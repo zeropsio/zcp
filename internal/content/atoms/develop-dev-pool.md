@@ -1,6 +1,6 @@
 ---
 id: develop-dev-pool
-priority: 3
+priority: 1
 phases: [develop-active]
 runtimes: [pool]
 environments: [container]

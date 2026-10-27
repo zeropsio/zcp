@@ -171,7 +171,7 @@ The closed value set is `{unset, auto, manual}` (`validAtomEnumValues["closeDepl
 
 **Empty = any runtime.** Service-scoped axis — see §3.10 for conjunction semantics.
 
-A develop session never names a pool in its scope, so an atom naming `pool` binds to a pool the session's work reaches though its scope does not list it — a pool keying a pair whose stage the scope names, or one this zcp holds a lease of (`synthesize.go::poolReachedBySession`) — and to no other: a pool elsewhere in the project is no part of the work (2026-10-27: `develop-dev-pool`, ~15 KB, rendered in sessions that never leased; `TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope`).
+A develop session never names a pool in its scope, so an atom naming `pool` binds to a pool the session's work reaches though its scope does not list it — a pool keying a pair whose stage the scope names, or one this zcp holds a lease of (`synthesize.go::poolReachedBySession`) — and to no other: a pool elsewhere in the project is no part of the work (2026-10-27: `develop-dev-pool`, ~15 KB, rendered in sessions that never leased; `TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope`). Where it does render, the dev-pool loop is the work's own guidance, so it sits at priority 1 and the budget composer cuts the edit-loop atoms around it to heads first (`TestDevelopBriefing_MultiPartPoolProject_UnderTheCap`).
 
 ### 3.6 `routes` (bootstrap-only, optional)
 

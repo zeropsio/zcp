@@ -1,6 +1,6 @@
 ---
 id: develop/dev-pool-dev-service
-atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-dev-pool, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-mode-expansion]
+atomIds: [develop-intro, develop-dev-pool, develop-strategy-review, develop-change-drives-deploy, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-mode-expansion]
 description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease, and this zcp holds a lease of it. The dev-pool guidance fires only because the work reaches that pool through its lease."
 ---
 === develop-intro ===
@@ -9,147 +9,6 @@ description: "A deployed dev-mode service whose project also holds a Swarm pool 
 Infrastructure is provisioned and at least one runtime already has a
 successful first deploy on record. You're in the edit loop: discover
 the current state, implement the user's request, redeploy, verify.
-
----
-
-=== develop-strategy-review ===
-### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
-
-Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
-
-```
-zerops_workflow action="close-mode" closeMode={"partdev":"auto"}
-```
-
-Swap `auto` for the close-mode you want:
-
-- `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
-- `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
-
-Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
-
-close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
-
----
-
-=== develop-change-drives-deploy ===
-### Every code change must reach a durable state
-
-Iteration cadence is mode-specific:
-
-- Dev-mode dynamic runtime: edit code in place; reload via
-  `zerops_dev_server` (no full redeploy for code-only changes).
-- Simple / standard / local / first-deploy: every change →
-  `zerops_deploy`.
-
-Once close-mode is `auto` and every resolved deploy
-target is deployed + verified, the work session auto-closes.
-
----
-
-=== develop-dev-server-triage ===
-### Dev-server state triage
-
-Before deploying, verifying, or iterating on a runtime service, run
-the triage rather than blind-starting a process.
-
-**Step 1 — Determine the expectation** from `runtimeClass` + `mode`
-in the envelope:
-
-Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
-action — its idle runtime container (`run.start: zsc noop --silent`) waits
-for `zerops_dev_server action=start hostname="<dev>"`. Implicit-webserver, static, and
-dynamic + simple/stage are platform-owned post-deploy; triage ends there.
-
-**Step 2 — Check current state** for dev-mode dynamic:
-
-```
-# container env
-zerops_dev_server action=status hostname="partdev" port={port} healthPath="{path}"
-
-# local env — runs on your machine
-Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}{path}"
-```
-
-Read the response:
-
-- `running: true` with HTTP 2xx/3xx/4xx `healthStatus` → proceed to
-  `zerops_verify`.
-- `running: false` with `reason: health_probe_connection_refused` →
-  start (step 3).
-- `running: true` with `healthStatus: 5xx` → server runs but is
-  broken; read logs and response body; do NOT restart (does not
-  fix bugs). Edit code, then iterate per the mode-specific cadence
-  (dev: edit + dev-server reload; simple/standard/local: redeploy).
-
-For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
-HTTP status; call `zerops_logs` to confirm consumption.
-
-**Step 3 — Act on the delta.**
-
-```
-# container env
-zerops_dev_server action=start hostname="partdev" command="{start-command}" port={port} healthPath="{path}"
-
-# local env
-Bash run_in_background=true command="{start-command}"
-```
-
-A redeploy replaces the runtime container: its supervisor starts your dev
-servers again right after it — read the deploy response's `devServer`
-before `zerops_verify`; start one only when it did not come back.
-
----
-
-=== develop-self-deploy-reproducibility ===
-### The dev container is disposable; the repository isn't
-
-A self-deploy replaces the dev container with a fresh one. Nothing on the
-old dev container's disk survives that swap except what git carries with
-it — the vault (values the `zerops.yaml` references, never a file) and
-managed-service data (Postgres, object storage, …) are the other two
-persistence mechanisms, and neither lives on the dev container's
-filesystem either. A file that exists only on today's dev container — an
-untracked script, a local SQLite DB, a `.env` — is gone the moment the new
-container replaces it.
-
-`zerops_deploy`'s response on a self-deploy carries this as data, not a
-guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
-that will not exist in the new container, and `envFiles` lists any
-`.env`/`.env.*` files found regardless of ignore state — values to
-move into the vault with `zerops_env` (secrets `sensitive=true`)
-and reference from `run.envVariables`, not carry forward as a workaround.
-`repoState` reports whether the source is clean, dirty, mid-merge, mid-
-rebase, or on a detached HEAD at deploy time.
-
-### After bootstrap or adopt, commit before changing anything
-
-Once a runtime's working tree is ready to iterate on — right after
-bootstrap writes the scaffold, or right after adopt inherits an existing
-one — write a `.gitignore` for the stack (build output, dependency
-directories, local env files) and make a baseline commit before making any
-other change. Every self-deploy after that point is then reproducible from
-that commit forward; skipping this step means the first self-deploy is the
-first moment anyone discovers what wasn't tracked.
-
----
-
-=== develop-checklist-dev-mode ===
-### Checklist (dev-mode dynamic-runtime services)
-
-Applies to **dynamic runtimes only** (Node, Bun, Deno, Go, Rust, Python,
-Ruby, Java, .NET — anything with a long-running app process under
-manual control). For implicit-webserver runtimes (`php-apache`,
-`php-nginx`) the implicit-webserver guidance fires instead; for static
-runtimes the web server auto-starts and this checklist does not apply.
-
-- Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
-  (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start hostname="<dev>"`; its supervisor
-  starts it again after later redeploys and restarts, until `action=stop`.
-- Stage setup block (if a dev+stage pair exists): real `start:`
-  command **plus** a `healthCheck`. Stage auto-starts on deploy and
-  Zerops probes it on its configured interval.
 
 ---
 
@@ -398,6 +257,147 @@ leases are keyed by branch, so they never meet.
 The pool's import stanza, setup shape — a workspace monorepo's dependencies
 included — and a declaration several parts share:
 `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".
+
+---
+
+=== develop-strategy-review ===
+### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
+
+Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
+
+```
+zerops_workflow action="close-mode" closeMode={"partdev":"auto"}
+```
+
+Swap `auto` for the close-mode you want:
+
+- `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
+- `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
+
+close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
+
+---
+
+=== develop-change-drives-deploy ===
+### Every code change must reach a durable state
+
+Iteration cadence is mode-specific:
+
+- Dev-mode dynamic runtime: edit code in place; reload via
+  `zerops_dev_server` (no full redeploy for code-only changes).
+- Simple / standard / local / first-deploy: every change →
+  `zerops_deploy`.
+
+Once close-mode is `auto` and every resolved deploy
+target is deployed + verified, the work session auto-closes.
+
+---
+
+=== develop-dev-server-triage ===
+### Dev-server state triage
+
+Before deploying, verifying, or iterating on a runtime service, run
+the triage rather than blind-starting a process.
+
+**Step 1 — Determine the expectation** from `runtimeClass` + `mode`
+in the envelope:
+
+Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
+action — its idle runtime container (`run.start: zsc noop --silent`) waits
+for `zerops_dev_server action=start hostname="<dev>"`. Implicit-webserver, static, and
+dynamic + simple/stage are platform-owned post-deploy; triage ends there.
+
+**Step 2 — Check current state** for dev-mode dynamic:
+
+```
+# container env
+zerops_dev_server action=status hostname="partdev" port={port} healthPath="{path}"
+
+# local env — runs on your machine
+Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}{path}"
+```
+
+Read the response:
+
+- `running: true` with HTTP 2xx/3xx/4xx `healthStatus` → proceed to
+  `zerops_verify`.
+- `running: false` with `reason: health_probe_connection_refused` →
+  start (step 3).
+- `running: true` with `healthStatus: 5xx` → server runs but is
+  broken; read logs and response body; do NOT restart (does not
+  fix bugs). Edit code, then iterate per the mode-specific cadence
+  (dev: edit + dev-server reload; simple/standard/local: redeploy).
+
+For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
+HTTP status; call `zerops_logs` to confirm consumption.
+
+**Step 3 — Act on the delta.**
+
+```
+# container env
+zerops_dev_server action=start hostname="partdev" command="{start-command}" port={port} healthPath="{path}"
+
+# local env
+Bash run_in_background=true command="{start-command}"
+```
+
+A redeploy replaces the runtime container: its supervisor starts your dev
+servers again right after it — read the deploy response's `devServer`
+before `zerops_verify`; start one only when it did not come back.
+
+---
+
+=== develop-self-deploy-reproducibility ===
+### The dev container is disposable; the repository isn't
+
+A self-deploy replaces the dev container with a fresh one. Nothing on the
+old dev container's disk survives that swap except what git carries with
+it — the vault (values the `zerops.yaml` references, never a file) and
+managed-service data (Postgres, object storage, …) are the other two
+persistence mechanisms, and neither lives on the dev container's
+filesystem either. A file that exists only on today's dev container — an
+untracked script, a local SQLite DB, a `.env` — is gone the moment the new
+container replaces it.
+
+`zerops_deploy`'s response on a self-deploy carries this as data, not a
+guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
+that will not exist in the new container, and `envFiles` lists any
+`.env`/`.env.*` files found regardless of ignore state — values to
+move into the vault with `zerops_env` (secrets `sensitive=true`)
+and reference from `run.envVariables`, not carry forward as a workaround.
+`repoState` reports whether the source is clean, dirty, mid-merge, mid-
+rebase, or on a detached HEAD at deploy time.
+
+### After bootstrap or adopt, commit before changing anything
+
+Once a runtime's working tree is ready to iterate on — right after
+bootstrap writes the scaffold, or right after adopt inherits an existing
+one — write a `.gitignore` for the stack (build output, dependency
+directories, local env files) and make a baseline commit before making any
+other change. Every self-deploy after that point is then reproducible from
+that commit forward; skipping this step means the first self-deploy is the
+first moment anyone discovers what wasn't tracked.
+
+---
+
+=== develop-checklist-dev-mode ===
+### Checklist (dev-mode dynamic-runtime services)
+
+Applies to **dynamic runtimes only** (Node, Bun, Deno, Go, Rust, Python,
+Ruby, Java, .NET — anything with a long-running app process under
+manual control). For implicit-webserver runtimes (`php-apache`,
+`php-nginx`) the implicit-webserver guidance fires instead; for static
+runtimes the web server auto-starts and this checklist does not apply.
+
+- Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
+  (a no-op keepalive), **no** `healthCheck`. You start the real dev
+  process yourself via `zerops_dev_server action=start hostname="<dev>"`; its supervisor
+  starts it again after later redeploys and restarts, until `action=stop`.
+- Stage setup block (if a dev+stage pair exists): real `start:`
+  command **plus** a `healthCheck`. Stage auto-starts on deploy and
+  Zerops probes it on its configured interval.
 
 ---
 
