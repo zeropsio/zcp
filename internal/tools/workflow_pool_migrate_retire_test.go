@@ -992,6 +992,40 @@ func TestPoolMigrateRetire_EnvCheck_LeavesZcpsOwnSecretsOut(t *testing.T) {
 	r.assertNothingRetired(t)
 }
 
+// TestPoolMigrateRetire_InAMate_NamesTheWorkBranchNoChangeProposes: in a Mate,
+// a retire that finishes with the work's branch pushed to HQ and no change
+// proposing it names the open-change call in its answer: the work ends in a
+// change a person reviews, not in a branch nobody was asked about.
+func TestPoolMigrateRetire_InAMate_NamesTheWorkBranchNoChangeProposes(t *testing.T) {
+	t.Parallel()
+	const repo = "https://hq.example.com/git/org-1/app-1/appdev.git"
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.rt.MateEnabled = true
+		f.rt.OrgID = "org-1"
+		f.hqAddress = func() string { return "https://hq.example.com" }
+		f.meta.GitPushState, f.meta.RemoteURL = "", repo
+		f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+		f.ssh.output = poolMigrateCensusFor("dev-pools", "origin", "dev-pools", "")
+	})
+	r.f.rt.HQ = &runtime.HQLink{Origin: "https://hq.example.com"}
+	record := `{"poolHostname":"apppool","poolServiceId":"svc-pool","containerId":"c-1","containerNumber":1,` +
+		`"containerHostname":"node-id-1.runtime.apppool.zerops","lease":"secret-lease-value","branch":"dev-pools",` +
+		`"repo":"` + repo + `","acquiredAt":"2026-10-24T09:30:00Z"}`
+	if err := os.WriteFile(filepath.Join(r.f.stateDir, "leases", retireLeaseAlias+".json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := r.retire(t, retireInput(true, true))
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want retired", out)
+	}
+	said, _ := out["nextUnavailable"].(string)
+	for _, want := range []string{`action="open-change"`, "dev-pools", retireLeaseAlias} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the retired answer %q does not name %q", said, want)
+		}
+	}
+}
+
 // TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
 // does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
 // DP-2): the container may be another holder's by now, so the retire refuses

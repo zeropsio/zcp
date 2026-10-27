@@ -16,6 +16,8 @@ package tools
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,5 +217,66 @@ func TestHandleWorkSessionClose_IgnoresUnrelatedInputFields(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("close should ignore unrelated fields, got:\n%s", extractText(result))
+	}
+}
+
+// unproposedHQ is the HQ the Mate of these tests presents itself to.
+const unproposedHQ = "https://hq.example.com"
+
+// writeUnproposedLeaseRecord records zcp's lease noolapool-1 of the Mate's HQ
+// repository app-1/noola on branch.
+func writeUnproposedLeaseRecord(t *testing.T, stateDir, branch string) {
+	t.Helper()
+	dir := filepath.Join(stateDir, "leases")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"poolHostname":"noolapool","poolServiceId":"svc-noolapool","containerId":"c-1","containerNumber":1,` +
+		`"containerHostname":"node-id-1.runtime.noolapool.zerops","lease":"secret-lease-value","branch":"` + branch + `",` +
+		`"repo":"` + unproposedHQ + `/git/org-1/app-1/noola.git","acquiredAt":"2026-10-27T09:30:00Z"}`
+	if err := os.WriteFile(filepath.Join(dir, "noolapool-1.json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHandleWorkSessionClose_InAMate_NamesALeaseBranchNoChangeProposes: in a
+// Mate, closing the work names each branch zcp's leases of its HQ repository
+// hold that no change proposes yet, with the open-change call — Odin's
+// 206-commit dev-pools had no change until the person asked (2026-10-27).
+func TestHandleWorkSessionClose_InAMate_NamesALeaseBranchNoChangeProposes(t *testing.T) {
+	t.Parallel()
+	mate := runtime.Info{InContainer: true, MateEnabled: true, OrgID: "org-1", HQ: &runtime.HQLink{Origin: unproposedHQ}}
+	tests := []struct {
+		name   string
+		rt     runtime.Info
+		branch string
+		change bool
+		want   bool
+	}{
+		{name: "a lease branch no change proposes", rt: mate, branch: "dev-pools", want: true},
+		{name: "its change is open", rt: mate, branch: "dev-pools", change: true},
+		{name: "a lease of main", rt: mate, branch: "main"},
+		{name: "outside a Mate", rt: runtime.Info{InContainer: true}, branch: "dev-pools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			engine, dir := closeTestEngine(t)
+			writeUnproposedLeaseRecord(t, dir, tt.branch)
+			if tt.change {
+				if err := workflow.RecordHQChange(dir, workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 1, Branch: tt.branch}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", tt.rt, closeInput())
+			if err != nil || result.IsError {
+				t.Fatalf("close: %v %s", err, extractText(result))
+			}
+			text := extractText(result)
+			named := strings.Contains(text, `action="open-change"`) && strings.Contains(text, "dev-pools") && strings.Contains(text, "noolapool-1")
+			if named != tt.want {
+				t.Errorf("close names the open-change of dev-pools = %v, want %v: %s", named, tt.want, text)
+			}
+		})
 	}
 }
