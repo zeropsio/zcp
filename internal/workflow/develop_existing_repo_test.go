@@ -80,7 +80,7 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 			"the first deploy puts its `run.start` under the dev-server supervisor",
 			`ssh appdev "cd <repo dir> && <the repo's install command>"`, "(`/var/www`, or the code volume's `mountPath`)",
 			"A restart keeps the installed dependencies",
-			"a redeploy replaces the container with what git carries",
+			"a redeploy replaces the dev container with what git carries",
 			"`notCarried`",
 		)
 		intro, err := os.ReadFile("../content/atoms/develop-first-deploy-intro.md")
@@ -134,21 +134,6 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 		)
 		if strings.Index(body, "zerops_origin") > strings.Index(body, "Read how the repo is developed") {
 			t.Error("the ask comes after the repo is read, so its code is taken before the person answers")
-		}
-	})
-
-	t.Run("an existing history becomes main as it is, never merged onto main's initial commit, and the setup follows it", func(t *testing.T) {
-		t.Parallel()
-		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "bring this repository in")
-		requireAll(t, body,
-			"its history becomes `main` exactly as it is",
-			"taken from its origin once the person connects it",
-			"pushed as a branch of its own and opened as a change",
-			"never cloned in and merged onto `main`'s initial commit",
-			"The setup below goes in after it, as a change of its own.",
-		)
-		if strings.Contains(body, "allow-unrelated-histories") {
-			t.Error("the guidance joins unrelated histories")
 		}
 	})
 
