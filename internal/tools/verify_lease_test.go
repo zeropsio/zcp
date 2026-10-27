@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -212,6 +214,77 @@ func TestVerify_UnknownHost_Unchanged(t *testing.T) {
 			}
 			if len(ssh.hosts) != 0 {
 				t.Errorf("ssh calls = %v, want none", ssh.hosts)
+			}
+		})
+	}
+}
+
+// previewAnswer answers every request with status and records the URLs.
+type previewAnswer struct {
+	mu     sync.Mutex
+	status int
+	urls   []string
+}
+
+func (p *previewAnswer) Do(req *http.Request) (*http.Response, error) {
+	p.mu.Lock()
+	p.urls = append(p.urls, req.URL.String())
+	p.mu.Unlock()
+	return &http.Response{StatusCode: p.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("<html>bad gateway</html>"))}, nil
+}
+
+// TestVerify_LeaseAlias_ProbesThePreviewFromOutside: a lease whose preview
+// server has a preview URL — its pool's subdomain on its preview port — is
+// verified from outside too: a preview answering 502 degrades the lease,
+// never "healthy" while the person's link is dark (Noola, 2026-10-27: six
+// leases healthy, six previews 502).
+func TestVerify_LeaseAlias_ProbesThePreviewFromOutside(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		status     int
+		wantCheck  string
+		wantStatus string
+	}{
+		{name: "the preview answers", status: http.StatusOK, wantCheck: ops.CheckPass, wantStatus: ops.StatusHealthy},
+		{name: "the preview answers 502", status: http.StatusBadGateway, wantCheck: ops.CheckFail, wantStatus: ops.StatusDegraded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+			writeLeaseFile(t, stateDir)
+			web := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"run web"}]}`)
+			web.StableNumber = 3
+			pool := platform.ServiceStack{ID: "svc-pool", Name: "webpool", ProjectID: "proj-1", Status: serviceStatusRunning, SubdomainAccess: true,
+				Ports:                []platform.Port{{Port: 9001, Protocol: "tcp"}, {Port: 9002, Protocol: "tcp"}, {Port: 9003, Protocol: "tcp"}},
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{pool}).WithService(&pool).
+				WithProject(&platform.Project{ID: "proj-1", Name: "proj", Status: statusActive, SubdomainHost: "abc1.prg1.zerops.app"})
+			answer := &previewAnswer{status: tt.status}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{InContainer: true}, &hostSSH{inner: web}, verifyVouchHeld(), verifyBoxHTTP(answer))
+			result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "webpool-3"})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("verify: %s", text)
+			}
+			var vr ops.VerifyResult
+			if err := json.Unmarshal([]byte(text), &vr); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			const url = "https://webpool-abc1-9003.prg1.zerops.app/"
+			var preview *ops.CheckResult
+			for i, c := range vr.Checks {
+				if c.URL == url {
+					preview = &vr.Checks[i]
+				}
+			}
+			if preview == nil || preview.Status != tt.wantCheck || preview.Server != "web" {
+				t.Fatalf("checks = %+v, want web's preview %s probed from outside: %s", vr.Checks, url, tt.wantCheck)
+			}
+			if vr.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", vr.Status, tt.wantStatus)
 			}
 		})
 	}
