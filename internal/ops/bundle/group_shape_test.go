@@ -455,3 +455,75 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// TestGroupRecipeBlockers_NameWhatIsMissingAndTheStageItIsFor: a part whose
+// stage setup nothing records, and no zerops.yaml tells, withholds every tier
+// that needs it — and a Mate's stand-up is not done while it does — so the
+// composer names, per part, the stage, the dev setup, why, and the setups
+// its zerops.yaml declares to choose from. A part that resolves names
+// nothing.
+func TestGroupRecipeBlockers_NameWhatIsMissingAndTheStageItIsFor(t *testing.T) {
+	t.Parallel()
+	base := GroupRuntime{
+		DevHostname: "webdev", ServiceType: "nodejs@22", RepoURL: "https://hq.example.com/git/org-1/app-1/webdev",
+		SetupName: "dev", Stages: []GroupStage{{Hostname: "webstage"}},
+	}
+	tests := []struct {
+		name     string
+		runtime  func() GroupRuntime
+		want     *GroupRecipeBlocker
+		whyWords string
+	}{
+		{
+			name:     "no zerops.yaml read",
+			runtime:  func() GroupRuntime { return base },
+			want:     &GroupRecipeBlocker{Runtime: "webdev", Stage: "webstage", DevSetup: "dev"},
+			whyWords: "no zerops.yaml was read",
+		},
+		{
+			name: "a zerops.yaml declaring several setups beside the dev one",
+			runtime: func() GroupRuntime {
+				r := base
+				r.ZeropsYAMLBody = "zerops:\n  - setup: dev\n  - setup: prod\n  - setup: preview\n"
+				return r
+			},
+			want:     &GroupRecipeBlocker{Runtime: "webdev", Stage: "webstage", DevSetup: "dev", Declared: []string{"preview", "prod"}},
+			whyWords: "beside the dev setup",
+		},
+		{
+			name: "the stage's setup recorded",
+			runtime: func() GroupRuntime {
+				r := base
+				r.Stages = []GroupStage{{Hostname: "webstage", SetupName: "prod"}}
+				return r
+			},
+		},
+		{
+			name: "one setup beside the dev one",
+			runtime: func() GroupRuntime {
+				r := base
+				r.ZeropsYAMLBody = "zerops:\n  - setup: dev\n  - setup: prod\n"
+				return r
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := GroupRecipeBlockers(GroupRecipeInputs{Name: "web", Runtimes: []GroupRuntime{tt.runtime()}})
+			if tt.want == nil {
+				if len(got) != 0 {
+					t.Errorf("blockers = %+v, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("blockers = %+v, want one", got)
+			}
+			b := got[0]
+			if b.Runtime != tt.want.Runtime || b.Stage != tt.want.Stage || b.DevSetup != tt.want.DevSetup || !slicesEqual(b.Declared, tt.want.Declared) || !strings.Contains(b.Why, tt.whyWords) {
+				t.Errorf("blocker = %+v, want %+v with a why saying %q", b, *tt.want, tt.whyWords)
+			}
+		})
+	}
+}
