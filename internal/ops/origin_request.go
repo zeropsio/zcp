@@ -38,6 +38,30 @@ func NewOriginRequest(rawURL, repo, why string) (OriginRequest, error) {
 	return OriginRequest{URL: origin, Repo: repo, Why: strings.TrimSpace(why)}, nil
 }
 
+// OriginWithdrawal is an origin ask the agent takes back: the address as it
+// was asked (canonical, as the request answered it) and the repository the
+// withdrawn ask named — "" for every ask naming the address.
+type OriginWithdrawal struct {
+	URL  string `json:"url"`
+	Repo string `json:"repo,omitempty"`
+}
+
+// NewOriginWithdrawal checks a withdrawal and writes nothing: the address is
+// checked as a request's is, and repo, when given, is a hostname.
+func NewOriginWithdrawal(rawURL, repo string) (OriginWithdrawal, error) {
+	origin, err := originURL(rawURL)
+	if err != nil {
+		return OriginWithdrawal{}, err
+	}
+	if repo = strings.TrimSpace(repo); repo != "" {
+		if perr := platform.ValidateHostname(repo); perr != nil {
+			perr.Suggestion = "repo is the repository in HQ the ask named — the dev service's hostname — or omit it to withdraw every ask naming the address."
+			return OriginWithdrawal{}, perr
+		}
+	}
+	return OriginWithdrawal{URL: origin, Repo: repo}, nil
+}
+
 // originURL is a repository's https address, owner/name, with neither a
 // credential nor anything past its path. A refusal never echoes the address:
 // a token can ride in its userinfo, its query, or an address that does not

@@ -530,6 +530,11 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s; %s sends it once its pool's orchestrator answers", alias, why, v.why, resendCall(alias, nil))}, true
 		default:
 			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, d.previewURLs(ctx), rec, without, why)
+			if len(outcomes[i].r.Restarted) > 0 || len(outcomes[i].r.Pending) > 0 {
+				// Its servers restarted under the new overlay: what they are
+				// now is its last-known for every envelope.
+				acquiredDevServers(ctx, d, rec)
+			}
 		}
 	})
 	var out []LeaseRewire

@@ -24,6 +24,10 @@ import (
 // remove one. The pass therefore compares a pair's checkout with the
 // checkouts of the pairs already wired before it asks HQ for a new one.
 
+// planStagesFallback is what a plan refusal names in place of the plan made
+// from it when that plan cannot be marshalled.
+const planStagesFallback = "runtime.stages listing {hostname, setupName} for every part"
+
 // hqRootsReadTimeout bounds each root-commit read the one-repository check
 // makes over SSH: a dev service that does not answer costs a pass no more
 // than this, and is no evidence.
@@ -171,7 +175,7 @@ func oneRepositoryPlanError(ctx context.Context, plan []workflow.BootstrapTarget
 	if len(reasons) == 0 {
 		return nil
 	}
-	planText := "runtime.stages listing {hostname, setupName} for every part"
+	planText := planStagesFallback
 	if planJSON, err := json.Marshal(fixed); err == nil {
 		planText = "plan=" + string(planJSON)
 	}
@@ -185,4 +189,88 @@ func oneRepositoryPlanError(ctx context.Context, plan []workflow.BootstrapTarget
 			quotedList(kept), quotedList(dropped), strings.Join(migrate, ", then "), planText))
 	pe.Subcode = platform.SubcodeWorkerPlanShape
 	return pe
+}
+
+// monorepoPlanError refuses a Mate's classic plan of several dev/stage pairs
+// (docs/spec-mate.md §10.10, "One repository per monorepo"): a classic
+// bootstrap wires its pairs at its close, while their checkouts are still
+// fresh from `zcp init`, so no root commit tells the parts of one repository
+// apart (oneRepositoryPlanError reads existing checkouts only) — and every
+// pair a Mate wires asks HQ for a repository of its own, which would split one
+// repository into one per part for good. The refusal carries the plan made
+// from it: the first pair's dev service holding every pair's stage, each with
+// its setup (the plan's own, else the part's name, the stage hostname without
+// its `stage` suffix), every dependency once, and pool-migrate after bootstrap
+// closes, giving each part a dev pool of its own. separate — the plan's
+// separateRepositories — says the pairs are separate repositories, and takes
+// the plan as it is. nil outside a Mate, with separate, and for a plan of one
+// pair however many stages it has.
+func monorepoPlanError(plan []workflow.BootstrapTarget, mate, separate bool) *platform.PlatformError {
+	if !mate || separate {
+		return nil
+	}
+	var pairs []int
+	for i, target := range plan {
+		if target.Runtime.EffectiveMode() == topology.PlanModeStandard {
+			pairs = append(pairs, i)
+		}
+	}
+	if len(pairs) < 2 {
+		return nil
+	}
+	first := plan[pairs[0]]
+	r := first.Runtime
+	var devs, stages []string
+	var refs []topology.StageRef
+	var deps []workflow.Dependency
+	for _, i := range pairs {
+		target := plan[i]
+		devs = append(devs, target.Runtime.DevHostname)
+		for _, s := range target.Runtime.StageRefs() {
+			if s.SetupName == "" {
+				s.SetupName = partOfStage(s.Hostname)
+			}
+			refs = append(refs, s)
+			stages = append(stages, s.Hostname)
+		}
+		for _, d := range target.Dependencies {
+			if !slices.ContainsFunc(deps, func(have workflow.Dependency) bool { return have.Hostname == d.Hostname }) {
+				deps = append(deps, d)
+			}
+		}
+	}
+	// A dependency another pair created is created by the one pair now.
+	for i := range deps {
+		if strings.EqualFold(deps[i].Resolution, workflow.ResolutionShared) {
+			deps[i].Resolution = workflow.ResolutionCreate
+		}
+	}
+	r.ExplicitStage, r.StageSetupName, r.Stages = "", "", refs
+	fixed := []workflow.BootstrapTarget{{Runtime: r, Dependencies: deps}}
+	for i, target := range plan {
+		if !slices.Contains(pairs, i) {
+			fixed = append(fixed, target)
+		}
+	}
+	planText := planStagesFallback
+	if planJSON, err := json.Marshal(fixed); err == nil {
+		planText = "plan=" + string(planJSON)
+	}
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("Plan validation failed: targets %s are each a dev/stage pair, and in a Mate every pair gets a repository of its own in HQ — a monorepo is one repository, never one per part, and HQ cannot merge or remove one once made", quotedList(devs)),
+		fmt.Sprintf("Plan the repository as one pair: %s with a stage per part in \"stages\" (%s), every dependency once; once bootstrap closes, zerops_workflow workflow=\"pool-migrate\" service=%q gives each part a dev pool of its own (zerops_knowledge uri=\"zerops://playbooks/monorepo\"). If these runtimes are separate repositories, not parts of one, re-submit the same plan with separateRepositories=true. %s",
+			quotedList([]string{r.DevHostname}), strings.Join(stages, ", "), r.DevHostname, planText))
+	pe.Subcode = platform.SubcodeWorkerPlanShape
+	return pe
+}
+
+// partOfStage is the part a stage builds, by its hostname: the hostname
+// without its `stage` suffix (webstage → web), as pool-migrate names the
+// part's pool (docs/spec-workflows.md §13 PM-12); the hostname itself when it
+// has none.
+func partOfStage(stage string) string {
+	if part, ok := strings.CutSuffix(stage, "stage"); ok && part != "" {
+		return part
+	}
+	return stage
 }

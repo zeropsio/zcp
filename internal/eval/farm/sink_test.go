@@ -15,6 +15,26 @@ import (
 	"time"
 )
 
+// TestSinkClient_OwnTransport_NotTheProcessDefault: the sink client's
+// connections are its own. httptest.Server.Close — and any other code in the
+// process — calls http.DefaultTransport.CloseIdleConnections, and a
+// conditional PUT that picks up an idle connection at that moment fails with
+// "HTTP/1.x transport connection broken: http: CloseIdleConnections called";
+// a PUT is never retried by the transport, so a manifest create read as
+// ambiguous failed a whole batch (CI run 40496811656, a parallel test's
+// server closing).
+func TestSinkClient_OwnTransport_NotTheProcessDefault(t *testing.T) {
+	t.Parallel()
+	client := NewSinkClient(Config{URL: "https://s3.example", Bucket: "zcp-farm", Key: "key", Secret: "secret"})
+	if client.client.Transport == nil || client.client.Transport == http.DefaultTransport {
+		t.Fatalf("sink HTTP client shares the process's default transport: %v", client.client.Transport)
+	}
+	other := NewSinkClient(Config{URL: "https://s3.example", Bucket: "zcp-farm", Key: "key", Secret: "secret"})
+	if other.client.Transport == client.client.Transport {
+		t.Error("two sink clients share one transport")
+	}
+}
+
 func TestSinkClient_DefaultTransportAndReadsAreBounded(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

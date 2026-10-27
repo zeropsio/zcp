@@ -698,6 +698,12 @@ func TestAnnotations_OriginTool(t *testing.T) {
 	if words := len(strings.Fields(tool.Description)); words > 60 {
 		t.Fatalf("description has %d words (max 60)", words)
 	}
+	// An ask no longer needed is withdrawn, never declared outdated in chat.
+	for _, want := range []string{"withdraw", "not in chat"} {
+		if !strings.Contains(tool.Description, want) {
+			t.Errorf("description lacks %q: %s", want, tool.Description)
+		}
+	}
 }
 
 func TestAnnotations_PublishPageTool(t *testing.T) {

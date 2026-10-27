@@ -104,9 +104,24 @@ type SinkClient struct {
 
 // NewSinkClient creates a SinkClient with its own finite request deadline.
 // Several CLI call sites intentionally use context.Background; the client
-// deadline keeps an unreachable object store from blocking them forever.
+// deadline keeps an unreachable object store from blocking them forever. Its
+// transport is its own (a clone of the default's settings): anything in the
+// process that closes http.DefaultTransport's idle connections — every
+// httptest.Server.Close does — would otherwise break a request that picked
+// one up at that moment, and the transport never retries a PUT, so a
+// conditional create would read as ambiguous.
 func NewSinkClient(cfg Config) *SinkClient {
-	return &SinkClient{cfg: cfg, client: &http.Client{Timeout: sinkRequestTimeout}, now: time.Now}
+	return &SinkClient{cfg: cfg, client: &http.Client{Timeout: sinkRequestTimeout, Transport: ownTransport()}, now: time.Now}
+}
+
+// ownTransport is a transport of the sink's own with the default transport's
+// settings — a fresh one with the environment's proxy when something replaced
+// the default with another kind.
+func ownTransport() http.RoundTripper {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+	return &http.Transport{Proxy: http.ProxyFromEnvironment}
 }
 
 // objectURL returns the path-style URL for key ("" for the bucket root,

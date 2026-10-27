@@ -43,7 +43,7 @@ func TestGroupRecipe_TheMateWebShape_RequiredUntilItComposes(t *testing.T) {
 	}
 
 	// The bootstrap's close: no zerops.yaml anywhere yet.
-	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqPassBackedOff)
+	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff)
 	if len(report.required) != 1 {
 		t.Fatalf("required = %v, want the group recipe's step (lines %v)", report.required, report.lines)
 	}
@@ -78,7 +78,7 @@ func TestGroupRecipe_TheMateWebShape_RequiredUntilItComposes(t *testing.T) {
 	// The code lands on main of the pair's repository: the next pass reads
 	// its zerops.yaml there and proposes the recipe.
 	lab.hq.landOnMain("appdev", map[string]string{"zerops.yaml": "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n  - setup: prod\n    run:\n      base: nodejs@22\n"})
-	report = reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqPassBackedOff)
+	report = reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff)
 	if len(report.required) != 0 {
 		t.Errorf("required = %v after the code landed, want none", report.required)
 	}

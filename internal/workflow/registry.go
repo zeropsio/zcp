@@ -94,6 +94,12 @@ func CurrentProcessStartTime() string {
 	return st
 }
 
+// ProcessAlive reports whether the process that recorded start (its
+// CurrentProcessStartTime) still runs as pid — a recycled PID reads dead; an
+// empty start trusts the bare PID. Exported so the tools layer tells a live
+// zcp session from an ended one the way the registry does.
+func ProcessAlive(pid int, start string) bool { return isProcessAlive(pid, start) }
+
 // ListSessions returns all sessions from the registry (read-only, no pruning).
 func ListSessions(stateDir string) ([]SessionEntry, error) {
 	reg, err := readRegistryShared(stateDir)

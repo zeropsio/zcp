@@ -148,6 +148,9 @@ func ComputeEnvelope(
 	}
 
 	snapshots := buildServiceSnapshots(services, metas, ws, selfHostnameFromRT(rt))
+	if rt.MateEnabled {
+		markStandIns(snapshots, metas)
+	}
 
 	var wsSummary *WorkSessionSummary
 	if ws != nil {
@@ -216,8 +219,10 @@ func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas 
 		records = readLeaseRecordSnapshots(stateDir)
 	}
 	notAnswering := make(map[string]string, len(records))
+	known := make(map[string]LeaseSnapshot, len(records))
 	for _, r := range records {
 		notAnswering[r.Alias] = r.NotAnswering
+		known[r.Alias] = r
 	}
 	// Read: a reader that answered (or records that stood in) with nothing is
 	// the empty array on the wire, never an absent key.
@@ -226,6 +231,12 @@ func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas 
 		read := reads[leases[i].Alias]
 		leases[i].Activity, leases[i].Unsaved = read.Activity, read.Unsaved
 		leases[i].NotAnswering = notAnswering[leases[i].Alias]
+		// Every envelope carries the last-known dev servers of a lease zcp
+		// records, with when they were read; a reader names none of its own.
+		if r, ok := known[leases[i].Alias]; ok && leases[i].DevServers == nil &&
+			(leases[i].AcquiredAt == "" || r.AcquiredAt == "" || leases[i].AcquiredAt == r.AcquiredAt) {
+			leases[i].DevServers, leases[i].DevServersReadAt = r.DevServers, r.DevServersReadAt
+		}
 	}
 	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
 		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
@@ -261,6 +272,10 @@ type leaseRecordFields struct {
 	Repo              string `json:"repo"`
 	AcquiredAt        string `json:"acquiredAt"`
 	NotAnswering      string `json:"notAnswering"`
+	// DevServers and DevServersReadAt are the last read of the lease's
+	// supervisor any zcp call made, and when.
+	DevServers       []topology.DevServerState `json:"devServers"`
+	DevServersReadAt string                    `json:"devServersReadAt"`
 }
 
 // readLeaseRecordSnapshots reads zcp's lease records as unverified "held"
@@ -296,6 +311,7 @@ func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
 			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
 			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
 			AcquiredAt: r.AcquiredAt, Repo: topology.RepoIdentity(r.Repo), NotAnswering: r.NotAnswering,
+			DevServers: r.DevServers, DevServersReadAt: r.DevServersReadAt,
 		})
 	}
 	return out
@@ -421,6 +437,18 @@ func buildServiceSnapshots(
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out
+}
+
+// markStandIns marks each snapshot of a dev service pool-migrate holds as its
+// repository's stand-in (ServiceMeta.PoolMigrateStandIn): a Mate's client
+// shows it as the step on the way it is (docs/spec-workflows.md §13 PM-14).
+func markStandIns(snapshots []ServiceSnapshot, metas []*ServiceMeta) {
+	byHost := ManagedRuntimeIndex(metas)
+	for i := range snapshots {
+		if byHost[snapshots[i].Hostname].PoolMigrateStandIn(snapshots[i].Hostname) {
+			snapshots[i].StandIn = &topology.StandIn{For: topology.StandInPoolMigrate}
+		}
+	}
 }
 
 // normalizeDeployDims fills the three orthogonal deploy dimensions with

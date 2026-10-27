@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // Verified-setup evidence — the durable extract of "this setup was
@@ -64,7 +65,12 @@ func RecordVerifiedSetup(stateDir, hostname string, ev VerifiedSetupEvidence) er
 		evidence = map[string]VerifiedSetupEvidence{}
 	}
 	evidence[ev.SetupName] = ev
+	return writeVerifiedEvidenceFile(path, evidence)
+}
 
+// writeVerifiedEvidenceFile writes evidence to path atomically (temp +
+// rename).
+func writeVerifiedEvidenceFile(path string, evidence map[string]VerifiedSetupEvidence) error {
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal verified evidence: %w", err)
@@ -76,7 +82,60 @@ func RecordVerifiedSetup(stateDir, hostname string, ev VerifiedSetupEvidence) er
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write verified evidence: %w", err)
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("write verified evidence: %w", err)
+	}
+	return nil
+}
+
+// removeVerifiedEvidence removes the sidecar of the record keyed by
+// hostname: the evidence goes with its record, so a deleted or re-keyed pair
+// leaves no sidecar naming a pair zcp no longer keeps. An absent sidecar is
+// nothing to remove.
+func removeVerifiedEvidence(stateDir, hostname string) error {
+	if err := os.Remove(verifiedEvidencePath(stateDir, hostname)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove verified evidence: %w", err)
+	}
+	return nil
+}
+
+// carryVerifiedEvidence moves the evidence of the record keyed by from, which
+// a re-key removed, to the records kept in its place: each kept record takes
+// the entries whose target it still names (a stage the pair carries), the
+// newer one winning per setup, and the rest — the retired dev service's own —
+// go with from's record. Best-effort, like every evidence write: evidence is
+// advisory, a re-verify rebuilds it, and the re-key never fails over it. The
+// caller holds the records' lock.
+func carryVerifiedEvidence(stateDir, from string, kept []*ServiceMeta) {
+	evidence, err := readVerifiedEvidenceFile(verifiedEvidencePath(stateDir, from))
+	if err != nil {
+		return
+	}
+	for _, m := range kept {
+		if m == nil || m.Hostname == from {
+			continue
+		}
+		hosts := m.Hostnames()
+		var carried map[string]VerifiedSetupEvidence
+		for setup, ev := range evidence {
+			if !slices.Contains(hosts, ev.TargetHostname) {
+				continue
+			}
+			if carried == nil {
+				path := verifiedEvidencePath(stateDir, m.Hostname)
+				if carried, err = readVerifiedEvidenceFile(path); err != nil {
+					break
+				}
+			}
+			if have, ok := carried[setup]; !ok || have.VerifiedAt < ev.VerifiedAt {
+				carried[setup] = ev
+			}
+		}
+		if len(carried) > 0 {
+			_ = writeVerifiedEvidenceFile(verifiedEvidencePath(stateDir, m.Hostname), carried)
+		}
+	}
+	_ = removeVerifiedEvidence(stateDir, from)
 }
 
 // ReadVerifiedSetups returns the per-setup latest evidence for the pair

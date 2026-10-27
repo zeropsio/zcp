@@ -60,7 +60,7 @@ func repoPartsPlanError(ctx context.Context, client platform.Client, projectID s
 	if len(reasons) == 0 {
 		return nil
 	}
-	planText := "runtime.stages listing {hostname, setupName} for every part"
+	planText := planStagesFallback
 	if planJSON, err := json.Marshal(fixed); err == nil {
 		planText = "plan=" + string(planJSON)
 	}

@@ -58,9 +58,10 @@ func describedChanges(t *testing.T) *hqLab {
 }
 
 // TestHQPass_MergedChangeNamesItsLeasesAndStages: a merged change's note names
-// its branch, the leases zcp holds on that branch — with the release that
-// frees them, which only the agent runs — and the stages of the repository's
-// pairs, which track main; it releases nothing.
+// its branch, the leases zcp still holds on that branch — which zcp releases
+// on its own once nothing unsaved is left in them, so the note names no
+// release for the agent to run — and the stages of the repository's pairs,
+// which track main. A pass given no release releases nothing.
 func TestHQPass_MergedChangeNamesItsLeasesAndStages(t *testing.T) {
 	lab := newHQLab(t)
 	lab.hq.keepOpenPerBranch()
@@ -78,10 +79,13 @@ func TestHQPass_MergedChangeNamesItsLeasesAndStages(t *testing.T) {
 	report := lab.passReport()
 
 	for _, want := range []string{"change #1 is merged", `"fix-login"`, "boxpool-6", "hqpool-4",
-		ops.LeaseReleaseBranchCall("fix-login", "", false), "appstage", "hqstage", `sha="origin/main"`} {
+		"zcp releases a merged or closed change's leases on its own", "appstage", "hqstage", `sha="origin/main"`} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the merged note lacks %q:\n%s", want, report)
 		}
+	}
+	if strings.Contains(report, ops.LeaseReleaseBranchCall("fix-login", "", false)) {
+		t.Errorf("the merged note names a release for the agent to run:\n%s", report)
 	}
 	if strings.Contains(report, "hqpool-5") {
 		t.Errorf("the merged note names a lease of another branch:\n%s", report)

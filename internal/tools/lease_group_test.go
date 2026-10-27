@@ -98,6 +98,12 @@ func groupLeaseServer(t *testing.T) (*mcp.Server, map[string]*poolOrchestrator) 
 // and the state directory the leases are recorded under.
 func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[string]*poolOrchestrator, string) {
 	t.Helper()
+	return groupLeaseServerSSHIn(t, ssh, runtime.Info{})
+}
+
+// groupLeaseServerSSHIn is groupLeaseServerSSH in the container rt describes.
+func groupLeaseServerSSHIn(t *testing.T, ssh ops.SSHDeployer, rt runtime.Info) (*mcp.Server, map[string]*poolOrchestrator, string) {
+	t.Helper()
 	orchs := map[string]*poolOrchestrator{
 		"hqpool":  {pool: "hqpool", token: "hq-orch-token-0001", number: 3},
 		"webpool": {pool: "webpool", token: "web-orch-token-0001", number: 7},
@@ -121,7 +127,7 @@ func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[st
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	stateDir := t.TempDir()
-	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, rt)
 	return srv, orchs, stateDir
 }
 

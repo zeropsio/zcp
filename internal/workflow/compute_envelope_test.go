@@ -1409,8 +1409,8 @@ func TestComputeEnvelope_PoolDevHalf_CarriesStages(t *testing.T) {
 	if err := json.Unmarshal(wire, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(decoded.Services[0]["stages"]); got != `[{"hostname":"appstage","setup":"prod"}]` {
-		t.Errorf("the pool's wire stages = %s, want [{appstage prod}]", got)
+	if got := string(decoded.Services[0]["stages"]); got != `[{"hostname":"appstage","setup":"prod","part":"prod"}]` {
+		t.Errorf("the pool's wire stages = %s, want [{appstage prod prod}]", got)
 	}
 	if _, ok := decoded.Services[1]["stages"]; ok {
 		t.Error("the stage's snapshot carries stages[]")

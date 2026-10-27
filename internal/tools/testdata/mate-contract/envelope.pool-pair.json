@@ -16,7 +16,7 @@
       "gitPushState": "configured",
       "buildIntegration": "none",
       "setupName": "pool",
-      "stages": [{ "hostname": "appstage", "setup": "prod" }]
+      "stages": [{ "hostname": "appstage", "setup": "prod", "part": "prod" }]
     },
     {
       "hostname": "appstage",
@@ -39,7 +39,9 @@
       "branch": "feat-x",
       "containerHostname": "node-id-1.runtime.apppool.zerops",
       "state": "held",
-      "unverified": false
+      "unverified": false,
+      "part": "prod",
+      "stage": "appstage"
     }
   ],
   "generated": "2026-10-14T21:04:00Z"

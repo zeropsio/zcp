@@ -105,6 +105,12 @@ type MateChange struct {
 	// UpdatedAt is when HQ last changed its record of the change, RFC 3339;
 	// "" from an HQ older than it.
 	UpdatedAt string `json:"updatedAt,omitempty"`
+	// Verdict is Core's refusal to land the change at its head, as Core last
+	// judged it — a recipe change Core lands by itself: head_moved (a push
+	// arrived while it judged), recipe_changes_files, files_past_bound, or a
+	// git failure's kind; "" while Core refused nothing, and from an HQ that
+	// names none.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // MateChangesPerRepo is how many of a Mate's changes in a repository its own

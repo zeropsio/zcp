@@ -137,7 +137,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// its own abandoned change by branch (docs/spec-mate.md §10.10): the
 		// action list names it and `branch` names it among its users; no new
 		// field — what HQ lets a Mate close lives in the handler's answers.
-		"zerops_workflow":    20419,
+		// Raised +290 (20419→20709) for `separateRepositories`, a Mate's
+		// classic plan saying its pairs are separate repositories
+		// (docs/spec-mate.md §10.10): a FlexBool published as
+		// oneOf[boolean,string] and one line of when; the refusal it answers
+		// carries the corrected plan.
+		"zerops_workflow":    20709,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
