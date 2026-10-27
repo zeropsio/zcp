@@ -4285,7 +4285,13 @@ repository kept there (§5.10). zcp never commits, opens a change or pushes for 
 deploy deploys and delivers nothing, and no deploy response carries a `pullRequest`. Only a
 dev/stage pair can be a Mate's: the dev half is the checkout, the stage half the verified basis a
 production is promoted from. So zcp's classic route refuses a plan that gives a Mate a runtime with
-no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit.
+no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit — and says the
+rule before any plan: a Mate's classic discover step states that every runtime is a dev/stage pair,
+and both it and the refusal say that "no stage" (or "a dev service only") means creating the stage
+and leaving it empty — imported without code it stays READY_TO_DEPLOY with no containers — with
+nothing to ask the person (`hq_pair.go`, `TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair`,
+`TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`). On 2026-10-27 all three Mate sessions learned
+the rule from a refused plan and asked the person, 2–4 minutes each.
 
 **A Mate is HQ's by what it is, not by whether HQ answers (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the project key is only how zcp reaches
