@@ -1697,9 +1697,14 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    `ZCP_API_KEY`, both read from the live env store as `zcp lease release` reads them) and, as soon
    as the platform accepted it, exits 0 with exactly `{"processId":"…"}`, never waiting for the
    process that stops it. Outside a container, without a key, or refused by the platform, it exits 1
-   with exactly `{"error":"…"}`, one line written for the person the Mate shows it to ("not running
+   with `{"error":"…"}`, one line written for the person the Mate shows it to ("not running
    in a Zerops container, so there is no service to restart", "the platform refused the restart:
-   …"); without `--json` it answers the same in one line of text. It is nothing Mate-shaped, so it
+   …"), and `"refused":true` beside it exactly when the restart certainly did not happen: nothing to
+   restart, no key, no client, or the platform's own 4xx (401, 403, 404, 429, or a rejection
+   carrying the API's error code). A timeout, a dropped connection, the platform's 5xx or an error
+   zcp cannot classify carries no `refused` and says "could not confirm the restart: …" — the
+   platform may have taken it, so the Mate waits out its grace. Without `--json` it answers the same
+   in one line of text. It is nothing Mate-shaped, so it
    is not gated on `ZCP_MATE_ENABLED`. The Mate sends it only to `zcp version` ≥ 9.226.0, the
    release that ships the verb: an older zcp, not knowing it, would start serve mode.
 
@@ -1722,7 +1727,7 @@ never repeatedly restarts on an uncertain response. No manually paired fallback 
 | MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field, and an update's outcome reads only the descriptor's version and `bootId` for equality with those it was pressed with. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
-| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with exactly `{"error":"…"}` and restarts nothing. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestCLIDispatch_SelfIsAVerb`. |
+| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with `{"error":"…"}` and restarts nothing, plus `"refused":true` only when the restart certainly did not happen (no container, key or client, or the platform's 4xx) — never for a timeout, a dropped connection or a 5xx, which say the restart is unconfirmed. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite`, `TestCLIDispatch_SelfIsAVerb`. |
 
 ### 2.10 A paired Mac — Mate's mechanism, zcp's guidance
 
