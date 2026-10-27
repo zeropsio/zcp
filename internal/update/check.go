@@ -79,11 +79,7 @@ func (c *Checker) Check(ctx context.Context) *Info {
 	}
 
 	info.LatestVersion = release.TagName
-	if c.DownloadBaseURL != "" {
-		info.DownloadURL = fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, release.TagName, assetName(runtime.GOOS, runtime.GOARCH))
-	} else {
-		info.DownloadURL = buildDownloadURL(release.TagName, runtime.GOOS, runtime.GOARCH)
-	}
+	info.DownloadURL = c.downloadURL(release.TagName)
 	info.Available = isNewer(c.CurrentVersion, release.TagName)
 
 	// Write cache (best-effort).
@@ -94,6 +90,14 @@ func (c *Checker) Check(ctx context.Context) *Info {
 	})
 
 	return info
+}
+
+// downloadURL is where this platform's binary of release tag downloads from.
+func (c *Checker) downloadURL(tag string) string {
+	if c.DownloadBaseURL != "" {
+		return fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, tag, assetName(runtime.GOOS, runtime.GOARCH))
+	}
+	return buildDownloadURL(tag, runtime.GOOS, runtime.GOARCH)
 }
 
 type githubRelease struct {
