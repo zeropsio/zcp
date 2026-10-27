@@ -173,6 +173,11 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		if steer := codeVolumeSteerFor(stateDir, input.Hostname); steer != "" {
 			resp.Warnings = append(resp.Warnings, steer)
 		}
+		if d.RtInfo.MateEnabled {
+			if meta, _ := workflow.FindServiceMeta(stateDir, input.Hostname); meta.PoolMigrateStandIn(input.Hostname) {
+				resp.StandIn = &topology.StandIn{For: topology.StandInPoolMigrate}
+			}
+		}
 		if migration != nil {
 			resp.MigratedToSupervisor = true
 			resp.MigrationTimes = &migration.times
@@ -266,6 +271,10 @@ type devServerToolResult struct {
 	// or what moving the dev setup onto the supervisor could not finish —
 	// and, for a variant-B dev service, that pool-migrate moves its pair.
 	Warnings []string `json:"warnings,omitempty"`
+	// StandIn marks, inside a Mate, a dev service pool-migrate holds as its
+	// repository's stand-in — the same object its envelope snapshot carries
+	// (docs/spec-workflows.md §13 PM-14); nil otherwise.
+	StandIn *topology.StandIn `json:"standIn,omitempty"`
 	// Envelope is the post-call state envelope with the dev service's
 	// devServers[] (docs/spec-mate.md §2.8a.3) — only from field-order
 	// step (3), DevServerDeps.CarriesParts.

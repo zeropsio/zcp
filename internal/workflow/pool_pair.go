@@ -617,3 +617,22 @@ func SettleMigratedCodeVolume(stateDir, dev string, pools []string, volumeGone b
 	}
 	return nil
 }
+
+// PoolMigrateStandIn reports whether pool-migrate holds hostname as its
+// repository's stand-in (docs/spec-workflows.md §13 PM-14): the dev half of a
+// bootstrapped container pair that serves several parts — more than one
+// stage, the step on the way to a dev pool per part, which in a Mate is the
+// only way there (PM-12) — or any dev service of a variant-B pair, whose
+// repository pool-migrate moves off its code volume (PM-13). It holds from
+// the plan that made the pair until the retire re-keys the pair onto its
+// pools; a pair keyed by its dev pool, a pair of one stage and every stage
+// are no stand-in. False for a nil meta.
+func (m *ServiceMeta) PoolMigrateStandIn(hostname string) bool {
+	if m == nil || !m.IsComplete() || m.DevIsPool() || m.Mode != topology.PlanModeStandard {
+		return false
+	}
+	if m.CodeVolume != nil {
+		return hostname == m.Hostname || slices.Contains(m.CodeVolume.DevServiceHostnames(), hostname)
+	}
+	return hostname == m.Hostname && len(m.Stages) > 1
+}

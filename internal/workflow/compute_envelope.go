@@ -148,6 +148,9 @@ func ComputeEnvelope(
 	}
 
 	snapshots := buildServiceSnapshots(services, metas, ws, selfHostnameFromRT(rt))
+	if rt.MateEnabled {
+		markStandIns(snapshots, metas)
+	}
 
 	var wsSummary *WorkSessionSummary
 	if ws != nil {
@@ -421,6 +424,18 @@ func buildServiceSnapshots(
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out
+}
+
+// markStandIns marks each snapshot of a dev service pool-migrate holds as its
+// repository's stand-in (ServiceMeta.PoolMigrateStandIn): a Mate's client
+// shows it as the step on the way it is (docs/spec-workflows.md §13 PM-14).
+func markStandIns(snapshots []ServiceSnapshot, metas []*ServiceMeta) {
+	byHost := ManagedRuntimeIndex(metas)
+	for i := range snapshots {
+		if byHost[snapshots[i].Hostname].PoolMigrateStandIn(snapshots[i].Hostname) {
+			snapshots[i].StandIn = &topology.StandIn{For: topology.StandInPoolMigrate}
+		}
+	}
 }
 
 // normalizeDeployDims fills the three orthogonal deploy dimensions with

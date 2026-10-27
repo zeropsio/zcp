@@ -261,6 +261,12 @@ type ServiceSnapshot struct {
 	WireStages []topology.StageWire      `json:"stages,omitempty"`
 	DevServers []topology.DevServerState `json:"devServers,omitempty"`
 
+	// StandIn marks, inside a Mate, a dev service pool-migrate holds as its
+	// repository's stand-in (ServiceMeta.PoolMigrateStandIn): {for:
+	// "pool-migrate"} beside its stages and dev servers, nil otherwise
+	// (docs/spec-workflows.md §13 PM-14, docs/spec-mate.md §2.8a.3).
+	StandIn *topology.StandIn `json:"standIn,omitempty"`
+
 	// MultiPart is the mechanical multi-part signal of a dev half's repo
 	// (ops.ReadPartsSignal): its zerops.yaml declares more than one part,
 	// its .zcp/dev-servers.json more than one server, or workspace markers
