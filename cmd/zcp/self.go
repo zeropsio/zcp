@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -21,7 +22,9 @@ import (
 // while idle when `zcp mate status` says restartNeeded. It answers as soon as
 // the platform accepted the restart and never waits for its process: the
 // restart stops this container, this process with it. It reads no stdin and
-// writes its one answer to stdout; exit 0 accepted, 1 anything else.
+// writes its one answer to stdout: under --json `{"processId":"…"}` with exit
+// 0, else `{"error":"…"}` with exit 1 — one line the Mate shows a person as
+// the reason.
 
 const selfUsage = "usage: zcp self restart [--json]"
 
@@ -33,12 +36,12 @@ type serviceRestarter interface {
 	RestartService(ctx context.Context, serviceID string) (*platform.Process, error)
 }
 
-// selfRestartAnswer is `zcp self restart --json`'s answer: the restart the
-// platform accepted and its process, or why there is none.
+// selfRestartAnswer is `zcp self restart`'s answer: the process of the
+// restart the platform accepted, or, when Error is set, why there is none.
+// Exactly one of the two is written (printSelfRestart).
 type selfRestartAnswer struct {
-	Restarting bool   `json:"restarting"`
-	ProcessID  string `json:"processId,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ProcessID string
+	Error     string
 }
 
 // runSelfCmd implements `zcp self restart`. args is everything after "self".
@@ -49,7 +52,7 @@ type selfRestartAnswer struct {
 func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, newClient func(token, apiHost string) (serviceRestarter, error)) int {
 	asJSON := slices.Contains(args, "--json")
 	fail := func(msg string) int {
-		printSelfRestart(stdout, selfRestartAnswer{Error: msg}, "", asJSON)
+		printSelfRestart(stdout, selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " ")}, "", asJSON)
 		return 1
 	}
 	if len(args) == 0 || args[0] != "restart" {
@@ -65,23 +68,23 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 
 	rt := runtime.DetectFrom(lookup)
 	if !rt.InContainer || rt.ServiceID == "" {
-		return fail("zcp self restart runs inside a Zerops container: it restarts the service it runs in, and no serviceId names one here")
+		return fail("not running in a Zerops container, so there is no service to restart")
 	}
 	key := lookup(hq.EnvKey)
 	if key == "" {
-		return fail(fmt.Sprintf("no %s in this container's environment: the platform takes the restart only with the project's key", hq.EnvKey))
+		return fail(fmt.Sprintf("this container has no %s, which the platform needs to restart it", hq.EnvKey))
 	}
 	client, err := newClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
 	if err != nil {
-		return fail(fmt.Sprintf("build the platform client: %v", err))
+		return fail(fmt.Sprintf("could not reach the platform: %v", err))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), selfRestartTimeout)
 	defer cancel()
 	proc, err := client.RestartService(ctx, rt.ServiceID)
 	if err != nil {
-		return fail(fmt.Sprintf("restart service %s: %v", rt.ServiceID, err))
+		return fail(fmt.Sprintf("the platform refused the restart: %v", err))
 	}
-	answer := selfRestartAnswer{Restarting: true}
+	var answer selfRestartAnswer
 	if proc != nil {
 		answer.ProcessID = proc.ID
 	}
@@ -99,12 +102,24 @@ func newSelfRestartClient(token, apiHost string) (serviceRestarter, error) {
 	return client, nil
 }
 
-// printSelfRestart writes answer to stdout: JSON under --json, else one line.
+// printSelfRestart writes answer to stdout: one JSON line under --json —
+// `{"error":"…"}` or `{"processId":"…"}`, nothing else — else one line of
+// text.
 func printSelfRestart(stdout io.Writer, answer selfRestartAnswer, serviceID string, asJSON bool) {
 	if asJSON {
-		data, err := json.Marshal(answer)
+		var data []byte
+		var err error
+		if answer.Error != "" {
+			data, err = json.Marshal(struct {
+				Error string `json:"error"`
+			}{answer.Error})
+		} else {
+			data, err = json.Marshal(struct {
+				ProcessID string `json:"processId"`
+			}{answer.ProcessID})
+		}
 		if err != nil {
-			data = []byte(`{"restarting":false,"error":"marshal the answer"}`)
+			data = []byte(`{"error":"could not write the answer"}`)
 		}
 		_, _ = fmt.Fprintln(stdout, string(data))
 		return

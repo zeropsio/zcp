@@ -22,9 +22,10 @@ import (
 // (internal/update), which trusts an entry for a day.
 const zcpReleaseCacheTTL = time.Hour
 
-// zcpReleaseStatus is `zcp mate status --json`'s "zcp" key: this binary
-// against the release install.sh installs, the tag GitHub's releases/latest
-// names.
+// zcpReleaseStatus is `zcp mate status --json`'s "zcp" key, always present:
+// this binary against the release install.sh installs, the tag GitHub's
+// releases/latest names. Latest is "" while that release is unknown, and
+// Behind is then false.
 type zcpReleaseStatus struct {
 	Installed string `json:"installed"`
 	Latest    string `json:"latest"`
@@ -32,27 +33,29 @@ type zcpReleaseStatus struct {
 }
 
 // startZCPReleaseLookup starts reading the latest zcp release beside the
-// manifest read and returns the wait for it. The answer is nil when the
-// release is unknown (offline, rate-limited, nothing cached under --local),
-// and for a build no release names (update.IsRelease) — a dev build, compared
-// with nothing and never sent to the network, since a restart would replace
-// it.
-func startZCPReleaseLookup(ctx context.Context, installed string, opts update.LatestOptions) func() *zcpReleaseStatus {
-	if !update.IsRelease(installed) {
-		return func() *zcpReleaseStatus { return nil }
+// manifest read and returns the wait for the "zcp" key. Latest stays "" when
+// the release is unknown (offline, rate-limited, nothing cached under
+// --local), and for a build no release names (update.IsRelease): a dev build
+// is compared with nothing and never sent to the network, since a restart
+// would replace it.
+func startZCPReleaseLookup(ctx context.Context, installed string, opts update.LatestOptions) func() zcpReleaseStatus {
+	if installed == "" {
+		installed = "dev"
 	}
-	done := make(chan *zcpReleaseStatus, 1)
+	if !update.IsRelease(installed) {
+		return func() zcpReleaseStatus { return zcpReleaseStatus{Installed: installed} }
+	}
+	done := make(chan zcpReleaseStatus, 1)
 	go func() {
 		checker := update.NewChecker(installed)
 		checker.CacheTTL = zcpReleaseCacheTTL
 		latest, err := checker.Latest(ctx, opts)
 		if err != nil {
-			done <- nil
-			return
+			latest = ""
 		}
-		done <- &zcpReleaseStatus{Installed: installed, Latest: latest, Behind: update.Behind(installed, latest)}
+		done <- zcpReleaseStatus{Installed: installed, Latest: latest, Behind: update.Behind(installed, latest)}
 	}()
-	return func() *zcpReleaseStatus { return <-done }
+	return func() zcpReleaseStatus { return <-done }
 }
 
 // mateWithoutUpdater reports whether the running Mate proved it predates
@@ -77,12 +80,11 @@ func mateWithoutUpdater(updateAvailable bool) bool {
 // restartVerdict is whether a container restart would change this container,
 // and why, in one line for a person: zcp is behind the release install.sh
 // installs, or the running Mate has no updater while a newer Mate is out.
-func restartVerdict(zcp *zcpReleaseStatus, mateInstalled, mateLatest string, mateNoUpdater bool) (bool, string) {
-	zcpBehind := zcp != nil && zcp.Behind
+func restartVerdict(zcp zcpReleaseStatus, mateInstalled, mateLatest string, mateNoUpdater bool) (bool, string) {
 	switch {
-	case zcpBehind && mateNoUpdater:
+	case zcp.Behind && mateNoUpdater:
 		return true, fmt.Sprintf("zcp %s is out and mate %s has no updater; a restart installs both", zcp.Latest, mateInstalled)
-	case zcpBehind:
+	case zcp.Behind:
 		return true, fmt.Sprintf("zcp %s is out; a restart installs it", zcp.Latest)
 	case mateNoUpdater:
 		return true, fmt.Sprintf("mate %s has no updater; a restart installs mate %s", mateInstalled, mateLatest)

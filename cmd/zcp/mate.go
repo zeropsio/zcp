@@ -92,11 +92,9 @@ type mateStatusResult struct {
 	Error           string                  `json:"error,omitempty"`
 	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
 	Updater         *mateUpdaterStatus      `json:"updater,omitempty"`
-	// ZCP is absent when the latest zcp release is unknown, and for a dev
-	// build (startZCPReleaseLookup).
-	ZCP           *zcpReleaseStatus `json:"zcp,omitempty"`
-	RestartNeeded bool              `json:"restartNeeded"`
-	Why           string            `json:"why,omitempty"`
+	ZCP             zcpReleaseStatus        `json:"zcp"`
+	RestartNeeded   bool                    `json:"restartNeeded"`
+	Why             string                  `json:"why,omitempty"`
 }
 
 // mateUpdaterStatus is the status's "updater" key (§2.1d).
@@ -204,7 +202,7 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
 	}
 	switch {
-	case result.ZCP != nil && result.ZCP.Behind:
+	case result.ZCP.Behind:
 		fmt.Fprintf(os.Stdout, "zcp: installed %s, %s available; a restart installs it\n", result.ZCP.Installed, result.ZCP.Latest)
 	case result.RestartNeeded:
 		fmt.Fprintf(os.Stdout, "restart needed: %s\n", result.Why)
