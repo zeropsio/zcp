@@ -206,9 +206,11 @@ func groupEnvironmentSetup(r GroupRuntime, setup string) (environmentSetup, warn
 
 // zeropsSubdomainAddress is a host on a Zerops subdomain (zeropsSubdomainSuffix,
 // zeropsDevSubdomainSuffix) anywhere in a value: a service's own public
-// address, with or without its scheme, a template such as
-// `appstage-${zeropsSubdomainHost}-3000.prg1.zerops.app` among them.
-var zeropsSubdomainAddress = regexp.MustCompile(`(?i)[a-z0-9*-]\.(?:[a-z0-9-]+\.)*zerops\.(?:app|dev)\b`)
+// address, with or without its scheme, written out or with `${name}`
+// references among its labels — the project's own subdomain variables, as in
+// `webstage-${zeropsSubdomainHost}-3000.${zeropsLocation}.zerops.app`. A value
+// that is only a reference (`${zeropsSubdomain}`) holds no such host.
+var zeropsSubdomainAddress = regexp.MustCompile(`(?i)(?:\*|(?:[a-z0-9-]|\$\{[a-z0-9_]+\})+)(?:\.(?:[a-z0-9-]|\$\{[a-z0-9_]+\})+)*\.zerops\.(?:app|dev)\b`)
 
 // namesZeropsSubdomainAddress reports whether v — a string, or a mapping or
 // list parsed from YAML — names an address on a Zerops subdomain: an address
