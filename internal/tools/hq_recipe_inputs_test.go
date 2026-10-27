@@ -95,7 +95,7 @@ func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceMetas: %v", err)
 	}
-	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 			writeHQWiredPairMeta(t, stateDir)
 			metas, _ := workflow.ListServiceMetas(stateDir)
 			client := medusaLikeProject().WithError(tt.method, errors.New("upstream timeout"))
-			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
+			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
@@ -296,7 +296,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			if tt.meta != nil {
 				metas = append(slices.Clone(wired), tt.meta)
 			}
-			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, wired)
+			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, wired, nil)
 			if len(tt.wantWait) > 0 {
 				if err == nil {
 					t.Fatalf("composed while a pair waits: utilities %+v", inputs.Utilities)
@@ -457,7 +457,7 @@ func TestHQRecipeInputs_PoolAndBoxNotUtilities(t *testing.T) {
 	box := publicBuildRuntime("svc-box", "sandbox", "ubuntu/zbox@1", "https://github.com/zerops-recipe-apps/box-app")
 	box.ServiceStackTypeInfo.ServiceStackTypeCategoryName = "STANDARD"
 
-	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(pool, box), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(pool, box), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}

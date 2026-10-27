@@ -537,14 +537,14 @@ func poolPairProject() *platform.Mock {
 		})
 }
 
-// TestGroupRecipeInputs_PoolDevHalf_CarriesThePartAsItsDevService: the
-// recipe never carries a dev pool (it is no application runtime), and a Mate
-// made from the recipe gets a dev service. So a pair keyed by its dev pool is
-// carried as the dev service it was moved from — that service's hostname
-// and setup — with the type, scale, public access and variables of its
-// stage, never the pool's: no swarm type, no pool scale, none of the pool's
-// own variables, and no zerops.yaml read from a mount of the pool's.
-func TestGroupRecipeInputs_PoolDevHalf_CarriesThePartAsItsDevService(t *testing.T) {
+// TestGroupRecipeInputs_PoolDevHalf_CarriedAsThePartsDevPool: a Mate made
+// from the recipe gets the project's shape — a pair keyed by its dev pool is
+// carried as that pool, keying its stage: the pool's hostname, type and
+// setup, its own scale and service variables but never its orchestrator's
+// credentials, no zerops.yaml read from a mount of the pool's (a random
+// container); and the stage as it runs, its own type, scale and access. The
+// pool keying the pair is no service left out.
+func TestGroupRecipeInputs_PoolDevHalf_CarriedAsThePartsDevPool(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	writeHQWiredPairMeta(t, stateDir)
@@ -561,50 +561,65 @@ func TestGroupRecipeInputs_PoolDevHalf_CarriesThePartAsItsDevService(t *testing.
 		t.Fatal(err)
 	}
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
+	}
+	if inputs.MateProjectID != "p1" {
+		t.Errorf("MateProjectID = %q, want the Mate's project, which the tiers' mark names", inputs.MateProjectID)
 	}
 	if len(inputs.Runtimes) != 1 {
 		t.Fatalf("runtimes = %+v, want the one pair", inputs.Runtimes)
 	}
 	got := inputs.Runtimes[0]
-	if got.DevHostname != "appdev" || got.ServiceType != "nodejs@22" || got.SetupName != "api" {
-		t.Errorf("dev half = %q %q setup %q, want the dev service it was moved from: appdev nodejs@22 setup api", got.DevHostname, got.ServiceType, got.SetupName)
-	}
-	if len(got.Stages) != 1 || got.Stages[0].Hostname != "appstage" || got.Stages[0].SetupName != "prod" {
-		t.Errorf("stages = %+v, want appstage building prod", got.Stages)
+	if got.DevHostname != testPool || !got.DevPool || got.ServiceType != "swarm@1" || got.SetupName != "pool" {
+		t.Errorf("dev half = %q pool %v %q setup %q, want the part's dev pool: %s swarm@1 setup pool", got.DevHostname, got.DevPool, got.ServiceType, got.SetupName, testPool)
 	}
 	if strings.Contains(got.ZeropsYAMLBody, "from-a-pool-container") {
 		t.Error("the composer read a zerops.yaml from a mount of the pool's")
 	}
-	if got.Scaling == nil || got.Scaling.MinContainers != 1 || got.Scaling.MaxContainers != 2 {
-		t.Errorf("scaling = %+v, want the stage's (1..2), never the pool's", got.Scaling)
+	if got.Scaling == nil || got.Scaling.MaxContainers != 3 || got.Scaling.MinRAM != 1 {
+		t.Errorf("pool scaling = %+v, want the pool's own (up to 3, 1 GB)", got.Scaling)
 	}
 	envs := envMap(got.ServiceEnvs)
-	for _, key := range []string{"API_TOKEN", "ADMIN_TOKEN", "sshIsolation"} {
+	for _, key := range []string{"API_TOKEN", "ADMIN_TOKEN"} {
 		if _, carried := envs[key]; carried {
-			t.Errorf("the dev half carries the pool's own %s", key)
+			t.Errorf("the pool carries its orchestrator's %s", key)
 		}
 	}
-	if envs["NODE_ENV"] != "production" {
-		t.Errorf("dev half variables = %v, want the stage's", envs)
+	if envs["sshIsolation"] != "vpn service@zcp" || envs["NODE_ENV"] != "development" {
+		t.Errorf("pool variables = %v, want its own sshIsolation and NODE_ENV", envs)
 	}
-	if !warningsHave(warnings, `"`+testPool+`"`) || !warningsHave(warnings, "not carried") {
-		t.Errorf("warnings %v do not say the pool is not carried", warnings)
+	if len(got.Stages) != 1 {
+		t.Fatalf("stages = %+v, want appstage", got.Stages)
+	}
+	stage := got.Stages[0]
+	if stage.Hostname != "appstage" || stage.SetupName != "prod" || stage.ServiceType != "nodejs@22" || !stage.SubdomainEnabled {
+		t.Errorf("stage = %+v, want appstage building prod, nodejs@22 as it runs, reachable", stage)
+	}
+	if stage.Scaling == nil || stage.Scaling.MinContainers != 1 || stage.Scaling.MaxContainers != 2 {
+		t.Errorf("stage scaling = %+v, want the stage's own (1..2)", stage.Scaling)
+	}
+	if envMap(stage.ServiceEnvs)["NODE_ENV"] != "production" {
+		t.Errorf("stage variables = %v, want the stage's", envMap(stage.ServiceEnvs))
+	}
+	if warningsHave(warnings, `"`+testPool+`"`) {
+		t.Errorf("warnings %v leave out the pool keying the pair", warnings)
 	}
 }
 
-// TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid: a pair keyed by a
-// dev pool it was never moved onto from a dev service has no dev service for
-// the recipe to carry, and one with no stage running has nothing to stand
-// for it: either is left out and said, never composed from the pool.
-func TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid(t *testing.T) {
+// TestGroupRecipeInputs_PoolDevHalf_EveryPoolKeyingAPairIsCarried: a pair
+// provisioned as a pool, never moved from a dev service, is carried as its
+// pool like any other; one whose stage does not run still carries its stage
+// from the pair's record — not read, so the composer types it by its setup —
+// and a pool keying no pair stays out of the recipe and said.
+func TestGroupRecipeInputs_PoolDevHalf_EveryPoolKeyingAPairIsCarried(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		arrange func(t *testing.T, stateDir string)
-		mock    func() *platform.Mock
+		name      string
+		arrange   func(t *testing.T, stateDir string)
+		mock      func() *platform.Mock
+		stageRead bool
 	}{
 		{
 			name: "provisioned as a pool",
@@ -614,24 +629,29 @@ func TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid(t *testing.T) {
 					Hostname: testPool, Mode: topology.PlanModeStandard,
 					Stages:           []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
 					BootstrapSession: "test", BootstrappedAt: "2026-09-16",
-					GitPushState: topology.GitPushConfigured,
-					HQ:           &workflow.HQRepoRef{AppID: labApp, Repo: "app"},
-					DevPool:      &workflow.DevPoolRef{ServiceID: testPoolID},
+					GitPushState: topology.GitPushConfigured, PrimarySetupName: "pool",
+					HQ:      &workflow.HQRepoRef{AppID: labApp, Repo: "app"},
+					DevPool: &workflow.DevPoolRef{ServiceID: testPoolID},
 				}); err != nil {
 					t.Fatal(err)
 				}
 			},
-			mock: poolPairProject,
+			mock:      poolPairProject,
+			stageRead: true,
 		},
 		{
-			name: "no stage runs",
+			name: "its stage does not run",
 			arrange: func(t *testing.T, stateDir string) {
 				t.Helper()
 				writeHQWiredPairMeta(t, stateDir)
 				keyOnPool(t, stateDir)
 			},
 			mock: func() *platform.Mock {
-				services := []platform.ServiceStack{liveRuntime(testPoolID, testPool, "swarm@1"), liveRuntime("svc-zcp", "zcp", "zcp@1")}
+				services := []platform.ServiceStack{
+					liveRuntime(testPoolID, testPool, "swarm@1"),
+					liveRuntime("svc-otherpool", "otherpool", "swarm@1"),
+					liveRuntime("svc-zcp", "zcp", "zcp@1"),
+				}
 				return platform.NewMock().
 					WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
 					WithServicesDirect(services).WithServices(services)
@@ -648,26 +668,30 @@ func TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			inputs, warnings, _ := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
-
-			for _, r := range inputs.Runtimes {
-				if r.DevHostname == testPool || strings.HasPrefix(r.ServiceType, "swarm") {
-					t.Errorf("the recipe carries the pool as a dev service: %+v", r)
-				}
+			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
+			if err != nil {
+				t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 			}
-			if !warningsHave(warnings, "dev pool") {
-				t.Errorf("warnings %v do not say why the pair is left out", warnings)
+			if len(inputs.Runtimes) != 1 || inputs.Runtimes[0].DevHostname != testPool || !inputs.Runtimes[0].DevPool {
+				t.Fatalf("runtimes = %+v, want the pair carried as its pool", inputs.Runtimes)
+			}
+			stages := inputs.Runtimes[0].Stages
+			if len(stages) != 1 || stages[0].Hostname != "appstage" || stages[0].SetupName != "prod" || (stages[0].ServiceType != "") != tt.stageRead {
+				t.Errorf("stages = %+v, want appstage building prod, read %v", stages, tt.stageRead)
+			}
+			if !tt.stageRead && !warningsHave(warnings, `"otherpool"`) {
+				t.Errorf("warnings %v do not say the pool keying no pair is left out", warnings)
 			}
 		})
 	}
 }
 
-// TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart: a dev
+// TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage: a dev
 // service serving several parts, moved onto one pool per part, leaves one
-// pool-keyed pair per part, each naming the dev service it was moved from.
-// The recipe carries that dev service once, with every part's stage in the
-// order the split names them — never twice under one hostname.
-func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *testing.T) {
+// pool-keyed pair per part on the one repository. The recipe carries every
+// part as its pool and its stage — never the retired dev service standing in
+// for them.
+func TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
@@ -693,7 +717,7 @@ func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *tes
 	services := []platform.ServiceStack{
 		liveRuntime("svc-apipool", "apipool", "swarm@1"),
 		liveRuntime("svc-webpool", "webpool", "swarm@1"),
-		liveRuntime("svc-webstage", "webstage", "nodejs@22"),
+		liveRuntime("svc-webstage", "webstage", "static"),
 		liveRuntime("svc-apistage", "apistage", "nodejs@22"),
 		liveRuntime("svc-zcp", "zcp", "zcp@1"),
 	}
@@ -701,19 +725,86 @@ func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *tes
 		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
 		WithServicesDirect(services).WithServices(services)
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 	}
-	if len(inputs.Runtimes) != 1 {
-		t.Fatalf("runtimes = %+v, want the dev service once", inputs.Runtimes)
+	got := make([]string, 0, len(inputs.Runtimes))
+	for _, r := range inputs.Runtimes {
+		parts := make([]string, 0, len(r.Stages))
+		for _, s := range r.Stages {
+			parts = append(parts, s.Hostname+":"+s.SetupName+":"+s.ServiceType)
+		}
+		got = append(got, r.DevHostname+"("+r.SetupName+") "+strings.Join(parts, ","))
+		if !r.DevPool || !strings.HasSuffix(r.RepoURL, "/appdev") {
+			t.Errorf("runtime %q = pool %v repo %q, want a pool on the one repository", r.DevHostname, r.DevPool, r.RepoURL)
+		}
 	}
-	got := inputs.Runtimes[0]
-	stages := make([]string, 0, len(got.Stages))
-	for _, s := range got.Stages {
-		stages = append(stages, s.Hostname+":"+s.SetupName)
+	slices.Sort(got)
+	want := []string{"apipool(apipool) apistage:api:nodejs@22", "webpool(webpool) webstage:web:static"}
+	if !slices.Equal(got, want) {
+		t.Errorf("runtimes = %v, want %v", got, want)
 	}
-	if got.DevHostname != "appdev" || got.SetupName != "dev" || !slices.Equal(stages, []string{"webstage:web", "apistage:api"}) {
-		t.Errorf("runtime = %q setup %q stages %v, want appdev (dev) with webstage:web and apistage:api", got.DevHostname, got.SetupName, stages)
+}
+
+// TestGroupRecipeInputs_ZeropsYAMLFromHQ: a pool holds no checkout of its
+// own, and a dev checkout can still be empty when the pass runs (a classic
+// bootstrap closes before develop puts code in), so the pair's zerops.yaml
+// is read from its repository's main in HQ when the mount has none — never
+// from a mount of the pool's.
+func TestGroupRecipeInputs_ZeropsYAMLFromHQ(t *testing.T) {
+	t.Parallel()
+	const onMain = "zerops:\n  - setup: pool\n  - setup: prod\n"
+	readMain := func(_ context.Context, repo string) string {
+		if repo == "appdev" {
+			return onMain
+		}
+		return ""
+	}
+	tests := []struct {
+		name   string
+		pooled bool
+		mount  string
+		want   string
+	}{
+		{name: "a pool-keyed pair", pooled: true, want: onMain},
+		{name: "a dev checkout with no zerops.yaml yet", want: onMain},
+		{name: "a dev checkout holding one", mount: "zerops:\n  - setup: api\n  - setup: prod\n", want: "zerops:\n  - setup: api\n  - setup: prod"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeHQWiredPairMeta(t, stateDir)
+			mock := poolPairProject()
+			if tt.pooled {
+				keyOnPool(t, stateDir)
+			} else {
+				services := []platform.ServiceStack{liveRuntime("svc-appdev", "appdev", "nodejs@22"), liveRuntime("svc-appstage", "appstage", "nodejs@22")}
+				mock = platform.NewMock().
+					WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE"}).
+					WithServicesDirect(services).WithServices(services)
+			}
+			mountRoot := t.TempDir()
+			if tt.mount != "" {
+				if err := os.MkdirAll(filepath.Join(mountRoot, "appdev"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(mountRoot, "appdev", "zerops.yml"), []byte(tt.mount), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			metas, err := workflow.ListServiceMetas(stateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas, readMain)
+			if err != nil {
+				t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
+			}
+			if len(inputs.Runtimes) != 1 || inputs.Runtimes[0].ZeropsYAMLBody != tt.want {
+				t.Errorf("zerops.yaml = %q, want %q", inputs.Runtimes[0].ZeropsYAMLBody, tt.want)
+			}
+		})
 	}
 }
