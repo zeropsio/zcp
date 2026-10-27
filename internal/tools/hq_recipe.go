@@ -61,6 +61,13 @@ type recipeOutcome struct {
 	// Blocked names why nothing happened, for the action to report. Empty on
 	// a pass that reached HQ.
 	Blocked string
+	// Required is the step the Mate's setup is not done without: a tier main
+	// lacks that the recipe cannot propose, what is missing and the call that
+	// fixes it (recipeRequiredStep). Empty when nothing is.
+	Required []string
+	// decided is a pass that composed against main — whether or not the
+	// recipe composed — so Required is its verdict, and recorded.
+	decided bool
 }
 
 // reconcileGroupRecipe proposes to the application's recipe repository the
@@ -143,11 +150,14 @@ func groupRecipeOutcome(
 	stateDir string,
 ) recipeOutcome {
 	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	if early.decided {
+		writeRecipeRequired(stateDir, early.Required)
+	}
 	if !ok {
 		return early
 	}
 	defer comp.close()
-	outcome := recipeOutcome{Warnings: comp.warnings}
+	outcome := recipeOutcome{Warnings: comp.warnings, Required: early.Required}
 	open := openRecipeChange(comp.state)
 	if open != nil {
 		outcome.Change = open.Number
@@ -377,6 +387,10 @@ func composeGroupRecipe(
 	// export and launch flows ask the agent to, so the composer decides each
 	// one itself: config as written, a secret as a generator — never its value.
 	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
+	// A tier main lacks that the recipe cannot propose is a step the
+	// Mate's setup is not done without: required, until a pass proposes it.
+	outcome.decided = true
+	outcome.Required = recipeRequired(inputs, layout, paths)
 	if err != nil {
 		comp.close()
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
@@ -391,6 +405,32 @@ func composeGroupRecipe(
 	}
 	comp.inputs, comp.files, comp.warnings = inputs, files, outcome.Warnings
 	return comp, outcome, true
+}
+
+// recipeRequired is the required step for the tiers main (holding paths)
+// lacks and layout does not compose — withheld by a part whose stage setup
+// nothing tells (bundle.GroupRecipeBlockers) — none when main has them, the
+// recipe composes them, or nothing names why.
+func recipeRequired(inputs bundle.GroupRecipeInputs, layout recipe.Layout, paths []string) []string {
+	composed := map[string]bool{}
+	for _, tier := range layout.Tiers {
+		composed[fmt.Sprintf("%d — %s", tier.Index, tier.Title)] = true
+	}
+	var withheld []string
+	for _, dir := range recipeTiersLacking(paths) {
+		if !composed[dir] {
+			withheld = append(withheld, dir)
+		}
+	}
+	blockers := bundle.GroupRecipeBlockers(inputs)
+	if len(withheld) == 0 || len(blockers) == 0 {
+		return nil
+	}
+	pooled := map[string]bool{}
+	for _, r := range inputs.Runtimes {
+		pooled[r.DevHostname] = r.DevPool
+	}
+	return []string{recipeRequiredStep(blockers, pooled, withheld)}
 }
 
 // openRecipeChange is the Mate's open change in the recipe repository, nil
@@ -654,6 +694,9 @@ func handleGroupRecipe(
 	}
 	if len(outcome.Warnings) > 0 {
 		result["warnings"] = outcome.Warnings
+	}
+	if len(outcome.Required) > 0 {
+		result["required"] = outcome.Required
 	}
 	switch {
 	case outcome.Line != "":

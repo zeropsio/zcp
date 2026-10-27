@@ -62,7 +62,13 @@ func TestGroupRecipe_TheMateWebShape_RequiredUntilItComposes(t *testing.T) {
 		t.Errorf("bootstrap response = required %v, message %q; want the step required and said", resp.Required, resp.Message)
 	}
 	developed := withRepositoryReport(&mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "develop started"}}}, report)
-	if text := getTextContent(t, developed); !strings.Contains(text, "REQUIRED") || !strings.Contains(text, step) {
+	var texts []string
+	for _, content := range developed.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			texts = append(texts, text.Text)
+		}
+	}
+	if text := strings.Join(texts, "\n"); !strings.Contains(text, "REQUIRED") || !strings.Contains(text, step) {
 		t.Errorf("a develop start does not carry the step:\n%s", text)
 	}
 	if got := readRecipeRequired(lab.stateDir); len(got) != 1 || got[0] != step {

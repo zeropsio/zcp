@@ -102,6 +102,11 @@ type BootstrapResponse struct {
 	// resolution failure for one hostname is best-effort — that entry is
 	// simply omitted, never a fabricated URL, never a close-blocking error.
 	RuntimeURLs []RuntimeURL `json:"runtimeUrls,omitempty"`
+	// Required are the steps the Mate's setup is not done without, each
+	// naming what is missing and the call that fixes it — its group recipe
+	// that cannot be proposed (docs/spec-mate.md §10.10). Set by the tools
+	// layer's repository pass on the responses it runs on; nil elsewhere.
+	Required []string `json:"required,omitempty"`
 }
 
 // RuntimeURL is one subdomain-enabled service's composed URL — an entry in

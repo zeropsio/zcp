@@ -188,3 +188,52 @@ func TierShape(body string) []string {
 	sort.Strings(shape)
 	return shape
 }
+
+// GroupRecipeBlocker is a part whose stage setup nothing records and no
+// zerops.yaml tells without a guess: every tier that needs it is withheld,
+// and a Mate's stand-up is not done while one is (spec-mate §10.10).
+type GroupRecipeBlocker struct {
+	// Runtime is the pair's dev half.
+	Runtime string
+	// Stage is the stage whose setup is missing, "" for a pair with none.
+	Stage string
+	// DevSetup is the setup the dev half builds — what a set-default-setup
+	// names as its setup beside the stage's.
+	DevSetup string
+	// Why says what is missing.
+	Why string
+	// Declared are the setups the pair's zerops.yaml declares beside the dev
+	// one, sorted — what the stage's setup is chosen from; none when no
+	// zerops.yaml was read.
+	Declared []string
+}
+
+// GroupRecipeBlockers names every part whose stage setup BuildGroupRecipe
+// would not resolve (groupPartSetups), in dev-hostname order: the part's
+// stage, the dev setup, why, and the setups to choose from.
+func GroupRecipeBlockers(inputs GroupRecipeInputs) []GroupRecipeBlocker {
+	runtimes := append([]GroupRuntime(nil), inputs.Runtimes...)
+	sort.SliceStable(runtimes, func(i, j int) bool { return runtimes[i].DevHostname < runtimes[j].DevHostname })
+	var blockers []GroupRecipeBlocker
+	for _, r := range runtimes {
+		if _, why := groupPartSetups(r); why != "" {
+			b := GroupRecipeBlocker{Runtime: r.DevHostname, DevSetup: r.SetupName, Why: why}
+			for i, stage := range r.Stages {
+				if strings.TrimSpace(stage.SetupName) == "" || len(r.Stages) == 1 {
+					b.Stage = r.Stages[i].Hostname
+					break
+				}
+			}
+			if declared, err := setupNamesInZeropsYAML(r.ZeropsYAMLBody); err == nil && strings.TrimSpace(r.ZeropsYAMLBody) != "" {
+				for _, name := range dedupeStrings(declared) {
+					if name != r.SetupName {
+						b.Declared = append(b.Declared, name)
+					}
+				}
+				sort.Strings(b.Declared)
+			}
+			blockers = append(blockers, b)
+		}
+	}
+	return blockers
+}
