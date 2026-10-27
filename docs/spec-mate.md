@@ -1535,9 +1535,10 @@ How zcp does it:
   `main` has it. Whether a tier lists the service is what the tier reads as YAML, and an edit that
   would read back as anything but `main` plus that service is refused. It only adds: a managed
   service a tier carries and the project does not is left. The reconcile's line names the call for
-  each one, names a tier no edit can take as one to add the service to by hand, and says that
-  environments already made need the service added themselves, by a person or the Chief. A
-  proposal a person closed unmerged is not named again until a later recipe change of the Mate's
+  each one, names a tier no edit can take as one to add the service to by hand, and says, as the
+  proposal's answer does, that merging the change imports the service into every stage or
+  production environment made from those tiers, which is why it waits for a person to merge it
+  unless none is made from them (D37). A proposal a person closed unmerged is not named again until a later recipe change of the Mate's
   merges. The call for a service the project no longer runs, while its proposal is the open change,
   withdraws it: the change is brought to `main`'s tree.
 - Tier header. Every tier says it also takes a managed service the Mate's project gained; an app
