@@ -160,3 +160,28 @@ func TestExportService_NotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent service")
 	}
 }
+
+// TestExportResult_RuntimeServices_PoolAndSandboxNotRuntimes pins PS-3: a
+// Swarm pool or Zerops Box (neither infrastructure nor an app runtime) is
+// not listed among the project's runtimes, and not among managed services.
+func TestExportResult_RuntimeServices_PoolAndSandboxNotRuntimes(t *testing.T) {
+	t.Parallel()
+
+	result := &ExportResult{
+		Services: []ExportedService{
+			{Hostname: "app", Type: "nodejs@22"},
+			{Hostname: "workers", Type: "swarm@1"},
+			{Hostname: "workersvm", Type: "swarm-vm@1"},
+			{Hostname: "box", Type: "ubuntu/zbox@1"},
+			{Hostname: "db", Type: "postgresql@16", IsInfrastructure: true},
+		},
+	}
+
+	runtimes := result.RuntimeServices()
+	if len(runtimes) != 1 || runtimes[0].Hostname != "app" {
+		t.Errorf("RuntimeServices = %+v, want only app", runtimes)
+	}
+	if managed := result.ManagedServices(); len(managed) != 1 || managed[0].Hostname != "db" {
+		t.Errorf("ManagedServices = %+v, want only db", managed)
+	}
+}

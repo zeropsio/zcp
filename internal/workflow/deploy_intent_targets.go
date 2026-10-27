@@ -20,6 +20,8 @@ import (
 // Hostname.
 //
 // Skips nil and !IsComplete() metas so callers don't have to pre-filter.
+// A pair keyed by its dev pool yields the pool half marked DevIsPool (with
+// ModeFor's empty mode) and its stages, as the envelope does.
 func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 	out := make([]ServiceSnapshot, 0, len(metas)*2)
 	for _, m := range metas {
@@ -37,6 +39,7 @@ func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 			TrackedRef:       m.TrackedRef,
 			StageHostname:    m.FirstStage().Hostname,
 			Stages:           slices.Clone(m.Stages),
+			DevIsPool:        m.DevIsPool(),
 			Bootstrapped:     true,
 			Deployed:         deployed,
 		})
@@ -73,6 +76,13 @@ func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 // dedup) when stateDir is empty, ListServiceMetas errors, or no metas exist
 // — degraded mode preserves pre-resolver gate behavior so legacy
 // adopted-without-meta paths keep working.
+//
+// With metas, a service no pair names any more drops out: develop's scope
+// admits only hostnames a pair names, so one no pair names is a service whose
+// pair went — deleted, pruned, or a dev a retire re-keyed onto its pool — and
+// a session of any process stops waiting on it (work sessions are per
+// process; the retire cannot reach theirs). A pool keying its pair drops out
+// too: nothing builds from it (Resolve), its stage gates in its own right.
 func ResolvedDeployTargets(stateDir string, ws *WorkSession) []string {
 	if ws == nil {
 		return nil
@@ -88,12 +98,19 @@ func ResolvedDeployTargets(stateDir string, ws *WorkSession) []string {
 		return dedupStrings(required)
 	}
 	snaps := SnapshotsFromMetas(metas)
+	named := ManagedRuntimeIndex(metas)
 	seen := map[string]bool{}
 	var out []string
 	for _, h := range required {
+		if named[h] == nil {
+			continue
+		}
 		target := snapshotByHostname(snaps, h)
 		if target.Hostname == "" {
 			target.Hostname = h
+		}
+		if target.DevIsPool {
+			continue
 		}
 		built := []string{h}
 		if bts := Resolve(target, snaps).Builds(); len(bts) > 0 {

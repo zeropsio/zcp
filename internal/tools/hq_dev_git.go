@@ -136,6 +136,7 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			lines, settled = startDevGit(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir)
 			retry = nextHQAttempt(retry, at, "", false)
 		}
+		lines = append(lines, followPoolCredentials(ctx, d.client, d.rt, d.stateDir, at, renewals)...)
 		saying := make(map[string]bool, len(lines))
 		for _, line := range lines {
 			if !said[line] {
@@ -209,7 +210,7 @@ func startPairDevGit(
 			said = append(said, line)
 		}
 	}
-	if hqPairCredentialStale(m, hqc) {
+	if hqPairCredentialStale(m, hqc, rt) {
 		line := renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m)
 		say(line)
 		settled = settled && line == ""
@@ -259,7 +260,7 @@ func followMateCredential(
 			continue
 		}
 		line, _ := withPairLocked(ctx, stateDir, hostname, func(m *workflow.ServiceMeta) (string, bool) {
-			if !hqPairCredentialStale(m, hqc) {
+			if !hqPairCredentialStale(m, hqc, rt) {
 				return "", true
 			}
 			return renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m), true
@@ -270,6 +271,44 @@ func followMateCredential(
 		}
 		renewals[hostname] = nextHQAttempt(renewals[hostname], at, line, false)
 		lines = append(lines, hostname+": "+line)
+	}
+	return lines
+}
+
+// poolRenewalKey keys a pool's failed renewal in followMateCredential's
+// renewals beside the pairs': a pool keying a pair is named like it.
+func poolRenewalKey(pool string) string { return "pool " + pool }
+
+// followPoolCredentials gives each pool an acquire put the Mate's Git
+// credential on (ops.PoolCredentialRecordPools) the one the Mate's file holds
+// now, once HQ sent a new one: a lease of an HQ repository there pushes with
+// it from its next fresh session (docs/spec-workflows.md §8 DP-16). A pool
+// keying a pair is its pair's (followMateCredential, renewHQPairCredential).
+// While none is new it reads the file and the records, and nothing else; a
+// pool whose renewal failed is in renewals and tried again only once
+// hqAttemptDue says so, counted at at. With no credential in the Mate's file
+// it says which pools keep what they hold (poolCredentialsNotRenewed).
+func followPoolCredentials(ctx context.Context, client platform.Client, rt runtime.Info, stateDir string, at time.Time, renewals map[string]hqPairState) []string {
+	if !rt.InContainer || !rt.MateEnabled {
+		return nil
+	}
+	credential, err := hq.ReadGitCredential(hqIdentity(rt).GitCredentialPath)
+	if err != nil {
+		return poolCredentialsNotRenewed(stateDir, err)
+	}
+	var lines []string
+	for _, pool := range ops.PoolCredentialRecordPools(stateDir) {
+		key := poolRenewalKey(pool)
+		if failed, ok := renewals[key]; ok && !hqAttemptDue(failed, at) {
+			continue
+		}
+		if err := ops.RenewPoolHQCredential(ctx, client, stateDir, pool, credential); err != nil {
+			line := fmt.Sprintf("HQ sent the Mate a new Git credential, and git in the pool's leases cannot reach HQ until its %s holds it, which could not be written (%v) — retrying.", ops.PoolHQCredentialEnvKey, err)
+			renewals[key] = nextHQAttempt(renewals[key], at, line, false)
+			lines = append(lines, pool+": "+line)
+			continue
+		}
+		delete(renewals, key)
 	}
 	return lines
 }
@@ -319,7 +358,9 @@ func withPairLocked(ctx context.Context, stateDir, hostname string, turn func(*w
 // to the repository's address on the current one: the checkout's origin
 // while it still names the retired repository, git's helper, and the record.
 // moved is false when the move could not be made; "" and true when there is
-// nothing to move.
+// nothing to move. A pair keyed by its dev pool has no checkout of its own —
+// the pool's hostname reaches a random container of it, possibly someone's
+// lease (docs/spec-workflows.md §8 PS-3) — so only its record follows.
 func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) (string, bool) {
 	retired := m.RemoteURL
 	if !isRetiredHQRepository(retired, hqc.Address(), m.HQ) {
@@ -329,7 +370,10 @@ func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDi
 	if err != nil {
 		return fmt.Sprintf("it is wired at %s, an HQ this Mate no longer links to, and its repository on %s cannot be named: %v", topology.RedactRepoURLCredentials(retired), hqc.Address(), err), false
 	}
-	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildGitHQMoveCommand(hqPairWorkingDir(m), retired, current, hqc.Address()))
+	var out []byte
+	if !m.DevIsPool() {
+		out, err = sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildGitHQMoveCommand(hqPairWorkingDir(m), retired, current, hqc.Address()))
+	}
 	if err != nil {
 		return fmt.Sprintf("it is wired at %s, an HQ this Mate no longer links to, and its checkout could not be moved to %s (%v) — retrying", topology.RedactRepoURLCredentials(retired), current, err), false
 	}
@@ -343,6 +387,8 @@ func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDi
 		return fmt.Sprintf("its checkout is on %s now, but recording it failed (%v) — retrying", current, err), false
 	}
 	m.RemoteURL = current
+	// A pool whose default repository is the pair's follows it.
+	ops.MovePoolDefaultRepos(stateDir, retired, current)
 	if !strings.Contains(string(out), ops.HQMovedMarker) {
 		return "", true
 	}

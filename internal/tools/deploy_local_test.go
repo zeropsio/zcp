@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -327,4 +329,44 @@ func TestNoFalseTerminalImperativeInLifecycleNote(t *testing.T) {
 			t.Errorf("sessionAnnotations note must not contain false terminal imperative %q", forbidden)
 		}
 	}
+}
+
+// TestDeployLocalTool_ToPool_SaysOnlyNewContainers: a local checkout deployed
+// to a pool (reachable while the adoption gate is inactive) says what every
+// deploy to a pool says and decides no public access on it
+// (docs/spec-workflows.md §8 DP-7).
+//
+// non-parallel: ops.OverrideRunnerForTest swaps ops's package-level runner.
+func TestDeployLocalTool_ToPool_SaysOnlyNewContainers(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "zerops:\n  - setup: webpool\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      base: nodejs@22\n      start: zcp-devsup run\n"
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "webpool", Status: serviceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-pool", ProjectID: "proj-1", ServiceStackID: "svc-pool", Status: statusActive, Sequence: 1},
+		})
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	restore := ops.OverrideRunnerForTest(localZcliMock{})
+	defer restore()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", testDeployEngine(t), nil)
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "webpool", "workingDir": dir})
+	text := getTextContent(t, result)
+	if result.IsError {
+		t.Fatalf("a local deploy to a pool must run: %s", text)
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed {
+		t.Fatalf("status = %q, want %s: %s", parsed.Status, statusDeployed, text)
+	}
+	assertPoolDeployResult(t, parsed)
 }

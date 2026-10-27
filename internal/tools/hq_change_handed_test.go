@@ -28,12 +28,12 @@ func (l *hqLab) status() string {
 var takeCommand = regexp.MustCompile("`(git fetch [^`]*)`")
 
 // TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch: a change a person
-// hands this Mate is the pair's change from the next pass on — recorded with
-// its branch, said once with how to take that branch, and named by status. Its
+// hands this Mate is its repository's change from the next pass on — kept in
+// the ledger with its branch and said once with how to take that branch. Its
 // branch is where the work goes, whether its Mate named it or it is that
 // Mate's default, pushed to or not yet: the agent takes it as the words say
-// and pushes there, and open-change answers the handed change without asking
-// HQ to open another.
+// and pushes there, and on an HQ that keeps one open change per repository
+// open-change answers the handed change without asking HQ to open another.
 func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -61,17 +61,14 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 			if !strings.Contains(text, "change #1") || !strings.Contains(text, "handed") || !strings.Contains(text, tc.want) {
 				t.Fatalf("develop's start does not say change #1 on %q was handed to this Mate:\n%s", tc.want, text)
 			}
-			if meta := lab.meta(); meta.HQ.Change != number || meta.HQ.Branch != tc.want {
-				t.Errorf("the pair records change #%d on %q, want #%d on %q", meta.HQ.Change, meta.HQ.Branch, number, tc.want)
+			if kept := lab.kept(number); kept == nil || kept.Branch != tc.want || kept.Source != workflow.HQChangeFromHanded {
+				t.Errorf("the ledger keeps %+v, want handed #%d on %q", kept, number, tc.want)
 			}
 			if again := lab.developStart(); strings.Contains(again, "handed") {
 				t.Errorf("the hand-over is said again on the next start:\n%s", again)
 			}
-			status := lab.status()
-			for _, want := range []string{"change=1", "changeBranch=" + tc.want} {
-				if !strings.Contains(status, want) {
-					t.Errorf("status lacks %q:\n%s", want, status)
-				}
+			if status := lab.status(); !strings.Contains(status, "HQ appdev: #1 "+tc.want) {
+				t.Errorf("status does not name change #1 on %q:\n%s", tc.want, status)
 			}
 
 			answer, answered, isError := lab.openChangeFrom("other-work", "Other work")

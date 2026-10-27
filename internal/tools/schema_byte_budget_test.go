@@ -116,7 +116,28 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// input, `branch`: a Mate opens the change of a branch of its own
 		// (HQ's change-is-a-branch contract); `title` and `service` name the
 		// action they now also serve.
-		"zerops_workflow":    20004,
+		// Raised +215 (20004→20219) for workflow="pool-migrate" and its one
+		// new input, `pool` (docs/spec-workflows.md §13): the workflow enum
+		// and `service` name the flow, `pool` overrides the part's pool
+		// hostname; the steps and refusals live in the flow's atom.
+		// Raised +295 (20219→20514) for action="pool-env", the pool-migrate
+		// env step zcp runs itself, and its one new input, `copyGitToken`
+		// (the person's yes to the pool getting the dev's GIT_TOKEN, a
+		// FlexBool published as oneOf[boolean,string]); what the step copies
+		// and never copies lives in the flow's env atom.
+		// Raised +192 (20514→20706) for action="retire", pool-migrate's
+		// retire of the old dev service: the action list names it, force
+		// and confirmDestructive name what they mean for it; no new field —
+		// the phases, refusals and the bundle live in the flow's retire atom.
+		// Lowered -386 (20706→20320): the plan runtime publishes no
+		// `codeVolume` any more — zcp sets up no new code volume
+		// (docs/spec-mate.md §2.8a.4a), and a plan still carrying one is
+		// refused by the schema, naming the field.
+		// Raised +99 (20320→20419) for action="close-change", a Mate closing
+		// its own abandoned change by branch (docs/spec-mate.md §10.10): the
+		// action list names it and `branch` names it among its users; no new
+		// field — what HQ lets a Mate close lives in the handler's answers.
+		"zerops_workflow":    20419,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
@@ -154,8 +175,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +39 (2546→2585): request says to ask when the feature using
 		// the value is being built — the env model's when-to-ask lines render
 		// only before the first deploy, so a later request never saw them.
-		"zerops_env":                2585,
-		"zerops_scale":              2242,
+		"zerops_env": 2585,
+		// Raised +421 (2242→2663): confirmDestructive, the diagnose-before-
+		// destruct ack a lowering of a pool's maxContainers over a lease needs
+		// (the lowering deletes the leased container with its /var/www); the
+		// ack is the shared DestructiveAck shape, its description one line.
+		"zerops_scale":              2663,
 		"zerops_import":             1910,
 		"zerops_discover":           879,
 		"zerops_preprocess":         811,
@@ -165,6 +190,31 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_manage":             453,
 		"zerops_subdomain":          393,
 		"zerops_mount":              306,
+		// New tool: acquire / status / release of a dev-pool container
+		// (docs/spec-workflows.md §8 DP-5). Six short fields; force is a
+		// FlexBool so a stringified boolean is not bounced by the schema.
+		// Raised 708 -> 842: repo (the clone URL acquire checks out, DP-6) and
+		// force (release's guard override, DP-4) replace B-S1's reset — two
+		// real inputs of the same call, not description bloat.
+		// Raised 842 -> 969: pools, the group acquire (DP-17) — one lease per
+		// pool on the branch, all or none — a new input of acquire, its
+		// description one line; pool names it as the alternative.
+		// Raised 969 -> 1045: release by branch (DP-23) — every lease of a
+		// branch, all or none — gives branch and repo a release role, one
+		// clause each; no new field.
+		// Raised 1045 -> 1057: action=sync (DP-24) — push a lease's branch,
+		// fast-forward the branch's other leases — names sync in action and
+		// gives lease a sync role; no new field.
+		// Raised 1057 -> 1085: action=park / action=unpark (DP-28) — stop a
+		// held lease's container keeping its files, start it again — names
+		// both in action and gives lease their role; no new field.
+		// Raised 1085 -> 1175: from, the branch an acquire cuts a new branch
+		// from instead of main (DP-6) — a new input of acquire, its
+		// description one short line.
+		"zerops_lease": 1175,
+		// New tool: setup / status of a Zerops Box (docs/spec-workflows.md §8
+		// PS-11..PS-14). Two fields: the action and the Box's hostname.
+		"zerops_box": 420,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.
@@ -180,7 +230,8 @@ func TestInputSchemaByteBudget(t *testing.T) {
 	// browser is container+binary-gated; covered by TestAnnotations_BrowserTool.
 	exempt := map[string]bool{"zerops_browser": true}
 
-	toolMap := listAllTools(t, runtime.Info{})
+	// A container's surface: zerops_lease is offered there only.
+	toolMap := listAllTools(t, runtime.Info{InContainer: true})
 
 	// Every advertised tool must carry a ceiling (catches new bloat from day
 	// one) and stay under it.

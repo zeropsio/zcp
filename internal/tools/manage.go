@@ -26,7 +26,7 @@ type ManageInput struct {
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. After an env var change use restart, NOT reload — reload doesn't re-read env for the running process (a runtime keeps its boot env; PHP-FPM keeps its boot config). reload (~4s) is for graceful config/code reloads. connect-storage/disconnect-storage drive the DEPRECATED managed seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
+		Description: "Manage service lifecycle: start, stop, restart, reload. After an env change restart, NOT reload — a runtime keeps its boot env; PHP-FPM keeps its boot config. reload (~4s) is for graceful config/code reloads. A Zerops Box is the opposite: reload applies an API key change, keeping sandboxes running; restart/stop kill them. connect-storage/disconnect-storage: DEPRECATED seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
@@ -55,19 +55,21 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStart}), nil, nil
 		case "stop":
-			proc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
+			proc, svc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStop}), nil, nil
+			next := withBoxLifecycleNotice(svc, ops.BoxActionStop, nextActionManageStop)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
 		case "restart":
-			proc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
+			proc, svc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageRestart}), nil, nil
+			next := withBoxLifecycleNotice(svc, ops.BoxActionRestart, nextActionManageRestart)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
 		case "reload":
 			proc, err := ops.Reload(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
@@ -105,6 +107,20 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				"Use start, stop, restart, reload, connect-storage, or disconnect-storage")), nil, nil
 		}
 	})
+}
+
+// withBoxLifecycleNotice puts in front of next what a restart or stop did to
+// a Zerops Box's running sandboxes (ops.BoxLifecycleNotice), read from svc —
+// the service the stop or restart resolved; next alone for any other service.
+func withBoxLifecycleNotice(svc *platform.ServiceStack, action, next string) string {
+	if svc == nil {
+		return next
+	}
+	notice := ops.BoxLifecycleNotice(svc.Name, svc.ServiceStackTypeInfo.ServiceStackTypeVersionName, action)
+	if notice == "" {
+		return next
+	}
+	return notice + " " + next
 }
 
 // pollManageProcess polls a process until completion, returning the final state

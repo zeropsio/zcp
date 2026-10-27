@@ -36,10 +36,11 @@ func canonicalGoldenScenarios() []goldenScenario {
 	out = append(out, strategySetupGoldenScenarios()...)
 	out = append(out, exportGoldenScenarios()...)
 	out = append(out, launchProductionGoldenScenarios()...)
+	out = append(out, poolMigrateGoldenScenarios()...)
 	return out
 }
 
-// idleGoldenScenarios returns the 4 scenarios that pin atoms firing
+// idleGoldenScenarios returns the 5 scenarios that pin atoms firing
 // when no active workflow session exists (PhaseIdle).
 func idleGoldenScenarios() []goldenScenario {
 	return []goldenScenario{
@@ -79,6 +80,20 @@ func idleGoldenScenarios() []goldenScenario {
 						RuntimeClass: topology.RuntimeDynamic,
 						Status:       "ACTIVE",
 					},
+				},
+			},
+		},
+		{
+			id:          "idle/dev-pool-only",
+			description: "Idle project whose only runtimes are two parts' dev pools beside a managed database — nothing to bootstrap or adopt; each part is worked on in a leased container.",
+			envelope: StateEnvelope{
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleScenario("dev-pool"),
+				Services: []ServiceSnapshot{
+					fixSnapManaged("db", "postgresql@18"),
+					fixSnapPool("hqpool", "swarm@1"),
+					fixSnapPool("webpool", "swarm@1"),
 				},
 			},
 		},
@@ -301,6 +316,19 @@ func developGoldenScenarios() []goldenScenario {
 				Environment: EnvContainer,
 				Services:    fixSnapMonorepoPair(),
 				WorkSession: fixSession("appdev", "webstage", "apistage", "workerstage"),
+			},
+		},
+		{
+			id:          "develop/dev-pool-dev-service",
+			description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease. The dev-pool guidance fires only because a pool is present.",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true},
+					fixSnapPool("devpool", "swarm@1"),
+				},
+				WorkSession: fixSession("partdev"),
 			},
 		},
 		{
@@ -659,6 +687,34 @@ func launchProductionGoldenScenarios() []goldenScenario {
 	}
 }
 
+// poolMigrateGoldenScenarios returns the scenario that pins the
+// pool-migrate-active phase atom fire-set. The handler renders its atom per
+// step; the phase axis alone selects it.
+func poolMigrateGoldenScenarios() []goldenScenario {
+	return []goldenScenario{
+		{
+			id:          "pool-migrate/active",
+			description: "Pool-migrate workflow on a part's dev/stage pair — the read side names the provision step and renders the pool's import stanza.",
+			envelope: StateEnvelope{
+				Phase:       PhasePoolMigrateActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname:      "appdev",
+						TypeVersion:   "nodejs@22",
+						RuntimeClass:  topology.RuntimeDynamic,
+						Mode:          topology.ModeStandard,
+						StageHostname: "appstage",
+						GitPushState:  topology.GitPushConfigured,
+						Bootstrapped:  true,
+						Deployed:      true,
+					},
+				},
+			},
+		},
+	}
+}
+
 // ── Fixture helpers ────────────────────────────────────────────────────
 //
 // Small constructors that compose ServiceSnapshot / WorkSessionSummary
@@ -909,6 +965,17 @@ func fixSnapManaged(hostname, typeVersion string) ServiceSnapshot {
 		TypeVersion:  typeVersion,
 		RuntimeClass: topology.RuntimeManaged,
 		Bootstrapped: true,
+	}
+}
+
+// fixSnapPool returns a Swarm pool snapshot: a pool is infrastructure the
+// project holds (never bootstrapped or adopted as an app runtime).
+func fixSnapPool(hostname, typeVersion string) ServiceSnapshot {
+	return ServiceSnapshot{
+		Hostname:     hostname,
+		TypeVersion:  typeVersion,
+		RuntimeClass: topology.RuntimePool,
+		Status:       "ACTIVE",
 	}
 }
 

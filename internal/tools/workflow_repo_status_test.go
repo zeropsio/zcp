@@ -194,3 +194,57 @@ func TestAttachRepoStatus_ManyServices_ReadsRunConcurrently(t *testing.T) {
 		}
 	}
 }
+
+// TestAttachRepoStatus_NeverSSHsAPool pins that a pool or a Box is never
+// reached over SSH for a repo read: by service hostname that reaches a random
+// pool container (docs/spec-workflows.md §8 PS-3).
+func TestAttachRepoStatus_NeverSSHsAPool(t *testing.T) {
+	t.Parallel()
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class), func(t *testing.T) {
+			t.Parallel()
+			ssh := &recordingSSH{}
+			services := []workflow.ServiceSnapshot{{Hostname: "swarm", RuntimeClass: class}}
+			attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
+			if len(ssh.calls) != 0 {
+				t.Errorf("SSH reached %v, want no SSH for class %q", ssh.calls, class)
+			}
+			if services[0].Repo != nil {
+				t.Errorf("Repo = %+v, want nil for class %q", services[0].Repo, class)
+			}
+		})
+	}
+}
+
+// TestAttachRepoStatus_BesideTheHQOriginWriter_NoRace pins the contract
+// attachHQCheckoutOrigin relies on to run beside it (workflow.go's status
+// reads): attachRepoStatus reads only each snapshot's Hostname and
+// RuntimeClass and writes only Repo, never copying a whole snapshot while
+// another goroutine writes HQCheckoutOrigin/HQOriginPending. Fails under
+// -race when the loop copies the struct.
+func TestAttachRepoStatus_BesideTheHQOriginWriter_NoRace(t *testing.T) {
+	t.Parallel()
+	services := []workflow.ServiceSnapshot{
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic},
+		{Hostname: "apidev", RuntimeClass: topology.RuntimeDynamic},
+	}
+	done := make(chan struct{})
+	writing := make(chan struct{})
+	go func() {
+		close(writing)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				for i := range services {
+					services[i].HQCheckoutOrigin = "https://hq.example/git/app/" + services[i].Hostname
+					services[i].HQOriginPending = ""
+				}
+			}
+		}
+	}()
+	<-writing
+	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("5ba1\n")}, runtime.Info{InContainer: true}, t.TempDir())
+	close(done)
+}

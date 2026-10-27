@@ -7,7 +7,7 @@ import (
 	"html"
 	"math"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +31,14 @@ import (
 // can go stale, and the description is where what it does and how it was
 // checked stays true.
 //
-// The words are kept on the pair first and put on the change second, so an
-// HQ that did not answer loses nothing — the pictures they show stay kept,
-// and describe-change called again puts them on:
+// The words are kept with the change in the change ledger first and put on
+// the change second, so an HQ that did not answer loses nothing — the
+// pictures they show stay kept, and describe-change called again puts them
+// on:
 //
-//   - the pair's open change takes them at once;
+//   - the change on the branch named — by branch, or by a lease alias — or the
+//     repository's only open one takes them at once; several open with none
+//     named is a refusal listing each;
 //   - with none open there is nothing to describe;
 //   - words never reach a change they were not written for: when the change
 //     merged or closed before they reached it, the Mate is told and nothing is
@@ -81,8 +84,8 @@ func (e *picturesGoneError) Error() string {
 }
 
 // handleDescribeChange is zerops_workflow action="describe-change": the
-// Mate's description of its change, set as the description of the pair's
-// open change in HQ.
+// Mate's description of its change, set as the description of the open change
+// the call names in HQ.
 func handleDescribeChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -106,71 +109,88 @@ func handleDescribeChange(
 	if refusal := describeTitleRefusal(title); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
-	meta, refusal := pairOfChange(stateDir, input.Service, "describe")
-	if refusal != nil {
-		return refusal, nil, nil
+	target, err := resolveChangeTarget(stateDir, hqc.Address(), changeAsk{Service: input.Service, Branch: input.Branch, Verb: changeVerbDescribe})
+	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
-	meta, release, refusal := holdPairToDescribe(ctx, stateDir, meta)
-	if refusal != nil {
-		return refusal, nil, nil
+	service := strings.TrimSpace(input.Service)
+	if service == "" && target.Pair != nil {
+		service = target.Pair.Hostname
 	}
-	defer release()
-	if refusal := describePicturesRefusal(stateDir, text, pictureTargetOf(meta, meta.HQ.Change)); refusal != nil {
+	kept := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
+	// The change the ledger names, when it names one, is checked before HQ
+	// is asked anything: a picture this Mate keeps for no change is refused
+	// at once.
+	known, _ := target.pick(nil, kept, changeVerbDescribe)
+	if refusal := describePicturesRefusal(stateDir, text, workflow.PictureTarget(target.AppID, target.Repo, known.Number)); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 
-	// The change on record is only as fresh as the last read of the Mate's
-	// state, and words are never put on one that merged or closed in
-	// between: they were written for it, and the next change is another.
-	state, stateErr := describeSelf(ctx, hqc, meta)
+	// The ledger is only as fresh as the last read of the Mate's state, and
+	// words are never put on a change that merged or closed in between:
+	// they were written for it, and the next change is another.
+	state, stateErr := describeSelf(ctx, hqc, known.Number != 0)
+	var fresh *hq.MateState
 	if stateErr == nil {
-		if learned := hqLearnLanding(stateDir, meta, state); learned != "" {
+		fresh = &state
+		if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
 			return jsonResult(changeDescriptionResult{
-				Service: meta.Hostname,
-				Message: sentenceOf(learned) + " The description was not written: the change it was for is no longer open, " +
-					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open.",
+				Service: service,
+				Message: learned + " The description was not written: the change it was for is no longer open, " +
+					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open." +
+					stillOpenWords(target, state),
 			}), nil, nil
 		}
+		kept = changesIn(hqChanges(stateDir), target.AppID, target.Repo)
 	}
-
-	number := meta.HQ.Change
-	if number == 0 && stateErr == nil {
-		// Nothing on record — the record of an open change may not have been
-		// written. The Mate's own state names its open change in the
-		// repository, if there is one.
-		if open := openChangeIn(state, meta.HQ.Repo); open != nil {
-			recordChange(stateDir, meta, open.Number, hqc.BranchOf(open.Number, open.Branch))
-			number = open.Number
-		}
+	pick, err := target.pick(fresh, kept, changeVerbDescribe)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
-
+	number := pick.Number
 	if number == 0 && stateErr != nil {
-		return jsonResult(changeDescriptionResult{Service: meta.Hostname, Message: describeStateUnknown(hqc.Address(), meta.Hostname, stateErr)}), nil, nil
+		return jsonResult(changeDescriptionResult{Service: service, Message: describeStateUnknown(hqc.Address(), describedWhere(target), stateErr)}), nil, nil
 	}
 	if number == 0 {
 		// Words describe the work a change carries: nothing is kept for a
 		// change that is not open.
 		return jsonResult(changeDescriptionResult{
-			Service: meta.Hostname,
-			Message: fmt.Sprintf("No change of this Mate is open on %q in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — the person is asked to review it only then.",
-				meta.HQ.Repo),
+			Service: service,
+			Message: fmt.Sprintf("No change of this Mate is open %s in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — the person is asked to review it only then.",
+				describedWhere(target)),
 		}), nil, nil
 	}
-	keepErr := keepChangeDescription(stateDir, meta, text, title, number)
+	release, refusal := holdChangeToDescribe(ctx, stateDir, target, number)
+	if refusal != nil {
+		return refusal, nil, nil
+	}
+	defer release()
+	if gone := describedChangeGone(stateDir, target, number, kept); gone != "" {
+		return jsonResult(changeDescriptionResult{Service: service, Message: gone}), nil, nil
+	}
+	// Checked before HQ was asked for another change than this one: its
+	// pictures are checked for this one now.
+	if number != known.Number {
+		if refusal := describePicturesRefusal(stateDir, text, workflow.PictureTarget(target.AppID, target.Repo, number)); refusal != nil {
+			return convertError(refusal, WithRecoveryStatus()), nil, nil
+		}
+	}
+	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
+	keepErr := keepChangeDescription(stateDir, ref, pick, text, title)
 
-	url := hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number)
-	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, meta, number, text, title); err != nil {
+	url := hqc.ChangeURL(target.AppID, target.Repo, number)
+	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title); err != nil {
 		var gone *picturesGoneError
 		if errors.As(err, &gone) {
-			forgetChangeDescription(stateDir, meta, text)
+			forgetChangeDescription(stateDir, ref, text)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, pictureTargetOf(meta, number))),
+				fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, ref.pictureTarget())),
 				pictureRetakeSuggestion,
 			), WithRecoveryStatus()), nil, nil
 		}
 		if errors.Is(err, errCannotAttach) {
-			forgetChangeDescription(stateDir, meta, text)
+			forgetChangeDescription(stateDir, ref, text)
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("Nothing was written onto change #%d: %v. HQ will not take that picture, so the description is dropped: words that show it could never go on.",
@@ -184,12 +204,12 @@ func handleDescribeChange(
 		}
 		if away != describeServed {
 			return jsonResult(changeDescriptionResult{
-				Service: meta.Hostname, PullRequest: number, PullRequestURL: url, Kept: true,
+				Service: service, PullRequest: number, PullRequestURL: url, Kept: true,
 				Message: describeNotLanded(hqc.Address(), number, tries, away, err),
 			}), nil, nil
 		}
 		return jsonResult(changeDescriptionResult{
-			Service:        meta.Hostname,
+			Service:        service,
 			PullRequest:    number,
 			PullRequestURL: url,
 			Kept:           true,
@@ -198,13 +218,82 @@ func handleDescribeChange(
 		}), nil, nil
 	}
 	return jsonResult(changeDescriptionResult{
-		Service:        meta.Hostname,
+		Service:        service,
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
 		Message: fmt.Sprintf("Change #%d carries this description now and asks for the person's review — they review it by these words in the app. A push that moves it makes it a draft again, until you describe it again.",
 			number),
 	}), nil, nil
+}
+
+// changeRef is one change of the Mate's in HQ: appID's repo, number.
+type changeRef struct {
+	AppID, Repo string
+	Number      int
+}
+
+// pictureTarget is how the picture store names the change.
+func (r changeRef) pictureTarget() string { return workflow.PictureTarget(r.AppID, r.Repo, r.Number) }
+
+// describedWhere names where a describe looked for its change: the branch
+// named, or the repository.
+func describedWhere(target changeTarget) string {
+	if target.Branch != "" {
+		return fmt.Sprintf("on the branch %q in %q", target.Branch, target.Repo)
+	}
+	return fmt.Sprintf("on %q", target.Repo)
+}
+
+// learnDescribedLandings learns what became of the ledger's changes the
+// describe could mean — the one on its branch, or, no branch named, any of
+// the repository's — and says it of those no longer open (learnChangeLanding);
+// "" when every one is open. Words are never put on another change then:
+// with no branch named, which one they were for is the Mate's to say.
+func learnDescribedLandings(stateDir, address string, target changeTarget, kept []workflow.HQChange, state hq.MateState) string {
+	var learned []string
+	for _, c := range kept {
+		if target.Branch != "" && c.Branch != target.Branch {
+			continue
+		}
+		if line := learnChangeLanding(stateDir, address, c, state); line != "" {
+			learned = append(learned, sentenceOf(line))
+		}
+	}
+	return strings.Join(learned, " ")
+}
+
+// stillOpenWords names, for a describe that named no branch, the changes
+// still open in the repository and the call that describes each; "" when a
+// branch was named or none is open.
+func stillOpenWords(target changeTarget, state hq.MateState) string {
+	if target.Branch != "" {
+		return ""
+	}
+	open := target.openCandidates(&state, nil)
+	if len(open) == 0 {
+		return ""
+	}
+	named := make([]string, 0, len(open))
+	for _, c := range open {
+		named = append(named, fmt.Sprintf("#%d with zerops_workflow action=\"describe-change\" branch=%q", c.Number, c.Branch))
+	}
+	return " If they are for a change still open, name its branch: " + strings.Join(named, ", or ") + "."
+}
+
+// describedChangeGone is what a describe says when the change it is about to
+// write was forgotten while it waited for the change: a pass learned it
+// merged or closed meanwhile. "" when it is still kept, or was not kept
+// before the wait.
+func describedChangeGone(stateDir string, target changeTarget, number int, keptBefore []workflow.HQChange) string {
+	if !slices.ContainsFunc(keptBefore, func(c workflow.HQChange) bool { return c.Number == number }) {
+		return ""
+	}
+	if _, found, err := workflow.ReadHQChange(stateDir, target.AppID, target.Repo, number); err != nil || found {
+		return ""
+	}
+	return fmt.Sprintf("The description was not written: change #%d in %q is no longer open — a pass learned what became of it while this describe waited, and said so. If these words are about work no change holds yet, describe the change that holds it once it is open.",
+		number, target.Repo)
 }
 
 // describeTextRefusal refuses words no description can carry: none, longer
@@ -255,12 +344,6 @@ func describePicturesRefusal(stateDir, text, target string) error {
 	)
 }
 
-// pictureTargetOf is how the picture store names change number of m's
-// repository.
-func pictureTargetOf(m *workflow.ServiceMeta, number int) string {
-	return workflow.PictureTarget(m.HQ.AppID, m.HQ.Repo, number)
-}
-
 // describeTitleRefusal refuses a title no change can carry: more than one
 // line, a NUL, or longer than HQ keeps. Nil for "" — no title given — and for
 // one that can go on.
@@ -281,100 +364,35 @@ func describeTitleRefusal(title string) *platform.PlatformError {
 	return nil
 }
 
-// openChangeIn is the Mate's open change in repo as its own state names it,
-// nil for none.
-func openChangeIn(state hq.MateState, repo string) *hq.MateChange {
-	for i := range state.Changes {
-		if c := &state.Changes[i]; c.Repo == repo && c.State == hq.ChangeOpen {
-			return c
-		}
-	}
-	return nil
-}
-
 // noRepositoryYet is what to do for a pair with no repository in HQ yet.
 const noRepositoryYet = `A pair gets its repository once this Mate is in an application in HQ; then push a branch of your own and open its change with zerops_workflow action="open-change".`
 
-// pairOfChange is the pair whose change a call is to verb ("describe",
-// "open"): the one service names, either half, or the only pair with a
-// repository in HQ. Otherwise the refusal that says which pairs there are.
-func pairOfChange(stateDir, service, verb string) (*workflow.ServiceMeta, *mcp.CallToolResult) {
-	if service != "" {
-		meta, err := workflow.FindServiceMeta(stateDir, service)
-		if err != nil {
-			return nil, convertError(fmt.Errorf("read the pair %q: %w", service, err), WithRecoveryStatus())
+// keepChangeDescription keeps the words — and the title given with them —
+// with the change they were written for in the ledger, recording the change
+// on its branch when the ledger did not keep it yet.
+func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text, title string) error {
+	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: ref.Number}
+	if err := workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
+		if !existed {
+			c.Branch, c.Title, c.Source = pick.Branch, pick.Title, workflow.HQChangeFromState
 		}
-		if meta == nil {
-			return nil, convertError(platform.NewPlatformError(
-				platform.ErrServiceNotFound,
-				fmt.Sprintf("No pair of this Mate is named %q.", service),
-				fmt.Sprintf("Pass the dev or the stage hostname of the pair whose change this %ss.", verb),
-			), WithRecoveryStatus())
-		}
-		if !hqPairWired(meta) {
-			return nil, convertError(platform.NewPlatformError(
-				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("%s has no repository in HQ yet, so it has no change to %s.", meta.Hostname, verb),
-				noRepositoryYet,
-			), WithRecoveryStatus())
-		}
-		return meta, nil
-	}
-	metas, _ := workflow.ListServiceMetas(stateDir)
-	var wired []*workflow.ServiceMeta
-	for _, m := range metas {
-		if hqPairWired(m) {
-			wired = append(wired, m)
-		}
-	}
-	switch len(wired) {
-	case 1:
-		return wired[0], nil
-	case 0:
-		return nil, convertError(platform.NewPlatformError(
-			platform.ErrPrerequisiteMissing,
-			"No pair of this Mate has its repository in HQ yet, so there is no change to "+verb+".",
-			noRepositoryYet,
-		), WithRecoveryStatus())
-	}
-	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
-	names := make([]string, 0, len(wired))
-	for _, m := range wired {
-		names = append(names, fmt.Sprintf("service=%q", m.Hostname))
-	}
-	return nil, convertError(platform.NewPlatformError(
-		platform.ErrServiceRequired,
-		fmt.Sprintf("This Mate has several pairs with a repository in HQ, each with its own change: say which change this %ss.", verb),
-		"Pass "+strings.Join(names, " or ")+".",
-	), WithRecoveryStatus())
-}
-
-// keepChangeDescription records the words — and the title given with them —
-// on the pair, in memory and on disk, for the change they were written for.
-func keepChangeDescription(stateDir string, m *workflow.ServiceMeta, text, title string, number int) error {
-	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: number}
-	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil {
-			return fmt.Errorf("%s no longer has its repository in HQ", m.Hostname)
-		}
-		meta.HQ.ChangeDescription = kept
+		c.Description = kept
 		return nil
 	}); err != nil {
-		return fmt.Errorf("keep the description of %s's change: %w", m.Hostname, err)
+		return fmt.Errorf("keep the description of change #%d: %w", ref.Number, err)
 	}
-	m.HQ.ChangeDescription = kept
 	return nil
 }
 
-// putChangeDescription sets text as change number's description — its
-// pictures attached to the change first (changeBody) — and title, when one is
-// given, as its title, in one edit: HQ asks the person to review the change
-// from then, at the head it has. Once HQ took it, the words the pair kept are
+// putChangeDescription sets text as the change's description — its pictures
+// attached to the change first (changeBody) — and title, when one is given,
+// as its title, in one edit: HQ asks the person to review the change from
+// then, at the head it has. Once HQ took it, the words the ledger kept are
 // forgotten, unless newer ones were kept meanwhile, which stay for the next
 // put. Nothing is written when a picture could not be attached: never a
 // description with a broken picture.
-func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, text, title string) error {
-	body, err := changeBody(ctx, hqc, stateDir, m, number, text)
+func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) error {
+	body, err := changeBody(ctx, hqc, stateDir, ref, text)
 	if err != nil {
 		return err
 	}
@@ -384,10 +402,10 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m
 	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
-	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, edit); err != nil {
+	if _, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit); err != nil {
 		return err
 	}
-	forgetChangeDescription(stateDir, m, text)
+	forgetChangeDescription(stateDir, ref, text)
 	return nil
 }
 
@@ -395,12 +413,12 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m
 // shows attached to the change — once per change, the address HQ serves it at
 // remembered with the picture — and written as an <img> with its size
 // (pictureTag).
-func changeBody(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, text string) (string, error) {
+func changeBody(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text string) (string, error) {
 	ids := workflow.PictureRefs(text)
 	if len(ids) == 0 {
 		return text, nil
 	}
-	target := pictureTargetOf(m, number)
+	target := ref.pictureTarget()
 	// Every picture is read before any is attached: the words go on whole
 	// or not at all. One already on this change needs only its address.
 	pics := make(map[string]workflow.Picture, len(ids))
@@ -429,7 +447,7 @@ func changeBody(ctx context.Context, hqc hq.Client, stateDir string, m *workflow
 				return "", fmt.Errorf("%w: %s is larger than the 20 MiB a picture of a change may be", errCannotAttach, id)
 			}
 			callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-			kept, err := hqc.Attach(callCtx, m.HQ.Repo, number, png)
+			kept, err := hqc.Attach(callCtx, ref.Repo, ref.Number, png)
 			cancel()
 			var refused *hq.RefusedError
 			if errors.As(err, &refused) && refusedForGood(refused) {
@@ -508,18 +526,15 @@ func missingPictures(stateDir, text, target string) ([]string, error) {
 	return missing, nil
 }
 
-// forgetChangeDescription drops the words the pair keeps, in memory and on
-// disk — only while they are still text: a describe that kept newer words
-// after these were read keeps them.
-func forgetChangeDescription(stateDir string, m *workflow.ServiceMeta, text string) {
-	if kept := m.HQ.ChangeDescription; kept != nil && kept.Text == text {
-		m.HQ.ChangeDescription = nil
-	}
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil || meta.HQ.ChangeDescription == nil || meta.HQ.ChangeDescription.Text != text {
+// forgetChangeDescription drops the words the ledger keeps for the change —
+// only while they are still text: a describe that kept newer words after
+// these were read keeps them.
+func forgetChangeDescription(stateDir string, ref changeRef, text string) {
+	_ = workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
+		if !existed || c.Description == nil || c.Description.Text != text {
 			return workflow.ErrSkipWrite
 		}
-		meta.HQ.ChangeDescription = nil
+		c.Description = nil
 		return nil
 	})
 }

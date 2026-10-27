@@ -89,6 +89,13 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 - **Plan.Primary** = `{adopt unmanaged runtimes, args: {action: start, workflow: develop, intent: "adopt"}, rationale: "Existing runtime services have no bootstrap metadata yet."}`
 - **Plan.Alternatives** = `[]` (adopt is the only viable entry).
 
+### 1.5a Swarm pools only (each part's dev environment is a pool)
+
+- **Envelope**: `Services=[{hqpool, pool}, {webpool, pool}, {db, managed}]`, `IdleScenario=dev-pool`.
+- **Plan.Primary** = `{tool: zerops_lease, args: {action: acquire, pools: ["hqpool","webpool"]}}` (one pool: `pool`).
+- **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services."}]`.
+- **Atoms**: `idle-dev-pool-entry` (names `zerops_lease` status and acquire, and the develop start that answers with the lease loop) — never `idle-bootstrap-entry`. The same atom joins any other idle scenario whose project holds a pool, with no plan step for the pool (`spec-workflows.md §8 DP-29`).
+
 ### 1.6 Bootstrapped but strategy unset
 
 - **Envelope**: `Services=[{svc, bootstrapped, strategy=unset}]`.
@@ -140,7 +147,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 
 ### 2.3 Route `adopt` — Adopt existing
 
-**Precondition**: ≥1 non-system, non-managed service without complete ServiceMeta.
+**Precondition**: ≥1 non-system app runtime without complete ServiceMeta — managed services, Swarm pools and Zerops Boxes are never adopt candidates (`spec-workflows.md §8 PS-2`).
 
 | Step | Envelope | Plan.Primary | Atoms |
 |---|---|---|---|
@@ -287,6 +294,18 @@ Compaction-safety invariant: envelope is deterministic, so recovered guidance is
 - **Plan.Primary** = idle branch logic.
 - Stale sessions from other PIDs are garbage-collected by age (separate concern).
 
+### 3.10 Pair keyed by its dev pool (after a pool migration's retire)
+
+- **State dir read**: one meta keyed by the pool, marked as a pool dev half, naming the stage
+  (`spec-workflows.md §13 PM-10`).
+- **Envelope**: the pool's snapshot keys the pair — `stages[]`, the HQ record, no `mode`; the stage
+  keeps `mode=stage`. Only atoms about pools bind to the pool; the develop session carries the
+  lease guidance (`develop-dev-pool`).
+- **Plan.Primary** for the stage: `zerops_deploy sourceService=<lease alias> targetService=<stage>`
+  from a held lease of the pool, else `zerops_lease action="acquire" pool=<pool>`; the pool half is
+  never a deploy or verify step, and a session naming the retired dev stops waiting on it.
+- Pinned by `TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool`.
+
 ---
 
 ## 4. Phase: `develop-closed-auto`
@@ -340,6 +359,9 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 - **Plan.Primary**: regular develop-active dispatch — agent observes
   the missing service via `zerops_discover` and decides whether to
   close the work session or restart bootstrap.
+- **Auto-close**: once the deleted service's meta is gone with it, no
+  pair names it and it is no deploy target — the session no longer
+  waits on it (`TestResolvedDeployTargets_DeadHostnameDropped`).
 - **Future hardening (not implemented)**: `ComputeEnvelope` could
   attach a typed `GhostServices []string` field and `BuildPlan`
   could surface a close-or-recreate Primary, replacing the inferred
@@ -538,9 +560,10 @@ table are inspiration, not corpus.
 ### 9.1 Axes
 
 What actually varies for a user of zcp. Every value appears in at least one cell;
-every pair the code branches on (route × topology, delivery × close-mode,
-env-channel × topology, access × verify, runtime-class × develop) appears in at
-least one cell. The matrix is a covering set, not the full product.
+every pair the code branches on (route × topology, route × infrastructure,
+delivery × close-mode, env-channel × topology, access × verify, runtime-class ×
+develop) appears in at least one cell. The matrix is a covering set, not the
+full product.
 
 | Axis | Values | Home |
 |---|---|---|
@@ -549,6 +572,7 @@ least one cell. The matrix is a covering set, not the full product.
 | Topology | simple · dev-only · standard-pair · (local-stage · local-only: deferred) | spec-workflows §4 |
 | Runtime class | dynamic · static · implicit-webserver | §3.2 |
 | Managed deps | none · db · db+cache+storage | platform |
+| Infrastructure the app uses | none · Zerops Box (runs code the app's users send; a Box exists only in prg1, where the farm's run projects are) · Swarm pool (adopted beside an app) | spec-workflows §8 PS |
 | Repo shape | monorepo multi-`setup:` (platform default) · one repo per service | platform |
 | Access | public subdomain · internal-only (worker/backend, `http://host:port`) | platform |
 | Delivery | zcli push (auto) · git-push configured · GitHub Actions · webhook · manual | spec-workflows §4.3, §11 |
@@ -627,6 +651,8 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | A9 ✚ | `managed-only-add-runtime` | managed-only · classic · dev-only | I have a DB, add an app | expectedServices unchanged nodePostgresRecord never | pending: scenario |
 | A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | gate |
 | A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | promote: meta |
+| A12 ✚ | `classic-code-runner-sandbox` | brand-new (prg1, like every farm run project) · classic · simple · node + Zerops Box (infrastructure, never the runtime) | API that runs people's Python snippets in throwaway sandboxes | expectedServices containerCheck(snippet ran in a Box sandbox — a dot-free hostname on a plain kernel version, never the API's or a pool container's `node-id-<n>.runtime.<service>.zerops`; `${sandbox_ZBOX_WORKSPACE_API_KEY}` reference in zerops.yaml) noFabricatedSecret noFailedProcesses toolArg(no literal KEY value in an env set or import) never(dev server or deploy on the Box) | gate |
+| A13 ✚ | `adopt-app-with-existing-pool` | unmanaged app + Swarm pool (preseed) · adopt · single runtime · node + pool | connect to what I have, add a health endpoint | expectedServices internalLiveness unchanged(the pool) meta(app adopted) noFailedProcesses toolArg(max 0 zerops_import) never(pool in an adopt or develop scope or plan; deploy, dev server or lease on the pool) | gate |
 
 #### B. Developing (seed: deployed fixture)
 

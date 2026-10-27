@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -34,6 +35,45 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 	}
 	if !result.Passed {
 		t.Errorf("expected pass, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+// TestCheckProvision_SearchLagsTheDirectRead_Pass: right after an import the
+// service search (Elasticsearch) can still read a service CREATING that a
+// direct read already sees ACTIVE — the state the agent just waited for
+// through zerops_discover. The check reads the project's services lag-free,
+// so it agrees with discover instead of failing the step.
+func TestCheckProvision_SearchLagsTheDirectRead_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: "CREATING"},
+	}).WithServicesDirect([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: serviceStatusActive},
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, nil, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass on the direct read's ACTIVE, got fail: %s", result.Summary)
 		for _, c := range result.Checks {
 			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
 		}
@@ -203,7 +243,7 @@ func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 
 func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 	t.Parallel()
-	mock := platform.NewMock().WithError("ListServices", fmt.Errorf("API down"))
+	mock := platform.NewMock().WithError("ListServicesDirect", fmt.Errorf("API down"))
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
 			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
@@ -891,5 +931,42 @@ func TestManagedEnvReadiness_LocalStorage_DoesNotRequireConnectionEnvs(t *testin
 	t.Parallel()
 	if isManagedNonStorage("local-storage:single@1") {
 		t.Error("Local Storage was treated as a connection-env managed dependency")
+	}
+}
+
+// TestCheckProvision_BoxDependency_ActivePassesWithoutAnEnvRead pins that a
+// Zerops Box planned beside the runtime passes provision once ACTIVE (its
+// status after import, live-verified 2026-10-24) and that its env is never
+// read: a Box's variables are the workspace key and the volume key, which zcp
+// never reads (docs/spec-workflows.md §8 PS-12, PS-15).
+func TestCheckProvision_BoxDependency_ActivePassesWithoutAnEnvRead(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: serviceStatusRunning},
+			{ID: "s2", Name: "sandbox", Status: serviceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+		}).
+		WithError("GetServiceEnv", errors.New("a Box's env must never be read"))
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "api", Type: "nodejs@22", BootstrapMode: "simple"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "sandbox", Type: "zbox@1", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, nil, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+		t.Errorf("a Box dependency that is ACTIVE must pass provision without an env read: %s", result.Summary)
 	}
 }

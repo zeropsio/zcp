@@ -63,8 +63,8 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 	if !strings.Contains(answer.PullRequestURL, "/appdev/") || !strings.Contains(answer.Message, `action="describe-change"`) {
 		t.Errorf("the answer names no link or next step: %s", text)
 	}
-	if got := lab.meta().HQ.Change; got != 1 {
-		t.Errorf("the pair records change #%d, want #1", got)
+	if kept := lab.kept(1); kept == nil || kept.Branch != "fix-login" {
+		t.Errorf("the ledger keeps %+v, want change #1 on fix-login", kept)
 	}
 	hqc, _ := openHQ(lab.hq.srv.Client(), lab.rt)
 	state, err := hqc.Self(t.Context())
@@ -114,15 +114,16 @@ func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 			if !isError || !strings.Contains(text, tt.want) {
 				t.Errorf("want a refusal naming %q, got isError=%v: %s", tt.want, isError, text)
 			}
-			if got := lab.meta().HQ.Change; got != 0 {
-				t.Errorf("a refused open recorded change #%d", got)
+			if kept := lab.ledger(); len(kept) != 0 {
+				t.Errorf("a refused open recorded %+v", kept)
 			}
 		})
 	}
 }
 
-// A Mate has one open change per repository: opening another answers the
-// open one, which stays on its own branch, and says so.
+// On an HQ that keeps one open change per repository, opening another answers
+// the open one, which stays on its own branch, and says so; nothing is kept
+// for the branch asked for.
 func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 	t.Parallel()
 	lab := newHQLab(t)
@@ -138,6 +139,11 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 	}
 	if !strings.Contains(answer.Message, "already open") || !strings.Contains(answer.Message, "fix-login") {
 		t.Errorf("the answer does not say the open change stays on its branch: %s", answer.Message)
+	}
+	for _, c := range lab.ledger() {
+		if c.Branch == "add-signup" {
+			t.Errorf("the ledger keeps change #%d for the branch asked for", c.Number)
+		}
 	}
 
 	// An HQ that does not name the open change's branch leaves it unnamed,
@@ -189,6 +195,37 @@ func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
 	lab.git("merge-base", "--is-ancestor", before, "HEAD")
 }
 
+// TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled: on an HQ that
+// keeps one open change per repository, change #1 merges and the agent opens
+// #2 before any pass learned it. open-change forgets #1 by the Mate's state it
+// read anyway, and says the merge once, so a describe naming no branch then
+// puts its words on #2 at the first call.
+func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if first, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !first.Created {
+		t.Fatalf("the first open: %s", text)
+	}
+	lab.hq.mergeChange("appdev", 1)
+	lab.pushFromMain("add-signup", map[string]string{"signup.js": "the signup\n"})
+
+	answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup")
+
+	if isError || !answer.Created || answer.PullRequest != 2 {
+		t.Fatalf("want change #2 opened: %s", text)
+	}
+	if lab.kept(1) != nil {
+		t.Error("open-change kept merged #1, which the Mate's state it read names merged")
+	}
+	if !strings.Contains(text, "#1 is merged") {
+		t.Errorf("open-change does not say #1 merged, which no pass said yet: %s", text)
+	}
+	if described, isError := lab.describe("appdev", describedWords); isError || !strings.Contains(described, `"described":true`) {
+		t.Errorf("a describe naming no branch did not put its words on #2: %s", described)
+	}
+}
+
 // An HQ from before changes were bound to a branch they name ignores the
 // branch asked for and binds the change to the Mate's own: the answer names
 // that branch and says the work goes there, never the one asked for.
@@ -207,8 +244,8 @@ func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
 	if isError || !answer.Created || answer.Branch != bound {
 		t.Fatalf("want change #1 opened on %q, got: %s", bound, text)
 	}
-	if got := lab.meta().HQ.Branch; got != bound {
-		t.Errorf("the pair records the change on %q, want %q", got, bound)
+	if kept := lab.kept(1); kept == nil || kept.Branch != bound {
+		t.Errorf("the ledger keeps %+v, want change #1 on %q", kept, bound)
 	}
 	push := pushCommand.FindStringSubmatch(answer.Message)
 	if push == nil {

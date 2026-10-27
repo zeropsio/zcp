@@ -98,6 +98,7 @@ A set of axes (and a few scalar attributes) decompose the guidance space. Each a
 | `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (probe-proves auth, provisions GIT_TOKEN + the session credential helper, stamps RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
 | `export-active` | Stateless export immediate workflow. |
 | `launch-production-active` | `zerops_workflow workflow="launch-production"` mid-flow on a source project. The launch-* atoms (16 of them) drive the handler's per-status guidance. |
+| `pool-migrate-active` | `zerops_workflow workflow="pool-migrate"` walking a part's dev service onto a dev pool (spec-workflows §13). The pool-migrate-* atoms drive the handler's per-step guidance, which it composes via `atomBody` like launch-production. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
 
@@ -165,6 +166,7 @@ The closed value set is `{unset, auto, manual}` (`validAtomEnumValues["closeDepl
 | `static` | Static-content runtime (nginx-static). |
 | `implicit-webserver` | Webserver-native runtime that auto-starts (php-apache, php-nginx). |
 | `managed` | Managed service (PostgreSQL, Valkey, …). No deploy, no ServiceMeta. |
+| `pool` | A Swarm pool (`swarm@1`, `swarm-vm@1`): containers leased per branch, never an app runtime (docs/spec-workflows.md §8 PS, DP). |
 | `unknown` | Runtime class not resolved yet. |
 
 **Empty = any runtime.** Service-scoped axis — see §3.10 for conjunction semantics.
@@ -306,7 +308,7 @@ this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 | `runtimeBases` | no | Service-scoped (§3.12). Concrete-base filter; platform strings, not a closed enum. |
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
-| `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`orphan`). |
+| `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`dev-pool`/`orphan`). |
 | `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. Mutually exclusive per atom with `envelopeDeployStates`. |
 | `envelopeDeployStates` | no | Envelope-scoped (§3.13). Mutually exclusive per atom with `deployStates`. |
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |

@@ -71,8 +71,8 @@ type recipeOutcome struct {
 // group's first recipe lands whole, a tier main lacks is proposed on any
 // later pass, and a group whose main has every tier gets nothing.
 //
-// The proposal is the Mate's change in the recipe repository — the one HQ
-// keeps open per repository — titled hq.RecipeProposalTitle, with no
+// The proposal is the Mate's change in the recipe repository — its one
+// change there opened naming no branch — titled hq.RecipeProposalTitle, with no
 // description, composed on a scratch repository of zcp's own rather than a
 // pair's checkout. What the change's branch holds is composed,
 // never merged: main's tree with the files main lacks written over it
@@ -167,10 +167,11 @@ func groupRecipeOutcome(
 	outcome.OnMain = len(missing) == 0
 	if written.other != nil {
 		// The Mate's open change there is another proposal of its own, and
-		// HQ keeps one per repository: it is left as it is.
+		// this Mate keeps one recipe proposal open at a time: it is left as
+		// it is.
 		outcome.Change, outcome.ChangeURL = 0, ""
 		if !outcome.OnMain {
-			outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) waits for this Mate's change #%d there (%q) to be merged or closed: HQ keeps one open change per Mate per repository",
+			outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) waits for this Mate's change #%d there (%q) to be merged or closed: this Mate keeps one recipe proposal open at a time",
 				hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), written.other.number, written.other.title)
 		}
 		return outcome
@@ -277,7 +278,7 @@ func composeGroupRecipe(
 	rt runtime.Info,
 	stateDir string,
 ) (groupRecipeComposition, recipeOutcome, bool) {
-	if !rt.InContainer || client == nil || httpClient == nil {
+	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
 	}
 	hqc, linked := openHQ(httpClient, rt)
@@ -367,7 +368,9 @@ func openRecipeChange(state hq.MateState) *hq.MateChange {
 // did: the change that carries it (0 when none is) and the branch HQ binds it
 // to, whether this call opened it, whether anything was pushed, and — when the Mate's open change there is
 // another of its proposals, under another title — that change, left as it
-// is: HQ keeps one open change per Mate per repository.
+// is: this Mate keeps one recipe proposal open at a time, its one change
+// opened naming no branch — proposals touch the same tier files, so two at
+// once would only conflict.
 type recipeWrite struct {
 	number  int
 	branch  string
@@ -456,9 +459,9 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, ti
 	}
 	// No open change, or an HQ whose state names no title: HQ updates are
 	// deferred, so a Mate meets an HQ from before titles for a while. HQ
-	// answers the Mate's open change rather than opening a second one, so
-	// asking to open is how such a write learns whether the open one is its
-	// own.
+	// answers an opener naming no branch with the Mate's one change opened
+	// so — its default change — rather than opening a second one, so asking
+	// to open is how such a write learns whether the open one is its own.
 	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title, "")
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)

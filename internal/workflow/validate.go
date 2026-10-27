@@ -196,12 +196,14 @@ type RuntimeTarget struct {
 	// (adopt sets it from observed custom domains) and is rejected here by
 	// ValidateBootstrapTargets — an agent-authored plan cannot request it.
 	PublicAccess string `json:"publicAccess,omitempty" jsonschema:"auto (default) | subdomain | none = internal-only, never public. Other values are rejected."`
-	// CodeVolume plans the pair as variant B: its repository on a shared
+	// CodeVolume records the pair as variant B: its repository on a shared
 	// local-storage service mounted under /var/www in the dev half and in
-	// every further dev service it names, each deploying its own dev setup.
-	// Only for parts whose runtimes cannot share one container or that one
-	// container cannot hold; absent is the default, one dev service holding
-	// the whole repository.
+	// every further dev service it names. Derive-only and never published:
+	// zcp sets up no new code volume (docs/spec-mate.md §2.8a.4a), so only
+	// adopt sets it, for a volume already holding the repository, and an
+	// agent's plan carrying it is refused (plannedCodeVolumeError). It stays a
+	// field of the plan because the plan is what provision and close write
+	// the pair's meta from.
 	CodeVolume *topology.CodeVolume `json:"codeVolume,omitempty"`
 }
 
@@ -233,6 +235,72 @@ func catalogTypeErrors(rt RuntimeTarget, schemas *schema.Schemas) []string {
 		errs = append(errs, fmt.Sprintf("target %q stage type %q not found in available service types", rt.DevHostname, rt.StageType))
 	}
 	return errs
+}
+
+// infrastructureKindError refuses a pool or Box as a runtime target (either
+// half of the pair): a Swarm pool / Zerops Box is infrastructure an app uses,
+// not the app, so the plan must import it as part of the app's infrastructure
+// instead. It runs
+// before the catalog check so the refusal holds whether or not the catalog
+// lists the type. Returns "" when neither half is such a kind. Spec:
+// spec-workflows.md §8 PS-5.
+func infrastructureKindError(rt RuntimeTarget) string {
+	for _, typ := range []string{rt.Type, rt.StageType} {
+		if topology.IsPoolType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Swarm pool, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+		if topology.IsSandboxType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Zerops Box, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+	}
+	return ""
+}
+
+// liveInfrastructureError refuses a pool or Box the project runs as any half
+// of a pair — the dev half, a stage, a code volume's further dev service — by
+// its LIVE type: an adopt plan names services that exist, and the type the
+// plan writes for one proves nothing about it, so infrastructureKindError,
+// which reads the plan's types, never sees a pool written down as
+// nodejs@22. A pool keys a pair only through the pool migration's re-key
+// (spec-workflows.md §8 PS-2, §13 PM-10). "" when no half is one.
+func liveInfrastructureError(rt RuntimeTarget, liveTypes map[string]string) string {
+	halves := append(append([]string{rt.DevHostname}, rt.StageHostnames()...), rt.CodeVolume.DevServiceHostnames()...)
+	for _, host := range halves {
+		typ := liveTypes[host]
+		var kind string
+		switch {
+		case topology.IsPoolType(typ):
+			kind = "a Swarm pool"
+		case topology.IsSandboxType(typ):
+			kind = "a Zerops Box"
+		default:
+			continue
+		}
+		return fmt.Sprintf("target %q: %q is %s (%s) in this project, not an app runtime — it is infrastructure an app uses, never adopted as a half of a pair; leave it out of the plan (a pool keys a pair only through zerops_workflow workflow=\"pool-migrate\")", rt.DevHostname, host, kind, typ)
+	}
+	return ""
+}
+
+// poolDependencyError refuses a Swarm pool named as a dependency of a runtime
+// (spec-workflows.md §8 PS-2, PS-5): a pool — a part's dev pool, or one the
+// app runs code in — is no managed service a runtime is wired to, and the
+// plan neither creates nor records one. Its LIVE type decides first, so a
+// pool the project runs is refused whatever type the plan writes for it; the
+// classic route reads no listing, so there the plan's own type is what is
+// read. Runs before the catalog check, so the refusal holds whether or not
+// the catalog lists the type. A Zerops Box is not refused: it is a dependency
+// of the runtime (PS-15). "" when the dependency is no pool.
+func poolDependencyError(devHostname string, dep Dependency, liveTypes map[string]string) string {
+	var what string
+	switch live := liveTypes[dep.Hostname]; {
+	case topology.IsPoolType(live):
+		what = fmt.Sprintf("%q is a Swarm pool (%s) in this project", dep.Hostname, live)
+	case topology.IsPoolType(dep.Type):
+		what = fmt.Sprintf("type %q is a Swarm pool", dep.Type)
+	default:
+		return ""
+	}
+	return fmt.Sprintf("target %q dependency %q: %s — a pool is never a dependency of a runtime, whether it is a part's dev pool or one the app runs code in; leave it out of the plan. A pool the project runs stays as it is: an app calls its orchestrator with the pool's API_TOKEN by reference (${%s_API_TOKEN}), and a dev pool's containers are leased with zerops_lease. A new pool takes its own zerops_import (zerops_knowledge uri=\"zerops://themes/pools-and-box\")", devHostname, dep.Hostname, what, dep.Hostname)
 }
 
 // publicAccessPlanError validates a target's publicAccess field (§8 O3
@@ -413,10 +481,14 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		liveManaged = schemas.ManagedBaseNames()
 	}
 
-	// Build set of live service hostnames for CREATE/EXISTS validation.
+	// Build set of live service hostnames for CREATE/EXISTS validation, and
+	// each one's live type: a plan's type for a service that exists proves
+	// nothing about it.
 	liveServiceNames := make(map[string]bool, len(liveServices))
+	liveTypes := make(map[string]string, len(liveServices))
 	for _, svc := range liveServices {
 		liveServiceNames[svc.Name] = true
+		liveTypes[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	}
 
 	// Collect all CREATE + EXISTS hostnames across targets for SHARED
@@ -474,6 +546,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
 			continue
 		}
+		if err := infrastructureKindError(rt); err != "" {
+			errs = append(errs, err)
+			continue
+		}
 		if typeErrs := catalogTypeErrors(rt, schemas); len(typeErrs) > 0 {
 			errs = append(errs, typeErrs...)
 			continue
@@ -484,10 +560,6 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// dev-hostname structure. Extracted (like catalogTypeErrors) to keep
 		// this loop under the maintainability-index lint threshold.
 		if err := pairStagesError(rt); err != "" {
-			errs = append(errs, err)
-			continue
-		}
-		if err := codeVolumeError(rt); err != "" {
 			errs = append(errs, err)
 			continue
 		}
@@ -505,6 +577,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 				errs = append(errs, collisionErr)
 				continue
 			}
+			if err := liveInfrastructureError(rt, liveTypes); err != "" {
+				errs = append(errs, err)
+				continue
+			}
 		}
 
 		// Validate dependencies. Extracted to validateTargetDependencies (see
@@ -513,7 +589,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// helper mutates target.Dependencies' backing array in place
 		// (Resolution/Mode normalization), which IS targets[i].Dependencies'
 		// backing array — both are the same slice header from this range.
-		depErrs, depDefaulted := validateTargetDependencies(rt.DevHostname, target.Dependencies, schemas, liveServices, liveServiceNames, sharedAnchors, liveManaged)
+		depErrs, depDefaulted := validateTargetDependencies(rt.DevHostname, target.Dependencies, schemas, liveServices, liveTypes, sharedAnchors, liveManaged)
 		errs = append(errs, depErrs...)
 		defaulted = append(defaulted, depDefaulted...)
 	}
@@ -535,7 +611,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 // resolution switch + mode-normalization + managed-mode-resolution block
 // alone carried more branches than the rest of that loop combined, pushing
 // it over the maintainability-index lint threshold.
-func validateTargetDependencies(devHostname string, deps []Dependency, schemas *schema.Schemas, liveServices []platform.ServiceStack, liveServiceNames, sharedAnchors, liveManaged map[string]bool) (errs []string, defaulted []string) {
+func validateTargetDependencies(devHostname string, deps []Dependency, schemas *schema.Schemas, liveServices []platform.ServiceStack, liveTypes map[string]string, sharedAnchors, liveManaged map[string]bool) (errs []string, defaulted []string) {
 	depSeen := make(map[string]bool, len(deps))
 	for j, dep := range deps {
 		if err := ValidatePlanHostname(dep.Hostname); err != nil {
@@ -552,6 +628,10 @@ func validateTargetDependencies(devHostname string, deps []Dependency, schemas *
 			errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", devHostname, dep.Hostname))
 			continue
 		}
+		if err := poolDependencyError(devHostname, dep, liveTypes); err != "" {
+			errs = append(errs, err)
+			continue
+		}
 		if schemas != nil && !schemas.HasServiceType(dep.Type) {
 			errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", devHostname, dep.Hostname, dep.Type))
 			continue
@@ -564,12 +644,12 @@ func validateTargetDependencies(devHostname string, deps []Dependency, schemas *
 		// Resolution validation.
 		switch dep.Resolution {
 		case ResolutionCreate:
-			if liveServices != nil && liveServiceNames[dep.Hostname] {
+			if _, live := liveTypes[dep.Hostname]; liveServices != nil && live {
 				errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", devHostname, dep.Hostname))
 				continue
 			}
 		case ResolutionExists:
-			if liveServices != nil && !liveServiceNames[dep.Hostname] {
+			if _, live := liveTypes[dep.Hostname]; liveServices != nil && !live {
 				errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", devHostname, dep.Hostname))
 				continue
 			}
@@ -694,31 +774,16 @@ func plannedRuntimeHostnames(rt RuntimeTarget) []string {
 	return hosts
 }
 
-// codeVolumeError validates a variant-B plan: a pair (standard or dev) with
-// at least one further dev service, a valid volume hostname, every hostname
-// valid, and the volume mounted under /var/www, never at it. Returns "" when
-// valid or when the target plans no code volume.
-func codeVolumeError(rt RuntimeTarget) string {
-	v := rt.CodeVolume
-	if v == nil {
-		return ""
-	}
-	if mode := rt.EffectiveMode(); mode != topology.PlanModeStandard && mode != topology.PlanModeDev {
-		return fmt.Sprintf("target %q: a code volume (variant B) shares the repository between dev services; bootstrapMode %q has no dev service", rt.DevHostname, mode)
-	}
-	if err := ValidatePlanHostname(v.Hostname); err != nil {
-		return fmt.Sprintf("target %q: code volume hostname %q: %v", rt.DevHostname, v.Hostname, err)
-	}
-	if len(v.DevServices) == 0 {
-		return fmt.Sprintf("target %q: a code volume needs at least one further dev service beside %q — with one dev service, keep the repository in it (no code volume)", rt.DevHostname, rt.DevHostname)
-	}
-	for _, d := range v.DevServices {
-		if err := ValidatePlanHostname(d.Hostname); err != nil {
-			return fmt.Sprintf("target %q: dev service %q: %v", rt.DevHostname, d.Hostname, err)
+// plannedCodeVolumeError refuses an agent's plan whose runtime carries a
+// code volume: zcp sets up no new one (docs/spec-mate.md §2.8a.4a). A part
+// whose runtime cannot share the dev service gets a dev pool of its own; a
+// variant-B pair zcp already records keeps working, and pool-migrate moves
+// it onto one dev pool per part. nil when no target carries one.
+func plannedCodeVolumeError(targets []BootstrapTarget) error {
+	for _, t := range targets {
+		if t.Runtime.CodeVolume != nil {
+			return fmt.Errorf("target %q: codeVolume is not accepted — zcp no longer sets up a shared code volume. Plan the pair without it: one dev service holds the whole repository, and a part whose runtime cannot share it gets a dev pool of its own (zerops_knowledge uri=\"zerops://themes/pools-and-box\", section \"A part's dev pool\"). A pair already keeping its repository on a code volume keeps working, and zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" moves it onto one dev pool per part", t.Runtime.DevHostname)
 		}
 	}
-	if err := topology.CodeVolumeMountPathError(v.MountPath); err != "" {
-		return fmt.Sprintf("target %q: %s", rt.DevHostname, err)
-	}
-	return ""
+	return nil
 }

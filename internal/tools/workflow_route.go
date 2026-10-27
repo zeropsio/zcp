@@ -39,7 +39,7 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 				liveHostnames = append(liveHostnames, s.Name)
 				liveStacks[s.Name] = s
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-				if !topology.IsManagedService(typeName) {
+				if !topology.IsManagedService(typeName) && !topology.IsPoolOrSandboxType(typeName) {
 					m, ok := metaIdx[s.Name]
 					// Adoptable = no meta OR orphan incomplete meta (empty
 					// BootstrapSession). Resumable services (incomplete +

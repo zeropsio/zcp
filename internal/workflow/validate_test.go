@@ -1102,3 +1102,251 @@ func TestValidatePlan_PublicAccess_Table(t *testing.T) {
 		})
 	}
 }
+
+// Spec: spec-workflows.md §8 PS-5. A pool is infrastructure an app uses, not
+// the app; the refusal comes before the catalog check so it holds whether or
+// not the live catalog lists the type.
+func TestValidateBootstrapTargets_PoolAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		target  RuntimeTarget
+		schemas *schema.Schemas
+	}{
+		{"swarm dev type", RuntimeTarget{DevHostname: "pool", Type: "swarm@1", BootstrapMode: "simple"}, testSchemas},
+		{"swarm-vm dev type", RuntimeTarget{DevHostname: "pool", Type: "swarm-vm@1", BootstrapMode: "simple"}, testSchemas},
+		{"swarm with nil catalog", RuntimeTarget{DevHostname: "pool", Type: "swarm@1", BootstrapMode: "simple"}, nil},
+		{"swarm as stage type", RuntimeTarget{DevHostname: "app", Type: "nodejs@22", StageType: "swarm@1", BootstrapMode: "standard", ExplicitStage: "appstage"}, testSchemas},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, tt.schemas, nil)
+			if err == nil {
+				t.Fatal("a Swarm pool as a bootstrap runtime target must be refused")
+			}
+			for _, want := range []string{"Swarm pool", "not an app runtime", "infrastructure"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing guidance %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-5. A Zerops Box hosts sandboxes; like a pool
+// it is infrastructure an app uses, never the app's runtime.
+func TestValidateBootstrapTargets_SandboxAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		target  RuntimeTarget
+		schemas *schema.Schemas
+	}{
+		{"zbox dev type", RuntimeTarget{DevHostname: "box", Type: "ubuntu/zbox@1", BootstrapMode: "simple"}, testSchemas},
+		{"bare zbox dev type", RuntimeTarget{DevHostname: "box", Type: "zbox@1", BootstrapMode: "simple"}, testSchemas},
+		{"zbox with nil catalog", RuntimeTarget{DevHostname: "box", Type: "ubuntu/zbox@1", BootstrapMode: "simple"}, nil},
+		{"zbox as stage type", RuntimeTarget{DevHostname: "app", Type: "nodejs@22", StageType: "ubuntu/zbox@1", BootstrapMode: "standard", ExplicitStage: "appstage"}, testSchemas},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, tt.schemas, nil)
+			if err == nil {
+				t.Fatal("a Zerops Box as a bootstrap runtime target must be refused")
+			}
+			for _, want := range []string{"Zerops Box", "not an app runtime", "infrastructure"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing guidance %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-2. An adopt plan names services that exist,
+// and the plan's own type for them proves nothing: a pool or a Box the project
+// runs, named as an existing dev half, stage or further dev service of a code
+// volume with a runtime type written in the plan, is refused by its LIVE type —
+// never recorded as a half of a pair.
+func TestValidateBootstrapTargets_ExistingPoolOrBoxByLiveType_Refused(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "apppool", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		{Name: "box", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zbox@1"}},
+		{Name: "vol", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage@1"}},
+	}
+	tests := []struct {
+		name   string
+		target RuntimeTarget
+		want   []string
+	}{
+		{"a pool as the existing stage", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "apppool", IsExisting: true},
+			[]string{`"apppool"`, "swarm@1", "Swarm pool"}},
+		{"a Box as the existing dev half", RuntimeTarget{DevHostname: "box", Type: "nodejs@22", BootstrapMode: "dev", IsExisting: true},
+			[]string{`"box"`, "zbox@1", "Zerops Box"}},
+		{"a pool as one of several existing stages", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: true,
+			Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "apppool", SetupName: "pool"}}},
+			[]string{`"apppool"`, "Swarm pool"}},
+		{"a pool as a code volume's further dev service", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "dev", IsExisting: true,
+			CodeVolume: &topology.CodeVolume{Hostname: "vol", MountPath: "/var/www/ws", DevServices: []topology.DevServiceRef{{Hostname: "apppool", SetupName: "pool"}}}},
+			[]string{`"apppool"`, "Swarm pool"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, nil, live)
+			if err == nil {
+				t.Fatal("an existing pool or Box adopted as a half of a pair must be refused by its live type")
+			}
+			for _, want := range append(tt.want, "infrastructure") {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing %q", err.Error(), want)
+				}
+			}
+		})
+	}
+	// A pair whose halves are runtimes passes as before.
+	ok := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage", IsExisting: true}
+	if _, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: ok}}, nil, live); err != nil {
+		t.Fatalf("an existing runtime pair: %v", err)
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-2, PS-5. A Swarm pool is never a dependency
+// of a runtime, whatever the route: adopt and a mode-switch re-bootstrap
+// (both pass the live listing), or classic (no listing, so the plan's own
+// type is all there is). A13 on the eval farm: an agent re-bootstrapping an
+// adopted app into simple mode listed the project's pool `sandbox` (swarm@1)
+// as an EXISTS dependency, and the plan was taken. The refusal names the
+// service and the way forward — leave the pool out of the plan — and holds
+// whether or not the catalog lists the type. A pool written down as another
+// type is refused by its live type, as PS-2 does for a half of a pair.
+func TestValidateBootstrapTargets_PoolAsDependency_Refused(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+	}
+	existingApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true}
+	newApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple"}
+	tests := []struct {
+		name    string
+		targets []BootstrapTarget
+		schemas *schema.Schemas
+		live    []platform.ServiceStack
+	}{
+		{"the project's pool as an EXISTS dependency of a mode switch (A13)",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}}}, nil, live},
+		{"the same plan on the classic route, which reads no live listing",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}}}, nil, nil},
+		{"a pool created beside a new runtime",
+			[]BootstrapTarget{{Runtime: newApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "CREATE"}}}}, testSchemas, nil},
+		{"a swarm-vm pool with no catalog",
+			[]BootstrapTarget{{Runtime: newApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm-vm@1", Resolution: "create"}}}}, nil, nil},
+		{"the project's pool written down as a managed type",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "valkey@7.2", Resolution: "EXISTS"}}}}, nil, live},
+		{"the project's pool shared by a second runtime",
+			[]BootstrapTarget{
+				{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}},
+				{Runtime: RuntimeTarget{DevHostname: "worker", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true},
+					Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "SHARED"}}},
+			}, nil, live},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets(tt.targets, tt.schemas, tt.live)
+			if err == nil {
+				t.Fatal("a Swarm pool named as a dependency of a runtime must be refused")
+			}
+			for _, want := range []string{`dependency "sandbox"`, "Swarm pool", "never a dependency of a runtime", "leave it out of the plan", "stays as it is", "zerops_lease"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing %q", err.Error(), want)
+				}
+			}
+			if strings.Contains(err.Error(), "not found in available service types") {
+				t.Errorf("the pool refusal must come before the catalog check: %q", err.Error())
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-2, PS-5, PS-15. What A13's agent should have
+// sent — the mode switch of an adopted app with the project's pool left out of
+// the plan — is taken on every route, and the pool's presence in the project
+// refuses nothing by itself. A Zerops Box stays what PS-15 makes it: a
+// dependency of the runtime, created beside it or already running.
+func TestValidateBootstrapTargets_PoolLeftOutOrBoxDependency_Accepted(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		{Name: "box", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+	}
+	existingApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true}
+	tests := []struct {
+		name    string
+		targets []BootstrapTarget
+		live    []platform.ServiceStack
+	}{
+		{"mode switch with the pool left out, live listing", []BootstrapTarget{{Runtime: existingApp}}, live},
+		{"mode switch with the pool left out, classic route", []BootstrapTarget{{Runtime: existingApp}}, nil},
+		{"a Box created beside a new runtime",
+			[]BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "api", Type: "nodejs@22", BootstrapMode: "simple"},
+				Dependencies: []Dependency{{Hostname: "sandbox2", Type: "ubuntu/zbox@1", Resolution: "CREATE"}}}}, live},
+		{"the project's Box as an EXISTS dependency",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "box", Type: "ubuntu/zbox@1", Resolution: "EXISTS"}}}}, live},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ValidateBootstrapTargets(tt.targets, nil, tt.live); err != nil {
+				t.Fatalf("plan must be taken: %v", err)
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-5. A Zerops Box passes the type check whenever
+// the schema lists it ACTIVE — as infrastructure the app uses (a dependency),
+// since the runtime-target slot refuses it. The "embedded seed" case runs the
+// committed seed through the same ACTIVE overlay the server applies, so it
+// fails until the seed knows `ubuntu/zbox@1`.
+func TestCatalogTypeErrors_ZboxActive_Accepted(t *testing.T) {
+	t.Parallel()
+	fixture := &schema.Schemas{ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+		"alpine/nodejs@22", "ubuntu/zbox@1",
+	}}}
+	tests := []struct {
+		name     string
+		schemas  *schema.Schemas
+		wantErr  bool
+		wantText string
+	}{
+		{"fixture lists zbox ACTIVE", schema.FilterToActive(fixture, []string{"alpine/nodejs@22", "ubuntu/zbox@1"}), false, ""},
+		{"embedded seed knows zbox ACTIVE", schema.FilterToActive(testSchemas, []string{"alpine/nodejs@22", "ubuntu/zbox@1"}), false, ""},
+		{"fixture lists zbox but not ACTIVE", schema.FilterToActive(fixture, []string{"alpine/nodejs@22"}), true, "not found in available service types"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets := []BootstrapTarget{{
+				Runtime:      RuntimeTarget{DevHostname: "app", Type: "alpine/nodejs@22", BootstrapMode: "simple"},
+				Dependencies: []Dependency{{Hostname: "sandbox", Type: "ubuntu/zbox@1", Resolution: "CREATE"}},
+			}}
+			_, err := ValidateBootstrapTargets(targets, tt.schemas, nil)
+			switch {
+			case tt.wantErr && err == nil:
+				t.Fatal("a Box the schema does not list ACTIVE must fail the type check")
+			case tt.wantErr && !strings.Contains(err.Error(), tt.wantText):
+				t.Fatalf("error %q missing %q", err.Error(), tt.wantText)
+			case !tt.wantErr && err != nil:
+				t.Fatalf("a Box the schema lists ACTIVE must pass the type check: %v", err)
+			}
+		})
+	}
+}

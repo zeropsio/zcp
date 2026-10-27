@@ -133,6 +133,8 @@ func TestDiscover_RuntimeDeployedFlag(t *testing.T) {
 			runtime("s4", "worker", "alpine/nodejs@24", nil),
 			runtime("s5", "db", "postgresql:single@17", nil),
 			runtime("s6", "zcp", "zcp@1", &platform.ActiveAppVersionDigest{ID: "av-zcp", Source: "GIT", Built: true}),
+			runtime("s7", "fleet", "swarm@1", nil),
+			runtime("s8", "box", "ubuntu/zbox@1", nil),
 		})
 
 	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
@@ -146,6 +148,8 @@ func TestDiscover_RuntimeDeployedFlag(t *testing.T) {
 		"worker":   "false",
 		"db":       "absent",
 		"zcp":      "absent",
+		"fleet":    "absent", // a pool and a Box are not app runtimes (spec-workflows.md §8 PS-2)
+		"box":      "absent",
 	}
 	for _, svc := range result.Services {
 		got := "absent"
@@ -1569,6 +1573,49 @@ func TestDiscover_PublicAccessPerRuntime_OneRoutingRead(t *testing.T) {
 	}
 }
 
+// A Swarm pool or Zerops Box is not an HTTP-class runtime (spec-workflows.md
+// §8 PS-2): discover observes no public access for it, so the agent is never
+// shown a per-service publicAccess intent for a service whose hostname reaches
+// a random container — while a real runtime beside it still carries one.
+func TestDiscover_PoolAndSandbox_NoPublicAccess(t *testing.T) {
+	t.Parallel()
+
+	httpPort := []platform.Port{{Port: 8080, Protocol: "tcp", HTTPSupport: true}}
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Ports: httpPort},
+		{ID: "svc-2", Name: "pool", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}, Ports: httpPort},
+		{ID: "svc-3", Name: "poolvm", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm-vm@1", ServiceStackTypeCategoryName: "USER"}, Ports: httpPort},
+		{ID: "svc-4", Name: "box", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}, Ports: httpPort},
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, svc := range result.Services {
+		switch svc.Hostname {
+		case "api":
+			if svc.PublicAccess == nil {
+				t.Error("api: PublicAccess want non-nil")
+			}
+		default:
+			if svc.PublicAccess != nil {
+				t.Errorf("%s: PublicAccess = %+v, want nil for a pool or Box", svc.Hostname, svc.PublicAccess)
+			}
+			if svc.IsInfrastructure {
+				t.Errorf("%s: IsInfrastructure must stay false", svc.Hostname)
+			}
+		}
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -1644,6 +1691,94 @@ func TestDiscover_IncludeEnvValues_SensitiveMasked(t *testing.T) {
 		}
 		if got := row["isSensitive"] == true; got != tt.wantSensitive {
 			t.Errorf("%s %s isSensitive = %v, want %v", tt.scope, tt.key, got, tt.wantSensitive)
+		}
+	}
+}
+
+// TestDiscover_IncludeEnvValues_PoolAndBoxCredentialsMasked: a Swarm pool's
+// API_TOKEN and ADMIN_TOKEN and a Zerops Box's ZBOX_ variables are
+// credentials — discover with includeEnvValues=true masks their values even
+// when the platform reads them back plain, while the pool's and the Box's
+// other values stay readable and a runtime's own API_TOKEN is the agent's
+// value, untouched.
+func TestDiscover_IncludeEnvValues_PoolAndBoxCredentialsMasked(t *testing.T) {
+	t.Parallel()
+
+	const secret = "pool-" + "orchestrator-secret"
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+			{ID: "svc-vm", Name: "vmpool", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/swarm-vm@1"}},
+			{ID: "svc-box", Name: "box", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+			{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+			{ID: "p1", Key: "API_TOKEN", Content: secret + "-api"},
+			{ID: "p2", Key: "ADMIN_TOKEN", Content: secret + "-admin"},
+			{ID: "p3", Key: "sshIsolation", Content: "vpn service@zcp"},
+		}).
+		WithServiceEnv("svc-vm", []platform.ServiceEnvVar{
+			{ID: "v1", Key: "API_TOKEN", Content: secret + "-vm"},
+		}).
+		WithServiceEnv("svc-box", []platform.ServiceEnvVar{
+			{ID: "b1", Key: "ZBOX_WORKSPACE_API_KEY", Content: secret + "-box-key"},
+			{ID: "b2", Key: "ZBOX_WORKSPACE_VOLUME_KEY", Content: secret + "-box-disk"},
+			{ID: "b3", Key: "DATABASE_URL", Content: "${db_connectionString}"},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{
+			{ID: "a1", Key: "API_TOKEN", Content: "app-own-value"},
+			{ID: "a2", Key: "POOL_TOKEN", Content: "${devpool_API_TOKEN}"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true, false)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Errorf("discover echoes a pool or Box credential: %s", raw)
+	}
+
+	rows := map[string]map[string]any{}
+	for _, svc := range result.Services {
+		for _, e := range svc.Envs {
+			rows[svc.Hostname+"/"+e["key"].(string)] = e
+		}
+	}
+	tests := []struct {
+		row        string
+		wantMasked bool
+		wantValue  string
+	}{
+		{"devpool/API_TOKEN", true, ""},
+		{"devpool/ADMIN_TOKEN", true, ""},
+		{"vmpool/API_TOKEN", true, ""},
+		{"box/ZBOX_WORKSPACE_API_KEY", true, ""},
+		{"box/ZBOX_WORKSPACE_VOLUME_KEY", true, ""},
+		{"devpool/sshIsolation", false, "vpn service@zcp"},
+		{"box/DATABASE_URL", false, "${db_connectionString}"},
+		{"api/API_TOKEN", false, "app-own-value"},
+		{"api/POOL_TOKEN", false, "${devpool_API_TOKEN}"},
+	}
+	for _, tt := range tests {
+		row, ok := rows[tt.row]
+		if !ok {
+			t.Errorf("%s: missing from discover", tt.row)
+			continue
+		}
+		if got := row["isCredentialRedacted"] == true; got != tt.wantMasked {
+			t.Errorf("%s isCredentialRedacted = %v, want %v (value %v)", tt.row, got, tt.wantMasked, row["value"])
+		}
+		if !tt.wantMasked && row["value"] != tt.wantValue {
+			t.Errorf("%s value = %v, want %v", tt.row, row["value"], tt.wantValue)
 		}
 	}
 }

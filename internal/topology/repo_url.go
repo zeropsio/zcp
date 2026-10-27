@@ -62,6 +62,20 @@ func CanonicalRepoURL(remote string) string {
 	return remote
 }
 
+// RepoIdentity is a repository's address as an identity any reader may see —
+// a lease's repository on the envelope among them (docs/spec-mate.md §2.8a.3):
+// its canonical form (CanonicalRepoURL) with no userinfo, query or fragment,
+// so no credential rides it whatever the address held. "" for an address that
+// is no URL with a scheme and a host.
+func RepoIdentity(remote string) string {
+	u, err := url.Parse(strings.TrimSpace(remote))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+	return CanonicalRepoURL(u.String())
+}
+
 // SameRepoURL reports whether two addresses name the same repository: equal
 // in canonical form (CanonicalRepoURL) but for case, which hosts like GitHub
 // ignore in the host, owner and name.

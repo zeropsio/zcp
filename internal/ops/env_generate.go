@@ -2,9 +2,11 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -67,6 +69,11 @@ type EnvDotenvResult struct {
 	Refused             bool     `json:"refused,omitempty"`
 }
 
+// previousDotenvValueMask is what a generate-dotenv diff shows for the value a
+// key had in the existing .env: that literal has no provenance zcp can read,
+// so it may be a secret whatever the key's new source is.
+const previousDotenvValueMask = "<not shown: the existing .env value>"
+
 // platformInternalKeys is the denylist of project-level keys that ship
 // inside a Zerops project for platform-internal use and have no value
 // for a local .env (deploy tokens, CDN URLs, runtime-only placeholders).
@@ -84,6 +91,7 @@ var platformInternalKeys = map[string]bool{
 	"ZCP_API_KEY":           true,
 	GitTokenEnvKey:          true,
 	LaunchTokenEnvKey:       true,
+	PoolHQCredentialEnvKey:  true,
 	"envIsolation":          true,
 	"sshIsolation":          true,
 	"apiCdnUrl":             true,
@@ -137,6 +145,20 @@ type refExpander struct {
 	// platform holds with sensitive:true — the expanded value then carries
 	// a sensitive value. The caller resets it before each top-level value.
 	resolvedSensitive bool
+	// masked collects, as `<host>_<var>` (the ref's own spelling), every
+	// source variable the platform withheld from the reading token — what
+	// a refusal names (spec-zerops-env-lifecycle.md §7).
+	masked map[string]bool
+}
+
+// maskedSources lists the withheld source variables, sorted.
+func (r *refExpander) maskedSources() []string {
+	out := make([]string, 0, len(r.masked))
+	for k := range r.masked {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // expandRefs walks `value` and substitutes resolvable `${...}` refs.
@@ -246,13 +268,23 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 		row, found := findEnvRow(r.cache[svcHost], varName)
 		if found && row.Masked {
 			// The platform withheld the value from this token: leave the ref
-			// literal and count it unresolved rather than write the placeholder.
+			// literal and count it unresolved rather than write the placeholder,
+			// and remember which variable it was for the refusal.
+			if r.masked == nil {
+				r.masked = make(map[string]bool)
+			}
+			r.masked[strings.ReplaceAll(svcHost, "-", "_")+"_"+varName] = true
 			sb.WriteString(m.Raw)
 			last = m.End
 			unresolved++
 			continue
 		}
 		rawVal, sensitive := row.Content, row.Sensitive
+		if found {
+			// A pool's or a Box's own credential is a secret whatever flag
+			// its row carries.
+			sensitive = sensitive || isPoolOrBoxCredential(varName, r.serviceIndex[svcHost].ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		}
 		if !found && projectFallback {
 			if pv, ok := r.projectEnv[varName]; ok {
 				rawVal, sensitive, found = pv.Content, pv.Sensitive, true
@@ -363,14 +395,20 @@ func EnvGenerateDotenv(
 	if err != nil {
 		// Translate the BuildEnvPlan ref-resolve error into the legacy
 		// PlatformError shape the existing tests / MCP clients expect.
-		msg := err.Error()
-		if strings.Contains(msg, "unresolved ${} refs in:") {
-			parts := strings.SplitN(msg, "unresolved ${} refs in: ", 2)
-			if len(parts) == 2 {
-				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-					fmt.Sprintf("could not resolve env vars: %s", parts[1]),
-					"Check that referenced services are running and have the expected env var keys")
+		var unresolved *UnresolvedRefsError
+		if errors.As(err, &unresolved) {
+			keys := strings.Join(unresolved.Keys, ", ")
+			if len(unresolved.Masked) > 0 {
+				// Not a typo: the platform answers a sensitive value with its
+				// placeholder to a project-scoped or read-only token
+				// (spec-zerops-env-lifecycle.md §7), so no expansion can reach it.
+				return nil, platform.NewPlatformError(platform.ErrPermissionDenied,
+					fmt.Sprintf("could not resolve env vars: %s — the platform withholds %s from the token zcp runs with", keys, strings.Join(unresolved.Masked, ", ")),
+					"A project-scoped or read-only Zerops token reads sensitive values masked; run zcp with a token that can read them, such as an organization member's personal access token (the one zcli login uses)")
 			}
+			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("could not resolve env vars: %s", keys),
+				"Check that referenced services are running and have the expected env var keys")
 		}
 		return nil, err
 	}
@@ -399,15 +437,22 @@ func EnvGenerateDotenv(
 	// platformInternalKeys already denylists the ZCP-owned keys out of the
 	// plan, so that class is defense-in-depth keeping every echo site on one
 	// owner.
+	// The before side is the existing .env's literal, which carries no word of
+	// where it came from (no manifest, docs/spec-env-handling.md §6.1): a
+	// secret a sensitive source rendered there earlier — a ref the key no
+	// longer uses — reads like any other value. So it is never echoed; the
+	// after side is masked by the plan's own classification.
 	sensitiveKeys := make(map[string]bool, len(plan.Keys))
 	for _, k := range plan.Keys {
 		sensitiveKeys[k.Key] = k.Sensitive
 	}
 	for i := range diff.Modified {
-		if masked, redacted := RedactEnvValue(diff.Modified[i].Key, diff.Modified[i].To, "", sensitiveKeys[diff.Modified[i].Key]); redacted {
-			diff.Modified[i].From = masked
-			diff.Modified[i].To = masked
+		m := &diff.Modified[i]
+		if masked, redacted := RedactEnvValue(m.Key, m.To, "", sensitiveKeys[m.Key]); redacted {
+			m.From, m.To = masked, masked
+			continue
 		}
+		m.From = previousDotenvValueMask
 	}
 
 	result := &EnvDotenvResult{
@@ -450,7 +495,7 @@ func EnvGenerateDotenv(
 	if err != nil {
 		return nil, fmt.Errorf("render dotenv: %w", err)
 	}
-	if err := atomicWriteFile(envPath, rendered, 0600); err != nil {
+	if err := atomicWriteFile(envPath, rendered); err != nil {
 		return nil, fmt.Errorf("write .env: %w", err)
 	}
 
@@ -466,12 +511,13 @@ func EnvGenerateDotenv(
 	return result, nil
 }
 
-// atomicWriteFile writes data to path via a temp file + rename. The
-// rename is the atomic step on POSIX filesystems — readers either see
-// the old file or the new one, never a half-written state. Concurrent
+// atomicWriteFile writes data to path via a temp file + rename, readable by
+// its owner only (0600: every file it writes holds a secret or zcp's own
+// state). The rename is the atomic step on POSIX filesystems — readers either
+// see the old file or the new one, never a half-written state. Concurrent
 // regens of the same file still race on read-modify-write semantics;
 // Phase 0E adds an advisory lock for serialization.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
 	if err != nil {
@@ -488,7 +534,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return fmt.Errorf("close temp: %w", err)
 	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		cleanup()
 		return fmt.Errorf("chmod temp: %w", err)
 	}

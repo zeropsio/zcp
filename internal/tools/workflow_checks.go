@@ -162,7 +162,10 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 			return nil, nil
 		}
 
-		services, err := ops.ListProjectServices(ctx, client, projectID)
+		// Lag-free: the agent waits for the import through zerops_discover's
+		// direct read, so the check reads the same state, never the search
+		// that can still say CREATING.
+		services, err := ops.ListProjectServicesDirect(ctx, client, projectID)
 		if err != nil {
 			return nil, fmt.Errorf("list services: %w", err)
 		}

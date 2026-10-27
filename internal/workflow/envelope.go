@@ -26,13 +26,84 @@ type StateEnvelope struct {
 	// for non-export phases. Atoms filter on this via exportStatus:
 	// frontmatter; service-scoped axes paired with this gate fire on the
 	// single targetService snapshot the export envelope carries.
-	ExportStatus topology.ExportStatus    `json:"exportStatus,omitempty"`
-	SelfService  *SelfService             `json:"selfService,omitempty"`
-	Project      ProjectSummary           `json:"project"`
-	Services     []ServiceSnapshot        `json:"services"`
-	WorkSession  *WorkSessionSummary      `json:"workSession,omitempty"`
-	Bootstrap    *BootstrapSessionSummary `json:"bootstrap,omitempty"`
-	Generated    time.Time                `json:"generated"`
+	ExportStatus topology.ExportStatus `json:"exportStatus,omitempty"`
+	SelfService  *SelfService          `json:"selfService,omitempty"`
+	Project      ProjectSummary        `json:"project"`
+	Services     []ServiceSnapshot     `json:"services"`
+	// Leases are the pool containers this project's zcp holds a lease on,
+	// at the envelope's top level (a lease is per thread, not per service).
+	// A pointer keeps "read" apart from "not read": nil — no reader, or a
+	// project that could not hold a lease — drops the key; a pointer to an
+	// empty slice is `"leases":[]` (read, none held). Additive to Mate's
+	// contract (docs/spec-mate.md §2.8a.3). DP-3 (docs/spec-workflows.md §8):
+	// a lease SECRET is never in the envelope — a snapshot carries the alias,
+	// never the lease string.
+	Leases      *[]LeaseSnapshot         `json:"leases,omitempty"`
+	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
+	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
+	Generated   time.Time                `json:"generated"`
+
+	// HQChanges are a Mate's changes in HQ, per repository, as status names
+	// them (RenderStatus's Changes section): zcp's own ledger and lease
+	// records with each change's standing as the Mate's state names it now,
+	// attached by status, off the envelope wire.
+	HQChanges []HQRepoChanges `json:"-"`
+	// HQChangesAsLastRead is HQChanges being the ledger's standing as last
+	// told, HQ not answering status's read of the Mate's state.
+	HQChangesAsLastRead bool `json:"-"`
+}
+
+// LeaseSnapshot is one pool-container lease as the envelope sees it: what the
+// agent needs to address the container (alias, pool, branch, container
+// hostname) and its reconciled state. It never carries the lease string.
+type LeaseSnapshot struct {
+	Alias             string `json:"alias"`
+	Pool              string `json:"pool"`
+	Branch            string `json:"branch"`
+	ContainerHostname string `json:"containerHostname"`
+	// State is the reconciled state the lease reader reports (held, lost,
+	// unknown-holder, … — rendered verbatim, never enumerated here).
+	State string `json:"state"`
+	// Unverified marks a state read from zcp's own record because the pool's
+	// orchestrator did not answer: last known, not confirmed.
+	Unverified bool `json:"unverified"`
+	// AcquiredAt is when zcp acquired the lease (RFC 3339, UTC), "" when it
+	// holds no record of it (an unknown holder): the key a client rebinds by
+	// when the bound lease of a branch ends and another stays held.
+	AcquiredAt string `json:"acquiredAt,omitempty"`
+	// Repo is the repository the lease's group is keyed by beside Branch
+	// (docs/spec-workflows.md §8 DP-17) — canonical and credential-free
+	// (topology.RepoIdentity) — so a client binds and rebinds a conversation
+	// by repository and branch, never by branch alone (docs/spec-mate.md §6.3);
+	// absent for a lease zcp holds no record of, or an older record naming none.
+	Repo string `json:"repo,omitempty"`
+	// DevServers is what the lease's supervisor reported, only on a call that
+	// read it (zerops_dev_server on the alias) — keyed by alias the way a dev
+	// service's devServers[] is keyed by its hostname (WithParts).
+	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+	// Activity and Unsaved are what a zerops_lease call read of the lease's
+	// checkout (docs/spec-workflows.md §8 DP-21), only on that call
+	// (WithLeaseActivity) — absent means not read in this call, never "no
+	// activity" or "nothing unsaved". ComputeEnvelope drops any a lease
+	// reader sets.
+	Activity *topology.LeaseActivity `json:"activity,omitempty"`
+	Unsaved  *topology.LeaseUnsaved  `json:"unsaved,omitempty"`
+	// NotAnswering is why the last zcp call that ran a command in the lease's
+	// container found it not answering — its process limit, or ssh not
+	// reaching it — as zcp's lease record keeps it until a later call reaches
+	// the container again; absent when that call reached it, or none ran.
+	// ComputeEnvelope takes it from the record on every envelope, never from
+	// an ssh read of its own (docs/spec-mate.md §2.8a.3).
+	NotAnswering string `json:"notAnswering,omitempty"`
+}
+
+// LeaseList is the leases the envelope carries, nil when none were read or
+// none are held.
+func (e StateEnvelope) LeaseList() []LeaseSnapshot {
+	if e.Leases == nil {
+		return nil
+	}
+	return *e.Leases
 }
 
 // IdleScenario discriminates the sub-cases of PhaseIdle so atoms can
@@ -49,6 +120,11 @@ const (
 	// was interrupted before writing BootstrappedAt. Resume takes priority
 	// over adopt because ZCP already owns the service slot via that session.
 	IdleIncomplete IdleScenario = "incomplete"
+	// IdleDevPool fires when no app runtime exists — nothing to bootstrap,
+	// adopt or resume — but at least one Swarm pool does: a part's dev
+	// environment, worked on in a container leased per branch, never through
+	// bootstrap or adopt (docs/spec-workflows.md §8 DP-29).
+	IdleDevPool IdleScenario = "dev-pool"
 )
 
 // DeployState marks a bootstrapped service's deploy progression. The
@@ -78,6 +154,11 @@ const (
 	// returns an empty Plan so callers know there's nothing to suggest
 	// outside the handler's response (same pattern as ExportActive).
 	PhaseLaunchProductionActive Phase = "launch-production-active"
+	// PhasePoolMigrateActive fires when zerops_workflow workflow="pool-migrate"
+	// walks a part's dev service onto a dev pool. Like launch-production, the
+	// handler emits its own atom guidance per step and BuildPlan returns an
+	// empty Plan (docs/spec-workflows.md §13).
+	PhasePoolMigrateActive Phase = "pool-migrate-active"
 )
 
 // SelfService names the ZCP host service when running in container environment.
@@ -138,6 +219,14 @@ type ServiceSnapshot struct {
 	StageHostname string              `json:"stageHostname,omitempty"`
 	Stages        []topology.StageRef `json:"-"`
 
+	// DevIsPool marks the snapshot of a pool that is a pair's dev half
+	// (ServiceMeta.DevIsPool): it keys the pair, carries its stages and HQ
+	// record, and has no Mode — no dev-runtime guidance applies to a pool.
+	// Pure readers ask it before treating the pair's dev half as a container
+	// (BuildPlan, Resolve). Off the wire: a client tells the pool by its
+	// runtimeClass and the pair by its stages.
+	DevIsPool bool `json:"-"`
+
 	// HQRepo and HQOrigin name, on a wired pair's dev half, its repository in
 	// HQ and how its code is kept (HQRepoRef.Origin, nil until read). Off the
 	// envelope wire: status renders them.
@@ -151,10 +240,6 @@ type ServiceSnapshot struct {
 	HQCheckoutOrigin string `json:"-"`
 	HQOriginPending  string `json:"-"`
 	HQOriginBlocked  string `json:"-"`
-	// HQChange and HQBranch name, there, the change the pair records and the
-	// branch it is bound to (HQRepoRef.Change, .Branch); off the wire too.
-	HQChange int    `json:"-"`
-	HQBranch string `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;
@@ -229,7 +314,8 @@ func (s ServiceSnapshot) PairStageHostnames() []string {
 
 // WithParts is the envelope as zcp sends it from field-order step (3) of
 // docs/spec-mate.md §2.8a.3: every dev half carries stages[] in place of
-// stageHostname/stageSetupName, and devServers[] where this call read its
+// stageHostname/stageSetupName — a pool that is a pair's dev half too, the
+// pool keying the pair — and devServers[] where this call read its
 // supervisor (keyed by dev hostname). The receiver is left as it was; a
 // second application keeps the stages the first one projected.
 func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState) StateEnvelope {
@@ -251,6 +337,14 @@ func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState
 		s.DevServers = devServers[s.Hostname]
 	}
 	e.Services = services
+	if e.Leases != nil {
+		leases := make([]LeaseSnapshot, len(*e.Leases))
+		copy(leases, *e.Leases)
+		for i := range leases {
+			leases[i].DevServers = devServers[leases[i].Alias]
+		}
+		e.Leases = &leases
+	}
 	return e
 }
 
@@ -282,12 +376,13 @@ type RepoStatus struct {
 }
 
 // ApplyRepoStatus attaches a live repo status to each service snapshot
-// that has one in statuses (keyed by hostname), skipping managed/unknown
-// services even if the caller mistakenly supplied one — a repo block
-// only ever makes sense for a service that runs application code.
+// that has one in statuses (keyed by hostname), skipping every service that
+// is not an app runtime (managed, unknown, pool, Box) even if the caller
+// mistakenly supplied one — a repo block only ever makes sense for a service
+// that runs application code in one addressable container.
 func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus) {
 	for i := range services {
-		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		st, ok := statuses[services[i].Hostname]
@@ -300,13 +395,13 @@ func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus)
 }
 
 // ApplyRollbackInfo attaches per-service rollback candidate ids to each
-// service snapshot that has one in infos (keyed by hostname), skipping
-// managed/unknown services even if the caller mistakenly supplied one —
-// rollback only ever makes sense for a runtime service with app-version
-// history.
+// service snapshot that has one in infos (keyed by hostname), skipping every
+// service that is not an app runtime (managed, unknown, pool, Box) even if
+// the caller mistakenly supplied one — rollback only ever makes sense for a
+// runtime service with app-version history.
 func ApplyRollbackInfo(services []ServiceSnapshot, infos map[string]RollbackInfo) {
 	for i := range services {
-		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		info, ok := infos[services[i].Hostname]

@@ -3,6 +3,7 @@ package workflow
 import (
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -225,6 +226,70 @@ func TestBootstrapCompleteAdoptPlan_SameBareTypeDifferentOS_RefusesWithTemplates
 	}
 }
 
+// TestBootstrapCompleteAdoptPlan_SeveralRuntimesSharingABase_RefusesWithTemplates:
+// zcp never guesses a dev/stage pairing, however many runtimes the scope
+// names. Any two scoped runtimes sharing a runtime base may be a dev and its
+// stage, so a bare scope naming two dev services and their stages, or a
+// dev/stage pair beside a service of another base, is refused with templates
+// covering every scoped runtime — the pairs template pairs a stage with the
+// runtime named like it — instead of adopting each stage as a dev service of
+// its own, a meta outside its pair (docs/spec-workflows.md §3.2, §8 E8).
+// Nothing is committed.
+func TestBootstrapCompleteAdoptPlan_SeveralRuntimesSharingABase_RefusesWithTemplates(t *testing.T) {
+	t.Parallel()
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	tests := []struct {
+		name     string
+		existing []platform.ServiceStack
+		scope    []string
+		want     []string
+	}{
+		{
+			name:     "two dev services and their stages",
+			existing: []platform.ServiceStack{py("webdev"), py("apidev"), py("webstage"), py("apistage"), userSvc("db", "postgresql:single@18")},
+			scope:    []string{"webdev", "apidev", "webstage", "apistage"},
+			want: []string{
+				`"runtime":{"devHostname":"webdev","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"standard","stageHostname":"webstage"}`,
+				`"runtime":{"devHostname":"apidev","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"standard","stageHostname":"apistage"}`,
+				`"runtime":{"devHostname":"webstage","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"dev"}`,
+				`"runtime":{"devHostname":"apistage","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"dev"}`,
+			},
+		},
+		{
+			name:     "a dev/stage pair beside a service of another base",
+			existing: []platform.ServiceStack{userSvc("appdev", "nodejs@22"), userSvc("appstage", "nodejs@22"), userSvc("api", "go@1")},
+			scope:    []string{"appdev", "appstage", "api"},
+			want: []string{
+				`"runtime":{"devHostname":"appdev","type":"nodejs@22","isExisting":true,"bootstrapMode":"standard","stageHostname":"appstage"}`,
+				`"runtime":{"devHostname":"appstage","type":"nodejs@22","isExisting":true,"bootstrapMode":"dev"}`,
+				`"runtime":{"devHostname":"api","type":"go@1","isExisting":true,"bootstrapMode":"dev"}`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			eng := startAdopt(t, t.TempDir())
+			_, err := eng.BootstrapCompleteAdoptPlan(tt.existing, tt.scope, runtime.Info{}, nil, nil)
+			if !errors.Is(err, ErrAdoptPairingChoice) {
+				t.Fatalf("want ErrAdoptPairingChoice, got %v", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("templates miss %s; got:\n%s", want, err)
+				}
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			if state.Bootstrap.Plan != nil || state.Bootstrap.CurrentStepName() != StepDiscover {
+				t.Errorf("nothing may be committed: plan %+v, step %q", state.Bootstrap.Plan, state.Bootstrap.CurrentStepName())
+			}
+		})
+	}
+}
+
 // TestBootstrapCompleteAdoptPlan_DifferentVersionSameRuntime_CommitsIndependent — two
 // adoptable runtimes of the same family but DIFFERENT versions (nodejs@22 vs nodejs@20)
 // are NOT a dev/stage pair (a pair shares the version). CanonicalBareForm keeps the
@@ -392,10 +457,11 @@ func TestBootstrapCompleteAdoptPlan_ExcludesConcurrentSessionService(t *testing.
 }
 
 // TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
-// (docs/spec-mate.md §2.8a, Decision: B is recognised from topology on every
-// route): two dev services whose dev setups mount one local-storage volume
-// are adopted as one pair holding the code volume, the volume is no
-// dependency, and one dev service alone stays an ordinary adopt.
+// (docs/spec-mate.md §2.8a.4a): two dev services whose dev setups mount one
+// local-storage volume already holding their repository — a variant-B
+// project whose record was lost — are adopted as one pair holding the code
+// volume again, so pool migration can move it; the volume is no dependency,
+// and one dev service alone stays an ordinary adopt.
 func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair(t *testing.T) {
 	t.Parallel()
 	existing := []platform.ServiceStack{
@@ -405,7 +471,7 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 	}
 	mount := func(setup, base string) AdoptVolumeSetup {
 		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: "vol", MountPath: "/var/www/ws", WorksIn: true,
-			Content: map[string]topology.VolumeContent{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}}
+			Content: map[string]topology.VolumeContent{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeCheckout}}
 	}
 	eng := startAdopt(t, t.TempDir())
 	if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"webdev", "apidev"}, runtime.Info{}, nil,
@@ -440,13 +506,16 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 	}
 }
 
-// TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent:
-// zcp never writes code into a volume it did not prove is a code volume.
-// Adopt takes two dev services sharing a local-storage volume for a variant-B
-// pair only when every dev setup works in the mount and every one of them
-// finds nothing there yet, an empty folder or this repository. A Laravel app
-// and worker sharing their storage volume adopt as two services, as before.
-func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent(t *testing.T) {
+// TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository:
+// zcp sets up no new code volume and never writes code into a volume it did
+// not prove is one. Adopt takes two dev services sharing a local-storage
+// volume for a variant-B pair only when every dev setup works in the mount
+// and every one of them finds this repository there already — a variant-B
+// project recorded again. A volume holding nothing yet or an empty folder
+// would become a code volume only by adopting it, so those dev services adopt
+// as separate services, as a Laravel app and worker sharing their storage
+// volume always have.
+func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository(t *testing.T) {
 	t.Parallel()
 	type seen = map[string]topology.VolumeContent
 	f2 := []platform.ServiceStack{userSvc("webdev", "bun@1.3"), userSvc("apidev", "go@1"), userSvc("vol", "local-storage:single@1")}
@@ -472,9 +541,11 @@ func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSet
 		wantPair bool
 	}{
 		{name: "F2 before its first deploy mounts the volume", existing: f2, scope: []string{"webdev", "apidev"},
-			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}), wantPair: true},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent})},
 		{name: "F2 with an empty volume", existing: f2, scope: []string{"webdev", "apidev"},
-			mounts: f2Mounts(true, seen{"webdev": topology.VolumeEmpty, "apidev": topology.VolumeEmpty}), wantPair: true},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeEmpty, "apidev": topology.VolumeEmpty})},
+		{name: "F2 where one dev service finds the repository and the other an empty volume", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeEmpty})},
 		{name: "F2 whose volume already holds the repository", existing: f2, scope: []string{"webdev", "apidev"},
 			mounts: f2Mounts(true, seen{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeCheckout}), wantPair: true},
 		{name: "Laravel app and worker sharing their storage volume", existing: laravel, scope: []string{"app", "worker"},
@@ -516,4 +587,214 @@ func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSet
 			}
 		})
 	}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair
+// (docs/spec-mate.md §2.8a.4a): a variant-B project recorded again keeps its
+// stages. Its dev services are found by what they run and hold, never by a
+// base only they would share: a setup mounting the volume belongs to the dev
+// service named after it, else to the one runtime of its base finding the
+// repository's checkout at the mount — so stages of the same base never hide
+// the pair. Every scoped stage named like one of the pair's dev services, or
+// whose setup the repository declares, is a stage of the pair with the setup
+// named after it when the repository declares one; the pair is then
+// standard, and the project's other runtimes stay out of it.
+func TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair(t *testing.T) {
+	t.Parallel()
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	checkout := func(hosts ...string) map[string]topology.VolumeContent {
+		c := map[string]topology.VolumeContent{}
+		for _, h := range hosts {
+			c[h] = topology.VolumeCheckout
+		}
+		return c
+	}
+	mount := func(setup, base, volume string, files []string, content map[string]topology.VolumeContent) AdoptVolumeSetup {
+		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: volume, MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files}
+	}
+	s2Files := []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}
+	tests := []struct {
+		name           string
+		existing       []platform.ServiceStack
+		scope          []string
+		mounts         []AdoptVolumeSetup
+		wantDev        string
+		wantSetup      string
+		wantVolume     string
+		wantDevService topology.DevServiceRef
+		wantStages     []topology.StageRef
+	}{
+		{
+			name: "dev services and stages of one base, beside another repository's pair",
+			existing: []platform.ServiceStack{
+				userSvc("appstage", "alpine/nodejs@24"), userSvc("appdev", "alpine/nodejs@24"),
+				userSvc("cache", "valkey:single@7.2"), userSvc("db", "postgresql:single@18"),
+				py("lvmapidev"), py("lvmapistage"), userSvc("lvmvol", "local-storage:single@1"), py("lvmwebdev"), py("lvmwebstage"),
+			},
+			scope: []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"},
+			mounts: []AdoptVolumeSetup{
+				mount("lvmwebdev", "python@3.12", "lvmvol", s2Files, checkout("lvmwebdev", "lvmapidev")),
+				mount("lvmapidev", "python@3.12", "lvmvol", s2Files, checkout("lvmwebdev", "lvmapidev")),
+			},
+			wantDev: "lvmwebdev", wantSetup: "lvmwebdev", wantVolume: "lvmvol",
+			wantDevService: topology.DevServiceRef{Hostname: "lvmapidev", SetupName: "lvmapidev"},
+			wantStages:     []topology.StageRef{{Hostname: "lvmwebstage", SetupName: "lvmwebstage"}, {Hostname: "lvmapistage", SetupName: "lvmapistage"}},
+		},
+		{
+			name:     "a stage of the dev half's base whose setup the repository does not name",
+			existing: []platform.ServiceStack{userSvc("webdev", "bun@1.3"), userSvc("apidev", "go@1"), userSvc("webstage", "bun@1.3"), userSvc("vol", "local-storage:single@1")},
+			scope:    []string{"webdev", "apidev", "webstage"},
+			mounts: []AdoptVolumeSetup{
+				mount("dev", "bun@1.3", "vol", []string{"dev", "dev-api", "prod"}, checkout("webdev")),
+				mount("dev-api", "go@1", "vol", []string{"dev", "dev-api", "prod"}, checkout("apidev")),
+			},
+			wantDev: "webdev", wantSetup: "dev", wantVolume: "vol",
+			wantDevService: topology.DevServiceRef{Hostname: "apidev", SetupName: "dev-api"},
+			wantStages:     []topology.StageRef{{Hostname: "webstage"}},
+		},
+		{
+			name:     "a stage named like no dev service whose setup the repository declares",
+			existing: []platform.ServiceStack{py("webdev"), py("apidev"), py("adminstage"), userSvc("vol", "local-storage:single@1")},
+			scope:    []string{"webdev", "apidev", "adminstage"},
+			mounts: []AdoptVolumeSetup{
+				mount("webdev", "python@3.12", "vol", []string{"webdev", "apidev", "adminstage"}, checkout("webdev", "apidev")),
+				mount("apidev", "python@3.12", "vol", []string{"webdev", "apidev", "adminstage"}, checkout("webdev", "apidev")),
+			},
+			wantDev: "webdev", wantSetup: "webdev", wantVolume: "vol",
+			wantDevService: topology.DevServiceRef{Hostname: "apidev", SetupName: "apidev"},
+			wantStages:     []topology.StageRef{{Hostname: "adminstage", SetupName: "adminstage"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			eng := startAdopt(t, t.TempDir())
+			if _, err := eng.BootstrapCompleteAdoptPlan(tt.existing, tt.scope, runtime.Info{}, nil, tt.mounts); err != nil {
+				t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			targets := state.Bootstrap.Plan.Targets
+			if len(targets) != 1 {
+				t.Fatalf("want one variant-B pair, got %+v", targets)
+			}
+			rt := targets[0].Runtime
+			cv := rt.CodeVolume
+			if rt.DevHostname != tt.wantDev || rt.PrimarySetupName != tt.wantSetup || rt.EffectiveMode() != topology.PlanModeStandard {
+				t.Errorf("pair = %s setup %q mode %s, want %s setup %q standard", rt.DevHostname, rt.PrimarySetupName, rt.EffectiveMode(), tt.wantDev, tt.wantSetup)
+			}
+			if cv == nil || cv.Hostname != tt.wantVolume || cv.MountPath != "/var/www/ws" || len(cv.DevServices) != 1 || cv.DevServices[0] != tt.wantDevService {
+				t.Errorf("codeVolume = %+v, want %s at /var/www/ws with %+v", cv, tt.wantVolume, tt.wantDevService)
+			}
+			if got := rt.StageRefs(); !slices.Equal(got, tt.wantStages) {
+				t.Errorf("stages = %+v, want %+v", got, tt.wantStages)
+			}
+			for _, d := range targets[0].Dependencies {
+				if d.Hostname == tt.wantVolume {
+					t.Errorf("the code volume is no dependency: %+v", targets[0].Dependencies)
+				}
+			}
+		})
+	}
+}
+
+// s2Mounts are the live S2 variant-B repository's dev setups: lvmwebdev and
+// lvmapidev mounting lvmvol at /var/www/ws, both dev services holding the
+// checkout there, and the file naming a setup after each stage.
+func s2Mounts() []AdoptVolumeSetup {
+	files := []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}
+	content := map[string]topology.VolumeContent{"lvmwebdev": topology.VolumeCheckout, "lvmapidev": topology.VolumeCheckout}
+	return []AdoptVolumeSetup{
+		{Setup: "lvmwebdev", RunBase: "python@3.12", Volume: "lvmvol", MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files},
+		{Setup: "lvmapidev", RunBase: "python@3.12", Volume: "lvmvol", MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files},
+	}
+}
+
+// s2Services are the live S2 project's lvm services: the variant-B pair, its
+// stages and its volume.
+func s2Services() []platform.ServiceStack {
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	return []platform.ServiceStack{py("lvmapidev"), py("lvmapistage"), userSvc("lvmvol", "local-storage:single@1"), py("lvmwebdev"), py("lvmwebstage")}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded:
+// the adopt answer names a variant-B pair with what it holds besides its dev
+// half — the code volume, its further dev services and its stages — so the
+// agent sees the whole pair it recorded, not one dev service.
+func TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded(t *testing.T) {
+	t.Parallel()
+	eng := startAdopt(t, t.TempDir())
+	resp, err := eng.BootstrapCompleteAdoptPlan(s2Services(), []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}, runtime.Info{}, nil, s2Mounts())
+	if err != nil {
+		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+	}
+	if want := "adopted lvmwebdev (the code volume lvmvol shared with lvmapidev; stages lvmwebstage, lvmapistage)"; !strings.Contains(resp.Message, want) {
+		t.Errorf("answer misses %q; got:\n%s", want, resp.Message)
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly:
+// a variant-B pair is recorded only from a scope — no plan carries a code
+// volume — so when the runtimes scoped beside it raise the pairing question,
+// the refusal names the pair and the scope that adopts it alone, before the
+// plan the agent picks for the rest.
+func TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly(t *testing.T) {
+	t.Parallel()
+	existing := append(s2Services(), userSvc("appdev", "alpine/nodejs@24"), userSvc("appstage", "alpine/nodejs@24"))
+	eng := startAdopt(t, t.TempDir())
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage", "appdev", "appstage"}, runtime.Info{}, nil, s2Mounts())
+	if !errors.Is(err, ErrAdoptPairingChoice) {
+		t.Fatalf("want ErrAdoptPairingChoice for appdev and appstage, got %v", err)
+	}
+	for _, want := range []string{`"appdev"`, `"appstage"`, "the code volume lvmvol", `scope=["lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"]`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal misses %s; got:\n%s", want, err)
+		}
+	}
+}
+
+// TestInferServicePairing_TwoPools_NoPairQuestion — two Swarm pools of one type
+// are not a dev/stage pair (spec-workflows.md §8 PS-2): the adopt completion
+// path never asks the pairing question for them, and an app next to them
+// still commits as its own single target.
+func TestInferServicePairing_TwoPools_NoPairQuestion(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvc("pool1", "swarm@1"),
+		userSvc("pool2", "swarm@1"),
+		userSvc("app", "nodejs@22"),
+	}
+
+	t.Run("scoped to both pools", func(t *testing.T) {
+		t.Parallel()
+		eng := startAdopt(t, t.TempDir())
+		_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"pool1", "pool2"}, runtime.Info{}, nil, nil)
+		if err == nil {
+			t.Fatal("want a refusal for pool-only scope, got nil")
+		}
+		if errors.Is(err, ErrAdoptPairingChoice) {
+			t.Fatalf("two pools must not raise the dev/stage pair question; got %v", err)
+		}
+	})
+
+	t.Run("app beside two pools", func(t *testing.T) {
+		t.Parallel()
+		eng := startAdopt(t, t.TempDir())
+		if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"app"}, runtime.Info{}, nil, nil); err != nil {
+			t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+		}
+		state, err := eng.GetState()
+		if err != nil {
+			t.Fatalf("GetState: %v", err)
+		}
+		plan := state.Bootstrap.Plan
+		if plan == nil || len(plan.Targets) != 1 || plan.Targets[0].Runtime.DevHostname != "app" {
+			t.Fatalf("want a single app target, got %+v", plan)
+		}
+		if len(plan.Targets[0].Dependencies) != 0 {
+			t.Errorf("a pool is no dependency of the app; got %+v", plan.Targets[0].Dependencies)
+		}
+	})
 }

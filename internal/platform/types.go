@@ -54,6 +54,10 @@ type Project struct {
 	// LocationID is the region code of the primary instance location
 	// (e.g. "eu-central") — read-back counterpart of project.location.
 	LocationID string `json:"locationId,omitempty"`
+	// LocationName is the name the platform gives that location, naming
+	// the region in parentheses: "EU Central (prg1)", "US East (ny1)"
+	// (live-verified 2026-10-24).
+	LocationName string `json:"locationName,omitempty"`
 	// Tags is the project's tag list.
 	Tags []string `json:"tags,omitempty"`
 }
@@ -292,7 +296,25 @@ const (
 	ServiceStatusRunning       = "RUNNING"
 	ServiceStatusFailed        = "FAILED"
 	ServiceStatusStopped       = "STOPPED"
+
+	// The deletion states, in both spellings a service read returns.
+	ServiceStatusDeleting        = "DELETING"
+	ServiceStatusServiceDeleting = "SERVICE_DELETING"
+	ServiceStatusDeleted         = "DELETED"
+	ServiceStatusServiceDeleted  = "SERVICE_DELETED"
 )
+
+// ServiceDeleting reports whether a service status says the service is being
+// deleted.
+func ServiceDeleting(status string) bool {
+	return status == ServiceStatusDeleting || status == ServiceStatusServiceDeleting
+}
+
+// ServiceDeleted reports whether a service status says the service no longer
+// exists.
+func ServiceDeleted(status string) bool {
+	return status == ServiceStatusDeleted || status == ServiceStatusServiceDeleted
+}
 
 // KnownStatusStrings is the single owner of "is this a real platform status
 // string". It unions ZCP's curated service/build/process constants — which

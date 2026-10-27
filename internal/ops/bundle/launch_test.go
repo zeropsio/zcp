@@ -501,3 +501,62 @@ func TestBuildLaunch_RejectsAmbiguousSetupMismatch(t *testing.T) {
 		t.Fatal("expected error on ambiguous setup mismatch, got nil")
 	}
 }
+
+// TestBuildLaunch_PoolAndSandbox_NamedNotCarried pins PS-3 at the composer: a
+// pool or Box handed in with the project's other services is never emitted
+// and is named in a warning; the managed dep beside it is still promoted.
+func TestBuildLaunch_PoolAndSandbox_NamedNotCarried(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.ManagedServices = append(inputs.ManagedServices,
+		ManagedServiceEntry{Hostname: "fleet", Type: "swarm@1"},
+		ManagedServiceEntry{Hostname: "lab", Type: "ubuntu/zbox@1"},
+	)
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	for _, host := range []string{"fleet", "lab"} {
+		if strings.Contains(b.ImportYAML, "hostname: "+host) {
+			t.Errorf("%s must not be emitted:\n%s", host, b.ImportYAML)
+		}
+	}
+	want := map[string]string{
+		"fleet": `Swarm pool "fleet" (swarm@1) is not carried into the production bundle — add it to the production import yourself`,
+		"lab":   `Zerops Box "lab" (ubuntu/zbox@1) is not carried into the production bundle — add it to the production import yourself`,
+	}
+	for host, w := range want {
+		found := false
+		for _, got := range b.Warnings {
+			if got == w {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing warning for %s: want %q in %v", host, w, b.Warnings)
+		}
+	}
+	if !strings.Contains(b.ImportYAML, "hostname: db") {
+		t.Errorf("the managed dep must still be promoted:\n%s", b.ImportYAML)
+	}
+}
+
+// TestBuildLaunch_PoolAsRuntime_Refused pins that a pool or Box can never be
+// the launch runtime, whatever the caller composed.
+func TestBuildLaunch_PoolAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{"swarm@1", "swarm-vm@1", "ubuntu/zbox@1"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Parallel()
+			inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+			inputs.Runtimes[0].ServiceType = typ
+			_, err := BuildLaunch(inputs, nil)
+			if err == nil {
+				t.Fatalf("a %s runtime must be refused", typ)
+			}
+			if !strings.Contains(err.Error(), "not an app runtime") || !strings.Contains(err.Error(), typ) {
+				t.Errorf("refusal must name the type and say it is not an app runtime, got: %v", err)
+			}
+		})
+	}
+}

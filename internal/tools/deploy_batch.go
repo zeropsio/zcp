@@ -48,7 +48,9 @@ func RegisterDeployBatch(
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
 	devsup DevsupSource,
+	opts ...DeployOption,
 ) {
+	vouch := deployConfigOf(opts).leaseVouch(client, projectID, stateDir)
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
 		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy. " +
@@ -73,8 +75,10 @@ func RegisterDeployBatch(
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
+			vouch: vouch,
 		}
-		if blocked := d.gate(input.Targets); blocked != nil {
+		services := deployListing(ctx, client, projectID)
+		if blocked := d.gate(services, input.Targets); blocked != nil {
 			return blocked, nil, nil
 		}
 
@@ -91,7 +95,7 @@ func RegisterDeployBatch(
 			input.Targets[i] = resolved
 		}
 
-		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets)
+		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, services)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
 			WorkSessionState:  sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
@@ -115,20 +119,27 @@ type batchDeployer struct {
 	// devsup finds the zcp-devsup a deploy putting a dev setup under the
 	// supervisor installs.
 	devsup DevsupSource
+	// vouch asks a lease source's orchestrator whose its container is
+	// before anything reads it (DP-2).
+	vouch leaseVouch
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
-// target; the first refusal is the answer for the whole batch.
-func (d batchDeployer) gate(targets []ops.DeployBatchTarget) *mcp.CallToolResult {
+// target; the first refusal is the answer for the whole batch. services is
+// the call's one listing (deployListing), which tells a pool target.
+func (d batchDeployer) gate(services []platform.ServiceStack, targets []ops.DeployBatchTarget) *mcp.CallToolResult {
 	// Gate: each target (and its source, when set) must be adopted by
 	// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
-	// adoption — see requireAdoption for the exemption rationale.
+	// adoption — see requireAdoption for the exemption rationale. A pool
+	// target is never adopted, so it is not asked to be (PS-5, DP-7); a
+	// lease source is no service to adopt (DP-1).
 	// Batch deploy is container-only (registered when sshDeployer != nil),
 	// so requireAdoption is called with InContainer=true to surface the
 	// bootstrap recovery hint.
 	containerRT := runtime.Info{InContainer: true}
 	for _, t := range targets {
-		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, t.TargetService, t.SourceService); blocked != nil {
+		gated := append(withoutPoolHosts(services, t.TargetService), t.SourceService)
+		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, gated...); blocked != nil {
 			return blocked
 		}
 	}
@@ -140,10 +151,12 @@ func (d batchDeployer) gate(targets []ops.DeployBatchTarget) *mcp.CallToolResult
 }
 
 // batchPreflightRefusal is why one target cannot deploy: the setup cannot be
-// resolved without the agent, pre-flight could not run, or it failed.
+// resolved without the agent, its source is a parked lease, pre-flight could
+// not run, or it failed.
 type batchPreflightRefusal struct {
 	target     string
 	setupInput *workflow.ErrRequiresSetupInput
+	refusal    error
 	err        error
 	checks     *workflow.StepCheckResult
 }
@@ -151,6 +164,8 @@ type batchPreflightRefusal struct {
 // result is the refusal as zerops_deploy_batch answers it.
 func (r *batchPreflightRefusal) result() *mcp.CallToolResult {
 	switch {
+	case r.refusal != nil:
+		return convertError(r.refusal, WithRecoveryStatus())
 	case r.setupInput != nil:
 		return jsonResult(buildRequiresSetupInputResponse(r.target, r.setupInput))
 	case r.err != nil:
@@ -181,6 +196,15 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	if sourceForPreflight == "" {
 		sourceForPreflight = t.TargetService
 	}
+	// A lease source is asked about first (DP-2): one that is no longer the
+	// lease's, or that the orchestrator does not answer about, is never read.
+	// A parked lease answers nothing and its mount is gone (DP-28).
+	switch lease, ok, err := checkedLeaseOf(ctx, d.stateDir, d.vouch, sourceForPreflight, "deployed from"); {
+	case err != nil:
+		return t, &batchPreflightRefusal{target: t.TargetService, refusal: err}
+	case ok && lease.Parked:
+		return t, &batchPreflightRefusal{target: t.TargetService, refusal: ops.LeaseParkedError(lease, "a deploy from it")}
+	}
 	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)
 	resolved, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
 	if pfErr != nil {
@@ -202,15 +226,19 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 
 // deploy runs the targets as one batch and applies each entry's post-deploy
 // steps: its deploy attempt, its supervisor's dev server, its public
-// access.
-func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget) *ops.DeployBatchResult {
+// access. An entry whose target is a pool takes none of the last two and says
+// it reaches only containers the pool creates later (pollTriggeredDeploy,
+// docs/spec-workflows.md §8 DP-7); one whose source is a lease alias pushes
+// from that container (ops.DeployBatchSSH, DP-1). services is the call's one
+// listing the entries resolve from; nil: each entry lists them.
+func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, services []platform.ServiceStack) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
 	configFiles := make(map[string]string, len(targets))
 	for _, t := range targets {
 		configFiles[t.TargetService] = t.ConfigFile
 	}
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
-		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
+		pollTriggeredDeploy(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
 	}
 
 	authVal := auth.Info{}
@@ -218,10 +246,15 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		authVal = *d.authInfo
 	}
 	// Each self-deployed dev service goes under the supervisor as a single
-	// zerops_deploy puts it there (superviseDevSetup).
+	// zerops_deploy puts it there (superviseDevSetup). A lease is a pool
+	// container, not a dev service: the supervisor in it is not migrated by
+	// this deploy (docs/spec-workflows.md §8 DP).
 	moves := map[string]devSetupMove{}
 	warnings := map[string]string{}
 	for _, t := range targets {
+		if _, fromLease := leaseOf(d.stateDir, t.SourceService); fromLease {
+			continue
+		}
 		move, err := superviseDevSetup(ctx, d.client, d.projectID, d.sshDeployer, d.stateDir, d.devsup, t.SourceService, t.TargetService, t.Setup, t.WorkingDir)
 		moves[t.TargetService] = move
 		if err != nil {
@@ -230,7 +263,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	}
 
 	result := ops.DeployBatchSSH(
-		ctx, d.client, d.projectID, d.sshDeployer, authVal,
+		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir, services,
 		targets, d.logFetcher, onProgress, pollFn,
 	)
 
@@ -255,6 +288,10 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			} else {
 				attempt.FailureClass = topology.FailureClassNetwork
 			}
+		case entry.Result != nil && entry.Result.Status == statusDeployed && entry.Result.ReachesNewContainersOnly:
+			// The pool is no app runtime (PS-1/PS-2): no public access is
+			// decided on it and no dev server asked for (DP-7).
+			attempt.SucceededAt = entry.EndedAt
 		case entry.Result != nil && entry.Result.Status == statusDeployed:
 			attempt.SucceededAt = entry.EndedAt
 			// Whether something listens is the dev-server supervisor's

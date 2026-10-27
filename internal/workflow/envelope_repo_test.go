@@ -120,3 +120,18 @@ func TestApplyRepoStatus_MixedServices_OnlyDevGetsRepo(t *testing.T) {
 		t.Errorf("appstage.Repo = %+v, want {Present:false}", services[2].Repo)
 	}
 }
+
+// TestApplyRepoStatus_SkipsPoolAndSandbox pins that a pool or a Box never
+// gets a repo block even if the caller supplies one: neither holds the app's
+// repo (docs/spec-workflows.md §8 PS-3).
+func TestApplyRepoStatus_SkipsPoolAndSandbox(t *testing.T) {
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class), func(t *testing.T) {
+			services := []ServiceSnapshot{{Hostname: "box", RuntimeClass: class}}
+			ApplyRepoStatus(services, map[string]RepoStatus{"box": {Present: true, Head: "abc123"}})
+			if services[0].Repo != nil {
+				t.Errorf("Repo = %+v, want nil for class %q", services[0].Repo, class)
+			}
+		})
+	}
+}

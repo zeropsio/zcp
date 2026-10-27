@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,8 @@ func TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive(t *testing.T
 		"proj-1",
 		ssh,
 		testAuthInfo(),
+		"",
+		nil,
 		[]DeployBatchTarget{
 			{SourceService: source, TargetService: "batch-f4-stage", Setup: "prod"},
 			{SourceService: source, TargetService: "batch-f4-worker", Setup: "worker"},
@@ -61,6 +64,8 @@ func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
 		"proj-1",
 		ssh,
 		testAuthInfo(),
+		"",
+		nil,
 		[]DeployBatchTarget{
 			{SourceService: sourceA, TargetService: "batch-f4-stage-a", Setup: "prod"},
 			{SourceService: sourceB, TargetService: "batch-f4-stage-b", Setup: "prod"},
@@ -73,6 +78,53 @@ func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
 	assertDeployBatchNoKickoffErrors(t, result)
 	if got := ssh.peak(); got != 2 {
 		t.Fatalf("peak concurrent ExecSSH calls across distinct sources = %d, want 2", got)
+	}
+}
+
+// TestDeployBatchSSH_LeaseSource_PushesFromAlias: a batch entry whose source
+// is a recorded lease alias deploys as DeploySSHWithLeases does from it
+// (docs/spec-workflows.md §8 DP-1): the alias is never looked up as a
+// service, every round trip runs inside the leased container, and two entries
+// from it share the alias's git lock while their builds are awaited at once.
+// The entry to the lease's own pool reaches only new containers (DP-7).
+func TestDeployBatchSSH_LeaseSource_PushesFromAlias(t *testing.T) {
+	stateDir, alias := leaseDeployState(t, 51)
+	mock := platform.NewMock().WithServices(leaseDeployServices())
+	ssh := newBatchConcurrencySSH(50 * time.Millisecond)
+	ssh.waitForBuilds = 2
+
+	result := DeployBatchSSH(
+		context.Background(),
+		mock,
+		"proj-1",
+		ssh,
+		testAuthInfo(),
+		stateDir,
+		nil,
+		[]DeployBatchTarget{
+			{SourceService: alias, TargetService: "appstage", Setup: "app"},
+			{SourceService: alias, TargetService: "webpool"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	assertDeployBatchNoKickoffErrors(t, result)
+	if hosts := ssh.hosts(); len(hosts) != 1 || hosts[0] != alias {
+		t.Errorf("ssh reached %v, want only the lease alias %q", hosts, alias)
+	}
+	if got := ssh.peakGitForSource(alias); got != 1 {
+		t.Errorf("peak concurrent git/upload ExecSSH calls for the alias = %d, want 1 (one git lock keyed on the alias)", got)
+	}
+	for _, e := range result.Entries {
+		toPool := e.Target.TargetService == "webpool"
+		if e.Result.ReachesNewContainersOnly != toPool {
+			t.Errorf("entry %s: reachesNewContainersOnly = %v, want %v", e.Target.TargetService, e.Result.ReachesNewContainersOnly, toPool)
+		}
+		if toPool && !strings.Contains(e.Result.Message, alias+" keeps the version it runs") {
+			t.Errorf("pool entry message %q does not name the lease %s", e.Result.Message, alias)
+		}
 	}
 }
 
@@ -237,6 +289,18 @@ func (s *batchConcurrencySSH) peakGitForSource(hostname string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.peakGitBySource[hostname]
+}
+
+// hosts is every host an ssh call reached, sorted.
+func (s *batchConcurrencySSH) hosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.peakBySource))
+	for h := range s.peakBySource {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *batchConcurrencySSH) peak() int {

@@ -113,16 +113,17 @@ the call and kills the process.
 === develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
-When the embedded guidance isn't enough, these are the canonical lookups:
-
-- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
-- **Runtime docs** (build tools, start commands, conventions) —
-  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
-  match the service's base stack.
-- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
-  (`includeEnvValues=true` only to troubleshoot).
-- **Deeper platform topics** (infra changes, scaling, status codes,
-  managed-service categories) — `zerops_knowledge query="<topic>"`.
+- **`zerops.yaml` schema** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands) — `zerops_knowledge
+  query="<base stack>"`.
+- **Env var keys** — `zerops_discover includeEnvs=true` (`includeEnvValues=true`
+  only to troubleshoot).
+- **Other platform topics** (scaling, status codes, managed services) —
+  `zerops_knowledge query="<topic>"`.
+- **Code the app's users send** (snippets, an agent's tool calls, plugins) runs
+  in a Zerops Box sandbox, never the app's container:
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code
+  the app's users send".
 
 ---
 

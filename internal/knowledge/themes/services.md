@@ -54,7 +54,7 @@ Without zerops.yaml wiring, the runtime service has no way to connect to managed
 
 ## Service Wiring Templates
 
-Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use a service's import.yaml `vault` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. Never write the deprecated `envSecrets` or `envVariables` there (a service-level `envVariables` is silently dropped). Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
+Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use a service's import.yaml `vault` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. Never write the deprecated `envSecrets` or `envVariables` there (a service-level `envVariables` still creates the service's values, but every one plain — a secret there is stored readable). Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
 **Type**: `postgresql:single` / `postgresql:ha` (check live stacks for versions), immutable

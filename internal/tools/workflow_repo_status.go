@@ -6,7 +6,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -16,7 +15,7 @@ import (
 // seconds of SSH latency onto every status call.
 const attachRepoStatusConcurrency = 4
 
-// attachRepoStatus populates services[i].Repo for every non-managed
+// attachRepoStatus populates services[i].Repo for every app-runtime
 // service (docs/spec-workflows.md §8 GLC-7, G1/G2) — the tools-layer half
 // of workflow.ApplyRepoStatus, which stays SSH-free so workflow/ never
 // imports ops/. Present/Head are read fresh over SSH on every call. Baseline and
@@ -42,13 +41,14 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
-	// Only the fields read here are read: attachHQCheckoutOrigin writes other
-	// fields of the same snapshots beside it, so a copy of a whole snapshot
-	// would race with it.
+	// Read each snapshot by index, field by field: attachHQCheckoutOrigin
+	// writes its own fields of the same snapshots meanwhile, so copying a
+	// whole snapshot here would race with it.
 	for i := range services {
-		if class := services[i].RuntimeClass; class == topology.RuntimeManaged || class == topology.RuntimeUnknown {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
+		hostname := services[i].Hostname
 		wg.Add(1)
 		go func(hostname string) {
 			defer wg.Done()
@@ -68,7 +68,7 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 			mu.Lock()
 			statuses[hostname] = status
 			mu.Unlock()
-		}(services[i].Hostname)
+		}(hostname)
 	}
 	wg.Wait()
 	workflow.ApplyRepoStatus(services, statuses)

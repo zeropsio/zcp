@@ -263,6 +263,31 @@ func TestWorkflowTool_DescribeChangeReachesItsHandler(t *testing.T) {
 	}
 }
 
+// TestWorkflowTool_CloseChangeReachesItsHandler: action="close-change" is
+// dispatched to its handler — which, with no HQ here, refuses on its own
+// terms rather than failing as an unknown action.
+func TestWorkflowTool_CloseChangeReachesItsHandler(t *testing.T) {
+	t.Parallel()
+
+	_, session := schemaTestSession(t)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "zerops_workflow",
+		Arguments: map[string]any{"action": "close-change", "branch": "fix-login"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	text := ""
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !result.IsError || strings.Contains(text, "Unknown action") || !strings.Contains(text, "close") {
+		t.Errorf("want the handler's own refusal, got isError=%v:\n%s", result.IsError, text)
+	}
+}
+
 // TestWorkflowTool_MacPairReachesItsHandler: action="mac-pair" is dispatched
 // to its handler — which, outside a Mate, refuses on its own terms rather than
 // failing as an unknown action.
@@ -285,5 +310,46 @@ func TestWorkflowTool_MacPairReachesItsHandler(t *testing.T) {
 	}
 	if !result.IsError || strings.Contains(text, "Unknown action") || !strings.Contains(text, "Mac") {
 		t.Errorf("want the handler's own refusal, got isError=%v:\n%s", result.IsError, text)
+	}
+}
+
+// TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume (docs/spec-mate.md
+// §2.8a.4a): zcp sets up no new code volume, so the plan runtime publishes no
+// codeVolume, and a call still carrying one is refused before any handler
+// runs, the refusal naming the field.
+func TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume(t *testing.T) {
+	t.Parallel()
+
+	tool, session := schemaTestSession(t)
+	schemaJSON, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	if strings.Contains(string(schemaJSON), `"codeVolume"`) {
+		t.Errorf("the plan runtime still publishes codeVolume:\n%s", schemaJSON)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "zerops_workflow",
+		Arguments: map[string]any{
+			"workflow": "bootstrap", "action": "complete", "step": "discover",
+			"plan": []any{map[string]any{"runtime": map[string]any{
+				"devHostname": "webdev", "type": "bun@1.3", "bootstrapMode": "dev",
+				"codeVolume": map[string]any{"hostname": "vol", "mountPath": "/var/www/ws",
+					"devServices": []any{map[string]any{"hostname": "apidev", "setupName": "dev-api"}}},
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	var text string
+	for _, c := range result.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !result.IsError || !strings.Contains(text, "codeVolume") || !strings.Contains(text, "additional properties") {
+		t.Errorf("a plan carrying codeVolume = (isError %v) %s, want it refused by the schema naming codeVolume", result.IsError, text)
 	}
 }

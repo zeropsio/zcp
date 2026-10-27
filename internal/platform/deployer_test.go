@@ -2,6 +2,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -130,6 +131,85 @@ func TestExecSSH_StoppedByItsContext_SaysWhy(t *testing.T) {
 	if !errors.As(err, &sshErr) || !errors.Is(sshErr.Err, context.DeadlineExceeded) {
 		t.Errorf("ExecSSH stopped by its deadline = %v, want an SSHExecError carrying context.DeadlineExceeded", err)
 	}
+}
+
+// TestSystemSSHDeployer_StreamSSH_StdoutOnly: a streamed command's stdout —
+// and only its stdout — reaches the writer byte for byte, binary and large as
+// a git bundle is, while its stderr stays apart; a failed command's stderr
+// rides its *SSHExecError. The ssh client runs without a tty (-T), which would
+// otherwise rewrite the bytes it carries.
+//
+// non-parallel: t.Setenv puts a fake ssh first on PATH.
+func TestSystemSSHDeployer_StreamSSH_StdoutOnly(t *testing.T) {
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "args")
+	// The fake ssh records its argv, then runs the remote command (its last
+	// argument) in a local shell.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + argsFile + "'\nfor last; do :; done\nexec sh -c \"$last\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	d := NewSystemSSHDeployer()
+
+	t.Run("stdout streamed, stderr apart", func(t *testing.T) {
+		// 4 MiB of every byte value — NUL and CR LF among them, which a tty
+		// would rewrite — then progress chatter on stderr.
+		payload := make([]byte, 4<<20)
+		for i := range payload {
+			payload[i] = byte(i*7 + i/256)
+		}
+		payloadFile := filepath.Join(t.TempDir(), "payload")
+		if err := os.WriteFile(payloadFile, payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := d.StreamSSH(context.Background(), "appdev", "cat '"+payloadFile+"'; echo 'progress chatter' >&2", &out); err != nil {
+			t.Fatalf("StreamSSH: %v", err)
+		}
+		if !bytes.Equal(out.Bytes(), payload) {
+			t.Fatalf("stdout carried %d bytes, want the %d bytes written, byte for byte, and no stderr", out.Len(), len(payload))
+		}
+		args, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimRight(string(args), "\n"), "\n")
+		if lines[0] != "-T" {
+			t.Errorf("ssh argv = %q, want -T first: no tty may rewrite the stream", lines)
+		}
+		for _, want := range []string{"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null", "LogLevel=ERROR", "appdev"} {
+			if !strings.Contains(string(args), want) {
+				t.Errorf("ssh argv = %q, want %q", lines, want)
+			}
+		}
+	})
+
+	t.Run("failure keeps stderr in the error", func(t *testing.T) {
+		var out strings.Builder
+		err := d.StreamSSH(context.Background(), "appdev", `printf 'partial'; echo 'fatal: not a git repository' >&2; exit 128`, &out)
+		var sshErr *SSHExecError
+		if !errors.As(err, &sshErr) {
+			t.Fatalf("StreamSSH = %v, want an SSHExecError", err)
+		}
+		if !strings.Contains(sshErr.Output, "fatal: not a git repository") || strings.Contains(sshErr.Output, "partial") {
+			t.Errorf("error output = %q, want the stderr alone", sshErr.Output)
+		}
+		if sshErr.Hostname != "appdev" {
+			t.Errorf("error hostname = %q", sshErr.Hostname)
+		}
+	})
+
+	t.Run("stopped by its context says so", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		var out strings.Builder
+		err := d.StreamSSH(ctx, "appdev", "sleep 10", &out)
+		var sshErr *SSHExecError
+		if !errors.As(err, &sshErr) || !errors.Is(sshErr.Err, context.DeadlineExceeded) {
+			t.Errorf("StreamSSH stopped by its deadline = %v, want an SSHExecError carrying context.DeadlineExceeded", err)
+		}
+	})
 }
 
 // TestExecSSHStdin_WritesTheSessionInput_NeverTheArgv: ExecSSHStdin hands

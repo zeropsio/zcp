@@ -90,6 +90,7 @@ Read the home before new call sites:
 - Tool 2nd return stays nil; structuredContent strips guidance; use text envelopes (`docs/spec-mate.md` §1, `TestNoStructuredContentOnToolResults`).
 - Gate every Mate effect on runtime.Info.MateEnabled, including OFF convergence (`docs/spec-mate.md` §2.0, `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`).
 - Unknown mate serve flags are fatal; use LaunchEnvLines for settings older bundles lack (`docs/spec-mate.md` §2.2, `TestServeArgv_FlagsAreContract1`, `TestStart_Mate_Argv`).
+- A new zcp-devsup ctl verb or flag is a capability: send it only when `ctl version` lists it; pool images pin older supervisors whose ctl fails on what it does not know (`TestDevServer_SupervisorWithoutEnvCapability_NotSentEnv`).
 - JSON stdout only, debug stderr; cmd/ CLI exempt (`TestNoStdoutOutsideJSONPath`).
 - tools/eval/cmd call ops.*, never client ListServices/GetServiceEnv/GetProjectEnv (`TestNoDirectClientCallsInToolsEvalCmd`).
 - vscode-bootstrap template edits require BootstrapExtVersion bump (`TestBootstrapExtVersion_ParityWithManifest`).

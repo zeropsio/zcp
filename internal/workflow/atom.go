@@ -326,6 +326,10 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		// is mid-flow on a source project. Atoms scoped to this phase
 		// drive the launch handler's per-status guidance.
 		"launch-production-active": {},
+		// pool-migrate-active fires when zerops_workflow workflow="pool-migrate"
+		// walks a part's dev service onto a dev pool; its atoms drive the
+		// handler's per-step guidance.
+		"pool-migrate-active": {},
 	},
 	"modes": {
 		"dev":         {},
@@ -359,6 +363,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"static":             {},
 		"implicit-webserver": {},
 		"managed":            {},
+		"pool":               {},
 		"unknown":            {},
 	},
 	"routes": {
@@ -378,6 +383,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"adopt":        {},
 		"incomplete":   {},
 		"orphan":       {},
+		"dev-pool":     {},
 	},
 	"deployStates": {
 		"never-deployed": {},

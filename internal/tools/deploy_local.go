@@ -142,7 +142,10 @@ func RegisterDeployLocal(
 		// for the exemption rationale.
 		// deploy_local always runs in local env — pass a zero-value
 		// runtime.Info to surface the adopt-local recovery hint.
-		if blocked := requireAdoption(stateDir, runtime.Info{}, recipeProbe, input.TargetService); blocked != nil {
+		// A pool target is never adopted, so it is not asked to be (DP-7);
+		// the project is listed only to tell one, once the gate refuses.
+		listServices, listedServices := lazyDeployListing(ctx, client, projectID)
+		if blocked := requireDeployAdoption(stateDir, runtime.Info{}, recipeProbe, listServices, input.TargetService); blocked != nil {
 			return blocked, nil, nil
 		}
 
@@ -203,7 +206,7 @@ func RegisterDeployLocal(
 			Strategy:    deployStrategyZCLILabel,
 		}
 
-		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
+		result, err := ops.DeployLocalFromListing(ctx, client, projectID, *authInfo, listedServices(),
 			input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 		if err != nil {
 			attempt.Error = err.Error()
@@ -221,34 +224,7 @@ func RegisterDeployLocal(
 
 		onProgress := buildProgressCallback(ctx, req)
 		ctx = deployFollowUpContext(ctx)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
-
-		// L1 break-glass aftermath: a direct deploy on a push-delivering
-		// pair leaves the container ahead of the repo — flag the standing
-		// reconcile push (spec-git-delivery-target §1.1).
-		if result.Status == statusDeployed {
-			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
-				result.Warnings = append(result.Warnings, warn)
-			}
-		}
-
-		switch {
-		case result != nil && result.Status == statusDeployed:
-			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-		case result != nil && result.TimedOut:
-			// In-flight (B23): build still running at poll timeout, not failed.
-			attempt.Error = deployBuildInFlightMsg
-		case result != nil:
-			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
-			attempt.FailureClass = classifyDeployStatus(result.Status)
-		}
-		if result != nil {
-			attempt.SHA = result.SHA
-			attempt.AppVersionID = result.AppVersionID
-			attempt.Dirty = result.Dirty
-		}
-		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+		settleLocalDeploy(ctx, client, httpClient, logFetcher, onProgress, projectID, stateDir, input.TargetService, input.WorkingDir, attempt, result)
 
 		// deploy_local always runs on a developer box, so the envelope's
 		// environment derives from a zero-value runtime.Info.
@@ -258,6 +234,58 @@ func RegisterDeployLocal(
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
+}
+
+// settleLocalDeploy follows a triggered local push to its end and applies its
+// post-deploy steps — split out of RegisterDeployLocal's closure to keep it
+// under the maintainability-index ceiling: a deploy to a pool says it reaches
+// only the containers the pool creates later and decides no public access on
+// it (docs/spec-workflows.md §8 DP-7), the break-glass warning, public access,
+// and the recorded deploy attempt.
+func settleLocalDeploy(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	logFetcher platform.LogFetcher,
+	onProgress ops.ProgressCallback,
+	projectID, stateDir, target, workingDir string,
+	attempt workflow.DeployAttempt,
+	result *ops.DeployResult,
+) {
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
+	toPool := result.ReachesNewContainersOnly
+	if toPool {
+		sayPoolImageOnly(result, target, "")
+	}
+
+	// L1 break-glass aftermath: a direct deploy on a push-delivering
+	// pair that shipped what the repo lacks leaves the container ahead of
+	// it — flag the standing reconcile push (spec-git-delivery-target §1.1).
+	if result.Status == statusDeployed && !toPool {
+		if warn := repoDeliveryDivergenceWarning(ctx, stateDir, target, localShipped(workingDir, result)); warn != "" {
+			result.Warnings = append(result.Warnings, warn)
+		}
+	}
+
+	switch {
+	case result.Status == statusDeployed && toPool:
+		// The pool is no app runtime (PS-1/PS-2): no public access is
+		// decided on it.
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+	case result.Status == statusDeployed:
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, target, result)
+	case result.TimedOut:
+		// In-flight (B23): build still running at poll timeout, not failed.
+		attempt.Error = deployBuildInFlightMsg
+	default:
+		attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		attempt.FailureClass = classifyDeployStatus(result.Status)
+	}
+	attempt.SHA = result.SHA
+	attempt.AppVersionID = result.AppVersionID
+	attempt.Dirty = result.Dirty
+	_ = workflow.RecordDeployAttempt(stateDir, target, attempt)
 }
 
 // deployLocalResponse wraps the local-mode deploy result with the
@@ -365,14 +393,23 @@ func sessionStateOf(stateDir string, hasProduction func() bool) *WorkSessionStat
 }
 
 // sessionHandsOverAChange reports whether ws deployed a pair's stage half
-// and that pair still records an open change for the closing note to hand over.
+// and the change ledger still keeps an open change in that pair's repository
+// for the closing note to hand over.
 func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession) bool {
+	var changes []workflow.HQChange
+	read := false
 	for _, host := range ws.Services {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {
 			continue
 		}
 		meta, err := workflow.FindServiceMeta(stateDir, host)
-		if err == nil && meta != nil && isStageOf(meta, host) && hqPairWired(meta) && meta.HQ.Change != 0 {
+		if err != nil || meta == nil || !isStageOf(meta, host) || !hqPairWired(meta) {
+			continue
+		}
+		if !read {
+			changes, read = hqChanges(stateDir), true
+		}
+		if len(changesIn(changes, meta.HQ.AppID, meta.HQ.Repo)) > 0 {
 			return true
 		}
 	}

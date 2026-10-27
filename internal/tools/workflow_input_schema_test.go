@@ -110,3 +110,56 @@ func TestWorkflowInputSchema_PublicAccessListsAllowedValues(t *testing.T) {
 		t.Errorf("publicAccess description = %q, want it to explain none", desc)
 	}
 }
+
+// TestWorkflowInputSchema_PoolMigrateNamed pins that the schema an agent reads
+// at discovery names workflow="pool-migrate", the dev service it takes, and
+// the pool hostname it may override.
+func TestWorkflowInputSchema_PoolMigrateNamed(t *testing.T) {
+	t.Parallel()
+	s := workflowInputSchema()
+	if s == nil {
+		t.Fatal("workflowInputSchema returned nil")
+	}
+	for key, want := range map[string]string{
+		"workflow": "pool-migrate",
+		"service":  "pool-migrate",
+		"pool":     "pool-migrate",
+	} {
+		prop, ok := s.Properties[key]
+		if !ok || prop == nil {
+			t.Fatalf("property %q missing from schema", key)
+		}
+		if !strings.Contains(prop.Description, want) {
+			t.Errorf("property %q description %q does not name %q", key, prop.Description, want)
+		}
+	}
+}
+
+// TestWorkflowInputSchema_PoolEnvNamed pins that the schema names the env
+// step's call, action="pool-env", and the person's yes to copying the dev's
+// GIT_TOKEN, copyGitToken, published as oneOf[boolean,string] like every
+// FlexBool.
+func TestWorkflowInputSchema_PoolEnvNamed(t *testing.T) {
+	t.Parallel()
+	s := workflowInputSchema()
+	if s == nil {
+		t.Fatal("workflowInputSchema returned nil")
+	}
+	if action := s.Properties["action"]; action == nil || !strings.Contains(action.Description, "pool-env") {
+		t.Fatal("action description does not name pool-env")
+	}
+	prop := s.Properties["copyGitToken"]
+	if prop == nil {
+		t.Fatal("property copyGitToken missing from schema")
+	}
+	b, err := json.Marshal(prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{"oneOf", "boolean", "string", "pool-env", "GIT_TOKEN"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("copyGitToken = %s, want it to carry %q", js, want)
+		}
+	}
+}

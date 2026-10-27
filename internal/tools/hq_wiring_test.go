@@ -211,8 +211,8 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 
 // TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange: nothing
 // pushes a merge at the Mate — a person merges in the app — so a pass asks
-// the Mate's own state what became of the change on record, says so once,
-// and forgets the number: a later change is another one.
+// the Mate's own state what became of each change the ledger keeps, says so
+// once, and forgets it: a later change is another one.
 func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -230,7 +230,7 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
+			lab.openRecorded()
 			elapseHQBackoff(t, lab.stateDir)
 			if report := lab.wire(); len(report) != 0 {
 				t.Fatalf("an open change says nothing, got %q", report)
@@ -246,27 +246,10 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 					t.Errorf("report = %q, want %q", report[0], want)
 				}
 			}
-			if meta := lab.meta(); meta.HQ.Change != 0 {
-				t.Errorf("the pair's record = %+v", meta.HQ)
+			if kept := lab.ledger(); len(kept) != 0 {
+				t.Errorf("the ledger keeps %+v, want the settled change forgotten", kept)
 			}
 		})
-	}
-}
-
-// TestClearChange_SkipsAStaleNumber: a pass that read change #3's outcome
-// never writes over a pair a concurrent describe already moved on to #4.
-func TestClearChange_SkipsAStaleNumber(t *testing.T) {
-	t.Parallel()
-	stateDir := t.TempDir()
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
-		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 4},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	clearChange(stateDir, &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}, 3)
-	if fresh, _ := workflow.FindServiceMeta(stateDir, "appdev"); fresh.HQ.Change != 4 {
-		t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
 	}
 }
 
@@ -285,7 +268,7 @@ func TestHandleRelease_AWiredPairHandsOff(t *testing.T) {
 	t.Cleanup(func() { launchPushProofReader = prev })
 
 	ssh := &containerSSHStub{}
-	result, _, _ := handleRelease(context.Background(), ssh,
+	result, _, _ := handleRelease(context.Background(), ssh, nil,
 		WorkflowInput{Service: "appdev", ReleaseVersion: "v1.0.0"}, lab.stateDir, runtime.Info{InContainer: true})
 	if askedRef != "" || len(ssh.commands) != 0 {
 		t.Errorf("HQ release ran legacy preflight: ref=%q SSH=%v", askedRef, ssh.commands)
@@ -357,7 +340,7 @@ func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
+			lab.openRecorded()
 			squash := lab.hq.merge()
 			tt.upset(lab)
 			head := lab.git("rev-parse", "HEAD")
@@ -993,5 +976,29 @@ func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T)
 	}
 	if ssh.waited {
 		t.Error("the repository's read waited out the origin read: they run one after the other")
+	}
+}
+
+// TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository pins that
+// being a Mate, not holding a key or an HQ origin, makes HQ the authority
+// (docs/spec-mate.md, "A Mate is HQ's by what it is"): a container whose
+// ZCP_MATE_ENABLED is off never takes the Mate's wiring — it asks HQ's Mate
+// API nothing and gives no pair an HQ record — even linked to an HQ (live
+// 2026-10-24: a session with the flag unset still created an HQ repository and
+// rewrote origin). Its repositories take the plain-project door instead
+// (TestReconcileHQRepositories_PlainProject_*).
+func TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository(t *testing.T) {
+	lab := newHQLab(t)
+	lab.rt.MateEnabled = false
+
+	lab.wire()
+
+	for _, call := range lab.hq.calls {
+		if strings.Contains(call, "/api/mate/") {
+			t.Errorf("outside a Mate the pass asked HQ's Mate API: %v", lab.hq.calls)
+		}
+	}
+	if meta := lab.meta(); meta.HQ != nil {
+		t.Errorf("outside a Mate the pair was given an HQ record: %+v", meta.HQ)
 	}
 }

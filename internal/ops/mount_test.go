@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -826,5 +828,161 @@ func TestMountStatus_PendingState(t *testing.T) {
 				t.Errorf("hostname %s not found in results", tt.hostname)
 			}
 		})
+	}
+}
+
+func TestMountStatus_LeaseNotOrphan(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.mountDirs = []string{"app", "apppool-3", "deleted"}
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+	mounter.states["/var/www/deleted"] = platform.MountStateStale
+
+	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "")
+	if err != nil {
+		t.Fatalf("MountStatus: %v", err)
+	}
+	byHost := map[string]MountInfo{}
+	for _, m := range result.Mounts {
+		byHost[m.Hostname] = m
+	}
+	lease, ok := byHost["apppool-3"]
+	if !ok {
+		t.Fatalf("mounts = %+v, want the lease mount apppool-3 reported", result.Mounts)
+	}
+	if lease.Orphan {
+		t.Errorf("lease mount reported as a deleted-service orphan: %+v", lease)
+	}
+	if !lease.Lease || !lease.Mounted {
+		t.Errorf("lease mount = %+v, want Lease and Mounted", lease)
+	}
+	if !strings.Contains(lease.Message, "zerops_lease") {
+		t.Errorf("lease message %q must point at zerops_lease for the lease's state", lease.Message)
+	}
+	if !byHost["deleted"].Orphan {
+		t.Errorf("a stale mount of a deleted service must still be an orphan: %+v", byHost["deleted"])
+	}
+}
+
+func TestMountStatus_LeaseAlias_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+
+	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("MountStatus(lease alias): %v", err)
+	}
+	if len(result.Mounts) != 1 || result.Mounts[0].Hostname != "apppool-3" || !result.Mounts[0].Mounted || !result.Mounts[0].Lease || result.Mounts[0].Orphan {
+		t.Errorf("mounts = %+v, want one mounted lease apppool-3", result.Mounts)
+	}
+}
+
+func TestMountLease_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mounter := newMockMounter()
+
+	got, err := MountLease(context.Background(), mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("MountLease: %v", err)
+	}
+	if got.Status != "MOUNTED" || got.MountPath != "/var/www/apppool-3" {
+		t.Errorf("result = %+v, want MOUNTED at /var/www/apppool-3", got)
+	}
+	if mounter.states["/var/www/apppool-3"] != platform.MountStateActive {
+		t.Error("the mounter was not asked to mount the alias")
+	}
+}
+
+func TestUnmountService_LeaseAlias_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+
+	got, err := UnmountService(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("UnmountService(lease alias): %v", err)
+	}
+	if got.Status != "UNMOUNTED" {
+		t.Errorf("status = %q, want UNMOUNTED (a lease is not a service, so it must not take the deleted-service path)", got.Status)
+	}
+	if _, still := mounter.states["/var/www/apppool-3"]; still {
+		t.Error("the alias is still mounted")
+	}
+}
+
+// TestMountService_AliasShapedName_LookedUpLikeAnyName: MountService decides
+// nothing by a name's shape — a name shaped like a lease alias is looked up
+// as a service like any other, and one no service has is refused before the
+// mounter is asked (a lease is mounted through MountLease, by the holder of
+// its record).
+func TestMountService_AliasShapedName_LookedUpLikeAnyName(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+
+	_, err := MountService(context.Background(), mock, "proj-1", mounter, "devpool-31")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrServiceNotFound {
+		t.Fatalf("err = %v, want SERVICE_NOT_FOUND: no service is named devpool-31", err)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("the mounter was asked to mount a host nothing resolves: %v", mounter.states)
+	}
+	if n := mock.CallCount("ListServices"); n != 1 {
+		t.Errorf("ListServices calls = %d, want the one lookup", n)
+	}
+}
+
+// probeWatch is the mock mounter, noting every path it write-probes.
+type probeWatch struct {
+	*mockMounter
+	probed []string
+}
+
+func (p *probeWatch) IsWritable(ctx context.Context, path string) (bool, error) {
+	p.probed = append(p.probed, path)
+	return p.mockMounter.IsWritable(ctx, path)
+}
+
+// TestMountStatus_LeaseMount_NeverWriteProbed: a lease's mount reaches
+// whoever holds its container now — sshfs reconnects to the same hostname
+// after the lease ended outside zcp — and a status asks no orchestrator, so it
+// never writes a probe file through a lease's mount, named or found among the
+// mounts; a service's mount is still probed.
+func TestMountStatus_LeaseMount_NeverWriteProbed(t *testing.T) {
+	t.Parallel()
+	for _, hostname := range []string{"apppool-3", ""} {
+		mock := platform.NewMock().WithServices(testServices())
+		mounter := &probeWatch{mockMounter: newMockMounter()}
+		mounter.mountDirs = []string{"app", "apppool-3"}
+		mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+		mounter.states["/var/www/app"] = platform.MountStateActive
+
+		result, err := MountStatus(context.Background(), mock, "proj-1", mounter, hostname)
+		if err != nil {
+			t.Fatalf("MountStatus(%q): %v", hostname, err)
+		}
+		for _, p := range mounter.probed {
+			if p == "/var/www/apppool-3" {
+				t.Errorf("MountStatus(%q) write-probed the lease mount %s", hostname, p)
+			}
+		}
+		for _, m := range result.Mounts {
+			if m.Hostname == "apppool-3" && (!m.Mounted || !m.Lease) {
+				t.Errorf("MountStatus(%q): lease mount = %+v, want mounted, a lease", hostname, m)
+			}
+		}
+		if hostname == "" && !slices.Contains(mounter.probed, "/var/www/app") {
+			t.Errorf("MountStatus: probed %v, want the service mount /var/www/app still probed", mounter.probed)
+		}
 	}
 }

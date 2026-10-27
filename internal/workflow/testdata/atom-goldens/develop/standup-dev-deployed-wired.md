@@ -31,7 +31,7 @@ Wired to this Mate's HQ — take `main` in and start the work on a branch of you
 cd /var/www/<push-source-host> && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>
 ```
 
-While status names `change=<n>` on the dev service, that change is open and the work goes on its branch, `changeBranch`, never on one cut from `main` — HQ refuses that push, as it is no fast-forward of the change's branch; develop's start says how to take it.
+One branch per piece of work, one change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch), and new work starts on a new branch cut as above. Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
 
 A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
 
@@ -141,16 +141,17 @@ the call and kills the process.
 === develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
-When the embedded guidance isn't enough, these are the canonical lookups:
-
-- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
-- **Runtime docs** (build tools, start commands, conventions) —
-  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
-  match the service's base stack.
-- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
-  (`includeEnvValues=true` only to troubleshoot).
-- **Deeper platform topics** (infra changes, scaling, status codes,
-  managed-service categories) — `zerops_knowledge query="<topic>"`.
+- **`zerops.yaml` schema** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands) — `zerops_knowledge
+  query="<base stack>"`.
+- **Env var keys** — `zerops_discover includeEnvs=true` (`includeEnvValues=true`
+  only to troubleshoot).
+- **Other platform topics** (scaling, status codes, managed services) —
+  `zerops_knowledge query="<topic>"`.
+- **Code the app's users send** (snippets, an agent's tool calls, plugins) runs
+  in a Zerops Box sandbox, never the app's container:
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code
+  the app's users send".
 
 ---
 

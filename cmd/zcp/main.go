@@ -134,7 +134,7 @@ func runInitCmd(args []string) int {
 			}
 			return 0
 		case "sshfs":
-			if err := zcpinit.RunSSHFS(); err != nil {
+			if err := zcpinit.RunSSHFS(initOptions()...); err != nil {
 				log.Printf("init sshfs: %v", err)
 				return 1
 			}
@@ -152,7 +152,7 @@ func runInitCmd(args []string) int {
 		log.Printf("init: record guided preference: %v", err)
 		return 1
 	}
-	if err := zcpinit.Run(".", rt); err != nil {
+	if err := zcpinit.Run(".", rt, initOptions()...); err != nil {
 		log.Printf("init: %v", err)
 		return 1
 	}

@@ -193,6 +193,7 @@ One reducer reads both carriers, in this order:
 | `zerops_verify` (single and all-services) | JSON | `envelope` key |
 | `zerops_import` | JSON | `envelope` key |
 | `zerops_mount` (mount, unmount, status) | JSON | `envelope` key |
+| `zerops_lease` (acquire, status, release) | JSON | `envelope` key — built after the operation, so the reducer sees the new lease set at once |
 | `zerops_workflow` bootstrap `start`/`complete`/`skip`/`status` | JSON | `envelope` key |
 | `zerops_standup` | JSON | `envelope` key |
 
@@ -226,7 +227,8 @@ state costs ~1.2 KB (no fence, no markdown) — a deploy response measured 119 B
 The synthesized guidance a prose result carries is held under `workflow.ComposeBodyBudget`
 (24 KB), which sits below the 28 KB soft cap and the **32 KB MCP tool-response cap** precisely
 to leave room for the scaffold `RenderStatus` adds — so the envelope fits inside existing
-headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it. JSON
+headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
+leases (§2.8a.3) on top of the four-service fixture (~3.1 KB fenced). JSON
 results are far smaller than the prose ones and are nowhere near the cap.
 
 ### 1.6 Why not `structuredContent`
@@ -293,6 +295,13 @@ now-off flag has to remove — so a container that never had mate prints not one
 2. **Bundle** — `mate.EnsureInstalled` (below) in full.
 3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
 4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
+   Then, when systemd says the unit's file changed on disk since it loaded it
+   (`systemctl show --property=NeedDaemonReload --value zerops@mate.service` answers `yes` — what it
+   warns "run 'systemctl daemon-reload'" about), `sudo systemctl daemon-reload` before any restart
+   (step 7), whether or not one follows, so this restart and every later one runs the definition on
+   disk; an unchanged unit is never reloaded, and a reload that fails is a named line, not a degrade.
+   `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
+   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
@@ -693,6 +702,9 @@ Each step answers agent-browser's own `error` text verbatim with an `errorKind` 
 `wedge` (a CDP wedge signal, which also recycles the service), `invalid-command` (a command,
 subcommand or `find` action agent-browser does not know — the call was wrong, not the page),
 `stale-ref` (an `@eN` ref no snapshot in the call's tab made; refs die with the tab),
+`script-timeout` (an `eval` that ran into the CDP timeout while the page still answered a
+trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
+alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
 `selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
 25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
 
@@ -826,11 +838,16 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `version` | required integer, format version; today `1`. A supervisor that does not know it runs nothing new and reports it (§2.8a.2 *Versions*) |
 | `servers[].name` | required, `^[a-z][a-z0-9-]{0,39}$`, unique in the file. It is the key everywhere: state, logs, `ctl`, envelope |
 | `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
-| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
+| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) plus the overlay set with `ctl env` (§2.8a.2), an overlay entry replacing the service's value of the same name |
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
-| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it — so zcp never names a declared server as keeping the old code after a sync's fast-forward (docs/spec-workflows.md §8 DP-24) |
 | `servers[].healthPath` | optional, default `/`; must start with `/`. The HTTP path a health probe of the server's `port` reads — an API part that answers 404 on `/` names the path it answers on (`TestParseDeclaration_Shapes`) |
-| `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
+| `servers[].service` | optional; the hostname of the dev service whose supervisor runs it — in variant B (MODEL §4) every entry carries it; in a repository whose parts are each a Swarm dev pool it is the part's pool, whose containers' `hostname` is the pool's, and an entry a lease's start adds carries it (docs/spec-workflows.md §8 DP-22), and moving a dev service serving several parts onto one pool per part requires every part's servers to name its pool (docs/spec-workflows.md §13 PM-11, PM-12) — from then on the dev service's own supervisor runs none of them. Absent: run by every supervisor reading the file (variant A: the one) (`TestDevServer_LeaseDeclaresItsPoolAsService`, `TestDevServer_LeaseReadsItsPoolsEntries`) |
+| `previewPortBase` | optional integer, top level; read in a Swarm pool container only (docs/spec-workflows.md §8 DP). The supervisor forwards `previewPortBase + ZEROPS_StableNumber` to the preview server's port, so each lease answers on its own per-port subdomain. `ZEROPS_StableNumber` starts at 1, so the pool's `run.ports` declares `previewPortBase + 1` through `previewPortBase + maxContainers` with `httpSupport: true`. zcp reads it, never writes it. The forward is a byte copy that passes a half-close on: a client that shuts its write side after its request still reads the whole reply, and a connection ends once both directions have, 30 s after the first did, or with the forward. A forward that ends stops listening and cuts its connections — and a dial to the server still under way — at once, and the next forward never waits for it (`TestSupervisor_PreviewForward_SlotPort`, `TestDeclaration_PreviewPortBase_*`, `TestForward_ClientHalfCloses_GetsTheWholeReply`, `TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync`) |
+| `siblingEnv` | optional object, top level: an environment variable a part's dev server reads → the pool (`^[a-z0-9]{1,40}$`) whose lease of the same branch it reaches, e.g. `{"HQ_HOST": "hqpool"}`; the app keeps reading its own variable. A name matches `^[A-Za-z_][A-Za-z0-9_]*$` and is never `ZEROPS_*`, `hostname`, `serviceId`, `projectId`, `PATH` or `HOME`; a broken rule makes the file invalid like any other. The supervisor never puts it into any environment: what reaches a server is only the overlay set with `ctl env` (§2.8a.2). zcp reads it, keeps it when it rewrites the file and never writes it: before it starts or reloads a lease's servers it sends the full overlay — each name set to the container hostname of the branch's lease on the named pool, a pool the branch holds no lease on left to the container's own value — to a supervisor whose `version` lists `env` (docs/spec-workflows.md §8 DP-22), and hands every other lease of the branch the recomputed overlay when a lease joins or leaves it (DP-26) (`TestParseDeclaration_SiblingEnv_Shapes`, `TestSupervisor_EnvOverlay_DeclaredSiblingEnvNeverReachesAServer`, `TestDeclareDevServer_KeepsTheSiblingEnv`, `TestDevServer_LeaseSiblingEnv_SendsFullOverlayBeforeStart`) |
+| `siblingPreviewEnv` | optional object, top level: an environment variable a part's dev server reads from a browser → the pool (`^[a-z0-9]{1,40}$`) whose lease of the same branch it reaches, e.g. `{"VITE_HQ_URL": "hqpool"}`; the name rule is `siblingEnv`'s, and a name is never in both, or the file is invalid. Where `siblingEnv` hands a container hostname, which only server-side code resolves, zcp sets each name to that lease's preview URL — `https://`, the pool's subdomain on `previewPortBase` + that lease's container's stable number, as `zerops_dev_server action=status` reports it — resolved at every point it resolves `siblingEnv` and never hand-copied, since the preview port follows the container (docs/spec-workflows.md §8 DP-31). A top-level key of its own, so a supervisor that predates it ignores it; the supervisor never puts it into any environment: zcp sends the value through `ctl env` (§2.8a.2). zcp reads it, keeps it when it rewrites the file and never writes it (`TestParseDeclaration_SiblingPreviewEnv_Shapes`, `TestDeclareDevServer_KeepsTheSiblingPreviewEnv`, `TestDevServer_LeaseSiblingPreviewEnv_HandsTheSiblingsPreviewURL`) |
+| `prepare` | optional string, top level; read in a Swarm pool container only (docs/spec-workflows.md §8 DP-14). After a lease's checkout zcp runs it with `/bin/sh -c` in the repo root, before it starts or reloads the supervisor: the incremental install a branch's own lockfile needs on top of the dependencies the pool's image baked into `/var/www`, e.g. `npm install --prefer-offline`. Its failure leaves the lease held and is reported in the acquire result. The supervisor never runs it; zcp keeps it when it rewrites the file and never writes one (`TestDeclaration_Prepare_ParsesAndRoundTrips`, `TestDeclareDevServer_KeepsTheRepositorysPrepare`) |
+| `servers[].preview` | optional bool; the server the preview forward reaches when more than one server listens (with one listening server, that one) — of the entries a supervisor runs (`service`, above). At most one per supervisor: two entries marked preview make the file invalid when one supervisor would run both — the same `service`, or either naming none — so in a repository whose parts are each a pool, each pool marks its own (`TestDeclaration_PreviewPortBase_ParsesAndOldFilesUnchanged`). zcp reads it, never writes it |
 | `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
 
 **Unknown keys.** The supervisor ignores a key it does not know, at the top level and in an entry, so
@@ -891,10 +908,12 @@ go on Ubuntu).
 URL in the line zcp writes, so a dev build of the supervisor can be tried before any release. Dev
 loop only; production never sets it.
 
-**Variant B stand-up.** The dev services start before the repo is cloned onto the shared volume, so
-each supervisor first reads a missing file (an empty declaration). After the clone, stand-up runs
-`zcp-devsup ctl reload` on every dev service's supervisor (§2.8a.4a); each starts only the entries
-of its own service (`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
+**Variant B stand-up.** zcp sets up no new code volume; a stand-up called again on a recorded
+variant-B pair (§2.8a.4a) still fills the volume when it is empty. The dev services start before
+the repo is cloned onto the shared volume, so each supervisor first reads a missing file (an empty
+declaration). After the clone, stand-up runs `zcp-devsup ctl reload` on every dev service's
+supervisor; each starts only the entries of its own service
+(`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
 
 **Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
 beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
@@ -905,6 +924,7 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   "format": 1,
   "supervisor": { "version": "vX.Y.Z", "pid": 412, "startedAt": "2026-10-14T21:00:00Z" },
   "declaration": { "version": 1, "error": "" },
+  "env": { "HQ_HOST": "node-id-7.runtime.hqpool.zerops" },
   "servers": {
     "web":    { "source": "declared", "desired": "running", "status": "running", "pid": 731, "pgid": 731, "leaderStart": 88213,
                 "startedAt": "2026-10-14T21:00:01Z", "restarts": 0, "exit": null, "logPath": "/home/zerops/.zcp/devsup/logs/web.log" },
@@ -959,9 +979,27 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   service's max RAM (`zerops_scale`) or stopping a server; a deploy reply says it once for all
   servers (`TestDevServer_StatusOfAServerSystemdRestartedWhenTheServiceRanOutOfMemoryPointsToItsRAM`,
   `TestDeployNextActions_DevServersSystemdRestartedWhenTheServiceRanOutOfMemorySayWhyOnce`).
+- `env` is the overlay `ctl env` last set, `{}` when none is: container hostnames and preview URLs, never a secret. It
+  lives in `$HOME` with the rest of the state, so a container restart starts every server under it
+  again, while a redeploy or a pool container's reset (a fresh `$HOME`) starts without it until it is
+  set again (`TestSupervisor_EnvOverlay_SurvivesRestart`).
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.
+- `previewLastConnAt` and `previewOpenConns` ride on the preview server only, beside its
+  `previewPort` (§2.8a.1), and only in `ctl status`: when its preview forward last took a connection
+  in this supervisor's life (absent until one does) and how many connections the forward holds open
+  now (`0` included). They are counted at the forward without delaying or changing a byte: the
+  clients, never the forward's own dial to the server. A restart of the server cuts its connections
+  and opens a new forward, and the time stays. Only its shut ends a forward: an `Accept` that fails
+  while it is open (every file descriptor in use, a connection aborted before it was taken) waits
+  5 ms, doubling up to 1 s, and takes the next — a forward that ended there held its port bound,
+  serving nothing, while the count read as observed (`TestForward_AnAcceptErrorNeverEndsTheForward`).
+  The two fields live in the supervisor's memory: `state.json`
+  never holds them, and a new supervisor starts without them. `ctl version` lists `activity` for
+  them (`TestForward_RecordsLastConnectionAndOpenCount`,
+  `TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile`,
+  `TestCtlStatus_PreviewActivity`).
 
 **Control.** zcp (and Mate's engine) run `zcp-devsup ctl <verb> --json` over SSH; `ctl` talks to the
 supervisor over the unix socket and prints one JSON answer. Every process is a child of the
@@ -975,7 +1013,8 @@ verb is idempotent, so the caller asks `status` again.
 | `reload` | same as `SIGHUP` |
 | `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
-| `version` | `{"version":"vX.Y.Z","formats":[1]}` |
+| `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
@@ -1052,8 +1091,9 @@ default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart
 |---|---|
 | A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below), seen at the agent's next call (MODEL §11.3). One exception: a server that exits within its **start window** (10 s after a start) or before its port first accepts is started once more, one window later and only once no sibling is still starting (bounded by the listen wait), unless something started, stopped or removed it meanwhile — siblings started beside it (four Maven wrappers unpacking one distribution) come back one at a time; a crash of that second start, or one after the server listened, stays down (`TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStaysDown`, `TestSupervisor_AServerThatCrashesBeforeItFirstListensIsStartedOnceMoreOneAtATime`, `TestSupervisor_AServerThatExitsStaysDownAndVisible`) |
 | A server meets the task limit | every server shares the cgroup of the platform's `zerops@zerops.service` unit, which sets no `TasksMax`: systemd's default, 15 % of the container's `pids.max` 2000, is 300 tasks (processes and threads) for the supervisor and all its servers. The supervisor never raises it. A start refused with `EAGAIN`, or an exit during whose run a fork was refused (`pids.events` `max` grew since the start), is started again after a backoff of 2 s doubling up to 1 min, one server at a time as a retry is, at most 6 times in a row; such a start is not the one more start above, and a start for any other reason resets the count. The server's `lastRestartReason` names the limit; after the sixth it stays down with `taskLimit` set (`TestSupervisor_AServerThatMeetsTheTaskLimitOnEveryStartStopsBeingStartedAndNamesTheLimit`, `TestMetTaskLimit_AnEAGAINStartOrARefusedForkDuringTheRunMetTheLimit`). Servers started together (boot, reload) start 1 s apart (`TestSupervisor_ServersStartedTogetherStartAGapApart`) |
-| A watched path changes | a change is a write, create, delete or move; reading a file or moving only its access time is not (`TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes`). For a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped. After 10 starts in a row that each saw a watched change within their own start window, a change within the window is the server's own output and restarts nothing (the supervisor log names the path to add to `ignore`); a change after the window always restarts, and one there after a start that saw none resets the count (`TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever`) |
+| A watched path changes | a change is a write, create, delete or move; reading a file or moving only its access time is not (`TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes`). For a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped. After 10 starts in a row that each saw a watched change within their own start window, a change within the window is the server's own output and restarts nothing (the supervisor log names the path to add to `ignore`); a change after the window restarts, and one there after a start that saw none resets the count — except, once that guard tripped, a burst after the window holding only paths the server's own output changed within its windows: a server writing them without a pause keeps each burst open until its 5 s bound, so every other burst ends past the window, and restarting on those restarted it every window, forever; a path its output never changed still restarts it (`TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestartedOnceTheGuardTrips`). Within or after is decided by when the burst's last change was made, never by when its settle ended: a write 9.7 s into a 10 s window settles after it, and decided by the restart's time it reset the count and restarted the server every start, forever (`TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever`, `TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterIt`). A burst of changes restarts the server once: the supervisor restarts it when no change has come for 500 ms (at most 5 s after the burst's first change), with the reason of the path that opened the burst; a burst whose last change came before the server's latest start began restarts nothing, since that start already runs it. A reload, or a start, stop or restart of any server, keeps each watcher whose `watch` reads the same, with the burst still settling in it — a sync's fast-forward that changes the declaration reloads a few hundred ms after it changed the watched files, and a replaced watcher dropped that burst, leaving the server on the old code (`TestSupervisor_AReloadOrAStartOfAnotherServerKeepsAWatchedChangeStillSettling`). Measured 2026-10-24: one write over sshfs (`cat > file`: truncate, bytes, close) restarted a watched server 2–3 times in the same second, ~10 s after the write — the old server's stop grace (up to 10 s for one that does not end on `SIGTERM`), during which each later change queued another restart of the new one; the watch itself is inotify, no poll (`TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce`, `TestSupervisor_AChangeMadeWhileARestartStopsTheServerRestartsNothingMore`) |
 | The kernel's OOM killer kills a process of the service | the platform's `zerops@zerops.service` has `OOMPolicy=stop` and `Restart=always` (`RestartSec=3`): once systemd notices the kill — at once, or only when it next reaps a process of the unit, minutes later — it stops the whole unit, every server with it, logs `Failed with result 'oom-kill'` and starts it again. The supervisor never changes the unit. On boot it reads systemd's result for the previous run of its unit from the journal (`journalctl UNIT=<its cgroup's unit> -o json`, through `sudo -n` for the `zerops` user, as only root and `systemd-journal` read it; the end line before the current start, with no start between); after `oom-kill` every server it starts gets `lastRestartReason` "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server" and `outOfMemory` until it starts again for another reason. The container's journal names neither the killed process (the kernel log is not readable there) nor a usable amount: the unit's logged memory peak was measured far below what its processes used (`TestSupervisor_AfterSystemdRestartedTheServiceBecauseItRanOutOfMemoryEachServerSaysSo`, `TestSupervisor_AfterAnyOtherEndOfThePreviousRunTheSupervisorStartedAgain`, `TestPreviousRunResult_ReadsHowSystemdEndedTheRunBeforeTheCurrentOne`) |
+| The supervisor stops (`SIGTERM`: its unit stops, or the lease supervisor zcp started under `setsid` ends, DP-13) | every server is stopped and keeps its `desired`; from then on nothing starts and no watch is set up — a `ctl` call or a watched burst still waiting for its turn starts nothing, so no process group outlives the supervisor, which a supervisor started under `setsid` has no unit to clean up (`TestSupervisor_NothingStartsAfterShutdown`) |
 | The supervisor is killed (zenv starts `run.start` again) | the new supervisor stops the groups the old one left (identity-checked), then starts every entry with `desired: running` |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
 | Redeploy (new container, `$HOME` empty) | every declared server for this service gets its first desired state: `autostart` ones start, the rest stay `stopped` |
@@ -1067,6 +1107,12 @@ and answers that the supervisor is older than the declaration, naming both.
 
 Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` keys the pair).
 
+A pair whose dev half is a dev pool (`spec-workflows.md` §13 PM-10) is keyed by the pool, so `stages`
+rides the pool's snapshot — `runtimeClass: "pool"`, no `mode` — and `devServers` never does: a pool's
+dev servers run in its leases and ride `leases[]`. A migrated part's tier on `main` still names its
+retired dev service, so this snapshot is where the part's pool shows beside its stages (fixture
+`envelope.pool-pair.json`, §2.8a.7). Additive like `leases[]`: no key is new, no version gate.
+
 ```json
 "stages": [ { "hostname": "webstage", "setup": "web" }, { "hostname": "apistage", "setup": "api" } ]
 ```
@@ -1076,9 +1122,14 @@ Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` key
 - It **replaces** `stageHostname` and `stageSetupName`: one stage ≡
   `[{hostname: stageHostname, setup: stageSetupName}]`. Each snapshot's own `setupName` stays as it
   is — it names that service's setup, not a pair.
-- zcp's synthesis and render read it (the envelope is their input, §1). **Mate never pairs from
-  it**: Mate pairs from the tier on `main`, then an open recipe change, then the hostname stem
-  (MODEL §9/3m, §11.2). A preview's address is its Zerops subdomain and the commit a preview runs is
+- zcp's synthesis and render read it (the envelope is their input, §1). Mate pairs from the tier on
+  `main`, then an open recipe change, then the hostname stem (MODEL §9/3m, §11.2) — **with one
+  exception: a pool-keyed pair** (a part migrated to a dev pool, `docs/spec-workflows.md` §13). A
+  `runtimeClass: "pool"` snapshot carrying `stages[]` (or, before field-order step 3, a single
+  `stageHostname`) pairs those stages with the pool: a tier or recipe naming a dev that still stands
+  wins, then the envelope, then the stem — so a tier naming the retired dev yields to the envelope.
+  Such a stage is never a checkout row, and the pool (no checkout of its own) is not one either; the
+  pairing comes from the thread's own last envelope (z3 `poolPairsIn`, `useThreadPoolPairs`). A preview's address is its Zerops subdomain and the commit a preview runs is
   the receipt's (§2.8a.6), so neither rides here.
 
 ```json
@@ -1133,6 +1184,55 @@ Single-part, today and after (3) — the same pair, the same meaning:
 ```
 
 The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
+
+**`leases[]` — the leases this container's zcp holds, not a service's.** It is a top-level key of the
+envelope, beside `services`, not a field of a `ServiceSnapshot`. It lists every lease zcp holds for the
+container, whichever conversation acquired it; which conversation a lease is bound to is Mate's own
+record (§6.3), never a field here:
+
+```json
+"leases": [ { "alias": "webpool-3", "pool": "webpool", "branch": "feat-x",
+              "containerHostname": "node-id-3.runtime.webpool.zerops", "state": "held", "unverified": false,
+              "acquiredAt": "2026-10-23T12:00:01Z", "repo": "https://hq.example.zerops.app/acme/web" } ]
+```
+
+| Key | Meaning |
+|---|---|
+| `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
+| `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
+| `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
+| `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
+| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, `parked`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader. `parked` is a lease that is still held whose container is stopped and kept (`spec-workflows.md` §8 DP-28): a client keeps it bound, as it keeps a `held` one (`TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope`). Whose a container is comes from the orchestrator's renew of the record's own lease (`spec-workflows.md` §8 DP-2): a lease whose container is no longer its reservation — gone, being deleted, free, or reserved by another holder since the lease ended outside zcp — is `lost`; one another holder took read `held` before zcp asked the orchestrator and reads `lost` now, so a client unbinds it as it does any lost lease (§6.3), and a lease stopped or started outside zcp stays `parked`/`held`. No state was added (`TestLeaseTool_Ownership_LeaseAnotherHolderTook_LostThenDropped`, `TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked`) |
+| `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) — or when the pool's listing answered but the renew of that lease did not (`spec-workflows.md` §8 DP-2): the state is then the listing's (`held`, `parked`, `unmounted`), never `lost`, so a client keeps the lease bound as that state says, and nothing is read from it (`TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead`) |
+| `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
+| `repo` | the repository the lease's group is keyed by beside `branch` (`spec-workflows.md` §8 DP-17): the record's identity, canonical (no `.git`, no trailing slash) and credential-free — no userinfo, query or fragment ever rides it (`topology.RepoIdentity`) — after `acquiredAt`; absent for a lease zcp has no record of (`unknown-holder`) and for a record older than keeping it. Two apps of one Mate both on `main` hold leases of the same branch: a client binds and rebinds by `repo` and `branch` together, never by branch alone (§6.3). Additive (`TestLeaseViews_CarryTheRepository`, `TestComputeEnvelope_LeaseRecords_CarryTheRepository`, `TestMateContractFixtures_LeaseStatus_RenderedByTheHandler`) |
+| `activity` | present only on a `zerops_lease` call that read the lease's checkout — today `action=status`, for each lease zcp holds (`spec-workflows.md` §8 DP-21) — exactly as that result reports it: `lastChangeAt` (the checkout's last change), `previewLastConnAt` and `previewOpenConns` (the preview forward's last connection and open connections, when the lease's supervisor reports them; one that reports them and runs no dev server on a preview port reads `previewOpenConns: 0`, since no preview connection can be open), `acquiredAt`, `readAt` (when zcp read it), all times RFC 3339 UTC, and `note` (what could not be read, and why). Inside it too a fact not read is absent, never zero: a lease status did not read (`unverified`, its ssh alias missing) carries `activity` with only `acquiredAt` and `note`; a read that failed (the container unreachable, the read cut at its budget) carries its `readAt`, keeps what it did read and says what failed in `note`. zcp's own `idle` label (`spec-workflows.md` §8 DP-25) rides the result only, never the envelope: a client draws idleness from these facts (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`, `TestLeaseTool_Status_IdleLease_NamesWhatFreesIt`) |
+| `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
+| `notAnswering` | why the last zcp call that ran a command in the lease's container found it not answering, on every envelope rather than only that call's: one of zcp's own fixed reasons — the container at its process limit (fork answered `resource temporarily unavailable`), or ssh not reaching it — never ssh's or the container's output, so it is credential-free. `zerops_lease` status, sync (its source and each member) and release's guard, and `zerops_dev_server` on the alias, record it with when in zcp's lease record, under the alias's record lock and only while that record is still the lease's (`spec-workflows.md` §8 DP-2, DP-21); the first later call that reaches the container clears it. The envelope reads the record and runs no ssh for it. Absent when the last such call reached the container, or none ran. Additive (`TestLeaseTool_NotAnswering_RidesEveryEnvelopeUntilACallReachesIt`) |
+
+- **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
+  the leases for this envelope — `zerops_workflow action="status"`, the develop briefing
+  (`action="start" workflow="develop"`), every JSON carrier (§1.4, through `tools.freshEnvelope`) and
+  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or
+  a project where zcp holds no lease record and keys no pair by a dev pool: a pool an app calls as its
+  own infrastructure costs no orchestrator call, and its reserved containers are `zerops_lease
+  action=status`'s to list). `zerops_lease`'s own envelope reads always, so a release of the last
+  lease carries the emptied list. Never `null`. A client keeps the last list it read until a
+  newer envelope carries the key (`TestComputeEnvelope_LeasesFromReader`, `TestEnvelopeJSON_LeasesNotRead_NoKey`,
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource`).
+- **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
+  `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
+  The same holds for `activity` and `unsaved`.
+- **Absent `activity` / `unsaved` means "not read in this call"**, never "no activity" or "nothing
+  unsaved", as with `devServers`; a client keeps the last one it read, with its `readAt`. Only the
+  `zerops_lease` call that read a lease's checkout lays them on (`workflow.WithLeaseActivity`, keyed
+  by alias); the lease reader every envelope is filled by asks the pool orchestrators only and runs
+  no ssh, so every other tool's envelope — `zerops_dev_server` on the alias included — carries
+  neither and pays no ssh read, and no envelope reader derives them (`TestLeaseReader_NeverReadsActivity`,
+  `TestComputeEnvelope_LeaseActivity_NeverFromTheReader`, `TestEnvelope_OtherToolsCarryNoLeaseActivity`,
+  `TestJSONCarriers_LeaseActivity_ReadBackVerbatim`; fixture `envelope.lease-status.json`, §2.8a.7).
+- **The lease string never appears** (`spec-workflows.md` §8 DP-3): a lease has no field that could
+  carry it (`TestEnvelopeJSON_NoLeaseString`).
 
 #### 2.8a.4 `ServiceMeta.Stages[]` (zcp-internal)
 
@@ -1208,54 +1308,115 @@ type CodeVolume struct {
 	MountPath   string          `json:"mountPath"`   // e.g. /var/www/ws
 	DevServices []DevServiceRef `json:"devServices"` // {hostname, setupName}
 }
-// on the plan's runtime target and on ServiceMeta:
+// on ServiceMeta, and derive-only on the plan's runtime target (never published):
 CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
 ```
 
-- Variant B (MODEL §4) is chosen only by MODEL §4's rule; a pair without `codeVolume` is variant A
-  and reads, deploys and stands up exactly as before.
+**zcp sets up no new code volume.** Dev pools replace variant B: a part whose runtime cannot share
+the dev service gets a Swarm dev pool of its own (docs/spec-workflows.md §8 DP). A variant-B pair
+recorded before keeps working exactly as below, and pool migration moves it onto one dev pool per
+part (docs/spec-workflows.md §13 PM-13). The record stays, and so does every reader of it: each
+meta write writes the whole struct, pool migration reads it, and zcp cannot know when every
+installation has migrated. A pair without `codeVolume` is variant A and reads, deploys and stands
+up exactly as before.
+
+- No path sets one up:
+  - Plan: the plan runtime publishes no `codeVolume`, so a call still carrying one is refused by
+    the input schema before any handler runs — the agent reads `validating "arguments": … validating
+    /properties/plan/items/properties/runtime: unexpected additional properties ["codeVolume"]` —
+    and a plan reaching the engine with one is refused naming the field, a dev pool per part and
+    pool-migrate, with nothing planned (`TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume`,
+    `TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools`).
+  - Adopt records a code volume only on a volume already holding the repository (below) — a
+    variant-B project whose record was lost, recorded again so pool migration can move it. Dev
+    services whose volume holds nothing yet or an empty folder adopt as separate services, as a
+    data volume's do: adopting them as a pair would make the volume a code volume, its first deploy
+    filling it. Only a scope records such a pair, never a plan: its setups are read through the
+    runtimes the adopt scope names, each from its own `zerops.yaml` (`/var/www` over SSH, else its
+    mount) — never from whichever runtime of the project sorts first — and the mount is probed only
+    on the runtimes whose own file declares the setup, so the project's other runtimes are neither
+    read nor reached, wherever they sort
+    (`TestAdoptVolumeSetups_ReadsTheScopedRuntimesNotTheProjectsFirstRuntime`). A setup mounting
+    the volume runs on an adoptable runtime of its `run.base` that finds the checkout at the mount:
+    the one named after the setup (a service's default setup is its hostname), else the only one no
+    other setup takes — stages and other runtimes of the same base hold no checkout there, so they
+    never make the choice ambiguous. The pair's stages are the scoped stage hostnames (ending in
+    `stage`) named like one of its dev services (`apistage` → `apidev` or `api`, as the stand-up
+    pairs them) or whose setup the repository's `zerops.yaml` declares, each recorded with the
+    setup named after it when declared, the one named like the dev half first; with stages the
+    pair is standard. The adopt answer names the code volume, further dev services and stages
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair`,
+    `TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded`,
+    `TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages`).
+    Runtimes scoped beside the pair still face the adopt pairing question (docs/spec-workflows.md
+    §3.2), whose refusal names the scope that adopts the pair alone
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly`).
+  - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
+    repository, one runtime that is no stage is the dev half of every stage the repository builds
+    (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,
+    each dev service holding its own checkout. The pair's stages put the one named like the dev half
+    first, then the tier's order (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
+    `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
+    `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
+  - The monorepo playbook gives a part that cannot share the dev service a dev pool and names
+    pool-migrate for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
+- Steering: every `zerops_deploy` whose target a variant-B pair names, every `zerops_dev_server`
+  answer for one of its dev services (`warnings`), and lifecycle status (a `### Shared code volume`
+  guidance block) carry one line — `zcp no longer sets up a shared code volume. <dev>'s pair keeps
+  working on the code volume <volume>; zerops_workflow workflow="pool-migrate" service="<dev>" moves
+  it onto one dev pool per part.` — a warning, never a refusal; a pair already keyed by its dev pool
+  carries none (`TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt`,
+  `TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair`,
+  `TestHandleLifecycleStatus_VariantBPair_NamesPoolMigrate`).
 - The pair stays one meta, keyed on the dev service the agent edits (`Hostname`). Every
   `DevServices[i]` is a further dev service of the pair with its own dev setup; the pair-keyed
-  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup.
-- Validation, before import: `mountPath` is an absolute folder strictly under `/var/www` — the
-  platform refuses `/var/www` itself as a mount (P4 H3) and zcp's mount `<host>:/var/www` shows the
-  volume as `/var/www/<host>/<folder>` — and the pair needs at least one further dev service. The
-  volume and every dev service are planned once and collide with no live service
-  (`TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt`).
+  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup. A pair
+  adopted again names the volume and each dev service once, every one of them live
+  (`TestValidateBootstrapTargets_AdoptedCodeVolume_NamesEveryServiceOnce`).
 - Deploy: a deploy from any dev service of the pair runs with `workingDir` = `mountPath` unless the
   caller names one (`ServiceMeta.WorkingDirFor`), and pre-flight reads `zerops.yml` from the same
   folder below the source's mount. In a project holding a local-storage service a `workingDir`
   under `/var/www` is a container path unless its first folder is a service's hostname, which stays
   refused as a local mount path (`TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume`).
-- Stand-up recognises the pair from the tier as it recognises every pair: per repository, one
-  runtime that is no stage is the dev half of every stage the repository builds (variant A, a stage
-  per part); several such runtimes beside the tier's only local-storage service are one variant-B
-  pair — the first in the tier's order the dev half, the rest further dev services — and without
-  exactly one local-storage service each stage pairs with the runtime named like it, as before.
-  The pair's stages put the one named like the dev half first, then the tier's order
-  (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
-  `TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair`).
-- Stand-up of a variant-B pair: it is adopted with `codeVolume`, and once the repository is checked
-  out its `mountPath` is read from `run.volume` of every dev setup of the pair in `zerops.yml` — one
-  that does not mount the volume, mounts it elsewhere than the others or outside `/var/www` stops
-  the pair. The dev half deploys from the checkout in `/var/www`, then every further dev service
-  deploys its own dev setup from the same checkout; then the volume is filled once from that
-  checkout (left as it is when it already holds this repository) and `zcp-devsup ctl reload` runs on
-  every dev service; the pair's stages build from the volume after the fill
-  (`TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair`,
-  `TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+  The deploy of the dev half fills a volume the record names that is still empty and reloads every
+  dev service's supervisor (`TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSupervisors`).
+- Stand-up called again on a project holding a recorded variant-B pair reads the tier beside the
+  records: a repository with several runtimes that are no stage, one of them the recorded pair's
+  dev half, beside the tier's only local-storage service the record names, is that pair — the
+  recorded dev half wherever the tier lists it, the others further dev services, every stage of the
+  repository its stage; a record naming another volume, or a pair already keyed by its dev pool,
+  keeps nothing (`TestParseMateTier_ARecordedVariantBPair_IsReadAsThatPair`). The adopt it runs
+  refuses a target naming a service another meta records — a further dev service or stage of
+  another pair — so no second meta is ever written for one runtime (docs/spec-workflows.md §8 E8;
+  `TestAdoptPair_AServiceAnotherPairAlreadyNames_Refused`). The pair is adopted again with
+  `codeVolume`, and once the repository is checked out its `mountPath` is read from `run.volume` of
+  every dev setup of the pair in `zerops.yml` — one that does not mount the volume, mounts it
+  elsewhere than the others or outside `/var/www` stops the pair. The dev half deploys from the
+  checkout in `/var/www`, then every further dev service deploys its own dev setup from the same
+  checkout; then the volume is filled once from that checkout (left as it is when it already holds
+  this repository) and `zcp-devsup ctl reload` runs on every dev service; the pair's stages build
+  from the volume after the fill
+  (`TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
 - zcp never writes code into a volume it did not prove is a code volume. Adopt takes a local-storage
   volume that several dev setups mount for a pair's code volume only when every dev setup works in
   the mount — each `run.initCommands`/`run.start` command is a `zsc noop` or names the mount, and a
   built-in web server serves a `documentRoot` inside it (`ops.ZeropsYmlEntry.WorksIn`) — and every
-  matched runtime finds nothing at the mount yet, an empty folder or a git checkout sharing a root
-  commit with its `/var/www`; anything else (a Laravel app and worker sharing `/var/www/storage`)
-  adopts as separate services. The fill writes only into an empty volume and refuses any other
-  content, naming the volume
-  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent`,
+  matched runtime finds a git checkout there sharing a root commit with its `/var/www`; anything
+  else — nothing at the mount yet, an empty folder, or a Laravel app and worker sharing
+  `/var/www/storage` — adopts as separate services. The fill writes only into an empty volume and
+  refuses any other content, naming the volume
+  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository`,
   `TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsCheckout`).
 - Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
   its own setup (`TestStandup_DeploysEveryStageOfAPair`).
+- A pool migration clears `codeVolume` (docs/spec-workflows.md §13 PM-13). A variant-B pair moves
+  one pool per part; its census and bundle read the volume's checkout. Its retire deletes every dev
+  service — each delete keeps the volume and its files — then the volume last, the only step that
+  loses the checkout; the platform refuses that delete while any service still mounts the volume.
+  `codeVolume` rides the pool-keyed pair until the volume reads gone, then leaves it, so no migrated
+  pair names a code volume
+  (`TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast`,
+  `TestPoolMigrateRetire_VariantB_VolumeStillMounted_KeepsTheCodeVolume`).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
@@ -1287,9 +1448,15 @@ How zcp does it:
   its repository and lacks the part — after the repository's last service — or removes the part's
   entry, its comment lines and its blank separator from each tier still carrying it; a dev half is
   never removed, a tier carrying no service of the repository is left alone, and a tier the text
-  edit cannot read is refused and named. Every other line stays as `main` has it. The change is
-  titled `Mate: <host> in the group recipe`; HQ's one open change per Mate per repository holds as
-  for scaling. The reconcile's line names the call for each part `main`'s tiers lack or still carry,
+  edit cannot read is refused and named. A tier's service names its part by its repository and the
+  setup a group environment builds for it (`bundle.GroupEnvironmentSetup`, the composer's own rule):
+  a stage deploying Mate's preview variant of a setup — which the AI Agent tier keeps, while Stage and
+  Small Production build the setup it extends — is that setup's part, so a part gained with a variant
+  is one proposal over every tier, and a stage that only switched to its variant changes no part; a
+  dev half keeps its own setup (`TestGroupRecipeService_PreviewVariant_IsThePartOfTheSetupItExtends`). Every other line stays as `main` has it. The change is
+  titled `Mate: <host> in the group recipe`; the Mate keeps one recipe proposal open at a time —
+  its one change there opened naming no branch, zcp's choice, since proposals touch the same tier
+  files — as for scaling. The reconcile's line names the call for each part `main`'s tiers lack or still carry,
   unless that part's change is the open one. A one-part app's tiers carry its part, so nothing is
   said or proposed.
 - Removal. `zerops_delete` deletes a service only with the person's explicit consent: a call
@@ -1363,6 +1530,8 @@ on it and never blocks.
 | `envelope.single-pair.today.json` | today's envelope for one pair — the bytes zcp marshals today |
 | `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
+| `envelope.pool-pair.json` | a pair keyed by its dev pool (`spec-workflows.md` §13 PM-10): `apppool` (a pool, no `mode`) carrying `stages[1]`, the stage `appstage`, the pool's lease in `leases[]`; the bytes zcp computes from the re-keyed pair |
+| `envelope.lease-status.json` | the envelope a `zerops_lease action=status` result carries, each lease naming its group's `repo` (two repositories); `devpool-3`, read, with `activity` and `unsaved`; `stoppool-2` of a stopped pool, unverified, its `activity` only `acquiredAt` and why it was not read, no `unsaved`; the bytes the real handler renders, its read times the call's own (`TestMateContractFixtures_LeaseStatus_RenderedByTheHandler`) |
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
@@ -2680,7 +2849,9 @@ What a stop runs is the platform's pushed deployment; the deploy half's version 
 only while that answer is on its way, so a production whose `appVersionName` names a merge waiting
 for its first release reads "Nothing live yet" (measured: `fsadfdasfsa`, `055a7e8`, nothing live).
 A Mate's preview is the public route of its pair's stage half (`pairPreviewRoute`: `appstage` beside
-`appdev`, `todoappstage` beside `todoapp`), never a service that only ends in `stage`. The next step
+`appdev`, `todoappstage` beside `todoapp`), never a service that only ends in `stage`. Its page lets
+Mate's preview pane frame it while the application's production keeps the app's framing (§10.10,
+MB-40). The next step
 is one, worst first: a Mate waiting on an answer, a Mate stopped on an error, a failed deploy —
 production's, then a stage's (2026-09-25) — a pull request the person can merge, one that cannot
 land, a release, _Add production_, a first task for a Mate nobody has spoken to. A failed stage
@@ -3097,6 +3268,15 @@ Three outcomes, deliberately distinct — a caller must never read one as anothe
 | `unavailable` | Zerops, but the mount table could not be read at all | degrades, names the reason, warns once (cleared by the next successful read); never empties the set on this path |
 | `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
 
+A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount source `<alias>:/var/www`,
+`<alias>` the lease alias of §2.8a.3 `leases[]`) is a direct child of `/var/www` like any dev mount, so it
+is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
+released and the mount goes. **The name alone says it is a lease's** (`kind: "lease"`): a Zerops service
+hostname is lowercase alphanumeric with no dash, and zcp names a lease `<pool>-<number>`
+(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so no sweep depends on whether the envelope's `leases[]` has been read
+yet — the checkpoint sweep runs at boot before any envelope does. The leases an envelope reported stay a
+second signal, never the only one.
+
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
 a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the
 checkpoint reactor, the diff query — see the same shape they always did.
@@ -3160,6 +3340,58 @@ hand-written RPC can set anything a mere default would allow:
 | No worktrees (`worktreesAllowed:false`) | the isolation unit on Zerops is a service, not a directory — a dev service has one `/var/www`, one process, one subdomain; a second checkout is a checkout nobody serves | the decider (`thread.create`, `thread.meta.update` persist `worktreePath:null`; `project.meta.update` forces `defaultThreadEnvMode:"local"`) — the sole write chokepoint every command funnels through |
 | No second commit pipeline (`stackedVcsActionsAllowed:false`) | zcp owns init, identity, the PAT, commit and push; mate owns turn-level history only | `GitManager.runStackedAction` refuses server-side; the `pullRequests`/`vcsStackedActions` capabilities hide the client control too — hiding is presentation, the refusal is the enforcement |
 | No background fetch (`upstreamRefreshAllowed:false`) | a status poll's `fetch` against a PAT-backed origin mate does not own is unwanted network from every mounted service at once | `GitManager.remoteStatus` forces `refreshUpstream:false` |
+
+**The isolation unit is a service or a leased container.** A part's dev pool (`docs/spec-workflows.md`
+§8 "Dev pools (DP)") gives each branch a pool container of its own, leased through `zerops_lease`: one
+`/var/www`, one checkout, its own processes and preview port — the same unit a dev service is, so
+`worktreesAllowed:false` stands. A conversation whose agent acquired a lease is bound to it — `lease:
+{alias, pool, branch, repo} | null`, taken from that conversation's own `zerops_lease` acquire; a lease's group is its repository and its branch (`docs/spec-workflows.md` §8 DP-17), both on every lease zcp reports (§2.8a.3 `repo`). The binding
+decides what a person sees for the conversation — the Git tab, Diff and the terminal's checkout open on
+`/var/www/<alias>`, a repository by §6.1's rule — and **not where its sessions run**: the agent's
+session keeps opening in the Mate workspace, because zcp keeps its state in the session's working
+directory (`.zcp/state`: the lease records, the work session, the ssh aliases it rewrites from them). A
+session opened in the lease mount would lose every lease record ("No lease record" on release), write
+`.zcp/state` into the leased checkout, and rewrite the ssh aliases from an empty set. The agent reaches
+the lease the way it reaches a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
+The media root stays with the session too, since the paths an agent writes are relative to it.
+
+zcp holds one set of leases for every conversation in the container, and a pool hands a released
+container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
+and unbinding fans out: when a `zerops_lease` result or an envelope's `leases[]` says a lease was
+released, is no longer held (gone, lost, or reserved with no zcp record), or was acquired again by
+another conversation — or is held under the same alias with another `acquiredAt`, a container handed
+out again by a holder Mate did not see — every conversation bound to it is unbound before the acquiring
+one is bound; a conversation whose record could not be read at that read is unbound at the next one. The
+binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
+`worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
+thread owns — nothing removes or releases it with the thread; releasing it is the agent's
+`zerops_lease action=release`.
+
+**Asking to release.** Mate never releases a lease and runs no `zcp` for it (§0 rule 4, MA-6). When the
+person archives a conversation bound to a lease, or presses Release beside that conversation's
+workspace chip, Mate asks whether to release the workspace, naming it and showing what it knows of it
+(last activity, unsaved work, idle; §2.8a.3). The archive is never held for the answer, and no timer
+asks, answers or dismisses the question. Only the person's Release sends anything: one visible user
+message, a normal turn of the bound conversation, asking its agent to run `zerops_lease action=release
+lease=<alias>` and to stop and say so rather than force when work is unpushed. An archived conversation
+is un-archived first, since the engine takes no message there; the agent's release, zcp's guard and the
+unbind fan-out above do the rest.
+
+**A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
+pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
+them together. A group acquire binds the conversation to the **first newly acquired** lease of the
+result (zcp lists them in `pools` order); a lease that comes back `reused: true` — the conversation's
+branch already held on that pool — binds nothing and unbinds nothing, so a repeat acquire never steals
+a binding. When the bound lease ends, the conversation is unbound and then bound to the **earliest
+acquired** (`acquiredAt`) lease of its repository and branch — `repo` and `branch` both equal to the
+bound lease's, never the branch alone: two apps of one Mate both on `main` hold leases of one branch name
+— that the same call read as still held; with none left it stays unbound. A branch release names no single lease, so every lease it lists as released unbinds
+whoever is bound to it. The Git tab, Diff, the terminal's checkouts and the addresses show **every held
+lease of the bound repository and branch** (bound lease first, each named `<pool> · <branch>`), taken from the Mate's
+one set of leases: the latest any conversation's Zerops call read, kept across a restart of the Mate
+server and pushed to every open conversation when it changes — so a member another conversation ended
+leaves every view at that read, never at a conversation's own older envelope. No new event or command
+carries any of this; the one envelope key it reads beyond the branch is each lease's `repo` (§2.8a.3).
 
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
@@ -3615,7 +3847,7 @@ that only the broker deploys to.
 | D30 | **A Mate's recipe proposal only adds** (2026-09-26: the medusa group's second Mate, which had joined the group's existing repositories, proposed its own composition of every tier over the hand-written ones — project env, secrets and the storage policy dropped, a `mailpit` added, production naming the dev setups — the broker merged it, and the next release built production's storefront with the dev setup, a 502; the first Mate had done the same the day before). Every Mate composes the whole app from its own project, so a proposal over a tier `main` carries is one Mate's view replacing the group's. zcp proposes only the tiers `main` lacks, from a branch cut at `main`'s tip, so its pull request only ever adds files, and closes its bot's proposals once `main` has every tier; the broker merges a Mate's proposal by itself only when every file it changes is added, and one that modifies, removes or renames a file `main` carries waits for a person with write. A tier on `main` changes only through a person's pull request. §10.10. **Narrowed by D31:** a tier on `main` still changes only through a pull request, and a registered Mate may open one and merge it when its person asks; the automation stays additive and withdraws only its own proposals. Holds in HQ: zcp proposes only the tiers `main` lacks as the Mate's change, which only adds, and Core lands it (§10.10). |
 | D31 | **Every registered Mate writes its group repo** (2026-09-30, the owner, after a person asked their Mate to add a service to two tiers and merge the group's open pull requests, and the Mate could open the pull request and not merge it: "mate should have write right to groups" · "the first mate ever has to stand up the group, every new one should be able to change it as well"). The broker's rights loop makes every registered Mate's bot a collaborator with `write` on `{slug}/group`, a planned action of every pass: a Mate registered before the rule gains it on its next pass with no token minted, a new one on the pass that makes its bot; a bot whose Mate leaves the group's registry loses it, as it loses its `read` team, and a deleted Mate's bot is retired and keeps it, as it keeps its team. `main` keeps its protection exactly — no direct push from anyone, merges from anyone with write, no merge whitelist; `env/*` stays the broker's and `v*` tags the release team's. So a Mate still changes the recipe only through a pull request, now one it may merge itself when its person asks, and its merge does what a person's does: the services a changed tier adds are imported into every environment built from that tier, with no production guard. The automation stays as D30 has it: zcp proposes only the tiers `main` lacks, from the bot's fork, and withdraws only the proposals it opened, never a pull request the Mate opened itself; the broker lands a Mate's pull request by itself only when it only adds files. `POST /mate/repository` still refuses `group`: the write is the rights loop's, never an answer there. §10.8, §10.10. Superseded 2026-10-02: in HQ a Mate writes only its own change; it proposes the recipe through it, and a change to a tier `main` carries is a person's to merge. |
 | D32 | **A new Mate stands up from its recipe in one zcp call** (2026-09-30, the owner confirming how a Mate is added, after the Beviro trial: without it the model improvised an adopt and four deploys one after another — mailpit 1:55, medusadev 5:49, nextstoredev 4:39 — could not place the stage half, and took sixteen minutes). The person's browser builds the project from the group's AI Agent tier, the Mate reaches HQ with its project key (§3.5), and the first turn's one call, `zerops_standup`, adopts every pair, checks `main` out, deploys every dev half at once and answers once they stand, then, on the model's second call, each stage after its dev half and the stages above it by the tier's priority, and reports each service with the model's next step. It delivers nothing — no commit, push or pull request — and touches the Mate's own project only. The model is the backup: whatever fails, it carries on in the same turn with zcp's own tools. §10.10. |
-| D34 | **A group recipe gives a search engine room to reindex, and keeps what a Mate learns** (2026-10-02, the owner: "while creating the recipe it should think about minimal viable resources (but not go overboard either)"). zcp writes Meilisearch, Elasticsearch and Typesense at no less than 2 GB `minRam` with 0.5 GB `minFreeRamGB` on every tier, each the max of the live value and the floor; every other service keeps the numbers it runs with. The recipe carries the free-memory buffer and a managed service's `profileOverrides` (Valkey's `maxmemory-policy`). A scale change or import override that leaves the recipe behind answers with each tier's old and new values, and `group-recipe scaling=<host>` proposes only that host's `verticalAutoscaling` into the tiers on `main`, for Review; a block it cannot rewrite safely is refused, never duplicated. Why: a new Mate's catalog import ran Meilisearch out of memory at the recipe's 1 GB, and the fix its agent made stopped at that one Mate. In HQ (2026-10-02): the proposal is the Mate's change in the recipe repository, titled `Mate: <host>'s scale in the group recipe`, for a person to merge; HQ keeps one open change per Mate per repository, so a scaling proposal and the additive one (D30) never write over each other — whichever finds the other open leaves it as it is and says so (§10.10). |
+| D34 | **A group recipe gives a search engine room to reindex, and keeps what a Mate learns** (2026-10-02, the owner: "while creating the recipe it should think about minimal viable resources (but not go overboard either)"). zcp writes Meilisearch, Elasticsearch and Typesense at no less than 2 GB `minRam` with 0.5 GB `minFreeRamGB` on every tier, each the max of the live value and the floor; every other service keeps the numbers it runs with. The recipe carries the free-memory buffer and a managed service's `profileOverrides` (Valkey's `maxmemory-policy`). A scale change or import override that leaves the recipe behind answers with each tier's old and new values, and `group-recipe scaling=<host>` proposes only that host's `verticalAutoscaling` into the tiers on `main`, for Review; a block it cannot rewrite safely is refused, never duplicated. Why: a new Mate's catalog import ran Meilisearch out of memory at the recipe's 1 GB, and the fix its agent made stopped at that one Mate. In HQ (2026-10-02): the proposal is the Mate's change in the recipe repository, titled `Mate: <host>'s scale in the group recipe`, for a person to merge; the Mate keeps one recipe proposal open at a time (its one change there opened naming no branch — zcp's choice since HQ keeps an open change per branch), so a scaling proposal and the additive one (D30) never write over each other — whichever finds the other open leaves it as it is and says so (§10.10). |
 | D35 | **A delivery to HQ fails fast** (2026-10-04, the owner: "a relatively short interval with at most three tries — in general fail fast here and say so, so it gets dealt with, rather than wait five minutes for something or mask that HQ works badly; it should simply always be available, and when it is not, the problem is bigger, somewhere in Zerops"). A delivery step HQ cannot serve — not reached, or a 5xx — is tried three times, 1 s and 3 s apart; a refusal fails at once. Then the delivery fails within the agent's call, naming the step, HQ's address and the last error: nothing is recorded as owed and nothing tries again in the background, the work stays committed in the checkout, and the next delivery sends it. Supersedes the pending delivery `zcp service mate` finished once HQ answered (every 30 s, and 5 s doubling to 5 min while one was owed, for as long as it took). The Mate's link to HQ is its server's and reconnects by itself (§3.5). §10.10. Superseded 2026-10-21 for deliveries: zcp delivers nothing (§10.10, *A Mate's git*); the bound holds for the HQ calls and git zcp still makes. |
 | —   | D2 (a relay), D7 (stage deploys), D9 (integration tokens at the door) and D14's build (adoption) are closed, superseded or not built; D14 stands as the design: adoption is the new-app flow with existing source, nothing adopted in place.                                                                                    |
 
@@ -3745,8 +3977,10 @@ with each one's origin address, `repos`, and whether that application has a prod
 target, released or not, `production` — both of which an older HQ omits; zcp reads no Git
 environment's pushes (`gitPushes`, which HQ still serves to released zcp); the closing note of a session that hands over a change names Put it live only while
 `production` is not true); a repository of
-its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
-time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
+its application, made or joined (`POST /api/mate/repos`); its changes in a repository, one open per
+branch it names beside its one change opened naming none — an HQ that keeps them so says
+`openPerBranch: true` in the Mate's state and lists every open change there — or, from an older HQ,
+one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a token
 for a GitHub repository at that call (`GET /api/mate/git-credential?host=github.com&path=…`, §5.10);
 git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; HQ's named difference 3 — the address without it answers 404) with the Mate's Git credential (§3.3), which today takes a Mate's push only
@@ -4003,6 +4237,34 @@ would keep (`TestGroupPriorities_*`, `TestBuildGroupRecipe_PriorityFollowsBuildR
 `TestBuildGroupRecipe_MedusaGolden`, `TestComposeGroupRecipeInputs_ReadsTheLiveProject`,
 `TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings`).
 
+**Mate's preview pane frames a Mate's dev and stage; production keeps the app's framing
+(2026-10-25).** The pane (§5.4) draws a service's page in a frame on Mate's origins —
+`https://mate.zerops.io`, which the desktop shell loads too, and the container's own `/mate/` on
+its `*.zerops.app` subdomain — so a page that sends `X-Frame-Options` (no value of it names another
+origin) or a `frame-ancestors` leaving them out reads "refused to connect" there (zeropsio/apps' hq
+and box stages, static services, measured 2026-10-25). The stage builds the setup production builds,
+so an allowance in that setup would reach production. A Mate's AGENTS.md (`agents_preview.md`,
+behind the gate, §2.0) says: dev and stage send no `X-Frame-Options` and widen the app's own
+`frame-ancestors` by Mate's origins; the dev setup may carry it where the stage builds another; the
+stage deploys **Mate's preview variant** of its setup — a setup that `extends` it and changes only
+the framing (a static service's `run.routing.headers`, else a `run.envVariables` value the app's
+header code reads) — and the setup it extends stays as the app wrote it. A setup lets the pane frame
+the app when its own `run` holds a `frame-ancestors` naming `https://mate.zerops.io`, or a bare
+source list naming Mate's origin set (that origin beside `https://*.zerops.app`); a setting naming
+Mate's address alone is the app's own (`bundle.WithoutMateFraming`). The AI Agent tier keeps the
+variant on the stage half; every group environment builds the setup it extends, named after it
+(`groupEnvironmentSetup`). A framed stage setup that extends no other is built framed, and the pass
+says so (MB-40). **Named limit (review R4-7):** the container's origin is named as the
+`https://*.zerops.app` wildcard, so any Zerops tenant's page can frame a Mate's dev and stage.
+`*.zerops.app` is a public-suffix-list private suffix, so another tenant's page is cross-site and
+SameSite=Lax or Strict cookies are not sent; an app with SameSite=None cookies, or with
+unauthenticated state-changing UI, can be clickjacked. It is not narrowed to the container's own
+origin: the wildcard beside `https://mate.zerops.io` is what `bundle.WithoutMateFraming` and the
+group recipe's variant recognition read as Mate's origin set, from the zerops.yaml alone — an
+exact origin there would stay in production's framing until both learned it — and the origin the
+pane loads `/mate/` from (the zcp service's `zeropsSubdomain`, `*.zerops.dev` on devel) is not
+verified live.
+
 **A Mate's git (2026-10-21, design B; was Delivery to HQ, 2026-10-02).** A Mate's code reaches its
 repository by plain git, as on a laptop: the agent brings `main` up to date, cuts a branch of its
 own, commits and pushes it, and `main` moves only by a merge — a person's in HQ, or GitHub's for a
@@ -4014,7 +4276,10 @@ no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-su
 
 **A Mate is HQ's by what it is, not by whether HQ answers (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the project key is only how zcp reaches
-it. A Mate whose HQ does not answer yet, or refuses its key, plans the same pairs, refuses
+it — and the converse holds: outside a Mate the key gives no pair a Mate's HQ repository and composes
+no group recipe — that container's repositories take the plain-project door (§6.7)
+(`TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository`). A Mate whose HQ does not
+answer yet, or refuses its key, plans the same pairs, refuses
 launch-production and hands its release to the person, as one HQ answers does — it never falls back
 to classic simple plans, a production project of its own or a pushed tag. Whatever needs HQ to
 answer says it cannot reach HQ and why (`hq.ErrNoIdentity`), and launch-production's next step
@@ -4050,19 +4315,45 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `zerops_workflow action="open-change" branch=<branch> title=<…>` — `POST /api/mate/changes`
   `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
   `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
-  `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
-  repository, `created: false`, rather than open a second, saying how to take its branch and bring
-  the work onto it (work cut from `main` is no fast-forward of it); the pair records the number and
-  the branch HQ names (`ServiceMeta.HQ {change, branch}`), which status names on the dev half
-  (`change=`, `changeBranch=`). An HQ from before changes were bound to a named branch ignores
-  `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp names and records that
-  branch and says to push the work there. While the change is open, develop's start says the work
-  goes on its branch rather than on one cut from `main`, and how to take it
-  (`TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`,
-  `TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound`).
-  Released zcp recorded the Mate's local branch `mate/<mateId>` under the same key; status and
-  every pass read such a record as its change's `mate/<mateId>/<n>`, and the take step renames that
-  local branch, which git cannot keep beside the change's
+  `400 invalid/invalid_ref`, and, past five open changes of the Mate in the repository,
+  `409 conflict/too_many_open` — and zcp reads the reason (too many: it names the open ones from the
+  Mate's state and asks the person to merge or close one). A change is a branch: an open change is
+  (application, repository, branch), never a pair's. zcp keeps each change it knows of in its change
+  ledger, one file per change (`<stateDir>/hq/changes/<appId>/<repo>/<number>.json`, 0600, a write
+  lock per change; `workflow.HQChange`), so the zcp of every conversation and every subagent of one
+  writes different files, and nothing is a session's "current" change. A change file that does not
+  decode (a write cut short) is listed by no reader; the next write of that change moves it aside as
+  `<number>.json.corrupt` and writes the change afresh, so it never fails a write for good
+  (`TestHQChangeLedger_UndecodableFileIsMovedAsideOnTheNextWrite`). A call names its change: by
+  `branch`, or by `service=` a lease alias — its record's repository on this Mate's HQ
+  (`hq.RepoOfURL`) and its branch, never `main` — or a pair, which names the repository; with
+  neither, the one repository of the Mate's wired pairs and HQ leases, pairs that share one counting
+  once (`resolveChangeTarget`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`,
+  `TestResolveChange_PairsSharingARepositoryAreOne`). HQ answers the change already open on the
+  branch named, `created: false` — it stays, and its work goes on by a push and a describe — and a
+  second branch opens a change of its own (`TestOpenChange_SecondBranchOpensItsOwnChange`,
+  `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`,
+  `TestOpenChange_TooManyOpen_NamesThem`,
+  `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`). An older HQ — no `openPerBranch` —
+  answers its one open change whatever branch is named: zcp keeps that change on its own branch,
+  records nothing for the branch asked for, and says the work goes onto the open one, how to take its
+  branch and bring the work onto it (work cut from `main` is no fast-forward of it)
+  (`TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`,
+  `TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`). An HQ from before changes were bound to
+  a named branch ignores `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp
+  names and keeps that branch and says to push the work there
+  (`TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound`). The Mate's state open-change
+  reads first also says what became of the changes the ledger keeps in the repository: its answer
+  forgets each one merged, closed or no longer listed and says it once (`landed`), so a describe
+  naming no branch never refuses on a change merged since the last pass
+  (`TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled`). On such an older HQ, while the
+  change is open, develop's start says the work goes on its branch rather than on one cut from
+  `main`, and how to take it. The pairs' records an earlier zcp wrote (`ServiceMeta.HQ {change,
+  branch, changeDescription}`) move into the ledger at every read of it, one change however many
+  pairs share its repository, and are cleared (`TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`);
+  released zcp recorded the Mate's local branch `mate/<mateId>` under the same key, which moves in
+  as its change's `mate/<mateId>/<n>`, and the take step renames that local branch, which git
+  cannot keep beside the change's
   (`TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking`). In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
   at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
@@ -4072,18 +4363,103 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   wired to HQ, to any remote, refuses before git runs — its `GIT_TOKEN` is the Mate's HQ
   credential — and says the plain-git way. The person reviews a change by its description:
   `zerops_workflow action="describe-change"` sets it on the pair's open change (MB-34).
+- **A Mate closes its own abandoned change** (owner decision D-5, 2026-10-25): `zerops_workflow
+  action="close-change" branch=<branch>` — or `service=` a lease of it; never inferred, not even as
+  the only open one — closes the Mate's own open change on that branch without merging,
+  `POST /api/mate/changes/:repo/:n/close`, its branch and the leases on it kept, the ledger
+  forgetting it; HQ shows it closed by its Mate in the change's conversation. A change on the branch
+  that is not this Mate's own is not in its state and is never asked for. Only an HQ that keeps an
+  open change per branch (`openPerBranch`) is asked; an older one, one that answers the route 404 or
+  405 (no close for a Mate yet), and a 403 all get the same answer: nothing was closed, a person
+  closes it in its review, by its link (`TestCloseChange_OwnByBranch`,
+  `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`,
+  `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`). The refusal past five open changes
+  names it beside asking the person to merge or close one.
 - **What became of the change** (merged with `mergedSha`, closed) is read fresh from the Mate's own
   state, `GET /api/mate/self`, by every `describe-change` and reconcile pass — no merge passes
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring
   `main` up to date and cut the next work's branch from it; it carries no CI line (§10.8). The
-  record's number is cleared once the change is no longer open.
+  ledger forgets a change once it is no longer open. A change the state no longer lists is read by
+  its window: an HQ that keeps an open change per branch lists every open one, so one missing settled
+  past the window and is said as no longer open, never as closed without merging; an older HQ lists
+  only the Mate's newest ten in the repository, so one missing while ten newer are listed may be an
+  open one that fell out, and stays kept, unknown — only one missing from a window that is not full,
+  or newer than its oldest, reads as closed (`TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow`). The pass's change turn runs after its pairs', per
+  repository, once a pair's turn read the state (or at develop's start) — and, with no pair to take
+  a turn (work only in leases), at every pass while the ledger or an HQ lease names a repository; it
+  turns to each repository the ledger, a wired pair or an HQ lease names, so a change handed there
+  is taken (`TestHQPass_ChangesTakeTheirTurnWithNoWiredPair`) — and holds each change with
+  no wait, leaving one a describe holds to the next pass. A change of another application than the
+  one HQ holds the Mate in stays there, said once. A merged change's note names its branch, the
+  leases zcp holds on it with the release that frees them (`zerops_lease action=release
+  branch=<branch>`) — never released by the pass — and the stages of its repository's pairs, which
+  track `main` (a dev pool's put on `main` from a lease of its part)
+  (`TestHQPass_MergedChangeNamesItsLeasesAndStages`). An open change's standing, as the Mate's state
+  names it from an HQ that judges it (`ready`, `mergeability`, `behind`), is said only when it
+  differs from what the agent was last told (the ledger's `told`): a draft with a push to describe;
+  behind `main` and still merging cleanly — merge `origin/main` in where the branch is checked out,
+  check it, push, sync the group's leases, describe it again, or leave it for the person to merge on
+  top of what it was not checked with; no longer merging cleanly — merge `origin/main` in and
+  resolve, never a rebase, never a force (`TestHQPass_OtherChangeBehindAfterMerge_ToldOnce`,
+  `TestHQPass_ConflictToldWithMergeNotRebase`, `TestHQChangeStanding_SaysOnlyWhatChanged`).
+  Develop's start, on an HQ that keeps an open change per branch, lists each repository's open
+  changes by number and branch with their standing and says new work goes on a branch of its own
+  cut from an up-to-date `main`, opening its own change — never onto an open change's branch
+  (`TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch`). The list is every open change
+  the Mate's state names in the repository, recorded in the ledger or not — one opened by another
+  zcp, or naming no branch (HQ's default change) — since each counts toward the open changes HQ
+  keeps a Mate there (`TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot`). Status names no change on a
+  pair: its Changes section is one line per repository — each change zcp's ledger keeps, by number
+  and branch, the leases on its branch, an old one labelled (no lease holds it, untouched in HQ for
+  days; a label, never an act), and each branch leases hold with no change yet. Each change's
+  standing is the Mate's state's now: status reads `GET /api/mate/self` once (bounded to 5 s, sent
+  once), inside a Mate and only when the section has a change or a leased branch to name — an idle
+  Mate costs HQ nothing — so a merge since the last pass reads merged while the pair backoff holds
+  the pass off: a merged change names the leases still on its branch, to release, and that new work
+  starts from `main`; a closed or no longer listed one is said so. The read writes nothing (neither
+  the ledger nor what was told), so the pass still says a merge or a standing once, with what to do.
+  HQ not answering — or outside a Mate, where status reads nothing of HQ — the section is the
+  ledger's standing as told, labelled as last read
+  (`TestStatus_OneBlockPerRepository`, `TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown`,
+  `TestStatusHQChanges_OutsideAMate_AsLastRead`,
+  `TestRenderStatus_ChangesBlockPerRepository`). `zerops_lease action=status` names each group's
+  change (repository@branch, once however many leases it has) from zcp's ledger and lease records,
+  its standing read the same way — once, inside a Mate, only when a lease group of an HQ repository
+  is in view; as last read while HQ does not answer (`TestLeaseGroupChanges_NamesEachGroupsChange`).
+  A lease on a branch whose change merged — the pass told it and forgot the change, or no pass ran
+  since — is never "no change yet", which invites a new change on merged work: lease status says
+  "change #N merged — release this lease (`zerops_lease action=release branch=<b>`), or start new
+  work from main", and status names it as a merged change, its leases to release
+  (`TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet`). A lease release's result names each
+  released branch's change the same way — its standing read once, inside a Mate; as last read while
+  HQ does not answer — a merged one naming the branch's leases still held with the branch release,
+  so the agent never calls a change open that merged since the last pass
+  (`TestLeaseRelease_ResultNamesTheReleasedBranchsChange`), and the stages of the repository's pairs,
+  which track `main`, with the call that puts `main` on one (`zerops_deploy sourceService="<alias>"
+  targetService="<stage>" sha="origin/main"`, the stage named when there is one): the merged note may
+  have reached the agent before the last merge only, and a stage left one merge behind `main` after
+  the last branch's release was seen live (global HQ 2026-10-26); an open change, or a repository
+  whose pairs have no stage, names none (`TestLeaseRelease_MergedChangeNamesTheStageCall`). A lease on a branch whose change was closed
+  still reads "no change yet" (opening again there is a new change). The launch refusal and the
+  release handoff name every open change once per repository, however many pairs share it — a
+  release takes `main` only (`TestLaunchProduction_ListsEveryOpenChangeOnce`,
+  `TestHandleRelease_NamesTheOpenChangesItLeavesOut`). The release handoff reads the Mate's state
+  once (bounded to 5 s, inside a Mate, only when the ledger keeps a change) and leaves out a change
+  it names merged, closed or no longer listed, so a change merged since the last pass is never
+  named as left out; it writes nothing, so the pass still says the merge once. Unread — outside a
+  Mate, or HQ not answering — it names the ledger's, as last read
+  (`TestHandleRelease_LeavesOutTheChangesHQSaysSettled`).
 - **A change handed to the Mate.** A person hands an open change whose Mate is gone to another
   Mate of the application; HQ keeps its branch — one its Mate named, or `mate/<old>/<n>` — and
-  `GET /api/mate/self` lists it with `branch` and `handed: true`. The next pass records it as the
-  pair's change with that branch (`hqTakeHanded`, once the change on record is known to be no
-  longer open) and says once how to take the branch — fetched when its Mate pushed to it, cut from
-  `main` when nothing is there — and to push to it, never force. `open-change` reads the Mate's
-  state first and answers the handed change, opening none. The group recipe's writer moves a
+  `GET /api/mate/self` lists it with `branch` and `handed: true`. The next pass keeps it in the
+  ledger with that branch (`hqTakeHanded`, after it learned what became of the changes it kept) and
+  says once how to take the branch — fetched when its Mate pushed to it, cut from `main` when
+  nothing is there — and to push to it, never force. `open-change` reads the Mate's state first and
+  answers a handed change on the branch named, opening none; another branch opens its own change,
+  the answer naming the handed one, which stays open on its branch
+  (`TestHandedChange_AnotherBranchOpensItsOwnChange`). An older HQ hands a change only to a Mate
+  holding no open change in the repository, so there `open-change` answers the handed change
+  whatever branch is named. The group recipe's writer moves a
   handed proposal on its stored branch (`hq.Client.BranchOf`). zcp
   `TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch`,
   `TestGroupRecipe_AHandedProposalMovesOnItsOwnBranch`.
@@ -4122,17 +4498,26 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (`HQRepoRef.credentialFingerprint`). The Mate's own service (`zcp service start mate`) looks at
   the file every 10 s and rewrites only that secret when the fingerprint differs from the file's, as
   after HQ issued a new one on a link, leaving the checkout's branch and origin alone; the repository
-  pass — bootstrap, adopt and every develop start — does the same outside its backoff.
+  pass — bootstrap, adopt and every develop start — does the same outside its backoff. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16), under a variable of its own: inside a
+  Mate an acquire of a repository on HQ writes it to the pool's `ZCP_HQ_GIT_TOKEN` — never the pool's `GIT_TOKEN`, which
+  every container of the pool reads and a lease of a repository outside HQ answers its host with, so it stays the
+  user's — when zcp's fingerprint for that pool — kept in
+  `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs; the Mate's
+  service's look and the repository pass renew every pool holding one, so a held lease pushes with the credential HQ
+  sent from its next fresh session. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
+  with its pair, into the same `ZCP_HQ_GIT_TOKEN`, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
+  fingerprint over and the per-pool record goes, so the pool is never renewed twice.
 - **A Mate moved to another HQ.** A wired pair whose record names its own repository
   (`/git/[<org>/]<app>/<repo>.git` of its HQ record) on another host than the HQ the Mate links to now
   was wired before the move; any other remote is the person's and is never moved. At the Mate's service start, and at
   every repository pass, its checkout's `origin` is pointed at the repository's address on the
   current HQ while it still names the retired one (an origin anywhere else is not moved), git's
   helper for the retired host goes and HQ's is written for the current one, and the record follows.
+  A pair keyed by its dev pool has no checkout to point: only its record follows.
   A start that could not finish — the dev service stopped, HQ not answering — is taken again on the
   pass's backoff, and so is a credential renewal that failed; each command on a dev service is bounded
   to 15 s. A pair a refused push marked keeps the pass's backoff: the pass wires it again. The project key
-  is never written into the dev service: it runs the application's code and its dependencies. The
+  is never written into the dev service or a pool: they run the application's code and its dependencies. The
   helper persisted in `.git/config` for HQ's host answers the dev service from `GIT_TOKEN` and the
   Mate's own shell from `zcp hq git-credential`, which reads the file at each request and answers
   for HQ's host only — and, for github.com, with HQ's per-call token (§5.10).
@@ -4142,15 +4527,16 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 
 `hq_pair.go`, `hq_change.go`, `hq_change_description.go`, `hq_describe_retry.go`, `hq_retry.go`,
 `hq_wiring.go`, `hq_dev_git.go`, `service/service.go`, `hq_pair_lock.go`, `deploy_git_push.go`, `workflow/pair_lock.go`,
-`ops/hq_base_branch.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
+`ops/hq_base_branch.go`, `ops/lease_pool_credential.go`, `ops/pool_credential_record.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
 `TestReconcileHQRepositories_*`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`,
 `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`,
 `TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`, `TestBuildBaseBranchCommand_*`,
 `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestHQGit_*`, `TestHQRetry_TriesOnlyWhileHQCannotServe`,
 `TestHQNotServingWords`, `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`,
 `TestClient_Bounded_EndsATryHQDoesNotAnswer`, `TestAPassSkipsAPairHeldElsewhere`, `TestLockPair`,
-`TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestClient_*`, `TestGitCredential_*`,
-`TestPersistedCredentialHelper_*` — against a fake HQ that serves real git with HQ's ref rules.
+`TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestClient_*`, `TestGitCredential_*`,
+`TestPersistedCredentialHelper_*`, `TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgain`,
+`TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH`, `TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord` — against a fake HQ that serves real git with HQ's ref rules.
 
 **A new Mate stands up from its recipe in one call (D32, 2026-09-30).** Adding Wren to Beviro —
 whose recipe is `0 — AI Agent/import.yaml` on `main` of the application's recipe repository in HQ,
@@ -4309,12 +4695,17 @@ still the whole prompt (`TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut
 **A change's description (2026-09-29; in HQ since 2026-10-02).** A change opens with a title of
 what it holds and nothing more, while the person reviews it by what it says
 (§5.4: the review shows what the change does in the Mate's words, right after the verdict). So the
-Mate writes it: `zerops_workflow action="describe-change" service=… description=…` — markdown, at
-most 20000 characters and no NUL, which no text in HQ keeps — sets the body of the pair's open change
-(`PATCH /api/mate/changes/:repo/:n {body}`), the one on record or the open one the Mate's state names,
-and replaces what was there; a `title=…` given with it retitles the change in the same edit. The
-words are kept on the pair first (`ServiceMeta.HQ.ChangeDescription`), so none are lost while HQ does
-not answer: they wait for the change they were written for. Words never reach a change they were not
+Mate writes it: `zerops_workflow action="describe-change" branch=… description=…` — markdown, at
+most 20000 characters and no NUL, which no text in HQ keeps — sets the body of the open change on that
+branch (`PATCH /api/mate/changes/:repo/:n {body}`); `service=` a lease alias names its branch, and
+with neither the repository's only open change is the one — several open is a refusal listing each
+one's `branch=`, number and title, never the newest (`TestDescribeChange_ByBranch`,
+`TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestResolveChange_SeveralOpen_RefusesListingEach`,
+`TestResolveChange_NeverTheNewest`) — and replaces what was there; a `title=…` given with it retitles
+the change in the same edit. The words are kept with the change in the ledger first, so none are
+lost while HQ does not answer: they wait for the change they were written for. A describe holds its
+change (`workflow.HoldHQChange`), never its pair, so a pass never forgets the change while a describe
+writes onto it (`TestDescribeChange_WaitsWhileItsChangeIsHeld`). Words never reach a change they were not
 written for: a change on record that merged or closed before they reached it is named to the Mate
 and nothing is kept, and words kept for a change that is gone are dropped rather than inherited by
 the next one. Describing never opens a change, and with none open there is nothing to describe yet.
@@ -4328,7 +4719,7 @@ reached HQ (a connection dropped after the words were sent, a balancer's 502 or 
 not have landed, since HQ has no read of a change's words to check. With no change on record, the
 read of the Mate's own state that names the open one is tried the same way, and HQ staying away is
 said as not knowing, never as "no change is open". `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
-`hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`,
+`hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`,
 `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`.
 
 - **A change asks for review only when it is ready (2026-10-05, D7 and F8 of run 11).** A change
@@ -4347,7 +4738,7 @@ said as not knowing, never as "no change is open". `hq_describe_retry.go`; `Test
   characters, with "…"; zcp gives a change no title of its own. A describe holds the pair's
   checkout, so two describes from two chats never interleave. The client asks for review only while
   the Mate rests, too: not while a turn runs or helpers it started still work in any of its chats; a
-  watch loop alone is not work. `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`;
+  watch loop alone is not work. `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`;
   HQ: `changes.test.ts` "a change is ready for review only at the head the Mate last described it
   at"; client: `mateNextStep.test.ts`, `groupFlow.test.ts`, `SidebarZeropsTree.test.tsx`,
   `ZeropsNextStepBanner.test.tsx`.
@@ -4384,10 +4775,13 @@ cannot show. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
 
 **A merge may come at any moment (2026-10-03; plain git since 2026-10-21).** A change appears in
 its Mate's conversation as soon as it opens, and the person may merge it while the agent still
-works. A pass reads what became of the pair's change from the Mate's own state and tells the agent:
-merged, bring `main` up to date and cut the next work's branch from it; closed, nothing of it is on
-`main`. A pass never changes the checkout. A closing session hands over a change only while the
-pair records an open one. Production guidance reads the Mate's changes from HQ; an unreadable HQ is
+works. A pass reads what became of each change zcp keeps from the Mate's own state and tells the
+agent: merged, bring `main` up to date and cut the next work's branch from it, the leases on its
+branch named for release and the stages that track `main`; closed, nothing of it is on `main`; and
+of the others, once each, those now behind `main` or no longer merging cleanly, with a merge of
+`origin/main`, never a rebase. A pass never changes the checkout and never releases a lease. A
+closing session hands over a change only while the ledger keeps an open one in a repository it
+deployed into. Production guidance reads the Mate's changes from HQ; an unreadable HQ is
 a visible unknown, with a manual ask again. The recipe's additive and scaling paths keep Core's
 empty-change rule: nothing beyond `main` opens nothing.
 `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`,
@@ -4572,11 +4966,15 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-31 | In a Mate, HQ answering or not, launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says the work goes to `main` first by a branch of the agent's own; with HQ not answering or refusing the key it says the answer is HQ's. A container that is not a Mate keeps its route. zcp `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep` (the handler, Mate and not, linked and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue` (the next step). |
 | MB-32 | A project's flow and its one next step are one derivation the projects page, the left menu and a Mate's conversation all draw (D29): worst first, a failed deploy the next step — production's before a stage's — a failed stage never hiding a release, and a failed production keeping the release that might clear it; production "After the first merge" with nothing to press while `main` is empty; a preview only the stage half beside its own dev half; a group stage drawn only where one exists; the conversation's step from the flow — its own mergeable change, as _Review_ at the composer's top, and nothing of the project's. The page lays it out one way: a _Next steps_ item carries its row's own verb (_Review_, _Review release_, _+ Add production_), a _Review_ opening the review and nothing merging or releasing from the page, and a step with no verb to press is not listed; a cell holds at most two lines, a row one verb at the end of the cell it acts on (and _Review release_ beside a failed production); an empty step is a muted word, never a dashed place; _Add stage_ and _Add production_ are the project menu's, never a footer link; a Mate opens from its chip, its tile or its card. The left menu draws production as one chip on the project's heading, a stage only where there is no production, and dots no heading — a folded one shows its busy Mates' faces. `groupFlow.test.ts` — "takes the worst step first: $case", "reads production as $case", "offers Add production only where $case → $addable", "still ranks a failed production above the release", "names production's failure before a stage's, and keeps the release a failed stage does not block", `pairPreviewRoute` "is $case"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "another Mate's change", "its own change that does not merge"); `OverviewView.test.tsx` — "carries the step's verb %s on each strip item, the row's own verb", "leaves a step with no verb to press out of the strip", "never holds more than two lines in a cell: %s", "puts the verb in the cell it belongs to", "still offers the release beside a broken production, not just the build (D28)", "draws a group stage under main only where one exists — never an empty slot", "reads production as coming after the first merge, with nothing to press", "opens any Mate a row names into its conversation, by a real button in reading order", "opens a tile's Mate from the whole tile, with no Open button beside it"; `ProjectsView.test.tsx` — "names the next step in its header, without the verb", "keeps Add stage and Add production in the group menu: no footer links", "draws each Mate as a row that carries its Preview on its first line"; `flowSteps.test.tsx` — "says its word in the muted hand, never dashed: %s", "holds its verbs at the cell's end, in order"; `projectsView.logic.test.ts` — "says %s awaits somebody: %s"; `SidebarZeropsTree.test.tsx` — "never dots a project for the production it does not have"; `SidebarProductionChip.logic.test.ts` — "$state" (its cases include "no production, only stage"), "draws no chip where there is neither a production nor a stage"; `SidebarProjects.logic.test.ts` — "headingFaces — who a folded project's heading shows (M15)"; `ZeropsReviewDoors.test.tsx` — "every door opens the review and never acts itself (R1)". |
 | MB-33 | A Mate proposes only the recipe tiers `main` of the application's recipe repository in HQ lacks (D30): a tier directory `main` has any file in is left whole, the group's first recipe lands whole, a top-level file `main` has is never proposed. The proposal is the Mate's own change in `group`, titled exactly "Mate: the group's import files" with no description, its branch `main`'s tree with the missing files written over it, so it only adds; it moves forward only — a changed composition on its head, with `main` as a second parent once `main` moved — and one `main` has overtaken is brought to `main`'s tree and adds nothing. A group whose `main` has every tier gets no change opened, and the agent's `group-recipe` answers that `main` already carries every tier. Every `buildFromGit` is the pair's repository in HQ. zcp `TestMissing_ATierTheRepositoryHas_IsLeftWhole`, `TestGroupRecipe_ProposedAsTheMatesChange`, `TestGroupRecipe_ProposedOntoAnUnbornMain`, `TestGroupRecipeAtStart_ReopensNothingAPersonDeclined`, `TestGroupRecipe_ProposesOnlyWhatMainLacks`, `TestGroupRecipe_FollowsTheProjectOnTheSameChange`, `TestGroupRecipe_MainMovedUnderAnOpenProposal`, `TestGroupRecipe_AProposalMainOvertookAddsNothing`, `TestGroupRecipe_OpensNothingMainAlreadyHas`, `TestHandleGroupRecipe_Table`. |
-| MB-34 | A Mate's description of its change is its change's body in HQ: set on the pair's open change — on record or named by the Mate's state, never opened by describing — kept on the pair while HQ does not answer, with an ask to describe again, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped). The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept for that change is refused before anything is written, and one HQ will never take writes nothing and drops the words (HQ refusing for now keeps them). zcp `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`. |
+| MB-34 | A Mate's description of its change is its change's body in HQ: set on the open change of the branch named — by branch or a lease alias, or the repository's only open one; several open with none named is refused, listing each — on record or named by the Mate's state, never opened by describing — kept with the change in the ledger while HQ does not answer, with an ask to describe again, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped). The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept for that change is refused before anything is written, and one HQ will never take writes nothing and drops the words (HQ refusing for now keeps them). zcp `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`. |
 | MB-35 | A new Mate stands up from its application's AI Agent tier, read from HQ, in one call (D32): every pair built from the application's repositories in HQ is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, its checkout put on `main` of the repository the tier names (never one HQ would have to make), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseMateTier_PairsOnlyRepositoriesOfThisApplication`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched`. |
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
-| MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`. |
+| MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`, `TestHQPass_MergedChangeNamesItsLeasesAndStages`. |
+| MB-40 | Mate's preview pane frames a Mate's dev and stage, never the application's production: a Mate's AGENTS.md has dev and stage drop `X-Frame-Options` and widen the app's own `frame-ancestors` by Mate's origins through Mate's preview variant of the stage's setup, never that setup; the group recipe's AI Agent tier keeps the variant and every group environment builds the setup it extends; a setting naming Mate's address alone is no framing. Named limit: the container origin is the `*.zerops.app` wildcard (§10.10, review R4-7). `TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage`, `TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends`, `TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild`, `TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming`. |
+| MB-41 | A Mate holds an open change per branch: open-change names its change by branch, or by a lease alias or pair (pairs sharing a repository are one); a second branch opens its own change, the same branch is answered, a handed change is answered only for its branch, and past five open the refusal names them. zcp keeps each change in its ledger, one file per change, never on a pair, moving the pairs' older records in once. Against an HQ that keeps one open change per repository (no `openPerBranch`) the answered change is kept on its own branch and nothing is recorded for the branch asked for; open-change forgets, and says once, a kept change the state it read names settled (§10.10). zcp `TestHQChangeLedger_OneFilePerChange`, `TestHQChangeLedger_ConcurrentWritersKeepEachOthersFields`, `TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`, `TestResolveChange_PairsSharingARepositoryAreOne`, `TestResolveChange_NeverTheNewest`, `TestOpenChange_SecondBranchOpensItsOwnChange`, `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`, `TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`, `TestOpenChange_TooManyOpen_NamesThem`, `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`, `TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled`, `TestHandedChange_AnotherBranchOpensItsOwnChange`, `TestClient_Self_Changes_DecodeStandingAndOpenPerBranch`, `TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow`. |
+| MB-42 | What zcp says of a Mate's several open changes: a merged one's note names the leases on its branch, for the agent to release, and the stages that track `main`; another's standing — behind `main`, conflicting, a draft — is said once, when it differs from what was told, with a merge of `origin/main`, never a rebase; develop's start lists every open change the Mate's state names in the repository, recorded or not, and sends new work to a branch of its own; status shows one Changes line per repository, each change's standing read fresh from the Mate's state (a merged one naming its leases to release; as last read while HQ does not answer), and no pair names a change; lease status names each group's change, and a lease on a merged change's branch says it merged — release it, or start new work from main — never "no change yet"; a lease release's result names each released branch's change the same way, a merged one with the call that puts `main` on the repository's stages; the launch refusal and release handoff name each open change once, the handoff leaving out one the Mate's state, read once, names settled. AGENTS.md: one branch per piece of work, one change per branch; the dev-pool atom opens and describes a branch's change from a lease and covers parallel work (§10.10). zcp `TestHQPass_MergedChangeNamesItsLeasesAndStages`, `TestHQPass_OtherChangeBehindAfterMerge_ToldOnce`, `TestHQPass_ConflictToldWithMergeNotRebase`, `TestHQChangeStanding_SaysOnlyWhatChanged`, `TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch`, `TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot`, `TestStatus_OneBlockPerRepository`, `TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown`, `TestRenderStatus_ChangesBlockPerRepository`, `TestLeaseGroupChanges_NamesEachGroupsChange`, `TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet`, `TestLeaseRelease_ResultNamesTheReleasedBranchsChange`, `TestLeaseRelease_MergedChangeNamesTheStageCall`, `TestLaunchProduction_ListsEveryOpenChangeOnce`, `TestHandleRelease_NamesTheOpenChangesItLeavesOut`, `TestHandleRelease_LeavesOutTheChangesHQSaysSettled`, `TestBuildAgentsMD_Container_GitHostOneChangePerBranch`, `TestDevelopDevPoolAtom_OpensTheBranchsChangeFromALease`. |
+| MB-43 | A Mate closes its own open change by branch, or a lease of it, never inferred: closed without merging in HQ, its branch and leases kept, forgotten by zcp; another Mate's is never asked for; an HQ without `openPerBranch`, or without the close route, is not asked or refuses, and the answer says a person closes it in its review (§10.10). zcp `TestCloseChange_OwnByBranch`, `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`, `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`, `TestWorkflowTool_CloseChangeReachesItsHandler`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |

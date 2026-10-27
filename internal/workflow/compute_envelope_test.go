@@ -3,6 +3,12 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -995,5 +1001,421 @@ func TestComputeEnvelope_UntrackedRuntimeDeployedFromPlatform(t *testing.T) {
 		if s.Deployed != want[s.Hostname] {
 			t.Errorf("%s: Deployed = %v, want %v", s.Hostname, s.Deployed, want[s.Hostname])
 		}
+	}
+}
+
+// A Swarm pool and a Zerops Box come through the envelope as their own
+// classes and never as adoptable runtimes (spec-workflows.md §8 PS-1, PS-2).
+func TestComputeEnvelope_PoolClass(t *testing.T) {
+	t.Parallel()
+
+	pool := platform.ServiceStack{
+		ID: "pool-id", Name: "swarmpool", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "swarm@1",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	box := platform.ServiceStack{
+		ID: "box-id", Name: "sandbox", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "ubuntu/zbox@1",
+			ServiceStackTypeCategoryName: "STANDARD",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{pool, box}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1",
+		runtime.Info{InContainer: true, ServiceName: "zcpdev"}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+
+	want := map[string]topology.RuntimeClass{"swarmpool": "pool", "sandbox": "sandbox"}
+	if len(env.Services) != len(want) {
+		t.Fatalf("services = %+v, want exactly %d", env.Services, len(want))
+	}
+	for _, svc := range env.Services {
+		if svc.RuntimeClass != want[svc.Hostname] {
+			t.Errorf("%s RuntimeClass = %q, want %q", svc.Hostname, svc.RuntimeClass, want[svc.Hostname])
+		}
+		if svc.Bootstrapped || svc.Mode != "" {
+			t.Errorf("%s Bootstrapped=%t Mode=%q, want an unbootstrapped, modeless service", svc.Hostname, svc.Bootstrapped, svc.Mode)
+		}
+	}
+	// Neither is an adoptable runtime: a project holding only a pool and a
+	// Box has nothing to bootstrap or adopt, and its pool is worked on
+	// through a lease (docs/spec-workflows.md §8 DP-29).
+	if env.IdleScenario != IdleScenario("dev-pool") {
+		t.Errorf("IdleScenario = %q, want dev-pool (pool and Box are not adoptable runtimes; the pool is leased)", env.IdleScenario)
+	}
+}
+
+// TestComputeEnvelope_IdleScenario_Pools pins where a Swarm pool puts an idle
+// project (docs/spec-workflows.md §8 DP-29): a project whose only runtimes
+// are pools is `dev-pool` — its work is a lease, nothing is bootstrapped or
+// adopted — while a pool beside an unmanaged runtime leaves that runtime's
+// adopt scenario as it was, and a Box alone is no pool.
+func TestComputeEnvelope_IdleScenario_Pools(t *testing.T) {
+	t.Parallel()
+
+	svc := func(name, typeVersion, category string) platform.ServiceStack {
+		return platform.ServiceStack{ID: name + "-id", Name: name, Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typeVersion, ServiceStackTypeCategoryName: category}}
+	}
+	pool := poolService("webpool")
+	box := svc("box", "ubuntu/zbox@1", "STANDARD")
+	db := svc("db", "postgresql@16", "STANDARD")
+	app := svc("appdev", "nodejs@22", "USER")
+
+	tests := []struct {
+		name     string
+		services []platform.ServiceStack
+		want     IdleScenario
+	}{
+		{"a pool alone", []platform.ServiceStack{pool}, IdleScenario("dev-pool")},
+		{"pools, a Box and a database", []platform.ServiceStack{box, db, pool, poolService("hqpool")}, IdleScenario("dev-pool")},
+		{"a Box alone", []platform.ServiceStack{box}, IdleEmpty},
+		{"nothing", nil, IdleEmpty},
+		{"a pool beside an unmanaged runtime", []platform.ServiceStack{app, pool}, IdleAdopt},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().WithServices(tt.services).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+			env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1",
+				runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime)
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			if env.IdleScenario != tt.want {
+				t.Errorf("IdleScenario = %q, want %q", env.IdleScenario, tt.want)
+			}
+		})
+	}
+}
+
+// poolService is a Swarm pool the way the platform lists it.
+func poolService(hostname string) platform.ServiceStack {
+	return platform.ServiceStack{
+		ID: "pool-id", Name: hostname, Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "swarm@1",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+}
+
+// writeLeaseRecordFile writes a lease record the way zcp stores it
+// (docs/spec-workflows.md §8 DP-2: .zcp/state/leases/<alias>.json).
+func writeLeaseRecordFile(t *testing.T, stateDir, alias, body string) {
+	t.Helper()
+	dir := filepath.Join(stateDir, "leases")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, alias+".json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
+	t.Parallel()
+
+	held := LeaseSnapshot{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"}
+	lost := LeaseSnapshot{Alias: "devpool-12", Pool: "devpool", Branch: "feat-y", ContainerHostname: "node-id-12.runtime.devpool.zerops", State: "lost"}
+	other := LeaseSnapshot{Alias: "apool-1", Pool: "apool", ContainerHostname: "node-id-1.runtime.apool.zerops", State: "unknown-holder"}
+
+	// poolPair is a pair keyed by the dev pool devpool.
+	poolPair := &ServiceMeta{Hostname: "devpool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+		BootstrapSession: "s", BootstrappedAt: "2026-10-02", DevPool: &DevPoolRef{ServiceID: "pool-id"}}
+
+	tests := []struct {
+		name       string
+		services   []platform.ServiceStack
+		metas      []*ServiceMeta
+		reader     LeaseReader
+		wantCalled bool
+		want       []LeaseSnapshot
+		wantRead   bool
+	}{
+		{"reader snapshots reach the envelope, sorted by pool then container number", []platform.ServiceStack{poolService("devpool")}, []*ServiceMeta{poolPair},
+			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{lost, other, held}, nil },
+			true, []LeaseSnapshot{other, held, lost}, true},
+		{"project without a pool or a record never asks the reader", nil, nil,
+			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
+			false, nil, false},
+		// An app's own pool (one it calls with ${<pool>_API_TOKEN}) keys no
+		// pair and zcp holds no lease of it: no envelope asks its
+		// orchestrator, nor lists its containers as unknown-holder.
+		{"a pool no pair is keyed by, with no record, never asks the reader", []platform.ServiceStack{poolService("apool")}, nil,
+			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{other}, nil },
+			false, nil, false},
+		{"no reader injected leaves the leases empty", []platform.ServiceStack{poolService("devpool")}, []*ServiceMeta{poolPair}, nil, false, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			for _, m := range tt.metas {
+				if err := WriteServiceMeta(stateDir, m); err != nil {
+					t.Fatal(err)
+				}
+			}
+			called := false
+			var opts []EnvelopeOption
+			if tt.reader != nil {
+				reader := tt.reader
+				opts = append(opts, WithLeaseReader(func(ctx context.Context) ([]LeaseSnapshot, error) {
+					called = true
+					return reader(ctx)
+				}))
+			}
+			mock := platform.NewMock().WithServices(tt.services).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+			env, err := ComputeEnvelope(context.Background(), mock, stateDir, "p1", runtime.Info{}, fixedTime, opts...)
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			if called != tt.wantCalled {
+				t.Errorf("reader called = %v, want %v", called, tt.wantCalled)
+			}
+			if (env.Leases != nil) != tt.wantRead {
+				t.Errorf("leases read = %v, want %v", env.Leases != nil, tt.wantRead)
+			}
+			if fmt.Sprintf("%+v", env.LeaseList()) != fmt.Sprintf("%+v", tt.want) {
+				t.Errorf("Leases = %+v, want %+v", env.LeaseList(), tt.want)
+			}
+		})
+	}
+}
+
+// TestComputeEnvelope_WithLeaseActivity_LaysTheCallsReadsByAlias: the reads a
+// zerops_lease call made of its leases' checkouts ride leases[] keyed by alias
+// (docs/spec-mate.md §2.8a.3): a lease the call read carries its activity and
+// unsaved work, a lease it did not read carries neither, and a read of an
+// alias the envelope does not list adds no lease.
+func TestComputeEnvelope_WithLeaseActivity_LaysTheCallsReadsByAlias(t *testing.T) {
+	t.Parallel()
+
+	read := &topology.LeaseActivity{LastChangeAt: "2026-10-23T13:00:00Z", AcquiredAt: "2026-10-23T12:00:00Z", ReadAt: "2026-10-23T14:00:00Z"}
+	unsaved := &topology.LeaseUnsaved{Files: []string{" M src/app.ts"}, FileCount: 1, UnpushedCommits: 0}
+	gone := &topology.LeaseActivity{Note: "not read"}
+	reader := WithLeaseReader(func(context.Context) ([]LeaseSnapshot, error) {
+		return []LeaseSnapshot{
+			{Alias: "devpool-3", Pool: "devpool", State: "held"},
+			{Alias: "devpool-4", Pool: "devpool", State: "unknown-holder"},
+		}, nil
+	})
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{poolService("devpool")}).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	// The zerops_lease call's own envelope reads always: no record and no
+	// pair keyed by the pool is no reason to leave its leases unread.
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime, reader, WithLeasesAlwaysRead(),
+		WithLeaseActivity(map[string]LeaseRead{
+			"devpool-3": {Activity: read, Unsaved: unsaved},
+			"devpool-9": {Activity: gone},
+		}))
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	leases := env.LeaseList()
+	if len(leases) != 2 {
+		t.Fatalf("leases = %+v, want the reader's two and no lease for the read of devpool-9", leases)
+	}
+	if leases[0].Alias != "devpool-3" || !reflect.DeepEqual(leases[0].Activity, read) || !reflect.DeepEqual(leases[0].Unsaved, unsaved) {
+		t.Errorf("devpool-3 = %+v, want the activity and unsaved work the call read", leases[0])
+	}
+	if leases[1].Activity != nil || leases[1].Unsaved != nil {
+		t.Errorf("devpool-4 was not read but carries activity %+v unsaved %+v", leases[1].Activity, leases[1].Unsaved)
+	}
+}
+
+// TestComputeEnvelope_LeaseActivity_NeverFromTheReader: a lease reader reports
+// reconciled state only — activity and unsaved reach leases[] through
+// WithLeaseActivity alone, so an envelope without it (every tool but
+// zerops_lease) never carries them, whatever a reader returns, and the
+// records that stand in for an unreachable orchestrator carry none either.
+func TestComputeEnvelope_LeaseActivity_NeverFromTheReader(t *testing.T) {
+	t.Parallel()
+
+	derived := LeaseSnapshot{
+		Alias: "devpool-3", Pool: "devpool", State: "held",
+		Activity: &topology.LeaseActivity{LastChangeAt: "2026-10-23T13:00:00Z"},
+		Unsaved:  &topology.LeaseUnsaved{UnpushedCommits: 3},
+	}
+	tests := []struct {
+		name   string
+		reader LeaseReader
+	}{
+		{"a reader that sets them", func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{derived}, nil }},
+		{"the records standing in", func(context.Context) ([]LeaseSnapshot, error) { return nil, errors.New("orchestrator unreachable") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","containerNumber":3,`+
+				`"containerHostname":"node-id-3.runtime.devpool.zerops","branch":"feat-x","acquiredAt":"2026-10-23T10:00:00Z"}`)
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{poolService("devpool")}).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+			env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime, WithLeaseReader(tt.reader))
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			leases := env.LeaseList()
+			if len(leases) != 1 || leases[0].Alias != "devpool-3" {
+				t.Fatalf("leases = %+v, want devpool-3", leases)
+			}
+			if leases[0].Activity != nil || leases[0].Unsaved != nil {
+				t.Errorf("devpool-3 carries activity %+v unsaved %+v without WithLeaseActivity", leases[0].Activity, leases[0].Unsaved)
+			}
+			raw, err := json.Marshal(env)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(raw), `"activity"`) || strings.Contains(string(raw), `"unsaved"`) {
+				t.Errorf("the wire carries lease activity: %s", raw)
+			}
+		})
+	}
+}
+
+func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","poolServiceId":"pool-id","containerId":"c3","containerNumber":3,`+
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"SECRET-LEASE-VALUE","branch":"feat-x","acquiredAt":"2026-10-23T10:00:00Z"}`)
+	// A record that names no lease (alias does not match its file) is skipped.
+	writeLeaseRecordFile(t, dir, "bogus-9", `{"poolHostname":"other","containerNumber":1,"lease":"SECRET-LEASE-VALUE"}`)
+
+	reader := WithLeaseReader(func(context.Context) ([]LeaseSnapshot, error) {
+		return nil, errors.New("orchestrator unreachable")
+	})
+	// The orchestrator is down; the project has no pool listed either — the
+	// record alone is enough to ask, and to report.
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime, reader)
+	if err != nil {
+		t.Fatalf("an unreachable orchestrator must never fail the envelope: %v", err)
+	}
+	// The record's acquiredAt stands in with the rest of its last known state.
+	want := []LeaseSnapshot{{
+		Alias: "devpool-3", Pool: "devpool", Branch: "feat-x",
+		ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held", Unverified: true,
+		AcquiredAt: "2026-10-23T10:00:00Z",
+	}}
+	if fmt.Sprintf("%+v", env.LeaseList()) != fmt.Sprintf("%+v", want) {
+		t.Errorf("Leases = %+v, want %+v", env.LeaseList(), want)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", env), "SECRET-LEASE-VALUE") {
+		t.Error("the lease string reached the envelope")
+	}
+}
+
+// TestComputeEnvelope_LeaseRecords_CarryTheRepository: a lease's snapshot names
+// the repository its group is keyed by — a group is a repository and a branch
+// (spec-workflows.md §8 DP-17) — the record's identity made credential-free,
+// after acquiredAt; the reader's snapshot and the record standing in for an
+// orchestrator that did not answer alike (docs/spec-mate.md §2.8a.3, §6.3).
+func TestComputeEnvelope_LeaseRecords_CarryTheRepository(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","poolServiceId":"pool-id","containerId":"c3","containerNumber":3,`+
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"SECRET-LEASE-VALUE","branch":"main",`+
+		`"repo":"https://git.example.com/acme/app?token=s3cr3t","acquiredAt":"2026-10-23T10:00:00Z"}`)
+	reader := WithLeaseReader(func(context.Context) ([]LeaseSnapshot, error) {
+		return nil, errors.New("orchestrator unreachable")
+	})
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(env.LeaseList())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"alias":"devpool-3","pool":"devpool","branch":"main","containerHostname":"node-id-3.runtime.devpool.zerops",` +
+		`"state":"held","unverified":true,"acquiredAt":"2026-10-23T10:00:00Z","repo":"https://git.example.com/acme/app"}]`
+	if string(raw) != want {
+		t.Errorf("leases =\n%s\nwant\n%s", raw, want)
+	}
+	if strings.Contains(string(raw), "s3cr3t") || strings.Contains(string(raw), "SECRET-LEASE-VALUE") {
+		t.Errorf("a credential reached the envelope: %s", raw)
+	}
+}
+
+// TestComputeEnvelope_PoolDevHalf_CarriesStages pins the envelope of a pair
+// keyed by its dev pool: the pool's snapshot keys the pair — it carries the
+// pair's stages (stageHostname today, stages[] from the field order's step 3)
+// and HQ record, and is marked a pool dev half for pure readers (off the
+// wire) — while it stays a pool for atom matching: no mode, so no dev-runtime
+// guidance lands on it. The stage keeps its stage mode.
+func TestComputeEnvelope_PoolDevHalf_CarriesStages(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pair, err := devKeyedPair().keyedOnPool(appPoolMove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteServiceMeta(dir, pair); err != nil {
+		t.Fatal(err)
+	}
+	stage := platform.ServiceStack{
+		ID: "s2", Name: "appstage", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{poolService("apppool"), stage}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if len(env.Services) != 2 {
+		t.Fatalf("services = %+v, want apppool and appstage", env.Services)
+	}
+	pool, st := env.Services[0], env.Services[1]
+	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool {
+		t.Fatalf("services[0] = %+v, want the pool", pool)
+	}
+	if !pool.DevIsPool || !pool.Bootstrapped || pool.Mode != "" {
+		t.Errorf("pool snapshot DevIsPool=%v Bootstrapped=%v Mode=%q, want a marked, tracked, modeless pool", pool.DevIsPool, pool.Bootstrapped, pool.Mode)
+	}
+	if pool.StageHostname != "appstage" || pool.StageSetupName != "prod" ||
+		!reflect.DeepEqual(pool.Stages, []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}) {
+		t.Errorf("pool snapshot stages = %q/%q %+v, want appstage/prod", pool.StageHostname, pool.StageSetupName, pool.Stages)
+	}
+	if pool.HQRepo != "appdev" {
+		t.Errorf("pool snapshot HQ = %q, want the pair's HQ record", pool.HQRepo)
+	}
+	if pool.SetupName != "pool" || pool.GitPushState != topology.GitPushConfigured {
+		t.Errorf("pool snapshot setup=%q gitPush=%q, want the pool setup and the pair's git-push state", pool.SetupName, pool.GitPushState)
+	}
+	if st.Mode != topology.ModeStage || st.DevIsPool || st.StageHostname != "" || st.SetupName != "prod" {
+		t.Errorf("stage snapshot = %+v, want the stage half, unmarked", st)
+	}
+
+	wire, err := json.Marshal(env.WithParts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Services []map[string]json.RawMessage `json:"services"`
+	}
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(decoded.Services[0]["stages"]); got != `[{"hostname":"appstage","setup":"prod"}]` {
+		t.Errorf("the pool's wire stages = %s, want [{appstage prod}]", got)
+	}
+	if _, ok := decoded.Services[1]["stages"]; ok {
+		t.Error("the stage's snapshot carries stages[]")
+	}
+	if strings.Contains(string(wire), "devIsPool") || strings.Contains(string(wire), "DevIsPool") {
+		t.Errorf("the marker rode the wire: %s", wire)
 	}
 }

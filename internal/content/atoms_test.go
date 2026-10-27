@@ -241,3 +241,81 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairSyncsInTheMatesOwnShell(t *t
 		}
 	}
 }
+
+// A dev pool's loop opens the branch's change from a lease once the branch is
+// pushed — repository and branch from the lease — and describes it by the
+// same, naming the lease's preview to try it on; parallel work gives each
+// subagent a branch of its own, its own group and its own change.
+func TestDevelopDevPoolAtom_OpensTheBranchsChangeFromALease(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-dev-pool.md" {
+			body = a.Content
+		}
+	}
+	for _, want := range []string{
+		`zerops_workflow action="open-change" service="<alias>"`,
+		`action="describe-change" service="<alias>"`,
+		"one group, one branch, one change",
+		"**Parallel work.**",
+		"a branch of its own",
+		"git merge origin/main",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("develop-dev-pool.md lacks %q", want)
+		}
+	}
+}
+
+// A dev pool's branch proves its production build on the stage before its
+// change is described: the lease preview runs dev servers, never the build.
+// The check deploys the branch to the stage, verifies it there and puts main
+// back at once; the description says it built and verified on the stage.
+func TestDevelopDevPoolAtom_ChecksTheBranchOnTheStageBeforeItsChangeIsDescribed(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-dev-pool.md" {
+			body = a.Content
+		}
+	}
+	for _, want := range []string{
+		"**Stage check.**",
+		`zerops_deploy sourceService="<alias>" targetService="<stage>"` + "`",
+		`zerops_verify serviceHostname="<stage>"`,
+		`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`,
+		"built and verified on the stage",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("develop-dev-pool.md lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "not on the stage") {
+		t.Error("develop-dev-pool.md still keeps a branch off the stage")
+	}
+}
+
+// A wired pair's start-from-remote guidance no longer reads a change off the
+// pair: a change is its repository's branch's, and new work starts on a
+// branch of its own.
+func TestDevelopGitPushStartFromRemoteAtom_NamesNoChangeOnThePair(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	for _, a := range atoms {
+		if a.Name == "develop-git-push-start-from-remote.md" && (strings.Contains(a.Content, "change=<n>") || strings.Contains(a.Content, "changeBranch")) {
+			t.Errorf("develop-git-push-start-from-remote.md still reads a change off the pair:\n%s", a.Content)
+		}
+	}
+}

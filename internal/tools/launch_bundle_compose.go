@@ -50,6 +50,13 @@ func composeLaunchBundleInputs(
 	if len(runtimes) != len(gateChecks) {
 		return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtimes (%d) and gateChecks (%d) must align 1:1", len(runtimes), len(gateChecks))
 	}
+	// A runtime whose pair is keyed by its dev pool has no checkout to read
+	// (docs/spec-workflows.md §10, §13 PM-10): the flow refuses it first.
+	for _, r := range runtimes {
+		if r.DevIsPool {
+			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q is the dev pool its pair is keyed by — no checkout to read; launch refuses it before compose", r.PushHostname)
+		}
+	}
 
 	// Discover once — shared across all runtimes for managed-dep
 	// aggregation and per-runtime type lookup.
@@ -133,6 +140,12 @@ func composeLaunchBundleInputs(
 		}
 	}
 
+	// PS-3: a pool or Box the project holds is neither the app nor a managed
+	// dependency the bundle can promote. Hand them to the composer in
+	// ManagedServices anyway — it never emits them and names each as "not
+	// carried" in the bundle warnings, so they are not dropped silently.
+	managed = append(managed, poolAndSandboxEntries(discover)...)
+
 	return bundle.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: productionProjectName,
@@ -176,7 +189,8 @@ func findRuntimeServiceByHostname(d *ops.DiscoverResult, hostname string) *ops.S
 		return nil
 	}
 	for i := range d.Services {
-		if d.Services[i].Hostname == hostname && !d.Services[i].IsInfrastructure {
+		if d.Services[i].Hostname == hostname && !d.Services[i].IsInfrastructure &&
+			!topology.IsPoolOrSandboxType(d.Services[i].Type) {
 			return &d.Services[i]
 		}
 	}
@@ -208,6 +222,22 @@ func collectManagedServicesExcluding(discover *ops.DiscoverResult, excludeHostna
 			Type:     svc.Type,
 			Mode:     svc.Mode,
 		})
+	}
+	return out
+}
+
+// poolAndSandboxEntries lists every Swarm pool and Zerops Box in the source
+// project as composer entries. The composer (bundle.BuildLaunch) is the single
+// owner of what "not carried" means for them.
+func poolAndSandboxEntries(discover *ops.DiscoverResult) []ops.ManagedServiceEntry {
+	if discover == nil {
+		return nil
+	}
+	var out []ops.ManagedServiceEntry
+	for _, svc := range discover.Services {
+		if topology.IsPoolOrSandboxType(svc.Type) {
+			out = append(out, ops.ManagedServiceEntry{Hostname: svc.Hostname, Type: svc.Type})
+		}
 	}
 	return out
 }

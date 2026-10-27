@@ -54,6 +54,9 @@ func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogF
 	cleanup := func() {
 		session.Close()
 		ss.Close()
+		// What a call left running (a lease's warm clone) reads the
+		// transport and writes the state directory a test tears down next.
+		srv.WaitBackground()
 	}
 	return session, cleanup
 }
@@ -156,6 +159,46 @@ func TestIntegration_DiscoverThenManage(t *testing.T) {
 	}
 	if proc.Status != "FINISHED" {
 		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	}
+}
+
+// A Swarm pool and a Zerops Box read through the full server as their own
+// kinds, never adoptable (spec-workflows.md §8 PS-2).
+func TestIntegration_DiscoverPoolAndSandbox_OwnKinds(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "pool", ProjectID: "proj-1", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-2", Name: "box", ProjectID: "proj-1", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		})
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	text := callAndGetText(t, session, "zerops_discover", nil)
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(text), &dr); err != nil {
+		t.Fatalf("parse discover result: %v", err)
+	}
+	want := map[string]ops.AdoptionState{"pool": ops.AdoptionPool, "box": ops.AdoptionSandbox}
+	if len(dr.Services) != len(want) {
+		t.Fatalf("expected %d services, got %d", len(want), len(dr.Services))
+	}
+	for _, svc := range dr.Services {
+		if svc.AdoptionState != want[svc.Hostname] {
+			t.Errorf("%s: adoptionState = %q, want %q", svc.Hostname, svc.AdoptionState, want[svc.Hostname])
+		}
+		if svc.AdoptionReason == "" {
+			t.Errorf("%s: adoptionReason must carry the one-line reason", svc.Hostname)
+		}
+	}
+	for _, w := range dr.Warnings {
+		if strings.Contains(w, `adoptionState="adoptable"`) {
+			t.Errorf("a pool or Box must raise no adopt warning; got: %s", w)
+		}
 	}
 }
 

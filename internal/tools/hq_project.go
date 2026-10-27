@@ -18,6 +18,9 @@ import (
 
 // reconcileProjectRepositories uses the same pair lock and pacing as Mate
 // wiring. A branch refusal remains held until the checkout or identity changes.
+// A pair keyed by its dev pool is never taken: the pool's hostname reaches a
+// random container of it and holds no checkout of its own
+// (docs/spec-workflows.md §8 PS-3, §13 PM-10).
 func reconcileProjectRepositories(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDeployer, rt runtime.Info, stateDir string, pace hqPassPace) []string {
 	if httpClient == nil {
 		return nil
@@ -46,7 +49,7 @@ func reconcileProjectRepositories(ctx context.Context, httpClient ops.HTTPDoer, 
 	var keyRefusal error
 	now := time.Now().UTC()
 	for _, m := range metas {
-		if !m.IsComplete() {
+		if !m.IsComplete() || m.DevIsPool() {
 			continue
 		}
 		release, lockErr := workflow.LockPair(ctx, stateDir, m.Hostname, 0)
@@ -56,7 +59,7 @@ func reconcileProjectRepositories(ctx context.Context, httpClient ops.HTTPDoer, 
 		// Read pacing and metadata while holding the same lock as the git sequence.
 		state := readHQPairState(stateDir, m.Hostname)
 		m, err = workflow.FindServiceMeta(stateDir, m.Hostname)
-		if err != nil || m == nil || !m.IsComplete() || m.HQ != nil || (m.RemoteURL != "" && !hqRemoteIsThePairs(m.RemoteURL, id.Origin, m.Hostname)) {
+		if err != nil || m == nil || !m.IsComplete() || m.DevIsPool() || m.HQ != nil || (m.RemoteURL != "" && !hqRemoteIsThePairs(m.RemoteURL, id.Origin, m.Hostname)) {
 			release()
 			continue
 		}

@@ -86,7 +86,13 @@ const (
 	// made — a ref from an earlier call's tab or one guessed before its
 	// snapshot ran.
 	ErrorKindStaleRef = "stale-ref"
-	ErrorKindOther    = "other"
+	// ErrorKindScriptTimeout is an eval whose promise never settled before
+	// agent-browser's CDP timeout while the page still answered a trivial
+	// evaluate (runBrowserSteps' liveness probe): the script hung, not the
+	// page — e.g. a wait on every animation's finished, which a looping one
+	// never gives. It is stamped by the walk, never read off the error text.
+	ErrorKindScriptTimeout = "script-timeout"
+	ErrorKindOther         = "other"
 )
 
 // classifyStepError maps one step's raw agent-browser error text to an
@@ -505,11 +511,15 @@ func OverrideBrowserScaleForTest(fn func(context.Context) error) func() {
 // client gives up after at least 30 s). A match on any of these recycles the
 // browser so the next call doesn't reattach to the same zombie Chrome.
 var cdpWedgeSignals = []string{
-	"CDP command timed out",
+	cdpCommandTimedOut,
 	"Target closed",
 	"Protocol error",
 	"no response came back",
 }
+
+// cdpCommandTimedOut is agent-browser's answer to a CDP command past its
+// timeout — on an eval, also a promise that never settled (evalOnLivePage).
+const cdpCommandTimedOut = "CDP command timed out"
 
 // resolveBrowserTimeout clamps the caller-requested timeout to
 // [browserDefaultTimeout, browserMaxTimeout] — 0/negative falls back to
@@ -741,10 +751,11 @@ func classifyRunResult(result *BrowserBatchResult, stdout, stderr string, runErr
 }
 
 // classifyStepErrors stamps ErrorKind on every step that carries an
-// Error, using classifyStepError.
+// Error, using classifyStepError. A kind the walk already stamped
+// (ErrorKindScriptTimeout) stands: the text alone would say wedge.
 func classifyStepErrors(steps []BrowserStepResult) {
 	for i := range steps {
-		if steps[i].Error != nil {
+		if steps[i].Error != nil && steps[i].ErrorKind == "" {
 			steps[i].ErrorKind = classifyStepError(*steps[i].Error)
 		}
 	}
@@ -826,10 +837,12 @@ func cutScreenshot(shot *BrowserScreenshotResult) error {
 
 // scanStepsForCDPWedge returns the first matching signal substring and
 // true if any step's error field contains one of the CDP-wedge markers
-// in cdpWedgeSignals. The "" sentinel in the return means "no match".
+// in cdpWedgeSignals. The "" sentinel in the return means "no match". An
+// eval the walk found hung on a live page (ErrorKindScriptTimeout) is no
+// wedge.
 func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 	for _, s := range steps {
-		if s.Error == nil {
+		if s.Error == nil || s.ErrorKind == ErrorKindScriptTimeout {
 			continue
 		}
 		msg := *s.Error

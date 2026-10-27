@@ -523,3 +523,136 @@ func TestMountTool_SelfStatus_Allowed(t *testing.T) {
 		t.Errorf("self-status should be allowed, got: %s", getTextContent(t, result))
 	}
 }
+
+// TestMountTool_ParkedLease_RefusedWithUnpark pins that zerops_mount refuses a
+// parked lease and names its unpark (docs/spec-workflows.md §8 DP-28): its
+// container is stopped, so an sshfs mount would block for about 42 s and fail.
+func TestMountTool_ParkedLease_RefusedWithUnpark(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
+	}
+	writeLeaseFile(t, stateDir)
+	parkLeaseFile(t, stateDir, "webpool-3")
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil, mountVouchHeld())
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3 is parked") || !strings.Contains(text, "zerops_lease action=unpark lease=webpool-3") {
+		t.Fatalf("result = (error %v) %s, want a refusal naming the parked lease and its unpark", result.IsError, text)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("mounted a parked lease: %v", mounter.states)
+	}
+}
+
+// TestMountTool_LeaseNoOneVouchesFor_NeverMounted: a mount of a lease reaches
+// its container over sshfs, so it asks the pool's orchestrator first whose the
+// container is (docs/spec-workflows.md §8 DP-2); a zcp that cannot ask — no
+// orchestrator wired here — mounts nothing and says why.
+func TestMountTool_LeaseNoOneVouchesFor_NeverMounted(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
+	}
+	writeLeaseFile(t, stateDir)
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3") || !strings.Contains(text, "orchestrator") {
+		t.Fatalf("result = (error %v) %s, want a refusal: zcp cannot ask whose the container is", result.IsError, text)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("mounted a lease no orchestrator vouched for: %v", mounter.states)
+	}
+}
+
+// TestMountTool_ParkedLease_NoWorkflow_StillNamesUnpark pins that the parked
+// refusal comes before the workflow gate (DP-28): a mount of a parked lease
+// outside any workflow names the unpark, not WORKFLOW_REQUIRED (live: the gate
+// answered first and never named the unpark).
+func TestMountTool_ParkedLease_NoWorkflow_StillNamesUnpark(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	writeLeaseFile(t, stateDir)
+	parkLeaseFile(t, stateDir, "webpool-3")
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil, mountVouchHeld())
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3 is parked") || !strings.Contains(text, "zerops_lease action=unpark lease=webpool-3") {
+		t.Fatalf("result = (error %v) %s, want the parked refusal naming the unpark", result.IsError, text)
+	}
+	if strings.Contains(text, platform.ErrWorkflowRequired) {
+		t.Errorf("the workflow gate answered before the parked refusal: %s", text)
+	}
+}
+
+// TestMountTool_AliasShapedName_MountedOnlyWithALeaseRecord: whether a name
+// is a lease is decided by zcp's lease record, never by its shape. A name
+// shaped like an alias that zcp holds no lease of is looked up as a service —
+// none has it, so it is refused before sshfs runs (no unit for a host nothing
+// resolves); the alias of a lease zcp holds and its orchestrator vouches for
+// is mounted without a service lookup (DP-2).
+func TestMountTool_AliasShapedName_MountedOnlyWithALeaseRecord(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		host      string
+		withLease bool
+		wantErr   bool
+	}{
+		{name: "no lease record: looked up, refused", host: "devpool-31", wantErr: true},
+		{name: "a lease zcp holds: mounted", host: "webpool-3", withLease: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+				t.Fatalf("save work session: %v", err)
+			}
+			if tt.withLease {
+				writeLeaseFile(t, stateDir)
+			}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev"}})
+			mounter := newStubMounter()
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, nil, nil, mountVouchHeld())
+
+			result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": tt.host})
+
+			text := getTextContent(t, result)
+			if !tt.wantErr {
+				if result.IsError || mounter.states["/var/www/"+tt.host] != platform.MountStateActive {
+					t.Fatalf("result = (error %v) %s, mounts %v: want %s mounted", result.IsError, text, mounter.states, tt.host)
+				}
+				return
+			}
+			if !result.IsError || !strings.Contains(text, platform.ErrServiceNotFound) {
+				t.Fatalf("result = (error %v) %s, want SERVICE_NOT_FOUND: no service and no lease has %s", result.IsError, text, tt.host)
+			}
+			if len(mounter.states) != 0 {
+				t.Errorf("sshfs was asked to mount %s, which nothing resolves: %v", tt.host, mounter.states)
+			}
+		})
+	}
+}

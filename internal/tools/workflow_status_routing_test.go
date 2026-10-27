@@ -55,7 +55,7 @@ func TestHandleLifecycleStatus_EmptyProject_RoutesToBootstrap(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "test"})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
@@ -114,7 +114,7 @@ func TestHandleLifecycleStatus_BootstrappedProject_RoutesToDevelop(t *testing.T)
 		})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
@@ -151,7 +151,7 @@ func TestHandleLifecycleStatus_PlatformError_PropagatesAsMCP(t *testing.T) {
 		})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus must not return raw error (use convertError); got: %v", err)
@@ -193,7 +193,7 @@ func TestHandleLifecycleStatus_CorruptWorkSession_SurfacesRecovery(t *testing.T)
 		WithProject(&platform.Project{ID: "proj-1", Name: "test"})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus must not return raw error; got: %v", err)
@@ -213,5 +213,43 @@ func TestHandleLifecycleStatus_CorruptWorkSession_SurfacesRecovery(t *testing.T)
 		if !strings.Contains(text, want) {
 			t.Errorf("corrupt-session error surface missing %q\nwire text:\n%s", want, text)
 		}
+	}
+}
+
+// TestHandleLifecycleStatus_VariantBPair_NamesPoolMigrate (docs/spec-mate.md
+// §2.8a.4a): status of a project holding a variant-B pair says that zcp sets
+// up no shared code volume any more and names the pool migration that moves
+// the pair onto one dev pool per part; a project without one hears nothing of
+// it.
+func TestHandleLifecycleStatus_VariantBPair_NamesPoolMigrate(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeVariantBPair(t, dir)
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test"}).
+		WithServices(variantBServices())
+
+	result, _, err := handleLifecycleStatus(context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil)
+	if err != nil {
+		t.Fatalf("handleLifecycleStatus: %v", err)
+	}
+	text := getTextContent(t, result)
+	if result.IsError || !strings.Contains(text, "no longer sets up a shared code volume") || !strings.Contains(text, poolMigrateSteer) {
+		t.Errorf("status of a variant-B project, want the pool-migrate steer:\n%s", text)
+	}
+
+	plain := t.TempDir()
+	setupAdoptedService(t, plain, "appdev", "appstage")
+	result, _, err = handleLifecycleStatus(context.Background(), workflow.NewEngine(plain, workflow.EnvContainer, nil),
+		platform.NewMock().WithProject(&platform.Project{ID: "proj-1", Name: "test"}).
+			WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev"}, {ID: "svc-2", Name: "appstage"}}),
+		"proj-1", runtime.Info{InContainer: true}, nil, nil)
+	if err != nil {
+		t.Fatalf("handleLifecycleStatus: %v", err)
+	}
+	if text := getTextContent(t, result); strings.Contains(text, "shared code volume") {
+		t.Errorf("status of a project without a code volume was steered:\n%s", text)
 	}
 }

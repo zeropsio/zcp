@@ -19,16 +19,18 @@ import (
 // it without asking HQ. A state from an HQ older than repositories records
 // the way unknown (Mode ""), so status does not ask that HQ on every call; a
 // pass asks again. A state of another application, or not naming the
-// repository, leaves the record as it is.
+// repository, leaves the record as it is, and a pair gone from disk meanwhile
+// (a pool migration re-keyed it) keeps no stub.
 func recordHQOrigin(stateDir string, m *workflow.ServiceMeta, state hq.MateState) {
 	origin, ok := hqOriginIn(state, m.HQ)
 	if !ok || m.HQ.Origin != nil && *m.HQ.Origin == origin {
 		return
 	}
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if existed && meta.HQ != nil && meta.HQ.AppID == m.HQ.AppID && meta.HQ.Repo == m.HQ.Repo {
-			meta.HQ.Origin = &origin
+		if !existed || meta.HQ == nil || meta.HQ.AppID != m.HQ.AppID || meta.HQ.Repo != m.HQ.Repo {
+			return workflow.ErrSkipWrite
 		}
+		meta.HQ.Origin = &origin
 		return nil
 	})
 	m.HQ.Origin = &origin
@@ -64,7 +66,13 @@ func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin,
 // origin as it is. Never a second remote: what zcp needs of HQ it reaches at
 // HQ's own address (ops.BuildMainSyncCommand). The line says a move, "" for
 // none; a repository's address that cannot be built is said, not skipped.
+// A pair keyed by its dev pool has no checkout to point — the pool's
+// hostname answers from a random container, possibly someone's lease — so
+// nothing moves: a lease's origin is the repository it checks out.
 func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
+	if m.DevIsPool() {
+		return ""
+	}
 	url, err := hqPairOriginTarget(hqc.Address(), hqc.OrgID(), m)
 	if err != nil {
 		return fmt.Sprintf("its checkout's origin could not be pointed at its repository in HQ: %v", err)
@@ -124,7 +132,9 @@ const hqCheckoutOriginBound = 5 * time.Second
 // (hqPairOriginTarget): status names what git pushes to, never only what the
 // record says it will be. Container only; a read that fails, or does not
 // answer within hqCheckoutOriginBound, leaves the half without it. It writes
-// only these two fields of services, so it runs beside attachRepoStatus.
+// only these two fields of services, so it runs beside attachRepoStatus. A
+// pool keying its pair holds no checkout of its own — its hostname answers
+// from a random container — and is read for none.
 func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) {
 	if !rt.InContainer || ssh == nil {
 		return
@@ -135,11 +145,11 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
 	for i := range services {
-		if services[i].HQRepo == "" {
+		if services[i].HQRepo == "" || services[i].DevIsPool {
 			continue
 		}
 		m, err := workflow.FindServiceMeta(stateDir, services[i].Hostname)
-		if err != nil || !hqPairWired(m) || m.Hostname != services[i].Hostname {
+		if err != nil || !hqPairWired(m) || m.Hostname != services[i].Hostname || m.DevIsPool() {
 			continue
 		}
 		wg.Add(1)
@@ -176,7 +186,9 @@ const originMovedMarker = "ZCP_ORIGIN_MOVED"
 // GitHub, the line that tells develop's start how it is worked on: its
 // checkout's origin is GitHub (hqPairOrigin points it there), so the agent
 // pushes its branch to origin and opens its change. A pair kept in HQ, or
-// followed, is worked on as every other.
+// followed, is worked on as every other. A pair keyed by its dev pool has no
+// checkout for the line to name — its work is checked out in a lease of the
+// pool — so it gets none.
 func hqKeptOnGitHub(stateDir string) []string {
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
@@ -185,7 +197,7 @@ func hqKeptOnGitHub(stateDir string) []string {
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Hostname < metas[j].Hostname })
 	var lines []string
 	for _, m := range metas {
-		if !hqPairWired(m) || m.HQ.Origin == nil || m.HQ.Origin.Mode != hq.OriginOnGitHub {
+		if !hqPairWired(m) || m.DevIsPool() || m.HQ.Origin == nil || m.HQ.Origin.Mode != hq.OriginOnGitHub {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s: its code is kept on GitHub at %s, and its checkout's origin is GitHub: %s",

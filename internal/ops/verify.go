@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -32,7 +33,7 @@ type HTTPDoer interface {
 // VerifyResult is the verification result for a single service.
 type VerifyResult struct {
 	Hostname string `json:"hostname"`
-	Type     string `json:"type"` // "runtime" or "managed"
+	Type     string `json:"type"` // "runtime", "managed", "pool" or "sandbox"
 	// TypeVersion is the live stack type-version (e.g. "ubuntu/bun@1.3.9",
 	// "php-nginx@8.4"). Carried so callers can classify the RuntimeClass
 	// without a second API read — the verify tool uses it to annotate the
@@ -254,14 +255,29 @@ func verifyService(
 	runtimeMeta RuntimeMeta,
 	publicAccess PublicAccessInput,
 ) (*VerifyResult, error) {
-	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
+	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	// A pool or Box is classified by type string, not category: a pool
+	// reports USER like a runtime, Box STANDARD like a database (PS-1).
+	// Both are verified by service_running alone here — an HTTP or log probe
+	// addressed to a pool's hostname reaches one random container of up to
+	// ten, so it would answer for none of them (PS-3). The tool layer adds
+	// each one's orchestrator check: a pool's through its orchestrator, a
+	// Box's keyless ping of its workspace API (PoolOrchestratorCheck,
+	// BoxOrchestratorCheck; PS-9).
+	leased := topology.IsPoolOrSandboxType(typeVersion)
+	managed := leased || isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
 	result := &VerifyResult{
 		Hostname:    svc.Name,
 		Type:        "runtime",
 		TypeVersion: svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 	}
-	if managed {
+	switch {
+	case topology.IsPoolType(typeVersion):
+		result.Type = runtimeClassPool
+	case topology.IsSandboxType(typeVersion):
+		result.Type = runtimeClassSandbox
+	case managed:
 		result.Type = runtimeClassManaged
 	}
 
@@ -269,7 +285,7 @@ func verifyService(
 	runningCheck := checkServiceRunning(ctx, client, fetcher, projectID, svc)
 	result.Checks = append(result.Checks, runningCheck)
 
-	// Managed services: only check service_running.
+	// Managed services, pools and Boxes: only check service_running.
 	if managed {
 		result.Status = aggregateStatus(result.Checks)
 		return result, nil
@@ -627,4 +643,80 @@ func aggregateAllStatus(results []VerifyResult) (overall string, healthy int) {
 	default:
 		return StatusDegraded, healthy
 	}
+}
+
+// VerifyTypeLease is VerifyResult.Type of a lease: a pool container zcp holds
+// by lease (docs/spec-workflows.md §8 DP), not a service.
+const VerifyTypeLease = "lease"
+
+// VerifyLease reports a lease: whether its container answers over SSH and the
+// dev servers its supervisor reports. A lease is never resolved as a service
+// or a service meta — its alias names no service of the project (DP-1) and a
+// pool is never probed by service hostname as one container (PS-3).
+//
+// unreachable is why `ssh <alias> true` failed ("" when it answered): the
+// tools layer owns the probe so its stderr is worded in one place. The dev
+// servers are read only from a container that answered. No supervisor is no
+// failure — a lease need not run one.
+func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, unreachable string) *VerifyResult {
+	result := &VerifyResult{Hostname: lease.Alias, Type: VerifyTypeLease}
+	identity := fmt.Sprintf("pool %s, container %s", lease.Pool, lease.ContainerHostname)
+	if lease.Branch != "" {
+		identity += ", branch " + lease.Branch
+	}
+	result.Checks = append(result.Checks, CheckResult{Name: "lease", Status: CheckInfo, Detail: identity})
+	if unreachable != "" {
+		result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckFail, Detail: unreachable})
+		result.Status = StatusUnhealthy
+		return result
+	}
+	result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckPass})
+	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias, lease.Pool)...)
+	result.Status = StatusHealthy
+	for _, c := range result.Checks {
+		if c.Status == CheckFail {
+			result.Status = StatusDegraded
+		}
+	}
+	return result
+}
+
+// leaseDevServerChecks reads the lease's supervisor (`zcp-devsup ctl status
+// --json` over SSH) into one check per dev server it holds: the declared
+// entries naming pool, or none.
+func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool string) []CheckResult {
+	ds, err := ReadDevServers(ctx, ssh, alias, "")
+	if ds != nil {
+		ds.Service = pool
+	}
+	var noSup *NoSupervisorError
+	var unresponsive *SupervisorUnresponsiveError
+	switch {
+	case errors.As(err, &noSup):
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: leaseNoSupervisorDetail(alias, noSup.Installed)}}
+	case errors.As(err, &unresponsive):
+		return []CheckResult{{Name: "dev_servers", Status: CheckFail, Detail: unresponsive.Error()}}
+	case err != nil:
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: "dev servers unreadable: " + err.Error()}}
+	}
+	servers := ds.Servers()
+	if len(servers) == 0 {
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: "the supervisor runs no dev server"}}
+	}
+	checks := make([]CheckResult, 0, len(servers))
+	for _, s := range servers {
+		status := ds.State.Servers[s.Name].Status
+		check := CheckResult{Name: "dev_server", Server: s.Name, Port: s.Port, Detail: string(status), Status: CheckInfo}
+		switch status {
+		case devsup.StatusRunning:
+			check.Status = CheckPass
+		case devsup.StatusCrashed:
+			check.Status = CheckFail
+		case devsup.StatusStopped, devsup.StatusStarting:
+			// An advisory state: a stopped server was asked to stop, a
+			// starting one is not yet a verdict.
+		}
+		checks = append(checks, check)
+	}
+	return checks
 }

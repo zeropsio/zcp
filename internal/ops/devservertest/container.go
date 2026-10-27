@@ -1,8 +1,9 @@
 // Package devservertest is a fake dev container for tests of zcp's dev-server
 // path: it answers the SSH commands zcp sends to a dev service — the
-// supervisor's `zcp-devsup ctl`, the declaration and zerops.yaml reads and
-// writes, the in-container health probe and a zcli push — the way a container
-// running zcp-devsup does (docs/spec-mate.md §2.8a.2). Only tests import it.
+// supervisor's `zcp-devsup ctl`, zcp's start of a lease's supervisor, the
+// declaration and zerops.yaml reads and writes, the in-container health probe
+// and a zcli push — the way a container running zcp-devsup does
+// (docs/spec-mate.md §2.8a.2). Only tests import it.
 package devservertest
 
 import (
@@ -31,12 +32,38 @@ type Container struct {
 	// Unresponsive: the supervisor runs but does not answer its control
 	// socket in time (a thrashing container); `ctl` exits 5.
 	Unresponsive bool
+	// FailStart: a supervisor zcp starts in the container (a lease's, which
+	// run.start never starts again after a reset) does not come up; its own
+	// output is StartOutput.
+	FailStart   bool
+	StartOutput string
+	// SupervisorStarts counts the supervisors zcp started in the container.
+	SupervisorStarts int
+	// Prepared are the repository's prepare commands zcp ran, in order; with
+	// PrepareFails each fails (exit 1) with PrepareOutput.
+	Prepared      []string
+	PrepareFails  bool
+	PrepareOutput string
 	// Silent: the container itself does not answer over SSH in time (out of
 	// memory or CPU); every command ends at the ssh deadline.
 	Silent bool
-	// SupervisorVersion and Formats answer `ctl version`.
+	// SupervisorVersion, Formats and Capabilities answer `ctl version`;
+	// Capabilities nil is a supervisor older than any (its answer carries no
+	// capabilities key, and its ctl fails on `env`).
 	SupervisorVersion string
 	Formats           []int
+	Capabilities      []string
+	// Env is the overlay `ctl env` last set. A change restarts every running
+	// server under it, as the supervisor does in its own goroutine: the env
+	// answer shows them as they were, the next answer restarted — or the one
+	// after EnvRestartReads more answers.
+	Env             map[string]string
+	EnvRestartReads int
+	// EnvRefusal, when set, is the error the supervisor refuses `ctl env`
+	// with (a state directory it cannot write, say); the overlay stays.
+	EnvRefusal  string
+	envRestarts []string
+	envReads    int
 	// Declaration is .zcp/dev-servers.json; "" when absent.
 	Declaration string
 	// YAMLFile and YAML are the repo's zerops.yaml; "" when absent.
@@ -62,6 +89,11 @@ type Container struct {
 	// state after they start, and only then as running or as Crash says.
 	Settle   map[string]int
 	settling map[string]int
+	// StableNumber is the container's ZEROPS_StableNumber (a pool
+	// container's slot; 0: none). With the declaration's previewPortBase the
+	// preview server's state carries its preview port, base + StableNumber,
+	// as the supervisor's forward does.
+	StableNumber int
 	// Logs is each server's log.
 	Logs map[string][]string
 	// Commands records every command, in order.
@@ -90,7 +122,8 @@ const SupervisedYAML = `zerops:
 // NewSupervised is a container whose dev setup runs the supervisor, with the
 // declaration decl (JSON; "" for none) whose servers all run.
 func NewSupervised(decl string) *Container {
-	c := &Container{Installed: true, Running: true, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: decl, YAMLFile: "zerops.yaml", YAML: SupervisedYAML}
+	c := &Container{Installed: true, Running: true, SupervisorVersion: "v9.300.0", Formats: []int{1}, Capabilities: slices.Clone(devsup.Capabilities),
+		Declaration: decl, YAMLFile: "zerops.yaml", YAML: SupervisedYAML}
 	c.boot()
 	return c
 }
@@ -104,6 +137,19 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 		return nil, &platform.SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded)}
 	}
 	switch {
+	case strings.Contains(command, "@@zcp-devsup check"):
+		return []byte(c.ensure()), nil
+	case strings.Contains(command, "@@zcp-devsup declaration") && !strings.Contains(command, "@@zcp-devsup version"):
+		if c.Declaration == "" {
+			return []byte("@@zcp-devsup declaration 1\n"), nil
+		}
+		return []byte(c.Declaration + "\n@@zcp-devsup declaration 0\n"), nil
+	case strings.Contains(command, "/bin/sh -c "):
+		c.Prepared = append(c.Prepared, firstQuoted(command, "/bin/sh -c "))
+		if c.PrepareFails {
+			return []byte(c.PrepareOutput), &platform.SSHExecError{Hostname: hostname, Output: c.PrepareOutput, Err: errors.New("exit status 1")}
+		}
+		return []byte(c.PrepareOutput), nil
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil
 	case strings.Contains(command, "zcp-devsup ctl logs"):
@@ -187,6 +233,31 @@ func (c *Container) Status(name string) devsup.Status {
 	return ""
 }
 
+// Overlay is a copy of the overlay `ctl env` last set.
+func (c *Container) Overlay() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.Env)
+}
+
+// Restarts is how often the supervisor restarted name, and why it last did.
+func (c *Container) Restarts(name string) (int, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s, ok := c.Servers[name]; ok {
+		return s.Restarts, s.LastRestartReason
+	}
+	return 0, ""
+}
+
+// Stop ends every process in the container, as a stop of it does: the
+// supervisor and its servers end; its files stay.
+func (c *Container) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Running, c.Servers = false, nil
+}
+
 // Redeploy replaces the container as a deploy does.
 func (c *Container) Redeploy() {
 	c.mu.Lock()
@@ -202,12 +273,37 @@ func (c *Container) redeploy() {
 	c.Installed = strings.Contains(c.YAML, "/zcp-devsup-linux-amd64")
 	c.Running = c.Installed && regexp.MustCompile(`(?m)^\s*start: zcp-devsup run(\s+--root\s+\S+)?\s*$`).MatchString(c.YAML)
 	if c.Installed && c.SupervisorVersion == "" {
-		c.SupervisorVersion, c.Formats = "v9.300.0", []int{1}
+		c.SupervisorVersion, c.Formats, c.Capabilities = "v9.300.0", []int{1}, slices.Clone(devsup.Capabilities)
 	}
-	c.Servers = nil
+	c.Servers, c.Env, c.envRestarts = nil, nil, nil
 	if c.Running {
 		c.boot()
 	}
+}
+
+// ensure answers zcp's start of a lease's supervisor: nothing is started
+// without the binary or while a supervisor holds the control socket, or
+// answers — otherwise one starts and boots the declaration, unless FailStart.
+// The overlay and a reload are calls of their own (ctl).
+func (c *Container) ensure() string {
+	switch {
+	case !c.Installed:
+		return "@@zcp-devsup check 127\n"
+	case c.Unresponsive:
+		return "@@zcp-devsup check 5\n"
+	case c.Running:
+		return "@@zcp-devsup check 0\n"
+	}
+	c.SupervisorStarts++
+	if c.FailStart {
+		return "@@zcp-devsup check 2\n@@zcp-devsup started 2\n" + c.StartOutput + "\n@@zcp-devsup log 0\n"
+	}
+	c.Running = true
+	if c.SupervisorVersion == "" {
+		c.SupervisorVersion, c.Formats, c.Capabilities = "v9.300.0", []int{1}, slices.Clone(devsup.Capabilities)
+	}
+	c.boot()
+	return "@@zcp-devsup check 2\n@@zcp-devsup started 0\n"
 }
 
 // boot gives every declared server its first desired state (autostart),
@@ -265,11 +361,15 @@ func (c *Container) start(name string, restart bool) {
 }
 
 func (c *Container) state(only string) devsup.State {
-	st := devsup.State{Format: 1, Supervisor: devsup.SupervisorInfo{Version: c.SupervisorVersion, Pid: 412}, Servers: map[string]devsup.ServerState{}}
+	st := devsup.State{Format: 1, Supervisor: devsup.SupervisorInfo{Version: c.SupervisorVersion, Pid: 412}, Env: maps.Clone(c.Env), Servers: map[string]devsup.ServerState{}}
+	preview, previewPort := "", 0
 	if d, err := devsup.ParseDeclaration([]byte(c.Declaration)); c.Declaration != "" {
 		st.Declaration.Version = d.Version
 		if err != nil {
 			st.Declaration.Error = err.Error()
+		}
+		if ps, ok := devsup.PreviewServer(d.Servers); ok && err == nil && d.PreviewPortBase > 0 && c.StableNumber > 0 {
+			preview, previewPort = ps.Name, d.PreviewPortBase+c.StableNumber
 		}
 	}
 	for n, s := range c.Servers {
@@ -282,6 +382,9 @@ func (c *Container) state(only string) devsup.State {
 				c.settling[n]--
 				server.Status, server.Exit, server.RetryPending, server.TaskLimit = devsup.StatusStarting, nil, false, nil
 			}
+			if n == preview {
+				server.PreviewPort = previewPort
+			}
 			st.Servers[n] = server
 		}
 	}
@@ -291,7 +394,12 @@ func (c *Container) state(only string) devsup.State {
 func (c *Container) read() string {
 	var b strings.Builder
 	if c.Installed {
-		fmt.Fprintf(&b, "%s\n@@zcp-devsup version 0\n", encode(map[string]any{"version": c.SupervisorVersion, "formats": c.Formats}))
+		c.applyEnvRestarts()
+		version := map[string]any{"version": c.SupervisorVersion, "formats": c.Formats}
+		if c.Capabilities != nil {
+			version["capabilities"] = c.Capabilities
+		}
+		fmt.Fprintf(&b, "%s\n@@zcp-devsup version 0\n", encode(version))
 		switch {
 		case c.Unresponsive:
 			fmt.Fprintf(&b, "{\"code\":5,\"error\":\"zcp-devsup is running here but did not answer\"}\n@@zcp-devsup status 5\n")
@@ -339,6 +447,7 @@ func (c *Container) ctl(command string) string {
 	if !c.Running {
 		return "{\"code\":2,\"error\":\"no zcp-devsup is running here\"}\n@@zcp-devsup ctl 2\n"
 	}
+	c.applyEnvRestarts()
 	args := ctlArgs(command)
 	verb, name := args[0], ""
 	if len(args) > 1 {
@@ -385,6 +494,18 @@ func (c *Container) ctl(command string) string {
 				c.start(n, false)
 			}
 		}
+	case "env":
+		if !slices.Contains(c.Capabilities, devsup.CapabilityEnv) {
+			return fail(1, "unknown verb env")
+		}
+		if c.EnvRefusal != "" {
+			return fail(1, c.EnvRefusal)
+		}
+		env, err := envArgs(args[1:])
+		if err != nil {
+			return fail(1, err.Error())
+		}
+		c.setEnv(env)
 	default:
 		return fail(1, "unknown verb "+verb)
 	}
@@ -393,6 +514,68 @@ func (c *Container) ctl(command string) string {
 		only = name
 	}
 	return encode(c.state(only)) + "\n@@zcp-devsup ctl 0\n"
+}
+
+// envArgs reads `env`'s flags: the --set pairs, or --clear alone.
+func envArgs(args []string) (map[string]string, error) {
+	env, cleared := map[string]string{}, false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--clear":
+			cleared = true
+		case "--set":
+			if i+1 >= len(args) {
+				return nil, errors.New("--set needs a value")
+			}
+			i++
+			k, v, ok := strings.Cut(args[i], "=")
+			if !ok {
+				return nil, fmt.Errorf("--set %q is not NAME=VALUE", args[i])
+			}
+			env[k] = v
+		default:
+			return nil, fmt.Errorf("env: unexpected %q", args[i])
+		}
+	}
+	if !cleared && len(env) == 0 {
+		return nil, errors.New("env needs --set NAME=VALUE or --clear")
+	}
+	return env, nil
+}
+
+// setEnv replaces the overlay; a change restarts every running server, after
+// this answer (applyEnvRestarts).
+func (c *Container) setEnv(env map[string]string) {
+	if maps.Equal(c.Env, env) {
+		return
+	}
+	c.Env = env
+	c.envRestarts, c.envReads = nil, c.EnvRestartReads
+	for _, n := range slices.Sorted(maps.Keys(c.Servers)) {
+		if st := c.Servers[n]; st.Status == devsup.StatusRunning && st.Desired == devsup.DesiredRunning {
+			c.envRestarts = append(c.envRestarts, n)
+		}
+	}
+}
+
+// applyEnvRestarts restarts the servers an overlay change left to restart,
+// once EnvRestartReads answers have passed since it.
+func (c *Container) applyEnvRestarts() {
+	if len(c.envRestarts) == 0 {
+		return
+	}
+	if c.envReads > 0 {
+		c.envReads--
+		return
+	}
+	for _, n := range c.envRestarts {
+		if st := c.Servers[n]; st != nil && st.Status == devsup.StatusRunning {
+			c.pid += 100
+			st.Restarts++
+			st.Pid, st.Pgid, st.LastRestartReason = 700+c.pid, 700+c.pid, "env changed"
+		}
+	}
+	c.envRestarts = nil
 }
 
 func (c *Container) logs(command string) ([]byte, error) {

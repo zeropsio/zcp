@@ -42,7 +42,7 @@ var errNotACommitHash = errors.New("git rev-parse did not print a single full co
 // HEAD yet (a fresh/unborn repo) — not itself a failure, just nothing to
 // record.
 func HeadStatus(ctx context.Context, r Runner, dir string) (sha, branch string, dirty, ok bool, err error) {
-	script := `git rev-parse --verify HEAD && printf '` + headBranchMarker + `%s\n' "$(git symbolic-ref -q --short HEAD)" && git status --porcelain | head -c1`
+	script := `git rev-parse --verify HEAD && printf '` + headBranchMarker + `%s\n' "$(git symbolic-ref -q --short HEAD)" && GIT_OPTIONAL_LOCKS=0 git status --porcelain | head -c1`
 	out, _, runErr := r.Run(ctx, dir, script)
 	if runErr != nil {
 		return "", "", false, false, nil //nolint:nilerr // no repo/no HEAD yet is not a failure
@@ -68,7 +68,9 @@ const headBranchMarker = "ZCP:BRANCH:"
 // present), "rebasing" (.git/rebase-merge or .git/rebase-apply present),
 // "detached" (HEAD is not on a branch), "dirty" (a clean working tree
 // would otherwise be reported, but `git status --porcelain` is non-empty),
-// or "clean". Shared between ReadHeadAndState (the envelope's live repo
+// or "clean". The status runs with GIT_OPTIONAL_LOCKS=0: it reads a checkout
+// that is someone else's working tree, and a plain status refreshes and
+// rewrites .git/index (TestStatusProbes_NeverRewriteTheIndex). Shared between ReadHeadAndState (the envelope's live repo
 // block, one round trip) and the self-deploy preflight script (folded
 // into ITS single round trip) — one classification, two call sites.
 const repoStateExpr = `if [ -f .git/MERGE_HEAD ]; then
@@ -77,7 +79,7 @@ elif [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
   printf rebasing
 elif ! git symbolic-ref -q HEAD >/dev/null 2>&1; then
   printf detached
-elif [ -n "$(git status --porcelain | head -c1)" ]; then
+elif [ -n "$(GIT_OPTIONAL_LOCKS=0 git status --porcelain | head -c1)" ]; then
   printf dirty
 else
   printf clean

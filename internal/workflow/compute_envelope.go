@@ -1,11 +1,17 @@
 package workflow
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"maps"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +24,57 @@ import (
 // synthesisEnvelope helper, NOT by ComputeEnvelope. ComputeEnvelope leaves
 // it nil; the bootstrap conductor builds a synthetic summary from the live
 // BootstrapState on every per-step render.
+
+// LeaseReader reports the project's pool-container leases, reconciled against
+// the pool orchestrators. It is injected (WithLeaseReader) so workflow does not
+// import ops. A reader error means the orchestrator could not be asked:
+// ComputeEnvelope then keeps zcp's own lease records' last known state and
+// marks it unverified. A reader reports reconciled state only: whatever
+// activity or unsaved work its snapshots carry is dropped, as those come from
+// WithLeaseActivity alone.
+type LeaseReader func(ctx context.Context) ([]LeaseSnapshot, error)
+
+// LeaseRead is what a zerops_lease call read of one lease's checkout
+// (docs/spec-workflows.md §8 DP-21): its activity and its unsaved work, each
+// nil when the call did not read it.
+type LeaseRead struct {
+	Activity *topology.LeaseActivity
+	Unsaved  *topology.LeaseUnsaved
+}
+
+// EnvelopeOption tunes ComputeEnvelope's inputs beyond the platform client.
+type EnvelopeOption func(*envelopeConfig)
+
+type envelopeConfig struct {
+	leases       LeaseReader
+	leaseReads   map[string]LeaseRead
+	leasesAlways bool
+}
+
+// WithLeaseReader injects the reader that fills StateEnvelope.Leases. Without
+// it the envelope carries no leases.
+func WithLeaseReader(r LeaseReader) EnvelopeOption {
+	return func(c *envelopeConfig) { c.leases = r }
+}
+
+// WithLeasesAlwaysRead asks the reader whatever the project holds — the
+// zerops_lease call's own envelope, whose leases are what the call is about:
+// a release of the last lease of a pool no pair is keyed by carries the
+// emptied list, never an absent key a client would keep its stale list for.
+func WithLeasesAlwaysRead() EnvelopeOption {
+	return func(c *envelopeConfig) { c.leasesAlways = true }
+}
+
+// WithLeaseActivity lays what this call read of its leases' checkouts onto
+// leases[] (docs/spec-mate.md §2.8a.3), keyed by alias the way WithParts keys
+// devServers: a lease the call read carries its activity and unsaved work,
+// every other lease neither, and a read of an alias leases[] does not list
+// adds nothing. Only the zerops_lease call that made the reads passes it; the
+// lease reader never reads a checkout, so no other tool's envelope pays for
+// one.
+func WithLeaseActivity(reads map[string]LeaseRead) EnvelopeOption {
+	return func(c *envelopeConfig) { c.leaseReads = reads }
+}
 
 // ComputeEnvelope is the single entry point for computing state. Every
 // workflow-aware tool handler calls this.
@@ -41,7 +98,12 @@ func ComputeEnvelope(
 	projectID string,
 	rt runtime.Info,
 	now time.Time,
+	opts ...EnvelopeOption,
 ) (StateEnvelope, error) {
+	var cfg envelopeConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	env := DetectEnvironment(rt)
 
 	var (
@@ -99,6 +161,8 @@ func ComputeEnvelope(
 		projectSummary.Name = project.Name
 	}
 
+	leases := readLeases(ctx, cfg, stateDir, metas)
+
 	return StateEnvelope{
 		Phase:        phase,
 		Environment:  env,
@@ -106,6 +170,7 @@ func ComputeEnvelope(
 		SelfService:  self,
 		Project:      projectSummary,
 		Services:     snapshots,
+		Leases:       leases,
 		WorkSession:  wsSummary,
 		// Bootstrap and Recipe are left nil here — the bootstrap conductor
 		// populates them on a per-render synthetic envelope (see
@@ -114,15 +179,139 @@ func ComputeEnvelope(
 	}, nil
 }
 
-// deriveIdleScenario classifies the idle phase into one of four sub-cases
+// leaseStateHeld is the state of a lease zcp holds — the reader's verbatim
+// state for a reserved container whose record is zcp's own.
+const leaseStateHeld = "held"
+
+// leaseStateRecorded is the state of a lease read from zcp's own record: the record is
+// only written by a successful acquire, so "held" is the last known state.
+const leaseStateRecorded = leaseStateHeld
+
+// readLeases fills StateEnvelope.Leases (nil: not read). The reader is asked
+// only when zcp could hold a lease the envelope is for — zcp has a lease
+// record, or a pair is keyed by its dev pool (metas) — or the call asks always
+// (WithLeasesAlwaysRead). A project without either costs nothing, a pool an
+// app calls as its own infrastructure included: its reserved containers are
+// zerops_lease action=status's to list. When the reader cannot answer
+// (the orchestrator answers only inside the project), the records' last known
+// state is reported, marked unverified; an envelope never fails over it.
+// Only the non-secret fields of a record are ever decoded (DP-3). Each lease
+// carries the activity and unsaved work of reads (WithLeaseActivity) and no
+// other, and why it is not answering from its record alone.
+func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas []*ServiceMeta) *[]LeaseSnapshot {
+	reader, reads := cfg.leases, cfg.leaseReads
+	if reader == nil {
+		return nil
+	}
+	records := readLeaseRecordSnapshots(stateDir)
+	if len(records) == 0 && !cfg.leasesAlways && !slices.ContainsFunc(metas, (*ServiceMeta).DevIsPool) {
+		return nil
+	}
+	leases, err := reader(ctx)
+	if err != nil {
+		leases = records
+	} else {
+		// The records as the reader left them: a lease it found not answering
+		// is recorded so by now, and a record it dropped carries nothing.
+		records = readLeaseRecordSnapshots(stateDir)
+	}
+	notAnswering := make(map[string]string, len(records))
+	for _, r := range records {
+		notAnswering[r.Alias] = r.NotAnswering
+	}
+	// Read: a reader that answered (or records that stood in) with nothing is
+	// the empty array on the wire, never an absent key.
+	leases = append([]LeaseSnapshot{}, leases...)
+	for i := range leases {
+		read := reads[leases[i].Alias]
+		leases[i].Activity, leases[i].Unsaved = read.Activity, read.Unsaved
+		leases[i].NotAnswering = notAnswering[leases[i].Alias]
+	}
+	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
+		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
+			return c
+		}
+		return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias))
+	})
+	return &leases
+}
+
+// leaseNumber is the container number at the end of an alias (<pool>-<n>).
+func leaseNumber(alias string) int {
+	i := strings.LastIndex(alias, "-")
+	n, err := strconv.Atoi(alias[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// leaseAliasRe is the shape of a lease alias (spec-workflows.md §8 DP-1); it
+// keeps a record from naming a path outside the lease directory.
+var leaseAliasRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,39}-[0-9]+$`)
+
+// leaseRecordFields are the non-secret fields of a lease record
+// (.zcp/state/leases/<alias>.json, spec-workflows.md §8 DP-2). The record's
+// lease string is deliberately not a field here: it is never decoded.
+type leaseRecordFields struct {
+	PoolHostname      string `json:"poolHostname"`
+	ContainerNumber   int64  `json:"containerNumber"`
+	ContainerHostname string `json:"containerHostname"`
+	Branch            string `json:"branch"`
+	Repo              string `json:"repo"`
+	AcquiredAt        string `json:"acquiredAt"`
+	NotAnswering      string `json:"notAnswering"`
+}
+
+// readLeaseRecordSnapshots reads zcp's lease records as unverified "held"
+// snapshots. A record that cannot be read, or whose alias does not match its
+// file name, names no lease and is skipped.
+func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
+	if stateDir == "" {
+		return nil
+	}
+	dir := filepath.Join(stateDir, "leases")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []LeaseSnapshot
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var r leaseRecordFields
+		if json.Unmarshal(raw, &r) != nil {
+			continue
+		}
+		alias := r.PoolHostname + "-" + strconv.FormatInt(r.ContainerNumber, 10)
+		if alias+".json" != e.Name() || !leaseAliasRe.MatchString(alias) {
+			continue
+		}
+		out = append(out, LeaseSnapshot{
+			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
+			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
+			AcquiredAt: r.AcquiredAt, Repo: topology.RepoIdentity(r.Repo), NotAnswering: r.NotAnswering,
+		})
+	}
+	return out
+}
+
+// deriveIdleScenario classifies the idle phase into one of five sub-cases
 // based on service composition. Returns "" for non-idle phases. Partitions
 // services the same way planIdle does: managed services don't count toward
 // any runtime bucket (they are data stores, not deploy targets).
 //
-// Priority: incomplete > bootstrapped > adopt > empty.
+// Priority: incomplete > bootstrapped > adopt > dev-pool > empty.
 //   - Incomplete wins because a ServiceMeta tagged to a prior session
 //     signals an interrupted bootstrap; atoms gated here surface resume.
 //   - Bootstrapped + adopt continue per the original logic.
+//   - Dev-pool when no app runtime exists but a Swarm pool does: its work is
+//     a lease (docs/spec-workflows.md §8 DP-29), never bootstrap or adopt.
 //   - Empty when no runtime services exist.
 //
 // Stale ServiceMetas (disk records whose live counterpart is gone) used to
@@ -133,11 +322,17 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	if phase != PhaseIdle {
 		return ""
 	}
-	// Managed deps don't drive the runtime buckets (bootstrap/adopt/resume) —
-	// the bucket counts only consider runtime services.
-	var bootstrapped, adoptable, resumable int
+	// Managed deps, pools and Boxes don't drive the runtime buckets
+	// (bootstrap/adopt/resume) — the bucket counts only consider runtime
+	// services; a pool or Box is never an adoptable target (PS-2).
+	var bootstrapped, adoptable, resumable, pools int
 	for _, svc := range services {
-		if svc.RuntimeClass == topology.RuntimeManaged {
+		if svc.RuntimeClass == topology.RuntimePool {
+			pools++
+			continue
+		}
+		if svc.RuntimeClass == topology.RuntimeManaged ||
+			svc.RuntimeClass == topology.RuntimeSandbox {
 			continue
 		}
 		if svc.Resumable {
@@ -158,6 +353,9 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	}
 	if adoptable > 0 {
 		return IdleAdopt
+	}
+	if pools > 0 {
+		return IdleDevPool
 	}
 	return IdleEmpty
 }
@@ -282,9 +480,12 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// The dev/primary side of a pair carries its stages; the wire
 		// fields StageHostname/StageSetupName name the first one.
 		snap.SetupName = meta.SetupNameFor(svc.Name)
+		// A pool keying its pair is the pair's dev half (its Mode is "":
+		// ModeFor projects no dev-runtime mode onto a pool); it carries the
+		// stages and the HQ record below like any dev half.
+		snap.DevIsPool = meta.DevIsPool() && svc.Name == meta.Hostname
 		if meta.HQ != nil && svc.Name == meta.Hostname {
 			snap.HQRepo, snap.HQOrigin = meta.HQ.Repo, meta.HQ.Origin
-			snap.HQChange, snap.HQBranch = meta.HQ.Change, meta.HQ.Branch
 		}
 		if meta.HasStage() && svc.Name == meta.Hostname {
 			first := meta.FirstStage()

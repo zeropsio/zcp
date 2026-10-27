@@ -152,7 +152,7 @@ func TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn(t *testing.T) {
 	if answer, text := lab.proposeService(client, "db"); answer == nil || answer.Change != 2 || len(answer.Tiers) != 3 {
 		t.Fatalf("service=db = %s", text)
 	}
-	if _, text := lab.proposeService(client, "cache"); !strings.Contains(text, "one open change per Mate per repository") {
+	if _, text := lab.proposeService(client, "cache"); !strings.Contains(text, "one recipe proposal open at a time") {
 		t.Errorf("service=cache while the database's change is open = %s, want it to wait", text)
 	}
 	production := lab.hq.recipeFiles(recipeBranch(2))[hq.RecipeTierPaths[hq.RecipeTierProduction]]

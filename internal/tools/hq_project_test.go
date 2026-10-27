@@ -300,3 +300,30 @@ func TestReconcileHQRepositories_PlainProject_KeepsOtherHQRepositoryBeforeCreati
 		})
 	}
 }
+
+// TestReconcileHQRepositories_PlainProject_SkipsAPairKeyedByItsDevPool: a
+// pair moved onto a dev pool outside a Mate is keyed by the pool, whose
+// hostname reaches a random container of it — possibly someone's lease — and
+// holds no checkout of its own (docs/spec-workflows.md §8 PS-3, §13 PM-10).
+// The plain-project route never reads or wires a checkout there: no ssh
+// reaches the pool, HQ is asked for nothing, and the pair's record stays as
+// it was.
+func TestReconcileHQRepositories_PlainProject_SkipsAPairKeyedByItsDevPool(t *testing.T) {
+	t.Parallel()
+	lab, count := plainProjectLab(t, "", 0, "")
+	before := keyOnPool(t, lab.stateDir)
+	ssh := &hostLogSSH{inner: projectLabSSH{lab.ssh}}
+
+	report := reconcileHQRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), ssh, lab.rt, lab.stateDir, hqPassNow)
+
+	if n := ssh.reached(testPool); n != 0 {
+		t.Errorf("the plain-project pass reached the pool %s over ssh %d time(s): %v", testPool, n, report)
+	}
+	if n := count("/api/project/self") + count("/api/project/repos"); n != 0 {
+		t.Errorf("the plain-project pass asked HQ about a pool-keyed pair (%d call(s)): %v", n, report)
+	}
+	after, err := workflow.FindServiceMeta(lab.stateDir, testPool)
+	if err != nil || after == nil || after.RemoteURL != before.RemoteURL || after.HQ != nil {
+		t.Errorf("the pool-keyed pair's record changed: %+v (%v), was %+v", after, err, before)
+	}
+}

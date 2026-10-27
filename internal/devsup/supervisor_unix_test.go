@@ -30,6 +30,10 @@ type rig struct {
 	// previousRun, when set, is the supervisors' reading of systemd's result
 	// for the previous run of their unit.
 	previousRun func() (string, bool)
+	// env is added to the environment the supervisors start servers with.
+	env []string
+	// grace is how long a stopped group gets before SIGKILL; zero is 1 s.
+	grace time.Duration
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -80,8 +84,12 @@ func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor
 	if stagger == 0 {
 		stagger = time.Millisecond
 	}
+	grace := r.grace
+	if grace == 0 {
+		grace = time.Second
+	}
 	s, err := New(Config{
-		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
+		Root: r.root, StateDir: r.state, Service: service, Env: append(os.Environ(), r.env...), Grace: grace, PortWait: portWait,
 		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, PreviousRun: r.previousRun, Version: "v-test",
 	})
 	if err != nil {
@@ -520,6 +528,127 @@ func TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes(t
 	})
 }
 
+// One write over sshfs (`cat > file`) restarted a watched server 2–3 times
+// in the same second: the write reached the watch as several changes spread
+// over more than the settle. A burst of changes, each coming before the last
+// settled, restarts the server once, naming the path that started the burst.
+func TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/main.go", "v1")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+
+	// Truncate, then the bytes, then the close: each a change, the gaps
+	// longer than one settle, never as long as the quiet that ends a burst.
+	for i, body := range []string{"", "v2", "v2 done"} {
+		if i > 0 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		r.write("apps/api/main.go", body)
+	}
+	eventually(t, "api to restart", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
+	eventually(t, "api to listen again", func() bool { return listening(api) })
+	time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one restart for the one write, naming apps/api/main.go", sv.Restarts, sv.LastRestartReason)
+	}
+}
+
+// A sync's fast-forward that changes the declaration reloads the supervisor a
+// few hundred ms after it changed the files a watch covers — inside the
+// settle of their burst. A reload, or a start of another server, that
+// replaced every watcher dropped that burst, and an unchanged watched server
+// kept serving the old code. A watcher whose watch is unchanged is kept, its
+// burst with it, so the change still restarts the server once.
+func TestSupervisor_AReloadOrAStartOfAnotherServerKeepsAWatchedChangeStillSettling(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		act  func(t *testing.T, s *Supervisor)
+	}{
+		{"reload", func(_ *testing.T, s *Supervisor) { s.Reload() }},
+		{"start of another server", func(t *testing.T, s *Supervisor) {
+			t.Helper()
+			if err := s.Start("web"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			api, web := freePort(t), freePort(t)
+			r.write("apps/api/main.go", "v1")
+			srv := r.listener("api", api)
+			srv.Watch = &Watch{Paths: []string{"apps/api"}}
+			other := r.listener("web", web)
+			off := false
+			other.Autostart = &off
+			r.declare(srv, other)
+			s := r.supervisor()
+			s.Boot()
+			eventually(t, "api to listen", func() bool { return listening(api) })
+
+			r.write("apps/api/main.go", "v2 (fast-forward)")
+			time.Sleep(200 * time.Millisecond) // the watch saw it; its burst is settling
+			tc.act(t, s)
+			eventually(t, "the watched change to restart api", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
+			time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+			if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+				t.Fatalf("api = %d restart(s), reason %q; want one, for the change", sv.Restarts, sv.LastRestartReason)
+			}
+		})
+	}
+}
+
+// The 8–10 s between a write and the restart was the old server's stop grace:
+// one that does not end on SIGTERM is killed only after it. Every change that
+// came while that restart stopped the server is already on disk when the new
+// one starts, so it restarts nothing again; a change after the start still
+// restarts it, naming its own path.
+func TestSupervisor_AChangeMadeWhileARestartStopsTheServerRestartsNothingMore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.grace = 3 * time.Second
+	api := freePort(t)
+	r.write("apps/api/main.go", "v1")
+	r.write("apps/api/util.go", "v1")
+	r.write("apps/api/late.go", "v1")
+	srv := Server{Name: "api", Port: api, Command: helperCmd(t, "ignore-term", "PORT="+strconv.Itoa(api)), Watch: &Watch{Paths: []string{"apps/api"}}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+
+	r.write("apps/api/main.go", "v2")
+	// The restart is stopping api, which waits out its grace: two more
+	// changes, each settling on its own, come meanwhile.
+	time.Sleep(time.Second)
+	r.write("apps/api/util.go", "v2")
+	time.Sleep(time.Second)
+	r.write("apps/api/main.go", "v3")
+	eventually(t, "api to restart", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts >= 1 && sv.Status == StatusRunning && listening(api)
+	})
+	time.Sleep(r.grace + time.Second) // a second restart would wait out the grace again
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one: the start after the stop already runs every change made during it", sv.Restarts, sv.LastRestartReason)
+	}
+
+	r.write("apps/api/late.go", "v2")
+	eventually(t, "a change after the start to restart api", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts == 2 && sv.LastRestartReason == "apps/api/late.go changed"
+	})
+}
+
 func TestSupervisor_StateSaysWhyTheSupervisorLastRestartedAServer(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -891,6 +1020,126 @@ func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedB
 	time.Sleep(r.window + 4*watchSettle)
 	if sv := mustServer(t, s.State(), "api"); sv.Restarts != watchLoopLimit+1 || sv.Status != StatusRunning {
 		t.Fatalf("api = %+v, want one restart for the edit", sv)
+	}
+}
+
+// A change is the server's own start output by when it was made, never by
+// when its burst settled: the settle (watchSettle of quiet) ends after the
+// last change, so a write made just inside the start window is decided after
+// the window closed. Decided by the time the restart ran, a server that writes
+// its watched files 9.7 s into each start never reached watchLoopLimit and was
+// restarted every 10 s, forever.
+func TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second
+	r.write("apps/api/main.py", "v1")
+	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to run", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Pid != 0
+	})
+	before := mustServer(t, s.State(), "api").Restarts
+
+	// Each of its last watchLoopLimit starts saw a change of its own; this
+	// start began a window and a settle ago, and its change came just
+	// inside the window — its burst settled after it.
+	started := time.Now().Add(-r.window - watchSettle)
+	s.mu.Lock()
+	sv := s.servers["api"]
+	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
+	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/pkg/PKG-INFO", started.Add(r.window-watchSettle/2), []string{"apps/api/pkg/PKG-INFO"})
+
+	got := mustServer(t, s.State(), "api")
+	if got.Restarts != before {
+		t.Fatalf("api restarted (%d → %d): a change made inside its start window was taken for one after it", before, got.Restarts)
+	}
+	if want := "restarts stopped: apps/api/pkg/PKG-INFO changed during each of its last 10 starts; add the path to watch.ignore"; got.LastRestartReason != want {
+		t.Fatalf("reason = %q, want %q", got.LastRestartReason, want)
+	}
+}
+
+// A server that writes into its watched path without a pause keeps each
+// burst open until watchSettleMax. With the default window the guard trips on
+// the bursts inside each start's window, but the next burst ends past the
+// window, and a change past the window always restarted: the server was
+// restarted every window, forever. Once the guard tripped, a burst made past
+// the window of only paths the server's own output changed inside its windows
+// is still that output and restarts nothing; a path it never wrote restarts it.
+func TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestartedOnceTheGuardTrips(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second
+	r.write("apps/api/main.py", "v1")
+	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to run", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Pid != 0
+	})
+	before := mustServer(t, s.State(), "api").Restarts
+
+	// Each of its last watchLoopLimit starts saw its own output; this start
+	// began more than a window ago.
+	started := time.Now().Add(-r.window - time.Second)
+	s.mu.Lock()
+	sv := s.servers["api"]
+	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
+	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/out.log", started.Add(r.window/2), []string{"apps/api/out.log"}) // its output inside the window: declined
+	s.watchFired("api", "apps/api/out.log", time.Now(), []string{"apps/api/out.log"})              // the same output, its burst ending past the window
+	got := mustServer(t, s.State(), "api")
+	if got.Restarts != before {
+		t.Fatalf("api restarted (%d → %d) on its own output past the window after the guard tripped", before, got.Restarts)
+	}
+	if !strings.HasPrefix(got.LastRestartReason, "restarts stopped: ") {
+		t.Fatalf("reason = %q, want the restarts named stopped", got.LastRestartReason)
+	}
+
+	s.watchFired("api", "apps/api/main.py", time.Now(), []string{"apps/api/main.py"}) // a path its output never changed
+	if got := mustServer(t, s.State(), "api"); got.Restarts != before+1 || got.LastRestartReason != "apps/api/main.py changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one more, for the edit", got.Restarts, got.LastRestartReason)
+	}
+}
+
+// Shutdown stops every server, but a watched burst or a ctl call already
+// waiting for the supervisor's turn ran once Shutdown let go and started a
+// server after it: a process group the supervisor's exit leaves behind (a
+// lease supervisor zcp starts under setsid has no unit to clean it up). After
+// Shutdown nothing starts.
+func TestSupervisor_NothingStartsAfterShutdown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.write("apps/api/main.go", "v1")
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	s.Shutdown()
+	released(t, api)
+
+	_ = s.Start("api")
+	_ = s.Restart("api")
+	s.watchFired("api", "apps/api/main.go", time.Now(), []string{"apps/api/main.go"})
+	s.mu.Lock()
+	g, watch := s.servers["api"].g, s.servers["api"].watch
+	s.mu.Unlock()
+	if g != nil {
+		_ = stopGroup(g.pgid, time.Second)
+		t.Fatalf("a server started after Shutdown (pgid %d)", g.pgid)
+	}
+	if watch != nil {
+		watch.close()
+		t.Fatal("a watch was set up after Shutdown")
 	}
 }
 

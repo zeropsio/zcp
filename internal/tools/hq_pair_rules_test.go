@@ -131,14 +131,8 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 	}{
 		{name: "no change at all", want: []string{"wired_mate_production_is_the_groups", "branch of your own"}},
 		{name: "a change still open is named", settle: func(*hqLab) {}, want: []string{"#1", "appdev", "merge"}},
-		{name: "HQ's open change is named after its local number is lost", settle: func(lab *hqLab) {
-			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
-				m.HQ.Change = 0
-				return nil
-			}); err != nil {
-				lab.t.Fatal(err)
-			}
-		}, want: []string{"#1", "appdev", "merge"}},
+		{name: "HQ's open change is named after its record is lost", settle: func(lab *hqLab) { lab.forget(1) },
+			want: []string{"#1", "appdev", "merge"}},
 		{name: "a change merged since the last pass is not named as open", settle: func(lab *hqLab) { lab.hq.merge() },
 			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "branch of your own"}},
 		{name: "a change closed without merging means push and merge first", settle: func(lab *hqLab) { lab.hq.close(1) },
@@ -170,10 +164,11 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 }
 
 // TestSessionAnnotations_HandoffOnlyWithAnOpenChange: a session that deployed
-// the stage half of a pair with an open change closes by handing the person
-// the change; a stand-up that left the stage out has nothing to hand over. The pair's record
-// of its change is the whole condition: the container holds no enrollment
-// here, and a change on record is still the person's to review.
+// the stage half of a pair with an open change in its repository closes by
+// handing the person the change; a stand-up that left the stage out has
+// nothing to hand over. The ledger's record of a change in the pair's
+// repository is the whole condition: the container holds no enrollment here,
+// and a change on record is still the person's to review.
 //
 // Not parallel: HOME is redirected so no enrollment is found (t.Setenv).
 func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
@@ -196,9 +191,14 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 				Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
 				CloseDeployMode: topology.CloseModeAuto, BootstrappedAt: now,
-				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: tt.change},
+				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"},
 			}); err != nil {
 				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			if tt.change != 0 {
+				if err := workflow.RecordHQChange(dir, workflow.HQChange{AppID: labApp, Repo: "appdev", Number: tt.change, Branch: "fix-login"}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "Stand up development of the project.", []string{"appdev", "appstage"})
 			ws.Roles = tt.roles
@@ -235,8 +235,8 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	lab.write(map[string]string{"index.js": "the app\n"})
 	lab.openChange()
 	lab.hq.merge()
-	if number := lab.meta().HQ.Change; number != 0 {
-		t.Fatalf("the pair records change #%d; want no record", number)
+	if kept := lab.ledger(); len(kept) != 0 {
+		t.Fatalf("the ledger keeps %+v; want no record", kept)
 	}
 	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {

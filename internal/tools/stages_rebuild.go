@@ -27,6 +27,12 @@ func rebuildMateStages(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.
 	}
 	tier, tierRead := "", false
 	for _, m := range metas {
+		// A pool keying its pair has no checkout on the mount — its hostname
+		// names no mount (docs/spec-workflows.md §13 PM-10) — and its stages
+		// came over with the pair.
+		if m.DevIsPool() {
+			continue
+		}
 		yml, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		if !workflow.StagesRebuildDue(m, othersThan(metas, m.Hostname), yml) {
 			continue

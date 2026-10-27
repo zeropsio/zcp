@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 )
 
 const (
@@ -26,25 +28,28 @@ const (
 //     shouldn't happen because the caller already checked hasSetupNamed),
 //     return ErrNoSourceSetup.
 //  3. Marshal a new block with `setup: prod` + the source's build/run
-//     blocks verbatim.
+//     blocks verbatim, except that Mate's frame sources leave the run
+//     block (bundle.WithoutMateFraming): production keeps the app's own
+//     framing. framed reports whether any did, so the guidance says so
+//     only then (prodSetupGuidanceWithBlock).
 //  4. Append a guidance comment about adding healthCheck (production
 //     readiness rubric requires it).
 //
 // Returns the yaml fragment (with leading 2-space indent matching the
 // list-entry shape) ready to be appended to the source `zerops:` list.
-func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
+func deriveProdSetupBlock(sourceYAMLBody string) (block string, framed bool, err error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(sourceYAMLBody), &doc); err != nil {
-		return "", fmt.Errorf("derive prod setup: parse source yaml: %w", err)
+		return "", false, fmt.Errorf("derive prod setup: parse source yaml: %w", err)
 	}
 	setupsRaw, ok := doc["zerops"].([]any)
 	if !ok || len(setupsRaw) == 0 {
-		return "", fmt.Errorf("derive prod setup: source yaml has no top-level `zerops:` list")
+		return "", false, fmt.Errorf("derive prod setup: source yaml has no top-level `zerops:` list")
 	}
 
 	template := pickProdSetupTemplate(setupsRaw)
 	if template == nil {
-		return "", fmt.Errorf("derive prod setup: no non-prod source setup block found to template from")
+		return "", false, fmt.Errorf("derive prod setup: no non-prod source setup block found to template from")
 	}
 
 	prod := map[string]any{
@@ -54,12 +59,14 @@ func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
 		prod[platformBuildToken] = build
 	}
 	if run, ok := template["run"]; ok {
-		prod["run"] = run
+		// A dev or stage setup written in a Mate may let Mate's preview
+		// pane frame the app; production keeps the app's own framing.
+		prod["run"], framed = bundle.WithoutMateFraming(run)
 	}
 
 	out, err := yaml.Marshal([]any{prod})
 	if err != nil {
-		return "", fmt.Errorf("derive prod setup: marshal: %w", err)
+		return "", false, fmt.Errorf("derive prod setup: marshal: %w", err)
 	}
 
 	rendered := string(out)
@@ -73,7 +80,7 @@ func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
 	// rubric requires run.healthCheck. Comments survive yaml.Marshal
 	// only via Node API; simpler to append as a separate guidance
 	// string the response surfaces alongside the block.
-	return indented, nil
+	return indented, framed, nil
 }
 
 // pickProdSetupTemplate selects the source setup block to template
@@ -149,7 +156,7 @@ func indentYAMLFragment(body, prefix string) string {
 // of setups actually found in the source so the agent can either edit
 // the source to add the expected name OR pass
 // WorkflowInput.ProdSetupNameOverride to target an existing one.
-func prodSetupGuidanceWithBlock(wantName string, availableNames []string, proposedBlock string) string {
+func prodSetupGuidanceWithBlock(wantName string, availableNames []string, proposedBlock string, framed bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Source zerops.yaml lacks a `setup: %s` block. ", wantName)
 	if len(availableNames) > 0 {
@@ -171,8 +178,18 @@ func prodSetupGuidanceWithBlock(wantName string, availableNames []string, propos
 	b.WriteString("- Add `run.healthCheck` (httpGet path on the runtime port) — prod-readiness rubric requires it.\n")
 	b.WriteString("- Verify build commands install only prod deps where possible (e.g. `npm ci --omit=dev`).\n")
 	b.WriteString("- Verify start command uses production env (`NODE_ENV=production`, `APP_ENV=production`, etc.) — set in the run block, or in the project vault referenced from it.\n")
+	if framed {
+		b.WriteString(prodSetupMateFramingNote)
+	}
 	return b.String()
 }
+
+// prodSetupMateFramingNote is said with a proposed block derived from a setup
+// that lets Mate's preview pane frame the app — only then: production keeps
+// the app's strict framing, and a stage building Mate's preview variant runs a
+// setup production never builds.
+const prodSetupMateFramingNote = "\n**Production keeps the app's strict framing.** The setup this block is derived from lets Mate's preview pane frame the app (a `frame-ancestors` naming `https://mate.zerops.io`, no `X-Frame-Options`); the proposed block leaves Mate's sources out (`'none'` where nothing else is left). " +
+	"A stage that builds Mate's preview variant of a setup — one that `extends` it and changes only the framing — runs a setup production never builds: re-call with `prodSetupNameOverride=\"<the setup it extends>\"`.\n"
 
 // prodSetupMissingGenericMessage is the fallback used when deriveProdSetupBlock
 // cannot produce a template (malformed source yaml, zero non-prod setups).

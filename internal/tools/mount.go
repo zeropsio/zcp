@@ -19,7 +19,32 @@ type MountInput struct {
 }
 
 // RegisterMount registers the zerops_mount tool.
-func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, rtInfo runtime.Info, stateDir string, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
+// MountOption configures RegisterMount.
+type MountOption func(*mountConfig)
+
+type mountConfig struct {
+	swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer (tests).
+	vouch leaseVouch
+}
+
+// WithPoolOrchestratorsForMount lets a mount of a lease ask the pool's
+// orchestrator, through swarm, whether the lease's container is still the
+// lease's before sshfs reaches it (docs/spec-workflows.md §8 DP-2). Without
+// it a mount of a lease is refused: zcp cannot vouch for the container.
+func WithPoolOrchestratorsForMount(swarm ops.SwarmFactory) MountOption {
+	return func(c *mountConfig) { c.swarm = swarm }
+}
+
+func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, rtInfo runtime.Info, stateDir string, engine *workflow.Engine, recipeProbe RecipeSessionProbe, opts ...MountOption) {
+	var cfg mountConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	vouch := cfg.vouch
+	if vouch == nil {
+		vouch = orchestratorVouch(client, projectID, stateDir, cfg.swarm)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mount",
 		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount (requires active workflow — bootstrap or develop), unmount, status.",
@@ -52,10 +77,31 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 					"Mounting a service into itself is not supported. Mount other services instead.",
 				), WithRecoveryStatus()), nil, nil
 			}
+			// A lease's container is asked about first (DP-2): one that is no
+			// longer the lease's — maybe another holder's — or that the
+			// orchestrator does not answer about is never mounted. A parked
+			// lease's container is stopped (DP-28): an sshfs mount would block
+			// for about 42 s and fail, so the refusal naming the unpark comes
+			// before any gate. A record that cannot be read leaves the mount
+			// as it was before leases existed.
+			lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.ServiceHostname, "mounted")
+			switch {
+			case err != nil:
+				return convertError(err, WithRecoveryStatus()), nil, nil
+			case isLease && lease.Parked:
+				return convertError(ops.LeaseParkedError(lease, "zerops_mount"), WithRecoveryStatus()), nil, nil
+			}
 			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 				return blocked, nil, nil
 			}
-			result, err := ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
+			// A lease is decided by zcp's record of it, never by the name's
+			// shape: any other name is looked up as a service.
+			var result *ops.MountResult
+			if isLease {
+				result, err = ops.MountLease(ctx, mounter, input.ServiceHostname)
+			} else {
+				result, err = ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
+			}
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}

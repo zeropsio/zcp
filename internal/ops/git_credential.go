@@ -168,8 +168,8 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // The helper's text depends on the host: a remote on the Mate's HQ (hqURL,
 // "" on a container that names none) gets the helper that also answers
 // the Mate's shell (hqCredentialHelperShell); every other host answers
-// GIT_TOKEN only. HQ's scope carries its port when it is not 443
-// (hqCredentialScope). A remote whose host cannot be a scope (an IPv6
+// GIT_TOKEN only. Every scope carries the remote's port when it is not 443
+// (scopeWithPort). A remote whose host cannot be a scope (an IPv6
 // literal, a name with an underscore, metacharacters) gets no helper at all:
 // parseGitHost's github.com default is never a scope, since a helper stored
 // there would answer github.com with this remote's token.
@@ -184,18 +184,48 @@ func gitCredentialHelperConfigFragment(remoteURL, hqURL string) string {
 // gitCredentialHelperWriteFragment is the helper write alone — the no-op `:` when
 // the remote's host is no scope to write it under.
 func gitCredentialHelperWriteFragment(remoteURL, hqURL string) string {
-	scope, ok := gitCredentialScopeHost(remoteURL)
+	scope, helper, ok := persistedHelperScope(remoteURL, hqURL, gitCredentialHelperShell, hqCredentialHelperShell)
 	if !ok {
 		return ":"
-	}
-	helper := gitCredentialHelperShell
-	if hqScope, onHQ := hqCredentialScope(remoteURL, hqURL, scope); onHQ {
-		scope, helper = hqScope, hqCredentialHelperShell
 	}
 	return fmt.Sprintf("git config %s %s",
 		shellQuote("credential.https://"+scope+".helper"),
 		shellQuote(helper),
 	)
+}
+
+// persistedHelperScope is the scope a helper persisted for remoteURL is
+// stored under, and which of the caller's two helpers it is: hq under HQ's
+// scope (hqCredentialScope) for a remote on the Mate's HQ, plain under the
+// remote's host otherwise — either with the remote's port when it names one
+// other than 443 (scopeWithPort); ok is false when that host can be no scope
+// (gitCredentialScopeHost). A dev service's checkout and a lease's pass their
+// own pair, so both are scoped by this one rule.
+func persistedHelperScope(remoteURL, hqURL, plain, hq string) (scope, helper string, ok bool) {
+	scope, ok = gitCredentialScopeHost(remoteURL)
+	if !ok {
+		return "", "", false
+	}
+	if hqScope, onHQ := hqCredentialScope(remoteURL, hqURL, scope); onHQ {
+		return hqScope, hq, true
+	}
+	return scopeWithPort(remoteURL, scope), plain, true
+}
+
+// scopeWithPort is host, the scope host an https remoteURL resolved to, with
+// the remote's port when it names one other than 443: git matches a scope's
+// port exactly (live, git 2.50: a helper under `https://host` is never asked
+// for `https://host:8443`, and one under `https://host:8443` never for the
+// default port). Any other remote keeps host alone.
+func scopeWithPort(remoteURL, host string) string {
+	remote, err := url.Parse(remoteURL)
+	if err != nil || !strings.EqualFold(remote.Scheme, httpsScheme) || !strings.EqualFold(remote.Hostname(), host) {
+		return host
+	}
+	if port := httpsPort(remote); port != defaultHTTPSPort {
+		return host + ":" + port
+	}
+	return host
 }
 
 // IsHQRemote reports whether remoteURL is a repository on the Mate's HQ:
@@ -230,10 +260,7 @@ func hqCredentialScope(remoteURL, hqURL, host string) (string, bool) {
 	if err != nil || !strings.EqualFold(remote.Hostname(), host) {
 		return "", false
 	}
-	if port := httpsPort(remote); port != defaultHTTPSPort {
-		return host + ":" + port, true
-	}
-	return host, true
+	return scopeWithPort(remoteURL, host), true
 }
 
 // The persisted helper's scope is always https (credential.https://…); a

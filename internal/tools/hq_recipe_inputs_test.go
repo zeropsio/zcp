@@ -437,3 +437,40 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 		t.Errorf("the outcome's warnings %v do not name the runtime left out", outcome.Warnings)
 	}
 }
+
+// A Swarm pool (USER category) and a Zerops Box (STANDARD) are neither a
+// runtime nor a utility of a recipe, even when an import built them from a
+// public repository: the recipe leaves them out and says so. Spec:
+// spec-workflows.md §8 PS-2/PS-3.
+func TestHQRecipeInputs_PoolAndBoxNotUtilities(t *testing.T) {
+	stateDir := t.TempDir()
+	writeHQWiredPairMeta(t, stateDir)
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		t.Fatalf("ListServiceMetas: %v", err)
+	}
+	pool := publicBuildRuntime("svc-pool", "devpool", "swarm@1", "https://github.com/zerops-recipe-apps/pool-app")
+	box := publicBuildRuntime("svc-box", "sandbox", "ubuntu/zbox@1", "https://github.com/zerops-recipe-apps/box-app")
+	box.ServiceStackTypeInfo.ServiceStackTypeCategoryName = "STANDARD"
+
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(pool, box), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
+	if err != nil {
+		t.Fatalf("composeGroupRecipeInputs: %v", err)
+	}
+	if len(inputs.Utilities) != 1 || inputs.Utilities[0].Hostname != "mailpit" {
+		t.Errorf("utilities = %+v, want mailpit alone — a pool and a Box are no utility", inputs.Utilities)
+	}
+	if len(inputs.Runtimes) != 1 || inputs.Runtimes[0].DevHostname != "appdev" {
+		t.Errorf("runtimes = %+v, want the one wired pair", inputs.Runtimes)
+	}
+	for _, m := range inputs.ManagedServices {
+		if m.Hostname == "devpool" || m.Hostname == "sandbox" {
+			t.Errorf("managed services carry %q — a pool and a Box are no managed dependency", m.Hostname)
+		}
+	}
+	for _, host := range []string{"devpool", "sandbox"} {
+		if !warningsHave(warnings, `"`+host+`"`) || !warningsHave(warnings, "not carried") {
+			t.Errorf("warnings %v do not say %q is not carried", warnings, host)
+		}
+	}
+}

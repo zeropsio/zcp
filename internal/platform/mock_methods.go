@@ -68,6 +68,7 @@ func (m *Mock) ListProjects(_ context.Context, clientID string) ([]Project, erro
 }
 
 func (m *Mock) GetProject(_ context.Context, _ string) (*Project, error) {
+	m.trackCall("GetProject")
 	if err := m.getError("GetProject"); err != nil {
 		return nil, err
 	}
@@ -254,6 +255,13 @@ func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, e
 	for i := range m.services {
 		if m.services[i].ID == serviceID {
 			return &m.services[i], nil
+		}
+	}
+	// A by-id read is direct, like ListServicesDirect: it sees a service the
+	// lagging search has not indexed yet.
+	for i := range m.servicesDirect {
+		if m.servicesDirect[i].ID == serviceID {
+			return &m.servicesDirect[i], nil
 		}
 	}
 	// Return the same typed error the real client maps a 404 to (C4), so
@@ -682,4 +690,20 @@ func (m *Mock) SearchAppVersions(_ context.Context, projectID string, limit int)
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// MintBoxAccess answers the access seeded for serviceID (WithBoxAccess), or
+// the refusal the platform gives for a service that is not there.
+func (m *Mock) MintBoxAccess(_ context.Context, serviceID string) (BoxAccess, error) {
+	m.trackCall("MintBoxAccess")
+	if err := m.getError("MintBoxAccess"); err != nil {
+		return BoxAccess{}, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	access, ok := m.boxAccess[serviceID]
+	if !ok {
+		return BoxAccess{}, &PlatformError{Code: ErrAPIError, APICode: "serviceStackNotFound", Message: fmt.Sprintf("mock: no Box access for service %s", serviceID)}
+	}
+	return access, nil
 }

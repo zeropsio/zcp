@@ -675,6 +675,36 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	}
 }
 
+// A Mate's git-host paragraph says one branch per piece of work and one change
+// per branch: new work on a new branch from an up-to-date main, a change
+// that stays on its own branch, a change built on another's unmerged work
+// cut from that branch and saying so, and a branch kept current by merging
+// origin/main — never a rebase, never a force. It no longer sends new work
+// onto an open change's branch, nor names a change on the pair.
+func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"one change per branch",
+		"a new branch from an up-to-date `main`",
+		"builds on #",
+		"git merge origin/main",
+		"never rebase",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git-host paragraph missing %q", want)
+		}
+	}
+	for _, retired := range []string{"carry the work on that change's branch instead", "changeBranch=", "`change=`"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("git-host paragraph still says %q", retired)
+		}
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
@@ -900,6 +930,49 @@ func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing
 			for _, want := range []string{
 				`zerops_env action="ai-key"`, "`OPENAI_API_KEY: ${NEBIUS_API_KEY}`", "`OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`",
 				"OpenAI-compatible", "/models", "Never print, log or commit the key", "Settings › Zerops › HQ",
+			} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage pins that a Mate's
+// agent lets Mate's preview pane frame the dev and stage services and keeps
+// production strict. The pane draws a service's page in a frame on Mate's
+// origins; on 2026-10-25 zeropsio/apps' hq and box stages, static services,
+// sent `x-frame-options: DENY` and a strict CSP, and the pane read "refused to
+// connect". The stage builds the setup production builds (in a Mate the
+// application's stage and production build the stage's setup), so the
+// allowance goes into a variant of it the stage deploys, never into that
+// setup itself.
+func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "local with the Mate flag", rt: runtime.Info{MateEnabled: true}},
+		{name: "the Chief", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				"preview pane", "`https://mate.zerops.io`", "`*.zerops.app`", "refused to connect",
+				"`X-Frame-Options`", "cannot name another origin", "`frame-ancestors`",
+				"`'self' https://mate.zerops.io https://*.zerops.app`", "only narrows",
+				"The dev setup may carry it", "builds the setup production builds", "`extends`",
+				"`run.routing.headers`", "replaced whole", "`run.envVariables`",
+				`setup="<the variant>"`, "the setup the variant extends", "`curl -sI",
 			} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)

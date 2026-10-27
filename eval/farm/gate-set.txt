@@ -35,3 +35,5 @@ dev-self-deploy-keeps-repo
 repo-adopt-initialized-no-git
 launch-to-existing-prod-project
 launch-production-from-standard-pair
+classic-code-runner-sandbox
+adopt-app-with-existing-pool

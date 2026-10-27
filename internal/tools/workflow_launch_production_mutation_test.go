@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // installMockAdminFactory replaces the package factory with one returning
@@ -484,5 +485,49 @@ func TestPollImportedServices_NoProcessesNoOp(t *testing.T) {
 	}
 	if err := pollImportedServices(context.Background(), mock, state); err != nil {
 		t.Fatalf("expected nil for empty process list, got %v", err)
+	}
+}
+
+// TestReadAndValidateSourceState_MateFraming_SaidOnlyWhenTheSetupCarriesIt:
+// production keeps the app's strict framing — said with the proposed block
+// only when the setup it is derived from let Mate's preview pane frame the
+// app (its frame sources left out of the block), never in every
+// launch-production envelope: the launch-write-prod-setup atom has no Mate
+// axis, and the rule's owner in a Mate is AGENTS.md's preview paragraph.
+func TestReadAndValidateSourceState_MateFraming_SaidOnlyWhenTheSetupCarriesIt(t *testing.T) {
+	const rule = "Production keeps the app's strict framing"
+	for _, tc := range []struct {
+		name, setup string
+		want        bool
+	}{
+		{name: "a stage written in a Mate", setup: "zerops:\n  - setup: stage\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n      start: npm start\n" +
+			"      envVariables:\n        FRAME_ANCESTORS: \"'self' https://mate.zerops.io https://*.zerops.app\"\n", want: true},
+		{name: "a stage with no Mate framing", setup: "zerops:\n  - setup: stage\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n      start: npm start\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &stubSSHDeployer{responses: map[string][]byte{
+				"git rev-parse HEAD":   []byte("sha\n"),
+				"git remote get-url":   []byte("https://github.com/example/myapp\n"),
+				"/var/www/zerops.yaml": []byte(tc.setup),
+			}}
+			input := WorkflowInput{Workflow: workflowLaunchProduction, TargetService: "app", ProductionProjectName: "myapp-prod"}
+			_, _, blocker := readAndValidateSourceState(context.Background(), pLP3MockClient(), ssh, pLP3ContainerRuntime(), nil, input, "src", t.TempDir(), "lid", false)
+			if blocker == nil {
+				t.Fatal("missing setup:prod must return a blocker")
+			}
+			if got := strings.Contains(extractText(blocker), rule); got != tc.want {
+				t.Errorf("the blocker says %q = %v, want %v:\n%s", rule, got, tc.want, extractText(blocker))
+			}
+		})
+	}
+
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range corpus {
+		if a.ID == "launch-write-prod-setup" && (strings.Contains(a.Body, rule) || strings.Contains(a.Body, "mate.zerops.io")) {
+			t.Errorf("%s carries Mate's framing rule into every launch-production envelope:\n%s", a.ID, a.Body)
+		}
 	}
 }

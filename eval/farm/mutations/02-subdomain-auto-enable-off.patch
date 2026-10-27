@@ -1,12 +1,12 @@
 diff --git a/internal/tools/dev_server.go b/internal/tools/dev_server.go
 --- a/internal/tools/dev_server.go
 +++ b/internal/tools/dev_server.go
-@@ -160,7 +160,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
- 		// classification. The address it reports is the started server's own
- 		// port's, not the service's first HTTP port's. A server listening on
- 		// loopback only has no public address.
+@@ -163,7 +163,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
+ 		// server's own port's — a lease's own preview port — never the
+ 		// service's first HTTP port's. A server listening on loopback only has
+ 		// no public address.
 -		if result.Running && isDevServerStartAction(input.Action) && result.Reason != ops.ReasonLoopbackOnly {
 +		if false && result.Running && isDevServerStartAction(input.Action) && result.Reason != ops.ReasonLoopbackOnly {
- 			scratch := &ops.DeployResult{}
- 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
- 			if scratch.SubdomainURL != "" {
+ 			scratch := ensureDevServerPublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, result)
+ 			resp.SubdomainURL = scratch.SubdomainURL
+ 			resp.PublicAccess = scratch.PublicAccess

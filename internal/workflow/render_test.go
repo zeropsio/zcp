@@ -365,6 +365,26 @@ func TestRenderServiceLine_UntrackedRuntimeSaysWhetherDeployed(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_ListArgRendersAsAList pins that a plan step's list
+// argument — a value holding a JSON array of strings, e.g. zerops_lease's
+// `pools` — renders the way the tool call is written, `pools=["a","b"]`,
+// never as a quoted string, while a plain value keeps its quotes.
+func TestRenderStatus_ListArgRendersAsAList(t *testing.T) {
+	t.Parallel()
+
+	out := RenderStatus(Response{
+		Envelope: StateEnvelope{Phase: PhaseIdle},
+		Plan: &Plan{Primary: NextAction{
+			Label: "Lease",
+			Tool:  "zerops_lease",
+			Args:  map[string]string{"action": "acquire", "pools": `["hqpool","webpool"]`},
+		}},
+	})
+	if want := `zerops_lease action="acquire" pools=["hqpool","webpool"]`; !strings.Contains(out, want) {
+		t.Errorf("render lacks %q:\n%s", want, out)
+	}
+}
+
 func TestRenderStatus_DeterministicArgs(t *testing.T) {
 	t.Parallel()
 
@@ -693,5 +713,133 @@ func TestRenderStatus_BlockersLineWhenPending(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRenderStatus_BlockersLine_PoolPairStage_NamesThePlansDeploy: the
+// auto-close line of a pending stage whose pair's dev half is a pool names
+// what the plan names — the deploy from a held lease of the pool, else the
+// acquire of one — never a deploy of the stage with no source (PM-10).
+func TestRenderStatus_BlockersLine_PoolPairStage_NamesThePlansDeploy(t *testing.T) {
+	t.Parallel()
+	held := LeaseSnapshot{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", State: "held"}
+	cases := []struct {
+		name   string
+		leases *[]LeaseSnapshot
+		want   string
+	}{
+		{"a held lease", &[]LeaseSnapshot{held}, `Next: zerops_deploy sourceService="apppool-4" targetService="appstage"`},
+		{"no lease held", &[]LeaseSnapshot{}, `Next: zerops_lease action="acquire" pool="apppool"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Services:    poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured),
+				Leases:      tc.leases,
+				WorkSession: &WorkSessionSummary{Intent: "ship the change", Services: []string{"appstage"}},
+			}
+			out := RenderStatus(Response{Envelope: env})
+			var line string
+			for l := range strings.SplitSeq(out, "\n") {
+				if strings.Contains(l, "Auto-close blocked") {
+					line = l
+				}
+			}
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("auto-close line %q, want it to name %s", line, tc.want)
+			}
+			if strings.Contains(line, `Next: zerops_deploy targetService="appstage"`) {
+				t.Errorf("auto-close line %q names a deploy of the stage with no source", line)
+			}
+		})
+	}
+}
+
+// A pool or Box is neither a bootstrapped runtime nor an adoption candidate:
+// its status line names the kind and carries no deployed/bootstrapped claim
+// and no zerops.yaml base-prefix hint (PS-1).
+func TestRenderServiceLine_PoolAndSandbox(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		svc  ServiceSnapshot
+		want string
+	}{
+		{
+			name: "pool",
+			svc:  ServiceSnapshot{Hostname: "swarmpool", TypeVersion: "alpine/swarm@1", RuntimeClass: topology.RuntimePool, Status: "ACTIVE", Deployed: true},
+			want: "swarmpool (alpine/swarm@1) — pool",
+		},
+		{
+			name: "sandbox",
+			svc:  ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"},
+			want: "box (ubuntu/zbox@1) — sandbox",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderServiceLine(tt.svc)
+			if got != tt.want {
+				t.Errorf("line = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderStatus_LeasesBlock(t *testing.T) {
+	t.Parallel()
+
+	resp := Response{Envelope: StateEnvelope{
+		Phase: PhaseIdle,
+		Leases: &[]LeaseSnapshot{
+			{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"},
+			{Alias: "devpool-12", Pool: "devpool", State: "lost"},
+			{Alias: "apool-1", Pool: "apool", Branch: "main", State: "held", Unverified: true},
+		},
+	}}
+	out := RenderStatus(resp)
+
+	want := "Leases:\n" +
+		"  - devpool-3 · devpool · feat-x · held\n" +
+		"  - devpool-12 · devpool · - · lost\n" +
+		"  - apool-1 · apool · main · held (unverified)\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("status lacks the Leases block\nwant:\n%s\ngot:\n%s", want, out)
+	}
+	if strings.Contains(out, "node-id-3") {
+		t.Error("the Leases block is one line of alias, pool, branch and state — no container hostname")
+	}
+}
+
+func TestRenderStatus_NoLeases_ByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	// The literal status of a lease-less project, as it rendered before leases
+	// existed: no Leases heading, no blank line, nothing.
+	resp := Response{Envelope: StateEnvelope{Phase: PhaseIdle}}
+	const want = "## Status\nPhase: idle\nServices: none\n"
+	if got := RenderStatus(resp); got != want {
+		t.Errorf("RenderStatus = %q, want %q", got, want)
+	}
+}
+
+// A pair keyed by its dev pool shows on the pool's line: which stages it
+// pairs with and its HQ record, with no claim a pool is a bootstrapped
+// runtime of its own.
+func TestRenderServiceLine_PoolDevHalf_NamesItsPair(t *testing.T) {
+	t.Parallel()
+	svc := ServiceSnapshot{
+		Hostname: "apppool", TypeVersion: "swarm@1", RuntimeClass: topology.RuntimePool, Status: "ACTIVE",
+		Bootstrapped: true, Deployed: true, DevIsPool: true, StageHostname: "webstage",
+		Stages:   []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}},
+		HQRepo:   "appdev",
+		HQOrigin: &HQOrigin{Mode: HQOriginNone},
+	}
+	want := "apppool (swarm@1) — pool — dev half of a pair, stage=webstage,apistage, hqRepo=appdev, origin.mode=none"
+	if got := renderServiceLine(svc); got != want {
+		t.Errorf("line = %q\nwant   %q", got, want)
 	}
 }

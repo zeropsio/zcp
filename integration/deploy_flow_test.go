@@ -108,6 +108,21 @@ func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 // setupTestServerWithDeploy creates a full MCP server with a mock SSH deployer.
 func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer) (*mcp.ClientSession, func()) {
 	t.Helper()
+	return setupTestServerIn(t, mock, logFetcher, sshDeployer, runtime.Info{})
+}
+
+// setupLeaseTestServer is setupTestServerWithDeploy in a container, the only
+// place zerops_lease is offered: a pool's orchestrator answers only inside the
+// project (docs/spec-workflows.md §8 DP-3, DP-5).
+func setupLeaseTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer) (*mcp.ClientSession, func()) {
+	t.Helper()
+	return setupTestServerIn(t, mock, logFetcher, sshDeployer, runtime.Info{InContainer: true})
+}
+
+// setupTestServerIn creates a full MCP server with a mock SSH deployer, as rt
+// detects the runtime.
+func setupTestServerIn(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.ClientSession, func()) {
+	t.Helper()
 
 	authInfo := &auth.Info{
 		ProjectID:   "proj-1",
@@ -123,7 +138,7 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, sshDeployer, nil, runtime.Info{}, nil)
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, sshDeployer, nil, rt, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -141,6 +156,9 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 	cleanup := func() {
 		session.Close()
 		ss.Close()
+		// What a call left running (a lease's warm clone) reads the
+		// transport and writes the state directory a test tears down next.
+		srv.WaitBackground()
 	}
 	return session, cleanup
 }

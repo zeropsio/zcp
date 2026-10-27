@@ -115,6 +115,11 @@ func handleExport(
 			fmt.Sprintf("Service %q not found in project", input.TargetService),
 			"Pass targetService=<runtime-hostname>. Discover the project's runtimes via zerops_discover."), WithRecoveryStatus()), nil, nil
 	}
+	// PS-3: a pool or Box is not the app — refuse before any SSH read (a read
+	// by a pool's hostname reaches a random one of its containers).
+	if err := refuseNonRuntimeKind(svc.Hostname, svc.Type, "export"); err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
 	if svc.IsInfrastructure {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -311,7 +316,7 @@ func scopePromptResponse(
 	}
 	var runtimes []string
 	for _, svc := range discover.Services {
-		if !svc.IsInfrastructure {
+		if !svc.IsInfrastructure && !topology.IsPoolOrSandboxType(svc.Type) {
 			runtimes = append(runtimes, svc.Hostname)
 		}
 	}
@@ -618,4 +623,25 @@ func convertClassificationsInput(in map[string]string) map[string]topology.Secre
 		out[k] = topology.SecretClassification(v)
 	}
 	return out
+}
+
+// refuseNonRuntimeKind returns a named refusal when the service is a Swarm
+// pool or a Zerops Box — neither is an app runtime, and a file read by a
+// pool's service hostname lands on a random one of its containers
+// (spec-workflows.md §8 PS-3). verb names the workflow in the message
+// ("export", "launch"). Nil for every other service type.
+func refuseNonRuntimeKind(hostname, serviceType, verb string) error {
+	switch {
+	case topology.IsPoolType(serviceType):
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Service %q is a Swarm pool (%s) — a pool is not the app's runtime, so %s cannot use it as the source (reading its files by hostname would reach a random container)", hostname, serviceType, verb),
+			"Pass the repo-backed app runtime hostname instead. A pool is infrastructure the app uses; recreate it in the new project's import yourself.")
+	case topology.IsSandboxType(serviceType):
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Service %q is a Zerops Box (%s) — a Box hosts sandboxes and is not the app's runtime, so %s cannot use it as the source", hostname, serviceType, verb),
+			"Pass the repo-backed app runtime hostname instead. A Box is infrastructure the app uses; recreate it in the new project's import yourself.")
+	}
+	return nil
 }

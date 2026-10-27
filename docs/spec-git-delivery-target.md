@@ -26,7 +26,8 @@ Six intent statements. Everything else in this spec derives from them.
    in git, the baking is unnecessary. Self-redeploy of a git-configured service is reserved for an
    explicit FUNDAMENTAL reason (break-glass: integration outage, recovery) — and when it does
    happen, it MUST preserve everything on the dev service (committed-tree precheck + deployFiles
-   `[.]` + `-g`), and ZCP flags "container now ahead of repo — push to reconcile".
+   `[.]` + `-g`), and ZCP flags "container now ahead of repo — push to reconcile" whenever what it
+   shipped is not already a clean commit on the tracked branch (`docs/spec-workflows.md` §8 S5).
 2. **Builds flow from the repo via integrations.** Dev-only: the push (re)builds the service via
    its integration. Dev+stage: the push builds the STAGE half. Tag push builds PRODUCTION. ZCP
    configures/instructs the integrations and OBSERVES the builds; it does not replace them.
@@ -113,7 +114,10 @@ write discipline unchanged.
   surface (sed-extract for error messages), never the auth path.
 - Host-scoped (`credential.https://<host>`) — parity with today's `.netrc machine` line; the host
   derivation stays owned by `ops.parseGitHost` (the launch-gate inline duplicate folds into it —
-  the consolidation the 2026-05-28 audit already ordered).
+  the consolidation the 2026-05-28 audit already ordered). A remote on a port other than 443 keeps
+  it in the scope (`credential.https://<host>:<port>`, `ops.scopeWithPort`): git matches a scope's
+  port exactly (live, git 2.50.1), so a portless scope is never asked for that remote and would
+  answer the host's default port instead (`TestPersistedCredentialHelper_ByShellAndHost`).
 - First-time probe (token not yet written): one-shot inline `-c credential.helper=…` with the
   candidate token via env-assignment prefix — environ-only, no argv leak, no file. Probe-first
   invariant unchanged: no state mutation until the probe passes.

@@ -405,3 +405,74 @@ func writeRuntimeMeta(t *testing.T, meta *workflow.ServiceMeta) string {
 	}
 	return dir
 }
+
+// A Swarm pool reports the USER category like any runtime, so the category
+// alone would offer it as the launch's promotion headline. Spec:
+// spec-workflows.md §8 PS-2/PS-3.
+func TestGatherLaunchSourceContext_PoolNotARuntime(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		poolType string
+	}{
+		{"swarm", "swarm@1"},
+		{"swarm-vm", "swarm-vm@1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithProject(&platform.Project{ID: "src", Name: "myapp-dev", Status: "ACTIVE"}).
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-app", Name: "app", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+					{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: tt.poolType, ServiceStackTypeCategoryName: "USER"}},
+				})
+
+			got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{})
+			if got == nil {
+				t.Fatal("expected non-nil source context")
+			}
+			if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0].Hostname != "app" {
+				t.Errorf("AvailableRuntimes: got %+v want [app] only — a pool is no runtime", got.AvailableRuntimes)
+			}
+			if got.PromotionHeadline != "app" {
+				t.Errorf("PromotionHeadline: got %q want app", got.PromotionHeadline)
+			}
+			for _, d := range got.ManagedDeps {
+				if d.Hostname == "devpool" {
+					t.Errorf("ManagedDeps %+v lists the pool as a managed dependency", got.ManagedDeps)
+				}
+			}
+		})
+	}
+}
+
+// A Zerops Box reports the STANDARD category like a database, so the category
+// alone would list it as a managed dependency. Spec: spec-workflows.md §8
+// PS-2/PS-3.
+func TestGatherLaunchSourceContext_BoxNotAManagedDep(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "src", Name: "myapp-dev", Status: "ACTIVE"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-db", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "STANDARD"}},
+			{ID: "svc-box", Name: "sandbox", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		})
+
+	got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{})
+	if got == nil {
+		t.Fatal("expected non-nil source context")
+	}
+	if len(got.ManagedDeps) != 1 || got.ManagedDeps[0].Hostname != "db" {
+		t.Errorf("ManagedDeps: got %+v want [db] only — a Box is no managed dependency", got.ManagedDeps)
+	}
+	if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0].Hostname != "app" {
+		t.Errorf("AvailableRuntimes: got %+v want [app] only", got.AvailableRuntimes)
+	}
+}

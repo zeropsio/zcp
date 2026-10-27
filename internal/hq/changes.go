@@ -15,8 +15,11 @@ import (
 // A Mate's changes in HQ (@t3tools/shared/hqChanges, which zcp reads as the
 // spec): a change is HQ's record of the Mate's work toward `main` in one
 // repository of its application, bound to a branch — one of the agent's own,
-// or `mate/<project id>/<number>` when none is named; a Mate has at most one
-// open change per repository. A Mate pushes any branch but `main`, a tag, or
+// or `mate/<project id>/<number>` when none is named. An HQ that says
+// openPerBranch in the Mate's state keeps a Mate an open change per branch it
+// names, beside its one default change opened naming none, at most five open
+// in a repository; an older one keeps one open change per repository and
+// answers it to any opener. A Mate pushes any branch but `main`, a tag, or
 // another Mate's open change's, so a branch may be pushed before or after its
 // change is opened.
 
@@ -205,13 +208,16 @@ type OpenedChange struct {
 	Created bool   `json:"created"`
 }
 
-// OpenChange is the Mate's open change in repo, or the next number opened
-// with title on branch — a branch of the Mate's own, which HQ binds the
-// change to; "" lets HQ name it. An open change keeps its title and branch:
-// retitling it is EditChange's. HQ refuses a branch another open change
-// holds (409, reason "branch_taken"), one it keeps for itself — `main`, a
-// full ref, its mate/ namespace (409, reason "protected_ref") — and one its
-// git does not take (400, reason "invalid_ref").
+// OpenChange is the Mate's open change on branch in repo, or the next number
+// opened with title on branch — a branch of the Mate's own, which HQ binds
+// the change to; "" is the Mate's default change, which HQ names. An HQ that
+// keeps one open change per repository answers its open one whatever branch
+// is named. An open change keeps its title and branch: retitling it is
+// EditChange's. HQ refuses a branch another Mate's open change holds (409,
+// reason "branch_taken"), one it keeps for itself — `main`, a full ref, its
+// mate/ namespace (409, reason "protected_ref") — one its git does not take
+// (400, reason "invalid_ref"), and a change past as many as it keeps a Mate
+// open in the repository (409, reason "too_many_open").
 func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (OpenedChange, error) {
 	var opened OpenedChange
 	body := map[string]string{"repo": repo, "title": title}
@@ -255,4 +261,15 @@ func (c Client) Attach(ctx context.Context, repo string, number int, png []byte)
 	var kept Attachment
 	err := c.call.send(ctx, http.MethodPost, changePath(repo, number)+"/attachments", c.authorization(), "image/png", png, &kept)
 	return kept, err
+}
+
+// CloseChange closes the Mate's own open change number in repo without
+// merging it: its branch stays, and HQ shows the change closed by its Mate in
+// the change's conversation. An HQ that keeps one open change per repository
+// has no such route (404); HQ refuses a change that is not the Mate's own
+// (403) and one no longer open (409, reason "change_not_open").
+func (c Client) CloseChange(ctx context.Context, repo string, number int) (Change, error) {
+	var change Change
+	err := c.call.json(ctx, http.MethodPost, changePath(repo, number)+"/close", c.authorization(), struct{}{}, &change)
+	return change, err
 }

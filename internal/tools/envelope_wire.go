@@ -129,6 +129,12 @@ func withFreshEnvelope(
 // answer is never altered by an envelope problem; the reason goes to stderr
 // (JSON-only stdout).
 //
+// The envelope carries the project's pool-container leases (leases[], docs/spec-mate.md
+// §2.8a.3) like action="status" does: the default lease reader asks the pool
+// orchestrators and checks a held lease's alias and mount on this host
+// (envelopeLeaseHost), an extra option (the lease tool's own orchestrator
+// factory and host side) replaces it.
+//
 // Call it only after a SUCCESSFUL mutation — the point is to describe the
 // state the mutation produced.
 func freshEnvelope(
@@ -137,14 +143,40 @@ func freshEnvelope(
 	client platform.Client,
 	projectID string,
 	rt runtime.Info,
+	extra ...workflow.EnvelopeOption,
 ) *workflow.StateEnvelope {
-	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now())
+	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(),
+		leaseEnvelopeOptions(client, projectID, stateDir, rt, envelopeLeaseTimeout, extra...)...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
 		return nil
 	}
 	envelope = replyEnvelope(envelope)
 	return &envelope
+}
+
+// leaseEnvelopeOptions are the options every envelope zcp computes starts
+// from: the default lease reader — the project's leases reconciled against
+// the pool orchestrators within timeout, a held lease's alias and mount
+// checked on this host (envelopeLeaseHost) — then extra, a later reader
+// replacing it. A stage whose pair's dev half is a pool deploys from a held
+// lease of it, so an envelope without the leases plans a lease that is
+// already held (docs/spec-workflows.md §13 PM-10).
+func leaseEnvelopeOptions(client platform.Client, projectID, stateDir string, rt runtime.Info, timeout time.Duration, extra ...workflow.EnvelopeOption) []workflow.EnvelopeOption {
+	return append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), timeout))}, extra...)
+}
+
+// envelopeLeaseHost is the host side an envelope's lease reader checks a held
+// lease's ssh alias and mount on, so leases[] reads `unmounted` wherever
+// zerops_lease action=status does (DP-2): inside a container the system
+// mounter (what cmd/zcp hands the server there) and the alias file; elsewhere
+// none, as a lease has neither there. It only reads — /proc/mounts and the
+// alias file.
+func envelopeLeaseHost(rt runtime.Info) ops.LeaseHost {
+	if !rt.InContainer {
+		return ops.LeaseHost{}
+	}
+	return ops.NewLeaseHost(platform.NewSystemMounter())
 }
 
 // bootstrapResponse carries a BootstrapResponse verbatim (embedded, so every

@@ -78,6 +78,9 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 			continue
 		}
 		typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		if topology.IsPoolOrSandboxType(typeName) {
+			continue // not an app runtime, not a managed service (spec-workflows.md §8 PS-2)
+		}
 		if topology.IsManagedService(typeName) {
 			managed = append(managed, s.Name)
 			continue
@@ -289,6 +292,9 @@ func classifyServicesForNote(services []platform.ServiceStack) (runtimes []platf
 			continue
 		}
 		typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		if topology.IsPoolOrSandboxType(typeName) {
+			continue // not an app runtime, not a managed service (spec-workflows.md §8 PS-2)
+		}
 		if topology.IsManagedService(typeName) {
 			managed = append(managed, s.Name)
 			continue

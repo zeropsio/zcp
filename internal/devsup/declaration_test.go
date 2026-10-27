@@ -1,7 +1,9 @@
 package devsup
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -243,3 +245,293 @@ func TestServer_FirstDesired_FollowsAutostart(t *testing.T) {
 }
 
 func autostart(b bool) *bool { return &b }
+
+func TestDeclaration_PreviewPortBase_ParsesAndOldFilesUnchanged(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		in          string
+		wantBase    int
+		wantPreview []string // names of the servers marked preview
+		wantErr     string
+	}{
+		{name: "an old file has no base and no preview", in: `{"version":1,"servers":[{"name":"web","port":3000,"command":"x"}]}`},
+		{name: "a base", in: `{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"x"}]}`, wantBase: 9000},
+		{
+			name:        "a server marked preview among several",
+			in:          `{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"x","preview":true},{"name":"api","port":8080,"command":"y"}]}`,
+			wantBase:    9000,
+			wantPreview: []string{"web"},
+		},
+		{name: "a negative base", in: `{"version":1,"previewPortBase":-1,"servers":[]}`, wantErr: "previewPortBase -1 is out of range"},
+		{name: "a base over the port range", in: `{"version":1,"previewPortBase":70000,"servers":[]}`, wantErr: "previewPortBase 70000 is out of range"},
+		{name: "a preview server without a port", in: `{"version":1,"servers":[{"name":"worker","command":"x","preview":true}]}`, wantErr: `"worker": preview needs a port`},
+		{
+			name:    "two servers marked preview",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","preview":true},{"name":"b","port":2,"command":"y","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
+		{
+			// Each pool's supervisor runs only its own entries (ForService):
+			// one preview each, never two in one supervisor.
+			name: "two pools each marking the preview of its own servers",
+			in: `{"version":1,"previewPortBase":9000,"servers":[` +
+				`{"name":"web","port":3000,"command":"x","service":"webpool","preview":true},{"name":"storybook","port":6006,"command":"y","service":"webpool"},` +
+				`{"name":"api","port":8080,"command":"z","service":"apipool","preview":true},{"name":"docs","port":8081,"command":"w","service":"apipool"}]}`,
+			wantBase:    9000,
+			wantPreview: []string{"web", "api"},
+		},
+		{
+			name:    "two previews of one pool",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","service":"webpool","preview":true},{"name":"b","port":2,"command":"y","service":"webpool","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
+		{
+			// An entry naming no service runs in every supervisor, beside
+			// each pool's own.
+			name:    "a preview naming no service beside one naming a pool",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","preview":true},{"name":"b","port":2,"command":"y","service":"webpool","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := ParseDeclaration([]byte(tt.in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.PreviewPortBase != tt.wantBase {
+				t.Fatalf("PreviewPortBase = %d, want %d", d.PreviewPortBase, tt.wantBase)
+			}
+			var marked []string
+			for _, s := range d.Servers {
+				if s.Preview {
+					marked = append(marked, s.Name)
+				}
+			}
+			if !reflect.DeepEqual(marked, tt.wantPreview) {
+				t.Fatalf("marked preview = %v, want %v", marked, tt.wantPreview)
+			}
+			// An old file written back stays an old file: neither key appears.
+			if tt.wantBase == 0 && tt.wantPreview == nil {
+				b, err := json.Marshal(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), "preview") {
+					t.Fatalf("an old declaration marshals with a preview key: %s", b)
+				}
+			}
+		})
+	}
+}
+
+func TestPreviewServer_PicksTheOnlyPortOrTheMarkedOne(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		servers []Server
+		want    string
+	}{
+		{name: "none", servers: nil},
+		{name: "a portless worker only", servers: []Server{{Name: "worker", Command: "x"}}},
+		{name: "the only server with a port", servers: []Server{{Name: "worker", Command: "x"}, {Name: "web", Port: 3000, Command: "y"}}, want: "web"},
+		{name: "several with ports, none marked", servers: []Server{{Name: "web", Port: 3000, Command: "x"}, {Name: "api", Port: 8080, Command: "y"}}},
+		{name: "several with ports, one marked", servers: []Server{{Name: "web", Port: 3000, Command: "x"}, {Name: "api", Port: 8080, Command: "y", Preview: true}}, want: "api"},
+		{name: "one with a port, marked", servers: []Server{{Name: "web", Port: 3000, Command: "x", Preview: true}}, want: "web"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := PreviewServer(tt.servers)
+			if ok != (tt.want != "") || got.Name != tt.want {
+				t.Fatalf("PreviewServer = %q, %v; want %q", got.Name, ok, tt.want)
+			}
+		})
+	}
+}
+
+// siblingEnv maps a variable a part's dev server reads to the pool whose
+// lease of the same branch it reaches; zcp reads it, the supervisor validates
+// it with the rest of the file and never acts on it.
+func TestParseDeclaration_SiblingEnv_Shapes(t *testing.T) {
+	t.Parallel()
+	servers := `"servers":[{"name":"web","port":3000,"command":"x"}]`
+	tests := []struct {
+		name    string
+		sibling string // the siblingEnv value; "" leaves the key out
+		want    map[string]string
+		wantErr string
+	}{
+		{name: "an old file has none"},
+		{name: "an empty map", sibling: `{}`, want: map[string]string{}},
+		{
+			name:    "variables naming pools",
+			sibling: `{"HQ_HOST":"hqpool","_api_host2":"api2pool"}`,
+			want:    map[string]string{"HQ_HOST": "hqpool", "_api_host2": "api2pool"},
+		},
+		{name: "a ZEROPS_ variable", sibling: `{"ZEROPS_HQ":"hqpool"}`, wantErr: `siblingEnv "ZEROPS_HQ"`},
+		{name: "hostname", sibling: `{"hostname":"hqpool"}`, wantErr: `siblingEnv "hostname"`},
+		{name: "serviceId", sibling: `{"serviceId":"hqpool"}`, wantErr: `siblingEnv "serviceId"`},
+		{name: "projectId", sibling: `{"projectId":"hqpool"}`, wantErr: `siblingEnv "projectId"`},
+		{name: "PATH", sibling: `{"PATH":"hqpool"}`, wantErr: `siblingEnv "PATH"`},
+		{name: "HOME", sibling: `{"HOME":"hqpool"}`, wantErr: `siblingEnv "HOME"`},
+		{name: "a name starting with a digit", sibling: `{"1HQ":"hqpool"}`, wantErr: `siblingEnv "1HQ"`},
+		{name: "a name with a dash", sibling: `{"HQ-HOST":"hqpool"}`, wantErr: `siblingEnv "HQ-HOST"`},
+		{name: "an empty name", sibling: `{"":"hqpool"}`, wantErr: `siblingEnv ""`},
+		{name: "a pool with a capital", sibling: `{"HQ_HOST":"HQpool"}`, wantErr: `siblingEnv "HQ_HOST": "HQpool"`},
+		{name: "a container hostname, not a pool", sibling: `{"HQ_HOST":"node-id-7.runtime.hqpool.zerops"}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "an empty pool", sibling: `{"HQ_HOST":""}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "a pool over 40 characters", sibling: `{"HQ_HOST":"` + strings.Repeat("a", 41) + `"}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "a pool that is not a string", sibling: `{"HQ_HOST":7}`, wantErr: "parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := `{"version":1,` + servers + `}`
+			if tt.sibling != "" {
+				in = `{"version":1,"siblingEnv":` + tt.sibling + `,` + servers + `}`
+			}
+			d, err := ParseDeclaration([]byte(in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !maps.Equal(d.SiblingEnv, tt.want) {
+				t.Fatalf("SiblingEnv = %#v, want %#v", d.SiblingEnv, tt.want)
+			}
+			// Written back, a file keeps its siblingEnv, and an old file gains none.
+			b, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := ParseDeclaration(b)
+			if err != nil || !maps.Equal(again.SiblingEnv, tt.want) {
+				t.Fatalf("written back: %s (%v)", b, err)
+			}
+			if tt.sibling == "" && strings.Contains(string(b), "siblingEnv") {
+				t.Fatalf("an old declaration marshals with a siblingEnv key: %s", b)
+			}
+		})
+	}
+}
+
+func TestDeclaration_Prepare_ParsesAndRoundTrips(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "absent", in: `{"version":1,"servers":[]}`},
+		{name: "a command", in: `{"version":1,"prepare":"npm install --prefer-offline","servers":[]}`, want: "npm install --prefer-offline"},
+		{name: "not a string", in: `{"version":1,"prepare":5,"servers":[]}`, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := ParseDeclaration([]byte(tt.in))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parsed %+v, want an error", d)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Prepare != tt.want {
+				t.Errorf("prepare = %q, want %q", d.Prepare, tt.want)
+			}
+			// zcp rewrites the declaration when the set of servers changes;
+			// the repository's prepare survives that, and an absent one stays absent.
+			b, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again, err := ParseDeclaration(b); err != nil || again.Prepare != tt.want {
+				t.Errorf("round trip = %+v, %v; want prepare %q", again, err, tt.want)
+			}
+			if tt.want == "" && strings.Contains(string(b), "prepare") {
+				t.Errorf("an absent prepare is written: %s", b)
+			}
+		})
+	}
+}
+
+// TestParseDeclaration_SiblingPreviewEnv_Shapes: siblingPreviewEnv names, like
+// siblingEnv, a variable a part's dev server reads and the pool whose lease of
+// the same branch it reaches — from a browser, so zcp hands it that lease's
+// preview URL. It follows siblingEnv's rules, and one variable is never in
+// both. It is a top-level key of its own, so a supervisor that predates it
+// ignores it and keeps running the file. zcp keeps it when it rewrites the
+// file, and siblingEnv's form is unchanged.
+func TestParseDeclaration_SiblingPreviewEnv_Shapes(t *testing.T) {
+	t.Parallel()
+	servers := `"servers":[{"name":"web","port":3000,"command":"x"}]`
+	tests := []struct {
+		name    string
+		preview string // the siblingPreviewEnv value; "" leaves the key out
+		sibling string // the siblingEnv value; "" leaves the key out
+		wantErr string
+	}{
+		{name: "an old file has none"},
+		{name: "variables naming pools", preview: `{"SELF_URL":"webpool","VITE_HQ_URL":"hqpool"}`, sibling: `{"HQ_HOST":"hqpool"}`},
+		{name: "a ZEROPS_ variable", preview: `{"ZEROPS_HQ":"hqpool"}`, wantErr: `siblingPreviewEnv "ZEROPS_HQ"`},
+		{name: "PATH", preview: `{"PATH":"hqpool"}`, wantErr: `siblingPreviewEnv "PATH"`},
+		{name: "a name with a dash", preview: `{"HQ-URL":"hqpool"}`, wantErr: `siblingPreviewEnv "HQ-URL"`},
+		{name: "a pool with a capital", preview: `{"HQ_URL":"HQpool"}`, wantErr: `siblingPreviewEnv "HQ_URL": "HQpool"`},
+		{name: "a URL, not a pool", preview: `{"HQ_URL":"https://hqpool-abc1-8001.prg1.zerops.app"}`, wantErr: `siblingPreviewEnv "HQ_URL"`},
+		{name: "one variable in both", preview: `{"HQ":"hqpool"}`, sibling: `{"HQ":"hqpool"}`, wantErr: `"HQ" is in both siblingEnv and siblingPreviewEnv`},
+		{name: "a pool that is not a string", preview: `{"HQ_URL":7}`, wantErr: "parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := `{"version":1,`
+			if tt.sibling != "" {
+				in += `"siblingEnv":` + tt.sibling + `,`
+			}
+			if tt.preview != "" {
+				in += `"siblingPreviewEnv":` + tt.preview + `,`
+			}
+			in += servers + `}`
+			d, err := ParseDeclaration([]byte(in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.preview != "" && !strings.Contains(string(out), `"siblingPreviewEnv":`+tt.preview) {
+				t.Errorf("rewritten = %s, want siblingPreviewEnv %s kept", out, tt.preview)
+			}
+			if tt.preview == "" && strings.Contains(string(out), "siblingPreviewEnv") {
+				t.Errorf("rewritten = %s, want no siblingPreviewEnv in a file that has none", out)
+			}
+			if tt.sibling != "" && !strings.Contains(string(out), `"siblingEnv":`+tt.sibling) {
+				t.Errorf("rewritten = %s, want siblingEnv %s as it was", out, tt.sibling)
+			}
+		})
+	}
+}

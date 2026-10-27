@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
@@ -87,7 +88,23 @@ type fakeHQ struct {
 	// handed are the changes a person handed the lab's Mate from a Mate that
 	// is gone, by repo#number.
 	handed map[string]bool
+	// perBranch: HQ keeps a Mate an open change per branch it names, beside
+	// its one default change opened naming none, at most labOpenCap open in a
+	// repository; its state says so (openPerBranch), lists every open change
+	// and each one's standing. Off, it is today's HQ: one open change per
+	// repository, answered to any opener.
+	perBranch bool
+	// described is the head each change was described at, by repo#number: a
+	// change is ready while its branch is still there.
+	described map[string]string
+	// closes: HQ lets a Mate close its own open change
+	// (POST /api/mate/changes/:repo/:n/close); off, the route is not there.
+	closes bool
 }
+
+// labOpenCap is how many open changes a Mate holds in a repository on an HQ
+// that keeps one per branch.
+const labOpenCap = 5
 
 func newFakeHQ(t *testing.T) *fakeHQ {
 	t.Helper()
@@ -100,7 +117,7 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
-		handed: map[string]bool{},
+		handed: map[string]bool{}, described: map[string]string{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -249,7 +266,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			refuse(http.StatusNotFound, "repo_not_found", "repo_not_found")
 			return
 		}
-		if open := f.findOf(labMate, f.appID, in.Repo); open != nil {
+		if open := f.answeredOpen(in.Repo, in.Branch); open != nil {
 			answered := *open
 			if f.unnamedBranches {
 				answered.Branch = ""
@@ -282,6 +299,9 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		case f.heldBranch(in.Repo, branch):
 			refuse(http.StatusConflict, "conflict", "branch_taken")
 			return
+		case f.perBranch && f.openCount(in.Repo) >= labOpenCap:
+			refuse(http.StatusConflict, "conflict", "too_many_open")
+			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		change := hq.Change{AppID: f.appID, Repo: in.Repo, Number: number, MateProjectID: labMate, Title: in.Title,
@@ -296,11 +316,21 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 	case len(parts) >= 5 && parts[2] == "changes":
 		number, _ := strconv.Atoi(parts[4])
 		change := f.find(f.appID, parts[3], number, "")
+		closing := r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "close"
 		switch {
+		case closing && !f.closes:
+			refuse(http.StatusNotFound, "not_found", "not_found")
 		case change == nil:
 			refuse(http.StatusNotFound, "change_not_found", "change_not_found")
+		case closing && change.MateProjectID != labMate:
+			refuse(http.StatusForbidden, "forbidden", "not_own_change")
 		case change.State != hq.ChangeOpen:
 			refuse(http.StatusConflict, "conflict", "change_not_open")
+		case closing:
+			now := time.Now().UTC().Format(time.RFC3339)
+			change.State, change.ClosedAt, change.UpdatedAt = hq.ChangeClosed, &now, now
+			f.writeRefs()
+			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPatch && len(parts) == 5:
 			var edit hq.ChangeEdit
 			_ = json.NewDecoder(r.Body).Decode(&edit)
@@ -309,6 +339,9 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			}
 			if edit.Body != nil {
 				change.Body = *edit.Body
+				if head := f.branchHead(r.Context(), change); head != nil {
+					f.described[fmt.Sprintf("%s#%d", change.Repo, change.Number)] = *head
+				}
 			}
 			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "attachments":
@@ -350,11 +383,17 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		if c.State == hq.ChangeOpen {
 			head = f.branchHead(ctx, &c)
 		}
+		key := fmt.Sprintf("%s#%d", c.Repo, c.Number)
 		// HQ stores a change's branch by its short name.
 		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead,
-			Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), Handed: f.handed[fmt.Sprintf("%s#%d", c.Repo, c.Number)]}
+			Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), Handed: f.handed[key]}
 		if !f.untitled {
 			change.Title = &c.Title
+		}
+		if f.perBranch {
+			ready := head != nil && f.described[key] == *head
+			behind := c.Behind
+			change.Ready, change.Mergeability, change.Behind, change.UpdatedAt = &ready, c.Mergeability, &behind, c.UpdatedAt
 		}
 		mine = append(mine, change)
 	}
@@ -364,7 +403,10 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		}
 		return b.Number - a.Number
 	})
-	state["changes"] = mine
+	state["changes"] = f.window(mine)
+	if f.perBranch {
+		state["openPerBranch"] = true
+	}
 	// HQ's shape: {name} for a repository HQ alone keeps, {name, origin:
 	// {url, mode}} for one with an origin connected, by name.
 	repos := []map[string]any{}
@@ -398,6 +440,75 @@ func (f *fakeHQ) keepInHQ() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.origins, "appdev")
+}
+
+// window is the Mate's changes its state lists, newest first per
+// repository: on an HQ that keeps an open change per branch every open one
+// and the newest hq.MateChangesPerRepo settled ones; on today's HQ the newest
+// hq.MateChangesPerRepo in any state.
+func (f *fakeHQ) window(mine []hq.MateChange) []hq.MateChange {
+	listed := []hq.MateChange{}
+	counted := map[string]int{}
+	for _, c := range mine {
+		if f.perBranch && c.State == hq.ChangeOpen {
+			listed = append(listed, c)
+			continue
+		}
+		if counted[c.Repo] < hq.MateChangesPerRepo {
+			counted[c.Repo]++
+			listed = append(listed, c)
+		}
+	}
+	return listed
+}
+
+// answeredOpen is the open change HQ answers an opener naming branch in repo
+// with, nil when it opens one: today's HQ answers the Mate's one open change
+// whatever is named; one that keeps an open change per branch answers the
+// Mate's change on the branch named, or — none named — its default change.
+func (f *fakeHQ) answeredOpen(repo, branch string) *hq.Change {
+	if !f.perBranch || f.unnamedBranches {
+		return f.findOf(labMate, f.appID, repo)
+	}
+	want := "refs/heads/" + branch
+	for i := range f.changes {
+		c := &f.changes[i]
+		if c.MateProjectID != labMate || c.AppID != f.appID || c.Repo != repo || c.State != hq.ChangeOpen {
+			continue
+		}
+		if branch != "" && c.Branch == want {
+			return c
+		}
+		if branch == "" && c.Branch == fmt.Sprintf("refs/heads/mate/%s/%d", labMate, c.Number) {
+			return c
+		}
+	}
+	return nil
+}
+
+// openCount is how many open changes the lab's Mate holds in repo.
+func (f *fakeHQ) openCount(repo string) int {
+	n := 0
+	for _, c := range f.changes {
+		if c.MateProjectID == labMate && c.AppID == f.appID && c.Repo == repo && c.State == hq.ChangeOpen {
+			n++
+		}
+	}
+	return n
+}
+
+// letMateClose makes HQ one that lets a Mate close its own open change.
+func (f *fakeHQ) letMateClose() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closes = true
+}
+
+// keepOpenPerBranch makes HQ one that keeps an open change per branch.
+func (f *fakeHQ) keepOpenPerBranch() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.perBranch = true
 }
 
 // findOf is mate's open change in repo of the application, nil for none.
@@ -596,7 +707,35 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 	f.git(f.t.Context(), dir, "update-ref", "refs/heads/main", squash)
 	change.State, change.Head, change.MergedSha, change.LandedHead = hq.ChangeMerged, head, &squash, head
 	f.writeRefs()
+	if f.perBranch {
+		f.rejudge(repo)
+	}
 	return squash
+}
+
+// rejudge is HQ judging repo's open changes again once its main moved: each
+// one with a head is behind when main is no longer its merge base, and
+// merges cleanly or conflicts as git's merge-tree says. f.mu is held.
+func (f *fakeHQ) rejudge(repo string) {
+	dir := f.repoDir(f.appID, repo)
+	main := f.git(f.t.Context(), dir, "rev-parse", "main")
+	for i := range f.changes {
+		c := &f.changes[i]
+		if c.AppID != f.appID || c.Repo != repo || c.State != hq.ChangeOpen {
+			continue
+		}
+		head := f.branchHead(f.t.Context(), c)
+		if head == nil {
+			continue
+		}
+		base := f.git(f.t.Context(), dir, "merge-base", "main", *head)
+		c.Behind = base != main
+		c.Mergeability = hq.MergeClean
+		if err := exec.CommandContext(f.t.Context(), "git", "-C", dir, "merge-tree", "--write-tree", "main", *head).Run(); err != nil {
+			c.Mergeability = hq.MergeConflict
+		}
+		c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 }
 
 // unborn makes repo in the Mate's application with no main: the recipe
@@ -724,6 +863,11 @@ type labSSH struct {
 }
 
 func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	return s.run(ctx, hostname, command, nil)
+}
+
+// run runs command in hostname's checkout, stdin on its input.
+func (s *labSSH) run(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
 	s.mu.Lock()
 	s.commands = append(s.commands, command)
 	s.mu.Unlock()
@@ -744,6 +888,9 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
 		"GIT_TOKEN=" + token,
 	}
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, &platform.SSHExecError{Hostname: hostname, Output: string(out), Err: err}
@@ -751,8 +898,8 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 	return out, nil
 }
 
-func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
-	return s.ExecSSH(ctx, hostname, command)
+func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
+	return s.run(ctx, hostname, command, stdin)
 }
 
 func (s *labSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
@@ -921,4 +1068,53 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("land on main: %v\n%s", err, out)
 	}
+}
+
+// ledger is every change zcp keeps for the lab's Mate, as on disk.
+func (l *hqLab) ledger() []workflow.HQChange {
+	l.t.Helper()
+	changes, err := workflow.ListHQChanges(l.stateDir)
+	if err != nil {
+		l.t.Fatalf("the change ledger: %v", err)
+	}
+	return changes
+}
+
+// kept is the ledger's change number of appdev, nil for none.
+func (l *hqLab) kept(number int) *workflow.HQChange {
+	l.t.Helper()
+	c, found, err := workflow.ReadHQChange(l.stateDir, labApp, "appdev", number)
+	if err != nil {
+		l.t.Fatalf("change #%d in the ledger: %v", number, err)
+	}
+	if !found {
+		return nil
+	}
+	return &c
+}
+
+// record keeps change number of appdev on branch in the ledger, as an
+// open-change leaves it.
+func (l *hqLab) record(number int, branch string) {
+	l.t.Helper()
+	if err := workflow.RecordHQChange(l.stateDir, workflow.HQChange{AppID: labApp, Repo: "appdev", Number: number, Branch: branch, Source: workflow.HQChangeFromOpen}); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// forget drops change number of appdev from the ledger, as a record never
+// written leaves it.
+func (l *hqLab) forget(number int) {
+	l.t.Helper()
+	if err := workflow.ForgetHQChange(l.stateDir, labApp, "appdev", number); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// openRecorded opens the pair's work as the Mate's change (openChange) and
+// keeps it in the ledger on the branch HQ bound it to.
+func (l *hqLab) openRecorded() {
+	l.t.Helper()
+	c := l.openChange()
+	l.record(c.Number, strings.TrimPrefix(c.Branch, "refs/heads/"))
 }

@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -67,6 +69,10 @@ func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProb
 //   - stateDir is empty (no state directory configured)
 //   - services/ directory doesn't exist (no bootstrap ever ran — gate activates
 //     once the first service is adopted, giving a clean migration path)
+//   - h is the alias of a lease zcp holds a record for (ops.LeaseTarget): a
+//     pool container is no service to adopt (docs/spec-workflows.md §8 DP-1),
+//     and the pool of such a lease named beside it is the deploy target of a
+//     lease-to-pool deploy (PS-2 keeps a pool from being adopted)
 //   - recipeProbe.CoversHost(h) — an open recipe session's Plan owns the
 //     hostname; recipe authoring legitimately deploys its own dev/stage slots
 //     before any bootstrap workflow exists. recipeProbe may be nil; the
@@ -87,11 +93,15 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 	if _, err := os.Stat(servicesDir); os.IsNotExist(err) {
 		return nil
 	}
+	leasePools := leasePoolsAmong(stateDir, hostnames)
 	for _, h := range hostnames {
 		if h == "" {
 			continue
 		}
 		if workflow.IsKnownService(stateDir, h) {
+			continue
+		}
+		if _, isLease := leaseOf(stateDir, h); isLease || leasePools[h] {
 			continue
 		}
 		// Recipe-authoring exemption: an open recipe session whose Plan
@@ -132,4 +142,154 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 		), WithRecovery(recovery))
 	}
 	return nil
+}
+
+// leaseOf is the lease host names, when host is the alias of a lease zcp holds
+// a record for. An unreadable record set is no lease: the caller falls back to
+// the service rules it had before leases.
+// isLease reports whether host is an alias of a lease zcp holds.
+func isLease(stateDir, host string) bool {
+	_, ok := leaseOf(stateDir, host)
+	return ok
+}
+
+func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
+	lease, ok, err := ops.LeaseTarget(stateDir, host)
+	if err != nil || !ok {
+		return ops.LeaseTargetInfo{}, false
+	}
+	return lease, true
+}
+
+// leaseVouch asks a lease's pool orchestrator, once, whether the container
+// the lease names is still the lease's (docs/spec-workflows.md §8 DP-2): the
+// lease as it is to be reached (parked when its container is stopped), or the
+// refusal of one that is no longer zcp's or that the orchestrator does not
+// answer about.
+type leaseVouch func(ctx context.Context, lease ops.LeaseTargetInfo, what string) (ops.LeaseTargetInfo, error)
+
+// orchestratorVouch is the leaseVouch that asks through swarm
+// (ops.LeaseTargetChecked); nil swarm vouches for no lease: the call is
+// refused, zcp cannot tell whose the container is.
+func orchestratorVouch(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory) leaseVouch {
+	return func(ctx context.Context, lease ops.LeaseTargetInfo, what string) (ops.LeaseTargetInfo, error) {
+		checked, ok, err := ops.LeaseTargetChecked(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm}, lease.Alias, what)
+		if err == nil && !ok {
+			// The record went between the two reads: nothing to vouch for.
+			return lease, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Lease %s was not %s: its record went while zcp read it", lease.Alias, what),
+				"zerops_lease action=status lists the leases this zcp holds")
+		}
+		return checked, err
+	}
+}
+
+// checkedLeaseOf is the lease host names, vouched for by its pool's
+// orchestrator once (vouch) for a call that reaches its container over ssh or
+// sshfs: err refuses a lease that is no longer zcp's — maybe another holder's
+// — or that the orchestrator does not answer about, before anything reaches
+// it; ok is false when host names no lease (an unreadable record set names
+// none, as leaseOf reads it).
+func checkedLeaseOf(ctx context.Context, stateDir string, vouch leaseVouch, host, what string) (ops.LeaseTargetInfo, bool, error) {
+	lease, ok := leaseOf(stateDir, host)
+	if !ok {
+		return ops.LeaseTargetInfo{}, false, nil
+	}
+	if vouch == nil {
+		vouch = orchestratorVouch(nil, "", stateDir, nil)
+	}
+	checked, err := vouch(ctx, lease, what)
+	return checked, true, err
+}
+
+// deployListing is a deploy call's one listing of the project's services
+// (an ES-backed search, docs/spec-workflows.md §3.5): its pool checks read
+// service types from it, and the deploy resolves its source and target from
+// it, so the call lists no more than it did before pools. A listing that
+// fails reads nil: the pool checks keep every hostname (the gate or the
+// deploy answers for it) and the deploy lists the services itself.
+func deployListing(ctx context.Context, client platform.Client, projectID string) []platform.ServiceStack {
+	if client == nil {
+		return nil
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil
+	}
+	return services
+}
+
+// lazyDeployListing is a single deploy's deployListing, read at most once and
+// only when first asked (list): a deploy asks it only for what needs a
+// service's type, so a call the gate or the delivery redirect answers from
+// zcp's records lists nothing. listed is what was read, nil when nothing
+// asked — the push then lists the services itself.
+func lazyDeployListing(ctx context.Context, client platform.Client, projectID string) (list, listed func() []platform.ServiceStack) {
+	var (
+		services []platform.ServiceStack
+		read     bool
+	)
+	list = func() []platform.ServiceStack {
+		if !read {
+			services, read = deployListing(ctx, client, projectID), true
+		}
+		return services
+	}
+	return list, func() []platform.ServiceStack { return services }
+}
+
+// requireDeployAdoption is a deploy's adoption gate, asked first from zcp's
+// records alone; only once it refuses is the project listed (list), to exempt
+// a pool among hostnames — a pool is never adopted (PS-5): a pool target is
+// deployed to (DP-7), a pool source is refused after the gate (PS-3).
+func requireDeployAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSessionProbe, list func() []platform.ServiceStack, hostnames ...string) *mcp.CallToolResult {
+	if requireAdoption(stateDir, rt, recipeProbe, hostnames...) == nil {
+		return nil
+	}
+	return requireAdoption(stateDir, rt, recipeProbe, withoutPoolHosts(list(), hostnames...)...)
+}
+
+// adoptedNonPool reports whether hostname is a service zcp adopted that is no
+// pool: a pool is never adopted (PS-5), so only the dev half of a pair keyed by
+// its dev pool is one among them. A deploy's pool-source check needs no
+// listing for such a source.
+func adoptedNonPool(stateDir, hostname string) bool {
+	meta, err := workflow.FindServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		return false
+	}
+	return !meta.DevIsPool() || meta.Hostname != hostname
+}
+
+// withoutPoolHosts drops the hostnames that are Swarm pools in services (a
+// deployListing): a pool is never adopted (PS-5), so the adoption gate has
+// nothing to ask of a deploy that targets one (DP-7). A hostname the listing
+// does not hold stays, and the gate or the deploy's own lookup answers for
+// it.
+func withoutPoolHosts(services []platform.ServiceStack, hostnames ...string) []string {
+	kept := make([]string, 0, len(hostnames))
+	for _, h := range hostnames {
+		if h != "" {
+			if svc, err := ops.FindService(services, h); err == nil &&
+				topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+				continue
+			}
+		}
+		kept = append(kept, h)
+	}
+	return kept
+}
+
+// leasePoolsAmong is the set of pools whose lease is named in hostnames.
+func leasePoolsAmong(stateDir string, hostnames []string) map[string]bool {
+	var pools map[string]bool
+	for _, h := range hostnames {
+		if lease, ok := leaseOf(stateDir, h); ok {
+			if pools == nil {
+				pools = map[string]bool{}
+			}
+			pools[lease.Pool] = true
+		}
+	}
+	return pools
 }

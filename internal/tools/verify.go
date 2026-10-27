@@ -26,12 +26,59 @@ type VerifyInput struct {
 // a live dev-server liveness read (ops.DevServerRunning, §8 O3 PA-4) — nil
 // is accepted (local-only mode has no SSH deployer) and degrades to the
 // static (mode, class) classification.
-func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer) {
+// VerifyOption configures RegisterVerify.
+type VerifyOption func(*verifyConfig)
+
+type verifyConfig struct {
+	swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer for a lease (tests).
+	vouch leaseVouch
+	// boxHTTP replaces the HTTP client a Box's orchestrator check asks
+	// through (tests).
+	boxHTTP ops.HTTPDoer
+}
+
+// WithPoolOrchestrators lets verify of a pool, in a container, also ask the
+// pool's orchestrator (ops.PoolOrchestratorCheck) through swarm. Without it
+// a pool is verified by service_running alone.
+func WithPoolOrchestrators(swarm ops.SwarmFactory) VerifyOption {
+	return func(c *verifyConfig) { c.swarm = swarm }
+}
+
+func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, opts ...VerifyOption) {
+	var cfg verifyConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	vouch := cfg.vouch
+	if vouch == nil {
+		vouch = orchestratorVouch(client, projectID, stateDir, cfg.swarm)
+	}
+	// checkPool adds the orchestrator check to a pool's result; the
+	// orchestrator answers only inside the project.
+	checkPool := func(ctx context.Context, r *ops.VerifyResult) {
+		if cfg.swarm == nil || !rt.InContainer || r == nil || r.Type != string(topology.RuntimePool) {
+			return
+		}
+		r.AddCheck(ops.PoolOrchestratorCheck(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: cfg.swarm}, r.Hostname))
+	}
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		},
+	}
+	var boxHTTP ops.HTTPDoer = httpClient
+	if cfg.boxHTTP != nil {
+		boxHTTP = cfg.boxHTTP
+	}
+	// checkBox adds the orchestrator check to a Box's result: its keyless
+	// ping, which answers only inside the project (PS-9).
+	checkBox := func(ctx context.Context, r *ops.VerifyResult) {
+		if r == nil || r.Type != string(topology.RuntimeSandbox) {
+			return
+		}
+		r.AddCheck(ops.BoxOrchestratorCheck(ctx, boxHTTP, r, rt.InContainer))
 	}
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -48,6 +95,10 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
+			for i := range result.Services {
+				checkPool(ctx, &result.Services[i])
+				checkBox(ctx, &result.Services[i])
+			}
 			recordVerifyAllToWorkSession(stateDir, result)
 			var notes []string
 			for i := range result.Services {
@@ -61,6 +112,17 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
+		}
+		// A lease alias names a pool container, not a service: it is read
+		// over SSH and never resolved as a service or a meta (DP-1, PS-3).
+		// It is asked of its orchestrator first (DP-2): one that is no longer
+		// the lease's — maybe another holder's — or that the orchestrator does
+		// not answer about is never probed, and never called healthy.
+		if lease, ok, err := checkedLeaseOf(ctx, stateDir, vouch, input.ServiceHostname, "verified"); ok {
+			if err != nil {
+				return convertError(err, WithRecoveryStatus()), nil, nil
+			}
+			return verifyLease(ctx, client, httpClient, ssh, projectID, stateDir, rt, lease), nil, nil
 		}
 		// Phase 4: if the input hostname is a push source whose builds land
 		// on a different runtime (dev half of a standard pair under
@@ -82,6 +144,8 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
+		checkPool(ctx, result)
+		checkBox(ctx, result)
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,
@@ -106,6 +170,40 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			resp.Note += note
 		}
 		return jsonResult(resp), nil, nil
+	})
+}
+
+// leaseProbeTimeout bounds `ssh <alias> true`: a container that does not
+// answer is unreachable, not a verify that hangs.
+const leaseProbeTimeout = 20 * time.Second
+
+// verifyLease answers zerops_verify for a lease alias: whether the container
+// answers over SSH, and the dev servers its supervisor reports. Nothing is
+// recorded to the work session — a lease is no service of the part.
+func verifyLease(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
+	if ssh == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("%s is a lease: it is verified over SSH, and this zcp has no SSH access to it", lease.Alias),
+			"Run zerops_verify from the zcp container of the project that holds the lease.",
+		), WithRecoveryStatus())
+	}
+	unreachable := ""
+	if lease.Parked {
+		// Nothing answers on a parked lease (DP-28): no probe to wait out.
+		unreachable = fmt.Sprintf("lease %s is parked: its container is stopped; %s starts it", lease.Alias, ops.LeaseUnparkCall(lease.Alias))
+	} else {
+		probeCtx, cancel := context.WithTimeout(ctx, leaseProbeTimeout)
+		if _, err := ssh.ExecSSH(probeCtx, lease.Alias, "true"); err != nil {
+			unreachable = withSSHStderr("ssh "+lease.Alias, err)
+		}
+		cancel()
+	}
+	result := ops.VerifyLease(ctx, ssh, lease, unreachable)
+	return jsonResult(verifyResponse{
+		VerifyResult:     result,
+		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
+		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	})
 }
 

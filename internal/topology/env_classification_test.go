@@ -14,6 +14,7 @@ func TestIsClassifyInfrastructure(t *testing.T) {
 		{"ZCP_AGENTS", true},
 		{"GIT_TOKEN", true},
 		{"ZCP_LAUNCH_TOKEN", true},
+		{"ZCP_HQ_GIT_TOKEN", true},
 		{"ZCP_CUSTOM_USER_THING", false}, // prefix-only ZCP_* stays out of the closed set
 		{"APP_KEY", false},
 		{"", false},

@@ -47,10 +47,13 @@ type MountInfo struct {
 	Pending   bool   `json:"pending,omitempty"`
 	Writable  bool   `json:"writable,omitempty"`
 	Orphan    bool   `json:"orphan,omitempty"`
+	Lease     bool   `json:"lease,omitempty"`
 	Message   string `json:"message,omitempty"`
 }
 
-// MountService mounts a service's /var/www via SSHFS. Idempotent.
+// MountService mounts a service's /var/www via SSHFS. Idempotent. The name
+// is looked up as a service whatever its shape: one no service has is refused
+// before sshfs runs. A lease's container is mounted through MountLease.
 func MountService(
 	ctx context.Context,
 	client platform.Client,
@@ -65,10 +68,9 @@ func MountService(
 			"Provide serviceHostname parameter",
 		)
 	}
-	if err := platform.ValidateHostname(hostname); err != nil {
+	if err := platform.ValidateMountName(hostname); err != nil {
 		return nil, err
 	}
-
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
@@ -76,7 +78,24 @@ func MountService(
 	if _, err := FindUserVisibleService(services, hostname); err != nil {
 		return nil, err
 	}
+	return mountDir(ctx, mounter, hostname)
+}
 
+// MountLease mounts a lease's container at /var/www/<alias> via SSHFS.
+// Idempotent. A lease is not a service, so nothing is looked up: the caller
+// holds zcp's record of the lease, whose orchestrator vouched for the
+// container (docs/spec-workflows.md §8 DP-2) — a name's shape alone never
+// makes it a lease.
+func MountLease(ctx context.Context, mounter Mounter, alias string) (*MountResult, error) {
+	if err := platform.ValidateLeaseAlias(alias); err != nil {
+		return nil, err
+	}
+	return mountDir(ctx, mounter, alias)
+}
+
+// mountDir mounts hostname — a service or a lease alias, already resolved —
+// at /var/www/<hostname>, clearing a stale mount or an orphan unit first.
+func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResult, error) {
 	mountPath := filepath.Join(mountBase, hostname)
 
 	state, err := mounter.CheckMount(ctx, mountPath)
@@ -104,7 +123,7 @@ func MountService(
 			return nil, platform.NewPlatformError(
 				platform.ErrMountFailed,
 				fmt.Sprintf("Failed to clear stale mount for %s: %v", hostname, err),
-				"Try fusermount -uz manually",
+				"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 			)
 		}
 		_ = os.Remove(mountPath)
@@ -150,7 +169,7 @@ func UnmountService(
 			"Provide serviceHostname parameter",
 		)
 	}
-	if err := platform.ValidateHostname(hostname); err != nil {
+	if err := platform.ValidateMountName(hostname); err != nil {
 		return nil, err
 	}
 
@@ -199,7 +218,7 @@ func UnmountService(
 			return nil, platform.NewPlatformError(
 				platform.ErrUnmountFailed,
 				fmt.Sprintf("Failed to force unmount stale %s: %v", hostname, err),
-				"Try fusermount -uz manually",
+				"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 			)
 		}
 		_ = os.Remove(mountPath)
@@ -212,11 +231,16 @@ func UnmountService(
 	}
 
 	// Active mount — try API lookup, fall back to force unmount if service deleted.
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
+	// A lease alias is not a service, so it is never looked up (and never
+	// mistaken for a deleted one).
+	var resolveErr error
+	if !isLeaseAlias(hostname) {
+		services, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
+		}
+		_, resolveErr = FindService(services, hostname)
 	}
-	_, resolveErr := FindService(services, hostname)
 	if resolveErr != nil {
 		// Service deleted but mount still active — force unmount.
 		var pe *platform.PlatformError
@@ -225,7 +249,7 @@ func UnmountService(
 				return nil, platform.NewPlatformError(
 					platform.ErrUnmountFailed,
 					fmt.Sprintf("Failed to force unmount %s: %v", hostname, err),
-					"Try fusermount -uz manually",
+					"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 				)
 			}
 			_ = os.Remove(mountPath)
@@ -270,14 +294,17 @@ func MountStatus(
 	}
 
 	if hostname != "" {
-		if err := platform.ValidateHostname(hostname); err != nil {
+		if err := platform.ValidateMountName(hostname); err != nil {
 			return nil, err
+		}
+		if isLeaseAlias(hostname) {
+			return &MountStatusResult{Mounts: []MountInfo{leaseMountInfo(ctx, mounter, hostname)}}, nil
 		}
 		svc, err := FindService(services, hostname)
 		if err != nil {
 			return nil, err
 		}
-		info := checkMountInfo(ctx, mounter, svc.Name, false)
+		info := checkMountInfo(ctx, mounter, svc.Name, false, true)
 		return &MountStatusResult{Mounts: []MountInfo{info}}, nil
 	}
 
@@ -285,7 +312,7 @@ func MountStatus(
 	mounts := make([]MountInfo, 0, len(services))
 	for _, svc := range services {
 		serviceNames[svc.Name] = true
-		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false))
+		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false, true))
 	}
 
 	// Detect orphan mount directories from deleted services.
@@ -293,8 +320,15 @@ func MountStatus(
 	// Plain directories (e.g. .claude, .zcp) are silently skipped.
 	dirs, _ := mounter.ListMountDirs(ctx, mountBase)
 	for _, dir := range dirs {
+		if isLeaseAlias(dir) {
+			// A lease mount, not a deleted service's leftover.
+			if info := leaseMountInfo(ctx, mounter, dir); info.Mounted || info.Stale || info.Pending {
+				mounts = append(mounts, info)
+			}
+			continue
+		}
 		if !serviceNames[dir] {
-			info := checkMountInfo(ctx, mounter, dir, true)
+			info := checkMountInfo(ctx, mounter, dir, true, true)
 			if info.Mounted || info.Stale || info.Pending {
 				mounts = append(mounts, info)
 			}
@@ -304,7 +338,29 @@ func MountStatus(
 	return &MountStatusResult{Mounts: mounts}, nil
 }
 
-func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan bool) MountInfo {
+// isLeaseAlias reports whether name is a dev-pool lease alias. An alias carries
+// a hyphen, which no platform hostname may, so it never names a service.
+func isLeaseAlias(name string) bool { return platform.ValidateLeaseAlias(name) == nil }
+
+// leaseMountInfo is the mount state of a lease's directory. It is never an
+// orphan; the lease's own state (held, lost, unmounted) is zerops_lease's.
+// It writes no probe file through the mount: sshfs reconnects to the
+// container's hostname, which a lease that ended outside zcp hands to the
+// pool's next holder, and a status asks no orchestrator whose it is (DP-2).
+func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) MountInfo {
+	info := checkMountInfo(ctx, mounter, alias, false, false)
+	info.Lease = true
+	lease := "Lease mount; zerops_lease action=status reports the lease's state."
+	if info.Message != "" {
+		lease += " " + info.Message
+	}
+	info.Message = lease
+	return info
+}
+
+// checkMountInfo is the mount state of /var/www/<hostname>; probe writes a
+// probe file through an active mount to tell it writable.
+func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan, probe bool) MountInfo {
 	mountPath := filepath.Join(mountBase, hostname)
 	info := MountInfo{
 		Hostname:  hostname,
@@ -318,7 +374,9 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 	switch state {
 	case platform.MountStateActive:
 		info.Mounted = true
-		info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+		if probe {
+			info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+		}
 	case platform.MountStateStale:
 		info.Stale = true
 		if orphan {

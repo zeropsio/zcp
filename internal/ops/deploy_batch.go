@@ -67,13 +67,21 @@ type DeployBatchResult struct {
 // targeted fixes to specific failing targets rather than rolling back the
 // whole cluster.
 //
+// Each entry deploys through DeploySSHFromListing over stateDir and services
+// (the caller's one listing of the project's services; nil: each entry lists
+// them): a source that is the alias of a lease zcp holds a record for pushes
+// from inside that pool container (docs/spec-workflows.md §8 DP-1), and an
+// entry whose target is a pool reports that it reaches only containers the
+// pool creates later (DP-7).
+//
 // Platform-layer safety: the platform.Client is a thin HTTP wrapper safe
 // for concurrent calls. Deploy fan-out is safe across distinct SOURCE
 // containers; entries sharing a source serialize inside DeploySSH on a
-// per-source git lock because each source container has one shared
-// /var/www/.git tree. The lock covers only the git round trips and zcli's
-// archive and upload; the wait on each build and pollBuild run outside it,
-// so stages fed from one dev service build in parallel.
+// per-source git lock (keyed on a lease's alias) because each source
+// container has one shared /var/www/.git tree. The lock covers only the git
+// round trips and zcli's archive and upload; the wait on each build and
+// pollBuild run outside it, so stages fed from one dev service build in
+// parallel.
 // RecordDeployAttempt is protected by workSessionMu in the workflow layer.
 func DeployBatchSSH(
 	ctx context.Context,
@@ -81,6 +89,8 @@ func DeployBatchSSH(
 	projectID string,
 	sshDeployer SSHDeployer,
 	authInfo auth.Info,
+	stateDir string,
+	services []platform.ServiceStack,
 	targets []DeployBatchTarget,
 	logFetcher platform.LogFetcher,
 	onProgress ProgressCallback,
@@ -111,8 +121,8 @@ func DeployBatchSSH(
 				entries[idx] = entry
 			}()
 
-			result, err := DeploySSH(
-				ctx, client, projectID, sshDeployer, authInfo,
+			result, err := DeploySSHFromListing(
+				ctx, client, projectID, sshDeployer, authInfo, stateDir, services,
 				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, tgt.SHA,
 			)
 			if err != nil {

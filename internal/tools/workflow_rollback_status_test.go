@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,5 +159,44 @@ func TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently(t *testing.T) {
 		if svc.Rollback == nil || svc.Rollback.Active == "" {
 			t.Errorf("service %s: Rollback = %+v, want Active set", svc.Hostname, svc.Rollback)
 		}
+	}
+}
+
+// appVersionReadCounter counts the app-version history reads that reach the
+// platform.
+type appVersionReadCounter struct {
+	platform.Client
+	reads atomic.Int32
+}
+
+func (c *appVersionReadCounter) ListServiceAppVersions(ctx context.Context, serviceID string) ([]platform.AppVersionEvent, error) {
+	c.reads.Add(1)
+	return c.Client.ListServiceAppVersions(ctx, serviceID) //nolint:wrapcheck // test double
+}
+
+// TestAttachRollbackInfo_PoolAndSandbox_NeverRead pins that a pool or a Box
+// gets no app-version history read: neither carries the app's versions
+// (docs/spec-workflows.md §8 PS-3).
+func TestAttachRollbackInfo_PoolAndSandbox_NeverRead(t *testing.T) {
+	t.Parallel()
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class), func(t *testing.T) {
+			t.Parallel()
+			counter := &appVersionReadCounter{Client: platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "s1", Name: "box"}}).
+				WithServiceAppVersions("s1", []platform.AppVersionEvent{
+					{ID: "av-new", ServiceStackID: "s1", Status: platform.ServiceStatusActive, Sequence: 1},
+				})}
+			services := []workflow.ServiceSnapshot{{Hostname: "box", RuntimeClass: class}}
+
+			attachRollbackInfo(context.Background(), services, counter, "proj-1")
+
+			if n := counter.reads.Load(); n != 0 {
+				t.Errorf("app-version reads = %d, want 0 for class %q", n, class)
+			}
+			if services[0].Rollback != nil {
+				t.Errorf("Rollback = %+v, want nil for class %q", services[0].Rollback, class)
+			}
+		})
 	}
 }

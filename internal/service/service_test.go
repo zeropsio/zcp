@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,10 +63,7 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 		got.args = args
 		return nil
 	})
-	// vscode declares a TasksMax tune; stub it so this test never shells out
-	// to `sudo systemctl set-property` (docs: TestServiceStart_TasksMaxTunerStubbed_NoSudo).
-	service.SetTuneFunc(func(string, int) error { return nil })
-	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+	t.Cleanup(service.ResetRunFunc)
 
 	tests := []struct {
 		name     string
@@ -112,7 +110,7 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 		tuned, tunedUnit, tunedMax = true, unit, tasksMax
 		return nil
 	})
-	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+	t.Cleanup(func() { service.ResetRunFunc(); service.SetTuneFunc(tuneNothing) })
 
 	// vscode runs as the ExecStart of zerops@vscode.service; code-server +
 	// in-container AI agents spawn many subprocesses and hit the default
@@ -140,7 +138,9 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 }
 
 func TestStart_Mate_RaisesTasksMaxForBrowsers(t *testing.T) {
-	// Not parallel — mutates runFunc + tuneFunc.
+	// Not parallel — mutates runFunc, tuneFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	installFakeMateBundle(t)
 	var tunedUnit string
 	var tunedMax int
 	service.SetRunFunc(func(string, []string, []string) error { return nil })
@@ -148,7 +148,7 @@ func TestStart_Mate_RaisesTasksMaxForBrowsers(t *testing.T) {
 		tunedUnit, tunedMax = unit, tasksMax
 		return nil
 	})
-	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+	t.Cleanup(func() { service.ResetRunFunc(); service.SetTuneFunc(tuneNothing) })
 
 	// The unit's default TasksMax is 300; one software-WebGL Chromium takes
 	// 90-150 tasks, so 2-3 browsers plus the agent hit the cap (fork EAGAIN,
@@ -163,14 +163,12 @@ func TestStart_Mate_RaisesTasksMaxForBrowsers(t *testing.T) {
 	}
 }
 
-// TestServiceStart_TasksMaxTunerStubbed_NoSudo pins that TestStart_VSCode_
-// RaisesTasksMax's stub-tuneFunc pattern is the only path any test in this
-// package takes to a vscode TasksMax tune: the two other tests exercising
-// Start("vscode") (TestStart_KnownService_ArgsCorrect and
-// TestStart_OtherServices_UnaffectedByMateGuard) now stub tuneFunc too, so
-// no test in this package shells out to `sudo systemctl set-property`. This
-// test proves the stub itself still receives the real call the production
-// code makes — it does not merely assert absence.
+// TestServiceStart_TasksMaxTunerStubbed_NoSudo pins that a stubbed tuneFunc is
+// the only path any test in this package takes to a TasksMax tune: TestMain
+// installs tuneNothing and every test that stubs the tuner restores it, so no
+// test shells out to `sudo systemctl set-property`. This test proves the stub
+// itself still receives the real call the production code makes — it does not
+// merely assert absence.
 func TestServiceStart_TasksMaxTunerStubbed_NoSudo(t *testing.T) {
 	// Not parallel — mutates runFunc + tuneFunc.
 	var tunedUnit string
@@ -180,7 +178,7 @@ func TestServiceStart_TasksMaxTunerStubbed_NoSudo(t *testing.T) {
 		tunedUnit, tunedMax = unit, tasksMax
 		return nil
 	})
-	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+	t.Cleanup(func() { service.ResetRunFunc(); service.SetTuneFunc(tuneNothing) })
 
 	// The tune runs before binary resolution (see TestStart_VSCode_RaisesTasksMax),
 	// so this assertion is meaningful even when code-server isn't installed
@@ -361,6 +359,7 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			// launch would never let it start.
 			booted := make(chan string, 1)
 			serverUp := make(chan struct{})
+			releaseBoot := sync.OnceFunc(func() { close(serverUp) })
 			service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
 				booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
 				<-serverUp
@@ -380,21 +379,25 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				gotEnv = extraEnv
 				seededAtLaunch = seeded
 				atLaunch, _ = mate.ReadStatus(statusPath)
-				close(serverUp)
+				releaseBoot()
 				return nil
 			})
 			t.Cleanup(func() { service.ResetRunFunc() })
 
 			started := make(chan error, 1)
 			go func() { started <- service.Start("mate") }()
+			var err error
 			select {
-			case err := <-started:
-				if err != nil {
-					t.Fatalf("Start(mate): %v", err)
-				}
+			case err = <-started:
 			case <-time.After(5 * time.Second):
-				close(serverUp)
-				t.Fatal("the server never started: the launch waited on the boot import")
+				// Free the boot import and wait the launch out: returning with
+				// Start still running would reset the seams it reads.
+				releaseBoot()
+				t.Error("the server never started: the launch waited on the boot import")
+				err = <-started
+			}
+			if err != nil {
+				t.Fatalf("Start(mate): %v", err)
 			}
 			if seededAtLaunch != tt.store["PATH"] {
 				t.Errorf("the sign-in seed ran over %q before the server started, want the live store's", seededAtLaunch)
@@ -506,13 +509,10 @@ func TestStart_Mate_GuardAllowsWhenEnabled(t *testing.T) {
 // TestStart_OtherServices_UnaffectedByMateGuard: nginx and vscode declare no
 // guard, so they must launch regardless of ZCP_MATE_ENABLED.
 func TestStart_OtherServices_UnaffectedByMateGuard(t *testing.T) {
-	// Not parallel — mutates runFunc, tuneFunc, and ZCP_MATE_ENABLED.
+	// Not parallel — mutates runFunc and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "")
 	service.SetRunFunc(func(string, []string, []string) error { return nil })
-	// vscode declares a TasksMax tune; stub it so this test never shells out
-	// to `sudo systemctl set-property` (docs: TestServiceStart_TasksMaxTunerStubbed_NoSudo).
-	service.SetTuneFunc(func(string, int) error { return nil })
-	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+	t.Cleanup(service.ResetRunFunc)
 
 	for _, name := range []string{"nginx", "vscode"} {
 		if err := service.Start(name); err != nil {

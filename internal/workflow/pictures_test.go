@@ -508,3 +508,40 @@ func TestReplacePictureRefs(t *testing.T) {
 		t.Errorf("ReplacePictureRefs = %q, want %q", got, want)
 	}
 }
+
+// TestKeepPicture_TheLedgersChangesKeepTheirPictures: the changes the ledger
+// keeps are the Mate's current ones — whatever pairs share their repository —
+// so a picture its kept words show outlives both bounds, and one already on
+// such a change keeps its address once its file is pruned.
+func TestKeepPicture_TheLedgersChangesKeepTheirPictures(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	bounds := pictureBounds{keepFor: 48 * time.Hour, maxBytes: 1 << 20}
+	stateDir := t.TempDir()
+	if err := RecordHQChange(stateDir, HQChange{AppID: "a1", Repo: "appdev", Number: 1, Branch: "fix-login"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHQChange(stateDir, HQChange{AppID: "a1", Repo: "appdev", Number: 2, Branch: "add-signup",
+		Description: &ChangeDescription{Text: "![The signup](shot-2)", Change: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2; i++ {
+		if _, err := keepPicture(stateDir, fakePNG(i), 800, 600, start, bounds); err != nil {
+			t.Fatalf("keep picture %d: %v", i, err)
+		}
+	}
+	url := "https://hq.example.invalid/api/apps/a1/changes/appdev/1/attachments/att-1"
+	if err := RecordPictureUpload(stateDir, "shot-1", PictureTarget("a1", "appdev", 1), url); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keepPicture(stateDir, fakePNG(3), 800, 600, start.Add(72*time.Hour), bounds); err != nil {
+		t.Fatalf("keep picture 3: %v", err)
+	}
+
+	if pic, png, err := KeptPicture(stateDir, "shot-1"); err != nil || png != nil || pic.Uploads[PictureTarget("a1", "appdev", 1)] != url {
+		t.Errorf("shot-1 = %+v, %q, %v; want its address kept for the ledger's change #1", pic, png, err)
+	}
+	if _, png, err := KeptPicture(stateDir, "shot-2"); err != nil || png == nil {
+		t.Errorf("shot-2, which change #2's kept words show, was pruned (%v)", err)
+	}
+}

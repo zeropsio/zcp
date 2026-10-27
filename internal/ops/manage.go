@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -37,6 +38,7 @@ type ScaleResult struct {
 	Hostname    string            `json:"serviceHostname"`
 	ServiceID   string            `json:"serviceId"`
 	TimedOut    bool              `json:"timedOut,omitempty"`
+	Notice      string            `json:"notice,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
 	// Effective is the service's autoscaling read back once the change
 	// landed; Clamped names each requested field the platform set to
@@ -56,22 +58,27 @@ func Start(ctx context.Context, client platform.Client, projectID, hostname stri
 	return client.StartService(ctx, svc.ID)
 }
 
-// Stop stops a running service.
-func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Stop stops a running service. It answers the service it resolved too, so
+// a caller reads its type (a Box's notice, BoxLifecycleNotice) without a
+// listing of its own.
+func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.StopService(ctx, svc.ID)
+	proc, err := client.StopService(ctx, svc.ID)
+	return proc, svc, err
 }
 
-// Restart restarts a running service.
-func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Restart restarts a running service, answering the service it resolved as
+// Stop does.
+func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.RestartService(ctx, svc.ID)
+	proc, err := client.RestartService(ctx, svc.ID)
+	return proc, svc, err
 }
 
 // Reload reloads a running service (graceful config/code reload). Faster than
@@ -128,12 +135,34 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 // refuses, e.g. a minRam above maxRam (seen live 2026-10-16).
 const apiCodeInvalidAutoscaling = "invalidCustomAutoscalingValue"
 
+// ScaleOption tunes Scale.
+type ScaleOption func(*scaleConfig)
+
+type scaleConfig struct {
+	shrinkDeps    LeaseDeps
+	approveShrink func(PoolShrink) error
+}
+
+// WithPoolShrinkGuard makes Scale check, before it lowers a pool's
+// maxContainers, which containers the lowering deletes (the pool deletes its
+// highest-numbered ones, leased ones included): it lists them through the
+// pool's orchestrator via d. A lowering that would delete a leased container,
+// or whose deletions cannot be checked, is put to approve first; an error
+// from approve refuses the scale before anything is sent.
+func WithPoolShrinkGuard(d LeaseDeps, approve func(PoolShrink) error) ScaleOption {
+	return func(c *scaleConfig) { c.shrinkDeps, c.approveShrink = d, approve }
+}
+
 // Scale updates the autoscaling parameters for a service. The platform
 // replaces the whole autoscaling with the body it gets, so every field the
 // caller leaves out is filled from the service's customAutoscaling — a
 // RAM-only call keeps the CPU and container bounds it had. A field the
 // service never set stays out and keeps its platform default.
-func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
+func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams, opts ...ScaleOption) (*ScaleResult, error) {
+	var cfg scaleConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
 	}
@@ -152,10 +181,33 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	if err != nil {
 		return nil, fmt.Errorf("scale: read current autoscaling: %w", err)
 	}
+	serviceType := current.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	if err := validateContainerCounts(serviceType, params); err != nil {
+		return nil, err
+	}
 	apiParams := buildAutoscalingParams(params)
 	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
-		topology.IsManagedService(current.ServiceStackTypeInfo.ServiceStackTypeVersionName))
+		containerCountFixed(serviceType), topology.IsPoolType(serviceType))
 	apiParams.ServiceMode = svc.Mode
+	// A raise of a dev pool's maximum past the preview ports it opens is
+	// refused before it is sent (PS-17).
+	if topology.IsPoolType(serviceType) && params.MaxContainers != nil {
+		if err := poolRaisePreviewPortsError(cfg.shrinkDeps.StateDir, current, *params.MaxContainers); err != nil {
+			return nil, err
+		}
+	}
+	// Check-before-mutate (spec-workflows §8 O3): what a lowering of a pool's
+	// maximum deletes is read before the change is sent.
+	var shrink *PoolShrink
+	if cfg.approveShrink != nil && topology.IsPoolType(serviceType) && params.MaxContainers != nil {
+		plan := planPoolShrink(ctx, cfg.shrinkDeps, svc, current, *params.MaxContainers)
+		if plan.NeedsApproval() {
+			if err := cfg.approveShrink(plan); err != nil {
+				return nil, err
+			}
+		}
+		shrink = &plan
+	}
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
 		var pe *platform.PlatformError
@@ -175,6 +227,20 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 	if proc == nil {
 		result.Message = "Scaling parameters updated"
+	}
+	if topology.IsSandboxType(serviceType) {
+		result.Notice = BoxLifecycleNotice(svc.Name, serviceType, BoxActionResize)
+	}
+	if topology.IsPoolType(serviceType) && (params.MinContainers != nil || params.MaxContainers != nil) {
+		result.Notice = poolContainerCountNotice
+		if params.MinContainers != nil && *params.MinContainers > 0 {
+			result.Notice += " " + poolMinContainersNotice
+		}
+		if shrink != nil {
+			if n := shrink.notice(); n != "" {
+				result.Notice += " " + n
+			}
+		}
 	}
 
 	return result, nil
@@ -209,8 +275,10 @@ func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscalin
 // the platform default applies. A memory size the platform would refuse as
 // input (more than 3 decimal places) can only be its own default, so it
 // stays out too. A managed service's container count is fixed by its
-// variant, so none is sent for it.
-func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, managed bool) {
+// variant, and a Box is a single VM, so none is sent for them. A pool
+// may legitimately sit at zero containers, so its zero minimum is sent back
+// whenever the service did return its container counts.
+func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, countFixed, pool bool) {
 	if cur == nil {
 		return
 	}
@@ -248,9 +316,13 @@ func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomA
 		swap := true
 		p.VerticalSwapEnabled = &swap
 	}
-	if !managed {
+	if !countFixed {
 		fillInt(&p.HorizontalMinCount, cur.HorizontalMinCount)
 		fillInt(&p.HorizontalMaxCount, cur.HorizontalMaxCount)
+		if pool && p.HorizontalMinCount == nil && cur.HorizontalMaxCount != 0 {
+			zero := cur.HorizontalMinCount
+			p.HorizontalMinCount = &zero
+		}
 	}
 }
 
@@ -407,6 +479,117 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 		suggestion := fmt.Sprintf("Pass %s no lower than %g, or %s no higher than %g, in the same call.", hi.name, lo.value, lo.name, hi.value)
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			fmt.Sprintf("%s is greater than %s", describe(lo), describe(hi)), suggestion)
+	}
+	return nil
+}
+
+// Lifecycle actions BoxLifecycleNotice describes.
+const (
+	BoxActionRestart = "restart"
+	BoxActionStop    = "stop"
+	BoxActionResize  = "resize"
+)
+
+// BoxLifecycleNotice is what a restart, a stop or a resize does to a Zerops
+// Box's sandboxes, "" for any other service or action (spec-workflows.md §8
+// PS-8). A Box is one VM: each of the three stops it, and its running
+// sandboxes come back PARKED without their memory, while parked ones keep
+// theirs; only a reload, which restarts the orchestrator alone, leaves them
+// running. Every resize stops the VM, CPU and RAM as well as disk, and the
+// disk only grows.
+func BoxLifecycleNotice(hostname, serviceType, action string) string {
+	if !topology.IsSandboxType(serviceType) {
+		return ""
+	}
+	const lost = "its running sandboxes come back PARKED without their memory — their processes are gone, and writes not yet flushed to disk may be lost; parked sandboxes keep theirs"
+	reload := fmt.Sprintf("zerops_manage action=reload serviceHostname=%q restarts only the orchestrator, keeps running sandboxes and applies an API key change", hostname)
+	switch action {
+	case BoxActionRestart:
+		return fmt.Sprintf("%s is a Zerops Box: a restart reboots its VM, so %s. Before the next restart, stop or resize, park the sandboxes to keep; when the VM need not reboot, %s.", hostname, lost, reload)
+	case BoxActionStop:
+		return fmt.Sprintf("%s is a Zerops Box: a stop shuts its VM down — its API, console and every sandbox URL are unreachable until it starts — and %s. Before the next stop, restart or resize, park the sandboxes to keep; when the VM need not stop, %s.", hostname, lost, reload)
+	case BoxActionResize:
+		return fmt.Sprintf("%s is a Zerops Box, a single VM: every resize — CPU and RAM as well as disk — stops and starts it, so %s; park the ones to keep before resizing. Its disk can only grow: the platform refuses a smaller one.", hostname, lost)
+	}
+	return ""
+}
+
+// poolContainerCountNotice is what a pool's container counts mean: they are
+// the ceiling of what its orchestrator holds and leases out, not a replica
+// count, and lowering the maximum deletes containers (live, 2026-10-23). A
+// maximum above 10 never reaches the platform (which would cap it at 10):
+// validateContainerCounts refuses it first.
+const poolContainerCountNotice = "A pool's maxContainers caps how many containers its orchestrator holds and hands out — at most 10 per pool; zerops_scale refuses a higher value. " +
+	"Lowering it below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their /var/www."
+
+// poolMinContainersNotice is what a pool's minContainers above 0 costs: the
+// containers the platform creates for the minimum have no primary snapshot, so
+// a reset release is refused (400 no-primary-snapshot) and zerops_lease
+// deletes such a container at its release rather than hand it on unreset with
+// the holder's files (spec-workflows.md §8 DP-15); a warm container comes from
+// the orchestrator's create instead (DP-27).
+const poolMinContainersNotice = "Containers the platform creates to fill a pool's minContainers have no primary snapshot, so they cannot be reset: a release with reset=true is refused, " +
+	"and zerops_lease deletes such a container when its lease is released rather than hand it on with the holder's files. " +
+	"Keep minContainers at 0 and have a warm container ready through the orchestrator's create (POST /container) — zerops_lease keeps one warm container in each pool it leases from."
+
+// poolContainerBounds is the minContainers..maxContainers range each pool
+// type's own stanza in the import schema allows
+// (internal/schema/testdata/import_yml_schema.json: swarm@1 and swarm-vm@1,
+// separate stanzas). Unlike runtimes, a pool may sit at zero containers.
+// Spec: spec-workflows.md §8 PS-4.
+var poolContainerBounds = map[string][2]int{
+	"swarm":    {0, 10},
+	"swarm-vm": {0, 10},
+}
+
+// poolBaseType is the type name of a pool without its OS prefix and version:
+// `alpine/swarm-vm@1` -> `swarm-vm`.
+func poolBaseType(serviceType string) string {
+	t := strings.ToLower(serviceType)
+	if i := strings.LastIndex(t, "/"); i >= 0 {
+		t = t[i+1:]
+	}
+	base, _, _ := strings.Cut(t, "@")
+	return base
+}
+
+// containerCountFixed reports a service whose container count Scale never
+// sends: a managed service (fixed by its variant) and a Box (one VM).
+func containerCountFixed(serviceType string) bool {
+	return topology.IsManagedService(serviceType) || topology.IsSandboxType(serviceType)
+}
+
+// validateContainerCounts applies the type's own container-count rule to
+// what the caller asked for: a Box takes none, a pool stays inside its
+// schema bounds. Every other type is left to the platform, as before.
+func validateContainerCounts(serviceType string, p ScaleParams) error {
+	if p.MinContainers == nil && p.MaxContainers == nil {
+		return nil
+	}
+	switch {
+	case topology.IsSandboxType(serviceType):
+		named := "minContainers"
+		if p.MinContainers == nil {
+			named = "maxContainers"
+		}
+		return platform.NewPlatformError(platform.ErrInvalidScaling,
+			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single VM", named, serviceType),
+			"Drop minContainers/maxContainers; scale a Box vertically (CPU, RAM, disk) only")
+	case topology.IsPoolType(serviceType):
+		bounds, ok := poolContainerBounds[poolBaseType(serviceType)]
+		if !ok {
+			return nil
+		}
+		for _, f := range []struct {
+			name string
+			v    *int
+		}{{"minContainers", p.MinContainers}, {"maxContainers", p.MaxContainers}} {
+			if f.v != nil && (*f.v < bounds[0] || *f.v > bounds[1]) {
+				return platform.NewPlatformError(platform.ErrInvalidScaling,
+					fmt.Sprintf("%s %d is outside %d..%d, the container range of %s", f.name, *f.v, bounds[0], bounds[1], serviceType),
+					fmt.Sprintf("Use a value from %d to %d (0 is valid for a pool)", bounds[0], bounds[1]))
+			}
+		}
 	}
 	return nil
 }

@@ -124,7 +124,16 @@ into the import yaml at provision time. Adding `mode: DEV` (or similar
 invented values) silently fails.
 
 Expected post-import states: Dev/Simple → RUNNING, Stage →
-READY_TO_DEPLOY, Managed → RUNNING/ACTIVE.
+READY_TO_DEPLOY, Managed → RUNNING/ACTIVE, Zerops Box → ACTIVE.
+
+### Zerops Box entry
+
+A Box the plan names takes its `hostname` and `type: ubuntu/zbox@1` —
+none of the runtime properties above, no `mode` and no container counts
+(it is one VM). Add `enableSubdomainAccess: true` only when its
+sandboxes will serve ports through URLs. The app reaches it from the
+project at `http://<box>:8080`, with `${<box>_ZBOX_WORKSPACE_API_KEY}`
+wired in its zerops.yaml `run.envVariables`.
 
 ### Import YAML — `project:` block dichotomy
 

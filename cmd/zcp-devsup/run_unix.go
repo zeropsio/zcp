@@ -82,6 +82,10 @@ type ctlArgs struct {
 	cwd        string
 	port       int
 	command    string
+	// env holds the --set pairs; clear is --clear. Either makes `env`
+	// replace the overlay with exactly the pairs.
+	env   map[string]string
+	clear bool
 }
 
 func parseCtl(args []string) (ctlArgs, error) {
@@ -103,6 +107,13 @@ func parseCtl(args []string) (ctlArgs, error) {
 			i = len(args)
 		case "--json":
 			a.json = true
+		case "--clear":
+			a.clear = true
+		case "--set":
+			var v string
+			if v, err = value(); err == nil {
+				err = a.setPair(v)
+			}
 		case "--state":
 			a.state, err = value()
 		case "--name":
@@ -145,6 +156,22 @@ func parseCtl(args []string) (ctlArgs, error) {
 	return a, nil
 }
 
+// setPair adds one --set NAME=VALUE; the value may hold `=` or be empty.
+func (a *ctlArgs) setPair(pair string) error {
+	name, value, ok := strings.Cut(pair, "=")
+	if !ok {
+		return fmt.Errorf("--set %q is not NAME=VALUE", pair)
+	}
+	if _, twice := a.env[name]; twice {
+		return fmt.Errorf("--set: %s is set twice", name)
+	}
+	if a.env == nil {
+		a.env = map[string]string{}
+	}
+	a.env[name] = value
+	return nil
+}
+
 func runCtl(args []string, stdout, stderr io.Writer) int {
 	a, err := parseCtl(args)
 	if err != nil {
@@ -156,14 +183,22 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(a, stdout, stderr, devsup.CodeFailed, err)
 	}
+	if (a.clear || a.env != nil) && a.verb != devsup.VerbEnv {
+		return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("--set and --clear go with env only"))
+	}
 	switch a.verb {
 	case "version":
-		return emit(a, stdout, map[string]any{"version": version, "formats": devsup.Formats}, version)
+		return emit(a, stdout, map[string]any{"version": version, "formats": devsup.Formats, "capabilities": devsup.Capabilities}, version)
 	case "logs":
 		return ctlLogs(a, dir, stdout, stderr)
 	}
 	req := devsup.Request{Verb: a.verb, Name: a.name}
 	switch a.verb {
+	case devsup.VerbEnv:
+		if !a.clear && a.env == nil {
+			return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("env needs --set NAME=VALUE or --clear; status shows the overlay"))
+		}
+		req.Env = a.env
 	case devsup.VerbStatus, devsup.VerbReload:
 	case devsup.VerbStart, devsup.VerbStop, devsup.VerbRestart, devsup.VerbRm:
 		if a.name == "" {
@@ -244,9 +279,20 @@ func statusText(st devsup.State) string {
 	if st.Declaration.Error != "" {
 		fmt.Fprintf(&b, "\ndeclaration: %s", st.Declaration.Error)
 	}
+	if len(st.Env) > 0 {
+		pairs := make([]string, 0, len(st.Env))
+		for n, v := range st.Env {
+			pairs = append(pairs, n+"="+v)
+		}
+		sort.Strings(pairs)
+		fmt.Fprintf(&b, "\nenv: %s", strings.Join(pairs, " "))
+	}
 	for _, n := range names {
 		sv := st.Servers[n]
 		fmt.Fprintf(&b, "\n%-20s %-9s pid %-7d restarts %d", n, sv.Status, sv.Pid, sv.Restarts)
+		if sv.PreviewPort != 0 {
+			fmt.Fprintf(&b, "  preview :%d", sv.PreviewPort)
+		}
 		if sv.Exit != nil {
 			fmt.Fprintf(&b, "  exit %d %s at %s", sv.Exit.Code, sv.Exit.Signal, sv.Exit.At.Format(time.RFC3339))
 		}

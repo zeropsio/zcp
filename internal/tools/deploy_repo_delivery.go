@@ -1,9 +1,13 @@
 package tools
 
 import (
+	"cmp"
+	"context"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -55,6 +59,14 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 	}
 	if hqPairWired(meta) {
 		return nil // nothing builds a Mate's services from its change
+	}
+	if meta.DevIsPool() {
+		// A pair keyed by its dev pool: the stage deploys from a lease of the
+		// pool, a cross-deploy whatever the git-push state — a git-push from a
+		// lease is refused (DP-6) — and a deploy to the pool is its image
+		// (DP-7). The direct deploy IS the delivery; a redirect would name the
+		// pool as the push source (docs/spec-workflows.md §13 PM-10).
+		return nil
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
 		return nil // L0 artifact flow or first-deploy bypass (D2a)
@@ -123,15 +135,68 @@ func batchRepoDeliveryRedirect(stateDir string, targets []ops.DeployBatchTarget)
 	return nil
 }
 
+// configuredRemote is the remote git-push-setup points at the pair's
+// RemoteURL in the dev's checkout.
+const configuredRemote = "origin"
+
+// deployShipped is what a direct deploy shipped and where its source's
+// checkout is read: the commit, whether uncommitted changes rode on top of
+// it, and a runner reaching the checkout at dir — nil when zcp cannot read
+// it.
+type deployShipped struct {
+	sha   string
+	dirty bool
+	repo  git.Runner
+	dir   string
+}
+
+// onTrackedBranch reports a clean deploy of a commit the source's checkout
+// already knows on the pair's tracked branch (GF-7's trackedRef) of the
+// configured remote: the repository holds what the container now runs, so
+// nothing is ahead to reconcile. It reads the checkout's own remote-tracking
+// ref, never the remote itself; whatever it cannot show keeps the warning.
+func (s deployShipped) onTrackedBranch(ctx context.Context, meta *workflow.ServiceMeta) bool {
+	if s.dirty || s.sha == "" || s.repo == nil {
+		return false
+	}
+	return git.CommitOnRemoteBranch(ctx, s.repo, s.dir, configuredRemote, trackedRefOrDefault(meta), s.sha)
+}
+
+// sshShipped is what a container deploy shipped, its source's checkout read
+// over SSH at the working directory the deploy pushed from (the source
+// defaults to the target for a self-deploy).
+func sshShipped(ssh ops.SSHDeployer, input DeploySSHInput, result *ops.DeployResult) deployShipped {
+	shipped := deployShipped{sha: result.SHA, dirty: result.Dirty, dir: cmp.Or(input.WorkingDir, topology.CodeMountRoot)}
+	if ssh != nil {
+		shipped.repo = git.SSHRunner{Executor: ssh, Hostname: cmp.Or(input.SourceService, input.TargetService)}
+	}
+	return shipped
+}
+
+// localShipped is what a local deploy shipped, its checkout read in
+// workingDir on this machine (the deploy's own default when empty).
+func localShipped(workingDir string, result *ops.DeployResult) deployShipped {
+	return deployShipped{sha: result.SHA, dirty: result.Dirty, repo: git.LocalRunner{}, dir: cmp.Or(workingDir, ".")}
+}
+
 // repoDeliveryDivergenceWarning is attached to a SUCCESSFUL break-glass
-// (or otherwise direct) deploy of an L1 target: the container now carries
+// (or otherwise direct) deploy of an L1 target whose container now carries
 // state the repo does not — the reconcile push is the standing next step.
-func repoDeliveryDivergenceWarning(stateDir, targetService string) string {
+// A clean deploy of a commit already on the tracked branch of the configured
+// remote, as the source's checkout last saw it, carries none: the container
+// is not ahead (docs/spec-workflows.md §8 S5).
+func repoDeliveryDivergenceWarning(ctx context.Context, stateDir, targetService string, shipped deployShipped) string {
 	meta, err := workflow.FindServiceMeta(stateDir, targetService)
 	if err != nil || meta == nil || hqPairWired(meta) {
 		return "" // a wired pair's stage deploy pushes by itself
 	}
+	if meta.DevIsPool() {
+		return "" // the stage's deploy from a lease is its delivery; no push from the pool reconciles it
+	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
+		return ""
+	}
+	if shipped.onTrackedBranch(ctx, meta) {
 		return ""
 	}
 	return "container is now AHEAD of the configured repo (direct deploy on a push-delivering pair) — reconcile with: zerops_deploy targetService=\"" + meta.Hostname + "\" strategy=\"git-push\""

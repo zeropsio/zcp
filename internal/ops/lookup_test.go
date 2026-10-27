@@ -219,6 +219,27 @@ func TestFetchServiceEnv_MaskedRow_IsMarkedAndCarriesNoPlaceholderValue(t *testi
 	}
 }
 
+// TestFetchServiceEnv_MaskedRow_LeavesTheClientsRowsAsTheyCame: marking a row
+// masked never writes into the slice the client returned — a client that hands
+// out shared rows (a cache, the mock under parallel subtests) would otherwise
+// see them blanked, and two concurrent reads race on them.
+func TestFetchServiceEnv_MaskedRow_LeavesTheClientsRowsAsTheyCame(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceEnv("svc-db", []platform.ServiceEnvVar{
+		{ID: "e1", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
+	})
+	if _, err := FetchServiceEnv(context.Background(), mock, "svc-db"); err != nil {
+		t.Fatalf("FetchServiceEnv: %v", err)
+	}
+	rows, err := mock.GetServiceEnv(context.Background(), "svc-db")
+	if err != nil {
+		t.Fatalf("GetServiceEnv: %v", err)
+	}
+	if rows[0].Content != platform.MaskedEnvValue || rows[0].Masked {
+		t.Errorf("the client's row = %+v, want it as the client answered it", rows[0])
+	}
+}
+
 func TestEnvScalars_MaskedRows_AreListedNotUsedAsValues(t *testing.T) {
 	t.Parallel()
 	scalars, masked := EnvScalars([]platform.ServiceEnvVar{

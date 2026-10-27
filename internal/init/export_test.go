@@ -6,12 +6,16 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 // Command runner overrides.
 
 func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
 func ResetCommandRunner()                               { commandRunner = defaultCommandRunner }
+
+func SetCommandOutput(fn func(string, ...string) ([]byte, error)) { commandOutput = fn }
+func ResetCommandOutput()                                         { commandOutput = defaultCommandOutput }
 
 // VS Code workspace directory overrides.
 
@@ -40,6 +44,17 @@ func ResetNginxOwner()           { nginxOwnerUID, nginxOwnerGID = zeropsUID, zer
 
 func SetSSHFSMountBase(dir string) { sshfsMountBase = dir }
 func ResetSSHFSMountBase()         { sshfsMountBase = defaultSSHFSMountBase }
+
+// Lease restore overrides.
+
+func SetLeaseStateDir(dir string) { leaseStateDir = func() string { return dir } }
+func ResetLeaseStateDir()         { leaseStateDir = defaultLeaseStateDir }
+
+func SetLeaseAliasFile(path string) { leaseAliasFile = path }
+func ResetLeaseAliasFile()          { leaseAliasFile = ops.DefaultLeaseAliasFile }
+
+func SetLeaseCheckTimeout(d time.Duration) { leaseCheckTimeout = d }
+func ResetLeaseCheckTimeout()              { leaseCheckTimeout = defaultLeaseCheckTimeout }
 
 // mate step overrides.
 

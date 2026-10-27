@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // A tier on main is the group's, and the additive reconcile never proposes
@@ -34,8 +35,30 @@ func recipeServiceTitle(host string) string {
 }
 
 // recipePart is a part of the app as the recipe names it: the repository a
-// service builds from and the setup it builds.
+// service builds from and the setup the part's group environments build
+// (recipePartSetup) — the AI Agent tier's stage deploying Mate's preview
+// variant of a setup and a group environment's runtime building the setup it
+// extends are one part.
 type recipePart struct{ repo, setup string }
+
+// recipePartSetup is the setup held names its part by: the setup a group
+// environment builds for it, read through the pair's zerops.yaml
+// (bundle.GroupEnvironmentSetup) — a stage's own setup unless it is Mate's
+// preview variant of another — while a dev half, which no group environment
+// builds, keeps its own.
+func recipePartSetup(comp groupRecipeComposition, held bundle.HeldRuntime) string {
+	for _, r := range comp.inputs.Runtimes {
+		if r.DevHostname == held.Hostname {
+			return held.SetupName
+		}
+	}
+	for _, r := range comp.inputs.Runtimes {
+		if topology.SameRepoURL(r.RepoURL, held.RepoURL) {
+			return bundle.GroupEnvironmentSetup(r, held.SetupName)
+		}
+	}
+	return held.SetupName
+}
 
 // recipeServiceTier is what a part's proposal writes to one tier file on
 // main: main's body with the part's service added or removed, or main's own
@@ -62,7 +85,7 @@ func recipePartOf(ctx context.Context, comp groupRecipeComposition, host string)
 		for _, body := range bodies {
 			for _, held := range bundle.HeldRuntimes(body) {
 				if held.Hostname == host {
-					return recipePart{held.RepoURL, held.SetupName}, true, nil
+					return recipePart{held.RepoURL, recipePartSetup(comp, held)}, true, nil
 				}
 			}
 		}
@@ -107,7 +130,7 @@ func planRecipeService(ctx context.Context, comp groupRecipeComposition, part re
 				continue
 			}
 			carried, anchor = true, held.Hostname
-			if held.SetupName == part.setup {
+			if recipePartSetup(comp, held) == part.setup {
 				onMain = held.Hostname
 			}
 		}
@@ -116,7 +139,7 @@ func planRecipeService(ctx context.Context, comp groupRecipeComposition, part re
 		}
 		composed := ""
 		for _, held := range bundle.HeldRuntimes(file.Body) {
-			if held.RepoURL == part.repo && held.SetupName == part.setup {
+			if held.RepoURL == part.repo && recipePartSetup(comp, held) == part.setup {
 				composed = held.Hostname
 			}
 		}
@@ -190,7 +213,7 @@ func recipePartSteer(ctx context.Context, comp groupRecipeComposition) (string, 
 			return "", fmt.Errorf("could not read %q of the recipe repository %q (%w)", file.Path, hq.RecipeRepo, err)
 		}
 		for _, held := range append(bundle.HeldRuntimes(file.Body), bundle.HeldRuntimes(mainBody)...) {
-			part := recipePart{held.RepoURL, held.SetupName}
+			part := recipePart{held.RepoURL, recipePartSetup(comp, held)}
 			if !seen[part] {
 				seen[part] = true
 				candidates = append(candidates, named{part, held.Hostname})
@@ -282,7 +305,7 @@ func handleGroupRecipeService(
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
 	if written.other != nil && len(edits) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
+			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and this Mate keeps one recipe proposal open at a time.",
 				written.other.number, hq.RecipeRepo, written.other.title),
 			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.number,
 				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.number))), WithRecoveryStatus()), nil, nil

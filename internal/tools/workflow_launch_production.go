@@ -234,6 +234,11 @@ func handleLaunchProduction(
 	// runtime B here, before the launch token is acquired — not at
 	// the publish-side gate after the key is spent.
 	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
+	// A part whose pair is keyed by its dev pool has no push source to read:
+	// refused by name before any read of the source (§10, §13 PM-10).
+	if blockers := poolDevPairLaunchBlockers(stateDir, readSideRuntimes); len(blockers) > 0 {
+		return launchSourceControlRequiredResponse(input, sourceContext, blockers), nil, nil
+	}
 	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
 		ctx, client, sshDeployer, rt, stateDir, projectID,
 		readSideRuntimes, input.SkipBuildIntegration,
@@ -1397,14 +1402,14 @@ func readAndValidateSourceState(
 		// existing dev/stage setup. Agent applies + tweaks instead of
 		// guessing from a generic template. Falls back to the generic
 		// message if derivation fails (malformed yaml, no template).
-		proposed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
+		proposed, framed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
 		if derr != nil {
 			return nil, false, launchSourceControlBlockerResponse(corpus,
 				prodSetupMissingGenericMessage(wantSetup, availableNames),
 			)
 		}
 		return nil, false, launchSourceControlBlockerResponse(corpus,
-			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed),
+			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed, framed),
 		)
 	}
 	if source.RepoURL == "" {
@@ -2253,7 +2258,9 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
 		return nil
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, state.TargetServiceHostname)
-	if err != nil || meta == nil || meta.BuildIntegration != topology.BuildIntegrationActions {
+	// A pair keyed by its dev pool has no push source to read the staged
+	// token from over ssh (docs/spec-workflows.md §13 PM-10).
+	if err != nil || meta == nil || meta.DevIsPool() || meta.BuildIntegration != topology.BuildIntegrationActions {
 		return nil
 	}
 	idByName := make(map[string]string, len(state.ImportedServices))

@@ -226,6 +226,11 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	step++
 	logStep(t, step, "verify HTTP reachability on both subdomain URLs")
 
+	// The go service is a dev-mode dynamic runtime: it serves nothing after
+	// its deploy until a dev server runs (PA-1, docs/spec-workflows.md §8 O3).
+	// php-nginx serves on its own.
+	startDevServerForSubdomain(t, s, goHost, "./app", 8080)
+
 	for _, tc := range []struct {
 		name string
 		url  string

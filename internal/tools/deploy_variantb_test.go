@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,4 +250,93 @@ func TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSuperv
 			}
 		})
 	}
+}
+
+// poolMigrateSteer is the call a variant-B pair's results name to move it
+// onto one dev pool per part (docs/spec-mate.md §2.8a.4a).
+const poolMigrateSteer = `zerops_workflow workflow="pool-migrate" service="webdev"`
+
+// warningsOf is the warnings of a tool's JSON answer.
+func warningsOf(t *testing.T, result *mcp.CallToolResult) []string {
+	t.Helper()
+	var body struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
+		t.Fatalf("parse %s: %v", getTextContent(t, result), err)
+	}
+	return body.Warnings
+}
+
+// steersToPoolMigrate reports whether one warning says zcp sets up no shared
+// code volume any more and names the pool migration of webdev's pair.
+func steersToPoolMigrate(warnings []string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, "no longer sets up a shared code volume") && strings.Contains(w, "vol") &&
+			strings.Contains(w, poolMigrateSteer) && strings.Contains(w, "one dev pool per part") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt (docs/spec-mate.md
+// §2.8a.4a): a variant-B pair keeps deploying as before, and every deploy of
+// one of its services says that zcp sets up no shared code volume any more
+// and names the pool migration that moves the pair onto one dev pool per
+// part. A pair without a code volume hears nothing of it.
+func TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "the dev half", args: map[string]any{"targetService": "webdev"}},
+		{name: "a further dev service", args: map[string]any{"targetService": "apidev"}},
+		{name: "a stage built from the volume", args: map[string]any{"sourceService": "webdev", "targetService": "apistage", "setup": "api"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeVariantBPair(t, stateDir)
+			services := variantBServices()
+			events := make([]platform.AppVersionEvent, 0, len(services))
+			for _, svc := range services {
+				events = append(events, platform.AppVersionEvent{ID: "av-" + svc.ID, ProjectID: "proj-1", ServiceStackID: svc.ID, Status: statusActive, Sequence: 1})
+			}
+			mock := platform.NewMock().WithServices(services).WithAppVersionEvents(events)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+
+			result := callTool(t, srv, "zerops_deploy", tt.args)
+			if result.IsError {
+				t.Fatalf("deploy: %s", getTextContent(t, result))
+			}
+			if w := warningsOf(t, result); !steersToPoolMigrate(w) {
+				t.Errorf("warnings = %q, want the pool-migrate steer", w)
+			}
+		})
+	}
+
+	t.Run("a pair without a code volume", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		setupAdoptedService(t, stateDir, "appdev", "appstage")
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev"}, {ID: "svc-2", Name: "appstage"}}).
+			WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+
+		result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"})
+		if result.IsError {
+			t.Fatalf("deploy: %s", getTextContent(t, result))
+		}
+		for _, w := range warningsOf(t, result) {
+			if strings.Contains(w, "pool-migrate") || strings.Contains(w, "code volume") {
+				t.Errorf("a pair without a code volume was steered: %q", w)
+			}
+		}
+	})
 }
