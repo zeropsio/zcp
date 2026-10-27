@@ -103,6 +103,10 @@ type fakeHQ struct {
 	// closes: HQ lets a Mate close its own open change
 	// (POST /api/mate/changes/:repo/:n/close); off, the route is not there.
 	closes bool
+	// before runs as each request arrives, after once it is served; neither
+	// with f.mu held, so a test orders requests of passes running at once
+	// and acts as HQ between them (around).
+	before, after func(*http.Request)
 }
 
 // labOpenCap is how many open changes a Mate holds in a repository on an HQ
@@ -157,6 +161,15 @@ func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {
+	f.mu.Lock()
+	before, after := f.before, f.after
+	f.mu.Unlock()
+	if before != nil {
+		before(r)
+	}
+	if after != nil {
+		defer after(r)
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
 	if f.down {
@@ -332,6 +345,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		case closing:
 			now := time.Now().UTC().Format(time.RFC3339)
 			change.State, change.ClosedAt, change.UpdatedAt = hq.ChangeClosed, &now, now
+			change.Head = f.branchHead(r.Context(), change)
 			f.writeRefs()
 			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPatch && len(parts) == 5:
@@ -744,12 +758,12 @@ func (f *fakeHQ) rejudge(repo string) {
 	}
 }
 
-// unborn makes repo in the Mate's application with no main: the recipe
-// repository an application HQ made holds until its first recipe lands.
-func (f *fakeHQ) unborn(repo string) {
+// unbornRecipe makes the recipe repository in the Mate's application with
+// no main, as an application HQ made holds it until its first recipe lands.
+func (f *fakeHQ) unbornRecipe() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.initRepo(f.t.Context(), f.appID, repo)
+	f.initRepo(f.t.Context(), f.appID, hq.RecipeRepo)
 }
 
 // hasMain reports whether the repository at dir has a main.
@@ -767,11 +781,13 @@ func (f *fakeHQ) seed(repo string) {
 // close closes the Mate's change number in appdev without merging it.
 func (f *fakeHQ) close(number int) { f.closeChange("appdev", number) }
 
-// closeChange closes the Mate's change number in repo without merging it.
+// closeChange closes the Mate's change number in repo without merging it;
+// HQ keeps the head it was closed at.
 func (f *fakeHQ) closeChange(repo string, number int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.find(f.appID, repo, number, hq.ChangeOpen).State = hq.ChangeClosed
+	change := f.find(f.appID, repo, number, hq.ChangeOpen)
+	change.State, change.Head = hq.ChangeClosed, f.branchHead(f.t.Context(), change)
 	f.writeRefs()
 }
 
@@ -821,6 +837,14 @@ func (f *fakeHQ) refuseWith(status int, code, reason string, n int, on func(*htt
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing, f.failStatus, f.failCode, f.failReason, f.failOn = n, status, code, reason, on
+}
+
+// around runs before as each request arrives and after once it is served,
+// either nil for none.
+func (f *fakeHQ) around(before, after func(*http.Request)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.before, f.after = before, after
 }
 
 // setDown makes HQ stop answering, or answer again.

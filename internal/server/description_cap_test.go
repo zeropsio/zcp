@@ -56,8 +56,10 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 	}
 	project := func(rt runtime.Info, ssh ops.SSHDeployer) *Server {
 		mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
-		return New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+		srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 			store, platform.NewMockLogFetcher(), ssh, nil, rt, nil)
+		t.Cleanup(srv.Stop) // what New starts in a Mate runs past the test otherwise
+		return srv
 	}
 	org := func(rt runtime.Info) *Server {
 		return NewOrg(context.Background(), emptyOrg{}, store, rt, nil)

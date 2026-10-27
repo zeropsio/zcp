@@ -7,6 +7,9 @@ package tools
 import (
 	"fmt"
 	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -209,7 +212,7 @@ func TestGroupRecipe_ProposedOntoAnUnbornMain(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newRecipeLab(t)
-			lab.hq.unborn(hq.RecipeRepo)
+			lab.hq.unbornRecipe()
 			dir := lab.hq.repoDir(labApp, hq.RecipeRepo)
 
 			first := lab.proposeRecipe(lab.mock)
@@ -267,7 +270,7 @@ func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newRecipeLab(t)
-			lab.hq.unborn(hq.RecipeRepo)
+			lab.hq.unbornRecipe()
 			if tt.settle != nil {
 				if first := lab.proposeRecipe(lab.mock); !first.Created {
 					t.Fatalf("first pass: %+v", first)
@@ -288,6 +291,120 @@ func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
 			}
 			if tt.wantOpen == 0 && line != "" {
 				t.Errorf("a start pass that changed nothing said %q", line)
+			}
+		})
+	}
+}
+
+// racedRecipeDuplicate is what a second recipe pass left when it raced the
+// first, before passes ran one at a time: the Mate's change number, open,
+// its branch a root commit of tree — the recipe composed against main still
+// unborn — which HQ judges unrelated to main (Mate Web, 2026-10-27).
+func (f *fakeHQ) racedRecipeDuplicate(number int, tree string) {
+	f.t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dir := f.repoDir(f.appID, hq.RecipeRepo)
+	root := f.git(f.t.Context(), dir, "-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", tree, "-m", "recipe: the racing pass's")
+	branch := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
+	f.git(f.t.Context(), dir, "update-ref", branch, root)
+	f.changes = append(f.changes, hq.Change{AppID: f.appID, Repo: hq.RecipeRepo, Number: number, MateProjectID: labMate,
+		Title: hq.RecipeProposalTitle, Branch: branch, State: hq.ChangeOpen, Mergeability: "unrelated"})
+	f.writeRefs()
+}
+
+// recipeTreeWith is base's tree in the recipe repository with body written
+// over path.
+func (f *fakeHQ) recipeTreeWith(base, path, body string) string {
+	f.t.Helper()
+	index := filepath.Join(f.t.TempDir(), "index")
+	git := func(stdin string, args ...string) string {
+		cmd := exec.CommandContext(f.t.Context(), "git", append([]string{"-C", f.repoDir(labApp, hq.RecipeRepo)}, args...)...) //nolint:gosec // G204: a test's own git
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_INDEX_FILE="+index)
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("", "read-tree", base)
+	blob := git(body, "hash-object", "-w", "--stdin")
+	git("", "update-index", "--add", "--cacheinfo", "100644,"+blob+","+path)
+	return git("", "write-tree")
+}
+
+// TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline: a recipe change
+// two passes at once left beside the first — composed against a main from
+// before the first landed — is a duplicate the first's merge superseded.
+// Closed, by a person, or by Core once a pass brought it to main's tree and
+// it added nothing, it is no person declining the recipe: a start pass
+// still proposes the tiers zcp wrote whose project changed shape. A
+// proposal made after the merge and closed by a person still is.
+func TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline(t *testing.T) {
+	t.Parallel()
+	cache := platform.ServiceStack{ID: "svc-cache", Name: "cache", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2", ServiceStackTypeCategoryName: "USER"}}
+	tests := []struct {
+		name string
+		// settle leaves change #2 closed, after #1 landed.
+		settle   func(*hqLab, string)
+		wantOpen int // the change the start pass leaves open, 0 for none
+	}{
+		{
+			// Composed a moment apart, the duplicate need not hold what
+			// landed: its README differs.
+			name: "a person closed the raced duplicate",
+			settle: func(lab *hqLab, tree string) {
+				lab.hq.racedRecipeDuplicate(2, lab.hq.recipeTreeWith(tree, "README.md", "# composed a moment apart\n"))
+				lab.hq.closeChange(hq.RecipeRepo, 2)
+			},
+			wantOpen: 3,
+		},
+		{
+			name: "Core closed the raced duplicate a pass brought to main",
+			settle: func(lab *hqLab, tree string) {
+				lab.hq.racedRecipeDuplicate(2, tree)
+				if brought := lab.proposeRecipe(lab.mock); !brought.OnMain || !brought.Committed || brought.Change != 2 {
+					lab.t.Fatalf("the pass over the duplicate: %+v", brought)
+				}
+				lab.hq.closeChange(hq.RecipeRepo, 2)
+			},
+			wantOpen: 3,
+		},
+		{
+			name: "a person closed a proposal made after the merge",
+			settle: func(lab *hqLab, _ string) {
+				if proposed := lab.proposeRecipe(recipeReconcileClient(cache)); !proposed.Created || proposed.Change != 2 {
+					lab.t.Fatalf("the proposal after the merge: %+v", proposed)
+				}
+				lab.hq.closeChange(hq.RecipeRepo, 2)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newRecipeLab(t)
+			lab.hq.unbornRecipe()
+			if first := lab.proposeRecipe(lab.mock); !first.Created || first.Change != 1 {
+				t.Fatalf("first pass: %+v", first)
+			}
+			tree := lab.hq.git(t.Context(), lab.hq.repoDir(labApp, hq.RecipeRepo), "rev-parse", recipeBranch(1)+"^{tree}")
+			lab.hq.mergeChange(hq.RecipeRepo, 1)
+			tt.settle(lab, tree)
+
+			// The project changed shape since: a reason to propose zcp's own
+			// tiers anew, unless a person declined the recipe.
+			line := GroupRecipeAtStart(t.Context(), recipeReconcileClient(cache), lab.hq.srv.Client(), lab.rt, lab.stateDir)
+
+			open := 0
+			for number := 1; number <= 3; number++ {
+				if c := lab.hq.changeIn(hq.RecipeRepo, number); c != nil && c.State == hq.ChangeOpen {
+					open = number
+				}
+			}
+			if open != tt.wantOpen {
+				t.Errorf("the start pass left change #%d open, want #%d (line %q)", open, tt.wantOpen, line)
 			}
 		})
 	}

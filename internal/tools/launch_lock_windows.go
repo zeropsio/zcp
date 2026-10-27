@@ -11,7 +11,7 @@ import (
 
 // tryLockFile attempts a non-blocking exclusive LockFileEx on f. ok=false
 // with a nil error means "already held elsewhere" (ERROR_LOCK_VIOLATION) —
-// a held launch, not a failure.
+// a held launch or recipe pass, not a failure.
 func tryLockFile(f *os.File) (ok bool, err error) {
 	overlapped := new(windows.Overlapped)
 	lockErr := windows.LockFileEx(
