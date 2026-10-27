@@ -1079,8 +1079,9 @@ func groupRuntimeEntry(
 // groupSetupWarnings reports every runtime naming a setup its zerops.yaml does
 // not declare. A warning rather than an error: this composes in a reconcile,
 // and a recipe missing one setup name is still worth proposing. parts holds
-// each part's setup per dev hostname; one read from the yaml is declared by
-// construction, a recorded one is checked like the dev half's.
+// each part's setups per dev hostname — its stage's and the one a group
+// environment builds; one read from the yaml is declared by construction, a
+// recorded one is checked like the dev half's.
 func groupSetupWarnings(runtimes []GroupRuntime, parts map[string][]groupPart) []string {
 	var warnings []string
 	for _, r := range runtimes {
@@ -1094,10 +1095,13 @@ func groupSetupWarnings(runtimes []GroupRuntime, parts map[string][]groupPart) [
 			warnings = append(warnings, fmt.Sprintf("runtime %q: zerops.yaml does not parse (%v) — its setup is unverified", r.DevHostname, err))
 			continue
 		}
-		wants := make([]string, 0, 1+len(parts[r.DevHostname]))
+		// Each setup a tier names: the dev half's and each stage's on the AI
+		// Agent tier, and the one a group environment builds for each part —
+		// the setup a preview variant extends where the stage builds one.
+		wants := make([]string, 0, 1+2*len(parts[r.DevHostname]))
 		wants = append(wants, r.SetupName)
 		for _, part := range parts[r.DevHostname] {
-			wants = append(wants, part.setup)
+			wants = append(wants, part.setup, part.environmentSetup)
 		}
 		for _, wanted := range dedupeStrings(wants) {
 			if !slices.Contains(declared, wanted) {

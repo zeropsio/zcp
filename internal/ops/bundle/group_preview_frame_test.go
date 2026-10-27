@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"maps"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,34 @@ const (
       envVariables:
         NODE_ENV: production
 `
+	// previewFrameAddressVariant is Mate's preview variant of a page that
+	// forbids framing: it frames nothing and points the app's own address and
+	// cookie domain at the Mate's stage.
+	previewFrameAddressVariant = `  - setup: preview
+    extends: prod
+    run:
+      envVariables:
+        Z_URL: https://apistage-1f2a-3000.prg1.zerops.app
+        Z_COOKIE_DOMAIN: apistage-1f2a-3000.prg1.zerops.app
+`
+	// previewFrameBuildlessBase is a production setup over a shared base that
+	// builds nothing (the wordpress recipe's shape): its address is a
+	// reference every environment resolves for itself.
+	previewFrameBuildlessBase = `  - setup: base
+    run:
+      base: php-nginx@8.4
+      start: php-fpm
+  - setup: prod
+    extends: base
+    build:
+      base: php@8.4
+      buildCommands:
+        - composer install --no-dev
+      deployFiles: ./
+    run:
+      envVariables:
+        APP_URL: ${zeropsSubdomain}
+`
 )
 
 func TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends(t *testing.T) {
@@ -117,6 +146,16 @@ func TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends
 		{
 			name: "a stage setup that extends another without Mate's framing is the stage's own", recordedStage: "prod",
 			yaml:      "zerops:\n" + previewFrameDev + previewFramePlainExtends,
+			wantAgent: "prod", wantGroup: "prod", noWarning: "Mate's preview pane",
+		},
+		{
+			name: "a variant that frames nothing points the app's addresses at the Mate's stage", recordedStage: "preview",
+			yaml:      "zerops:\n" + previewFrameDev + previewFrameEnvProd + previewFrameAddressVariant,
+			wantAgent: "preview", wantGroup: "prod", noWarning: "Mate's preview pane",
+		},
+		{
+			name: "a stage setup over a base that builds nothing is the stage's own", recordedStage: "prod",
+			yaml:      "zerops:\n" + previewFrameDev + previewFrameBuildlessBase,
 			wantAgent: "prod", wantGroup: "prod", noWarning: "Mate's preview pane",
 		},
 	}
@@ -216,5 +255,189 @@ func TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming(t *testin
 		if got, _ := serviceEntries(t, tierDoc(t, files, dir))["api"]["zeropsSetup"].(string); got != "prod" {
 			t.Errorf("%s api zeropsSetup = %q, want the stage's prod", dir, got)
 		}
+	}
+}
+
+// poolMonorepoPreviewVariants is what a Mate of Zerops Apps gave its stages
+// (2026-10-27): Mate's preview variant of each part's setup, pointing the
+// app's addresses and cookies at the Mate's own stages. hq and box forbid
+// framing, so theirs frame nothing; the web's lets Mate's preview pane frame
+// it by one project's Mate origins.
+const poolMonorepoPreviewVariants = `  - setup: webpreview
+    extends: web
+    run:
+      envVariables:
+        Z_URL: https://webstage-1f2a-3000.prg1.zerops.app
+        FRAME_ANCESTORS: "'self' https://mate.zerops.io https://zcp-1f2a-3773.prg1.zerops.app"
+  - setup: hqpreview
+    extends: hq
+    run:
+      envVariables:
+        Z_URL: https://hqstage-1f2a.prg1.zerops.app
+        Z_COOKIE_DOMAIN: hqstage-1f2a.prg1.zerops.app
+  - setup: boxpreview
+    extends: box
+    run:
+      envVariables:
+        Z_URL: https://boxstage-1f2a.prg1.zerops.app
+        Z_HQ_URL: https://hqstage-1f2a.prg1.zerops.app
+`
+
+// poolMonorepoPoolsYAML is the pool monorepo's zerops.yaml with its dev
+// pools' setups alone.
+const poolMonorepoPoolsYAML = `zerops:
+  - setup: webpool
+    run:
+      base: nodejs@24
+      start: zcp-devsup run
+  - setup: hqpool
+    run:
+      base: nodejs@24
+      start: zcp-devsup run
+  - setup: boxpool
+    run:
+      base: nodejs@24
+      start: zcp-devsup run
+`
+
+// zeropsAppsMainYAML is Zerops Apps' zerops.yml on its main after the Mate's
+// change (2026-10-27), trimmed to what the tiers read: the dev pools, web, hq
+// and box, and the Mate's three preview variants — each extending its part's
+// setup and writing the Mate's stage as the app's address from the project's
+// own subdomain variables. hq's variant also frames the app for one project's
+// Mate origins; the web's frames nothing.
+const zeropsAppsMainYAML = `zerops:
+  - setup: web
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build web
+      deployFiles:
+        - dist
+    run:
+      base: nodejs@24
+      start: node dist/apps/web/analog/server/index.mjs
+      envVariables:
+        Z_URL: https://zerops.io
+  - setup: hq
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build hq
+      deployFiles:
+        - dist/apps/hq/analog/public/~
+    run:
+      base: static@latest
+      routing:
+        headers:
+          - for: /*
+            values:
+              X-Frame-Options: "'DENY' always"
+              Content-Security-Policy: >-
+                "default-src 'self';
+                connect-src 'self' https://*.zerops.io https://*.zerops.dev;
+                frame-ancestors 'none'" always
+      envVariables:
+        Z_URL: https://hq.zerops.io
+        Z_COOKIE_DOMAIN: .zerops.io
+  - setup: box
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build box
+      deployFiles:
+        - dist/apps/box/analog/public/~
+    run:
+      base: static@latest
+      envVariables:
+        Z_URL: https://box.zerops.io
+  - setup: webpreview
+    extends: web
+    run:
+      envVariables:
+        Z_URL: https://webstage-${zeropsSubdomainHost}-3000.${zeropsLocation}.zerops.app
+  - setup: hqpreview
+    extends: hq
+    run:
+      routing:
+        headers:
+          - for: /*
+            values:
+              Content-Security-Policy: >-
+                "default-src 'self';
+                connect-src 'self' https://*.zerops.io https://*.zerops.dev;
+                frame-ancestors https://mate.zerops.io https://zcp-38ff-8080.prg1.zerops.app" always
+      envVariables:
+        Z_URL: https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+        Z_COOKIE_DOMAIN: hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+  - setup: boxpreview
+    extends: box
+    run:
+      envVariables:
+        Z_URL: https://boxstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+        Z_HQ_URL: https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+  - setup: webpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+  - setup: hqpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+  - setup: boxpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+`
+
+// TestBuildGroupRecipe_PoolMonorepoPreviewVariants_StageAndProductionBuildTheBases:
+// each stage of a pool-keyed monorepo builds Mate's preview variant of its
+// part's setup. The AI Agent tier re-creates a Mate, whose stages are its
+// preview, so it keeps the variants; Stage and Small Production build the
+// setups the variants extend — the variants point at one Mate's stages and
+// let one project's Mate origins frame the app. Without a zerops.yaml, an
+// `extends`, or the setup it names, every tier names the stage's own setup.
+func TestBuildGroupRecipe_PoolMonorepoPreviewVariants_StageAndProductionBuildTheBases(t *testing.T) {
+	t.Parallel()
+	variants := map[string]string{"web": "webpreview", "hq": "hqpreview", "box": "boxpreview"}
+	bases := map[string]string{"web": "web", "hq": "hq", "box": "box"}
+	standalone := strings.NewReplacer("    extends: web\n", "", "    extends: hq\n", "", "    extends: box\n", "").
+		Replace(poolMonorepoPreviewVariants)
+	tests := []struct {
+		name      string
+		body      string
+		wantGroup map[string]string
+	}{
+		{name: "variants extending web, hq and box", body: poolMonorepoYAML + poolMonorepoPreviewVariants, wantGroup: bases},
+		{name: "Zerops Apps' variants as its main writes them", body: zeropsAppsMainYAML, wantGroup: bases},
+		{name: "no zerops.yaml was read", body: "", wantGroup: variants},
+		{name: "the variants extend nothing", body: poolMonorepoYAML + standalone, wantGroup: variants},
+		{name: "the setups the variants extend are not declared", body: poolMonorepoPoolsYAML + poolMonorepoPreviewVariants, wantGroup: variants},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := poolMonorepoInputs()
+			for i := range in.Runtimes {
+				in.Runtimes[i].ZeropsYAMLBody = tt.body
+				in.Runtimes[i].Stages[0].SetupName = GroupPromotedHostname(in.Runtimes[i].DevHostname) + "preview"
+			}
+			layout, warnings, err := BuildGroupRecipe(in)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if tt.body != "" && warningsContain(warnings, "is not declared") {
+				t.Errorf("warnings %v say a setup a tier names is not declared", warnings)
+			}
+			wantAgent := map[string]string{"webstage": "webpreview", "hqstage": "hqpreview", "boxstage": "boxpreview"}
+			if got := tierRuntimes(t, tierDocBody(t, layout, "AI Agent")); !maps.Equal(got, wantAgent) {
+				t.Errorf("AI Agent runtimes = %v, want %v", got, wantAgent)
+			}
+			for _, title := range []string{"Stage", "Small Production"} {
+				if got := tierRuntimes(t, tierDocBody(t, layout, title)); !maps.Equal(got, tt.wantGroup) {
+					t.Errorf("%s runtimes = %v, want %v (warnings %v)", title, got, tt.wantGroup, warnings)
+				}
+			}
+		})
 	}
 }
