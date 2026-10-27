@@ -929,6 +929,9 @@ type hqLab struct {
 	// describeWaits are the waits between a describe's tries, recorded
 	// rather than waited out.
 	describeWaits []time.Duration
+	// completion is the release a pass gives a finished change's leases
+	// (withLeaseCompletion); nil passes none.
+	completion leaseBranchRelease
 }
 
 func newHQLab(t *testing.T) *hqLab {
@@ -985,7 +988,11 @@ func (l *hqLab) write(files map[string]string) {
 // wire runs a repository pass, which gives the pair its repository in HQ.
 func (l *hqLab) wire() []string {
 	l.t.Helper()
-	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff)
+	var opts []hqPassOption
+	if l.completion != nil {
+		opts = append(opts, withLeaseCompletion(l.completion))
+	}
+	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff, opts...)
 }
 
 // openChange puts the pair's work up as the Mate's change, "Build the app",
