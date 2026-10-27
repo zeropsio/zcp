@@ -51,7 +51,6 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
 			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
-			"Recipe close step: one call per subdomain (appstage, then appdev). " +
 			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds); " +
 			"each call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser. " +
@@ -66,9 +65,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"(an unknown command, subcommand or find action: fix the command, not the page), " +
 			"stale-ref (an @eN ref, see below), " +
 			"script-timeout (your eval's promise never settled, e.g. awaiting a looping animation's finished; the page is alive), " +
-			"slow-page (the open got no answer while a plain request to the page did, naming its time to first byte: the page is slow, not Chrome; " +
-			"the walk goes on within timeoutSeconds and the browser is kept), " +
-			"server-error (the page answered 5xx: your commands after it did not run, its screenshot and the tail did) " +
+			"slow-page, server-error (the message says what to do) " +
 			"or other failures. " +
 			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +

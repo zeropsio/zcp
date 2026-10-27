@@ -526,7 +526,7 @@ var cdpWedgeSignals = []string{
 	cdpCommandTimedOut,
 	"Target closed",
 	"Protocol error",
-	"no response came back",
+	browserNoAnswer,
 }
 
 // cdpCommandTimedOut is agent-browser's answer to a CDP command past its
