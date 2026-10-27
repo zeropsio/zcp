@@ -37,11 +37,18 @@ import (
 // variables at all. The next pass reads again. A read that only refines — a
 // scale, a profile, a storage's policy — is a warning. A pair a later pass
 // wires fails the pass too (groupRecipeWaits), its warnings naming it.
+//
+// A pair's zerops.yaml is read from its dev checkout on the mount, else from
+// its repository's main in HQ (readMain, nil reads none): a pool holds no
+// checkout of its own, and a dev checkout is still empty when a classic
+// bootstrap closes, before develop puts the code in (the Mate Web Mate,
+// 2026-10-27, whose recipe never composed for want of it).
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
 	projectID, group, mountRoot, address, orgID, appID string,
 	metas, wired []*workflow.ServiceMeta,
+	readMain recipeRepoYAML,
 ) (bundle.GroupRecipeInputs, []string, error) {
 	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
 	if err != nil {
@@ -68,19 +75,17 @@ func composeGroupRecipeInputs(
 		Name:            group,
 		Title:           group,
 		MateProjectName: discovered.Project.Name,
+		MateProjectID:   projectID,
 		CorePackage:     project.Mode,
 		ProjectEnvs:     groupRecipeProjectEnvs(projectEnvs),
 	}
 	warnings := leftOut
-	for _, m := range groupRecipePairs(wired) {
-		dev, ok, why := groupRecipeDevHalf(m, live)
-		if why != "" {
-			warnings = append(warnings, why)
-		}
+	mainYAML := map[string]string{}
+	for _, m := range wired {
+		dev, ok := groupRecipeDevHalf(m, live)
 		if !ok {
-			// The meta outlived the service (deleted outside ZCP), or holds no
-			// dev service to carry. It has nothing to contribute and must not
-			// stall the others.
+			// The meta outlived its dev half (deleted outside ZCP). It has
+			// nothing to contribute and must not stall the others.
 			continue
 		}
 		// An unread scale is the composer's to warn about.
@@ -90,16 +95,20 @@ func composeGroupRecipeInputs(
 			return bundle.GroupRecipeInputs{}, nil, err
 		}
 		// Every stage is a part of the app: the composer runs each as a
-		// runtime of its own in the group environments.
+		// runtime of its own in the group environments, typed, scaled and
+		// reached as the stage runs — a stage that does not run is typed
+		// by its setup.
 		stages := make([]bundle.GroupStage, 0, len(m.Stages))
 		for _, stage := range m.Stages {
-			var stageEnvs []bundle.ProjectEnvVar
+			part := bundle.GroupStage{Hostname: stage.Hostname, SetupName: stage.SetupName}
 			if svc, ok := live[stage.Hostname]; ok && stage.Hostname != "" {
-				if stageEnvs, err = groupRecipeServiceEnvs(ctx, client, svc); err != nil {
+				if part.ServiceEnvs, err = groupRecipeServiceEnvs(ctx, client, svc); err != nil {
 					return bundle.GroupRecipeInputs{}, nil, err
 				}
+				stageShape, _ := ops.FetchServiceShape(ctx, client, svc.ServiceID)
+				part.ServiceType, part.Scaling, part.SubdomainEnabled = svc.Type, stageShape.Scaling, svc.SubdomainEnabled
 			}
-			stages = append(stages, bundle.GroupStage{Hostname: stage.Hostname, SetupName: stage.SetupName, ServiceEnvs: stageEnvs})
+			stages = append(stages, part)
 		}
 		// A pair that has never deployed has no setup recorded — the classic
 		// bootstrap route's ordinary state — and refusing there made the whole
@@ -112,12 +121,21 @@ func composeGroupRecipeInputs(
 		if dev.mounted {
 			yamlBody, _ = readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		}
+		if yamlBody == "" && readMain != nil {
+			body, read := mainYAML[m.HQ.Repo]
+			if !read {
+				body = readMain(ctx, m.HQ.Repo)
+				mainYAML[m.HQ.Repo] = body
+			}
+			yamlBody = body
+		}
 		repoURL, err := hq.RepoURLAt(address, orgID, appID, m.HQ.Repo)
 		if err != nil {
 			return bundle.GroupRecipeInputs{}, nil, err
 		}
 		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
 			DevHostname:      dev.hostname,
+			DevPool:          dev.pool,
 			Stages:           stages,
 			ServiceType:      dev.svc.Type,
 			RepoURL:          repoURL,
@@ -142,6 +160,9 @@ func composeGroupRecipeInputs(
 	known := workflow.ManagedRuntimeIndex(metas)
 	for _, svc := range discovered.Services {
 		switch {
+		case paired[svc.Hostname] != nil && topology.IsPoolType(svc.Type):
+			// A dev pool keying a wired pair: carried as that pair's dev half.
+			continue
 		case topology.IsPoolOrSandboxType(svc.Type):
 			// A Swarm pool reports the runtime category and a Zerops Box the
 			// database one, so only the type tells them apart: neither is a
@@ -178,96 +199,46 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
-// groupRecipePairs are the wired pairs as the recipe carries them: a dev
-// service serving several parts that moved onto one pool per part left one
-// pool-keyed pair per part, each naming the dev service it was moved from
-// and every part's pool (devPool.migratedFrom.parts); the recipe carries that
-// dev service once, so those pairs fold into the first of them, holding every
-// part's stage in the order the split names the parts.
-func groupRecipePairs(wired []*workflow.ServiceMeta) []*workflow.ServiceMeta {
-	split := func(m *workflow.ServiceMeta) bool {
-		return m.DevIsPool() && m.DevPool.MigratedFrom != nil && len(m.DevPool.MigratedFrom.Parts) > 1
-	}
-	byPool := map[string]*workflow.ServiceMeta{}
-	for _, m := range wired {
-		if split(m) {
-			byPool[m.Hostname] = m
-		}
-	}
-	out := make([]*workflow.ServiceMeta, 0, len(wired))
-	carried := map[string]bool{}
-	for _, m := range wired {
-		if !split(m) {
-			out = append(out, m)
-			continue
-		}
-		from := m.DevPool.MigratedFrom
-		if carried[from.Hostname] {
-			continue
-		}
-		carried[from.Hostname] = true
-		// The part met first carries the dev service: its pair-wide records
-		// are every part's.
-		one := *m
-		one.Stages = nil
-		for _, pool := range from.Parts {
-			if part, ok := byPool[pool]; ok && part.DevPool.MigratedFrom.Hostname == from.Hostname {
-				one.Stages = append(one.Stages, part.Stages...)
-			}
-		}
-		out = append(out, &one)
-	}
-	return out
-}
+// recipeRepoYAML reads a repository's zerops.yaml off its main in HQ: ""
+// when main holds none or it cannot be read.
+type recipeRepoYAML func(ctx context.Context, repo string) string
 
-// groupDevHalf is the dev service the recipe carries for a wired pair: the
-// hostname the AI Agent tier gives it, the setup it builds, and the live
-// service its type, scale, public access and variables are read from.
+// groupDevHalf is the dev half the recipe carries for a wired pair: the
+// hostname the AI Agent tier gives it, the setup it builds, whether it is a
+// dev pool, and the live service its type, scale, public access and
+// variables are read from.
 type groupDevHalf struct {
 	hostname, setup string
 	svc             ops.ServiceInfo
+	pool            bool
 	// mounted: the pair's checkout is on the mount under the pair's hostname,
-	// where its zerops.yaml is read.
+	// where its zerops.yaml is read — never a pool's, whose hostname reaches
+	// a random container.
 	mounted bool
 }
 
-// groupRecipeDevHalf is the dev service the recipe carries for the wired pair
-// m: the dev service as it runs — or, for a pair keyed by its dev pool, which
-// the recipe never carries (a pool is no application runtime,
-// docs/spec-workflows.md §8 PS-3), the dev service the pair was moved from,
-// so a Mate made from the recipe gets a dev service again. That one's
-// hostname and setup are kept under devPool.migratedFrom; its live facts are
-// read from the pair's first stage that runs, since the pool's own type,
-// scale, mount and variables — its orchestrator's credentials among them —
-// are no dev service's. ok is false when the pair has nothing to carry; why
-// then says so, "" for a pair whose dev service is gone (the meta outlived
-// it).
-func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo) (dev groupDevHalf, ok bool, why string) {
-	if !m.DevIsPool() {
-		svc, found := live[m.Hostname]
+// groupRecipeDevHalf is the dev half the recipe carries for the wired pair
+// m, as it runs: its dev service, or — for a pair keyed by its dev pool —
+// the pool itself, which a Mate made from the recipe gets again (owner's
+// decision, 2026-10-27: every part its own dev pool and stage). A pool's
+// setup is its image's, the pair's PrimarySetupName, else named after the
+// pool. ok is false when the dev half no longer runs (the meta outlived it).
+func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo) (dev groupDevHalf, ok bool) {
+	svc, found := live[m.Hostname]
+	if m.DevIsPool() {
 		return groupDevHalf{
 			hostname: m.Hostname,
-			setup:    firstNonEmptySetup(m.PrimarySetupName, m.FirstStage().SetupName, m.Hostname),
+			setup:    firstNonEmptySetup(m.PrimarySetupName, m.Hostname),
 			svc:      svc,
-			mounted:  true,
-		}, found, ""
+			pool:     true,
+		}, found
 	}
-	from := m.DevPool.MigratedFrom
-	if from == nil {
-		return groupDevHalf{}, false, fmt.Sprintf(
-			"pair %q is not in the recipe: its dev half is a dev pool, which the recipe never carries, and it was never moved onto it from a dev service the recipe could carry instead", m.Hostname)
-	}
-	for _, stage := range m.Stages {
-		if svc, found := live[stage.Hostname]; found && stage.Hostname != "" {
-			return groupDevHalf{
-				hostname: from.Hostname,
-				setup:    firstNonEmptySetup(from.PrimarySetupName, m.FirstStage().SetupName, from.Hostname),
-				svc:      svc,
-			}, true, ""
-		}
-	}
-	return groupDevHalf{}, false, fmt.Sprintf(
-		"pair %q is not in the recipe: its dev half is a dev pool, which the recipe never carries, and no stage of it runs to stand for the dev service %q it was moved from", m.Hostname, from.Hostname)
+	return groupDevHalf{
+		hostname: m.Hostname,
+		setup:    firstNonEmptySetup(m.PrimarySetupName, m.FirstStage().SetupName, m.Hostname),
+		svc:      svc,
+		mounted:  true,
+	}, found
 }
 
 // notCarriedPoolKind is the human name of a pool or Box the recipe does not
@@ -417,7 +388,9 @@ func groupRecipeProjectEnvs(envs []platform.ProjectEnvVar) []bundle.ProjectEnvVa
 }
 
 // groupRecipeServiceEnvs reads a runtime's own user-set variables — the
-// layer its zerops.yaml does not rebuild — the control plane's left out.
+// layer its zerops.yaml does not rebuild — the control plane's left out, and
+// a pool's orchestrator tokens (ops.IsPoolOrBoxCredential), which the
+// platform makes anew for every pool.
 func groupRecipeServiceEnvs(ctx context.Context, client platform.Client, svc ops.ServiceInfo) ([]bundle.ProjectEnvVar, error) {
 	envs, err := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
 	if err != nil {
@@ -425,7 +398,7 @@ func groupRecipeServiceEnvs(ctx context.Context, client platform.Client, svc ops
 	}
 	out := make([]bundle.ProjectEnvVar, 0, len(envs))
 	for _, env := range envs {
-		if isControlPlaneEnv(env.Key) {
+		if isControlPlaneEnv(env.Key) || ops.IsPoolOrBoxCredential(env.Key, svc.Type) {
 			continue
 		}
 		value := env.Content

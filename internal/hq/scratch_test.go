@@ -114,3 +114,61 @@ func TestScratch_File(t *testing.T) {
 		})
 	}
 }
+
+// TestScratch_History: who wrote what a file holds is read off the history
+// of the rev a scratch fetched — each commit that changed the path, newest
+// first, by its author's address and its subject — so the recipe can tell a
+// tier only this Mate's recipe proposals ever wrote (Core's squash of a
+// Mate's change is authored SquashAuthorEmail) from one anyone else touched.
+func TestScratch_History(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	ctx := t.Context()
+	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key", OrgID: "org-1"}}
+	scratch, err := c.OpenScratch(ctx, "app-1", RecipeRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(scratch.Close)
+	empty, err := scratch.git(ctx, strings.NewReader(""), "mktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(parent string, files map[string]string, email, subject string) string {
+		t.Helper()
+		base := empty
+		var parents []string
+		if parent != "" {
+			base, parents = parent, []string{parent}
+		}
+		tree, err := scratch.TreeWith(ctx, base, files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rev, err := scratch.Commit(ctx, CommitSpec{Tree: tree, Parents: parents, Message: subject, Name: "Mate", Email: email})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev
+	}
+	first := commit("", map[string]string{"3 — Stage/import.yaml": "a\n", "README.md": "r\n"}, SquashAuthorEmail("p-mate"), RecipeProposalTitle+" (#1)")
+	second := commit(first, map[string]string{"README.md": "s\n"}, "person@example.invalid", "Words (#2)")
+	third := commit(second, map[string]string{"3 — Stage/import.yaml": "b\n"}, SquashAuthorEmail("p-other"), "More memory (#3)")
+
+	got, err := scratch.History(ctx, third, "3 — Stage/import.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Commit{
+		{AuthorEmail: "p-other@mate.hq.invalid", Subject: "More memory (#3)"},
+		{AuthorEmail: "p-mate@mate.hq.invalid", Subject: RecipeProposalTitle + " (#1)"},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("History = %+v, want %+v", got, want)
+	}
+	if none, err := scratch.History(ctx, third, "4 — Small Production/import.yaml"); err != nil || len(none) != 0 {
+		t.Errorf("History of a path no commit touched = %+v, %v; want none", none, err)
+	}
+}
