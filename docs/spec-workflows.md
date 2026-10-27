@@ -361,6 +361,14 @@ of hostnames that the recipe's import YAML would clash with in the
 current project. Advisory only — provision still catches the conflict
 — but the LLM uses it as a pre-flight gate.
 
+**Import YAML preview**: only the best-fit `recipe` option inlines its
+`importYaml` — the agent commits by slug and start re-fetches the YAML —
+and not even that one when its `fit` is `over-provisions` or `mixed`:
+its `why` names the services beyond the intent, and its YAML would preview
+what the agent is told not to take (2026-10-27: 6.9 KB of NestJS +
+PostgreSQL inlined for a Vite client;
+`TestBuildBootstrapRouteOptions_OverProvisioningRecipeCarriesNoImportYAML`).
+
 **Forcing a route**: A caller that has already decided (e.g. from a
 prior discovery round, from a direct user instruction, or from an
 internal auto-adoption helper) skips discovery by passing `route=`

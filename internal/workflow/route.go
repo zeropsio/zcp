@@ -246,7 +246,10 @@ func BuildBootstrapRouteOptions(
 	// re-fetches the canonical YAML) and chooses between options by fit/why —
 	// not by reading every option's full ~3 KB import YAML. Carry the full
 	// ImportYAML only on the single best-fit recipe (a preview of the
-	// recommendation); the rest surface slug/fit/why/collisions and fetch the
+	// recommendation), and never on one that provisions services beyond the
+	// intent: its why already names them, and its YAML previews what the
+	// agent is told not to take (2026-10-27: 6.9 KB of NestJS + PostgreSQL for
+	// a Vite client). The rest surface slug/fit/why/collisions and fetch the
 	// YAML on commit. This trims the heaviest single source of route-menu noise.
 	keepBestFitImportYAMLOnly(keptRecipes, demotedRecipes)
 
@@ -264,26 +267,26 @@ func BuildBootstrapRouteOptions(
 // single best-fit. kept and demoted preserve rank order (FindRankedMatches), so
 // the best-fit is kept[0] when any recipe survives the fit filter, otherwise
 // demoted[0] (so the agent still previews one full YAML even when all candidates
-// are missing a dependency). Mutates in place.
+// are missing a dependency). A best fit that provisions services beyond the
+// intent (overProvisions) carries none either. Mutates in place.
 func keepBestFitImportYAMLOnly(kept, demoted []BootstrapRouteOption) {
-	keptBest := -1
-	if len(kept) > 0 {
-		keptBest = 0
-	}
 	for i := range kept {
-		if i != keptBest {
+		if i != 0 || overProvisions(kept[i]) {
 			kept[i].ImportYAML = ""
 		}
 	}
-	demotedBest := -1
-	if keptBest < 0 && len(demoted) > 0 {
-		demotedBest = 0
-	}
 	for i := range demoted {
-		if i != demotedBest {
+		if len(kept) > 0 || i != 0 || overProvisions(demoted[i]) {
 			demoted[i].ImportYAML = ""
 		}
 	}
+}
+
+// overProvisions reports whether a recipe option provisions services the
+// intent never named — fit over-provisions, or mixed (extras beside a missing
+// dependency).
+func overProvisions(opt BootstrapRouteOption) bool {
+	return opt.Fit == RecipeFitOverProvisions || opt.Fit == RecipeFitMixed
 }
 
 // adoptOption returns an adopt route option when the project has at least
