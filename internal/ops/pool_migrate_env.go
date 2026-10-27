@@ -584,7 +584,7 @@ func ApplyPoolMigrateEnv(ctx context.Context, client platform.Client, ssh SSHDep
 	step.keepRecord()
 
 	out := step.out
-	out.DefaultRepo = SeedPoolDefaultRepo(in.StateDir, in.Pool.Name, in.Origin)
+	out.DefaultRepo = seedPoolDefaultRepo(in.StateDir, in.Pool.Name, in.Origin, in.InMate)
 	out.StageDiff = poolStageDiff(sides.stages, held)
 	out.Done = len(out.Failed) == 0 &&
 		out.DefaultRepo.State != PoolDefaultRepoPending && out.DefaultRepo.State != PoolDefaultRepoFailed
@@ -1115,6 +1115,12 @@ func poolDefaultRepoState(stateDir, pool, origin string) PoolMigrateDefaultRepo 
 // clone when an acquire names none (zcp's per-pool record, DP-5), writing only
 // when the record names another repository or none.
 func SeedPoolDefaultRepo(stateDir, pool, origin string) PoolMigrateDefaultRepo {
+	return seedPoolDefaultRepo(stateDir, pool, origin, false)
+}
+
+// seedPoolDefaultRepo is SeedPoolDefaultRepo; onHQ: origin is the pair's
+// repository on the Mate's HQ (in a Mate), recorded so (poolDefault.HQ).
+func seedPoolDefaultRepo(stateDir, pool, origin string, onHQ bool) PoolMigrateDefaultRepo {
 	repo, reason := poolDefaultRepoOrigin(origin)
 	if reason != "" {
 		return PoolMigrateDefaultRepo{State: PoolDefaultRepoUnavailable, Reason: reason}
@@ -1123,7 +1129,7 @@ func SeedPoolDefaultRepo(stateDir, pool, origin string) PoolMigrateDefaultRepo {
 	if topology.SameRepoURL(have, repo) {
 		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoUnchanged}
 	}
-	if err := storePoolDefaultRepo(stateDir, pool, repo); err != nil {
+	if err := storePoolDefaultRepoOn(stateDir, pool, repo, onHQ); err != nil {
 		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoFailed, Reason: err.Error()}
 	}
 	return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoSeeded, Previous: have}

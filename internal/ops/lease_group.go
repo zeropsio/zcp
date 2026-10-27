@@ -195,7 +195,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			continue
 		}
 		if m.becomesDefault {
-			if err := storePoolDefaultRepo(d.StateDir, m.pool, repoURL); err != nil {
+			if err := storePoolDefaultRepoOn(d.StateDir, m.pool, repoURL, IsHQRemote(repoURL, d.hqAddress())); err != nil {
 				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the repository could not be recorded as the pool's default: %v", err))
 			}
 		}

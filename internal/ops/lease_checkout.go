@@ -102,6 +102,11 @@ func validateLeaseRepo(raw string) (string, error) {
 // credential; compare it through topology.SameRepoURL, never as a string.
 type poolDefault struct {
 	Repo string `json:"repo"`
+	// HQ: the repository was on the Mate's HQ when it was recorded — an HQ
+	// repository, whose host is never the person's token's (DP-6), even once
+	// the Mate links to another HQ (D8, live 2026-10-27). A record written
+	// before zcp kept this says false.
+	HQ bool `json:"hq,omitempty"`
 }
 
 func poolDefaultPath(stateDir, pool string) string {
@@ -128,7 +133,7 @@ func MovePoolDefaultRepos(stateDir, from, to string) []string {
 		if e.IsDir() || !isRecord || !topology.SameRepoURL(readPoolDefaultRepo(stateDir, pool), from) {
 			continue
 		}
-		if storePoolDefaultRepo(stateDir, pool, to) == nil {
+		if storePoolDefaultRepoOn(stateDir, pool, to, true) == nil {
 			moved = append(moved, pool)
 		}
 	}
@@ -139,23 +144,35 @@ func MovePoolDefaultRepos(stateDir, from, to string) []string {
 // readPoolDefaultRepo is the pool's default repository, "" when none is
 // recorded (or the record cannot be read: it names nothing zcp could use).
 func readPoolDefaultRepo(stateDir, pool string) string {
+	return readPoolDefaultRecord(stateDir, pool).Repo
+}
+
+// readPoolDefaultRecord is the pool's default record, the zero value when none is
+// recorded or it cannot be read.
+func readPoolDefaultRecord(stateDir, pool string) poolDefault {
 	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
-		return ""
+		return poolDefault{}
 	}
 	raw, err := os.ReadFile(poolDefaultPath(stateDir, pool))
 	if err != nil {
-		return ""
+		return poolDefault{}
 	}
 	var rec poolDefault
 	if json.Unmarshal(raw, &rec) != nil {
-		return ""
+		return poolDefault{}
 	}
-	return rec.Repo
+	return rec
 }
 
-// storePoolDefaultRepo records repo as the pool's default, atomically with
-// mode 0600.
+// storePoolDefaultRepo records repo, a repository outside the Mate's HQ, as
+// the pool's default (storePoolDefaultRepoOn).
 func storePoolDefaultRepo(stateDir, pool, repo string) error {
+	return storePoolDefaultRepoOn(stateDir, pool, repo, false)
+}
+
+// storePoolDefaultRepoOn records repo as the pool's default, atomically with
+// mode 0600; onHQ: repo is on the Mate's HQ (poolDefault.HQ).
+func storePoolDefaultRepoOn(stateDir, pool, repo string, onHQ bool) error {
 	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
 		return errors.New("no state directory or an unusable pool name")
 	}
@@ -163,7 +180,7 @@ func storePoolDefaultRepo(stateDir, pool, repo string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
-	data, err := json.MarshalIndent(poolDefault{Repo: repo}, "", "  ")
+	data, err := json.MarshalIndent(poolDefault{Repo: repo, HQ: onHQ}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
@@ -490,13 +507,14 @@ func storePoolTokenScope(stateDir, pool, scope string) error {
 // worked (bind true). "" when none applies (repo "" or on HQ): no GIT_TOKEN
 // helper at all.
 func leaseTokenScope(stateDir, pool, hqURL, repo string) (scope string, bind bool) {
-	if def := readPoolDefaultRepo(stateDir, pool); def != "" && !IsHQRemote(def, hqURL) {
-		return leaseHelperScope(def), false
+	def := readPoolDefaultRecord(stateDir, pool)
+	if def.Repo != "" && !def.HQ && !IsHQRemote(def.Repo, hqURL) {
+		return leaseHelperScope(def.Repo), false
 	}
 	if recorded := readPoolTokenScope(stateDir, pool); recorded != "" {
 		return recorded, false
 	}
-	if repo == "" || IsHQRemote(repo, hqURL) {
+	if repo == "" || IsHQRemote(repo, hqURL) || retiredHQDefault(def, repo, hqURL) {
 		return "", false
 	}
 	scope = leaseHelperScope(repo)
@@ -540,7 +558,11 @@ func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, bran
 		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out))}, nil
 	}
 	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
-	if repoScope := leaseHelperScope(repo); code == platform.ErrGitTokenMissing && repoScope != "" && !strings.EqualFold(repoScope, tokenScope) {
+	tokenCode := code == platform.ErrGitTokenMissing || code == platform.ErrGitTokenInvalid
+	switch repoScope := leaseHelperScope(repo); {
+	case tokenCode && retiredHQDefault(readPoolDefaultRecord(d.StateDir, rec.PoolHostname), repo, hqURL):
+		code, suggestion = platform.ErrPrerequisiteMissing, retiredHQDefaultSuggestion(repo)
+	case tokenCode && repoScope != "" && !strings.EqualFold(repoScope, tokenScope):
 		code, suggestion = platform.ErrPrerequisiteMissing, foreignHostSuggestion(repoScope, tokenScope)
 	}
 	pe := platform.NewPlatformError(code,
@@ -623,6 +645,22 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	}
 	return platform.ErrSSHDeployFailed,
 		"Check the repo URL and that the container can reach the git host"
+}
+
+// retiredHQDefault reports whether repo is the pool's default recorded on the
+// Mate's HQ (def.HQ) while that HQ is not the one the Mate links to now
+// (hqURL): an HQ repository the Mate left, whose host never was the person's
+// token's.
+func retiredHQDefault(def poolDefault, repo, hqURL string) bool {
+	return def.HQ && topology.SameRepoURL(def.Repo, repo) && !IsHQRemote(repo, hqURL)
+}
+
+// retiredHQDefaultSuggestion is what a checkout of the pool's default says
+// when it is an HQ repository the Mate has left (retiredHQDefault) and git
+// asked for a credential there: no person's token answers it.
+func retiredHQDefaultSuggestion(repo string) string {
+	return "The repository " + repo + " is the pool's default, recorded while it was on this Mate's HQ, and the Mate links to another HQ now: no person's token answers it. " +
+		"Name the repository on the HQ this Mate links to now with repo=<its address there> (zerops_workflow action=\"status\" names each pair's repository); the next repository pass moves the pool's default along with its pair. Never ask for a token or make one up"
 }
 
 // foreignHostSuggestion is what a checkout says when git asked for a
