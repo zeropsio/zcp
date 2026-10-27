@@ -54,3 +54,39 @@ func TestWithoutMateFraming_ExactContainerOrigin(t *testing.T) {
 		})
 	}
 }
+
+// A setup names an address of the project it was written in when a value
+// holds a host on a Zerops subdomain — written out, or with the project's own
+// subdomain variables among its labels, as a Mate writes its stage's address.
+// A value that is only a reference resolves in each environment for itself.
+func TestNamesZeropsSubdomainAddress_ReferencesInLabels_Count(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "an address written out", value: "https://apistage-1f2a-3000.prg1.zerops.app", want: true},
+		{name: "a cookie domain without a scheme", value: "hqstage-1f2a.prg1.zerops.app", want: true},
+		{name: "a devel address", value: "https://apistage-1f2a-3000.dev1.zerops.dev/login", want: true},
+		{name: "the zerops.app wildcard", value: "https://*.zerops.app", want: true},
+		{name: "the location as a reference", value: "https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app", want: true},
+		{name: "the subdomain host and port inside a label", value: "https://webstage-${zeropsSubdomainHost}-3000.${zeropsLocation}.zerops.app", want: true},
+		{name: "a path after a referenced host", value: "https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app/github-auth", want: true},
+		{name: "the subdomain host in a written-out location", value: "https://appstage-${zeropsSubdomainHost}-3000.prg1.zerops.app", want: true},
+		{name: "only the service's own subdomain reference", value: "${zeropsSubdomain}", want: false},
+		{name: "only another service's subdomain reference", value: "${appstage_zeropsSubdomain}", want: false},
+		{name: "Mate's hosted address", value: "https://mate.zerops.io", want: false},
+		{name: "a production cookie domain", value: ".zerops.io", want: false},
+		{name: "the shared domain alone", value: "zerops.app", want: false},
+		{name: "another domain ending alike", value: "https://example.zerops.apps", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := namesZeropsSubdomainAddress(tt.value); got != tt.want {
+				t.Errorf("namesZeropsSubdomainAddress(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}

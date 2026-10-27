@@ -300,6 +300,96 @@ const poolMonorepoPoolsYAML = `zerops:
       start: zcp-devsup run
 `
 
+// zeropsAppsMainYAML is Zerops Apps' zerops.yml on its main after the Mate's
+// change (2026-10-27), trimmed to what the tiers read: the dev pools, web, hq
+// and box, and the Mate's three preview variants — each extending its part's
+// setup and writing the Mate's stage as the app's address from the project's
+// own subdomain variables. hq's variant also frames the app for one project's
+// Mate origins; the web's frames nothing.
+const zeropsAppsMainYAML = `zerops:
+  - setup: web
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build web
+      deployFiles:
+        - dist
+    run:
+      base: nodejs@24
+      start: node dist/apps/web/analog/server/index.mjs
+      envVariables:
+        Z_URL: https://zerops.io
+  - setup: hq
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build hq
+      deployFiles:
+        - dist/apps/hq/analog/public/~
+    run:
+      base: static@latest
+      routing:
+        headers:
+          - for: /*
+            values:
+              X-Frame-Options: "'DENY' always"
+              Content-Security-Policy: >-
+                "default-src 'self';
+                connect-src 'self' https://*.zerops.io https://*.zerops.dev;
+                frame-ancestors 'none'" always
+      envVariables:
+        Z_URL: https://hq.zerops.io
+        Z_COOKIE_DOMAIN: .zerops.io
+  - setup: box
+    build:
+      base: nodejs@24
+      buildCommands:
+        - nx build box
+      deployFiles:
+        - dist/apps/box/analog/public/~
+    run:
+      base: static@latest
+      envVariables:
+        Z_URL: https://box.zerops.io
+  - setup: webpreview
+    extends: web
+    run:
+      envVariables:
+        Z_URL: https://webstage-${zeropsSubdomainHost}-3000.${zeropsLocation}.zerops.app
+  - setup: hqpreview
+    extends: hq
+    run:
+      routing:
+        headers:
+          - for: /*
+            values:
+              Content-Security-Policy: >-
+                "default-src 'self';
+                connect-src 'self' https://*.zerops.io https://*.zerops.dev;
+                frame-ancestors https://mate.zerops.io https://zcp-38ff-8080.prg1.zerops.app" always
+      envVariables:
+        Z_URL: https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+        Z_COOKIE_DOMAIN: hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+  - setup: boxpreview
+    extends: box
+    run:
+      envVariables:
+        Z_URL: https://boxstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+        Z_HQ_URL: https://hqstage-${zeropsSubdomainHost}.${zeropsLocation}.zerops.app
+  - setup: webpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+  - setup: hqpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+  - setup: boxpool
+    run:
+      base: ubuntu/nodejs@24
+      start: zcp-devsup run
+`
+
 // TestBuildGroupRecipe_PoolMonorepoPreviewVariants_StageAndProductionBuildTheBases:
 // each stage of a pool-keyed monorepo builds Mate's preview variant of its
 // part's setup. The AI Agent tier re-creates a Mate, whose stages are its
@@ -319,6 +409,7 @@ func TestBuildGroupRecipe_PoolMonorepoPreviewVariants_StageAndProductionBuildThe
 		wantGroup map[string]string
 	}{
 		{name: "variants extending web, hq and box", body: poolMonorepoYAML + poolMonorepoPreviewVariants, wantGroup: bases},
+		{name: "Zerops Apps' variants as its main writes them", body: zeropsAppsMainYAML, wantGroup: bases},
 		{name: "no zerops.yaml was read", body: "", wantGroup: variants},
 		{name: "the variants extend nothing", body: poolMonorepoYAML + standalone, wantGroup: variants},
 		{name: "the setups the variants extend are not declared", body: poolMonorepoPoolsYAML + poolMonorepoPreviewVariants, wantGroup: variants},
