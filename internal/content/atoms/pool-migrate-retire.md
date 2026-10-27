@@ -92,4 +92,7 @@ reads `retiring`; re-send the acknowledged call and it resumes from where
 it stopped, never deleting anything twice. **Retired**: the dev service is
 gone, its URL with it; the stage deploys from a lease of the pool
 (`zerops_deploy sourceService="<alias>" targetService="<stage>"`).
-`retire.gaps` names what a migrated part does not have yet.
+`retire.gaps` names what a migrated part does not have yet. In a Mate the
+answer also names a lease branch no change proposes yet, with the
+`open-change` call: the work reaches `main` only through a change the person
+reviews, so open it once the work is ready.

@@ -46,6 +46,13 @@ func shellWord(s string) string {
 // DevsupAsset is the release asset zcp-devsup ships as.
 const DevsupAsset = "zcp-devsup-linux-amd64"
 
+// DevsupLatestURL is the zcp-devsup asset of whichever zcp release is the
+// newest when it is fetched: the download a pool setup's install line names
+// when zcp cannot name the release itself (the release list unreadable, or a
+// static page like the pools-and-box theme). The install line follows the
+// redirect (curl -L, wget by default).
+const DevsupLatestURL = "https://github.com/zeropsio/zcp/releases/latest/download/" + DevsupAsset
+
 // devsupURLRe bounds a download URL to what the prepareCommands line carries
 // inside single quotes.
 var devsupURLRe = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+/` + DevsupAsset + `$`)

@@ -33,7 +33,7 @@ func DevServerStates(ctx context.Context, client platform.Client, projectID stri
 			return result.PreviewURL // built by the caller, who has just enabled the subdomain
 		}
 		if _, ok := previews[port]; !ok {
-			previews[port] = LeasePreviewURL(ctx, client, projectID, result.Pool, port)
+			previews[port] = leasePreviewURL(ctx, client, projectID, result.Pool, port, !result.subdomainOn)
 		}
 		return previews[port]
 	}
@@ -121,8 +121,12 @@ func devServerPublicURLs(ctx context.Context, client platform.Client, projectID 
 // LeasePreviewURL is a lease's public address: the pool's subdomain on the
 // lease's preview port (docs/spec-mate.md §2.8a.1 previewPortBase). The pool,
 // not the lease alias, is the service that has the subdomain. It is "" while
-// the pool's subdomain is off or the pool does not declare port with HTTP
-// support, and for a lease with no preview port.
+// the pool's subdomain is off or the pool does not declare port, and for a
+// lease with no preview port. A declared port is enough: port is the lease's
+// preview port — previewPortBase + its container's stable number, a port of
+// the declaration's preview range — and a pool reports its ports without
+// httpSupport while its subdomain is off and for a while after it went on
+// (the flag follows the subdomain, docs/spec-workflows.md §8 PS-17).
 func LeasePreviewURL(ctx context.Context, client platform.Client, projectID, pool string, port int) string {
 	return leasePreviewURL(ctx, client, projectID, pool, port, true)
 }
@@ -146,7 +150,7 @@ func leasePreviewURL(ctx context.Context, client platform.Client, projectID, poo
 	if err != nil || (requireOn && !detail.SubdomainAccess) {
 		return ""
 	}
-	if !slices.ContainsFunc(detail.Ports, func(p platform.Port) bool { return p.Port == port && (p.HTTPSupport || isHTTPScheme(p)) }) {
+	if !slices.ContainsFunc(detail.Ports, func(p platform.Port) bool { return p.Port == port }) {
 		return ""
 	}
 	return SubdomainURLForPort(ctx, client, projectID, svc, port)

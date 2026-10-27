@@ -533,7 +533,7 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 			if len(outcomes[i].r.Restarted) > 0 || len(outcomes[i].r.Pending) > 0 {
 				// Its servers restarted under the new overlay: what they are
 				// now is its last-known for every envelope.
-				acquiredDevServers(ctx, d, rec)
+				acquiredDevServers(ctx, d, rec, false)
 			}
 		}
 	})

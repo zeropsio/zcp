@@ -162,6 +162,9 @@ func WithLeaseHQ(httpClient ops.HTTPDoer) LeaseOption {
 func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP ops.HTTPDoer) {
 	deps = leaseDepsIn(deps, rt)
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
+	// An acquire that starts a lease's dev servers runs the public-access
+	// step zerops_dev_server's start runs, on the lease's pool (§8 O3).
+	deps.PublicAccess = leasePublicAccess(client, projectID, stateDir)
 	// envelope is the result's lifecycle envelope; read are the views this
 	// call read checkouts for, whose activity and unsaved work ride leases[]
 	// (the envelope's own lease reader never reads a checkout).
@@ -311,6 +314,26 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release, rollout, sync, park or unpark")), nil, nil
 		}
 	})
+}
+
+// leasePublicAccess is an acquire's public-access step for a lease it took
+// and started dev servers in: ensurePublicAccessAt on the lease's pool —
+// eligibility, intent and the enable-once stamp as ever — with no readiness
+// wait (a dev server may still be compiling; verify probes the preview). It
+// answers whether the pool's subdomain serves now, and its warnings as a note.
+func leasePublicAccess(client platform.Client, projectID, stateDir string) func(context.Context, string) (bool, string) {
+	return func(ctx context.Context, alias string) (bool, string) {
+		if client == nil {
+			return false, ""
+		}
+		result := &ops.DeployResult{}
+		ensurePublicAccessAt(ctx, client, nil, projectID, stateDir, alias, result, nil, func() string { return "" })
+		var note string
+		if len(result.Warnings) > 0 {
+			note = "the pool's public access: " + strings.Join(result.Warnings, "; ")
+		}
+		return result.SubdomainAccessEnabled, note
+	}
 }
 
 // leaseAcquireNext is what an acquire's result tells the agent to do next:

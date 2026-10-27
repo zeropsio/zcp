@@ -50,6 +50,16 @@ func buildSignalLibrary() []failureSignal {
 		// BUILD phase
 		// =================================================================
 		{
+			// A VM that starts a thread per core it sees — the Erlang VM
+			// under Elixir — runs into the container's task limit: thread
+			// creation fails with EAGAIN ("error = 11"). Narrow, so first.
+			id:         "build:thread-limit",
+			phases:     []DeployFailurePhase{PhaseBuild},
+			logRegex:   threadLimitRegex,
+			requireLog: true,
+			build:      buildThreadLimit,
+		},
+		{
 			// Missing FILE OPERAND, not a missing binary: a build command
 			// referenced a path that doesn't exist (cp/mv source absent;
 			// deployFiles / a cp pointing at build output that wasn't
@@ -126,6 +136,16 @@ func buildSignalLibrary() []failureSignal {
 		// =================================================================
 		// PREPARE phase
 		// =================================================================
+		{
+			// The thread limit in run.prepareCommands: Noola's elixir pool
+			// image, PREPARING_RUNTIME_FAILED on "Failed to create dirty cpu
+			// scheduler thread … error = 11" (2026-10-27).
+			id:         "prepare:thread-limit",
+			phases:     []DeployFailurePhase{PhasePrepare},
+			logRegex:   threadLimitRegex,
+			requireLog: true,
+			build:      prepareThreadLimit,
+		},
 		{
 			id:         "prepare:missing-sudo",
 			phases:     []DeployFailurePhase{PhasePrepare},
@@ -509,9 +529,38 @@ func buildOOMKilled(match string) *topology.DeployFailureClassification {
 	}
 }
 
+// threadLimitRegex reads a thread the container's task limit refused: the
+// Erlang VM's "Failed to create dirty cpu scheduler thread …, error = 11"
+// (EAGAIN), and any other runtime's "Failed to create … thread".
+var threadLimitRegex = regexp.MustCompile(`(?:Failed to create [^\n]*thread|\berror = 11\b)`)
+
+// threadLimitAdvice is how a VM's threads are capped in the build and the
+// prepare: the Erlang VM sizes its schedulers by the cores it sees.
+const threadLimitAdvice = "Cap the VM's threads for the command that failed: for Elixir/Erlang set `ELIXIR_ERL_OPTIONS=\"+S 4:4 +SDcpu 2:2 +A 4\"` " +
+	"(4 schedulers, 2 dirty CPU schedulers, 4 async threads) in build.envVariables for a build command, or on the command itself in run.prepareCommands " +
+	"(`ELIXIR_ERL_OPTIONS=\"+S 4:4 +SDcpu 2:2 +A 4\" mix deps.compile`); for another runtime, its own worker or thread-count setting."
+
+func buildThreadLimit(match string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassBuild,
+		LikelyCause:     fmt.Sprintf("A build command could not create a thread (the log says %q): it starts one per core it sees and ran into the container's limit on threads.", match),
+		SuggestedAction: threadLimitAdvice,
+		Signals:         []string{"build:thread-limit"},
+	}
+}
+
 // =============================================================================
 // prepare phase builders
 // =============================================================================
+
+func prepareThreadLimit(match string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassStart,
+		LikelyCause:     fmt.Sprintf("A run.prepareCommands command could not create a thread (the log says %q): it starts one per core it sees and ran into the container's limit on threads.", match),
+		SuggestedAction: threadLimitAdvice,
+		Signals:         []string{"prepare:thread-limit"},
+	}
+}
 
 func prepareMissingSudo(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{

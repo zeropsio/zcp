@@ -877,6 +877,155 @@ func TestPoolMigrateRetire_GuardFails_Refused(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateRetire_OwnPortSubdomain_NoDomainRefusal: the routing list
+// carries the dev's own port subdomain (`<host>-<sub>-<port>.prg1.zerops.app`)
+// beside any custom domain. It dies with the dev, as the diagnosis says, so
+// the retire never refuses on it — nor on a meta intent "domain" an earlier
+// reconcile recorded from it while the live routing names no custom domain.
+func TestPoolMigrateRetire_OwnPortSubdomain_NoDomainRefusal(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessDomain})
+	})
+	r.f.mock.WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+		Domains:   []platform.PublicHTTPDomain{{Name: "appdev-38ff-3000.prg1.zerops.app"}},
+		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 3000, ServiceID: "svc-dev"}},
+	})
+	out, isErr := r.retire(t, retireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("first call = %v, want DIAGNOSIS_REQUIRED, no domain refusal", out)
+	}
+	r.assertNothingRetired(t)
+}
+
+// TestPoolMigrateRetire_BundleFails_NamesTheCause_SafeToRepeat: a bundle the
+// dev's repository refuses aborts the retire naming the step that failed and
+// git's own words, and says plainly that the same call is safe to repeat —
+// nothing was deleted — rather than leaving the agent to work that out from
+// the script (two sessions, 2026-10-27).
+func TestPoolMigrateRetire_BundleFails_NamesTheCause_SafeToRepeat(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	r.ssh.onBundle = func() {
+		// A merge stopped on a conflict once the census read the repository:
+		// git refuses the WIP commit the bundle keeps of the tree.
+		retireGit(t, r.ssh.repo, "stash", "push", "-q", "-m", "out of the way")
+		retireGit(t, r.ssh.repo, "switch", "-q", "-c", "other")
+		if err := os.WriteFile(filepath.Join(r.ssh.repo, "app.txt"), []byte("other\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		retireGit(t, r.ssh.repo, "commit", "-q", "-am", "other")
+		retireGit(t, r.ssh.repo, "switch", "-q", "main")
+		if err := os.WriteFile(filepath.Join(r.ssh.repo, "app.txt"), []byte("mine\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		retireGit(t, r.ssh.repo, "commit", "-q", "-am", "mine")
+		cmd := exec.CommandContext(context.Background(), "git", "merge", "other")
+		cmd.Dir = r.ssh.repo
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Fatalf("the merge was meant to stop on a conflict:\n%s", out)
+		}
+	}
+	out, isErr := r.retire(t, retireInput(true, true))
+	if isErr || out["status"] != "aborted" {
+		t.Fatalf("retire = %v, want aborted", out)
+	}
+	msg := poolMigrateRefusalMessage(out, poolRetireAbortBundle)
+	for _, want := range []string{"git stash create", "Cannot save the current index state", "safe to repeat"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("abort message = %q, want it to name %q", msg, want)
+		}
+	}
+	if got := r.client.deletes(); len(got) > 0 {
+		t.Errorf("deleted %q after a failed bundle", got)
+	}
+}
+
+// TestPoolMigrateRetire_EnvCheck_LeavesZcpsOwnSecretsOut: the retire's check
+// for variables referencing the dev leaves out what zcp itself holds or
+// wrote — the zcp service's own env, the Mate credential it puts on a pool,
+// the secrets the env step copied to the pool (read resolved on the dev, so
+// never a reference) — and names a secret it could not read without telling
+// the agent to read it: an agent told to check them "yourself" ran printenv
+// over ZCP_API_KEY and VSCODE_PASSWORD (2026-10-27).
+func TestPoolMigrateRetire_EnvCheck_LeavesZcpsOwnSecretsOut(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.services = append(f.services, poolMigrateRuntime("zcp", "svc-zcp"), poolMigrateRuntime("worker", "svc-worker"))
+		f.env["svc-zcp"] = []platform.ServiceEnvVar{
+			{ID: "z-key", Key: "ZCP_API_KEY", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+			{ID: "z-pass", Key: "VSCODE_PASSWORD", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+			{ID: "z-lease", Key: "apppool_LEASE_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		}
+		f.env["svc-worker"] = []platform.ServiceEnvVar{
+			{ID: "w-secret", Key: "WORKER_SECRET", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		}
+		f.env["svc-pool"] = append(f.env["svc-pool"],
+			platform.ServiceEnvVar{ID: "p-hq", Key: "ZCP_HQ_GIT_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true})
+	})
+	record := filepath.Join(r.f.stateDir, "migrate", "pool-env", "apppool.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(`{"poolServiceId":"svc-pool","dev":"appdev","fingerprints":{"STRIPE_SECRET":"fp"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := r.retire(t, retireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("first call = %v, want DIAGNOSIS_REQUIRED", out)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, never := range []string{"ZCP_API_KEY", "VSCODE_PASSWORD", "apppool_LEASE_TOKEN", "ZCP_HQ_GIT_TOKEN", "apppool STRIPE_SECRET", "yourself"} {
+		if strings.Contains(text, never) {
+			t.Errorf("the answer names %q: %s", never, text)
+		}
+	}
+	if !strings.Contains(text, "worker WORKER_SECRET") {
+		t.Errorf("the answer does not name the secret zcp could not read: %s", text)
+	}
+	r.assertNothingRetired(t)
+}
+
+// TestPoolMigrateRetire_InAMate_NamesTheWorkBranchNoChangeProposes: in a Mate,
+// a retire that finishes with the work's branch pushed to HQ and no change
+// proposing it names the open-change call in its answer: the work ends in a
+// change a person reviews, not in a branch nobody was asked about.
+func TestPoolMigrateRetire_InAMate_NamesTheWorkBranchNoChangeProposes(t *testing.T) {
+	t.Parallel()
+	const repo = "https://hq.example.com/git/org-1/app-1/appdev.git"
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.rt.MateEnabled = true
+		f.rt.OrgID = "org-1"
+		f.hqAddress = func() string { return "https://hq.example.com" }
+		f.meta.GitPushState, f.meta.RemoteURL = "", repo
+		f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+		f.ssh.output = poolMigrateCensusFor("dev-pools", "origin", "dev-pools", "")
+	})
+	r.f.rt.HQ = &runtime.HQLink{Origin: "https://hq.example.com"}
+	record := `{"poolHostname":"apppool","poolServiceId":"svc-pool","containerId":"c-1","containerNumber":1,` +
+		`"containerHostname":"node-id-1.runtime.apppool.zerops","lease":"secret-lease-value","branch":"dev-pools",` +
+		`"repo":"` + repo + `","acquiredAt":"2026-10-24T09:30:00Z"}`
+	if err := os.WriteFile(filepath.Join(r.f.stateDir, "leases", retireLeaseAlias+".json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := r.retire(t, retireInput(true, true))
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want retired", out)
+	}
+	said, _ := out["nextUnavailable"].(string)
+	for _, want := range []string{`action="open-change"`, "dev-pools", retireLeaseAlias} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the retired answer %q does not name %q", said, want)
+		}
+	}
+}
+
 // TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
 // does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
 // DP-2): the container may be another holder's by now, so the retire refuses

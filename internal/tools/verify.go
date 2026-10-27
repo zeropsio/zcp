@@ -33,9 +33,9 @@ type verifyConfig struct {
 	swarm ops.SwarmFactory
 	// vouch replaces the orchestrator's answer for a lease (tests).
 	vouch leaseVouch
-	// boxHTTP replaces the HTTP client a Box's orchestrator check asks
-	// through (tests).
-	boxHTTP ops.HTTPDoer
+	// probeHTTP replaces the HTTP client a Box's orchestrator check and a
+	// lease's preview check ask through (tests).
+	probeHTTP ops.HTTPDoer
 }
 
 // WithPoolOrchestrators lets verify of a pool, in a container, also ask the
@@ -68,9 +68,9 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		},
 	}
-	var boxHTTP ops.HTTPDoer = httpClient
-	if cfg.boxHTTP != nil {
-		boxHTTP = cfg.boxHTTP
+	var probeHTTP ops.HTTPDoer = httpClient
+	if cfg.probeHTTP != nil {
+		probeHTTP = cfg.probeHTTP
 	}
 	// checkBox adds the orchestrator check to a Box's result: its keyless
 	// ping, which answers only inside the project (PS-9).
@@ -78,7 +78,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		if r == nil || r.Type != string(topology.RuntimeSandbox) {
 			return
 		}
-		r.AddCheck(ops.BoxOrchestratorCheck(ctx, boxHTTP, r, rt.InContainer))
+		r.AddCheck(ops.BoxOrchestratorCheck(ctx, probeHTTP, r, rt.InContainer))
 	}
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -122,7 +122,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
-			return verifyLease(ctx, client, httpClient, ssh, projectID, stateDir, rt, lease), nil, nil
+			return verifyLease(ctx, client, httpClient, probeHTTP, ssh, projectID, stateDir, rt, lease), nil, nil
 		}
 		// Phase 4: if the input hostname is a push source whose builds land
 		// on a different runtime (dev half of a standard pair under
@@ -178,9 +178,10 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 const leaseProbeTimeout = 20 * time.Second
 
 // verifyLease answers zerops_verify for a lease alias: whether the container
-// answers over SSH, and the dev servers its supervisor reports. Nothing is
-// recorded to the work session — a lease is no service of the part.
-func verifyLease(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
+// answers over SSH, the dev servers its supervisor reports, and each preview
+// URL asked from outside through previewHTTP. Nothing is recorded to the work
+// session — a lease is no service of the part.
+func verifyLease(ctx context.Context, client platform.Client, httpClient, previewHTTP ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
 	if ssh == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -199,7 +200,7 @@ func verifyLease(ctx context.Context, client platform.Client, httpClient ops.HTT
 		}
 		cancel()
 	}
-	result := ops.VerifyLease(ctx, ssh, lease, unreachable)
+	result := ops.VerifyLeaseWithPreview(ctx, ssh, lease, unreachable, ops.LeasePreviewProbe{Client: client, ProjectID: projectID, HTTP: previewHTTP})
 	return jsonResult(verifyResponse{
 		VerifyResult:     result,
 		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),

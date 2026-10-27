@@ -50,26 +50,33 @@ const poolMigrateRefNS = "refs/zcp-migrate/"
 // the untracked repositories of its own it does not ($Z/nested). A worktree
 // path holding a newline, which the line-by-line read would cut and take for
 // a missing directory, fails it: such a tree is neither fingerprinted nor
-// bundled as if it were gone.
-const poolMigrateBundleFunctions = `zfptree() {
+// bundled as if it were gone. A step of zfptree that fails prints, beside the
+// tree's error, the step and what git said on stderr (zcause, from $Z/err),
+// and zfpone tries the tree once more first: a file a running process removes
+// between git listing it and indexing it failed a step once (update-index now
+// takes a listed file that is gone with --remove, so it no longer does).
+const poolMigrateBundleFunctions = `zcause() {
+  printf 'zcp-bundle-cause %s: %s\n' "$1" "$(tr '\n' ' ' < "$Z/err" 2>/dev/null | cut -c1-400)"
+}
+zfptree() {
   h=$(git rev-parse --verify -q HEAD) || h=unborn
   printf 'H %s\n' "$h"
-  s=$(git status --porcelain=v2 --branch --untracked-files=all) || return 1
+  s=$(git status --porcelain=v2 --branch --untracked-files=all 2>"$Z/err") || { zcause 'git status'; return 1; }
   printf 'S %s\n' "$(printf '%s\n' "$s" | git hash-object --stdin)"
-  x=$(git ls-files -s) || return 1
+  x=$(git ls-files -s 2>"$Z/err") || { zcause 'git ls-files of the index'; return 1; }
   printf 'I %s\n' "$(printf '%s\n' "$x" | git hash-object --stdin)"
-  ix=$(git rev-parse --git-path index) || return 1
+  ix=$(git rev-parse --git-path index 2>"$Z/err") || { zcause 'git rev-parse of the index path'; return 1; }
   w=
   if [ -f "$ix" ]; then
-    cp "$ix" "$Z/index" || return 1
-    w=$(GIT_INDEX_FILE="$Z/index" git stash create "zcp pool-migrate: the work in $3") || { rm -f "$Z/index"; return 1; }
+    cp "$ix" "$Z/index" 2>"$Z/err" || { zcause 'a copy of the index'; return 1; }
+    w=$(GIT_INDEX_FILE="$Z/index" git stash create "zcp pool-migrate: the work in $3" 2>"$Z/err") || { zcause 'git stash create of the tracked changes'; rm -f "$Z/index"; return 1; }
     rm -f "$Z/index"
   fi
   if [ -n "$w" ]; then printf 'W %s %s\n' "$(git rev-parse "$w^{tree}")" "$(git rev-parse "$w^2^{tree}")"; else echo 'W clean'; fi
   rm -f "$Z/uindex"
-  git ls-files -z -o --exclude-standard -- . ':(exclude,glob)**/.env' ':(exclude,glob)**/.env.*' > "$Z/untracked" || return 1
-  GIT_INDEX_FILE="$Z/uindex" git update-index --add -z --stdin < "$Z/untracked" 2>/dev/null || return 1
-  u=$(GIT_INDEX_FILE="$Z/uindex" git write-tree) || return 1
+  git ls-files -z -o --exclude-standard -- . ':(exclude,glob)**/.env' ':(exclude,glob)**/.env.*' > "$Z/untracked" 2>"$Z/err" || { zcause 'git ls-files of the untracked files'; return 1; }
+  GIT_INDEX_FILE="$Z/uindex" git update-index --add --remove -z --stdin < "$Z/untracked" 2>"$Z/err" || { zcause 'git update-index of the untracked files'; return 1; }
+  u=$(GIT_INDEX_FILE="$Z/uindex" git write-tree 2>"$Z/err") || { zcause 'git write-tree of the untracked files'; return 1; }
   rm -f "$Z/uindex" "$Z/untracked"
   printf 'U %s\n' "$u"
   if [ -n "$1" ]; then
@@ -85,8 +92,10 @@ zfpone() {
     if [ -n "$zside" ]; then printf '%s %s - %s\n' "$i" "${ph:-unborn}" "$E" >> "$zside"; fi
   elif t=$(cd "$p" && zfptree "$zside" "$i" "$p"); then
     printf '%s\n' "$t"
+  elif sleep 1; t=$(cd "$p" && zfptree "$zside" "$i" "$p"); then
+    printf '%s\n' "$t"
   else
-    echo "zcp-bundle-error tree $p"; zfail=1
+    echo "zcp-bundle-error tree $p"; printf '%s\n' "$t" | grep '^zcp-bundle-cause '; zfail=1
   fi
   i=$((i+1)); p=; ph=
 }
@@ -143,7 +152,7 @@ E=$(git hash-object -t tree /dev/null) || { echo 'zcp-bundle-error empty tree'; 
 const poolMigrateBundleScript = `echo 'zcp-bundle 1'
 rm -rf "$Z/mirror.git"
 : > "$Z/trees"; : > "$Z/nested"
-fp1=$(zfp "$Z/trees") || { printf '%s\n' "$fp1" | grep '^zcp-bundle-error'; exit 4; }
+fp1=$(zfp "$Z/trees") || { printf '%s\n' "$fp1" | grep -E '^zcp-bundle-(error|cause) '; exit 4; }
 sed 's/^/W /' "$Z/worktrees"
 printf '%s\n' "$fp1" | sed 's/^/F /'
 git clone -q --mirror --local --no-hardlinks "$R" "$Z/mirror.git" || { echo 'zcp-bundle-error mirror'; exit 4; }
@@ -164,7 +173,7 @@ while read -r ti th tw tu; do
 done < "$Z/trees"
 git -C "$M" update-ref --stdin < "$Z/refs" || { echo 'zcp-bundle-error refs to keep'; exit 4; }
 o=$(git -C "$M" fsck --no-dangling --no-progress 2>&1) || { echo 'zcp-bundle-error fsck of the mirror'; printf '%s\n' "$o"; exit 4; }
-fp2=$(zfp '') || { printf '%s\n' "$fp2" | grep '^zcp-bundle-error'; exit 4; }
+fp2=$(zfp '') || { printf '%s\n' "$fp2" | grep -E '^zcp-bundle-(error|cause) '; exit 4; }
 if [ "$fp1" != "$fp2" ]; then printf '%s\n' "$fp2" | sed 's/^/G /'; echo 'zcp-bundle-error moved'; exit 4; fi
 git -C "$M" for-each-ref --format='B %(objectname) %(refname)' || { echo 'zcp-bundle-error manifest'; exit 4; }
 sed 's/^/N /' "$Z/nested"
@@ -173,7 +182,7 @@ echo 'zcp-bundle-end'`
 // poolMigrateFingerprintScript reads the fingerprint alone, then removes the
 // scratch directory.
 const poolMigrateFingerprintScript = `echo 'zcp-fingerprint 1'
-fp=$(zfp '') || { printf '%s\n' "$fp" | grep '^zcp-bundle-error'; exit 4; }
+fp=$(zfp '') || { printf '%s\n' "$fp" | grep -E '^zcp-bundle-(error|cause) '; exit 4; }
 printf '%s\n' "$fp" | sed 's/^/F /'
 rm -rf "$Z"
 echo 'zcp-fingerprint-end'`
@@ -373,7 +382,7 @@ type poolMigrateBundleRead struct {
 func parsePoolMigrateBundle(out string) (*poolMigrateBundleRead, error) {
 	read := &poolMigrateBundleRead{}
 	var header, end bool
-	var failed, noise, again []string
+	var failed, causes, noise, again []string
 	sc := bufio.NewScanner(strings.NewReader(out))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -387,6 +396,9 @@ func parsePoolMigrateBundle(out string) (*poolMigrateBundleRead, error) {
 			continue
 		case strings.HasPrefix(line, "zcp-bundle-error "):
 			failed = append(failed, strings.TrimPrefix(line, "zcp-bundle-error "))
+			continue
+		case strings.HasPrefix(line, poolMigrateBundleCause):
+			causes = append(causes, strings.TrimSpace(strings.TrimPrefix(line, poolMigrateBundleCause)))
 			continue
 		}
 		tag, rest, _ := strings.Cut(line, " ")
@@ -417,11 +429,27 @@ func parsePoolMigrateBundle(out string) (*poolMigrateBundleRead, error) {
 		moved := poolMigrateFingerprintOf(read.fp).Moved(poolMigrateFingerprintOf(again))
 		return nil, fmt.Errorf("the repository moved while it was bundled — %s; call again once nothing writes to it", strings.Join(moved, "; "))
 	case len(failed) > 0:
-		return nil, fmt.Errorf("the bundle could not take %s: %s", strings.Join(failed, ", "), strings.Join(noise, "; "))
+		return nil, poolMigrateStepError("the bundle could not take "+strings.Join(failed, ", "), causes, noise)
 	case !end:
 		return nil, errors.New("the bundle's answer came back incomplete")
 	}
 	return read, nil
+}
+
+// poolMigrateBundleCause starts the line a failed tree step prints: the step
+// and git's stderr (zcause).
+const poolMigrateBundleCause = "zcp-bundle-cause "
+
+// poolMigrateStepError is what failed — msg — with each tree step that failed
+// on both tries and what git said, else what the session printed besides.
+func poolMigrateStepError(msg string, causes, noise []string) error {
+	switch {
+	case len(causes) > 0:
+		return fmt.Errorf("%s — %s (failed on both tries)", msg, strings.Join(causes, "; "))
+	case len(noise) > 0:
+		return fmt.Errorf("%s: %s", msg, strings.Join(noise, "; "))
+	}
+	return errors.New(msg)
 }
 
 // trees reads the worktree porcelain and the manifest into the bundle's trees.
@@ -501,7 +529,9 @@ func BuildPoolMigrateBundle(ctx context.Context, ssh SSHDeployer, in PoolMigrate
 	read, perr := parsePoolMigrateBundle(string(out))
 	switch {
 	case err != nil && perr != nil:
-		return nil, fmt.Errorf("bundle of %s: %s: %w", in.Dev, perr.Error(), err)
+		// The parse names what failed from the whole answer; the ssh error
+		// would only repeat that answer.
+		return nil, fmt.Errorf("bundle of %s: %w", in.Dev, perr)
 	case err != nil:
 		return nil, fmt.Errorf("bundle of %s: %w", in.Dev, err)
 	case perr != nil:
@@ -632,11 +662,8 @@ func ReadPoolMigrateFingerprint(ctx context.Context, ssh SSHDeployer, hostname, 
 		work = PoolMigrateWorkDir
 	}
 	out, err := ssh.ExecSSH(ctx, hostname, PoolMigrateFingerprintCommand(root, work))
-	if err != nil {
-		return PoolMigrateFingerprint{}, fmt.Errorf("fingerprint of %s: %w", hostname, err)
-	}
 	var header, end bool
-	var lines, failed []string
+	var lines, failed, causes []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		switch {
 		case line == "zcp-fingerprint 1":
@@ -645,13 +672,17 @@ func ReadPoolMigrateFingerprint(ctx context.Context, ssh SSHDeployer, hostname, 
 			end = true
 		case strings.HasPrefix(line, "zcp-bundle-error "):
 			failed = append(failed, strings.TrimPrefix(line, "zcp-bundle-error "))
+		case strings.HasPrefix(line, poolMigrateBundleCause):
+			causes = append(causes, strings.TrimSpace(strings.TrimPrefix(line, poolMigrateBundleCause)))
 		case strings.HasPrefix(line, "F "):
 			lines = append(lines, strings.TrimPrefix(line, "F "))
 		}
 	}
 	switch {
 	case len(failed) > 0:
-		return PoolMigrateFingerprint{}, fmt.Errorf("fingerprint of %s could not read %s", hostname, strings.Join(failed, ", "))
+		return PoolMigrateFingerprint{}, fmt.Errorf("fingerprint of %s: %w", hostname, poolMigrateStepError("could not read "+strings.Join(failed, ", "), causes, nil))
+	case err != nil:
+		return PoolMigrateFingerprint{}, fmt.Errorf("fingerprint of %s: %w", hostname, err)
 	case !header || !end:
 		return PoolMigrateFingerprint{}, fmt.Errorf("fingerprint of %s came back incomplete", hostname)
 	}

@@ -123,13 +123,13 @@ func scrubSecrets(text string, secrets []string) string {
 // server's preview URL, as zerops_dev_server status reports it. A read that
 // fails leaves them unread (nil): the acquire's notes already say what is
 // wrong with the supervisor, and zerops_dev_server action=status reads it.
-func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord) []topology.DevServerState {
+func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord, subdomainOn bool) []topology.DevServerState {
 	ds, err := ReadDevServers(ctx, d.SSH, rec.alias(), "")
 	if err != nil {
 		return nil
 	}
 	ds.Service = rec.PoolHostname
-	states := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds})
+	states := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
 	// What this read found is the lease's last-known dev servers from now on,
 	// for every envelope (NoteLeaseDevServers).
 	noteLeaseDevServers(d.StateDir, rec, states, d.now())

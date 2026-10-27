@@ -442,6 +442,9 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	// What each pool-migrate flow was sent, so its answers carry each
+	// guidance atom once (workflow_pool_migrate_guidance.go).
+	cfg.poolGuidance = newPoolMigrateGuidanceSent()
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"), pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as a change the person reviews; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as a change the person reviews; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
@@ -457,7 +460,15 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 		// it unmounts the dev and asks the pool's orchestrator about its
 		// lease (workflow_pool_migrate_retire.go).
 		if input.Action == "retire" {
-			return handlePoolMigrateRetire(ctx, projectID, client, sshDeployer, mounter, cfg.swarm, input, stateDir, rt)
+			return handlePoolMigrateRetire(ctx, projectID, client, sshDeployer, mounter, cfg.swarm, input, stateDir, rt, cfg.poolGuidance)
+		}
+		// pool-migrate's other calls — the read side and the env step — run
+		// with what the tool was configured with (poolMigrateHandler).
+		if handler := poolMigrateHandler(input); handler != nil {
+			return handler(ctx, poolMigrateDeps{
+				projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt,
+				hqAddress: func() string { return hqAddress(rt) }, devsup: cfg.devsup, guidance: cfg.poolGuidance,
+			}, input)
 		}
 		// New multi-action handler.
 		if input.Action != "" {
@@ -504,7 +515,16 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 type WorkflowOption func(*workflowToolConfig)
 
 type workflowToolConfig struct {
-	swarm ops.SwarmFactory
+	swarm  ops.SwarmFactory
+	devsup DevsupSource
+	// poolGuidance remembers the guidance each pool-migrate flow was sent.
+	poolGuidance *poolMigrateGuidanceSent
+}
+
+// WithDevsupForWorkflow names the zcp-devsup this zcp installs, for the line
+// pool-migrate's image step names when a pool setup installs none.
+func WithDevsupForWorkflow(devsup DevsupSource) WorkflowOption {
+	return func(c *workflowToolConfig) { c.devsup = devsup }
 }
 
 // WithPoolOrchestratorsForWorkflow lets pool-migrate's retire ask a pool's
@@ -1293,6 +1313,12 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// against the actual envelope.
 	// Carry a fresh envelope: closing is a lifecycle transition the mate
 	// client's strip must see without waiting for the next status call.
-	return withFreshEnvelope(ctx, textResult("Work session closed."),
+	// In a Mate, a lease branch no change proposes yet is work no person
+	// was asked to review: name it with the call that proposes it.
+	closed := "Work session closed."
+	if note := unproposedNote(unproposedLeaseBranches(stateDir, rt, nil)); note != "" {
+		closed += " " + note
+	}
+	return withFreshEnvelope(ctx, textResult(closed),
 		stateDir, client, projectID, rt), nil, nil
 }

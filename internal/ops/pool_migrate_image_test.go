@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -232,6 +233,43 @@ func TestPoolMigrateImage_SetupChecks_EachGapNamed(t *testing.T) {
 				t.Error("a setup with a gap is never done")
 			}
 		})
+	}
+}
+
+// TestPoolMigrateImage_InstallMissing_DevSetupWithoutOne_PrintsTheLine: a pool
+// setup without the zcp-devsup install line, in a repository whose dev setup
+// carries none either, is told the whole line to add — never pointed at a
+// line it cannot see. Odin spent five minutes and a redeploy finding it in the
+// zcp binary (2026-10-27).
+func TestPoolMigrateImage_InstallMissing_DevSetupWithoutOne_PrintsTheLine(t *testing.T) {
+	t.Parallel()
+	quoted := "        - \"" + strings.ReplaceAll(imageDevsupLine, `"`, `\"`) + "\"\n"
+	config := strings.ReplaceAll(imageReadyYAML(), quoted, "")
+	if strings.Contains(config, DevsupAsset) {
+		t.Fatalf("the fixture still installs zcp-devsup:\n%s", config)
+	}
+	got := checkPoolMigrateImage(imageInput(imagePool(3, nil)), imageRead("zerops.yaml", config, imageDeclaration, "2026-10-24T10:00:00Z"))
+	msg := imageMessage(got.Missing, PoolMigrateImageInstall)
+	if want := DevsupPrepareCommand("https://github.com/zeropsio/zcp/releases/latest/download/" + DevsupAsset); !strings.Contains(msg, want) {
+		t.Errorf("install message = %q, want the whole line to add: %s", msg, want)
+	}
+}
+
+// TestPoolsAndBoxTheme_DevPoolSetup_CarriesTheInstallLine: the dev-pool
+// setup the theme shows installs zcp-devsup with the line zcp itself writes,
+// never a placeholder an agent has to fill from elsewhere.
+func TestPoolsAndBoxTheme_DevPoolSetup_CarriesTheInstallLine(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join("..", "knowledge", "themes", "pools-and-box.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theme := string(body)
+	if strings.Contains(theme, "<install zcp-devsup>") {
+		t.Error("the theme's pool setup still says <install zcp-devsup>")
+	}
+	if want := DevsupPrepareCommand("https://github.com/zeropsio/zcp/releases/latest/download/" + DevsupAsset); !strings.Contains(theme, want) {
+		t.Errorf("the theme's pool setup does not carry the install line %s", want)
 	}
 }
 
@@ -479,6 +517,121 @@ func TestPoolMigrateImage_Done_PoolRunsAnImageNewerThanTheSetup(t *testing.T) {
 	}
 }
 
+// imageOutput is what the image read prints for a commit carrying config and
+// the declaration, its config file last changed at changed, and — when
+// deployed is set — the config file as it was when the pool's app version was
+// created.
+func imageOutput(config, declaration, changed, deployed string) string {
+	var b strings.Builder
+	b.WriteString("zcp-image 1\n")
+	fmt.Fprintf(&b, "F %d zerops.yaml\n%s\n", len(config), config)
+	fmt.Fprintf(&b, "F %d .zcp/dev-servers.json\n%s\n", len(declaration), declaration)
+	fmt.Fprintf(&b, "C %s\n", changed)
+	if deployed != "" {
+		fmt.Fprintf(&b, "P %d zerops.yaml\n%s\n", len(deployed), deployed)
+	}
+	b.WriteString("zcp-image-end\n")
+	return b.String()
+}
+
+// TestPoolMigrateImage_Current_DecidedByThePoolsOwnSetup: a pool's image is
+// stale only when its own setup changed after its app version was built — an
+// edit of another part's setup in the same zerops.yaml leaves it current.
+// Odin rebuilt five healthy pools after fixing the edge pool's setup, because
+// any change of the file made every pool's image step current again
+// (2026-10-27).
+func TestPoolMigrateImage_Current_DecidedByThePoolsOwnSetup(t *testing.T) {
+	t.Parallel()
+	ready := imageReadyYAML()
+	edge := "  - setup: edgepool\n    run:\n      base: nodejs@22\n      start: zcp-devsup run\n"
+	tests := []struct {
+		name        string
+		config      string
+		deployed    string
+		wantCurrent bool
+	}{
+		{name: "another part's setup was added since", config: ready + edge, deployed: ready, wantCurrent: true},
+		{name: "another part's setup changed since", config: strings.Replace(ready, "        - zsc noop\n", "        - zsc noop --silent\n", 1), deployed: ready, wantCurrent: true},
+		{name: "the pool's own setup changed since", config: ready, deployed: strings.Replace(ready, "npm ci", "npm install", 1)},
+		{name: "the pool's setup was not there yet", config: ready, deployed: strings.Replace(ready, "setup: apppool", "setup: worker", 1)},
+		{name: "no config file committed by then", config: ready},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// The file's last change (08:00Z) is after the build (07:00Z).
+			read, err := parsePoolMigrateImageRead(imageOutput(tt.config, imageDeclaration, "2026-10-24T10:00:00+02:00", tt.deployed))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := checkPoolMigrateImage(imageInput(imagePool(3, imageBuilt("2026-10-24T07:00:00Z"))), read)
+			if got.Deployed == nil {
+				t.Fatalf("deployed = nil, want the pool's app version read")
+			}
+			if got.Deployed.Current != tt.wantCurrent || got.Done != (tt.wantCurrent && len(got.Missing) == 0) {
+				t.Errorf("deployed.current = %v done = %v, want current %v (%+v, missing %v)", got.Deployed.Current, got.Done, tt.wantCurrent, got.Deployed, got.Missing)
+			}
+		})
+	}
+}
+
+// imageCommitAt commits everything in root with the committer date at.
+func imageCommitAt(t *testing.T, root, at, message string) {
+	t.Helper()
+	censusGit(t, root, "add", "-A")
+	cmd := exec.CommandContext(context.Background(), "git", "commit", "-q", "-m", message)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		"GIT_COMMITTER_DATE="+at, "GIT_AUTHOR_DATE="+at,
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+}
+
+// TestReadPoolMigrateImage_AnotherSetupCommittedAfterTheBuild_StillDone runs
+// the real read: the pool setup committed before the pool's app version was
+// built, another part's setup committed after it — the pool's image step
+// stays done, in the same one round trip.
+func TestReadPoolMigrateImage_AnotherSetupCommittedAfterTheBuild_StillDone(t *testing.T) {
+	t.Parallel()
+	base := censusBase(t)
+	root := censusCleanRepo(t, base)
+	censusWrite(t, filepath.Join(root, "zerops.yaml"), imageReadyYAML())
+	censusWrite(t, filepath.Join(root, ".zcp", "dev-servers.json"), imageDeclaration)
+	imageCommitAt(t, root, "2026-10-24T08:00:00Z", "pool setup")
+	censusWrite(t, filepath.Join(root, "zerops.yaml"), imageReadyYAML()+"  - setup: edgepool\n    run:\n      base: nodejs@22\n")
+	imageCommitAt(t, root, "2026-10-24T10:00:00Z", "the edge pool's setup")
+	head := strings.TrimSpace(censusMust(t, root, "rev-parse", "HEAD"))
+
+	in := imageInput(imagePool(3, imageBuilt("2026-10-24T09:00:00.250Z")))
+	in.Root, in.Head.Head = root, head
+	ssh := &censusLocalSSH{}
+	got, err := ReadPoolMigrateImage(context.Background(), ssh, in)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.Deployed == nil || !got.Deployed.Current || !got.Done {
+		t.Fatalf("image = %+v (deployed %+v), want done: only another part's setup changed after the build", got, got.Deployed)
+	}
+	if len(ssh.calls) != 1 {
+		t.Errorf("ssh calls = %v, want one round trip", ssh.calls)
+	}
+
+	// The pool's own setup committed after the build makes the step current.
+	censusWrite(t, filepath.Join(root, "zerops.yaml"), strings.Replace(imageReadyYAML(), "npm ci", "npm install", 1))
+	imageCommitAt(t, root, "2026-10-24T11:00:00Z", "the pool's own setup")
+	in.Head.Head = strings.TrimSpace(censusMust(t, root, "rev-parse", "HEAD"))
+	got, err = ReadPoolMigrateImage(context.Background(), &censusLocalSSH{}, in)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.Deployed == nil || got.Deployed.Current || got.Done {
+		t.Fatalf("image = %+v (deployed %+v), want the pool's own setup change to need a deploy", got, got.Deployed)
+	}
+}
+
 func TestPoolMigrateImage_Uncommitted_Named(t *testing.T) {
 	t.Parallel()
 	in := imageInput(imagePool(3, nil))
@@ -536,12 +689,12 @@ func TestReadPoolMigrateImage_ReadsTheCommitNotTheTree(t *testing.T) {
 	if len(got.Missing) != 0 || got.File != "zerops.yaml" || got.PreviewPortBase != 4000 || got.Commit != head {
 		t.Fatalf("image = %+v, want the commit's ready setup and its previewPortBase 4000", got)
 	}
-	if len(ssh.calls) != 1 || ssh.calls[0] != "appdev: "+PoolMigrateImageCommand(root, head) {
+	if len(ssh.calls) != 1 || ssh.calls[0] != "appdev: "+PoolMigrateImageCommand(root, head, "") {
 		t.Fatalf("ssh calls = %v, want one round trip", ssh.calls)
 	}
 
 	// The commit's last change of zerops.yaml is when its committer said.
-	read, err := parsePoolMigrateImageRead(string(mustExec(t, ssh, PoolMigrateImageCommand(root, head))))
+	read, err := parsePoolMigrateImageRead(string(mustExec(t, ssh, PoolMigrateImageCommand(root, head, ""))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +804,7 @@ func TestReadPoolMigrateImage_SSHFailure_KeepsTheSSHError(t *testing.T) {
 // object, take a lock or touch the index or the tree.
 func TestReadPoolMigrateImage_ScriptRunsOnlyReadOnlyGit(t *testing.T) {
 	t.Parallel()
-	script := PoolMigrateImageCommand("/var/www", imageHead)
+	script := PoolMigrateImageCommand("/var/www", imageHead, "2026-10-24T09:00:00Z")
 	readOnly := map[string]bool{"cat-file": true, "log": true}
 	matches := regexp.MustCompile(`\bgit\s+([a-z-]+)`).FindAllStringSubmatch(script, -1)
 	if len(matches) == 0 {

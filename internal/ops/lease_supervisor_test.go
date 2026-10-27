@@ -269,7 +269,7 @@ func TestLeaseDevServerChecks_NoSupervisor_SaysWhatALeaseNeeds(t *testing.T) {
 			t.Parallel()
 			c := &devservertest.Container{Installed: tt.installed, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: previewDeclaration}
 
-			checks := leaseDevServerChecks(context.Background(), c, "devpool-3", "devpool")
+			checks := leaseDevServerChecks(context.Background(), c, "devpool-3", "devpool", LeasePreviewProbe{})
 
 			if len(checks) != 1 || checks[0].Name != "dev_servers" {
 				t.Fatalf("checks = %+v, want one dev_servers note", checks)

@@ -194,7 +194,8 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 		const prepareCauses = "Common causes: a package install without sudo (containers run as the zerops user); " +
 			"a package name that does not exist on the run.os image; " +
 			"reinstalling a tool the base image already provides (e.g. npm EEXIST); " +
-			"a /var/www path, which is empty during prepare (use addToRunPrepare + /home/zerops/ instead)."
+			"a /var/www path, which is empty during prepare (use addToRunPrepare + /home/zerops/ instead); " +
+			"a VM that starts a thread per core hitting the container's thread limit (\"Failed to create … thread\", \"error = 11\": cap its threads, e.g. ELIXIR_ERL_OPTIONS=\"+S 4:4 +SDcpu 2:2 +A 4\" for Elixir)."
 		if len(in.BuildLogs) > 0 {
 			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Its output is at the end of the build log (deploy response `buildLogs`, event `buildLogTail`). " + prepareCauses
 		} else {

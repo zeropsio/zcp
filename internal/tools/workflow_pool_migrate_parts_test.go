@@ -377,6 +377,55 @@ func TestPoolMigrateEnv_MultiPart_WritesOnlyTheNamedPartsPool(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateEnv_MultiPart_NoPartNamed_CopiesEveryPartsEnv: pool-env
+// without pool gives every part's settled pool the dev's env in one call —
+// Zerops Apps made six pool-env calls back to back, one per part and again
+// (2026-10-27) — and the answer lists each part past its env step.
+func TestPoolMigrateEnv_MultiPart_NoPartNamed_CopiesEveryPartsEnv(t *testing.T) {
+	t.Parallel()
+	f := multiPartFixture(t, partProvisioned, partProvisioned, func(f *poolMigrateFixture) {
+		f.input.Action = actionPoolEnv
+	})
+	out, mock := f.runEnv(t)
+	if out["action"] != actionPoolEnv {
+		t.Fatalf("action = %v", out["action"])
+	}
+	for _, id := range []string{"svc-webpool", "svc-apipool"} {
+		rows, _ := mock.GetServiceEnv(context.Background(), id)
+		keys := map[string]bool{}
+		for _, r := range rows {
+			keys[r.Key] = true
+		}
+		if !keys["APP_URL"] || !keys["STRIPE_SECRET"] {
+			t.Errorf("%s env = %v, want the dev's env copied in the one call", id, rows)
+		}
+	}
+	for _, p := range answerParts(t, out) {
+		if p["step"] == "env" {
+			t.Errorf("part %v is still at its env step: %v", p["stage"], answerParts(t, out))
+		}
+	}
+}
+
+// TestPoolMigrate_MultiPart_EnvStep_NextCopiesEveryPart: a part at its env
+// step names the pool-env call without a pool — the one call that gives every
+// part's pool its env — so the agent makes one call, not one per part.
+func TestPoolMigrate_MultiPart_EnvStep_NextCopiesEveryPart(t *testing.T) {
+	t.Parallel()
+	f := multiPartFixture(t, partProvisioned, partProvisioned, nil)
+	out, _ := f.run(t)
+	if out["step"] != "env" {
+		t.Fatalf("step = %v, want env", out["step"])
+	}
+	tool, args := poolMigrateNextArgs(out)
+	if tool != "zerops_workflow" || args["action"] != actionPoolEnv || args["service"] != "appdev" {
+		t.Fatalf("next = %v %v, want pool-env of appdev", tool, args)
+	}
+	if _, named := args["pool"]; named {
+		t.Errorf("next names pool %v: one pool-env call without it copies every part's env", args["pool"])
+	}
+}
+
 // newMultiPartRetireRig is appdev with web leased and api as far as given,
 // under the retire's rig: its repository real, its mount up, each pool's
 // orchestrator listing zcp's lease <pool>-1 held.

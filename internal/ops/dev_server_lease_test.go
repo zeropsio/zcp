@@ -156,7 +156,12 @@ func TestLeasePreviewURL_BuiltFromThePoolsSubdomainAndThePreviewPort(t *testing.
 	}{
 		{name: "the slot's port is declared with httpSupport", client: poolClient(0, httpPorts...), port: 9003, want: "https://devpool-abc1-9003.prg1.zerops.app"},
 		{name: "a port the pool does not declare", client: poolClient(0, httpPorts...), port: 9009},
-		{name: "a port without httpSupport", client: poolClient(0, platform.Port{Port: 9003}), port: 9003},
+		// A pool reports its preview ports without httpSupport while its
+		// subdomain is off — the flag follows the subdomain — and right after
+		// it was switched on (2026-10-27, every pool of three sessions): the
+		// lease's preview port, previewPortBase + its stable number, is
+		// declared all the same, and its subdomain serves it.
+		{name: "a declared preview port the pool reports without httpSupport", client: poolClient(0, platform.Port{Port: 9003, Protocol: "tcp"}), port: 9003, want: "https://devpool-abc1-9003.prg1.zerops.app"},
 		{name: "no preview port", client: poolClient(0, httpPorts...), port: 0},
 	}
 	for _, tt := range tests {

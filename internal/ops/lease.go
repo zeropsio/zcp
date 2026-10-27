@@ -92,6 +92,13 @@ type LeaseDeps struct {
 	// GroupLockWait bounds a release's wait for its branch's lock
 	// (lockReleaseGroup); zero means leaseReleaseGroupWait.
 	GroupLockWait time.Duration
+	// PublicAccess runs, for each lease an acquire took and started the
+	// supervisor of, the public-access step of the lease's pool that
+	// zerops_dev_server's start runs (the tools layer's ensurePublicAccess:
+	// its eligibility, intent and enable-once stamp) — once per pool, as an
+	// acquire takes one lease per pool — and answers whether the pool's
+	// subdomain serves now, and a note on what it could not do. nil runs none.
+	PublicAccess func(ctx context.Context, alias string) (on bool, note string)
 }
 
 // now reads zcp's clock.

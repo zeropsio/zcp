@@ -178,11 +178,19 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		})
 		rewire.Wait()
 		// Each lease taken reports its dev servers as the acquire leaves
-		// them: one read, nothing waited for (DP-30).
+		// them: one read, nothing waited for (DP-30) — after its pool's
+		// public access is on, so the preview server's URL answers.
 		runMembers(fresh, func(m *groupMember) {
-			if m.supervised {
-				m.view.DevServers = acquiredDevServers(ctx, d, m.rec)
+			if !m.supervised {
+				return
 			}
+			on := false
+			if d.PublicAccess != nil {
+				var note string
+				on, note = d.PublicAccess(ctx, m.rec.alias())
+				m.view.Note = joinNotes(m.view.Note, note)
+			}
+			m.view.DevServers = acquiredDevServers(ctx, d, m.rec, on)
 		})
 	}
 	views := make([]LeaseView, 0, len(members))

@@ -205,6 +205,8 @@ type poolMigrateFixture struct {
 	rt        runtime.Info
 	input     WorkflowInput
 	hqAddress func() string
+	// devsup is the zcp-devsup source the image step names a line from.
+	devsup DevsupSource
 	// stateDir and mock persist across the fixture's calls once built.
 	stateDir string
 	mock     *platform.Mock
@@ -266,7 +268,7 @@ func (f *poolMigrateFixture) build(t *testing.T) {
 }
 
 func (f *poolMigrateFixture) deps() poolMigrateDeps {
-	return poolMigrateDeps{projectID: "proj-1", client: f.mock, ssh: f.ssh, stateDir: f.stateDir, rt: f.rt, hqAddress: f.hqAddress}
+	return poolMigrateDeps{projectID: "proj-1", client: f.mock, ssh: f.ssh, stateDir: f.stateDir, rt: f.rt, hqAddress: f.hqAddress, devsup: f.devsup}
 }
 
 // run is the read side's call; runEnv is action="pool-env".
@@ -470,6 +472,53 @@ func TestPoolMigrate_StepFromLiveState_NoPool_Provision(t *testing.T) {
 				if m["step"] != wantSteps[i] || m["state"] != wantState {
 					t.Errorf("steps[%d] = %v, want %s/%s", i, m, wantSteps[i], wantState)
 				}
+			}
+		})
+	}
+}
+
+// TestPoolMigrate_Provision_StanzaCarriesTheDevsPublicAccess: the pool takes
+// the dev service's public-access intent — its leases' previews are the
+// part's public addresses from then on — so the stanza switches the pool's
+// subdomain on unless the person switched the dev's off. All three sessions
+// of 2026-10-27 imported a pool without it and found every preview dark (502)
+// until the agent enabled each pool's subdomain by hand.
+func TestPoolMigrate_Provision_StanzaCarriesTheDevsPublicAccess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*poolMigrateFixture)
+		want   bool
+	}{
+		{name: "no intent recorded (auto)", want: true},
+		{name: "the dev's subdomain is on", mutate: func(f *poolMigrateFixture) {
+			f.services[0].SubdomainAccess = true
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessSubdomain})
+		}, want: true},
+		{name: "the person switched the dev's public access off", mutate: func(f *poolMigrateFixture) {
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessNone})
+		}},
+		{name: "zcp enabled the dev's subdomain once and the person switched it off since", mutate: func(f *poolMigrateFixture) {
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessAuto, SubdomainEnabledByZcpAt: "2026-10-24T09:00:00Z"})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPoolMigrateFixture()
+			if tt.mutate != nil {
+				tt.mutate(&f)
+			}
+			out, _ := f.run(t)
+			if out["step"] != "provision" {
+				t.Fatalf("step = %v, want provision", out["step"])
+			}
+			content := poolMigrateNextContent(t, out)
+			if got := strings.Contains(content, "enableSubdomainAccess: true"); got != tt.want {
+				t.Errorf("stanza enables the subdomain = %v, want %v:\n%s", got, tt.want, content)
+			}
+			if errs := schema.ValidateImportYAML(content); len(errs) > 0 {
+				t.Fatalf("stanza fails the import schema: %v\n%s", errs, content)
 			}
 		})
 	}
@@ -1105,5 +1154,60 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// poolMigrateToolCall calls zerops_workflow on srv with args and answers the
+// JSON and its size in bytes.
+func poolMigrateToolCall(t *testing.T, srv *mcp.Server, args map[string]any) (map[string]any, int) {
+	t.Helper()
+	res := callTool(t, srv, "zerops_workflow", args)
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("zerops_workflow %v: %s", args, text)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, text)
+	}
+	return out, len(text)
+}
+
+// TestPoolMigrate_Guidance_EachAtomOncePerFlow: an answer carries each step's
+// guidance once — the plan and the move step's on the first answer, a step's
+// own when the flow reaches it — and a later answer only names what it sent
+// already, with the call that repeats it in full: action="status", for
+// recovery after a compaction. The three sessions of 2026-10-27 received the
+// whole growing guidance, 6–19 KB, on every answer (~110–210 KB a session).
+func TestPoolMigrate_Guidance_EachAtomOncePerFlow(t *testing.T) {
+	t.Parallel()
+	f := poolEnvFixture()
+	f.build(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, f.mock, nil, "proj-1", nil, nil, nil, f.stateDir, "zcp", nil, f.ssh, f.rt, "")
+	read := map[string]any{"workflow": "pool-migrate", "service": "appdev"}
+	const plan, envAtom = "### Move a part's dev service onto a dev pool", "### Give a part's pool the dev service's env"
+
+	first, firstBytes := poolMigrateToolCall(t, srv, read)
+	if g, _ := first["guidance"].(string); !strings.Contains(g, plan) || !strings.Contains(g, envAtom) {
+		t.Fatalf("the first answer lacks the plan or the env step's guidance:\n%s", g)
+	}
+	second, secondBytes := poolMigrateToolCall(t, srv, read)
+	if second["step"] != first["step"] {
+		t.Fatalf("step = %v, then %v", first["step"], second["step"])
+	}
+	g, _ := second["guidance"].(string)
+	if strings.Contains(g, plan) || strings.Contains(g, envAtom) {
+		t.Errorf("the second answer repeats guidance it sent already:\n%s", g)
+	}
+	if !strings.Contains(g, `action="status"`) {
+		t.Errorf("the second answer does not name the call that repeats the guidance in full:\n%s", g)
+	}
+	if secondBytes*2 > firstBytes {
+		t.Errorf("the second answer is %d bytes against the first's %d, want under half", secondBytes, firstBytes)
+	}
+	status, _ := poolMigrateToolCall(t, srv, map[string]any{"workflow": "pool-migrate", "action": "status", "service": "appdev"})
+	if g, _ := status["guidance"].(string); !strings.Contains(g, plan) || !strings.Contains(g, envAtom) || status["step"] != first["step"] {
+		t.Errorf("action=status answers step %v without the whole guidance:\n%s", status["step"], g)
 	}
 }

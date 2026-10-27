@@ -171,6 +171,9 @@ type poolMigrateResponse struct {
 	Warnings []string             `json:"warnings,omitempty"`
 	Guidance string               `json:"guidance"`
 	Inputs   poolMigrateInputs    `json:"inputs"`
+	// guidance is Guidance by atom, for the call's rendering of it
+	// (poolMigrateGuidanceSent.render).
+	guidance []poolMigrateGuidancePart
 }
 
 type poolMigrateStepState struct {
@@ -215,6 +218,14 @@ type poolMigrateDeps struct {
 	// hqAddress is the address of this Mate's HQ, "" without one: where the
 	// dev service's origin is in a Mate.
 	hqAddress func() string
+	// devsup finds the zcp-devsup this zcp installs: the line the image step
+	// names for a pool setup that installs none.
+	devsup DevsupSource
+	// guidance remembers the guidance each flow was sent, so an answer
+	// carries each atom once; nil sends every answer's in full.
+	guidance *poolMigrateGuidanceSent
+	// fullGuidance sends this call's guidance in full (action="status").
+	fullGuidance bool
 }
 
 // poolMigrateCall is what a call read before it acts on a settled pool.
@@ -263,13 +274,13 @@ func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput)
 	case failed != nil:
 		return failed, nil, nil
 	case final != nil:
-		return jsonResult(*final), nil, nil
+		return d.respond(*final), nil, nil
 	}
 	resp, failed := dr.answer(ctx, d)
 	if failed != nil {
 		return failed, nil, nil
 	}
-	return jsonResult(resp), nil, nil
+	return d.respond(resp), nil, nil
 }
 
 // handlePoolMigrateEnv is the env step, zerops_workflow workflow="pool-migrate"
@@ -289,6 +300,22 @@ func handlePoolMigrateEnv(
 	return poolMigrateEnvRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }}, input)
 }
 
+// poolMigrateHandler is the handler of a pool-migrate call the tool answers
+// with its configured deps — the env step, the read side with or without
+// action="start", and action="status" (the read side with the flow's whole
+// guidance) — nil for any other call.
+func poolMigrateHandler(input WorkflowInput) func(context.Context, poolMigrateDeps, WorkflowInput) (*mcp.CallToolResult, any, error) {
+	switch {
+	case input.Action == actionPoolEnv:
+		return poolMigrateEnvRun
+	case input.Workflow == workflowPoolMigrate && (input.Action == "" || input.Action == actionStart):
+		return poolMigrateRun
+	case input.Workflow == workflowPoolMigrate && input.Action == actionStatus:
+		return poolMigrateStatusRun
+	}
+	return nil
+}
+
 func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if wf := strings.TrimSpace(input.Workflow); wf != "" && wf != workflowPoolMigrate {
 		return convertError(platform.NewPlatformError(
@@ -303,19 +330,19 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 		return failed, nil, nil
 	case final != nil:
 		final.Action = actionPoolEnv
-		return jsonResult(*final), nil, nil
+		return d.respond(*final), nil, nil
 	}
-	// A dev serving several parts reads every part first: the answer lists
-	// them, and a call naming none copies the env of the part the read side
-	// walks.
+	// A dev serving several parts, called without a part, gives every part's
+	// settled pool its env in this one call.
 	part := dr.selected
+	if dr.multiPart() && part < 0 {
+		return poolMigrateEnvEveryPart(ctx, d, dr, input)
+	}
+	// A part named of several reads every part first: the answer lists them.
 	var answers []poolMigrateResponse
 	if dr.multiPart() {
 		if answers, failed = dr.partAnswers(ctx, d); failed != nil {
 			return failed, nil, nil
-		}
-		if part < 0 {
-			part = max(dr.current(answers), 0)
 		}
 	}
 	answered := func(resp poolMigrateResponse) (*mcp.CallToolResult, any, error) {
@@ -324,7 +351,7 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 			resp = dr.partsAnswer(answers, part)
 		}
 		resp.Action = actionPoolEnv
-		return jsonResult(resp), nil, nil
+		return d.respond(resp), nil, nil
 	}
 	call, final, failed := dr.partRead(ctx, d, part)
 	switch {
@@ -389,9 +416,9 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 		Workflow: workflowPoolMigrate,
 		Phase:    workflow.PhasePoolMigrateActive,
 		Service:  service,
-		Guidance: atomBody(corpus, poolMigrateAtomID),
 		Inputs:   poolMigrateInputs{Service: service, Pool: poolInput},
 	}
+	resp.addGuidance(corpus, poolMigrateAtomID)
 	refused := func(refusals ...poolMigrateRefusal) (*poolMigrateDevRead, *poolMigrateResponse, *mcp.CallToolResult) {
 		r := poolMigrateRefused(resp, refusals...)
 		return nil, &r, nil
@@ -495,9 +522,7 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 		changes, _ = workflow.PeekHQChanges(stateDir)
 	}
 	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt, changes)
-	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
-		resp.Guidance += "\n\n" + move
-	}
+	resp.addGuidance(corpus, poolMigrateMoveAtomID)
 	return &poolMigrateDevRead{
 		input: input, resp: resp, corpus: corpus, meta: meta, dev: devSvc,
 		byName: byName, services: live, parts: parts, selected: selected,
@@ -526,7 +551,7 @@ func (dr *poolMigrateDevRead) partRead(ctx context.Context, d poolMigrateDeps, i
 		}
 	}
 	if !poolLive {
-		stanza, warnings, err := renderPoolStanza(ctx, d.client, partDev, pool, d.rt.ServiceName)
+		stanza, warnings, err := renderPoolStanza(ctx, d.client, partDev, pool, d.rt.ServiceName, poolMigratePublicAccess(dr.meta, partDev))
 		if err != nil {
 			return nil, nil, convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus())
 		}
@@ -665,17 +690,21 @@ func poolMigrateSettledAnswer(ctx context.Context, d poolMigrateDeps, call *pool
 			Why: fmt.Sprintf("zcp could not read %s on %s, so the person gives the pool its value.", req.Key, call.partDev.Name),
 		})
 	}
-	if envAtom := atomBody(call.corpus, poolMigrateEnvAtomID); envAtom != "" {
-		resp.Guidance += "\n\n" + envAtom
-	}
+	resp.addGuidance(call.corpus, poolMigrateEnvAtomID)
 	if env.Done {
 		return poolMigrateImageAnswer(ctx, d, call, resp)
 	}
 	args := map[string]string{"workflow": workflowPoolMigrate, "action": actionPoolEnv, "service": call.dev.Name, "pool": call.pool.Name}
+	why := "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you."
+	if len(call.partPools) > 0 {
+		// One call without a part gives every part's settled pool its env.
+		delete(args, "pool")
+		why = "zcp gives every part's pool the dev service's own env itself in this one call, secrets included, writing only what differs; no value passes through you."
+	}
 	return poolMigrateAt(resp, poolMigrateStepEnv, &poolMigrateNext{
 		Tool: "zerops_workflow",
 		Args: args,
-		Why:  "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you.",
+		Why:  why,
 	}, "")
 }
 
@@ -699,6 +728,13 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		DevSetup:              call.meta.PrimarySetupName,
 		FallbackMaxContainers: poolMigrateMaxContainers,
 		PartPools:             call.partPools,
+		InstallURL: func() string {
+			url, err := d.devsup.URL(ctx)
+			if err != nil {
+				return ""
+			}
+			return url
+		},
 	})
 	if err != nil {
 		// The census just read the dev, so this is no refusal: the step
@@ -708,9 +744,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 				". Call again: the image step names a deploy only once it has checked the commit.")
 	}
 	resp.Image = image
-	if imageAtom := atomBody(call.corpus, poolMigrateImageAtomID); imageAtom != "" {
-		resp.Guidance += "\n\n" + imageAtom
-	}
+	resp.addGuidance(call.corpus, poolMigrateImageAtomID)
 	short := poolMigrateShortCommit(image.Commit)
 	switch {
 	case image.Done:
@@ -727,7 +761,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 	}
 	why := fmt.Sprintf("Builds the pool's image from setup %q in commit %s, never the dev service's working tree; it reaches only containers the pool creates after it.", image.Setup, short)
 	if image.Deployed != nil {
-		why += " The app version the pool runs was not created after the last change of " + image.File + " up to that commit."
+		why += fmt.Sprintf(" The app version the pool runs was built before setup %q last changed in %s up to that commit.", image.Setup, image.File)
 	}
 	if len(image.Uncommitted) > 0 {
 		why += fmt.Sprintf(" Your changes to %s are not in that commit: commit them first and call again to ship them.", strings.Join(image.Uncommitted, " and "))
@@ -746,9 +780,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 // such a lease by its own records. The retire itself asks the pool's
 // orchestrator and verifies the lease; this reads neither, and writes nothing.
 func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMigrateResponse) poolMigrateResponse {
-	if retire := atomBody(call.corpus, poolRetireAtomID); retire != "" {
-		resp.Guidance += "\n\n" + retire
-	}
+	resp.addGuidance(call.corpus, poolRetireAtomID)
 	dev, pool := call.dev.Name, call.pool.Name
 	wb := resp.WorkBranch
 	if wb == nil || wb.Branch == "" {
@@ -963,11 +995,14 @@ type poolStanzaDoc struct {
 }
 
 type poolStanzaService struct {
-	Hostname            string              `yaml:"hostname"`
-	Type                string              `yaml:"type"`
-	MinContainers       int                 `yaml:"minContainers"`
-	MaxContainers       int                 `yaml:"maxContainers"`
-	VerticalAutoscaling *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
+	Hostname      string `yaml:"hostname"`
+	Type          string `yaml:"type"`
+	MinContainers int    `yaml:"minContainers"`
+	MaxContainers int    `yaml:"maxContainers"`
+	// EnableSubdomainAccess switches the pool's subdomain on: each lease's
+	// preview is the pool's subdomain on the lease's preview port.
+	EnableSubdomainAccess bool                `yaml:"enableSubdomainAccess,omitempty"`
+	VerticalAutoscaling   *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
 	// Vault holds the pool's own service env. A service-level envVariables
 	// block is deprecated in the import schema, and sshIsolation reaches the
 	// pool's containers only as a service env variable.
@@ -986,16 +1021,19 @@ type poolStanzaVertical struct {
 
 // renderPoolStanza renders the import the provision step names: the pool
 // hostname, swarm@1, no containers until a lease asks for one, at most
-// poolMigrateMaxContainers, the dev service's own vertical scale (read by id,
-// a direct read), and the sshIsolation that admits this zcp service. It never
-// carries a credential: GIT_TOKEN reaches the pool in the env step.
-func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.ServiceStack, pool, zcpHostname string) (string, []string, error) {
+// poolMigrateMaxContainers, the subdomain on when publicAccess says the dev's
+// public access carries over (poolMigratePublicAccess), the dev service's own
+// vertical scale (read by id, a direct read), and the sshIsolation that admits
+// this zcp service. It never carries a credential: GIT_TOKEN reaches the pool
+// in the env step.
+func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.ServiceStack, pool, zcpHostname string, publicAccess bool) (string, []string, error) {
 	svc := poolStanzaService{
-		Hostname:      pool,
-		Type:          poolMigratePoolType,
-		MinContainers: poolMigrateMinContainers,
-		MaxContainers: poolMigrateMaxContainers,
-		Vault:         map[string]string{"sshIsolation": "vpn service@" + zcpHostname},
+		Hostname:              pool,
+		Type:                  poolMigratePoolType,
+		MinContainers:         poolMigrateMinContainers,
+		MaxContainers:         poolMigrateMaxContainers,
+		EnableSubdomainAccess: publicAccess,
+		Vault:                 map[string]string{"sshIsolation": "vpn service@" + zcpHostname},
 	}
 	var warnings []string
 	scaling, err := ops.FetchServiceScaling(ctx, client, dev.ID)
@@ -1023,6 +1061,20 @@ func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.
 		return "", nil, fmt.Errorf("encode: %w", err)
 	}
 	return buf.String(), warnings, nil
+}
+
+// poolMigratePublicAccess reports whether the part's pool switches its
+// subdomain on at import: its leases' previews are the part's public
+// addresses from then on, so the pool takes the dev service's public-access
+// intent, reconciled with the dev's observed subdomain (docs/spec-workflows.md
+// §8 O3) — on unless the person switched the dev's public access off.
+func poolMigratePublicAccess(meta *workflow.ServiceMeta, dev platform.ServiceStack) bool {
+	observed := topology.PublicAccessObserved{Subdomain: topology.SubdomainOff}
+	if dev.SubdomainAccess {
+		observed.Subdomain = topology.SubdomainOn
+	}
+	rec, _ := topology.ReconcilePublicAccess(meta.PublicAccessFor(dev.Name), observed)
+	return rec.Intent != topology.PublicAccessNone
 }
 
 // poolMigrateAt answers a candidate's current step.

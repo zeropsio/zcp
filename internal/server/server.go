@@ -335,9 +335,19 @@ func (s *Server) registerTools() {
 	// (deploy-decomp Phase 7).
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
+	// The zcp-devsup a dev setup installs (docs/spec-mate.md §2.8a.2): the
+	// newest published release's asset unless ZCP_DEVSUP_URL names a build.
+	devsup := tools.DevsupSource{
+		Latest: func(ctx context.Context) (string, error) {
+			return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
+		},
+		Override: os.Getenv("ZCP_DEVSUP_URL"),
+	}
+
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost,
-		tools.WithPoolOrchestratorsForWorkflow(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
+		tools.WithPoolOrchestratorsForWorkflow(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})),
+		tools.WithDevsupForWorkflow(devsup))
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir, wfEngine)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
@@ -355,14 +365,6 @@ func (s *Server) registerTools() {
 	// adoption gate so cross-deploys (e.g. `apidev → apistage`) succeed
 	// before any bootstrap workflow runs. Nil outside authoring mode.
 	if s.sshDeployer != nil {
-		// The zcp-devsup a dev setup installs (docs/spec-mate.md §2.8a.2): the
-		// newest published release's asset unless ZCP_DEVSUP_URL names a build.
-		devsup := tools.DevsupSource{
-			Latest: func(ctx context.Context) (string, error) {
-				return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
-			},
-			Override: os.Getenv("ZCP_DEVSUP_URL"),
-		}
 		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup,
 			tools.WithPoolOrchestratorsForDeploy(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
