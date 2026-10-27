@@ -112,6 +112,13 @@ func originWithdraw(in OriginInput) *mcp.CallToolResult {
 	})
 }
 
+// originWithdrawWords says how an ask is taken back once the agent no
+// longer needs the pick: withdrawn, so Mate closes its card — never said in
+// chat to be outdated.
+func originWithdrawWords(req ops.OriginRequest) string {
+	return fmt.Sprintf("Should you no longer need their pick — re-planned, the repository gone, asked by mistake — withdraw it (`zerops_origin action=\"withdraw\" url=%q repo=%q`): Mate closes its card; never say in chat that it is outdated.", req.URL, req.Repo)
+}
+
 // originAnswerOf answers a checked request from the Mate's state in HQ:
 // connected when the asked address already is the origin of the asked
 // repository, or of another one of the application; else asked, also by an
@@ -133,14 +140,14 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 	if !ops.IsGitHubRepository(req.URL) {
 		return originAnswer{
 			Requested: &originRequested{Origin: req},
-			NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether %[2]s follows %[1]s — a repository outside GitHub is only followed, never pushed to; the code is kept in Mate. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you how it ended. Followed: take the code from HQ — %[3]s — then %[4]s; only a public one can be fetched. Declined: nothing changes. End your turn.",
-				req.URL, req.Repo, originFromHQ(dir), originFollowed(req, dir)),
+			NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether %[2]s follows %[1]s — a repository outside GitHub is only followed, never pushed to; the code is kept in Mate. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you how it ended. Followed: take the code from HQ — %[3]s — then %[4]s; only a public one can be fetched. Declined: nothing changes. %[5]s End your turn.",
+				req.URL, req.Repo, originFromHQ(dir), originFollowed(req, dir), originWithdrawWords(req)),
 		}
 	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. Which they picked, that message says. %[4]s %[5]s Declined: nothing changes. End your turn.",
-			req.URL, req.Repo, originFromHQ(dir), "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir)),
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. Which they picked, that message says. %[4]s %[5]s Declined: nothing changes. %[6]s End your turn.",
+			req.URL, req.Repo, originFromHQ(dir), "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir), originWithdrawWords(req)),
 	}
 }
 
