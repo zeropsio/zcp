@@ -3,6 +3,7 @@ package bundle
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -165,19 +166,27 @@ func withoutMateSources(sources []string) ([]string, bool) {
 
 // groupEnvironmentSetup names the setup a group environment builds for a part
 // whose stage builds setup. A stage builds the setup production builds, so a
-// Mate lets the preview pane frame its stage through Mate's preview variant of
-// it: a setup whose own `run` lets the pane frame the app and that `extends`
-// one other setup of the zerops.yaml. A group environment builds the setup the
-// variant extends — the application's stage and production keep the app's own
-// framing — and any other setup as it is. warning is non-empty for a framed
-// setup a group environment builds framed.
+// Mate gives its stage Mate's preview variant of it: a setup that `extends`
+// one other setup of the zerops.yaml and carries what only that Mate's project
+// has — its own `run` lets Mate's preview pane frame the app, or it names an
+// address on a Zerops subdomain (the Mate's stage as the app's address, a
+// cookie domain), which no group environment has. A page that forbids framing
+// gets a variant that frames nothing and only points its addresses (Zerops
+// Apps' hq and box). A group environment builds the setup the variant extends
+// — one level, to a setup the zerops.yaml declares and that does not let the
+// pane frame the app — so the application's stage and production keep the
+// app's own framing and addresses; any other setup it builds as it is, one
+// that extends another and carries neither (production over a shared base)
+// too. warning is non-empty for a framed setup a group environment builds
+// framed.
 func groupEnvironmentSetup(r GroupRuntime, setup string) (environmentSetup, warning string) {
 	entries := zeropsYAMLSetupEntries(r.ZeropsYAMLBody)
 	entry, ok := entries[setup]
 	if !ok {
 		return setup, ""
 	}
-	if _, framed := WithoutMateFraming(entry["run"]); !framed {
+	_, framed := WithoutMateFraming(entry["run"])
+	if !framed && !namesZeropsSubdomainAddress(entry) {
 		return setup, ""
 	}
 	if bases := yamlExtendsNames(entry["extends"]); len(bases) == 1 && bases[0] != setup {
@@ -187,9 +196,38 @@ func groupEnvironmentSetup(r GroupRuntime, setup string) (environmentSetup, warn
 			}
 		}
 	}
+	if !framed {
+		return setup, ""
+	}
 	return setup, fmt.Sprintf(
 		"runtime %q: its stage's setup %q lets Mate's preview pane frame the app, and the application's stage and production build it framed — give the stage a setup that extends the production setup and changes only the framing, and deploy the stage with it",
 		r.DevHostname, setup)
+}
+
+// zeropsSubdomainAddress is a host on a Zerops subdomain (zeropsSubdomainSuffix,
+// zeropsDevSubdomainSuffix) anywhere in a value: a service's own public
+// address, with or without its scheme, a template such as
+// `appstage-${zeropsSubdomainHost}-3000.prg1.zerops.app` among them.
+var zeropsSubdomainAddress = regexp.MustCompile(`(?i)[a-z0-9*-]\.(?:[a-z0-9-]+\.)*zerops\.(?:app|dev)\b`)
+
+// namesZeropsSubdomainAddress reports whether v — a string, or a mapping or
+// list parsed from YAML — names an address on a Zerops subdomain: an address
+// of the project the setup was written in, which a reference such as
+// `${zeropsSubdomain}` is not.
+func namesZeropsSubdomainAddress(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return zeropsSubdomainAddress.MatchString(v)
+	case map[string]any:
+		for _, item := range v {
+			if namesZeropsSubdomainAddress(item) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(v, namesZeropsSubdomainAddress)
+	}
+	return false
 }
 
 // GroupEnvironmentSetup is the setup a group environment builds for a part of
