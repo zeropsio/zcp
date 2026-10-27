@@ -82,9 +82,11 @@ Every fact has one owner and one path to the client:
 Touchpoints between mate and zcp, closed list:
 
 - the envelope carried in tool results (§1);
-- `zcp` argv, a closed list: `zcp mate status` / `zcp mate update` (§2.9 MU-2) and `zcp studio
-  console serve`, the loopback data console the mate server hosts and brokers (§5.7). The mate server
-  runs no other `zcp` argv; the agent sign-in flag it writes through the Zerops API (§8.1);
+- `zcp` argv, a closed list (MA-6): `zcp mate status` / `zcp mate update` (§2.9 MU-2), `zcp studio
+  console serve`, the loopback data console the mate server hosts and brokers (§5.7), `zcp version`,
+  `zcp lease release` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35) and
+  `zcp self restart` (§2.9 step 7, MU-4). The mate server runs no other `zcp` argv; the agent
+  sign-in flag it writes through the Zerops API (§8.1);
 - `zcp init` installing and supervising the mate unit, and the contract that goes with it (§2.8);
 - the agent-browser daemon's published stream port, `~/.agent-browser/default.stream`, on
   localhost — read by the mate server, never written by it, unknown to zcp as a mate concern;
@@ -99,7 +101,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, and `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0). `scripts/mate-boundaries.test.ts`. |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0), and `self restart --json` (§2.9 step 7, MU-4: once the Mate has drained, gated on `zcp version` ≥ 9.226.0). `scripts/mate-boundaries.test.ts`. |
 | MA-7 | The Mate server sends `ZCP_API_KEY` only to HQ, in the first frame of its link, and to Zerops, for its own flag write (§8.1); it never forwards it anywhere else. Test to be written (`ZeropsHqLink`). |
 
 ## 1. Envelope on the wire
@@ -394,6 +396,22 @@ web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
 completed sign-in seed as `signIns: {state, input?, at, error?}` (§10.5); `input` is an opaque
 fingerprint of HQ's origin and the project key, never the key. The text status names the same state and reason.
 
+The same status says whether a container restart, which installs both halves (§2.9 step 7), would
+change anything. **`zcp: {installed, latest, behind}`**, always present, is this binary (its
+version in `installed`) against the zcp release `install.sh` installs (GitHub's `releases/latest`
+for `zeropsio/zcp`), read through zcp's own update cache (`~/.cache/zcp/update.json`) with the
+manifest's one-hour TTL, beside the manifest read; `--refresh` asks the release source, `--local`
+reads only the cache. `latest` is `""` while that release is unknown (offline, rate-limited, nothing
+cached under `--local`), never guessed, and for a build no release names (a dev or git-describe
+build), which never reaches the network: a restart would replace it. Only a release older than a
+known `latest` reads `behind: true`. **`restartNeeded`** is always
+present, and **`why`**, one line for a person, only when it is true: zcp is behind ("zcp v9.226.0 is
+out; a restart installs it"), or the running Mate answered its loopback updater readiness with
+exactly 404 — older than protocol 1, §2.1d — while a newer Mate is out, which the restart installs.
+The Mate is asked only in an enabled Mate container (elsewhere 3773 is an ordinary user port), only
+when `updateAvailable`, and never under `--local`; any other answer is no reason. The text status
+adds one line when zcp is behind, or names the restart when only the Mate needs it.
+
 ### 2.1b Disabling — the reverse direction
 
 `MateEnabled` false with a unit file present: stop the unit (best-effort — it may already be stopped),
@@ -506,7 +524,8 @@ Confirmed manual updates on protocol-capable Mates use the same drain and switch
 non-rollback-compatible manual release failing readiness stays on its candidate and reports
 that attended recovery is required; neither its worker nor boot launches an incompatible
 previous schema. Older Mates have no drain capability: while idle, perform one attended
-full container restart using the normal operator restart. `install.sh` updates zcp and
+full container restart using the normal operator restart, or `zcp self restart` in the container
+(§2.9 step 7); `zcp mate status --json` names such a Mate `restartNeeded` while a newer Mate is out. `install.sh` updates zcp and
 `zcp init` installs Mate. Verify `status --json` reports `updater.protocol:1` and Mate's
 loopback readiness advertises protocol 1 before leaving future updates unattended.
 
@@ -1652,7 +1671,9 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    version it left. `bootId` is a value of the server process, new at every start and never
    persisted, optional on the wire — older servers send none — and not part of the zcp↔mate
    contract (C-1…C-12): zcp neither writes nor reads it. Running threads stop; the client says so before
-   the click. There is no container restart in this path.
+   the click. `zcp mate update` replaces only the Mate and restarts no container. When zcp itself is
+   behind (`zcp.behind`, §2.1a) the update is a container restart instead: the Mate drains its work,
+   then runs `zcp self restart --json` (step 7).
 5. **One check: Check for updates.** The status behind the line is cache-served twice over —
    zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
    is invisible for up to two hours. The Mate menu therefore always offers "Check for updates"
@@ -1665,6 +1686,22 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    version-skew rule the thread commands already follow. The data console is `capabilities.dataConsole`;
    without it the Data surface shows one line ("This Mate doesn't include the data console yet")
    with the update line and verb from step 3–4 beside it, instead of a defect from an older server.
+7. **A restart is the update.** A container restart installs both halves: the zcp service's
+   `run.initCommands` run `install.sh` (the latest zcp release), then `zcp init` (the stable Mate,
+   §2.1a, §2.1c), then `zcp init nginx`. zcp says when one would change something:
+   `zcp mate status --json` answers `zcp: {installed, latest, behind}`, `restartNeeded` and `why`
+   (§2.1a), and the server relays them. The Mate server owns the idle check and the trigger: with
+   `restartNeeded` true it drains its work, then runs **`zcp self restart --json`**. zcp owns
+   everything that touches the platform from the container: the verb asks the platform to restart
+   the service the container is (`PUT /service-stack/{serviceId}/restart`, with the project's
+   `ZCP_API_KEY`, both read from the live env store as `zcp lease release` reads them) and, as soon
+   as the platform accepted it, exits 0 with exactly `{"processId":"…"}`, never waiting for the
+   process that stops it. Outside a container, without a key, or refused by the platform, it exits 1
+   with exactly `{"error":"…"}`, one line written for the person the Mate shows it to ("not running
+   in a Zerops container, so there is no service to restart", "the platform refused the restart:
+   …"); without `--json` it answers the same in one line of text. It is nothing Mate-shaped, so it
+   is not gated on `ZCP_MATE_ENABLED`. The Mate sends it only to `zcp version` ≥ 9.226.0, the
+   release that ships the verb: an older zcp, not knowing it, would start serve mode.
 
 **The sign-in floor.** The GUI's minimum supported Mate server version (`MINIMUM_MATE_SERVER_VERSION`) is explicit and independent of its own package version.
 **Release rule:** the hosted client's floor never exceeds the Mate version the fork's published
@@ -1685,6 +1722,7 @@ never repeatedly restarts on an uncertain response. No manually paired fallback 
 | MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field, and an update's outcome reads only the descriptor's version and `bootId` for equality with those it was pressed with. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
+| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with exactly `{"error":"…"}` and restarts nothing. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestCLIDispatch_SelfIsAVerb`. |
 
 ### 2.10 A paired Mac — Mate's mechanism, zcp's guidance
 

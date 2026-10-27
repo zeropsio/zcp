@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -45,6 +46,9 @@ func TestSubcommands_HelpOrUnknownFlag_ChangesNothing(t *testing.T) {
 		{"catalog sync --help", func() int { return runCatalog([]string{"sync", "--help"}) }, 0, "Usage: zcp catalog sync"},
 		{"catalog sync --bogus", func() int { return runCatalog([]string{"sync", "--bogus"}) }, 2, ""},
 		{"agent mark-oauth --help", func() int { runAgent([]string{"mark-oauth", "--help"}); return 0 }, 0, "Usage: zcp agent"},
+		{"self --help", selfCmd("--help"), 0, "usage: zcp self"},
+		{"self restart --help", selfCmd("restart", "--help"), 0, "usage: zcp self restart"},
+		{"self restart --bogus", selfCmd("restart", "--bogus"), 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, work := t.TempDir(), t.TempDir()
@@ -68,4 +72,13 @@ func TestSubcommands_HelpOrUnknownFlag_ChangesNothing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// selfCmd runs `zcp self <args>` in a container whose platform client a
+// help request or a mistyped flag never builds: building it fails the call.
+func selfCmd(args ...string) func() int {
+	noClient := func(string, string) (serviceRestarter, error) {
+		return nil, errors.New("a help request or a mistyped flag built the platform client")
+	}
+	return func() int { return runSelfCmd(args, os.Stdout, lookupIn(selfLiveEnv()), noClient) }
 }
