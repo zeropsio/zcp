@@ -103,7 +103,7 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := os.OpenFile(filepath.Join(dir, "group-recipe.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := os.OpenFile(filepath.Join(dir, recipePassLockFile), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -105,16 +105,20 @@ type recipeOutcome struct {
 // a tier proposed without that runtime would stay without it.
 //
 // Like the repository reconcile it is a reconcile, not a step, and nothing
-// it can meet is fatal: an HQ that does not answer, a push another process
-// moved the branch past, leaves a working project and a line saying so, and
-// the next pass tries again. A Mate that never gets its proposal through
-// loses nothing but the proposal. zcp's start in a Mate is one more pass
-// (GroupRecipeAtStart).
+// it can meet is fatal: an HQ that does not answer, another pass still
+// running when this one's call ends, a push that moved the branch past this
+// one's, leaves a working project and a line saying so, and the next pass
+// tries again. A Mate that never gets its proposal through loses nothing but
+// the proposal. zcp's start in a Mate is one more pass (GroupRecipeAtStart).
 //
 // Idempotent on CONTENT: the recipe is composed from live state on every
 // pass, and a branch that already holds the tree it would push is left as
 // it is. Nothing about the proposal is stored: each pass composes it anew
-// and finds the change in the Mate's state.
+// and finds the change in the Mate's state. That read is good only until
+// another pass writes, so passes run one at a time on the Mate, across every
+// zcp it runs (holdRecipePass): the second waits for the first and reads HQ
+// afresh — main carrying what the first landed, or the first's change —
+// rather than proposing onto a main the first already changed.
 func reconcileGroupRecipe(
 	ctx context.Context,
 	client platform.Client,
@@ -149,6 +153,11 @@ func groupRecipeOutcome(
 	rt runtime.Info,
 	stateDir string,
 ) recipeOutcome {
+	release, err := holdRecipePass(ctx, rt, stateDir)
+	if err != nil {
+		return recipeOutcome{Line: recipePassHeldLine(err)}
+	}
+	defer release()
 	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
 	if early.decided {
 		writeRecipeRequired(stateDir, early.Required)

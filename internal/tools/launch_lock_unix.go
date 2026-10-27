@@ -11,7 +11,7 @@ import (
 
 // tryLockFile attempts a non-blocking exclusive flock on f. ok=false with a
 // nil error means "already held elsewhere" (EWOULDBLOCK/EAGAIN) — a held
-// launch, not a failure.
+// launch or recipe pass, not a failure.
 func tryLockFile(f *os.File) (ok bool, err error) {
 	err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err == nil {
