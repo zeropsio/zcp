@@ -333,7 +333,13 @@ func completionLeaseServer(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	stateDir := t.TempDir()
 	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
-	return srv, orchs, LeaseDepsFor(mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	deps := LeaseDepsFor(mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	// The warm policy's creates and clones outlive the release that starts
+	// them; they finish before the state dir is removed.
+	var background sync.WaitGroup
+	deps.Warm.Go = background.Go
+	t.Cleanup(background.Wait)
+	return srv, orchs, deps
 }
 
 // TestHQPass_MergedChangesLeasesReleasedByThePass: inside a Mate the
