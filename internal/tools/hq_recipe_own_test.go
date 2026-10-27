@@ -236,3 +236,37 @@ func TestGroupRecipe_ItsOwnTiersWithTheSameShape_StayAsTheyAre(t *testing.T) {
 		t.Errorf("tiers of the same shape were proposed anew: %+v", outcome)
 	}
 }
+
+// TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre: the
+// header zcp writes into every tier is no part of what zcp compares, so a zcp
+// that words its header otherwise proposes nothing over the tiers an older
+// zcp wrote from this Mate, and still counts them its own: the mark is the
+// digest of the file as the older zcp wrote it (bundle.TierStamp), and a
+// tier's shape is the services it creates (bundle.TierShape). Once the
+// project's shape changes, its own tier is proposed anew as before.
+func TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre(t *testing.T) {
+	t.Parallel()
+	lab := newRecipeLab(t)
+	older := map[string]string{}
+	for path, body := range recipeBeforePools(t, lab, labMate) {
+		if _, _, stamped := bundle.TierStamp(body); stamped {
+			worded := strings.Replace(body, "\n#\n", "\n#\n# An older zcp worded this header otherwise.\n", 1)
+			if worded == body {
+				t.Fatalf("%s: no header paragraph to reword:\n%s", path, body)
+			}
+			body = bundle.StampTier(worded, labMate)
+		}
+		older[path] = body
+	}
+	lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, older)
+
+	if same := lab.proposeRecipe(lab.mock); same.Change != 0 || same.Committed || !same.OnMain {
+		t.Errorf("tiers an older zcp worded otherwise were proposed anew: %+v", same)
+	}
+
+	lab.moveLabPairOntoPool()
+	moved := lab.proposeRecipe(lab.mock)
+	if moved.Change == 0 || !moved.Created || len(moved.Proposed) != 1 || moved.Proposed[0] != "0 — AI Agent" {
+		t.Errorf("after the pool migration = %+v, want the AI Agent tier, still zcp's own, proposed anew", moved)
+	}
+}
