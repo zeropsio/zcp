@@ -701,7 +701,7 @@ func pageVerdict(steps []BrowserStepResult, timeout time.Duration) string {
 				status = m[1]
 			}
 			return fmt.Sprintf("The page answered HTTP %s, a server error: the commands after it did not run; its screenshot, errors, console and network requests did. "+
-				"Read the server's logs (zerops_logs, or zerops_dev_server action=logs for a dev server), fix it, then call again.", status)
+				"Read the server's logs (zerops_logs, or zerops_dev_server action=logs hostname=\"<service>\" for a dev server), fix it, then call again.", status)
 		case ErrorKindSlowPage:
 			_, note, _ := strings.Cut(*s.Error, browserSlowPageMarker)
 			return fmt.Sprintf("The page was slow, not Chrome: %s. The walk went on within timeoutSeconds (%d s); raise it for a page this slow, or call again once the server has warmed up.",
