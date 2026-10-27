@@ -28,9 +28,9 @@ import (
 //   - refused head_moved — a push arrived while Core judged — the change is
 //     pushed once more, its tree unchanged, to be judged again; once per
 //     change, so a refusal that persists never loops;
-//   - refused for anything else — recipe_changes_files, files_past_bound, a
-//     git failure — it is a person's to land or close: zcp never pushes it
-//     again for it, and the pass names it.
+//   - refused for anything else — recipe_changes_environments,
+//     files_past_bound, a git failure — it is a person's to land or close:
+//     zcp never pushes it again for it, and the pass names it.
 
 // recipeJudgedDir keeps, per change, that zcp pushed it again for a
 // head_moved refusal: <stateDir>/hq-recipe-repushed/<appID>-<number>.

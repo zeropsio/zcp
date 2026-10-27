@@ -143,6 +143,6 @@ func forgetStageOfSeveral(stateDir, hostname string) string {
 	if !hqPairWired(meta) {
 		return ""
 	}
-	return fmt.Sprintf("%s was a part of the pair %q, and the group recipe's tiers on main may still carry it: call zerops_workflow action=\"group-recipe\" service=%q to propose its removal, as a change the person reviews.",
+	return fmt.Sprintf("%s was a part of the pair %q, and the group recipe's tiers on main may still carry it: call zerops_workflow action=\"group-recipe\" service=%q to propose its removal as the Mate's recipe change.",
 		hostname, meta.Hostname, hostname)
 }

@@ -532,7 +532,8 @@ func TestGroupRecipeBlockers_NameWhatIsMissingAndTheStageItIsFor(t *testing.T) {
 // zcp's mark says, beside the targeted proposals, that zcp proposes the whole
 // file anew while it stays as zcp wrote it; and a monorepo whose parts are
 // each a pool-keyed pair on one repository is an app of several parts, whose
-// tiers take a part's service added or removed.
+// tiers take a part's service added or removed. It says nothing of who lands
+// zcp's proposals — HQ's rule, which the file on main outlives.
 func TestGroupTierHeader_SaysWhatZcpProposesIntoAMarkedTier(t *testing.T) {
 	t.Parallel()
 	layout, _, err := BuildGroupRecipe(poolMonorepoInputs())
@@ -544,5 +545,8 @@ func TestGroupTierHeader_SaysWhatZcpProposesIntoAMarkedTier(t *testing.T) {
 		if !strings.Contains(header, want) {
 			t.Errorf("the Stage tier's header does not say %q:\n%s", want, tierDocBody(t, layout, "Stage"))
 		}
+	}
+	if strings.Contains(header, "a person reviews") {
+		t.Errorf("the Stage tier's header says a person reviews zcp's proposals:\n%s", tierDocBody(t, layout, "Stage"))
 	}
 }

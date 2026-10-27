@@ -103,7 +103,7 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 		{"a host whose block the recipe already has", scalingRecipeClient(1, 0.25), "db", nil},
 		{"a host the recipe does not name", scalingRecipeClient(1, 0.25), "cache", nil},
 		{"a scale that could not be read", unreadService{scalingRecipeClient(4, 1), "svc-search"}, "search", nil},
-		{"raised past the recipe", scalingRecipeClient(4, 1), "search", []string{"minRam 2 → 4", "minFreeRamGB 0.5 → 1", `action="group-recipe" scaling="search"`, "as a change the person reviews"}},
+		{"raised past the recipe", scalingRecipeClient(4, 1), "search", []string{"minRam 2 → 4", "minFreeRamGB 0.5 → 1", `action="group-recipe" scaling="search"`, "as the Mate's recipe change"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -122,6 +122,9 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 	answer, text := lab.proposeScaling(scalingRecipeClient(4, 1), "search")
 	if answer == nil || answer.Change != 2 || answer.Branch != recipeBranch(2) {
 		t.Fatalf("scaling proposal = %s", text)
+	}
+	if !strings.Contains(text, "HQ lands the change on main by itself") || strings.Contains(text, "reviews and merges") {
+		t.Errorf("scaling proposal = %s, want it to say HQ lands the change by itself unless it changes an environment", text)
 	}
 	if change := lab.hq.changeIn(hq.RecipeRepo, 2); change == nil || change.Title != scalingTitle || change.State != hq.ChangeOpen {
 		t.Fatalf("change #2 = %+v, want it open and titled %q", change, scalingTitle)

@@ -6,7 +6,7 @@
 # person may edit it. zcp adds only a whole tier the group repo lacks; into a
 # tier it already carries, zcp proposes only a service's scale (group-recipe
 # scaling=<hostname>) or a managed service added to the Mate's project
-# (group-recipe service=<hostname>), as a change a person reviews.
+# (group-recipe service=<hostname>), as the Mate's change.
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the

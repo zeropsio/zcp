@@ -603,6 +603,8 @@ func TestPoolMigrateRetire_DiagnoseThenConfirm(t *testing.T) {
 	}
 	if gaps := strings.Join(retireStrings(block["gaps"]), " "); !strings.Contains(gaps, "recipe") || !strings.Contains(gaps, "launch") {
 		t.Errorf("gaps = %q, want the recipe and launch follow-ups named", gaps)
+	} else if !strings.Contains(gaps, "until the change zcp proposes on its next recipe pass lands") || strings.Contains(gaps, "until a person merges") {
+		t.Errorf("gaps = %q, want the recipe follow-up to wait for the change to land, not for a person", gaps)
 	}
 }
 

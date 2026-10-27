@@ -37,8 +37,8 @@ func tierEntryType(body, host string) string {
 }
 
 // A managed service added to a one-part app's Mate project is proposed into
-// every tier that lacks it, shaped by each tier's policy, as one change the
-// person reviews: the reconcile names the call and says the environments
+// every tier that lacks it, shaped by each tier's policy, as one recipe
+// change of the Mate's: the reconcile names the call and says the environments
 // already made need the service themselves; the proposal adds that service
 // alone, ahead of the runtimes, every other line — a person's edits
 // included — as main has it.
@@ -56,6 +56,9 @@ func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testi
 	}
 	if strings.Contains(outcome.Line, `service="db"`) {
 		t.Errorf("the steer names the database every tier already lists: %s", outcome.Line)
+	}
+	if !strings.Contains(outcome.Line, "to propose each as the Mate's recipe change") || strings.Contains(outcome.Line, "the person reviews") {
+		t.Errorf("the steer does not name the Mate's recipe change: %s", outcome.Line)
 	}
 
 	answer, text := lab.proposeService(client, "cache")

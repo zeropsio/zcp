@@ -81,7 +81,8 @@ func (l *hqLab) moveLabPairOntoPool() {
 // zcp wrote from this Mate before its pair moved onto a dev pool — landed by
 // Core from this Mate's proposals, before tiers carried zcp's mark, and
 // nobody's change touched since — are proposed anew once the project's shape
-// changed, as the Mate's recipe change a person reviews: the AI Agent tier
+// changed, as the Mate's recipe change, which HQ lands by itself unless its
+// merge would change an environment made from a tier: the AI Agent tier
 // gets the dev pool in the dev service's place, marked; a tier whose shape
 // did not change (Stage, Small Production: the same runtime, type, setup and
 // repository) is left as main has it, and so is every README. A person who
@@ -128,10 +129,13 @@ func TestGroupRecipe_ItsOwnTiersFromBeforeAPoolMigration_ProposedAnew(t *testing
 	if len(outcome.Proposed) != 1 || outcome.Proposed[0] != "0 — AI Agent" {
 		t.Errorf("proposed = %v, want the AI Agent tier alone", outcome.Proposed)
 	}
-	for _, want := range []string{"0 — AI Agent", "a person reviews"} {
+	for _, want := range []string{"0 — AI Agent", "HQ lands the change on main by itself", "import, stop or start a service in a stage or production environment made from a tier", "a person to merge it in Review"} {
 		if !strings.Contains(outcome.Line, want) {
 			t.Errorf("line %q does not say %q", outcome.Line, want)
 		}
+	}
+	if strings.Contains(outcome.Line, "a person reviews and merges it") {
+		t.Errorf("line %q says a person merges a change HQ may land by itself", outcome.Line)
 	}
 
 	lab.hq.closeChange(hq.RecipeRepo, outcome.Change)
@@ -234,5 +238,39 @@ func TestGroupRecipe_ItsOwnTiersWithTheSameShape_StayAsTheyAre(t *testing.T) {
 
 	if outcome.Change != 0 || outcome.Committed || !outcome.OnMain {
 		t.Errorf("tiers of the same shape were proposed anew: %+v", outcome)
+	}
+}
+
+// TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre: the
+// header zcp writes into every tier is no part of what zcp compares, so a zcp
+// that words its header otherwise proposes nothing over the tiers an older
+// zcp wrote from this Mate, and still counts them its own: the mark is the
+// digest of the file as the older zcp wrote it (bundle.TierStamp), and a
+// tier's shape is the services it creates (bundle.TierShape). Once the
+// project's shape changes, its own tier is proposed anew as before.
+func TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre(t *testing.T) {
+	t.Parallel()
+	lab := newRecipeLab(t)
+	older := map[string]string{}
+	for path, body := range recipeBeforePools(t, lab, labMate) {
+		if _, _, stamped := bundle.TierStamp(body); stamped {
+			worded := strings.Replace(body, "\n#\n", "\n#\n# An older zcp worded this header otherwise.\n", 1)
+			if worded == body {
+				t.Fatalf("%s: no header paragraph to reword:\n%s", path, body)
+			}
+			body = bundle.StampTier(worded, labMate)
+		}
+		older[path] = body
+	}
+	lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, older)
+
+	if same := lab.proposeRecipe(lab.mock); same.Change != 0 || same.Committed || !same.OnMain {
+		t.Errorf("tiers an older zcp worded otherwise were proposed anew: %+v", same)
+	}
+
+	lab.moveLabPairOntoPool()
+	moved := lab.proposeRecipe(lab.mock)
+	if moved.Change == 0 || !moved.Created || len(moved.Proposed) != 1 || moved.Proposed[0] != "0 — AI Agent" {
+		t.Errorf("after the pool migration = %+v, want the AI Agent tier, still zcp's own, proposed anew", moved)
 	}
 }

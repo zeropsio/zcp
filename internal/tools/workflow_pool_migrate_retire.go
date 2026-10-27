@@ -229,7 +229,7 @@ type poolRetireBundleView struct {
 // poolRetireGaps are the follow-ups a migrated part waits for.
 func poolRetireGaps() []string {
 	return []string{
-		"The group recipe's tiers on main still name this part's dev service until a person merges the change zcp proposes on its next recipe pass, giving the part its dev pool there (zerops_workflow action=\"group-recipe\" proposes it now); a tier a person or another Mate wrote is left as it is.",
+		"The group recipe's tiers on main still name this part's dev service until the change zcp proposes on its next recipe pass lands, giving the part its dev pool there (zerops_workflow action=\"group-recipe\" proposes it now); a tier a person or another Mate wrote is left as it is.",
 		"Launching or exporting this part to production waits for a follow-up: launch and export refuse a part whose dev half is a pool.",
 	}
 }

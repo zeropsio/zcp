@@ -20,8 +20,8 @@ import (
 // a part is added or removed, a runtime changes type. Left additive, such a
 // tier described a dev service for good (Zerops Apps and Noola, 2026-10-27).
 // So zcp proposes its OWN tier anew when the project's shape changed, as the
-// Mate's recipe change a person reviews — it changes a file main carries, so
-// Core does not land it by itself.
+// Mate's recipe change, which HQ lands by itself unless its merge would
+// change an environment made from the tier (recipeLanding).
 //
 // Its own: the tier's mark (bundle.StampTier) names this Mate and still
 // matches the file; or, for a tier written before tiers carried the mark,

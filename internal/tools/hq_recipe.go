@@ -26,6 +26,14 @@ import (
 // files without an SSH round trip.
 const recipePairMountRoot = "/var/www"
 
+// recipeLanding says how a Mate's change in the recipe repository reaches
+// main (HQ's landing rule, mate-hq spec/protocol.md S16b; spec-mate D37):
+// Core lands it by itself, adds or edits alike, unless its merge would
+// import, stop or start a service in an environment made from a tier — that
+// one waits for a person with recipe_changes_environments. Said after a
+// proposal is made; a steer names the call and leaves the landing to it.
+const recipeLanding = "HQ lands the change on main by itself; one whose merge would import, stop or start a service in a stage or production environment made from a tier waits for a person to merge it in Review"
+
 // recipeOutcome is what one pass did. The reconcile reads Line (empty when
 // there is nothing worth saying on a bootstrap response); the agent-facing
 // action reads the rest, because a person who ASKED for the recipe wants the
@@ -202,11 +210,13 @@ func groupRecipeOutcome(
 		"recipe: the tiers "+hq.RecipeRepo+" lacks, or zcp wrote from this Mate before its project changed shape, from "+comp.inputs.MateProjectName,
 		func(ctx context.Context, _ *hq.Scratch, _ string, paths []string) (map[string]string, error) {
 			missing = recipe.Missing(comp.files, paths)
-			// What main lacks goes first and alone: a change that only adds
-			// is the kind Core lands by itself. A tier of zcp's own to
-			// propose anew follows once main has every tier — unless a
-			// person closed such a proposal unmerged and no recipe change
-			// of this Mate's merged since.
+			// What main lacks goes first and alone: a tier HQ sees for the
+			// first time imports nothing, so a change that only adds tiers
+			// changes no environment and Core lands it by itself, never held
+			// back beside a tier proposed anew whose merge would. A tier of
+			// zcp's own to propose anew follows once main has every tier —
+			// unless a person closed such a proposal unmerged and no recipe
+			// change of this Mate's merged since.
 			if len(missing) == 0 && !recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
 				var err error
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
@@ -245,8 +255,8 @@ func groupRecipeOutcome(
 	}
 	switch {
 	case outcome.Created && len(replaced) > 0:
-		outcome.Line = fmt.Sprintf("the tiers zcp wrote from this Mate on main of the recipe repository %q (%s) no longer describe its project — the services they create changed — so change #%d (%s) proposes them anew; it changes files main carries, so a person reviews and merges it, and a tier a person or another Mate wrote or changed is left as it is",
-			hq.RecipeRepo, strings.Join(outcome.Replaced, ", "), outcome.Change, outcome.ChangeURL)
+		outcome.Line = fmt.Sprintf("the tiers zcp wrote from this Mate on main of the recipe repository %q (%s) no longer describe its project — the services they create changed — so change #%d (%s) proposes them anew, and a tier a person or another Mate wrote or changed is left as it is. %s",
+			hq.RecipeRepo, strings.Join(outcome.Replaced, ", "), outcome.Change, outcome.ChangeURL, recipeLanding)
 	case outcome.Created:
 		outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) is proposed as change #%d (%s); it only adds files, so a tier the group already has is never touched",
 			hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), outcome.Change, outcome.ChangeURL)
@@ -758,7 +768,7 @@ func handleGroupRecipe(
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
 	case outcome.OnMain:
 		result["message"] = fmt.Sprintf(
-			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as a change the person reviews. To carry a managed service this project gained (a database, a cache, a storage), or a part of the app added or removed, call it with service set to the hostname: it proposes only that service added to, or removed from, each tier on main, as a change the person reviews.",
+			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as the Mate's recipe change. To carry a managed service this project gained (a database, a cache, a storage), or a part of the app added or removed, call it with service set to the hostname: it proposes only that service added to, or removed from, each tier on main, as the Mate's recipe change.",
 			hq.RecipeRepo)
 	default:
 		result["message"] = fmt.Sprintf(

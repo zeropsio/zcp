@@ -353,3 +353,21 @@ func TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume(t *testing.T) {
 		t.Errorf("a plan carrying codeVolume = (isError %v) %s, want it refused by the schema naming codeVolume", result.IsError, text)
 	}
 }
+
+// TestWorkflowTool_GroupRecipeDescription_NamesTheMatesRecipeChange: the
+// description offers group-recipe's scale and service proposals as the
+// Mate's recipe change, never as a change a person reviews — HQ lands a
+// recipe change by itself unless its merge would change an environment made
+// from a tier, and the call's own answer says which.
+func TestWorkflowTool_GroupRecipeDescription_NamesTheMatesRecipeChange(t *testing.T) {
+	t.Parallel()
+
+	tool, _ := schemaTestSession(t)
+
+	if n := strings.Count(tool.Description, "as the Mate's recipe change"); n != 2 {
+		t.Errorf("the description names the Mate's recipe change %d times, want 2 (scaling, service):\n%s", n, tool.Description)
+	}
+	if strings.Contains(tool.Description, "the person reviews") {
+		t.Errorf("the description says a person reviews a recipe change HQ may land by itself:\n%s", tool.Description)
+	}
+}
