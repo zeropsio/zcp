@@ -25,7 +25,8 @@ import (
 // reconcile says which part main's tiers lack or still carry and names the
 // call, and that call proposes adding or removing that ONE part's service in
 // each tier file on main, every other line as main has it, as the Mate's
-// change in the recipe repository a person reviews and merges (§2.8a.5). The
+// change in the recipe repository (§2.8a.5), which HQ lands by itself unless
+// its merge would change an environment made from a tier (recipeLanding). The
 // service added is the composer's entry, under the hostname the tier holds
 // for the part or the one the naming rule gives a new part — never one
 // recomputed for a service a tier already carries.
@@ -241,7 +242,7 @@ func recipePartSteer(ctx context.Context, comp groupRecipeComposition) (string, 
 	if len(calls) == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf("the tiers on %q of the recipe repository %q do not carry this Mate's parts as it runs them — to propose each as a change the person reviews, call %s",
+	return fmt.Sprintf("the tiers on %q of the recipe repository %q do not carry this Mate's parts as it runs them — to propose each as the Mate's recipe change, call %s",
 		hqBase, hq.RecipeRepo, strings.Join(calls, ", then ")), nil
 }
 
@@ -329,8 +330,8 @@ func handleGroupRecipeService(
 	}
 	result["branch"] = written.branch
 	result["tiers"] = edits
-	message := fmt.Sprintf("Proposed %s to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. The person reviews and merges it like any recipe change.%s",
-		what, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), refusedServiceTiers(tiers))
+	message := fmt.Sprintf("Proposed %s to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. %s.%s",
+		what, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), recipeLanding, refusedServiceTiers(tiers))
 	if recipeManagedService(comp, host) {
 		message += fmt.Sprintf(" It shapes only the environments made from the recipe later: the stage and production environments already made need %s added themselves, by a person or the Chief.", host)
 	}

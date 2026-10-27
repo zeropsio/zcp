@@ -22,8 +22,9 @@ import (
 // narrow way back to the group: the scale tool says when the recipe on main
 // differs and names the call, and that call proposes ONE host's
 // verticalAutoscaling block in each tier file as the Mate's change in the
-// recipe repository, which a person reviews and merges, the recipe's floors
-// applied (bundle.ApplyResourceFloor). Nothing is proposed on its own: a
+// recipe repository, the recipe's floors applied (bundle.ApplyResourceFloor),
+// which HQ lands by itself unless its merge would change an environment made
+// from a tier (recipeLanding). Nothing is proposed on its own: a
 // Mate's experiment with its own scale is not the group's until someone says
 // so. This Mate keeps one recipe proposal open at a time, so a scaling
 // proposal and the additive one never write over each other: whichever finds
@@ -124,7 +125,7 @@ func groupRecipeScalingSteer(
 	if err != nil || len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("The group recipe on %q of the recipe repository %q still writes %s differently (%s). To carry this scale into the recipe the group's next Mates and environments are made from, call zerops_workflow action=\"group-recipe\" scaling=%q — it proposes only %s's verticalAutoscaling, floors applied, as a change the person reviews.",
+	return fmt.Sprintf("The group recipe on %q of the recipe repository %q still writes %s differently (%s). To carry this scale into the recipe the group's next Mates and environments are made from, call zerops_workflow action=\"group-recipe\" scaling=%q — it proposes only %s's verticalAutoscaling, floors applied, as the Mate's recipe change.",
 		hqBase, hq.RecipeRepo, host, strings.Join(parts, "; "), host, host)
 }
 
@@ -214,8 +215,8 @@ func handleGroupRecipeScaling(
 	}
 	result["branch"] = written.branch
 	result["tiers"] = changed
-	result["message"] = fmt.Sprintf("Proposed %s's scale to the recipe repository %q as change #%d (%s): it changes only %s's verticalAutoscaling (%s). The person reviews and merges it like any recipe change.%s",
-		host, hq.RecipeRepo, written.number, result["changeUrl"], host, strings.Join(changed, "; "), refusedTiers(tiers))
+	result["message"] = fmt.Sprintf("Proposed %s's scale to the recipe repository %q as change #%d (%s): it changes only %s's verticalAutoscaling (%s). %s.%s",
+		host, hq.RecipeRepo, written.number, result["changeUrl"], host, strings.Join(changed, "; "), recipeLanding, refusedTiers(tiers))
 	return jsonResult(result), nil, nil
 }
 

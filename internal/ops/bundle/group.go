@@ -762,8 +762,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 // (D30), and into one main carries proposes nothing but a service's scale
 // (D34), a managed service the Mate's project gained, for every app, and, for
 // an app of several parts, a part's service added or removed (spec-mate
-// §2.8a.5), as a change a person reviews, so a person's edit is never
-// written over.
+// §2.8a.5), as the Mate's change, so a person's edit is never written over.
+// It says nothing of who lands that change: that is HQ's rule (D37), which a
+// file on main outlives.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
 	proposes := "only a service's scale (group-recipe scaling=<hostname>) or a managed service added to the Mate's project (group-recipe service=<hostname>)"
 	if groupHasSeveralParts(inputs.Runtimes) {
@@ -776,12 +777,12 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 	}
 	header := []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews%s.",
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as the Mate's change%s.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes, anew),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
 	if marked {
-		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew, as a change a person reviews, when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
+		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
 	}
 	return header
 }

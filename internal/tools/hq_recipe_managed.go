@@ -21,8 +21,8 @@ import (
 // file on main lacking it — the composer's entry, each tier's policy applied
 // (the Small Production tier's highly available variant, the AI Agent and
 // Stage tiers' as the Mate runs it), placed among the managed services ahead
-// of every runtime — every other line as main has it, as the Mate's change a
-// person reviews. It only ever adds: a managed service a tier carries and
+// of every runtime — every other line as main has it, as the Mate's recipe
+// change. It only ever adds: a managed service a tier carries and
 // the Mate's project does not may be one people want there, so nothing
 // removes it. The change shapes environments made from the recipe later; a
 // stage or production already made needs the service added itself.
@@ -192,7 +192,7 @@ func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (strin
 	}
 	line := fmt.Sprintf("the tiers on %q of the recipe repository %q lack managed services this Mate's project runs, so the environments made from them would come up without them", hqBase, hq.RecipeRepo)
 	if len(calls) > 0 {
-		line += " — to propose each as a change the person reviews, call " + strings.Join(calls, ", then ")
+		line += " — to propose each as the Mate's recipe change, call " + strings.Join(calls, ", then ")
 	}
 	if len(byHand) > 0 {
 		if len(calls) > 0 {
