@@ -705,3 +705,83 @@ func TestBuildPlan_PoolDevHalf_NoDeployStep(t *testing.T) {
 		t.Errorf("plan = %+v, want close with nothing per service", plan)
 	}
 }
+
+// TestBuildPlan_PoolStages_SecondaryPutsMainOnThem pins the plan's second
+// step for stages whose pairs' dev halves are pools: a stage tracks main, so
+// beside the deploy from a held lease the plan names the call that puts main
+// on it — sha="origin/main" — and on several stages at once that call is one
+// zerops_deploy_batch, each target from a held lease of its own part's pool.
+// On 2026-10-27 a batch without sha shipped five leases' branch to their
+// stages, and each was redeployed alone with sha="origin/main".
+func TestBuildPlan_PoolStages_SecondaryPutsMainOnThem(t *testing.T) {
+	t.Parallel()
+	webPair := []ServiceSnapshot{
+		{
+			Hostname: "webpool", RuntimeClass: topology.RuntimePool, DevIsPool: true, Bootstrapped: true, Deployed: true,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, StageHostname: "webstage",
+			Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "webprod"}},
+		},
+		{
+			Hostname: "webstage", RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeStage, Bootstrapped: true,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, SetupName: "webprod",
+		},
+	}
+	appLease := LeaseSnapshot{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", State: "held"}
+	webLease := LeaseSnapshot{Alias: "webpool-2", Pool: "webpool", Branch: "feat-x", State: "held"}
+	cases := []struct {
+		name     string
+		services []ServiceSnapshot
+		scope    []string
+		leases   []LeaseSnapshot
+		want     *NextAction
+	}{
+		{
+			name: "one stage", services: poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured),
+			scope: []string{"appstage"}, leases: []LeaseSnapshot{appLease},
+			want: &NextAction{Label: "Put main on appstage", Tool: "zerops_deploy", Args: map[string]string{
+				"sourceService": "apppool-4", "targetService": "appstage", "setup": "web", "sha": "origin/main",
+			}},
+		},
+		{
+			name: "several stages", services: append(poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured), webPair...),
+			scope: []string{"appstage", "webstage"}, leases: []LeaseSnapshot{appLease, webLease},
+			want: &NextAction{Label: "Put main on the stages", Tool: "zerops_deploy_batch", Args: map[string]string{
+				"targets": `[{"sourceService":"apppool-4","targetService":"appstage","setup":"web","sha":"origin/main"},{"sourceService":"webpool-2","targetService":"webstage","setup":"webprod","sha":"origin/main"}]`,
+			}},
+		},
+		{
+			name: "no lease held", services: poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured),
+			scope: []string{"appstage"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseDevelopActive)
+			env.Services = tc.services
+			env.Leases = &tc.leases
+			env.WorkSession = &WorkSessionSummary{Intent: "put main on the stages", Services: tc.scope, Deploys: map[string][]AttemptInfo{}}
+			plan := BuildPlan(env)
+			if tc.want == nil {
+				if plan.Secondary != nil {
+					t.Errorf("secondary = %+v, want none without a held lease", plan.Secondary)
+				}
+				return
+			}
+			if plan.Secondary == nil {
+				t.Fatalf("no secondary step; plan = %+v", plan)
+			}
+			got := *plan.Secondary
+			if got.Label != tc.want.Label || got.Tool != tc.want.Tool || !reflect.DeepEqual(got.Args, tc.want.Args) {
+				t.Errorf("secondary = %s %s %v, want %s %s %v", got.Label, got.Tool, got.Args, tc.want.Label, tc.want.Tool, tc.want.Args)
+			}
+			if !strings.Contains(got.Rationale, "tracks main") {
+				t.Errorf("rationale %q does not say the stage tracks main", got.Rationale)
+			}
+			rendered := formatAction(got)
+			if strings.Contains(rendered, `targets="`) {
+				t.Errorf("the targets render quoted, not as the array the tool takes: %s", rendered)
+			}
+		})
+	}
+}

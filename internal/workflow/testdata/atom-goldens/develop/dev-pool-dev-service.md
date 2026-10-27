@@ -233,7 +233,10 @@ build, so check the branch on the stage before its change is described.
 A build that fails leaves the stage on what it ran; fix the branch, push, and
 check again. Say in the change's description that it built and verified on
 the stage. Run one branch's check at a time per stage: a check from another
-lease replaces it. Once a branch is merged, put main on the stage the same way.
+lease replaces it. Once a change merges, put main on every stage it touched in
+one call, each target from a lease of its own part:
+`zerops_deploy_batch targets=[{"sourceService":"<alias>","targetService":"<stage>","sha":"origin/main"}, …]`
+— a target without `sha` ships its lease's branch, not main.
 A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
 names in its `warnings` the verify and the call that puts main back. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
