@@ -1312,8 +1312,8 @@ type CodeVolume struct {
 CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
 ```
 
-**zcp sets up no new code volume.** Dev pools replace variant B: a part whose runtime cannot share
-the dev service gets a Swarm dev pool of its own (docs/spec-workflows.md §8 DP). A variant-B pair
+**zcp sets up no new code volume.** Dev pools replace variant B: every part gets a Swarm dev pool
+of its own (docs/spec-workflows.md §8 DP; §10.10 "One repository per monorepo"). A variant-B pair
 recorded before keeps working exactly as below, and pool migration moves it onto one dev pool per
 part (docs/spec-workflows.md §13 PM-13). The record stays, and so does every reader of it: each
 meta write writes the whole struct, pool migration reads it, and zcp cannot know when every
@@ -1358,8 +1358,12 @@ up exactly as before.
     first, then the tier's order (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
     `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
     `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
-  - The monorepo playbook gives a part that cannot share the dev service a dev pool and names
-    pool-migrate for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
+  - The monorepo playbook gives every part its own dev pool and stage on one repository — in a
+    Mate through one dev service with a stage per part, then pool-migrate — and names pool-migrate
+    for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
+  - A plan still carrying `codeVolume` is refused naming the way instead: one dev service holding
+    the repository with a stage per part, then pool-migrate giving each part a dev pool of its own
+    (`TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools`).
 - Steering: every `zerops_deploy` whose target a variant-B pair names, every `zerops_dev_server`
   answer for one of its dev services (`warnings`), and lifecycle status (a `### Shared code volume`
   guidance block) carry one line — `zcp no longer sets up a shared code volume. <dev>'s pair keeps
@@ -4306,6 +4310,43 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
   is enforced by that record; a pair the stand-up adopted is wired to the recipe's name, and wired
   again to it.
+- **One repository per monorepo** (owner decision, 2026-10-24; a split seen live 2026-10-27:
+  one monorepo wired as three and as seven HQ repositories, one per dev service, which HQ cannot
+  remove). A monorepo's every part gets its own dev pool and its own stage, nothing sharing a
+  container, all on ONE repository in HQ. A pair keyed by a dev pool exists only after
+  pool migration (docs/spec-workflows.md §13 PM-10, PM-12), so in a Mate the shape is reached
+  through one dev service holding the repository with a stage per part — one pair, wired to one
+  repository — then `pool-migrate` before building on it, each part landing on a pool of its own
+  keyed to that repository and the dev service retired; the monorepo playbook's §2 says so and a
+  dev service per part is never the end state (`TestPlaybookMonorepo_ContentPins_PartRules`).
+  zcp refuses the split itself, by root commit — two checkouts sharing a root commit whose tree is
+  not the empty tree are one repository (`ops.ReadRepositoryRoots`, one read-only SSH round trip,
+  `GIT_OPTIONAL_LOCKS=0`); a root of the empty tree is no evidence, since HQ seeds every
+  repository's `main` with one and `zcp init` makes one in every fresh checkout, the same commit in
+  checkouts initialised in the same second:
+  - The repository pass, before it asks HQ for a NEW repository for a pair (a pair not wired yet;
+    a wired one is wired again to its record's), compares the pair's dev checkout with the checkouts
+    of the pairs already wired — read when the pair's turn comes, so a pair this pass wired counts —
+    and on a shared root asks HQ for nothing: the pair stays unwired, and its report line names both
+    dev services, the wired pair's repository and the way out — one dev service with a stage per
+    part (the wired pair takes the other's stages, its work goes onto a branch of that repository),
+    then `zerops_workflow workflow="pool-migrate" service=<the wired dev>`. The attempt is
+    recorded and backs off as any unwired one, and the group recipe waits for the pair as for any
+    pair the pass will still wire. A checkout that cannot be read, or holds no root carrying code,
+    is no evidence (the pair is wired as before), and a pair keyed by its dev pool is never compared
+    — a pool holds no checkout of its own (`hq_one_repository.go`;
+    `TestReconcileHQRepositories_ADevHoldingAWiredPairsRepository_GetsNoRepositoryOfItsOwn`).
+  - A Mate's explicit bootstrap plan (classic or adopt) pairing two existing dev services whose
+    checkouts share such a root is refused before the parts read and before anything is recorded,
+    with the plan made from it: the first of them keeps every stage of the pairs holding its
+    repository, the others leave the plan, and pool-migrate is named for once bootstrap closes. A
+    dev service the plan creates holds no checkout yet and is not read
+    (`TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair`).
+  - Named limit: pairs wired while their checkouts are still fresh from `zcp init` (a classic
+    bootstrap wires at its close, before develop puts code in) carry only empty-tree roots, so the
+    pass cannot tell they will hold one repository; the playbook and AGENTS.md's git host paragraph
+    ("a repository of several parts stays one repository — never a dev service per part") are the
+    steer there.
 - **The agent's work** goes by plain git from the dev half's checkout, guided by AGENTS.md's git
   host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main` (a
   `main` that will not fast-forward: `git branch <name>`, then `git reset --keep origin/main`), `git
