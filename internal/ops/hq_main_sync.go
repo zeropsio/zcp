@@ -26,6 +26,11 @@ import (
 //   - commits HQ's `main` does not have that another ref holds too — a
 //     branch, or the branch of a change pushed from `main` → nothing: they are
 //     kept, and the agent's guidance names the way onto HQ's `main`;
+//   - a history of its own sharing nothing with HQ's unwritten root — one
+//     parentless commit of the empty tree, as a repository is born — that only
+//     `main` holds → left where it is (MainFirstHistory): it is the
+//     repository's first history, pushed as it is on a branch, whose change
+//     HQ makes `main`; never carried onto that root;
 //   - commits only `main` holds → left where it is (MainOwnCommits), the step
 //     that keeps them named: `main` moves only by a merge, and no commit of
 //     the agent's is ever discarded.
@@ -45,6 +50,8 @@ func BuildMainSyncCommand(workingDir, repoURL string) string {
 			`git checkout -q ` + shellQuote(baseBranch) + `; exit; fi; ` +
 			mark(MainSeedInTheWay) + `; exit 0; fi; ` +
 			`if git for-each-ref --contains "$old" --format='%(refname)' | grep -qvx "$ref"; then exit 0; fi; ` +
+			`if [ "$(git rev-list --count "$new")" = 1 ] && [ "$(git rev-parse "$new^{tree}")" = "$(git hash-object -t tree /dev/null)" ] && ! git merge-base "$old" "$new" >/dev/null; then ` +
+			mark(MainFirstHistory) + `; exit 0; fi; ` +
 			mark(MainOwnCommits+` $(git rev-list --count "$new..$old")`) + `; }`,
 	}, " && ")
 }
@@ -64,6 +71,10 @@ const (
 	// MainOwnCommits: `main` holds commits HQ's does not, and no other ref
 	// holds them; the detail is how many. Nothing moved.
 	MainOwnCommits = "OWN_COMMITS"
+	// MainFirstHistory: HQ's `main` is its unwritten root and `main` is a
+	// history of its own, sharing nothing with it, that no other ref holds —
+	// the repository's first history, to push as it is. Nothing moved.
+	MainFirstHistory = "FIRST_HISTORY"
 )
 
 // MainSync reads the state BuildMainSyncCommand found out of its output, with

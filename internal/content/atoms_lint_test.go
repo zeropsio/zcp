@@ -150,6 +150,35 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "dev-server-call-missing-hostname",
 			wantCat:     "tool-call-shape",
 		},
+		// zerops_origin is named in the form it is called in: its action
+		// first, one it takes. A bare name says nothing of how to call it,
+		// and a call without a known action is refused as pasted.
+		{
+			name:        "origin-named-without-its-call",
+			body:        "Given its address, ask first with `zerops_origin` if you have it.\n",
+			wantPattern: "origin-call-without-action",
+			wantCat:     "tool-call-shape",
+		},
+		{
+			name:        "origin-call-without-action",
+			body:        "Ask with `zerops_origin url=\"<its address>\" repo=\"appdev\"`.\n",
+			wantPattern: "origin-call-without-action",
+			wantCat:     "tool-call-shape",
+		},
+		{
+			name:        "origin-call-with-an-action-it-does-not-take",
+			body:        "Connect it with `zerops_origin action=\"connect\" url=\"<its address>\"`.\n",
+			wantPattern: "origin-call-without-action",
+			wantCat:     "tool-call-shape",
+		},
+		// An imported history becomes main as it is: atoms never join it to
+		// a repository's initial commit.
+		{
+			name:        "unrelated-histories-joined",
+			body:        "Then `git merge --allow-unrelated-histories origin/main` onto it.\n",
+			wantPattern: "unrelated-histories-joined",
+			wantCat:     "git-history",
+		},
 		// axis-L (HARD-FORBID env-only title qualifiers) -----------------
 		{
 			name:        "axis-l-title-em-dash-container",
@@ -443,7 +472,8 @@ func TestAtomAuthoringLint_CleanFixtureYieldsZero(t *testing.T) {
 			"You observe the project state and choose the next action.\n" +
 			"Service status transitions from PENDING to RUNNING after the first deploy.\n" +
 			"Use zerops_workflow action=start to begin a develop session.\n" +
-			"Start it with `zerops_dev_server action=start hostname=\"appdev\" name=\"web\"`; `zerops_dev_server action=start` names the action.\n",
+			"Start it with `zerops_dev_server action=start hostname=\"appdev\" name=\"web\"`; `zerops_dev_server action=start` names the action.\n" +
+			"Ask with `zerops_origin action=\"request\" url=\"<its address>\" repo=\"appdev\" why=\"<one line>\"`, or take it back with `zerops_origin action=\"withdraw\" url=\"<its address>\"`.\n",
 	}
 	violations := lintAtomCorpus([]AtomFile{atom})
 	if len(violations) != 0 {

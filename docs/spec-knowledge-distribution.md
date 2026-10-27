@@ -640,6 +640,16 @@ Enforced by `TestAtomAuthoringLint` (`internal/content/atoms_lint.go`):
    atom-corpus-verification plan's master defect ledger
    (`internal/workflow/testdata/atom-goldens/_review-ledger.md`)
    is the worked-example archive.
+6. **A tool named but not called** — `zerops_origin` appears only in
+   its call form, its action first and one the tool takes
+   (`zerops_origin action="request" …`, `content.AcceptedOriginActions`,
+   kept in sync with the tool by
+   `TestAtomLintAcceptedOriginActionsMatchTheTool`); `zerops_dev_server`
+   names `hostname` before its other arguments; ToolSearch selects
+   carry the MCP-server prefix.
+7. **Joining unrelated histories** — `--allow-unrelated-histories`. An
+   existing repository's history becomes `main` as it is (spec-mate
+   §5.10), never merged onto a repository's initial commit.
 
 ### 11.3 Enforcement
 

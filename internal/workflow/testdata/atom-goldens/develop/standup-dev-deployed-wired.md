@@ -33,7 +33,7 @@ cd /var/www/<push-source-host> && git fetch origin && git checkout main && git m
 
 One branch per piece of work, one change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch), and new work starts on a new branch cut as above. Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
 
-A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
+A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work. On this Mate's HQ, while `origin/main` holds only HQ's initial commit, a `main` sharing no history with it is the repository's first history instead: leave it as it is, cut your branch from it, push the branch and open its change — merged, HQ makes it `main`; never merge or rebase it onto that commit.
 
 Where the remote later refuses the branch you push, the ref is protected — on this Mate's HQ that is `main`, a tag, or a branch another open change holds: push a branch of your own and open its change with `zerops_workflow action="open-change"`, never a fresh token. The transport classifier names that case directly when it happens.
 

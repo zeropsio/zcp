@@ -56,7 +56,7 @@ type originAnswer struct {
 func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
-		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as its origin, or in Mate, only following it. Writes nothing: Mate shows a card for repo, the pair's dev hostname; a message tells you their pick. Never ask for a token. action=withdraw url (repo) closes an ask no longer needed — not in chat.",
+		Description: "Before a repository's code comes in, ask the person where it is kept: on GitHub, mounted in HQ as its origin, or in Mate, only followed. Writes nothing: Mate shows a card for repo, the pair's dev hostname; a message brings their pick. Never ask for a token. action=withdraw url (repo) closes an unneeded ask — not in chat.",
 		Annotations: &mcp.ToolAnnotations{Title: "Ask where a repository's code is kept", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OriginInput) (*mcp.CallToolResult, any, error) {
 		if in.Action == originActionWithdraw {
@@ -146,9 +146,30 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. Which they picked, that message says. %[4]s %[5]s Declined: nothing changes. %[6]s End your turn.",
-			req.URL, req.Repo, originFromHQ(dir), "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir), originWithdrawWords(req)),
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. %[4]s Which they picked, that message says. %[5]s %[6]s Declined: nothing changes; should its code still come in, %[7]s. %[8]s End your turn.",
+			req.URL, req.Repo, originFromHQ(dir), originMainFromGitHub, "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir),
+			originAsItsOwnBranch(fmt.Sprintf("cd %s && git fetch %s HEAD:<branch>", dir, req.URL)), originWithdrawWords(req)),
 	}
+}
+
+// originMainFromGitHub is what connecting a GitHub repository does to its
+// repository in HQ: HQ follows GitHub and takes the repository's `main` from
+// it in place of the one initial commit HQ made `main` with, so `main` starts
+// as GitHub's own and its history gains no commit of HQ's. The agent's own
+// setup follows as an ordinary change, which HQ merges on GitHub by squash.
+const originMainFromGitHub = "Connected, HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`: never clone it in and merge it, and never merge HQ's initial commit into its history; " +
+	"your own setup goes in after it, as an ordinary change on a branch cut from that `main` — on GitHub a pull request, merged by squash."
+
+// originAsItsOwnBranch is how code HQ takes from no origin comes in: its
+// history, put on a branch by fetchOnto, pushed exactly as it is and its
+// change opened from that branch — merged, HQ makes that history `main`. It
+// is never merged or rebased onto the initial commit HQ made `main` with,
+// which would leave `main` holding commits its origin never had.
+func originAsItsOwnBranch(fetchOnto string) string {
+	return fmt.Sprintf("its history goes in exactly as it is, as a branch of its own (`%s && git push origin <branch>`) "+
+		"whose change you open with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"`: "+
+		"merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
+		fetchOnto)
 }
 
 // originKept is what the way HQ says the person keeps a connected origin's
@@ -201,14 +222,19 @@ func originCheckout(stateDir, repo string) string {
 // originFollowed adds the repository as a fetch-only `upstream` beside HQ's
 // origin: a push to it is refused by git itself. A GitHub one is fetched
 // through `zcp hq git-credential`, which answers a private one with HQ's read
-// token when HQ holds one.
+// token when HQ holds one, and HQ takes its `main` itself; one elsewhere
+// first comes in as a branch of its own (originAsItsOwnBranch), its new work
+// merged only once `main` shares its history.
 func originFollowed(req ops.OriginRequest, dir string) string {
-	helper := ""
 	if ops.IsGitHubRepository(req.URL) {
-		helper = " && " + hq.GitHubHelperConfig
+		return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push && %s && git fetch upstream`, and take its new work in on a branch of your own with `git merge upstream/main`",
+			dir, req.URL, hq.GitHubHelperConfig)
 	}
-	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push%s && git fetch upstream`, and take its new work in on a branch of your own with `git merge upstream/main`",
-		dir, req.URL, helper)
+	// HQ takes `main` from GitHub alone: a repository followed elsewhere
+	// first comes in as a branch of its own.
+	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push && git fetch upstream`; "+
+		"while `main` still holds only HQ's initial commit, %s; after that, take its new work in on a branch of your own with `git merge upstream/main`",
+		dir, req.URL, originAsItsOwnBranch("git checkout -b <branch> upstream/main"))
 }
 
 // originHolder is the repository in HQ the asked address already is the

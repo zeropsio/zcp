@@ -80,7 +80,7 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 			"the first deploy puts its `run.start` under the dev-server supervisor",
 			`ssh appdev "cd <repo dir> && <the repo's install command>"`, "(`/var/www`, or the code volume's `mountPath`)",
 			"A restart keeps the installed dependencies",
-			"a redeploy replaces the container with what git carries",
+			"a redeploy replaces the dev container with what git carries",
 			"`notCarried`",
 		)
 		intro, err := os.ReadFile("../content/atoms/develop-first-deploy-intro.md")
@@ -128,7 +128,8 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 		t.Parallel()
 		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "run this repo here")
 		requireAll(t, body,
-			"Given its address, ask first** with `zerops_origin` if you have it",
+			"Given its address, ask first** with",
+			`zerops_origin action="request" url="<its address>" repo="appdev" why="<one line>"`,
 			"Never ask for a token.",
 		)
 		if strings.Index(body, "zerops_origin") > strings.Index(body, "Read how the repo is developed") {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -151,6 +152,50 @@ var atomLintRules = []atomLintRule{
 		category: "tool-call-shape",
 		pattern:  regexp.MustCompile(`zerops_dev_server (action=[a-z]+ [a-gi-zA-Z]|[b-gi-zA-Z])[a-zA-Z]*=`),
 	},
+	// An imported history becomes a repository's `main` as it is, pushed as
+	// a branch of its own; joining it to the initial commit HQ seeds `main`
+	// with leaves `main` holding commits its origin never had.
+	{
+		name:     "unrelated-histories-joined",
+		category: "git-history",
+		pattern:  regexp.MustCompile(`--allow-unrelated-histories\b`),
+	},
+}
+
+// AcceptedOriginActions lists every `action="X"` value zerops_origin takes.
+// Source of truth is `internal/tools/origin.go` (RegisterOrigin's handler);
+// `TestAtomLintAcceptedOriginActionsMatchTheTool` keeps the two in sync.
+var AcceptedOriginActions = []string{"request", "withdraw"}
+
+// originCallRe matches every zerops_origin mention with the action it names
+// right after it, if any.
+var originCallRe = regexp.MustCompile(`zerops_origin(?: action="([a-z]+)")?`)
+
+// originCallViolations flags a zerops_origin mention that is not its call:
+// the tool refuses a call without an action it takes, so an atom names it
+// as `zerops_origin action="request" …` (or "withdraw"), never bare and
+// never with its arguments in another order.
+func originCallViolations(ctx atomLintCtx) []AtomLintViolation {
+	var out []AtomLintViolation
+	for i, line := range ctx.bodyLines {
+		trimmed := strings.TrimSpace(line)
+		for _, m := range originCallRe.FindAllStringSubmatch(line, -1) {
+			if slices.Contains(AcceptedOriginActions, m[1]) {
+				continue
+			}
+			if _, allowed := atomLintAllowlist[ctx.file+"::"+trimmed]; allowed {
+				continue
+			}
+			out = append(out, AtomLintViolation{
+				AtomFile: ctx.file,
+				Category: "tool-call-shape",
+				Pattern:  "origin-call-without-action",
+				Line:     ctx.frontmatterLines + i + 1,
+				Snippet:  trimmed,
+			})
+		}
+	}
+	return out
 }
 
 // LintAtomCorpus scans every atom body (frontmatter excluded) for the
@@ -205,6 +250,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, staleStrategyViolations(ctx)...)
 		out = append(out, statusTokenViolations(ctx)...)
 		out = append(out, overrideAdviceScopeViolations(ctx)...)
+		out = append(out, originCallViolations(ctx)...)
 	}
 	return out
 }

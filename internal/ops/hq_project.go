@@ -22,7 +22,7 @@ func BuildProjectRepositoryCommand(workingDir, remoteURL, hqURL string) string {
 		` GIT_CONFIG_VALUE_0="Authorization: Project $zcp_project_key"` +
 		` && unset zcp_project_key` +
 		" && (git remote add origin " + shellQuote(remoteURL) + " 2>/dev/null || git remote set-url origin " + shellQuote(remoteURL) + ")" +
-		" && " + BuildBaseBranchCommand(workingDir)
+		" && " + baseBranchCommand(workingDir, true)
 }
 
 // BuildProjectCheckoutStateCommand observes the inputs to a base-branch refusal

@@ -589,6 +589,57 @@ func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.
 	}
 }
 
+// TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs: a pair
+// holding a history of its own when ZCP wires it — an existing repository
+// brought in — keeps it as `main` exactly as it is: HQ's unwritten root is
+// never joined into it, no commit is made on it (the owner, 2026-10-27: clean
+// history, no merge commits). Develop's start says to push it as it is on a
+// branch of the agent's own and open its change, which HQ makes `main` —
+// never to carry it onto that root.
+func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.write(map[string]string{"index.js": "the imported app\n"})
+	lab.commit("the imported history")
+	own := lab.git("rev-parse", "HEAD")
+
+	lab.wire()
+
+	if got := lab.git("rev-parse", "main"); got != own {
+		t.Errorf("main is %s, want the pair's own history %s as it is:\n%s", got, own, lab.git("log", "--oneline", "--graph", "--all"))
+	}
+	if got := lab.git("symbolic-ref", "HEAD"); got != "refs/heads/main" {
+		t.Errorf("HEAD is %s, want refs/heads/main", got)
+	}
+	text := lab.developStart()
+	for _, want := range []string{
+		"first history",
+		"holds only its initial commit",
+		"`git checkout -b <branch> main && git push origin <branch>`",
+		`zerops_workflow action="open-change" branch="<branch>"`,
+		"HQ makes it",
+		"never merge or rebase it onto that initial commit",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("develop's start does not say %q:\n%s", want, text)
+		}
+	}
+	// The pass's own line for the pair (the git-push start guidance beside it
+	// names a reset for a main that merely fell behind).
+	line := text
+	if i := strings.Index(line, "first history"); i >= 0 {
+		line = line[i:]
+		if j := strings.Index(line, "initial commit;"); j >= 0 {
+			line = line[:j]
+		}
+	}
+	for _, never := range []string{"git cherry-pick", "git reset --keep origin/main"} {
+		if strings.Contains(line, never) {
+			t.Errorf("develop's start carries the first history onto HQ's root (%q):\n%s", never, line)
+		}
+	}
+}
+
 // TestDevelopStart_SaysHowEachRepositorysCodeIsKept: develop's start reads
 // from HQ how each wired pair's repository's code is kept and records it, so
 // status names it (origin.mode). A repository kept on GitHub is worked on

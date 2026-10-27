@@ -4,10 +4,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/content"
 )
 
@@ -156,4 +158,27 @@ func diffKeys(a, b map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestAtomLintAcceptedOriginActionsMatchTheTool pins
+// content.AcceptedOriginActions to zerops_origin: every listed action is one
+// the tool takes, so the origin-call lint never passes an atom whose call
+// the tool refuses as pasted — and an action outside the list is refused.
+func TestAtomLintAcceptedOriginActionsMatchTheTool(t *testing.T) {
+	t.Parallel()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterOrigin(srv, http.DefaultClient, "P_MATE", labOrg, t.TempDir())
+	invalid := func(action string) bool {
+		result := callTool(t, srv, "zerops_origin", map[string]any{"action": action})
+		return result.IsError && strings.Contains(getTextContent(t, result), "Invalid action")
+	}
+	for _, action := range content.AcceptedOriginActions {
+		if invalid(action) {
+			t.Errorf("content.AcceptedOriginActions lists %q, which zerops_origin refuses as an invalid action", action)
+		}
+	}
+	if !invalid("connect") {
+		t.Error("zerops_origin takes an action outside content.AcceptedOriginActions: update the list in internal/content/atoms_lint.go")
+	}
 }
