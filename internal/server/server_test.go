@@ -727,6 +727,7 @@ func TestServer_StandupToolGating(t *testing.T) {
 			}
 			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), tt.ssh, nil, tt.rt, nil)
+			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
 			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
@@ -775,6 +776,7 @@ func TestServer_ObserveToolGating(t *testing.T) {
 			}
 			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), tt.ssh, nil, tt.rt, nil)
+			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
 			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
@@ -825,6 +827,7 @@ func TestServer_PublishPageToolGating(t *testing.T) {
 			}
 			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
+			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
 			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
@@ -904,6 +907,7 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 			}
 			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
+			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
 			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {

@@ -51,7 +51,9 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 		&auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1"},
 		store, platform.NewMockLogFetcher(), ssh, nil,
 		runtime.Info{InContainer: true, ServiceID: "s-zcp", ServiceName: "zcp", ProjectID: "proj-1", MateEnabled: true, HQ: leaseIntHQLink(t)}, nil)
-	defer srv.WaitBackground()
+	// The start pass and a lease's warm work write the state dir: stopped
+	// and waited for before the TempDir cleanup, which runs after this one.
+	t.Cleanup(srv.Stop)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.MCPServer().Connect(ctx, st, nil)

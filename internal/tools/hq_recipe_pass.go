@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // One group recipe pass runs at a time on a Mate (groupRecipeOutcome). A
@@ -42,12 +40,10 @@ var errRecipePassRunning = errors.New("another group recipe pass is running on t
 // holdRecipePass takes the Mate's one recipe pass, waiting for another to
 // finish until ctx ends or recipePassWait passes — errRecipePassRunning
 // then. release lets go. A holder never takes it again while it has it: a
-// second hold in the same process waits on the first. Outside a Mate no pass
-// reaches HQ, and there is nothing to hold.
-func holdRecipePass(ctx context.Context, rt runtime.Info, stateDir string) (release func(), err error) {
-	if !rt.InContainer || !rt.MateEnabled || stateDir == "" {
-		return func() {}, nil
-	}
+// second hold in the same process waits on the first. A pass takes it only
+// once it knows it has something to do (recipePassReady), so a pass that
+// stops before asking HQ anything writes nothing.
+func holdRecipePass(ctx context.Context, stateDir string) (release func(), err error) {
 	dir := filepath.Join(stateDir, hqStateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("recipe pass lock: %w", err)

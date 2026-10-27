@@ -61,21 +61,39 @@ type Server struct {
 	// (spec §5.3 workflow-context stamping, S4). Zero value is a legal
 	// empty state (no zerops_workflow call seen yet).
 	wfCtx workflowContext
-	// background is the work tool calls start and return without waiting
-	// for (WaitBackground).
+	// background is the work that runs off a caller's path: what New starts
+	// off the startup path, and what tool calls start and return without
+	// waiting for (WaitBackground).
 	background sync.WaitGroup
+	// stop ends the context New's own background work runs under (Stop);
+	// nil for a server New did not make.
+	stop context.CancelFunc
 }
 
 // CallCount returns the number of tool calls served during this server's lifetime.
 func (s *Server) CallCount() int64 { return s.calls.Load() }
 
-// WaitBackground waits for the work tool calls started and returned without
-// waiting for: zerops_lease's warm creates and clones (DP-27, DP-32), each
-// bounded by its own deadline. zcp itself never waits for it — a process that
-// ends cuts it short, and status says so — but a caller that tears down what
-// that work reads or writes (the state directory, the HTTP transport) waits
-// first.
+// WaitBackground waits for the work running off a caller's path: what New
+// started off the startup path — the dev-server keeper's retire, a Mate's
+// recipe pass — and what tool calls started and returned without waiting
+// for: zerops_lease's warm creates and clones (DP-27, DP-32), each bounded by
+// its own deadline. zcp itself never waits for it — a process that ends cuts
+// it short, and status says so — but a caller that tears down what that work
+// reads or writes (the state directory, the HTTP transport) waits first, or
+// stops the server (Stop).
 func (s *Server) WaitBackground() { s.background.Wait() }
+
+// Stop ends New's own background work — its context is cancelled, so a
+// start pass gives up at its next call — and waits for everything running
+// off a caller's path (WaitBackground). A test that removes the state
+// directory New's work writes stops the server first, in a cleanup that
+// runs before the directory's.
+func (s *Server) Stop() {
+	if s.stop != nil {
+		s.stop()
+	}
+	s.background.Wait()
+}
 
 // New creates a new ZCP MCP server with all tools registered.
 //
@@ -128,6 +146,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		},
 	)
 
+	background, stop := context.WithCancel(ctx)
 	s := &Server{
 		server:      srv,
 		client:      client,
@@ -139,6 +158,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		rtInfo:      rtInfo,
 		logger:      logger,
 		telemetry:   tel,
+		stop:        stop,
 	}
 
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
@@ -153,24 +173,26 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	// units an older zcp left on this container go (its record stays until
 	// each host's deploy carries the kept server over). `zcp init` does the
 	// same at every container start; this covers a zcp updated in place
-	// since. Best-effort and off the startup path.
+	// since. Best-effort and off the startup path, as the server's
+	// background work (Stop).
 	if rtInfo.InContainer {
-		go func() {
-			if err := tools.RetireDevServerKeeper(ctx, platform.NewSystemUnits()); err != nil {
+		s.background.Go(func() {
+			if err := tools.RetireDevServerKeeper(background, platform.NewSystemUnits()); err != nil {
 				fmt.Fprintf(os.Stderr, "zcp: retire dev-server keeper: %v\n", err)
 			}
-		}()
+		})
 	}
 	// A Mate's start is a recipe pass too: a recipe no earlier pass could
 	// propose, or one a zcp before root-commit proposals refused onto a
 	// recipe repository without main, goes out without waiting for the next
-	// bootstrap or adopt. Off the startup path; its line goes to the log.
+	// bootstrap or adopt. Off the startup path, as the server's background
+	// work (Stop); its line goes to the log.
 	if rtInfo.InContainer && rtInfo.MateEnabled {
-		go func() {
-			if line := tools.GroupRecipeAtStart(ctx, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
+		s.background.Go(func() {
+			if line := tools.GroupRecipeAtStart(background, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
 				fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
 			}
-		}()
+		})
 	}
 	return s
 }

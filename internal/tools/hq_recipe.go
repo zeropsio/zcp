@@ -173,7 +173,12 @@ func groupRecipeOutcome(
 	rt runtime.Info,
 	stateDir string,
 ) recipeOutcome {
-	release, err := holdRecipePass(ctx, rt, stateDir)
+	// A pass that stops before asking HQ anything takes no turn and writes
+	// nothing: every zcp start in a Mate is one.
+	if _, _, blocked, ready := recipePassReady(client, httpClient, rt, stateDir); !ready {
+		return blocked
+	}
+	release, err := holdRecipePass(ctx, stateDir)
 	if err != nil {
 		return recipeOutcome{Line: recipePassHeldLine(err)}
 	}
@@ -346,6 +351,28 @@ func recipeHeld(ctx context.Context, scratch *hq.Scratch, main string, owned map
 	return held, nil
 }
 
+// recipePassReady is what a recipe pass knows before it asks HQ anything:
+// whether this is a Mate linked to its HQ with a pair whose repository is
+// there — with none, there is nothing to compose — and, when it is, its HQ
+// client and the service records. blocked says why not.
+func recipePassReady(client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) (hqc hq.Client, metas []*workflow.ServiceMeta, blocked recipeOutcome, ready bool) {
+	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil {
+		return hq.Client{}, nil, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
+	}
+	hqc, linked := openHQ(httpClient, rt)
+	if !linked {
+		return hq.Client{}, nil, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return hq.Client{}, nil, recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}, false
+	}
+	if !slices.ContainsFunc(metas, func(m *workflow.ServiceMeta) bool { return m.IsComplete() && hqPairWired(m) }) {
+		return hq.Client{}, nil, recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them"}, false
+	}
+	return hqc, metas, recipeOutcome{}, true
+}
+
 // composeGroupRecipe composes the application's recipe from this Mate's live
 // project. ok is false when something stops it, with the outcome saying
 // what (Blocked, or a Line for the reconcile).
@@ -356,19 +383,9 @@ func composeGroupRecipe(
 	rt runtime.Info,
 	stateDir string,
 ) (groupRecipeComposition, recipeOutcome, bool) {
-	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
-	}
-	hqc, linked := openHQ(httpClient, rt)
-	if !linked {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
-	}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil || len(metas) == 0 {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}, false
-	}
-	if !slices.ContainsFunc(metas, func(m *workflow.ServiceMeta) bool { return m.IsComplete() && hqPairWired(m) }) {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them"}, false
+	hqc, metas, blocked, ready := recipePassReady(client, httpClient, rt, stateDir)
+	if !ready {
+		return groupRecipeComposition{}, blocked, false
 	}
 
 	repo, err := hqc.EnsureRepo(ctx, hq.RecipeRepo)

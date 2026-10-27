@@ -299,6 +299,7 @@ func listAllTools(t *testing.T, rt runtime.Info) map[string]*mcp.Tool {
 	logFetcher := platform.NewMockLogFetcher()
 
 	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, rt, nil)
+	t.Cleanup(srv.Stop) // what New starts in a Mate runs past the test otherwise
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -626,6 +627,7 @@ func TestAnnotations_StandupTool(t *testing.T) {
 	srv := server.New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
 		store, platform.NewMockLogFetcher(), &nopSSH{}, &nopMounter{},
 		runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, nil)
+	t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
