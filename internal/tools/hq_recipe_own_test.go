@@ -201,6 +201,11 @@ func TestGroupRecipe_ATierAPersonOrAnotherMateWrote_IsNeverProposedOver(t *testi
 			if got := lab.hq.recipeFiles("main"); got[recipeAgentTier] != main[recipeAgentTier] {
 				t.Error("main's AI Agent tier changed")
 			}
+			// The dev service a pool took over is the tier's dev half: no
+			// steer proposes taking it out of a tier the group keeps.
+			if strings.Contains(outcome.Line, `service="appdev"`) {
+				t.Errorf("the reconcile steers to remove the dev service the pool took over: %s", outcome.Line)
+			}
 		})
 	}
 }
