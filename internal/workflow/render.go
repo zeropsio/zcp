@@ -19,7 +19,7 @@ type Response struct {
 
 // RenderStatus produces the markdown status block from a Response. Section
 // order is stable: Phase → Services → Leases → Changes → Progress → Blockers →
-// Guidance → Next. Each section is skipped when it has no content, keeping the
+// Required → Guidance → Next. Each section is skipped when it has no content, keeping the
 // output compact. Blockers is a one-line call-to-action surfaced above
 // the (large) Guidance section so the auto-close gate is visible
 // without scrolling past atoms.
@@ -32,11 +32,21 @@ func RenderStatus(resp Response) string {
 	renderLeases(&b, resp.Envelope)
 	renderHQChanges(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
+	renderRequired(&b, resp.Envelope)
 	renderProdSourceControlSignpost(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
+}
+
+// renderRequired puts every step the Mate's setup is not done without in the
+// head of status, beside the blockers: one line each, naming what is missing
+// and the call that fixes it.
+func renderRequired(b *strings.Builder, env StateEnvelope) {
+	for _, step := range env.Required {
+		fmt.Fprintf(b, "→ REQUIRED: %s\n", step)
+	}
 }
 
 // renderProdSourceControlSignpost surfaces the dev/stage→production

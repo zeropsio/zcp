@@ -1,0 +1,117 @@
+# The Stage tier. One shared environment per group, fed by a branch — the
+# shape a person shows a client.
+#
+# zcp wrote this file from the Mate "Noola - Odin". It is the group's now: a
+# person may edit it. zcp adds only a whole tier the group repo lacks; into a
+# tier it already carries, zcp proposes only a service's scale (group-recipe
+# scaling=<hostname>), a managed service added to the Mate's project or a part's
+# service added or removed (group-recipe service=<hostname>), as a change a
+# person reviews — and this whole file anew while it stays exactly as zcp
+# wrote it (the mark below).
+#
+# Priority is the order services are created in, each wave deployed before the
+# next starts: the managed services first, then every runtime before the
+# runtimes whose build reads it.
+#
+# The line below is zcp's mark: the Mate's project this file was composed from
+# and a digest of the file. While the file stays exactly as zcp wrote it, zcp
+# proposes it anew, as a change a person reviews, when that Mate's project
+# changes shape — a part added or removed, a dev pool, a runtime's type; an
+# edit of any line makes the file the group's alone.
+# zcp-recipe: p-odin sha256=c7ddf620396e876dcfd8614fee03947a336ab71de11afc47486d427bbd626bfe
+
+project:
+  name: noola stage
+  corePackage: LIGHT
+  vault:
+    API_INTERNAL_URL: http://api:3000
+    SMTP_HOST: mailpit
+    SMTP_PORT: "1025"
+
+services:
+  - hostname: cache
+    type: valkey:single@7.2
+    priority: 10
+    profile: hobby
+
+  - hostname: db
+    type: postgresql:single@18
+    priority: 10
+    profile: oltp-hobby
+
+  - hostname: api
+    type: ubuntu/nodejs@24
+    priority: 1
+    zeropsSetup: apiprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  - hostname: edge
+    type: alpine/elixir@1.16.3
+    priority: 1
+    zeropsSetup: edgeprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  - hostname: geo
+    type: nodejs@24
+    priority: 1
+    zeropsSetup: geoprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    minContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+
+  - hostname: site
+    type: alpine/static@1.0
+    priority: 1
+    zeropsSetup: siteprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  - hostname: web
+    type: alpine/static@1.0
+    priority: 1
+    zeropsSetup: webprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250

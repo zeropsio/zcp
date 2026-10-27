@@ -95,6 +95,63 @@ func (s *Scratch) Fetch(ctx context.Context, branch string) (head string, found 
 	return head, err == nil, err
 }
 
+// RemoteHead is the commit HQ's branch is at, asked without fetching
+// anything; found is false when HQ has no such branch.
+func (s *Scratch) RemoteHead(ctx context.Context, branch string) (head string, found bool, err error) {
+	out, err := s.git(ctx, nil, "ls-remote", s.url, "refs/heads/"+branch)
+	if err != nil {
+		return "", false, err
+	}
+	head, _, _ = strings.Cut(out, "\t")
+	return head, head != "", nil
+}
+
+// FetchTip takes only the tip commit of HQ's branch into the scratch under
+// the same name — its tree, none of its history — and answers its head;
+// found is false when HQ has no such branch. Fetch's twin for a read of a
+// file at the tip of a repository whose history is large.
+func (s *Scratch) FetchTip(ctx context.Context, branch string) (head string, found bool, err error) {
+	ref := "refs/heads/" + branch
+	if _, err := s.git(ctx, nil, "fetch", "-q", "--no-tags", "--depth=1", s.url, "+"+ref+":"+ref); err != nil {
+		if errors.Is(err, errNoSuchRef) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	head, err = s.git(ctx, nil, "rev-parse", "--verify", ref+"^{commit}")
+	return head, err == nil, err
+}
+
+// Commit is one commit of a scratch's history as a reader of who wrote a
+// file needs it: its author's address and its subject.
+type Commit struct {
+	AuthorEmail string
+	Subject     string
+}
+
+// SquashAuthorEmail is the author address of Core's squash of a change of
+// the Mate mateProjectID onto main (HQ changes.ts: every landing is a squash
+// authored by the change's Mate): what tells, on main, which Mate's change
+// wrote a commit.
+func SquashAuthorEmail(mateProjectID string) string {
+	return mateProjectID + "@mate.hq.invalid"
+}
+
+// History is every commit of rev's history that changed path, newest first;
+// none for a path no commit touched.
+func (s *Scratch) History(ctx context.Context, rev, path string) ([]Commit, error) {
+	out, err := s.gitRaw(ctx, s.env, nil, "log", "--format=%ae%x00%s%x00", rev, "--", path)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(strings.TrimSpace(out), "\x00")
+	var commits []Commit
+	for i := 0; i+1 < len(fields); i += 2 {
+		commits = append(commits, Commit{AuthorEmail: strings.TrimSpace(fields[i]), Subject: strings.TrimSpace(fields[i+1])})
+	}
+	return commits, nil
+}
+
 // unborn is the rev of a branch HQ has no commit on yet: Fetch's head for a
 // branch it did not find. Every read of it reads the empty tree.
 const unborn = ""

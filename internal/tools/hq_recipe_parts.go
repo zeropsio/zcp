@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -109,9 +110,13 @@ func recipeTierFiles(files []recipe.File) []recipe.File {
 // service added where the composed tier has it and main does not, removed
 // where main has it and the composed tier does not. A tier that carries no
 // service of the repository is a tier people wrote for it themselves, and is
-// left alone; a dev half is never removed.
+// left alone; a dev half — the dev service a pool took over among them — is
+// never removed.
 func planRecipeService(ctx context.Context, comp groupRecipeComposition, part recipePart) ([]recipeServiceTier, error) {
-	devs := map[string]bool{}
+	devs := maps.Clone(comp.retiredDevs)
+	if devs == nil {
+		devs = map[string]bool{}
+	}
 	for _, r := range comp.inputs.Runtimes {
 		devs[r.DevHostname] = true
 	}

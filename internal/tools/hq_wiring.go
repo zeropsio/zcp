@@ -148,11 +148,21 @@ func hqRepositoryActionRefusal(action string) *mcp.CallToolResult {
 	), WithRecoveryStatus())
 }
 
+// mateRepositoryReport is what a repository pass has to say: its report
+// lines, and the steps the Mate's setup is not done without (its group
+// recipe that cannot be proposed, recipeOutcome.Required).
+type mateRepositoryReport struct {
+	lines    []string
+	required []string
+}
+
 // reconcileMateRepositories runs both repository reconciles in the one order
 // that works: a pair gets its repository in HQ, and only then can the group
-// recipe name what builds it. Every bootstrap and adopt pass calls this; both
-// halves are silent when there is nothing to do. Pairs an older zcp left
-// without stages get them back first, so the recipe names every stage.
+// recipe name what builds it. Every bootstrap, adopt and develop start calls
+// this — the recipe tried again on each until it composes; both halves are
+// silent when there is nothing to do. Pairs an older zcp left without stages
+// get them back first, so the recipe names every stage. pace is the
+// repository pass's (a develop start runs it now).
 func reconcileMateRepositories(
 	ctx context.Context,
 	client platform.Client,
@@ -160,16 +170,19 @@ func reconcileMateRepositories(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
-) []string {
+	pace hqPassPace,
+) mateRepositoryReport {
 	if !rt.MateEnabled {
-		return reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
+		return mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace)}
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
-	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
-		lines = append(lines, "the group's recipe: "+line)
+	report := mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace)}
+	recipe := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir)
+	if recipe.Line != "" {
+		report.lines = append(report.lines, "the group's recipe: "+recipe.Line)
 	}
-	return lines
+	report.required = recipe.Required
+	return report
 }
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
@@ -1025,24 +1038,43 @@ func forgetHQPairState(stateDir, hostname string) error {
 	return nil
 }
 
-// appendRepositoryReport folds the reconcile's lines into a bootstrap
-// response's message. Separate from the reconcile so the reconcile stays a
-// pure "what happened" reporter with no opinion about where it is rendered.
-func appendRepositoryReport(resp *workflow.BootstrapResponse, lines []string) {
-	if resp == nil || len(lines) == 0 {
+// appendRepositoryReport folds the reconcile's report into a bootstrap
+// response: its lines into the message, and each required step into
+// Required and the message's own sentence — a stand-up is not done while
+// one stands. Separate from the reconcile so the reconcile stays a pure
+// "what happened" reporter with no opinion about where it is rendered.
+func appendRepositoryReport(resp *workflow.BootstrapResponse, report mateRepositoryReport) {
+	if resp == nil {
 		return
 	}
-	resp.Message += " HQ — " + strings.Join(lines, "; ") + "."
+	if len(report.lines) > 0 {
+		resp.Message += " HQ — " + strings.Join(report.lines, "; ") + "."
+	}
+	if len(report.required) > 0 {
+		resp.Required = append(resp.Required, report.required...)
+		resp.Message += " " + requiredSentence(report.required)
+	}
 }
 
-// withRepositoryReport adds the reconcile's lines to a tool result as one
-// more text block; a result with nothing to add is returned as it is.
-func withRepositoryReport(result *mcp.CallToolResult, lines []string) *mcp.CallToolResult {
-	if result == nil || len(lines) == 0 {
+// withRepositoryReport adds the reconcile's report to a tool result: its
+// lines as one more text block, each required step as one of its own; a
+// result with nothing to add is returned as it is.
+func withRepositoryReport(result *mcp.CallToolResult, report mateRepositoryReport) *mcp.CallToolResult {
+	if result == nil {
 		return result
 	}
-	result.Content = append(result.Content, &mcp.TextContent{Text: "HQ — " + strings.Join(lines, "; ") + "."})
+	if len(report.lines) > 0 {
+		result.Content = append(result.Content, &mcp.TextContent{Text: "HQ — " + strings.Join(report.lines, "; ") + "."})
+	}
+	if len(report.required) > 0 {
+		result.Content = append(result.Content, &mcp.TextContent{Text: requiredSentence(report.required)})
+	}
 	return result
+}
+
+// requiredSentence says the steps the Mate's setup is not done without.
+func requiredSentence(required []string) string {
+	return "REQUIRED before this Mate's setup is done — " + strings.Join(required, " — ")
 }
 
 // sameGitRepository reports whether two remote URLs name one repository:

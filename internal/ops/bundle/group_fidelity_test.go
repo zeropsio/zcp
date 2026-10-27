@@ -198,7 +198,7 @@ func TestBuildGroupRecipe_HAIncapableStaysSingle(t *testing.T) {
 }
 
 // A runtime the project builds from a public repository and no pair —
-// a utility such as mailpit — is written as the project runs it on every
+// a utility such as an image proxy — is written as the project runs it on every
 // tier: its own hostname, its public build, its own scale, no tier's
 // transform. It takes its place in the dependency order like any runtime: one
 // read only once the reader runs orders nothing, so it shares the reader's
@@ -206,13 +206,13 @@ func TestBuildGroupRecipe_HAIncapableStaysSingle(t *testing.T) {
 func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
-	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n  - setup: api\n    run:\n      envVariables:\n        SMTP_HOST: ${mailpit_hostname}\n"
+	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n  - setup: api\n    run:\n      envVariables:\n        SMTP_HOST: ${imgproxy_hostname}\n"
 	in.Utilities = []GroupUtility{{
-		Hostname: "mailpit", ServiceType: "alpine@3.21",
-		BuildFromGit:     "https://github.com/zerops-recipe-apps/mailpit-app.git",
+		Hostname: "imgproxy", ServiceType: "alpine@3.21",
+		BuildFromGit:     "https://github.com/zerops-recipe-apps/imgproxy-app.git",
 		SubdomainEnabled: true,
 		Scaling:          &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED", MinRAM: 0.25},
-		ServiceEnvs:      []ProjectEnvVar{{Key: "MP_UI_AUTH", Value: "admin:live-mailpit-pass"}},
+		ServiceEnvs:      []ProjectEnvVar{{Key: "IMGPROXY_AUTH", Value: "admin:live-imgproxy-pass"}},
 	}}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
@@ -221,29 +221,29 @@ func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 	for _, tier := range layout.Tiers {
 		t.Run(tier.Title, func(t *testing.T) {
 			t.Parallel()
-			mailpit := serviceNode(t, tier.ImportYAML, "mailpit")
+			imgproxy := serviceNode(t, tier.ImportYAML, "imgproxy")
 			want := map[string]string{
-				"hostname": "mailpit", "type": "alpine@3.21", "priority": "1",
-				"buildFromGit": "https://github.com/zerops-recipe-apps/mailpit-app", "enableSubdomainAccess": "true",
+				"hostname": "imgproxy", "type": "alpine@3.21", "priority": "1",
+				"buildFromGit": "https://github.com/zerops-recipe-apps/imgproxy-app", "enableSubdomainAccess": "true",
 				"minContainers": "1", "maxContainers": "1",
 			}
 			got := map[string]string{}
-			for _, key := range mappingKeys(mailpit) {
-				if node := mappingValue(mailpit, key); node.Kind == yaml.ScalarNode {
+			for _, key := range mappingKeys(imgproxy) {
+				if node := mappingValue(imgproxy, key); node.Kind == yaml.ScalarNode {
 					got[key] = node.Value
 				}
 			}
 			if !maps.Equal(got, want) {
-				t.Errorf("mailpit = %v, want %v", got, want)
+				t.Errorf("imgproxy = %v, want %v", got, want)
 			}
-			if got := scalarMap(mappingValue(mailpit, "verticalAutoscaling")); !maps.Equal(got, map[string]string{"cpuMode": "SHARED", "minRam": "0.25"}) {
-				t.Errorf("mailpit verticalAutoscaling = %v, want its own", got)
+			if got := scalarMap(mappingValue(imgproxy, "verticalAutoscaling")); !maps.Equal(got, map[string]string{"cpuMode": "SHARED", "minRam": "0.25"}) {
+				t.Errorf("imgproxy verticalAutoscaling = %v, want its own", got)
 			}
-			if got := scalarMap(mappingValue(mailpit, "vault")); got["MP_UI_AUTH"] == "admin:live-mailpit-pass" {
-				t.Errorf("mailpit's credential reached the recipe")
+			if got := scalarMap(mappingValue(imgproxy, "vault")); got["IMGPROXY_AUTH"] == "admin:live-imgproxy-pass" {
+				t.Errorf("imgproxy's credential reached the recipe")
 			}
-			if strings.Contains(tier.ImportYAML, "live-mailpit-pass") {
-				t.Errorf("mailpit's credential reached the recipe")
+			if strings.Contains(tier.ImportYAML, "live-imgproxy-pass") {
+				t.Errorf("imgproxy's credential reached the recipe")
 			}
 		})
 	}
@@ -260,10 +260,10 @@ func TestBuildGroupRecipe_UtilityBuildCarriesNoCredential(t *testing.T) {
 		name, live, wantBuild, wantSetup string
 		wantPrivate                      bool
 	}{
-		{name: "a public repository", live: "https://github.com/zerops-recipe-apps/mailpit-app.git",
-			wantBuild: "https://github.com/zerops-recipe-apps/mailpit-app", wantSetup: "mailpit"},
+		{name: "a public repository", live: "https://github.com/zerops-recipe-apps/imgproxy-app.git",
+			wantBuild: "https://github.com/zerops-recipe-apps/imgproxy-app", wantSetup: "imgproxy"},
 		{name: "a query and a fragment are dropped", live: "https://github.com/acme/tool.git?ref=main#readme",
-			wantBuild: "https://github.com/acme/tool", wantSetup: "mailpit"},
+			wantBuild: "https://github.com/acme/tool", wantSetup: "imgproxy"},
 		{name: "a user and a password: a private repository", live: "https://x-access-token:" + fakeGitHubToken + "@github.com/acme/private-tool", wantPrivate: true},
 		{name: "a token for the user: a private repository", live: "https://" + fakeGitHubToken + "@github.com/acme/private-tool", wantPrivate: true},
 	}
@@ -272,16 +272,16 @@ func TestBuildGroupRecipe_UtilityBuildCarriesNoCredential(t *testing.T) {
 			t.Parallel()
 			in := groupInputsFixture()
 			in.MateProjectName = "acme-juno"
-			in.Utilities = []GroupUtility{{Hostname: "mailpit", ServiceType: "alpine@3.21", BuildFromGit: tt.live, SetupName: "mailpit"}}
+			in.Utilities = []GroupUtility{{Hostname: "imgproxy", ServiceType: "alpine@3.21", BuildFromGit: tt.live, SetupName: "imgproxy"}}
 			layout, _, err := BuildGroupRecipe(in)
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
 			}
 			for _, tier := range layout.Tiers {
-				mailpit := serviceNode(t, tier.ImportYAML, "mailpit")
+				imgproxy := serviceNode(t, tier.ImportYAML, "imgproxy")
 				got := map[string]string{}
 				for _, key := range []string{"buildFromGit", "zeropsSetup"} {
-					if node := mappingValue(mailpit, key); node != nil {
+					if node := mappingValue(imgproxy, key); node != nil {
 						got[key] = node.Value
 					}
 				}
@@ -290,13 +290,13 @@ func TestBuildGroupRecipe_UtilityBuildCarriesNoCredential(t *testing.T) {
 					want = map[string]string{}
 				}
 				if !maps.Equal(got, want) {
-					t.Errorf("%s: mailpit = %v, want %v", tier.Title, got, want)
+					t.Errorf("%s: imgproxy = %v, want %v", tier.Title, got, want)
 				}
-				comment := strings.ToLower(mailpit.HeadComment)
+				comment := strings.ToLower(imgproxy.HeadComment)
 				says := strings.Contains(comment, "private repository") && strings.Contains(comment, "acme-juno") && strings.Contains(comment, "by hand")
 				if says != tt.wantPrivate {
-					t.Errorf("%s: mailpit's comment is %q; want one saying it builds from a private repository in acme-juno and its source is set by hand: %v",
-						tier.Title, mailpit.HeadComment, tt.wantPrivate)
+					t.Errorf("%s: imgproxy's comment is %q; want one saying it builds from a private repository in acme-juno and its source is set by hand: %v",
+						tier.Title, imgproxy.HeadComment, tt.wantPrivate)
 				}
 			}
 			for path, body := range groupFiles(t, layout) {

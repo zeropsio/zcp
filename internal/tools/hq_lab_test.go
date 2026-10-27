@@ -702,7 +702,9 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 	if f.hasMain(dir) {
 		tree, parents = f.git(f.t.Context(), dir, "merge-tree", "--write-tree", "main", *head), []string{"-p", "main"}
 	}
-	squash := f.git(f.t.Context(), dir, append(append([]string{"-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid",
+	// Core's squash: the change's title and number as its subject, the
+	// change's Mate as its author (HQ changes.ts, squashMerge).
+	squash := f.git(f.t.Context(), dir, append(append([]string{"-c", "user.name=Mate", "-c", "user.email=" + hq.SquashAuthorEmail(change.MateProjectID),
 		"commit-tree", tree}, parents...), "-m", fmt.Sprintf("%s (#%d)", change.Title, number))...)
 	f.git(f.t.Context(), dir, "update-ref", "refs/heads/main", squash)
 	change.State, change.Head, change.MergedSha, change.LandedHead = hq.ChangeMerged, head, &squash, head
@@ -1049,11 +1051,26 @@ func requireGitForLab(t *testing.T) {
 // way an earlier merge of HQ's would have.
 func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	f.t.Helper()
+	f.landAs(repo, "other", "other@example.invalid", "Another Mate's work", files)
+}
+
+// landRecipeAsSquash puts files on the recipe repository's main as Core's
+// squash of a change titled title, number number, that mate's — the commit a
+// landed change leaves on main.
+func (f *fakeHQ) landRecipeAsSquash(mate, title string, number int, files map[string]string) {
+	f.t.Helper()
+	f.landAs(hq.RecipeRepo, "Mate", hq.SquashAuthorEmail(mate), fmt.Sprintf("%s (#%d)", title, number), files)
+}
+
+// landAs puts files on repo's main as one commit by name <email> with
+// subject.
+func (f *fakeHQ) landAs(repo, name, email, subject string, files map[string]string) {
+	f.t.Helper()
 	f.seed(repo)
 	clone := filepath.Join(f.t.TempDir(), "other")
 	f.git(f.t.Context(), "", "clone", "-q", f.repoDir(f.appID, repo), clone)
-	for name, body := range files {
-		path := filepath.Join(clone, name)
+	for file, body := range files {
+		path := filepath.Join(clone, file)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			f.t.Fatal(err)
 		}
@@ -1062,7 +1079,7 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 		}
 	}
 	f.git(f.t.Context(), clone, "add", "-A")
-	f.git(f.t.Context(), clone, "-c", "user.name=other", "-c", "user.email=other@example.invalid", "commit", "-qm", "Another Mate's work")
+	f.git(f.t.Context(), clone, "-c", "user.name="+name, "-c", "user.email="+email, "commit", "-qm", subject)
 	cmd := exec.CommandContext(f.t.Context(), "git", "-C", clone, "push", "-q", "origin", "main")
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_AS_HQ=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
