@@ -178,3 +178,29 @@ func TestMultiPartRouteNote_PoolAndBoxAreNeverRead(t *testing.T) {
 		t.Errorf("read %v, want appdev only", repos.read)
 	}
 }
+
+// TestAttachPartsSignal_ZeropsYamlReachesThePairStages: a dev half whose repo
+// carries its zerops.yaml marks itself and every stage of its pair — the
+// stages deploy setups of that same file — so a first deploy of it gets no
+// guidance that scaffolds a zerops.yaml or writes the app; a repo without one
+// marks nothing.
+func TestAttachPartsSignal_ZeropsYamlReachesThePairStages(t *testing.T) {
+	t.Parallel()
+	withFile := "@@file\nzerops.yml\n@@yaml\nzerops:\n  - setup: dev\n  - setup: web\n@@declaration\n@@markers\n@@packages\n"
+	noFile := "@@file\n@@yaml\n@@declaration\n@@markers\n@@packages\n"
+	got := []workflow.ServiceSnapshot{
+		{Hostname: "appdev", Mode: topology.ModeStandard, RuntimeClass: topology.RuntimeDynamic, SetupName: "dev",
+			Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}}},
+		{Hostname: "webstage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
+		{Hostname: "newdev", Mode: topology.ModeStandard, RuntimeClass: topology.RuntimeDynamic, SetupName: "dev", StageHostname: "newstage"},
+		{Hostname: "newstage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
+	}
+	repos := &partsRepos{out: map[string]string{"appdev": withFile, "newdev": noFile}}
+	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true}, nil)
+	want := map[string]bool{"appdev": true, "webstage": true, "newdev": false, "newstage": false}
+	for _, s := range got {
+		if s.HasZeropsYAML != want[s.Hostname] {
+			t.Errorf("%s: HasZeropsYAML = %v, want %v", s.Hostname, s.HasZeropsYAML, want[s.Hostname])
+		}
+	}
+}
