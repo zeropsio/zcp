@@ -183,8 +183,8 @@ func TestBuildGroupRecipe_ThreeParts_OneRuntimePerStage(t *testing.T) {
 	}
 	want := map[string]map[string]string{
 		"AI Agent":         {"appdev": "dev", "webstage": "web", "apistage": "api", "workerstage": "worker"},
-		"Stage":            {"app": "web", "api": "api", "worker": "worker"},
-		"Small Production": {"app": "web", "api": "api", "worker": "worker"},
+		"Stage":            {"web": "web", "api": "api", "worker": "worker"},
+		"Small Production": {"web": "web", "api": "api", "worker": "worker"},
 	}
 	for _, tier := range layout.Tiers {
 		if got := tierRuntimes(t, tier.ImportYAML); !maps.Equal(got, want[tier.Title]) {
@@ -193,8 +193,9 @@ func TestBuildGroupRecipe_ThreeParts_OneRuntimePerStage(t *testing.T) {
 	}
 }
 
-// A new service's hostname is the stem for the first part and the part name
-// for the others, and an existing tier hostname is never recomputed.
+// A new service's hostname is its part's — the stem of the part's stage
+// (`webstage` → `web`), for every part alike — and an existing tier hostname
+// is never recomputed.
 func TestBuildGroupRecipe_PartHostnames_HeldByTheTier(t *testing.T) {
 	t.Parallel()
 	repo := "https://hq.example.com/git/app-1/appdev"
@@ -205,7 +206,7 @@ func TestBuildGroupRecipe_PartHostnames_HeldByTheTier(t *testing.T) {
 	}{
 		{
 			name: "no tier holds a part yet",
-			want: map[string]string{"app": "web", "api": "api", "worker": "worker"},
+			want: map[string]string{"web": "web", "api": "api", "worker": "worker"},
 		},
 		{
 			name: "a person renamed the web and the api in the tier",
@@ -218,7 +219,7 @@ func TestBuildGroupRecipe_PartHostnames_HeldByTheTier(t *testing.T) {
 		{
 			name: "a tier holds a part of another repository",
 			held: []HeldRuntime{{Hostname: "frontend", RepoURL: "https://hq.example.com/git/app-1/other", SetupName: "web"}},
-			want: map[string]string{"app": "web", "api": "api", "worker": "worker"},
+			want: map[string]string{"web": "web", "api": "api", "worker": "worker"},
 		},
 	}
 	for _, tt := range tests {
@@ -248,26 +249,22 @@ func TestBuildGroupRecipe_PartHostnames_HeldByTheTier(t *testing.T) {
 	}
 }
 
-// A part whose name is no hostname, or one another service already has, is
-// left out of the group environments and said — never renamed on a guess.
+// A part whose name another service of the group environments already has
+// is left out of them and said — never renamed on a guess.
 func TestBuildGroupRecipe_PartHostnameUnusable_LeftOutAndSaid(t *testing.T) {
 	t.Parallel()
 	inputs := threePartsInputs()
 	inputs.ManagedServices = append(inputs.ManagedServices, ManagedServiceEntry{Hostname: "worker", Type: "valkey@7.2"})
-	inputs.Runtimes[0].Stages[1].SetupName = "api-v2"
-	inputs.Runtimes[0].ZeropsYAMLBody = strings.Replace(threePartsYAML, "setup: api\n", "setup: api-v2\n", 1)
 	layout, warnings, err := BuildGroupRecipe(inputs)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	stage := tierDocBody(t, layout, "Stage")
-	if got := tierRuntimes(t, stage); !maps.Equal(got, map[string]string{"app": "web"}) {
-		t.Errorf("Stage runtimes = %v, want only app (web)", got)
+	if got := tierRuntimes(t, stage); !maps.Equal(got, map[string]string{"web": "web", "api": "api"}) {
+		t.Errorf("Stage runtimes = %v, want web and api only", got)
 	}
-	for _, want := range []string{`part "api-v2"`, `part "worker"`} {
-		if !warningsContain(warnings, want) {
-			t.Errorf("warnings %v do not name %s", warnings, want)
-		}
+	if !warningsContain(warnings, `part "worker"`) {
+		t.Errorf("warnings %v do not name part \"worker\"", warnings)
 	}
 }
 
