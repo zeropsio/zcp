@@ -310,8 +310,8 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 func completionLeaseServer(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[string]*poolOrchestrator, ops.LeaseDeps) {
 	t.Helper()
 	orchs := map[string]*poolOrchestrator{
-		"hqpool":  {pool: "hqpool", token: "hq-orch-token-0001", number: 3},
-		"webpool": {pool: "webpool", token: "web-orch-token-0001", number: 7},
+		"hqpool":  {pool: "hqpool", token: "hq-orchestrator-fixture", number: 3},
+		"webpool": {pool: "webpool", token: "web-orchestrator-fixture", number: 7},
 	}
 	urls := map[string]string{}
 	for name, o := range orchs {
