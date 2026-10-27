@@ -358,7 +358,7 @@ func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo strin
 		return onHQ + "the Mate's server holds no Git credential from HQ: it is not linked to HQ yet (its /mate/setup.json says why)"
 	}
 	rec, found := readPoolCredential(d.StateDir, pool.Name)
-	if !found || rec.PoolServiceID != pool.ID || rec.Fingerprint != hq.GitCredentialFingerprint(credential) {
+	if !found || rec.PoolServiceID != pool.ID || rec.needsRenewal(hq.GitCredentialFingerprint(credential)) {
 		return onHQ + "zcp's record does not say the pool holds the one the Mate's server keeps from HQ now (an acquire of an HQ repository writes it)"
 	}
 	return ""

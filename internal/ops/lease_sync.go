@@ -188,7 +188,20 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	view.CheckMillis = time.Since(start).Milliseconds()
 	pushStart := time.Now()
 	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
+	renewals := newLeaseCredentialRenewals()
 	view.Push, view.Commit, err = pushLeaseBranch(ctx, d.SSH, alias, branch, onHQ)
+	// HQ refusing the pool's credential: renewed in this call, pushed once
+	// more (renewLeasePoolCredential).
+	if err != nil && onHQ && gitCredentialRefused(err) {
+		r := renewals.renew(ctx, d, rec)
+		if r.renewed {
+			view.Push, view.Commit, err = pushLeaseBranch(ctx, d.SSH, alias, branch, onHQ)
+		}
+		if err != nil && gitCredentialRefused(err) {
+			err = heldLeaseCredentialRefusal(err, fmt.Sprintf("Lease %s could not push branch %s to origin, so no other lease was touched", alias, branch),
+				r, LeaseSyncCall(alias))
+		}
+	}
 	// The check reached the source; a push it does not reach says so
 	// through its refusal's cause.
 	if _, silent := leaseNotAnswering(err); silent {
@@ -215,7 +228,7 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 			parkedMember(m, alias)
 			return
 		}
-		fastForwardMember(ctx, d, mrec, m, branch, alias, onHQ)
+		fastForwardMember(ctx, d, mrec, m, branch, alias, onHQ, renewals)
 	})
 	for _, m := range members {
 		view.Members = append(view.Members, *m)
@@ -414,10 +427,26 @@ func leaseSyncMemberCommand(branch string) string {
 // whether the container answered (noteLeaseAnswer); a member that moved also
 // names its running dev servers nothing reloads. source is the lease the sync
 // pushed from, onHQ whether the repository is on the Mate's HQ.
-func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *LeaseSyncMember, branch, source string, onHQ bool) {
+func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *LeaseSyncMember, branch, source string, onHQ bool, renewals *leaseCredentialRenewals) {
 	start := time.Now()
 	defer func() { m.Millis = time.Since(start).Milliseconds() }()
 	out, err := d.SSH.ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
+	// HQ refusing the member's pool's credential on its fetch: that pool
+	// renewed in this call, the member tried once more.
+	if err != nil && onHQ && gitCredentialRefused(err) {
+		r := renewals.renew(ctx, d, rec)
+		if r.renewed {
+			out, err = d.SSH.ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
+		}
+		if err != nil && gitCredentialRefused(err) {
+			code, _ := classifyCheckoutFailure(err, onHQ)
+			m.Outcome, m.Code = LeaseSyncFailed, code
+			m.Note = fmt.Sprintf("%s could not be fetched or fast-forwarded (%s). %s", m.Alias, sshFailureText(err),
+				heldLeaseHQCredentialSuggestion(hqRefusalWhy(err), r, LeaseSyncCall(source)))
+			noteLeaseAnswer(d.StateDir, rec, err, d.now())
+			return
+		}
+	}
 	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	if err != nil {
 		memberFailure(m, err, onHQ)

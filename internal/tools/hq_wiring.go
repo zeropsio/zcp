@@ -502,6 +502,12 @@ func takeOverPoolCredential(stateDir string, hqc hq.Client, m *workflow.ServiceM
 	if !found || serviceID != m.DevPool.ServiceID {
 		return
 	}
+	// A record a lease's refused git marked says the pool holds nothing HQ
+	// takes, whatever the pair's says: the pools' renewal writes it, and the
+	// next takeover finds it renewed.
+	if ops.PoolCredentialRefused(stateDir, m.Hostname) {
+		return
+	}
 	// No credential in the Mate's file names none to match: the record is
 	// adopted only where the pair names none yet. One naming another
 	// credential than the pair's cannot be weighed against none, so it stays,

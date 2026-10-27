@@ -63,8 +63,14 @@ type PoolHQCredential struct {
 // credential fingerprint names: its per-pool record, or the record of a pair
 // keyed by the pool, which takes the per-pool one over (DP-16).
 func (p PoolHQCredential) holds(stateDir string, pool *platform.ServiceStack, fingerprint string) bool {
-	if rec, found := readPoolCredential(stateDir, pool.Name); found && rec.PoolServiceID == pool.ID && rec.Fingerprint == fingerprint {
-		return true
+	rec, found := readPoolCredential(stateDir, pool.Name)
+	if found && rec.PoolServiceID == pool.ID {
+		if rec.Refused {
+			return false
+		}
+		if rec.Fingerprint == fingerprint {
+			return true
+		}
 	}
 	if p.Kept == nil {
 		return false
@@ -94,6 +100,17 @@ const poolCredentialProbe = `printf '%s' "$` + PoolHQCredentialEnvKey + `" | sha
 type poolCredentialRecord struct {
 	PoolServiceID string `json:"poolServiceId"`
 	Fingerprint   string `json:"fingerprint"`
+	// Refused marks a pool whose credential HQ refused a lease's git and zcp
+	// could not write afresh then (renewLeasePoolCredential): whatever the
+	// fingerprint says, the pool holds nothing HQ takes, so the next renewal
+	// and the next acquire write it (needsRenewal).
+	Refused bool `json:"refused,omitempty"`
+}
+
+// needsRenewal reports whether the pool this record is of must be given the
+// credential fingerprint names: it names another, or HQ refused what it holds.
+func (rec poolCredentialRecord) needsRenewal(fingerprint string) bool {
+	return rec.Refused || rec.Fingerprint != fingerprint
 }
 
 func poolCredentialDir(stateDir string) string {
@@ -115,7 +132,7 @@ func readPoolCredential(stateDir, pool string) (poolCredentialRecord, bool) {
 		return poolCredentialRecord{}, false
 	}
 	var rec poolCredentialRecord
-	if json.Unmarshal(raw, &rec) != nil || rec.PoolServiceID == "" || rec.Fingerprint == "" {
+	if json.Unmarshal(raw, &rec) != nil || rec.PoolServiceID == "" || (rec.Fingerprint == "" && !rec.Refused) {
 		return poolCredentialRecord{}, false
 	}
 	return rec, true
@@ -371,7 +388,7 @@ func RenewPoolHQCredentials(ctx context.Context, client platform.Client, stateDi
 		if e.IsDir() || !isRecord {
 			continue
 		}
-		if rec, found := readPoolCredential(stateDir, pool); !found || rec.Fingerprint == fingerprint {
+		if rec, found := readPoolCredential(stateDir, pool); !found || !rec.needsRenewal(fingerprint) {
 			continue
 		}
 		if err := renewPoolHQCredential(ctx, client, stateDir, pool, credential, fingerprint); err != nil {
@@ -389,7 +406,7 @@ func RenewPoolHQCredential(ctx context.Context, client platform.Client, stateDir
 		return nil
 	}
 	fingerprint := hq.GitCredentialFingerprint(credential)
-	if rec, found := readPoolCredential(stateDir, pool); !found || rec.Fingerprint == fingerprint {
+	if rec, found := readPoolCredential(stateDir, pool); !found || !rec.needsRenewal(fingerprint) {
 		return nil
 	}
 	return renewPoolHQCredential(ctx, client, stateDir, pool, credential, fingerprint)
@@ -405,7 +422,7 @@ func renewPoolHQCredential(ctx context.Context, client platform.Client, stateDir
 	}
 	defer unlock()
 	rec, found := readPoolCredential(stateDir, pool)
-	if !found || rec.Fingerprint == fingerprint {
+	if !found || !rec.needsRenewal(fingerprint) {
 		return nil
 	}
 	// By id: the record names the pool service zcp wrote, and the service

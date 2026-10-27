@@ -65,3 +65,12 @@ func PoolCredentialRecordPools(stateDir string) []string {
 	slices.Sort(pools)
 	return pools
 }
+
+// PoolCredentialRefused reports whether zcp's record of pool is marked: HQ
+// refused the credential a lease there presented and it could not be written
+// afresh then, so the next renewal writes it whatever its fingerprint says.
+// The pass's takeover leaves such a record to that renewal.
+func PoolCredentialRefused(stateDir, pool string) bool {
+	rec, found := readPoolCredential(stateDir, pool)
+	return found && rec.Refused
+}
