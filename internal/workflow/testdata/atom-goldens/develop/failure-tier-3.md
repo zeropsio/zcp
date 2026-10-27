@@ -104,8 +104,14 @@ A repository you did not write — in the working directory, or one the
 person asks to run or develop here — runs in the dev service as its
 developers run it locally. Scaffold nothing for it.
 
-1. **Given its address, ask first** with `zerops_origin` if you have
-   it. Never ask for a token.
+1. **Given its address, ask first** with
+   `zerops_origin action="request" url="<its address>" repo="appdev" why="<one line>"`
+   if you have it. Never ask for a token. With it, its history becomes
+   `main` exactly as it is: taken from its origin once the person
+   connects it, or, from anywhere else (a bundle, another host), pushed
+   as a branch of its own and opened as a change — never cloned in and
+   merged onto `main`'s initial commit. The setup below goes in after it,
+   as a change of its own.
 2. **Read how the repo is developed before you write any setup:**
    `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, package scripts,
    `Makefile`, `.devcontainer/`, `Procfile`, a compose file — the

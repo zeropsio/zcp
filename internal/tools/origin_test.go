@@ -90,6 +90,13 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 		"Never push `main` and never force-push",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed — in your own shell, never over ssh: `cd /var/www/appdev && git remote add upstream https://github.com/zeropsio/mate && git remote set-url --push upstream no_push && " + hq.GitHubHelperConfig + " && git fetch upstream`",
 		"a private one is read with HQ's read token for it, and when HQ holds none, say so",
+		// HQ takes main from GitHub: an existing history is never merged
+		// onto the initial commit HQ seeds main with.
+		"Connected, HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`: never clone it in and merge it, and never merge HQ's initial commit into its history",
+		"your own setup goes in after it, as an ordinary change on a branch cut from that `main` — on GitHub a pull request, merged by squash",
+		// Declined — or GitHub HQ cannot connect — the code comes in as it is.
+		"Declined: nothing changes; should its code still come in, its history goes in exactly as it is, as a branch of its own (`cd /var/www/appdev && git fetch https://github.com/zeropsio/mate HEAD:<branch> && git push origin <branch>`)",
+		"whose change you open with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"`: merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
@@ -427,6 +434,10 @@ func TestOriginRequest_RepositoryOutsideGitHub_IsOnlyFollowed(t *testing.T) {
 		"Mate asks whether appdev follows https://gitlab.com/acme/app — a repository outside GitHub is only followed, never pushed to",
 		"`cd /var/www/appdev && git remote add upstream https://gitlab.com/acme/app && git remote set-url --push upstream no_push && git fetch upstream`",
 		"only a public one can be fetched",
+		// HQ does not take main from outside GitHub: while main holds only
+		// its initial commit, the followed history goes in as it is.
+		"while `main` still holds only HQ's initial commit, its history goes in exactly as it is, as a branch of its own (`git checkout -b <branch> upstream/main && git push origin <branch>`)",
+		"merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)

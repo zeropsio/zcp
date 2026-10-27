@@ -709,6 +709,57 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 	}
 }
 
+// A repository that already exists comes into HQ as `main` itself, with no
+// merge commit (the owner, 2026-10-27: clean history, squash only). HQ
+// seeds every repository it gives a pair with one initial commit on `main`;
+// Zerops Apps, Mate Web and Noola were brought in by merging their history
+// onto it, so HQ's `main` held commits GitHub never had. Code kept on
+// GitHub is connected first and HQ takes `main` from GitHub; code from
+// anywhere else is pushed as it is as a branch of its own, which HQ makes
+// `main`; the Mate's own setup follows as an ordinary change. A container
+// that is no Mate has no HQ and is told none of it.
+func TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain(t *testing.T) {
+	t.Parallel()
+	wants := []string{
+		"**A repository that already exists**",
+		`zerops_origin action="request" url="<its GitHub address>" repo="<the dev hostname>" why="<one line>"`,
+		"HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`",
+		"never clone it in and merge it",
+		"a bundle, another host, a GitHub repository HQ cannot connect",
+		"as a branch of its own, exactly as it is",
+		"HQ makes that history `main`",
+		"never merge or rebase it onto `main`'s initial commit",
+		"never merge HQ's initial commit into it",
+		"`.zcp/dev-servers.json`",
+		"goes in afterwards as an ordinary change",
+		"merged by squash",
+	}
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "a plain container", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range wants {
+				if got := strings.Contains(out, want); got != tc.want {
+					t.Errorf("%q present = %v, want %v", want, got, tc.want)
+				}
+			}
+			if strings.Contains(out, "allow-unrelated-histories") {
+				t.Error("AGENTS.md joins unrelated histories")
+			}
+		})
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {

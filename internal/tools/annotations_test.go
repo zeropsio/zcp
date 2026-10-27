@@ -700,8 +700,9 @@ func TestAnnotations_OriginTool(t *testing.T) {
 	if words := len(strings.Fields(tool.Description)); words > 60 {
 		t.Fatalf("description has %d words (max 60)", words)
 	}
-	// An ask no longer needed is withdrawn, never declared outdated in chat.
-	for _, want := range []string{"withdraw", "not in chat"} {
+	// An ask no longer needed is withdrawn, never declared outdated in chat;
+	// the ask comes before the code does, never after a clone.
+	for _, want := range []string{"withdraw", "not in chat", "Before a repository's code comes in, ask"} {
 		if !strings.Contains(tool.Description, want) {
 			t.Errorf("description lacks %q: %s", want, tool.Description)
 		}
