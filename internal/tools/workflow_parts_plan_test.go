@@ -334,7 +334,7 @@ func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(
 			checkouts := map[string]string{"boxdev": t.TempDir(), "hqdev": t.TempDir()}
 			labHistory(t, checkouts["boxdev"], tt.box)
 			labHistory(t, checkouts["hqdev"], tt.hq)
-			services := []platform.ServiceStack{}
+			services := make([]platform.ServiceStack, 0, 4)
 			for _, host := range []string{"boxdev", "boxstage", "hqdev", "hqstage"} {
 				services = append(services, platform.ServiceStack{
 					ID: "svc-" + host, Name: host, Status: "ACTIVE",
