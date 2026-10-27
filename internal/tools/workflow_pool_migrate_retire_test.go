@@ -943,6 +943,55 @@ func TestPoolMigrateRetire_BundleFails_NamesTheCause_SafeToRepeat(t *testing.T) 
 	}
 }
 
+// TestPoolMigrateRetire_EnvCheck_LeavesZcpsOwnSecretsOut: the retire's check
+// for variables referencing the dev leaves out what zcp itself holds or
+// wrote — the zcp service's own env, the Mate credential it puts on a pool,
+// the secrets the env step copied to the pool (read resolved on the dev, so
+// never a reference) — and names a secret it could not read without telling
+// the agent to read it: an agent told to check them "yourself" ran printenv
+// over ZCP_API_KEY and VSCODE_PASSWORD (2026-10-27).
+func TestPoolMigrateRetire_EnvCheck_LeavesZcpsOwnSecretsOut(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.services = append(f.services, poolMigrateRuntime("zcp", "svc-zcp"), poolMigrateRuntime("worker", "svc-worker"))
+		f.env["svc-zcp"] = []platform.ServiceEnvVar{
+			{ID: "z-key", Key: "ZCP_API_KEY", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+			{ID: "z-pass", Key: "VSCODE_PASSWORD", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+			{ID: "z-lease", Key: "apppool_LEASE_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		}
+		f.env["svc-worker"] = []platform.ServiceEnvVar{
+			{ID: "w-secret", Key: "WORKER_SECRET", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		}
+		f.env["svc-pool"] = append(f.env["svc-pool"],
+			platform.ServiceEnvVar{ID: "p-hq", Key: "ZCP_HQ_GIT_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true})
+	})
+	record := filepath.Join(r.f.stateDir, "migrate", "pool-env", "apppool.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(`{"poolServiceId":"svc-pool","dev":"appdev","fingerprints":{"STRIPE_SECRET":"fp"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := r.retire(t, retireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("first call = %v, want DIAGNOSIS_REQUIRED", out)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, never := range []string{"ZCP_API_KEY", "VSCODE_PASSWORD", "apppool_LEASE_TOKEN", "ZCP_HQ_GIT_TOKEN", "apppool STRIPE_SECRET", "yourself"} {
+		if strings.Contains(text, never) {
+			t.Errorf("the answer names %q: %s", never, text)
+		}
+	}
+	if !strings.Contains(text, "worker WORKER_SECRET") {
+		t.Errorf("the answer does not name the secret zcp could not read: %s", text)
+	}
+	r.assertNothingRetired(t)
+}
+
 // TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
 // does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
 // DP-2): the container may be another holder's by now, so the retire refuses
