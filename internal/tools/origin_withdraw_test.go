@@ -86,3 +86,21 @@ func TestOriginWithdraw_BadInput_Refused(t *testing.T) {
 		}
 	}
 }
+
+// TestOriginRequest_NamesTheWithdraw: an ask's answer says how to take it back
+// once the agent no longer needs the pick — never by telling the person in
+// chat that its card is outdated.
+func TestOriginRequest_NamesTheWithdraw(t *testing.T) {
+	for _, url := range []string{"https://github.com/zeropsio/mate", "https://gitlab.com/zeropsio/mate"} {
+		srv, _ := originHQ(t, `[]`)
+		answer, text := originAnswerTo(t, srv, url)
+		if answer.Requested == nil {
+			t.Fatalf("%s: want an ask, got %s", url, text)
+		}
+		for _, want := range []string{`action="withdraw"`, "never say in chat"} {
+			if !strings.Contains(answer.NextActions, want) {
+				t.Errorf("%s: nextActions lacks %q: %s", url, want, answer.NextActions)
+			}
+		}
+	}
+}
