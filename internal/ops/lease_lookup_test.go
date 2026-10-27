@@ -27,7 +27,7 @@ func TestLeaseTarget_ResolvesRecordedAliasOnly(t *testing.T) {
 	}{
 		{name: "recorded alias", host: "webpool-3", wantOK: true, want: LeaseTargetInfo{
 			Alias: "webpool-3", Pool: "webpool", PoolServiceID: "svc-pool",
-			ContainerHostname: "node-id-3.runtime.webpool.zerops", Branch: "feat-x",
+			ContainerHostname: "node-id-3.runtime.webpool.zerops", Branch: "feat-x", AcquiredAt: "2026-10-23T12:00:00Z",
 		}},
 		{name: "alias shape but no record", host: "webpool-4", wantOK: false},
 		{name: "service hostname", host: "appdev", wantOK: false},

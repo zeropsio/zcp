@@ -40,6 +40,8 @@ const contractStatusRunning = "running"
 type contractStage struct {
 	Hostname string `json:"hostname"`
 	Setup    string `json:"setup,omitempty"`
+	// Part is the part the stage builds (docs/spec-mate.md §2.8a.3).
+	Part string `json:"part,omitempty"`
 }
 
 type contractVerify struct {
@@ -77,7 +79,10 @@ type contractEnvelope struct {
 
 type contractDevServerResult struct {
 	ops.DevServerResult
-	Name     string            `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// StandIn marks a dev service pool-migrate holds as its repository's
+	// stand-in (docs/spec-workflows.md §13 PM-14).
+	StandIn  *topology.StandIn `json:"standIn,omitempty"`
 	Envelope *contractEnvelope `json:"envelope,omitempty"`
 }
 
@@ -205,7 +210,7 @@ func TestMateContractFixtures_SinglePair_StagesMeanTodaysPair(t *testing.T) {
 		was := today.Services[i]
 		var stages []contractStage
 		if was.StageHostname != "" {
-			stages = []contractStage{{Hostname: was.StageHostname, Setup: was.StageSetupName}}
+			stages = []contractStage{{Hostname: was.StageHostname, Setup: was.StageSetupName, Part: was.StageSetupName}}
 		}
 		if !reflect.DeepEqual(svc.Stages, stages) {
 			t.Errorf("%s stages = %+v, today's pair is %+v", svc.Hostname, svc.Stages, stages)
@@ -236,7 +241,7 @@ func TestMateContractFixtures_ThreeParts_CarriesEveryPreviewAndServer(t *testing
 		hosts[s.Hostname] = true
 	}
 	dev := env.Services[0]
-	wantStages := []contractStage{{"webstage", "web"}, {"apistage", "api"}, {"workerstage", "worker"}}
+	wantStages := []contractStage{{"webstage", "web", "web"}, {"apistage", "api", "api"}, {"workerstage", "worker", "worker"}}
 	if !reflect.DeepEqual(dev.Stages, wantStages) {
 		t.Errorf("stages = %+v, want %+v", dev.Stages, wantStages)
 	}
@@ -260,6 +265,14 @@ func TestMateContractFixtures_ThreeParts_CarriesEveryPreviewAndServer(t *testing
 	want := []row{{"web", "running", 3000}, {"api", "running", 8080}, {"worker", "crashed", 0}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("dev servers = %+v, want %+v", got, want)
+	}
+	if dev.StandIn == nil || dev.StandIn.For != topology.StandInPoolMigrate {
+		t.Errorf("a dev serving three parts in a Mate is pool-migrate's stand-in, got standIn %+v", dev.StandIn)
+	}
+	for _, s := range env.Services[1:] {
+		if s.StandIn != nil {
+			t.Errorf("%s: a stage is never a stand-in, got %+v", s.Hostname, s.StandIn)
+		}
 	}
 	worker := dev.DevServers[2]
 	if worker.LastExit == nil || worker.LastExit.Code == nil || *worker.LastExit.Code != 1 || worker.URL != "" {
@@ -457,7 +470,7 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-weather", SSH: c, StateDir: dir,
-				RtInfo: runtime.Info{InContainer: true, ServiceName: "zcp"}, CarriesParts: true})
+				RtInfo: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, CarriesParts: true})
 
 			before := time.Now().UTC()
 			result := callTool(t, srv, "zerops_dev_server", tt.args)
@@ -478,6 +491,9 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			if !reflect.DeepEqual(got.DevServerResult, want.DevServerResult) || got.Name != want.Name {
 				t.Errorf("result fields\n got %+v name=%q\nwant %+v name=%q", got.DevServerResult, got.Name, want.DevServerResult, want.Name)
 			}
+			if !reflect.DeepEqual(got.StandIn, want.StandIn) {
+				t.Errorf("standIn = %+v, want %+v", got.StandIn, want.StandIn)
+			}
 			dev := contractService(t, got.Envelope, "appdev")
 			if dev.StageHostname != "" || dev.StageSetupName != "" {
 				t.Errorf("the dev half still carries today's stage keys: %+v", dev.ServiceSnapshot)
@@ -485,6 +501,9 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			wantDev := contractService(t, want.Envelope, "appdev")
 			if !reflect.DeepEqual(dev.Stages, wantDev.Stages) {
 				t.Errorf("stages = %+v, want %+v", dev.Stages, wantDev.Stages)
+			}
+			if !reflect.DeepEqual(dev.StandIn, wantDev.StandIn) || !reflect.DeepEqual(dev.StandIn, want.StandIn) {
+				t.Errorf("the envelope's standIn %+v differs from the fixture's %+v or the result's own %+v", dev.StandIn, wantDev.StandIn, want.StandIn)
 			}
 			for i := range dev.DevServers {
 				d := &dev.DevServers[i]
@@ -573,14 +592,14 @@ func TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot(t *testing.T) {
 	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool || pool.Mode != "" {
 		t.Errorf("services[0] = %+v, want the pool, modeless", pool.ServiceSnapshot)
 	}
-	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod"}}) || pool.DevServers != nil {
+	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod", Part: "prod"}}) || pool.DevServers != nil {
 		t.Errorf("the pool carries stages %+v and devServers %+v, want [{appstage prod}] and none", pool.Stages, pool.DevServers)
 	}
 	if stage.Stages != nil || stage.Mode != topology.ModeStage {
 		t.Errorf("the stage = %+v stages %+v, want a stage half carrying no stages", stage.ServiceSnapshot, stage.Stages)
 	}
-	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" {
-		t.Errorf("leases = %+v, want the pool's one lease", leases)
+	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" || leases[0].Part != "prod" || leases[0].Stage != "appstage" {
+		t.Errorf("leases = %+v, want the pool's one lease, naming its part and the stage its pair pairs with", leases)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -173,6 +174,11 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		if steer := codeVolumeSteerFor(stateDir, input.Hostname); steer != "" {
 			resp.Warnings = append(resp.Warnings, steer)
 		}
+		if d.RtInfo.MateEnabled {
+			if meta, _ := workflow.FindServiceMeta(stateDir, input.Hostname); meta.PoolMigrateStandIn(input.Hostname) {
+				resp.StandIn = &topology.StandIn{For: topology.StandInPoolMigrate}
+			}
+		}
 		if migration != nil {
 			resp.MigratedToSupervisor = true
 			resp.MigrationTimes = &migration.times
@@ -202,9 +208,18 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 				result.PreviewURL = ops.LeasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort)
 			}
 		}
+		var states []topology.DevServerState
+		if d.CarriesParts || result.Pool != "" {
+			states = ops.DevServerStates(ctx, client, projectID, result)
+		}
+		if result.Pool != "" && result.Read != nil {
+			// A lease's dev servers as this call read them are its
+			// last-known ones for every later envelope (docs/spec-mate.md
+			// §2.8a.3).
+			ops.NoteLeaseDevServers(stateDir, input.Hostname, states, time.Now())
+		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
-				states := ops.DevServerStates(ctx, client, projectID, result)
 				withServers := env.WithParts(map[string][]topology.DevServerState{input.Hostname: states})
 				resp.Envelope = &withServers
 			}
@@ -266,6 +281,10 @@ type devServerToolResult struct {
 	// or what moving the dev setup onto the supervisor could not finish —
 	// and, for a variant-B dev service, that pool-migrate moves its pair.
 	Warnings []string `json:"warnings,omitempty"`
+	// StandIn marks, inside a Mate, a dev service pool-migrate holds as its
+	// repository's stand-in — the same object its envelope snapshot carries
+	// (docs/spec-workflows.md §13 PM-14); nil otherwise.
+	StandIn *topology.StandIn `json:"standIn,omitempty"`
 	// Envelope is the post-call state envelope with the dev service's
 	// devServers[] (docs/spec-mate.md §2.8a.3) — only from field-order
 	// step (3), DevServerDeps.CarriesParts.

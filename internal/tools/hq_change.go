@@ -213,12 +213,13 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // Passes, describes and the launch refusal ask, so a merge landed since the
 // last read is known before the caller acts on the change.
 //
-// A merged change's note names the leases zcp holds on its branch — merged
-// work, which only their release frees, and nothing here releases — and the
-// stages of its repository's pairs, which track main (address is this Mate's
-// HQ, which names the leases' repository). The change is forgotten as soon
-// as it is no longer open. "" while it is open, which is the ordinary state
-// and worth no words — or unknown.
+// A merged change's note names the leases zcp still holds on its branch —
+// which a Mate's HQ pass releases by itself once nothing unsaved is left in
+// them (releaseCompletedLeases, DP-34), so the note names no release for the
+// agent to run — and the stages of its repository's pairs, which track main
+// (address is this Mate's HQ, which names the leases' repository). The change
+// is forgotten as soon as it is no longer open. "" while it is open, which is
+// the ordinary state and worth no words — or unknown.
 func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.MateState) string {
 	outcome, _ := outcomeOf(state, c)
 	if outcome == changeStillOpen || outcome == changeUnknown {
@@ -236,16 +237,16 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", c.Number, hqBase)
 }
 
-// mergedLeases names the leases zcp holds on a merged change's branch and the
-// release that frees them, "" for none: a person releases nothing here, and
-// neither does a pass.
+// mergedLeases names the leases zcp still holds on a merged change's branch,
+// "" for none: a Mate's HQ pass releases them by itself once nothing unsaved
+// is left in them (DP-34), so what keeps one is work to commit and push.
 func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 	held := leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch)
 	if len(held) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("; the leases %s still hold its branch %q with the merged work: release them when you are done (`%s`), and cut the next work's branch from %q",
-		strings.Join(held, ", "), c.Branch, ops.LeaseReleaseBranchCall(c.Branch, "", false), hqBase)
+	return fmt.Sprintf("; the leases %s still hold its branch %q: zcp releases a merged or closed change's leases on its own once nothing unsaved is left in them — commit and push what is there, never force — and cut the next work's branch from %q",
+		strings.Join(held, ", "), c.Branch, hqBase)
 }
 
 // mergedStages names the stages of the repository's pairs, which track main

@@ -16,7 +16,7 @@
       "gitPushState": "configured",
       "buildIntegration": "none",
       "setupName": "dev",
-      "stages": [{ "hostname": "appstage", "setup": "prod" }],
+      "stages": [{ "hostname": "appstage", "setup": "prod", "part": "prod" }],
       "devServers": [
         {
           "name": "appdev",

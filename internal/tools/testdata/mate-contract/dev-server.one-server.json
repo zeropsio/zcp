@@ -35,7 +35,8 @@
         "stages": [
           {
             "hostname": "appstage",
-            "setup": "prod"
+            "setup": "prod",
+            "part": "prod"
           }
         ],
         "devServers": [
