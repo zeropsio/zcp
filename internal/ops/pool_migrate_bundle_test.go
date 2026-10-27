@@ -720,7 +720,7 @@ func TestPoolMigrateBundle_TreeStepFailingOnce_TriedAgain_Bundles(t *testing.T) 
 	shim := t.TempDir()
 	mark := filepath.Join(t.TempDir(), "failed-once")
 	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = update-index ] && [ ! -e \"$ZCP_TEST_MARK\" ]; then : > \"$ZCP_TEST_MARK\"; echo 'fatal: Unable to process path gone.tmp' >&2; exit 128; fi\ndone\nexec \"$ZCP_TEST_GIT\" \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil { //nolint:gosec // an executable shim of the test's own
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ssh := &bundleLocalSSH{env: []string{"PATH=" + shim + string(os.PathListSeparator) + os.Getenv("PATH"), "ZCP_TEST_MARK=" + mark, "ZCP_TEST_GIT=" + realGit}}

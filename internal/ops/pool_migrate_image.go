@@ -198,14 +198,15 @@ if [ -n "$cf" ]; then
   t=$(git log -1 --no-show-signature --format=%cI "$c" -- "$cf") || { echo '` + poolMigrateImageError + `log'; exit 0; }
   printf 'C %s\n' "$t"
 fi
+pc=
 if [ -n "$cf" ] && [ -n "$d" ]; then
   pc=$(git log -1 --no-show-signature --format=%H --before="$d" "$c" -- "$cf") || { echo '` + poolMigrateImageError + `log before the build'; exit 0; }
-  if [ -n "$pc" ] && [ "$(git cat-file -t "$pc:$cf" 2>/dev/null)" = blob ]; then
-    s=$(git cat-file -s "$pc:$cf") || { echo "` + poolMigrateImageError + `size $cf before the build"; exit 0; }
-    printf 'P %s %s\n' "$s" "$cf"
-    git cat-file blob "$pc:$cf" || { echo; echo "` + poolMigrateImageError + `read $cf before the build"; exit 0; }
-    echo
-  fi
+fi
+if [ -n "$pc" ] && [ "$(git cat-file -t "$pc:$cf" 2>/dev/null)" = blob ]; then
+  s=$(git cat-file -s "$pc:$cf") || { echo "` + poolMigrateImageError + `size $cf before the build"; exit 0; }
+  printf 'P %s %s\n' "$s" "$cf"
+  git cat-file blob "$pc:$cf" || { echo; echo "` + poolMigrateImageError + `read $cf before the build"; exit 0; }
+  echo
 fi
 echo '` + poolMigrateImageEnd + `'`
 
