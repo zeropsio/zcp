@@ -758,12 +758,12 @@ func (f *fakeHQ) rejudge(repo string) {
 	}
 }
 
-// unborn makes repo in the Mate's application with no main: the recipe
-// repository an application HQ made holds until its first recipe lands.
-func (f *fakeHQ) unborn(repo string) {
+// unbornRecipe makes the recipe repository in the Mate's application with
+// no main, as an application HQ made holds it until its first recipe lands.
+func (f *fakeHQ) unbornRecipe() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.initRepo(f.t.Context(), f.appID, repo)
+	f.initRepo(f.t.Context(), f.appID, hq.RecipeRepo)
 }
 
 // hasMain reports whether the repository at dir has a main.

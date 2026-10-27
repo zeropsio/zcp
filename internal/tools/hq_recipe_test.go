@@ -212,7 +212,7 @@ func TestGroupRecipe_ProposedOntoAnUnbornMain(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newRecipeLab(t)
-			lab.hq.unborn(hq.RecipeRepo)
+			lab.hq.unbornRecipe()
 			dir := lab.hq.repoDir(labApp, hq.RecipeRepo)
 
 			first := lab.proposeRecipe(lab.mock)
@@ -270,7 +270,7 @@ func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newRecipeLab(t)
-			lab.hq.unborn(hq.RecipeRepo)
+			lab.hq.unbornRecipe()
 			if tt.settle != nil {
 				if first := lab.proposeRecipe(lab.mock); !first.Created {
 					t.Fatalf("first pass: %+v", first)
@@ -385,7 +385,7 @@ func TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newRecipeLab(t)
-			lab.hq.unborn(hq.RecipeRepo)
+			lab.hq.unbornRecipe()
 			if first := lab.proposeRecipe(lab.mock); !first.Created || first.Change != 1 {
 				t.Fatalf("first pass: %+v", first)
 			}

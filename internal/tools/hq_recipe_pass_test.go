@@ -37,7 +37,7 @@ func waitAtMost(done <-chan struct{}, d time.Duration) {
 func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 	t.Parallel()
 	lab := newRecipeLab(t)
-	lab.hq.unborn(hq.RecipeRepo)
+	lab.hq.unbornRecipe()
 	// HQ lets the passes overlap as far as they can: the first change opens
 	// once a second pass asks to open one too — or after a second, when none
 	// does — and Core lands it, adding only, on its push; the second open is
@@ -97,7 +97,7 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	t.Parallel()
 	lab := newRecipeLab(t)
-	lab.hq.unborn(hq.RecipeRepo)
+	lab.hq.unbornRecipe()
 	// Another zcp process's pass, holding the recipe.
 	dir := filepath.Join(lab.stateDir, hqStateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
