@@ -162,13 +162,19 @@ type mateRepositoryReport struct {
 // this — the recipe tried again on each until it composes; both halves are
 // silent when there is nothing to do. Pairs an older zcp left without stages
 // get them back first, so the recipe names every stage. pace is the
-// repository pass's (a develop start runs it now).
+// repository pass's (a develop start runs it now). Inside a Mate the pass
+// releases a finished change's leases (DP-34) over the lease operations of
+// projectID, a lease's mount through mounter, and leaves the Mate's own
+// import-files change in conflict to the recipe reconcile that follows it
+// (recipeChangeTurn).
 func reconcileMateRepositories(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
+	mounter ops.Mounter,
 	rt runtime.Info,
+	projectID string,
 	stateDir string,
 	pace hqPassPace,
 ) mateRepositoryReport {
@@ -176,7 +182,8 @@ func reconcileMateRepositories(
 		return mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace)}
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	report := mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace)}
+	report := mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace,
+		withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt)), withRecipeFollowing())}
 	recipe := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir)
 	if recipe.Line != "" {
 		report.lines = append(report.lines, "the group's recipe: "+recipe.Line)
@@ -205,6 +212,10 @@ func reconcileMateRepositories(
 // their next fresh session. A pool that keys a pair is renewed with its pair,
 // from the pair's record (renewHQPairCredential), and never twice.
 //
+// With withLeaseCompletion its changes' turn also releases the leases of
+// every branch whose change is merged or closed (releaseCompletedLeases,
+// docs/spec-workflows.md §8 DP-34).
+//
 // Returns one report line per pair, then per pool, that has something to say,
 // by hostname so the message is stable.
 func reconcileHQRepositories(
@@ -215,6 +226,7 @@ func reconcileHQRepositories(
 	rt runtime.Info,
 	stateDir string,
 	pace hqPassPace,
+	opts ...hqPassOption,
 ) []string {
 	// Local mode holds no Mate and no container to push from.
 	if !rt.InContainer || sshDeployer == nil {
@@ -227,7 +239,7 @@ func reconcileHQRepositories(
 	if !linked {
 		return nil
 	}
-	report := reconcileHQPairs(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, pace)
+	report := reconcileHQPairs(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, pace, hqPassConfigOf(opts))
 	return append(report, renewHQPoolCredentials(ctx, client, rt, stateDir, hqc)...)
 }
 
@@ -290,6 +302,7 @@ func reconcileHQPairs(
 	stateDir string,
 	hqc hq.Client,
 	pace hqPassPace,
+	cfg hqPassConfig,
 ) []string {
 	// A meta list that cannot be read takes no pair's turn; the changes are
 	// the ledger's and the leases', and still take theirs.
@@ -334,10 +347,14 @@ func reconcileHQPairs(
 	// The changes are the repositories', not a pair's: their turn comes once
 	// a pair's turn read the Mate's state, at develop's start, or — with no
 	// pair to take a turn (work only in leases) — at every pass, while a
-	// wired pair, the ledger or an HQ lease names a repository.
+	// wired pair, the ledger or an HQ lease names a repository. A finished
+	// change's leases are released first (DP-34), so what a merged change's
+	// note names is what is still held.
 	if selfRead() || ((pace == hqPassNow || len(pending) == 0) && hqChangesHaveRepo(stateDir, address, pending)) {
 		if state, err := self(); err == nil {
+			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state, hqc.BranchOf, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
+			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows)...)
 		}
 	}
 	return report

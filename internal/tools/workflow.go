@@ -77,6 +77,12 @@ type WorkflowInput struct {
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
 
+	// SeparateRepositories says a Mate's classic plan of several dev/stage
+	// pairs is several repositories, each pair its own (docs/spec-mate.md
+	// §10.10): without it such a plan is refused for one pair with a stage
+	// per part (monorepoPlanError).
+	SeparateRepositories FlexBool `json:"separateRepositories,omitempty" jsonschema:"Mate, step=discover: true when each dev/stage pair of a classic plan is its own repository. Without it several pairs are refused: a monorepo is one dev service with a stage per part, then pool-migrate."`
+
 	// CopyGitToken is the person's yes to the pool getting the dev service's
 	// GIT_TOKEN, on the env step outside a Mate (docs/spec-workflows.md §13
 	// PM-4). zcp reads and writes the value itself; it never crosses the call.
@@ -330,6 +336,7 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "skipPipelineSetup")
 	patchFlexBoolProperty(s, "confirmLaunch")
 	patchFlexBoolProperty(s, "copyGitToken")
+	patchFlexBoolProperty(s, "separateRepositories")
 	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
 	// The plan runtime's codeVolume is derive-only: zcp sets up no new code
 	// volume (docs/spec-mate.md §2.8a.4a), so it is not published, and a plan
@@ -413,9 +420,10 @@ func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
 // tried again here too — a recipe that could not be proposed at bootstrap
 // (its code not in yet) is a step the Mate's setup is not done without, and
 // a project that changed shape since (a pool migration) has tiers of zcp's
-// own to propose anew (spec-mate §10.10).
-func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	report := reconcileMateRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow)
+// own to propose anew (spec-mate §10.10). The pass also releases the leases
+// of a finished change (DP-34), a lease's mount through mounter.
+func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, mounter ops.Mounter, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
+	report := reconcileMateRepositories(ctx, client, httpClient, sshDeployer, mounter, rt, projectID, stateDir, hqPassNow)
 	report.lines = append(report.lines, hqKeptOnGitHub(stateDir)...)
 	result, _, err := handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	return withRepositoryReport(result, report), nil, err
@@ -583,7 +591,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handlePoolMigrate(ctx, projectID, client, sshDeployer, input, stateDir, rt)
 		}
 		if input.Workflow == workflowDevelop {
-			return handleDevelopStart(ctx, projectID, engine, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer)
+			return handleDevelopStart(ctx, projectID, engine, client, httpClient, schemaCache, input, stateDir, rt, mounter, sshDeployer)
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	case "reset":

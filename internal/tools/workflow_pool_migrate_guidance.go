@@ -15,7 +15,7 @@ import (
 // reaches — the plan and the move step's on every answer, the env step's once
 // the pool is settled, the image step's once it holds the dev's env, the
 // retire's once the image step is done — and it grows with the flow. A flow's
-// answers carry each atom once (docs/spec-workflows.md §13 PM-14): the first
+// answers carry each atom once (docs/spec-workflows.md §13 PM-15): the first
 // answer that reaches it carries it in full, every later one names it in one
 // line beside the call that repeats it all, action="status", the recovery
 // after a context compaction. The three sessions of 2026-10-27 received the

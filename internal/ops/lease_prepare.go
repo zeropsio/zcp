@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -129,10 +130,49 @@ func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord, subdo
 	}
 	ds.Service = rec.PoolHostname
 	states := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
+	// What this read found is the lease's last-known dev servers from now on,
+	// for every envelope (NoteLeaseDevServers).
+	noteLeaseDevServers(d.StateDir, rec, states, d.now())
 	if len(states) == 0 {
 		return nil
 	}
 	return states
+}
+
+// NoteLeaseDevServers records, in the record of the lease at alias, its dev
+// servers as a call that read its supervisor found them (states, none when it
+// runs none) and when it read them (at): every later envelope carries them as the lease's
+// last-known ones, with when (docs/spec-mate.md §2.8a.3). Best-effort: a
+// lease zcp holds no record of, or a record that cannot be read or written,
+// keeps what it had.
+func NoteLeaseDevServers(stateDir, alias string, states []topology.DevServerState, at time.Time) {
+	rec, ok, err := leaseTargetRecord(stateDir, alias)
+	if err != nil || !ok {
+		return
+	}
+	noteLeaseDevServers(stateDir, rec, states, at)
+}
+
+// noteLeaseDevServers is NoteLeaseDevServers on rec, the record as the call
+// knew it: a record its alias names another lease by now is left alone.
+func noteLeaseDevServers(stateDir string, rec leaseRecord, states []topology.DevServerState, at time.Time) {
+	if stateDir == "" {
+		return
+	}
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if leaseRecordReplaced(stateDir, rec) {
+		return
+	}
+	cur, err := loadLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return
+	}
+	cur.DevServers, cur.DevServersReadAt = slices.Clone(states), at.UTC().Format(time.RFC3339)
+	_ = writeLeaseRecordLocked(stateDir, cur)
 }
 
 // leaseCheckoutRead is what an acquire reads in the container after its

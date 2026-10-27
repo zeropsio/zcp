@@ -916,7 +916,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			// A lease the release's own steps found ended is lost whatever
 			// becomes of the branch: those records go now, with their alias
 			// and mount.
-			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+			return LeaseChange{}, unsavedRefusal(ctx, d, members, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err)))
 		}
 	}
 	// The releases and the rewire of what stays held run under the group's
@@ -942,7 +942,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+			return LeaseChange{}, unsavedRefusal(ctx, d, members, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err)))
 		}
 	}
 	runMembers(members, func(m *releaseMember) {
@@ -1086,6 +1086,11 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 		"Pass repo, the clone URL whose leases of the branch to release, or release one lease by its alias as lease")
 }
 
+// ErrNoLeaseOfBranch is the cause of a branch release's refusal when zcp
+// holds no lease of the branch: a caller to whom that means the branch is
+// released already (`zcp lease release`, DP-35) tells it by errors.Is.
+var ErrNoLeaseOfBranch = errors.New("no lease of the branch")
+
 // noLeaseOfBranch is the refusal of a release of a branch (of repo, when one
 // was named) zcp holds no lease of.
 func noLeaseOfBranch(branch, repo string) error {
@@ -1093,9 +1098,11 @@ func noLeaseOfBranch(branch, repo string) error {
 	if repo != "" {
 		of = " of " + repo
 	}
-	return platform.NewPlatformError(platform.ErrInvalidParameter,
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
 		fmt.Sprintf("This zcp holds no lease of branch %s%s", branch, of),
 		"zerops_lease action=status lists the leases this zcp holds, each with its branch")
+	pe.Cause = ErrNoLeaseOfBranch
+	return pe
 }
 
 // branchReleaseRefusal is the refusal of a branch's release, nil when every

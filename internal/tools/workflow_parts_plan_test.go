@@ -299,8 +299,11 @@ func submitPlanOverRepo(t *testing.T, route workflow.BootstrapRoute, dev, repo s
 // a root commit that carries code — would split it. It is refused before
 // anything is recorded, on the classic and the adopt route, with the plan
 // made from it: the first dev service with every stage of the two, the other
-// left out, then pool-migrate. Two repositories, a checkout that cannot be
-// read and a plan outside a Mate stay as they are.
+// left out, then pool-migrate — even when the plan says its runtimes are
+// separate repositories (separateRepositories, which a Mate's classic plan of
+// several pairs needs at all): the checkouts are the evidence. Two
+// repositories, a checkout that cannot be read and a plan outside a Mate stay
+// as they are.
 func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(t *testing.T) {
 	t.Parallel()
 	requireGitForLab(t)
@@ -350,7 +353,7 @@ func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(
 			}
 
 			result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil,
-				WorkflowInput{Step: workflow.StepDiscover, Plan: plan}, nil, "proj-1", dir, nil, ssh, tt.rt)
+				WorkflowInput{Step: workflow.StepDiscover, Plan: plan, SeparateRepositories: true}, nil, "proj-1", dir, nil, ssh, tt.rt)
 			if err != nil {
 				t.Fatalf("handleBootstrapComplete: %v", err)
 			}

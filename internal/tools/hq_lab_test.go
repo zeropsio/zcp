@@ -55,9 +55,12 @@ type fakeHQ struct {
 	mu    sync.Mutex
 	appID string
 	// appName is the application's name HQ answers, "" for none.
-	appName     string
-	repos       map[string]bool
-	changes     []hq.Change
+	appName string
+	repos   map[string]bool
+	changes []hq.Change
+	// verdicts is Core's last refusal to land each change at its head, by
+	// "<repo>#<number>": what the Mate's state names as the change's verdict.
+	verdicts    map[string]string
 	attachments map[string][]byte
 	// failing is how many of the next requests failOn matches — any, when
 	// nil — are answered failStatus with failCode, and failReason when one
@@ -117,7 +120,7 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
-		handed: map[string]bool{}, described: map[string]string{},
+		handed: map[string]bool{}, described: map[string]string{}, verdicts: map[string]string{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -390,6 +393,7 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		if !f.untitled {
 			change.Title = &c.Title
 		}
+		change.Verdict = f.verdicts[key]
 		if f.perBranch {
 			ready := head != nil && f.described[key] == *head
 			behind := c.Behind
@@ -931,6 +935,9 @@ type hqLab struct {
 	// describeWaits are the waits between a describe's tries, recorded
 	// rather than waited out.
 	describeWaits []time.Duration
+	// completion is the release a pass gives a finished change's leases
+	// (withLeaseCompletion); nil passes none.
+	completion leaseBranchRelease
 }
 
 func newHQLab(t *testing.T) *hqLab {
@@ -987,7 +994,11 @@ func (l *hqLab) write(files map[string]string) {
 // wire runs a repository pass, which gives the pair its repository in HQ.
 func (l *hqLab) wire() []string {
 	l.t.Helper()
-	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff)
+	var opts []hqPassOption
+	if l.completion != nil {
+		opts = append(opts, withLeaseCompletion(l.completion))
+	}
+	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff, opts...)
 }
 
 // openChange puts the pair's work up as the Mate's change, "Build the app",

@@ -351,7 +351,7 @@ func TestExtractEnvelope_CarrierPrecedence(t *testing.T) {
 }
 
 // TestStateEnvelope_WithParts (docs/spec-mate.md §2.8a.3): from field-order
-// step (3) a dev half's stages ride stages[] {hostname, setup} in place of
+// step (3) a dev half's stages ride stages[] {hostname, setup, part} in place of
 // stageHostname/stageSetupName — one stage means today's pair — and
 // devServers[] only where the call read them; the envelope zcp computed is
 // left as it was, and projecting twice changes nothing.
@@ -373,9 +373,9 @@ func TestStateEnvelope_WithParts(t *testing.T) {
 		stages  []topology.StageWire
 		servers int
 	}{
-		{stages: []topology.StageWire{{Hostname: "appstage", Setup: "prod"}}},
+		{stages: []topology.StageWire{{Hostname: "appstage", Setup: "prod", Part: "prod"}}},
 		{},
-		{stages: []topology.StageWire{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage"}}, servers: 1},
+		{stages: []topology.StageWire{{Hostname: "webstage", Setup: "web", Part: "web"}, {Hostname: "apistage", Part: "api"}}, servers: 1},
 	}
 	for _, twice := range []bool{false, true} {
 		if twice {
@@ -395,7 +395,7 @@ func TestStateEnvelope_WithParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"setupName":"dev","stages":[{"hostname":"appstage","setup":"prod"}]`) {
+	if !strings.Contains(string(b), `"setupName":"dev","stages":[{"hostname":"appstage","setup":"prod","part":"prod"}]`) {
 		t.Errorf("single pair on the wire = %s", b)
 	}
 }

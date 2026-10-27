@@ -827,6 +827,7 @@ func rekeyServiceMeta(stateDir, from, to string, rekey func(fromMeta, toMeta *Se
 		if err := os.Remove(filepath.Join(stateDir, "services", from+".json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("rekey service meta: remove %q: %w", from, err)
 		}
+		carryVerifiedEvidence(stateDir, from, []*ServiceMeta{next})
 		out = next
 		return nil
 	})
@@ -878,6 +879,7 @@ func rekeyServiceMetas(stateDir string, hosts []string, rekey func(read map[stri
 			if err := os.Remove(filepath.Join(stateDir, "services", host+".json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return fmt.Errorf("rekey service metas: remove %q: %w", host, err)
 			}
+			carryVerifiedEvidence(stateDir, host, keep)
 		}
 		out = keep
 		return nil
@@ -1160,8 +1162,9 @@ func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 	return nil, nil //nolint:nilnil // not-found sentinel
 }
 
-// DeleteServiceMeta removes the service metadata file for the given hostname.
-// Returns nil if the file does not exist (idempotent). Holds the .services.lock
+// DeleteServiceMeta removes the service metadata file for the given hostname,
+// and its verified-setup sidecar with it (the evidence names the pair, so it
+// goes with the record). Returns nil if the file does not exist (idempotent). Holds the .services.lock
 // so a delete cannot race a concurrent UpdateServiceMeta/UpsertServiceMeta
 // read-modify-write (which would otherwise resurrect a just-deleted meta, or
 // drop a just-written one) — the single canonical deleter, so all callers are
@@ -1172,6 +1175,6 @@ func DeleteServiceMeta(baseDir, hostname string) error {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("delete service meta: %w", err)
 		}
-		return nil
+		return removeVerifiedEvidence(baseDir, hostname)
 	})
 }

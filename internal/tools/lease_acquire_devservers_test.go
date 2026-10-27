@@ -12,6 +12,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // TestLeaseTool_Acquire_CarriesEachLeasesDevServers: a group acquire's result
@@ -87,7 +88,7 @@ func TestLeaseTool_Acquire_SwitchesThePoolsPublicAccessOn(t *testing.T) {
 	web := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"run web"}]}`)
 	web.StableNumber = 1
 	ssh := &rewireToolSSH{containers: map[string]*devservertest.Container{"webpool-7": web}}
-	srv, _, _, mock := groupLeaseServerWith(t, ssh, func(m *platform.Mock) {
+	srv, _, _, mock := groupLeaseServerWith(t, ssh, runtime.Info{}, func(m *platform.Mock) {
 		pool := platform.ServiceStack{
 			ID: "svc-webpool", Name: "webpool", ProjectID: "proj-1", Status: "ACTIVE",
 			Ports:                []platform.Port{{Port: 9001, Protocol: "tcp"}, {Port: 9002, Protocol: "tcp"}, {Port: 9003, Protocol: "tcp"}},

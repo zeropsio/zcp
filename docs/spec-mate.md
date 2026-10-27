@@ -99,7 +99,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts`. |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, and `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0). `scripts/mate-boundaries.test.ts`. |
 | MA-7 | The Mate server sends `ZCP_API_KEY` only to HQ, in the first frame of its link, and to Zerops, for its own flag write (§8.1); it never forwards it anywhere else. Test to be written (`ZeropsHqLink`). |
 
 ## 1. Envelope on the wire
@@ -1119,6 +1119,11 @@ retired dev service, so this snapshot is where the part's pool shows beside its 
 
 - `stages` projects `ServiceMeta.Stages` (§2.8a.4) in its order; `setup` is omitted while zcp has
   not resolved it, exactly as `stageSetupName` is today. Absent when the pair has no stage.
+- Each stage names its `part`, the same name a lease of its part carries (`leases[].part`): for a
+  pair keyed by its dev pool, the dev server's name a lease of the pool runs, else the stage's
+  setup; for a dev service, the stage's setup (the part's dev server is declared under it), else the
+  stage hostname without its `stage` suffix (`TestWithParts_LeasesAndStagesNameTheirPart`).
+  Additive like the rest: `{"hostname": "webstage", "setup": "web", "part": "web"}`.
 - It **replaces** `stageHostname` and `stageSetupName`: one stage ≡
   `[{hostname: stageHostname, setup: stageSetupName}]`. Each snapshot's own `setupName` stays as it
   is — it names that service's setup, not a pair.
@@ -1155,6 +1160,21 @@ zcp reads the supervisor on `zerops_workflow action="status"`, `zerops_verify`, 
 fields stay, `name` added only when it differs from `hostname`). **Absent `devServers` means "not
 read in this call"**, never "none running": Mate keeps the last read with its `readAt` (MODEL §6, N7).
 A dev service with one dev server shows today's card, without a server name.
+
+**`standIn` — the dev service pool-migrate holds as the repository's stand-in.** Inside a Mate the dev
+service's snapshot carries, after `stages` and `devServers`, `"standIn": {"for": "pool-migrate"}` while
+pool-migrate holds it as its repository's stand-in (`docs/spec-workflows.md` §13 PM-14): the dev half
+of a pair serving several parts — the one dev service with a stage per part a Mate plans for a monorepo
+(§10.10 "One repository per monorepo") — from the plan that made the pair until the retire re-keys it
+onto its pools, and every dev service of a variant-B pair. Absent otherwise: a pair of one stage, a pair
+keyed by its dev pool, every stage, and every snapshot outside a Mate. `zerops_dev_server` names the
+same object at its result's top level for that host. Additive to contract 2 like `leases[]`: no key
+changes, no `SupportedContract` bump (fixtures `envelope.three-parts.json`,
+`dev-server.three-servers-one-crashed.json`, `dev-server.running-http-404.json`).
+
+| Key | Meaning |
+|---|---|
+| `standIn.for` | the flow that holds the dev service as its repository's stand-in: `pool-migrate` |
 
 **A part with no dev server.** `zerops_verify` of a container dev service whose pair has more than one
 stage names, in its `note`, each stage's part that runs a process (its setup, or one it extends, has a
@@ -1201,7 +1221,8 @@ record (§6.3), never a field here:
 | `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
 | `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
-| `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
+| `devServers`, `devServersReadAt` | the lease's dev servers — the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain — **last-known, with `devServersReadAt`** (RFC 3339, UTC, the time of that read): every envelope carries what the last zcp call that read the lease's supervisor found — an acquire (it starts each lease's supervisor and reads it, `spec-workflows.md` §8 DP-30), a rewire's restarts (DP-26), a sync's fast-forward of the lease (DP-24), `zerops_dev_server` on the alias — recorded in the lease's record (`ops.NoteLeaseDevServers`, never the lease string) and gone with it when the lease is released or lost; **fresh on a call that read them**, which puts its own read and time in their place. `devServersReadAt` without `devServers` is a read that found none. Absent both while no zcp call has read it. A pool's rollout touches no held lease, so it records nothing (`TestWithParts_LeaseDevServers`, `TestComputeEnvelope_LeaseCarriesLastKnownDevServers`, `TestLeaseTool_Acquire_EveryLaterEnvelopeKeepsTheLeasesDevServers`, `TestDevServer_LeaseRead_EveryLaterEnvelopeKeepsIt`) |
+| `part`, `stage` | the part the lease's pool serves — its dev server's name (the one named after the pair's stage setup when it runs several), else the pool-keyed pair's stage setup — and the stage hostname that pool's pair pairs with (`spec-workflows.md` §13 PM-10); each absent where zcp knows neither, e.g. a pool no pair keys and none of whose dev servers it has read. A client names a workspace by its part ("Web → preview / stage") rather than its pool, alias or branch (`TestWithParts_LeasesAndStagesNameTheirPart`, fixture `envelope.pool-pair.json`) |
 | `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, `parked`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader. `parked` is a lease that is still held whose container is stopped and kept (`spec-workflows.md` §8 DP-28): a client keeps it bound, as it keeps a `held` one (`TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope`). Whose a container is comes from the orchestrator's renew of the record's own lease (`spec-workflows.md` §8 DP-2): a lease whose container is no longer its reservation — gone, being deleted, free, or reserved by another holder since the lease ended outside zcp — is `lost`; one another holder took read `held` before zcp asked the orchestrator and reads `lost` now, so a client unbinds it as it does any lost lease (§6.3), and a lease stopped or started outside zcp stays `parked`/`held`. No state was added (`TestLeaseTool_Ownership_LeaseAnotherHolderTook_LostThenDropped`, `TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked`) |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) — or when the pool's listing answered but the renew of that lease did not (`spec-workflows.md` §8 DP-2): the state is then the listing's (`held`, `parked`, `unmounted`), never `lost`, so a client keeps the lease bound as that state says, and nothing is read from it (`TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead`) |
 | `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
@@ -3167,7 +3188,19 @@ themselves; no token crosses the conversation.
   repository as `upstream` with its push URL `no_push`. A `connected` answer gives the way HQ's
   `repos[].origin.mode` says the code is kept (`github` or `follow`); from an HQ older than
   `mode`, it gives both and has the agent ask the person in one sentence. No answer has the agent
-  point `origin` itself.
+  point `origin` itself. A `requested` answer also names how the agent takes the ask back.
+- **Withdraw.** `zerops_origin action=withdraw` takes `url` (required: the address as it was asked,
+  checked and canonicalised as a request's) and `repo` (optional: the HQ repository the ask named,
+  a hostname). The agent withdraws an ask it no longer needs — it re-planned, the repository was
+  retired, it asked by mistake — instead of telling the person in chat that a card is outdated (the
+  tool description and every `requested` answer say so). It writes nothing and asks HQ nothing; it
+  answers `{"withdrawn":{"origin":{"url":"<url>","repo":"<repo>"}},"nextActions":"…"}` —
+  `withdrawn.origin.repo` is the repository the withdrawn ask named (never `connected.repo`, the one
+  already holding an address), absent without `repo` — and Mate closes the card of that ask, or of
+  every ask naming the address when `repo` is absent. A later `connected` answer for the same address
+  closes an open ask too (`connected.origin.url`). zcp `TestOriginWithdraw_AnswersWhatItWithdrew`,
+  `TestOriginWithdraw_BadInput_Refused`, `TestOriginRequest_NamesTheWithdraw`,
+  `TestAnnotations_OriginTool`.
 - **The wiring is the one writer of `origin`.** Every pass that reads the Mate's state records on
   the pair how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a
   repository HQ alone keeps, `mode` empty — unknown — from an HQ that names no repositories, so
@@ -3390,18 +3423,20 @@ out again by a holder Mate did not see — every conversation bound to it is unb
 one is bound; a conversation whose record could not be read at that read is unbound at the next one. The
 binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
 `worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
-thread owns — nothing removes or releases it with the thread; releasing it is the agent's
-`zerops_lease action=release`.
+thread owns — nothing removes or releases it with the thread itself; it is released by the agent's
+`zerops_lease action=release`, by zcp's HQ pass once its branch's change is merged or closed
+(`docs/spec-workflows.md` §8 DP-34), or by Mate on the conversation's archive (below).
 
-**Asking to release.** Mate never releases a lease and runs no `zcp` for it (§0 rule 4, MA-6). When the
-person archives a conversation bound to a lease, or presses Release beside that conversation's
-workspace chip, Mate asks whether to release the workspace, naming it and showing what it knows of it
-(last activity, unsaved work, idle; §2.8a.3). The archive is never held for the answer, and no timer
-asks, answers or dismisses the question. Only the person's Release sends anything: one visible user
-message, a normal turn of the bound conversation, asking its agent to run `zerops_lease action=release
-lease=<alias>` and to stop and say so rather than force when work is unpushed. An archived conversation
-is un-archived first, since the engine takes no message there; the agent's release, zcp's guard and the
-unbind fan-out above do the rest.
+**Release on archive and on completion.** The person never manages a lease by hand: Mate shows no
+release control. When the person archives a conversation bound to a lease, Mate runs `zcp lease release
+--branch <branch> --repo <repo> --json` (MA-6, `docs/spec-workflows.md` §8 DP-35) for the bound
+lease's repository and branch — never `--force`, within 3 minutes, only on a zcp whose `zcp version` is
+9.223.0 or later — and never holds the archive for it. Exit 0 unbinds every conversation bound to a
+lease the answer lists in `released[]` (a branch release takes every lease of the branch); exit 3 — a
+lease holds unsaved work, or another live zcp session shares it — keeps the binding, silently; anything
+else is a failure the conversation's chip shows. zcp itself releases a branch's leases once its change
+in HQ is merged or closed (DP-34), on its HQ pass and its service's look; the unbind fan-out above
+follows from the envelope. Idleness never releases (§0 rule 4).
 
 **A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
 pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
@@ -4170,7 +4205,18 @@ Mate's state (`GET /api/mate/self`); two passes racing on the branch end in a re
 next pass's work. It runs once at each zcp start in a Mate (which opens no proposal again that a person closed unmerged), on every bootstrap close, adopt pass and develop start, right after the repository
 reconcile, and when the agent asks (`zerops_workflow action="group-recipe"`), which answers with the change or that
 `main` already carries every tier; Core lands a proposal that only adds by itself, and a person
-merges one that changes a file (SPEC §3.2c). The recipe, and the stage and production projects its
+merges one that changes a file (SPEC §3.2c). Core judges a proposal once, on its push, so a Mate's HQ
+pass (the repository reconcile's changes' turn) answers what it judged of the Mate's own open
+proposal, as the Mate's state names it (`changes[].mergeability`, and `changes[].verdict` — Core's
+refusal to land it at its head, an HQ field a newer HQ names): in `conflict` with `main` — a sibling's
+tier landed first — the recipe reconcile runs again, so the branch takes `main` in and Core lands it
+or closes it as empty (bootstrap, adopt and develop start leave it to the reconcile that follows them); refused
+`head_moved` — a push arrived while Core judged — it is pushed once more, its tree unchanged, to be
+judged again, once per change (`<stateDir>/hq-recipe-repushed/<appId>-<number>`), so a refusal that
+persists never loops; refused for anything else — `recipe_changes_files`, `files_past_bound`, a git
+failure — it waits for a person, who lands or closes it in HQ: zcp never pushes it again for it, and
+the pass's report names the change, its address and the refusal (`hq_recipe_judged.go`;
+`TestHQPass_RecipeChangeJudged`). The recipe, and the stage and production projects its
 tiers create, are named after the application: the slug of its name as HQ gives it
 (`MateState.appName`, by the group-slug rule main's client named groups with — lowercase letters,
 digits and dashes, starting with a letter, 2 to 30 long), its id while HQ names it nothing. The
@@ -4433,11 +4479,21 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
     repository, the others leave the plan, and pool-migrate is named for once bootstrap closes. A
     dev service the plan creates holds no checkout yet and is not read
     (`TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair`).
-  - Named limit: pairs wired while their checkouts are still fresh from `zcp init` (a classic
-    bootstrap wires at its close, before develop puts code in) carry only empty-tree roots, so the
-    pass cannot tell they will hold one repository; the playbook and AGENTS.md's git host paragraph
-    ("a repository of several parts stays one repository — never a dev service per part") are the
-    steer there.
+  - A Mate's classic plan of more than one dev/stage pair is refused before anything is recorded —
+    a classic bootstrap wires its pairs at its close, while their checkouts are still fresh from `zcp
+    init` and carry only empty-tree roots, so no read can tell the parts of one repository apart — with
+    the plan made from it: the first pair's dev service holding every pair's stage in `stages`, each
+    with its setup (the plan's own, else the part's name, the stage hostname without its `stage`
+    suffix), every dependency once (one another pair `SHARED` is created by the one pair), and
+    `zerops_workflow workflow="pool-migrate" service=<dev>` named for once bootstrap closes. A plan
+    whose pairs are genuinely separate repositories says so with `separateRepositories: true` beside
+    `plan` on `zerops_workflow action="complete" step="discover"` (its jsonschema description says
+    when), and is taken as it is — the root-commit check above still refuses existing dev services
+    holding one repository, whatever the plan says. One pair with a stage per part, the recipe route
+    and a group's stand-up (repositories named from the recipe), and every plan outside a Mate are
+    unchanged (`monorepoPlanError`;
+    `TestBootstrapPlan_InAMate_SeveralPairs_RefusedForOnePairWithAStagePerPart`,
+    `TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair`).
 - **The agent's work** goes by plain git from the dev half's checkout, guided by AGENTS.md's git
   host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main` (a
   `main` that will not fast-forward: `git branch <name>`, then `git reset --keep origin/main`), `git
