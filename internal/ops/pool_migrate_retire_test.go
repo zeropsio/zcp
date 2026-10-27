@@ -28,7 +28,7 @@ func TestPoolMigrateEnvReferences_NamesEveryReferenceButTheDevsOwn(t *testing.T)
 		WithServiceEnv("svc-worker", []platform.ServiceEnvVar{{Key: "SECRET", Content: platform.MaskedEnvValue, Sensitive: true}}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "APP", Content: "${appstage_hostname}"}, {Key: "API_TOKEN", Content: platform.MaskedEnvValue, Sensitive: true}})
 
-	refs, unread, err := PoolMigrateEnvReferences(context.Background(), mock, "proj-1", "appdev", services)
+	refs, unread, err := PoolMigrateEnvReferences(context.Background(), mock, "proj-1", "appdev", services, PoolMigrateReferenceSkip{})
 	if err != nil {
 		t.Fatalf("PoolMigrateEnvReferences: %v", err)
 	}

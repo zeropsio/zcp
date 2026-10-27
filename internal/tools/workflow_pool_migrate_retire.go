@@ -801,7 +801,12 @@ func (g *poolRetireGuards) readReferences(ctx context.Context, d poolRetireDeps)
 	for _, s := range targets[1:] {
 		retired = append(retired, s.Hostname)
 	}
-	refs, unread, err := ops.PoolMigrateEnvReferencesTo(ctx, d.client, d.projectID, retired, g.call.services)
+	// zcp's own service and what zcp wrote are no reference to the dev.
+	skip := ops.PoolMigrateReferenceSkip{StateDir: d.stateDir}
+	if d.rt.ServiceName != "" {
+		skip.Services = []string{d.rt.ServiceName}
+	}
+	refs, unread, err := ops.PoolMigrateEnvReferencesTo(ctx, d.client, d.projectID, retired, g.call.services, skip)
 	if err != nil {
 		g.refuse(poolRetireRefuseEnvReference, fmt.Sprintf("the env variables that could reference %s could not be read: %v. Call again.", strings.Join(retired, ", "), err))
 		return
@@ -947,7 +952,7 @@ func (g *poolRetireGuards) destruction(input WorkflowInput) DiagnosedDestruction
 // poolRetireUnreadNote names the env variables zcp could not read for a
 // reference to dev.
 func poolRetireUnreadNote(unread []string, dev string) string {
-	return fmt.Sprintf("%s could not be read for a reference to %s (zcp's token reads them masked): check them yourself", strings.Join(unread, ", "), dev)
+	return fmt.Sprintf("%s are secrets zcp's token reads masked, so they were not checked for a reference to %s. A secret holds a credential, which is rarely a reference; if one of them should name %s, ask the person to check it in the Zerops dashboard — do not read or print a secret's value over SSH", strings.Join(unread, ", "), dev, dev)
 }
 
 // poolRetireDestructionOf is the destruction the retire states for targets —

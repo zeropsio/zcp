@@ -166,7 +166,7 @@ func TestPoolMigrateEnvReferencesTo_EachRetiredServiceNamed(t *testing.T) {
 		WithServiceEnv("svc-vol", nil).
 		WithServiceEnv("svc-webstage", []platform.ServiceEnvVar{{Key: "FILES", Content: "${vol_hostname}"}, {Key: "WEB", Content: "${webdev_zeropsSubdomain}"}})
 
-	refs, unread, err := PoolMigrateEnvReferencesTo(context.Background(), mock, "proj-1", []string{"webdev", "apidev", "vol"}, services)
+	refs, unread, err := PoolMigrateEnvReferencesTo(context.Background(), mock, "proj-1", []string{"webdev", "apidev", "vol"}, services, PoolMigrateReferenceSkip{})
 	if err != nil {
 		t.Fatalf("PoolMigrateEnvReferencesTo: %v", err)
 	}
