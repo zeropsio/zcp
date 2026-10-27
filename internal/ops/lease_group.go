@@ -1078,6 +1078,11 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 		"Pass repo, the clone URL whose leases of the branch to release, or release one lease by its alias as lease")
 }
 
+// ErrNoLeaseOfBranch is the cause of a branch release's refusal when zcp
+// holds no lease of the branch: a caller to whom that means the branch is
+// released already (`zcp lease release`, DP-35) tells it by errors.Is.
+var ErrNoLeaseOfBranch = errors.New("no lease of the branch")
+
 // noLeaseOfBranch is the refusal of a release of a branch (of repo, when one
 // was named) zcp holds no lease of.
 func noLeaseOfBranch(branch, repo string) error {
@@ -1085,9 +1090,11 @@ func noLeaseOfBranch(branch, repo string) error {
 	if repo != "" {
 		of = " of " + repo
 	}
-	return platform.NewPlatformError(platform.ErrInvalidParameter,
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
 		fmt.Sprintf("This zcp holds no lease of branch %s%s", branch, of),
 		"zerops_lease action=status lists the leases this zcp holds, each with its branch")
+	pe.Cause = ErrNoLeaseOfBranch
+	return pe
 }
 
 // branchReleaseRefusal is the refusal of a branch's release, nil when every

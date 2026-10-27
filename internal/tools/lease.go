@@ -215,6 +215,11 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
+			if rt.MateEnabled {
+				// Which zcp session took or reused each lease: `zcp lease
+				// release` refuses one another live session shares (DP-35).
+				recordLeaseSessions(stateDir, change.Leases)
+			}
 			return jsonResult(leaseToolResult{
 				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
 				NextActions: joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx),
@@ -250,6 +255,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				if err != nil {
 					return convertError(err), nil, nil
 				}
+				forgetLeaseSessions(stateDir, releasedAliases(change.Leases))
 				return jsonResult(leaseToolResult{
 					Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
 					NextActions: joinNext(leaseReleaseBranchNext(change.Leases, input.Branch, input.Repo, force), leaseRewireNext(change.Rewired), releasedChanges(change.Leases)), Envelope: envelope(ctx),
@@ -262,6 +268,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
+			forgetLeaseSessions(stateDir, releasedAliases(change.Leases))
 			return jsonResult(leaseToolResult{
 				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired, NextActions: joinNext(leaseRewireNext(change.Rewired), releasedChanges(change.Leases)), Envelope: envelope(ctx),
 			}), nil, nil
