@@ -213,7 +213,7 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 	untrimmedTools := map[string]string{
 		"zerops_workflow":           "~210 words — orchestration tool spans five workflows + three deploy-axis actions + multi-language trigger phrases for natural-language routing of launch-production (Czech + English); trim path is to move per-workflow blurbs + trigger-phrase tables into an atom-corpus discoverability surface so the description holds just the tool's contract",
 		"zerops_dev_server":         "173 words — explains the historical hand-rolled pattern this tool replaces + the reason-code taxonomy; substantial rewrite needed to keep load-bearing parts under 60",
-		"zerops_deploy_batch":       "68 words — borderline; one-pass copy edit",
+		"zerops_deploy_batch":       "94 words — the parallelism contract, failure semantics and when to batch; trim by moving the STDIO-penalty history to the spec",
 		"zerops_record_fact":        "81 words — explains workflow integration semantics; trim by moving workflow context to atom corpus",
 		"zerops_preprocess":         "88 words — explains motivation + invariants; trim by referencing spec instead of restating",
 		"zerops_workspace_manifest": "66 words — borderline; one-pass copy edit",

@@ -186,10 +186,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_preprocess":         811,
 		"zerops_workspace_manifest": 716,
 		"zerops_logs":               712,
-		"zerops_deploy_batch":       608,
-		"zerops_manage":             453,
-		"zerops_subdomain":          393,
-		"zerops_mount":              306,
+		// A target's sha (deploy that commit, zerops_deploy's sha) is a new
+		// field: one batch puts main on several stages (DP-8).
+		"zerops_deploy_batch": 681,
+		"zerops_manage":       453,
+		"zerops_subdomain":    393,
+		"zerops_mount":        306,
 		// New tool: acquire / status / release of a dev-pool container
 		// (docs/spec-workflows.md §8 DP-5). Six short fields; force is a
 		// FlexBool so a stringified boolean is not bounced by the schema.

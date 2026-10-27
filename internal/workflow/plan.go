@@ -29,8 +29,9 @@ type Plan struct {
 }
 
 // NextAction describes one concrete tool call suggested to the LLM. An Args
-// value is a string; a list-valued tool argument (zerops_lease's `pools`)
-// carries ListArg's encoding.
+// value is a string; a list-valued tool argument carries a JSON array —
+// ListArg's encoding for zerops_lease's `pools`, an array of objects for
+// zerops_deploy_batch's `targets`.
 type NextAction struct {
 	Label     string            `json:"label"`
 	Tool      string            `json:"tool"`
@@ -55,11 +56,12 @@ func ListArg(values []string) string {
 	return string(b)
 }
 
-// isListArg reports whether an Args value carries ListArg's encoding.
+// isListArg reports whether an Args value carries a JSON array — ListArg's
+// encoding, or an array of objects such as zerops_deploy_batch's targets.
 func isListArg(value string) bool {
 	if !strings.HasPrefix(value, "[") {
 		return false
 	}
-	var values []string
+	var values []any
 	return json.Unmarshal([]byte(value), &values) == nil
 }
