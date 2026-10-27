@@ -33,7 +33,7 @@ func DevServerStates(ctx context.Context, client platform.Client, projectID stri
 			return result.PreviewURL // built by the caller, who has just enabled the subdomain
 		}
 		if _, ok := previews[port]; !ok {
-			previews[port] = LeasePreviewURL(ctx, client, projectID, result.Pool, port)
+			previews[port] = leasePreviewURL(ctx, client, projectID, result.Pool, port, !result.subdomainOn)
 		}
 		return previews[port]
 	}

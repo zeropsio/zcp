@@ -132,6 +132,10 @@ type DevServerResult struct {
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
 	Unreported bool `json:"-"`
+	// subdomainOn: the caller has just found or switched the lease's pool's
+	// subdomain on, so a preview URL is built without waiting for the pool's
+	// own flag to show it (leasePreviewURL's requireOn).
+	subdomainOn bool
 }
 
 // DevServerParams is the typed input of ExecuteDevServer. Fields not relevant
