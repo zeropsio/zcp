@@ -4,8 +4,10 @@
 # zcp wrote this file from the Mate "Zerops Apps - Jago". It is the group's now:
 # a person may edit it. zcp adds only a whole tier the group repo lacks; into a
 # tier it already carries, zcp proposes only a service's scale (group-recipe
-# scaling=<hostname>) or a managed service added to the Mate's project
-# (group-recipe service=<hostname>), as a change a person reviews.
+# scaling=<hostname>), a managed service added to the Mate's project or a part's
+# service added or removed (group-recipe service=<hostname>), as a change a
+# person reviews — and this whole file anew while it stays exactly as zcp
+# wrote it (the mark below).
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
@@ -16,7 +18,7 @@
 # proposes it anew, as a change a person reviews, when that Mate's project
 # changes shape — a part added or removed, a dev pool, a runtime's type; an
 # edit of any line makes the file the group's alone.
-# zcp-recipe: p-jago sha256=09393ff339c045c80de20a4a0ceba310cc0c2f5e55fadad1f8393208dcc7aef5
+# zcp-recipe: p-jago sha256=7f9f1e821538c310f13dcdb7aae82a586f009a97ce7e05457fed96358e18df16
 
 project:
   name: zerops-apps production

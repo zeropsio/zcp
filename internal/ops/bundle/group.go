@@ -766,19 +766,42 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 // written over.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
 	proposes := "only a service's scale (group-recipe scaling=<hostname>) or a managed service added to the Mate's project (group-recipe service=<hostname>)"
-	if slices.ContainsFunc(inputs.Runtimes, func(r GroupRuntime) bool { return len(r.Stages) > 1 }) {
+	if groupHasSeveralParts(inputs.Runtimes) {
 		proposes = "only a service's scale (group-recipe scaling=<hostname>), a managed service added to the Mate's project or a part's service added or removed (group-recipe service=<hostname>)"
+	}
+	marked := strings.TrimSpace(inputs.MateProjectID) != ""
+	anew := ""
+	if marked {
+		anew = " — and this whole file anew while it stays exactly as zcp wrote it (the mark below)"
 	}
 	header := []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews.",
-			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes),
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews%s.",
+			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes, anew),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
-	if strings.TrimSpace(inputs.MateProjectID) != "" {
+	if marked {
 		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew, as a change a person reviews, when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
 	}
 	return header
+}
+
+// groupHasSeveralParts reports an app of several parts: a repository whose
+// pairs run more than one stage between them — one dev service with a stage
+// per part, or a pool-keyed pair per part on one repository.
+func groupHasSeveralParts(runtimes []GroupRuntime) bool {
+	parts := map[string]int{}
+	for _, r := range runtimes {
+		repo, _ := publicRepoURL(r.RepoURL)
+		if repo == "" {
+			repo = r.DevHostname
+		}
+		parts[repo] += max(len(r.Stages), 1)
+		if parts[repo] > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // groupApps is what the priorities rank: every runtime pair, by any name it
