@@ -36,15 +36,18 @@
         "stages": [
           {
             "hostname": "webstage",
-            "setup": "web"
+            "setup": "web",
+            "part": "web"
           },
           {
             "hostname": "apistage",
-            "setup": "api"
+            "setup": "api",
+            "part": "api"
           },
           {
             "hostname": "workerstage",
-            "setup": "worker"
+            "setup": "worker",
+            "part": "worker"
           }
         ],
         "devServers": [

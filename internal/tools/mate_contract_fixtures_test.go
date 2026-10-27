@@ -40,6 +40,8 @@ const contractStatusRunning = "running"
 type contractStage struct {
 	Hostname string `json:"hostname"`
 	Setup    string `json:"setup,omitempty"`
+	// Part is the part the stage builds (docs/spec-mate.md §2.8a.3).
+	Part string `json:"part,omitempty"`
 }
 
 type contractVerify struct {
@@ -208,7 +210,7 @@ func TestMateContractFixtures_SinglePair_StagesMeanTodaysPair(t *testing.T) {
 		was := today.Services[i]
 		var stages []contractStage
 		if was.StageHostname != "" {
-			stages = []contractStage{{Hostname: was.StageHostname, Setup: was.StageSetupName}}
+			stages = []contractStage{{Hostname: was.StageHostname, Setup: was.StageSetupName, Part: was.StageSetupName}}
 		}
 		if !reflect.DeepEqual(svc.Stages, stages) {
 			t.Errorf("%s stages = %+v, today's pair is %+v", svc.Hostname, svc.Stages, stages)
@@ -239,7 +241,7 @@ func TestMateContractFixtures_ThreeParts_CarriesEveryPreviewAndServer(t *testing
 		hosts[s.Hostname] = true
 	}
 	dev := env.Services[0]
-	wantStages := []contractStage{{"webstage", "web"}, {"apistage", "api"}, {"workerstage", "worker"}}
+	wantStages := []contractStage{{"webstage", "web", "web"}, {"apistage", "api", "api"}, {"workerstage", "worker", "worker"}}
 	if !reflect.DeepEqual(dev.Stages, wantStages) {
 		t.Errorf("stages = %+v, want %+v", dev.Stages, wantStages)
 	}
@@ -590,14 +592,14 @@ func TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot(t *testing.T) {
 	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool || pool.Mode != "" {
 		t.Errorf("services[0] = %+v, want the pool, modeless", pool.ServiceSnapshot)
 	}
-	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod"}}) || pool.DevServers != nil {
+	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod", Part: "prod"}}) || pool.DevServers != nil {
 		t.Errorf("the pool carries stages %+v and devServers %+v, want [{appstage prod}] and none", pool.Stages, pool.DevServers)
 	}
 	if stage.Stages != nil || stage.Mode != topology.ModeStage {
 		t.Errorf("the stage = %+v stages %+v, want a stage half carrying no stages", stage.ServiceSnapshot, stage.Stages)
 	}
-	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" {
-		t.Errorf("leases = %+v, want the pool's one lease", leases)
+	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" || leases[0].Part != "prod" || leases[0].Stage != "appstage" {
+		t.Errorf("leases = %+v, want the pool's one lease, naming its part and the stage its pair pairs with", leases)
 	}
 }
 
