@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -115,6 +116,7 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 		}
 	}
 	if len(inUse) > 0 {
+		slices.SortFunc(inUse, func(a, b LeaseRefusedEntry) int { return strings.Compare(a.Lease, b.Lease) })
 		return LeaseReleaseAnswer{Refused: inUse}, LeaseReleaseExitRefused
 	}
 	change, err := ReleaseLeaseBranch(ctx, deps, repo, branch)
@@ -141,6 +143,10 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 		answer.Released = append(answer.Released, LeaseReleasedEntry{Lease: v.Alias, Outcome: v.ReleaseOutcome()})
 	}
 	forgetLeaseSessions(deps.StateDir, releasedAliases(change.Leases))
+	// By alias: a group's leases are acquired at once, each stamped to the
+	// second its own reservation answered, so their acquire order is the
+	// clock's — the answer is not.
+	slices.SortFunc(answer.Released, func(a, b LeaseReleasedEntry) int { return strings.Compare(a.Lease, b.Lease) })
 	if len(failed) > 0 {
 		answer.Error = "the orchestrator would not release every lease of branch " + branch + ", which stay held (" + strings.Join(failed, "; ") + "); the same call again releases what is left"
 		return answer, LeaseReleaseExitFailed
