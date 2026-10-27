@@ -87,7 +87,9 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 		var idxs []int
 		for i, svc := range envelope.Services {
-			if scope != nil && !scope[svc.Hostname] && !(poolNamedByAtom(svc, atom.Axes) && poolReachedBySession(svc, envelope, scope)) {
+			// Outside the session's scope only a pool the work reaches binds,
+			// and only to an atom about pools.
+			if scope != nil && !scope[svc.Hostname] && (!poolNamedByAtom(svc, atom.Axes) || !poolReachedBySession(svc, envelope, scope)) {
 				continue
 			}
 			if svc.DevIsPool && !poolNamedByAtom(svc, atom.Axes) {

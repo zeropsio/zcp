@@ -1107,9 +1107,10 @@ func TestHandleDevelopBriefing_ManyPairs_StaysUnderTheMCPCap(t *testing.T) {
 
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
-	var services []platform.ServiceStack
-	var scope []string
-	for _, part := range []string{"api", "web", "admin", "worker", "docs", "geo", "edge", "mail", "search"} {
+	parts := []string{"api", "web", "admin", "worker", "docs", "geo", "edge", "mail", "search"}
+	services := make([]platform.ServiceStack, 0, 2*len(parts))
+	scope := make([]string, 0, len(parts))
+	for _, part := range parts {
 		dev, stage := part+"dev", part+"stage"
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname: dev, Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: stage}},

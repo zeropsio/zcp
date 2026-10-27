@@ -70,9 +70,9 @@ func multiPartPoolProject() StateEnvelope {
 		{"site", "alpine/static@1.0", "siteprod"},
 		{"web", "alpine/static@1.0", "webprod"},
 	}
-	var services []ServiceSnapshot
-	var leases []LeaseSnapshot
-	var stages []string
+	services := make([]ServiceSnapshot, 0, 2*len(parts)+6)
+	leases := make([]LeaseSnapshot, 0, len(parts))
+	stages := make([]string, 0, len(parts))
 	for _, p := range parts {
 		services = append(services, poolPartPair(p.part, p.stageType, p.setup)...)
 		leases = append(leases, LeaseSnapshot{
@@ -214,7 +214,12 @@ func TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope(t *testing.T) {
 		t.Fatalf("LoadAtomCorpus: %v", err)
 	}
 	const atom = "develop-dev-pool"
-	apiPair := fixSnapDeployedPairAuto("apidev", "apistage", "nodejs@22", topology.RuntimeDynamic)
+	apiPair := []ServiceSnapshot{
+		{Hostname: "apidev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "apistage",
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
+		{Hostname: "apistage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
+	}
 	webPair := poolPartPair("web", "alpine/static@1.0", "webprod")
 	partdev := ServiceSnapshot{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true}
 	held := []LeaseSnapshot{{Alias: "devpool-1", Pool: "devpool", Branch: "feat", State: "held"}}
@@ -279,7 +284,7 @@ func TestRenderServices_BasePrefixRuleSaidOnce(t *testing.T) {
 	if n := strings.Count(out, "on BOTH build.base and run.base"); n != 1 {
 		t.Errorf("the base-prefix rule is said %d times, want once:\n%s", n, out)
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(line, "  - apistage ") && !strings.Contains(line, "base prefix ubuntu/") {
 			t.Errorf("apistage's line no longer names its prefix: %s", line)
 		}
