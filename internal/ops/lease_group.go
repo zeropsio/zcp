@@ -908,7 +908,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			// A lease the release's own steps found ended is lost whatever
 			// becomes of the branch: those records go now, with their alias
 			// and mount.
-			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+			return LeaseChange{}, unsavedRefusal(ctx, d, members, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err)))
 		}
 	}
 	// The releases and the rewire of what stays held run under the group's
@@ -934,7 +934,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+			return LeaseChange{}, unsavedRefusal(ctx, d, members, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err)))
 		}
 	}
 	runMembers(members, func(m *releaseMember) {

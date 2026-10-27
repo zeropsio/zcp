@@ -26,6 +26,9 @@ type LeaseTargetInfo struct {
 	// StableNumber is the container's ZEROPS_StableNumber as the checkout
 	// read it, 0 when the record does not know it.
 	StableNumber int
+	// AcquiredAt is when the acquire that took the lease answered (RFC 3339,
+	// UTC), as zcp's record keeps it.
+	AcquiredAt string
 }
 
 // targetInfo is the record as a lease target: never the lease.
@@ -39,6 +42,7 @@ func (r leaseRecord) targetInfo() LeaseTargetInfo {
 		Repo:              r.Repo,
 		Parked:            r.Parked,
 		StableNumber:      r.StableNumber,
+		AcquiredAt:        r.AcquiredAt,
 	}
 }
 
