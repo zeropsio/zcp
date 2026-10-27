@@ -122,7 +122,8 @@ const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 type baseOutcome int
 
 const (
-	// branchJoined: the pair's tree and working copy are untouched.
+	// branchJoined: the pair's tree and working copy are untouched. Only the
+	// plain-project door joins HQ's seed (TestBuildProjectRepositoryCommand_JoinsTheSeed).
 	branchJoined baseOutcome = iota
 	// branchFromBase: a marker-only pair now holds the base's tree.
 	branchFromBase
@@ -132,6 +133,10 @@ const (
 	// commits and its working copy untouched, for the agent to take the
 	// base in.
 	branchNamed
+	// branchFirstHistory: a history of its own against HQ's unwritten root
+	// is named `main` exactly as it is — no commit made, HQ's root never
+	// joined in — so the change pushed from it lands as `main`.
+	branchFirstHistory
 )
 
 type baseCase struct {
@@ -149,14 +154,14 @@ type baseCase struct {
 func baseCases() []baseCase {
 	return []baseCase{
 		{
-			name: "local commits are joined onto the seed, the pair's files kept",
+			name: "local commits on HQ's unwritten root stay as they are, named main",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "README.md"), "the pair's README\n")
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
 				commitAll(t, dir, "the first page")
 			},
-			want: branchJoined,
+			want: branchFirstHistory,
 			wantFiles: map[string]string{
 				"README.md": "the pair's README\n",
 				"index.js":  "the app\n",
@@ -191,7 +196,7 @@ func baseCases() []baseCase {
 				runGit(t, dir, "merge", "-q", "--allow-unrelated-histories", "--no-edit", "other")
 				runGit(t, dir, "branch", "-q", "-D", "other")
 			},
-			want: branchJoined,
+			want: branchFirstHistory,
 			wantFiles: map[string]string{
 				"app.txt":   "resolved\n",
 				"other.txt": "other root\n",
@@ -205,7 +210,7 @@ func baseCases() []baseCase {
 				commitAll(t, dir, "init")
 				writeLabFile(t, filepath.Join(dir, "zerops.yaml"), "zerops: [edited]\n")
 			},
-			want:      branchJoined,
+			want:      branchFirstHistory,
 			wantFiles: map[string]string{"zerops.yaml": "zerops: [edited]\n"},
 		},
 		{
@@ -229,7 +234,7 @@ func baseCases() []baseCase {
 			want: branchFromBase,
 		},
 		{
-			name: "a staged change stays staged through the seed join",
+			name: "a staged change stays staged on a history of its own",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
@@ -237,8 +242,19 @@ func baseCases() []baseCase {
 				writeLabFile(t, filepath.Join(dir, "index.js"), "staged\n")
 				runGit(t, dir, "add", "index.js")
 			},
-			want:      branchJoined,
+			want:      branchFirstHistory,
 			wantFiles: map[string]string{"index.js": "staged\n"},
+		},
+		{
+			name: "a history of its own on another branch, no main, is named main where it is",
+			seed: func(t *testing.T, dir string) {
+				t.Helper()
+				runGit(t, dir, "checkout", "-q", "-b", "imported")
+				writeLabFile(t, filepath.Join(dir, "index.js"), "the imported app\n")
+				commitAll(t, dir, "the imported history")
+			},
+			want:      branchFirstHistory,
+			wantFiles: map[string]string{"index.js": "the imported app\n"},
 		},
 		{
 			name: "a marker-only pair with a staged file is refused cleanly",
@@ -350,12 +366,14 @@ func baseCases() []baseCase {
 
 // TestBuildBaseBranchCommand_DescendsFromMain is the table the wiring
 // owes. Whatever local history the pair has, it ends on its own branch
-// sharing its history with `origin/main` — or it is refused by name and
-// nothing moved.
-// A pair joined onto HQ's seed keeps its tree and its working copy
-// byte for byte: the seed is a placeholder, and the pair's code is not zcp's
-// to rewrite (the rebase this replaced lost a hand-resolved merge in
-// wasp-hello-world-app — measured 2026-09-24).
+// sharing its history with `origin/main`, or — against HQ's unwritten root,
+// one parentless commit of the empty tree — on `main` holding its own
+// history exactly as it is, or it is refused by name and nothing moved.
+// A history of its own keeps its commits, tree and working copy byte for
+// byte, and HQ's root is never joined into it (the owner, 2026-10-27: clean
+// history, no merge commits): HQ makes the change pushed from it `main`. The
+// pair's code is not zcp's to rewrite (the rebase the join replaced lost a
+// hand-resolved merge in wasp-hello-world-app — measured 2026-09-24).
 func TestBuildBaseBranchCommand_DescendsFromMain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
@@ -396,6 +414,26 @@ func TestBuildBaseBranchCommand_DescendsFromMain(t *testing.T) {
 					t.Errorf("the working copy changed:\nbefore:\n%s\nafter:\n%s", before.status, got)
 				}
 				runGit(t, pair, "merge-base", "origin/main", "HEAD")
+			case branchFirstHistory:
+				if err != nil {
+					t.Fatalf("command failed: %v\noutput:\n%s", err, out)
+				}
+				if got := runGit(t, pair, "symbolic-ref", "HEAD"); got != "refs/heads/"+baseBranch {
+					t.Errorf("HEAD is %s, want refs/heads/%s", got, baseBranch)
+				}
+				if got := runGit(t, pair, "rev-parse", "HEAD"); got != before.head {
+					t.Errorf("the history moved, a commit was made on it: HEAD %s → %s\n%s", before.head, got,
+						runGit(t, pair, "log", "--oneline", "--graph", "--all"))
+				}
+				if exec.CommandContext(t.Context(), "git", "-C", pair, "merge-base", "--is-ancestor", "origin/main", "HEAD").Run() == nil {
+					t.Errorf("HQ's unwritten root was joined into the history:\n%s", runGit(t, pair, "log", "--oneline", "--graph", "--all"))
+				}
+				if got := runGit(t, pair, "rev-parse", "HEAD^{tree}"); got != before.tree {
+					t.Errorf("the pair's tree changed: %s → %s", before.tree, got)
+				}
+				if got := runGit(t, pair, "status", "--porcelain"); got != before.status {
+					t.Errorf("the working copy changed:\nbefore:\n%s\nafter:\n%s", before.status, got)
+				}
 			case branchJoined:
 				assertOnBase(t, pair, string(out), err)
 				if got := runGit(t, pair, "rev-parse", "HEAD^{tree}"); got != before.tree {
@@ -635,8 +673,10 @@ func TestBuildBaseBranchCommand_Idempotent(t *testing.T) {
 // TestBuildBaseBranchCommand_Shape pins the pieces that cannot be seen from
 // the outcome: the fetch authenticates through HQ's session credential
 // helper (the credential never reaches argv), `main` is fetched BEFORE the
-// branch is decided, and the join is plumbing — no porcelain that replays,
-// rewrites or runs the pair's hooks.
+// branch is decided, and a Mate's wiring makes no commit at all — HQ's
+// unwritten root is never joined into a history (no `commit-tree`, no
+// unrelated-histories merge), and no porcelain replays, rewrites or runs the
+// pair's hooks. The plain-project door keeps its join of HQ's seed.
 func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 	t.Parallel()
 
@@ -648,23 +688,57 @@ func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 		"fetch --no-tags origin 'main'",
 		"b='main'",
 		"git merge-base FETCH_HEAD HEAD",
-		`commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD`,
 		"git symbolic-ref HEAD",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("command missing %q:\n%s", want, cmd)
 		}
 	}
-	if fetch, join := strings.Index(cmd, "fetch --no-tags"), strings.Index(cmd, "commit-tree \"HEAD"); fetch > join {
-		t.Errorf("the base must be fetched before the join reads FETCH_HEAD:\n%s", cmd)
+	if fetch, decide := strings.Index(cmd, "fetch --no-tags"), strings.Index(cmd, "git merge-base FETCH_HEAD HEAD"); fetch > decide {
+		t.Errorf("the base must be fetched before the branch is decided from FETCH_HEAD:\n%s", cmd)
 	}
-	// Never a rebase or a porcelain merge (they rewrite the pair's history or
-	// its working copy), never `-B`, a force or a reset: moving or resetting
-	// an existing branch would discard work the Mate has already pushed.
-	for _, absent := range []string{"rebase", "git merge ", "checkout -B", "--force", "reset"} {
+	// Never a join of HQ's root, a rebase or a porcelain merge (they rewrite
+	// the pair's history or its working copy), never `-B`, a force or a
+	// reset: moving or resetting an existing branch would discard work the
+	// Mate has already pushed.
+	for _, absent := range []string{"commit-tree", "Join the repository's base", "allow-unrelated-histories", "rebase", "git merge ", "checkout -B", "--force", "reset"} {
 		if strings.Contains(cmd, absent) {
 			t.Errorf("command must not carry %q:\n%s", absent, cmd)
 		}
+	}
+
+	plain := BuildProjectRepositoryCommand("/var/www", "https://hq.invalid/git/o/a/appdev.git", "https://hq.invalid")
+	if !strings.Contains(plain, `commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD`) {
+		t.Errorf("the plain-project door must keep its join of HQ's seed:\n%s", plain)
+	}
+}
+
+// TestBuildProjectRepositoryCommand_JoinsTheSeed pins the plain-project door
+// as it was: a plain project pushes `main` itself, with no change for HQ to
+// land, so its history of its own is still joined onto HQ's seed — tree and
+// working copy untouched — and its `main` descends from HQ's.
+func TestBuildProjectRepositoryCommand_JoinsTheSeed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := baseLab(t, func(t *testing.T, dir string) {
+		t.Helper()
+		writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
+		commitAll(t, dir, "the first page")
+	})
+	before := snapshotPair(t, pair)
+	remote := runGit(t, pair, "remote", "get-url", "origin")
+
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", BuildProjectRepositoryCommand(pair, remote, "https://hq.invalid")) //nolint:gosec // test-only, the command under test against a t.TempDir repository
+	cmd.Stdin = strings.NewReader("project-key\n")
+	out, err := cmd.CombinedOutput()
+
+	assertOnBase(t, pair, string(out), err)
+	if got := runGit(t, pair, "rev-parse", "HEAD^{tree}"); got != before.tree {
+		t.Errorf("the pair's tree changed: %s → %s", before.tree, got)
+	}
+	if got := runGit(t, pair, "status", "--porcelain"); got != before.status {
+		t.Errorf("the working copy changed:\nbefore:\n%s\nafter:\n%s", before.status, got)
 	}
 }
 

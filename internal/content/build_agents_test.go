@@ -733,6 +733,10 @@ func TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain(t *te
 		"`.zcp/dev-servers.json`",
 		"goes in afterwards as an ordinary change",
 		"merged by squash",
+		// A pair wired holding a history of its own keeps it as main: while
+		// HQ's main is only its initial commit, that main is the
+		// repository's first history, never reset onto that commit.
+		"unless `origin/main` holds only HQ's initial commit, when that `main` is the repository's first history: keep it as it is and cut your branch from it",
 	}
 	for _, tc := range []struct {
 		name string

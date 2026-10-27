@@ -231,3 +231,58 @@ func TestMainSync_AMainThatMovesMidSwitchKeepsTheCheckoutOnIt(t *testing.T) {
 		t.Errorf("the checkout differs from main:\n%s", got)
 	}
 }
+
+// TestMainSync_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs: against HQ's
+// unwritten root — one parentless commit of the empty tree — a `main` of a
+// history of its own is the repository's first history, never commits to
+// carry onto that root: the sync names it (FIRST_HISTORY) and moves nothing,
+// so the agent pushes it as it is and HQ makes its change `main`. Kept on a
+// branch too, it is already on its way and nothing is said; against a `main`
+// holding code it stays commits of its own.
+func TestMainSync_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	ownHistory := func(t *testing.T, dir string) {
+		t.Helper()
+		writeLabFile(t, filepath.Join(dir, "index.js"), "the imported app\n")
+		commitAll(t, dir, "the imported history")
+	}
+	for _, tc := range []struct {
+		name string
+		base func(t *testing.T, dir string)
+		pair func(t *testing.T, dir string)
+		want string
+	}{
+		{name: "a main of its own on HQ's unwritten root is its first history", base: hqSeed, pair: ownHistory, want: "FIRST_HISTORY"},
+		{
+			name: "a first history a branch holds too says nothing",
+			base: hqSeed,
+			pair: func(t *testing.T, dir string) {
+				t.Helper()
+				ownHistory(t, dir)
+				runGit(t, dir, "branch", "bring-it-in")
+			},
+		},
+		{name: "against a main holding code it stays commits of its own", base: landedBase, pair: ownHistory, want: MainOwnCommits},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pair := baseLabOn(t, tc.base, tc.pair)
+			remote := runGit(t, pair, "remote", "get-url", "origin")
+			mainBefore := runGit(t, pair, "rev-parse", "refs/heads/main")
+
+			//nolint:gosec // test-only, the command under test against a t.TempDir repository
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildMainSyncCommand(pair, remote)).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the sync failed: %v\n%s", err, out)
+			}
+			if state, _ := MainSync(string(out)); state != tc.want {
+				t.Errorf("MainSync = %q, want %q; output:\n%s", state, tc.want, out)
+			}
+			if got := runGit(t, pair, "rev-parse", "refs/heads/main"); got != mainBefore {
+				t.Errorf("main moved %s → %s", mainBefore, got)
+			}
+			assertLabFiles(t, pair, map[string]string{"index.js": "the imported app\n"})
+		})
+	}
+}
