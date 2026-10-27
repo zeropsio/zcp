@@ -407,6 +407,25 @@ func TestPoolMigrateEnv_MultiPart_NoPartNamed_CopiesEveryPartsEnv(t *testing.T) 
 	}
 }
 
+// TestPoolMigrate_MultiPart_EnvStep_NextCopiesEveryPart: a part at its env
+// step names the pool-env call without a pool — the one call that gives every
+// part's pool its env — so the agent makes one call, not one per part.
+func TestPoolMigrate_MultiPart_EnvStep_NextCopiesEveryPart(t *testing.T) {
+	t.Parallel()
+	f := multiPartFixture(t, partProvisioned, partProvisioned, nil)
+	out, _ := f.run(t)
+	if out["step"] != "env" {
+		t.Fatalf("step = %v, want env", out["step"])
+	}
+	tool, args := poolMigrateNextArgs(out)
+	if tool != "zerops_workflow" || args["action"] != actionPoolEnv || args["service"] != "appdev" {
+		t.Fatalf("next = %v %v, want pool-env of appdev", tool, args)
+	}
+	if _, named := args["pool"]; named {
+		t.Errorf("next names pool %v: one pool-env call without it copies every part's env", args["pool"])
+	}
+}
+
 // newMultiPartRetireRig is appdev with web leased and api as far as given,
 // under the retire's rig: its repository real, its mount up, each pool's
 // orchestrator listing zcp's lease <pool>-1 held.
