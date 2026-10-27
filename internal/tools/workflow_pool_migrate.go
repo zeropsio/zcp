@@ -727,7 +727,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 	}
 	why := fmt.Sprintf("Builds the pool's image from setup %q in commit %s, never the dev service's working tree; it reaches only containers the pool creates after it.", image.Setup, short)
 	if image.Deployed != nil {
-		why += " The app version the pool runs was not created after the last change of " + image.File + " up to that commit."
+		why += fmt.Sprintf(" The app version the pool runs was built before setup %q last changed in %s up to that commit.", image.Setup, image.File)
 	}
 	if len(image.Uncommitted) > 0 {
 		why += fmt.Sprintf(" Your changes to %s are not in that commit: commit them first and call again to ship them.", strings.Join(image.Uncommitted, " and "))

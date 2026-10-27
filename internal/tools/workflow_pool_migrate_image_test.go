@@ -111,6 +111,17 @@ func poolImageRunning(created string) func(*poolMigrateFixture) {
 	}
 }
 
+// poolImageDeployedAt is the build time the image read asks the config file
+// at for the fixture's pool: "" while it runs no app version.
+func poolImageDeployedAt(f poolMigrateFixture) string {
+	for _, svc := range f.services {
+		if svc.Name == "apppool" {
+			return ops.PoolMigrateImageDeployedAt(svc)
+		}
+	}
+	return ""
+}
+
 func poolImageBlock(t *testing.T, out map[string]any) map[string]any {
 	t.Helper()
 	image, ok := out["image"].(map[string]any)
@@ -172,7 +183,7 @@ func TestPoolMigrateImageStep_ReadySetup_NamesTheShaDeploy(t *testing.T) {
 		t.Errorf("steps = %v", states)
 	}
 	cmds := f.ssh.recorded()
-	if len(cmds) != 2 || cmds[1] != "appdev: "+ops.PoolMigrateImageCommand("/var/www", poolMigrateHead) {
+	if len(cmds) != 2 || cmds[1] != "appdev: "+ops.PoolMigrateImageCommand("/var/www", poolMigrateHead, poolImageDeployedAt(f)) {
 		t.Fatalf("ssh commands = %v, want the census and one read of the commit", cmds)
 	}
 	for method, n := range mock.CallCounts {
@@ -357,7 +368,7 @@ func TestPoolMigrateImageStep_ReadSideWritesNothing(t *testing.T) {
 					t.Errorf("the image step called %s %d times", method, n)
 				}
 			}
-			want := []string{"appdev: " + ops.PoolMigrateCensusCommand("/var/www"), "appdev: " + ops.PoolMigrateImageCommand("/var/www", poolMigrateHead)}
+			want := []string{"appdev: " + ops.PoolMigrateCensusCommand("/var/www"), "appdev: " + ops.PoolMigrateImageCommand("/var/www", poolMigrateHead, poolImageDeployedAt(f))}
 			if cmds := f.ssh.recorded(); !reflect.DeepEqual(cmds, want) {
 				t.Errorf("ssh commands = %v, want the census and the read of the commit", cmds)
 			}

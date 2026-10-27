@@ -49,10 +49,11 @@ pays for them:
 | `deps-baked` | install the dependencies into `/var/www` in `run.prepareCommands`: what it writes survives every reset of a container, and the checkout keeps it. What `build.deployFiles` ships into `/var/www` is wiped by every reset. A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` |
 
 **Done.** The step is done once nothing is missing and the pool runs an app
-version created after the commit last changed its `zerops.yaml`
-(`image.deployed.current`); the step is then `move`. A later commit that
-changes `zerops.yaml` makes the step `image` again. While a build of the pool
-runs, `next` waits on it.
+version built after the pool setup last changed (`image.deployed.current`);
+the step is then `move`. A later commit that changes the pool setup makes the
+step `image` again; a change of another part's setup in the same file leaves
+it done (`image.deployed.setupUnchanged`). While a build of the pool runs,
+`next` waits on it.
 
 A deploy of a pool reaches only the containers it creates afterwards: a
 container the pool already holds keeps its image until

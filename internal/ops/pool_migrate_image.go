@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -20,7 +22,8 @@ import (
 // checks the pool setup in the commit — read with read-only git on the dev
 // service, parsed by the zerops.yaml and declaration parsers every other reader
 // uses — and it is done once the pool runs an app version newer than the
-// commit's last change of its config file.
+// commit's last change of its own setup: an edit of another part's setup in
+// the same file leaves a pool's image current.
 
 // The image step's checks. A missing check holds the deploy: the step names
 // none until the commit passes it. A dependency check is a finding, named
@@ -93,7 +96,12 @@ type PoolMigrateImageCheck struct {
 type PoolMigrateImageDeployed struct {
 	Created           string `json:"created"`
 	ConfigCommittedAt string `json:"configCommittedAt,omitempty"`
-	Current           bool   `json:"current"`
+	// SetupUnchanged says the config file changed after the app version was
+	// created, but not the pool setup: the setup reads the same as in the
+	// file the commit held when the app version was created, so the image is
+	// current.
+	SetupUnchanged bool `json:"setupUnchanged,omitempty"`
+	Current        bool `json:"current"`
 }
 
 // PoolMigrateImageInput is what the image step reads.
@@ -137,6 +145,12 @@ type poolMigrateCommitRead struct {
 	// configChangedAt is the committer date (ISO 8601) of the commit's last
 	// change of configFile.
 	configChangedAt string
+	// deployedConfig is configFile as the commit's history held it when the
+	// pool's app version was created — at the last commit changing it then
+	// — hasDeployedConfig false when the read was not asked for it or none
+	// was committed by then.
+	deployedConfig    string
+	hasDeployedConfig bool
 }
 
 // The read's framing (poolMigrateImageScript).
@@ -149,13 +163,17 @@ const (
 // poolMigrateImageScript reads, at the commit $c, the config file a deploy of
 // it reads — zerops.yaml, else zerops.yml — and the dev-server declaration,
 // each byte for byte after a line naming its size and path, then the
-// committer date of the commit's last change of the config file. Every git
-// command in it reads objects only. A commit the repository does not hold
-// prints N; a step that fails prints a zcp-image-error line and the read
-// stops without its end line, so a read cut short is never a read.
+// committer date of the commit's last change of the config file, and — with
+// $d, the time the pool's app version was created — the config file as the
+// last commit changing it at or before $d left it. Every git command in it
+// reads objects only. A commit the repository does not hold prints N; a step
+// that fails prints a zcp-image-error line and the read stops without its end
+// line, so a read cut short is never a read.
 //
 //	F <size> <path>   followed by exactly <size> bytes and a newline
 //	C <date>          git log --format=%cI of the config file
+//	P <size> <path>   the config file when the app version was created,
+//	                  framed like F
 //	N                 the repository does not hold the commit
 const poolMigrateImageScript = `export GIT_OPTIONAL_LOCKS=0 LC_ALL=C
 set -f
@@ -176,12 +194,38 @@ if [ -n "$cf" ]; then
   t=$(git log -1 --no-show-signature --format=%cI "$c" -- "$cf") || { echo '` + poolMigrateImageError + `log'; exit 0; }
   printf 'C %s\n' "$t"
 fi
+if [ -n "$cf" ] && [ -n "$d" ]; then
+  pc=$(git log -1 --no-show-signature --format=%H --before="$d" "$c" -- "$cf") || { echo '` + poolMigrateImageError + `log before the build'; exit 0; }
+  if [ -n "$pc" ] && [ "$(git cat-file -t "$pc:$cf" 2>/dev/null)" = blob ]; then
+    s=$(git cat-file -s "$pc:$cf") || { echo "` + poolMigrateImageError + `size $cf before the build"; exit 0; }
+    printf 'P %s %s\n' "$s" "$cf"
+    git cat-file blob "$pc:$cf" || { echo; echo "` + poolMigrateImageError + `read $cf before the build"; exit 0; }
+    echo
+  fi
+fi
 echo '` + poolMigrateImageEnd + `'`
 
 // PoolMigrateImageCommand is the one SSH command that reads commit's pool
-// setup files in the repository rooted at root.
-func PoolMigrateImageCommand(root, commit string) string {
-	return "cd " + shellQuote(root) + " || exit 3\nc=" + shellQuote(commit) + "\n" + poolMigrateImageScript
+// setup files in the repository rooted at root, and — with deployedAt, a
+// `git log --before` time (PoolMigrateImageDeployedAt) — the config file as it
+// was when the pool's app version was created.
+func PoolMigrateImageCommand(root, commit, deployedAt string) string {
+	return "cd " + shellQuote(root) + " || exit 3\nc=" + shellQuote(commit) + "\nd=" + shellQuote(deployedAt) + "\n" + poolMigrateImageScript
+}
+
+// PoolMigrateImageDeployedAt is when the pool's app version was created, in
+// the form `git log --before` reads (UTC, to the second — a commit made in
+// the same second counts as before it), "" when the pool runs none or its
+// time does not parse.
+func PoolMigrateImageDeployedAt(pool platform.ServiceStack) string {
+	if !pool.HasDeployedCode() {
+		return ""
+	}
+	created, err := time.Parse(time.RFC3339Nano, pool.ActiveAppVersion.Created)
+	if err != nil || created.IsZero() {
+		return ""
+	}
+	return created.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // ReadPoolMigrateImage reads the pool setup in the dev service's HEAD commit,
@@ -195,7 +239,7 @@ func ReadPoolMigrateImage(ctx context.Context, ssh SSHDeployer, in PoolMigrateIm
 		return checkPoolMigrateImage(in, poolMigrateCommitRead{}), nil
 	}
 	short := poolMigrateShort(in.Head.Head)
-	out, err := ssh.ExecSSH(ctx, in.Dev, PoolMigrateImageCommand(in.Root, in.Head.Head))
+	out, err := ssh.ExecSSH(ctx, in.Dev, PoolMigrateImageCommand(in.Root, in.Head.Head, PoolMigrateImageDeployedAt(in.Pool)))
 	if err != nil {
 		return nil, fmt.Errorf("read the pool setup at %s on %s: %w", short, in.Dev, err)
 	}
@@ -245,6 +289,17 @@ func parsePoolMigrateImageRead(out string) (poolMigrateCommitRead, error) {
 			} else {
 				r.configFile, r.config = path, body
 			}
+		case strings.HasPrefix(line, "P "):
+			sizeText, path, _ := strings.Cut(strings.TrimPrefix(line, "P "), " ")
+			size, err := strconv.Atoi(sizeText)
+			if err != nil || size < 0 || path == "" {
+				return r, fmt.Errorf("the read of the commit names a file oddly: %q", line)
+			}
+			if len(rest) < size+1 || rest[size] != '\n' {
+				return r, fmt.Errorf("the read of %s before the build came back cut short", path)
+			}
+			r.deployedConfig, r.hasDeployedConfig = rest[:size], true
+			rest = rest[size+1:]
 		case strings.HasPrefix(line, "C "):
 			r.configChangedAt = strings.TrimSpace(strings.TrimPrefix(line, "C "))
 		case strings.HasPrefix(line, poolMigrateImageError):
@@ -305,7 +360,7 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 	}
 	img.File = read.configFile
 	img.Uncommitted = poolMigrateUncommitted(in.Head, read.configFile)
-	img.Deployed = poolMigrateImageDeployed(in.Pool, read.configChangedAt)
+	img.Deployed = poolMigrateImageDeployed(in.Pool, read, img.Setup)
 
 	var entry *ZeropsYmlEntry
 	var doc *ZeropsYmlDoc
@@ -360,16 +415,48 @@ func poolMigrateMaxContainers(pool platform.ServiceStack, fallback int) int {
 
 // poolMigrateImageDeployed is the app version the pool runs, nil for none or
 // for the placeholder a startWithoutCode import leaves: current when it was
-// created at or after the commit's last change of the config file.
-func poolMigrateImageDeployed(pool platform.ServiceStack, configChangedAt string) *PoolMigrateImageDeployed {
+// created at or after the commit's last change of the config file, or when
+// the pool's own setup reads the same now as in the file when it was created
+// — a change of another part's setup since leaves the pool's image as it is.
+func poolMigrateImageDeployed(pool platform.ServiceStack, read poolMigrateCommitRead, setup string) *PoolMigrateImageDeployed {
 	if !pool.HasDeployedCode() {
 		return nil
 	}
-	d := &PoolMigrateImageDeployed{Created: pool.ActiveAppVersion.Created, ConfigCommittedAt: configChangedAt}
+	d := &PoolMigrateImageDeployed{Created: pool.ActiveAppVersion.Created, ConfigCommittedAt: read.configChangedAt}
 	created, createdErr := time.Parse(time.RFC3339Nano, d.Created)
-	changed, changedErr := time.Parse(time.RFC3339, configChangedAt)
+	changed, changedErr := time.Parse(time.RFC3339, read.configChangedAt)
 	d.Current = createdErr == nil && changedErr == nil && !created.IsZero() && !created.Before(changed)
+	if !d.Current && read.hasDeployedConfig {
+		now, nowOK := poolMigrateSetupContent(read.config, setup)
+		then, thenOK := poolMigrateSetupContent(read.deployedConfig, setup)
+		d.SetupUnchanged = nowOK && thenOK && now == then
+		d.Current = d.SetupUnchanged
+	}
 	return d
+}
+
+// poolMigrateSetupContent is setup as the platform builds it from a config
+// file — `extends` resolved — in one canonical form, so two files compare by
+// that setup alone; ok is false when the file does not parse or holds no such
+// setup.
+func poolMigrateSetupContent(config, setup string) (string, bool) {
+	var raw struct {
+		Zerops []map[string]any `yaml:"zerops"`
+	}
+	if err := yaml.Unmarshal([]byte(config), &raw); err != nil {
+		return "", false
+	}
+	for _, s := range resolveExtends(raw.Zerops) {
+		if name, _ := s["setup"].(string); name != setup {
+			continue
+		}
+		out, err := yaml.Marshal(s)
+		if err != nil {
+			return "", false
+		}
+		return string(out), true
+	}
+	return "", false
 }
 
 // poolMigrateDevsupLine is the item of prepareCommands that installs

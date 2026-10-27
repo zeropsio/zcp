@@ -652,12 +652,12 @@ func TestReadPoolMigrateImage_ReadsTheCommitNotTheTree(t *testing.T) {
 	if len(got.Missing) != 0 || got.File != "zerops.yaml" || got.PreviewPortBase != 4000 || got.Commit != head {
 		t.Fatalf("image = %+v, want the commit's ready setup and its previewPortBase 4000", got)
 	}
-	if len(ssh.calls) != 1 || ssh.calls[0] != "appdev: "+PoolMigrateImageCommand(root, head) {
+	if len(ssh.calls) != 1 || ssh.calls[0] != "appdev: "+PoolMigrateImageCommand(root, head, "") {
 		t.Fatalf("ssh calls = %v, want one round trip", ssh.calls)
 	}
 
 	// The commit's last change of zerops.yaml is when its committer said.
-	read, err := parsePoolMigrateImageRead(string(mustExec(t, ssh, PoolMigrateImageCommand(root, head))))
+	read, err := parsePoolMigrateImageRead(string(mustExec(t, ssh, PoolMigrateImageCommand(root, head, ""))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -767,7 +767,7 @@ func TestReadPoolMigrateImage_SSHFailure_KeepsTheSSHError(t *testing.T) {
 // object, take a lock or touch the index or the tree.
 func TestReadPoolMigrateImage_ScriptRunsOnlyReadOnlyGit(t *testing.T) {
 	t.Parallel()
-	script := PoolMigrateImageCommand("/var/www", imageHead)
+	script := PoolMigrateImageCommand("/var/www", imageHead, "2026-10-24T09:00:00Z")
 	readOnly := map[string]bool{"cat-file": true, "log": true}
 	matches := regexp.MustCompile(`\bgit\s+([a-z-]+)`).FindAllStringSubmatch(script, -1)
 	if len(matches) == 0 {
