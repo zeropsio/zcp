@@ -877,6 +877,27 @@ func TestPoolMigrateRetire_GuardFails_Refused(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateRetire_OwnPortSubdomain_NoDomainRefusal: the routing list
+// carries the dev's own port subdomain (`<host>-<sub>-<port>.prg1.zerops.app`)
+// beside any custom domain. It dies with the dev, as the diagnosis says, so
+// the retire never refuses on it — nor on a meta intent "domain" an earlier
+// reconcile recorded from it while the live routing names no custom domain.
+func TestPoolMigrateRetire_OwnPortSubdomain_NoDomainRefusal(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessDomain})
+	})
+	r.f.mock.WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+		Domains:   []platform.PublicHTTPDomain{{Name: "appdev-38ff-3000.prg1.zerops.app"}},
+		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 3000, ServiceID: "svc-dev"}},
+	})
+	out, isErr := r.retire(t, retireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("first call = %v, want DIAGNOSIS_REQUIRED, no domain refusal", out)
+	}
+	r.assertNothingRetired(t)
+}
+
 // TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
 // does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
 // DP-2): the container may be another holder's by now, so the retire refuses

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -117,6 +118,52 @@ func TestObservePublicAccess_Domains_FilteredByServiceID(t *testing.T) {
 	if route.Name != "probe.example.com" || route.Port != 3000 || route.Path != "/" ||
 		route.DNSCheckStatus != "PENDING" || !route.SSLEnabled {
 		t.Errorf("route = %+v, unexpected", route)
+	}
+}
+
+// TestObservePublicAccess_OwnPlatformSubdomain_NotACustomDomain pins that
+// the service's own zerops.app subdomains — the plain one and each port's
+// (`<host>-<sub>-<port>.prg1.zerops.app`), which the routing list carries
+// beside the custom domains — are never read as a custom domain (§8 O3):
+// counting one made a pool-migrate retire refuse a dev service, and an
+// ensurePublicAccess reconcile record intent "domain", for a subdomain the
+// platform itself names.
+func TestObservePublicAccess_OwnPlatformSubdomain_NotACustomDomain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		domains []string
+		want    []string
+	}{
+		{name: "a port subdomain", domains: []string{"api-38ff-3000.prg1.zerops.app"}},
+		{name: "the plain subdomain", domains: []string{"api-38ff.prg1.zerops.app"}},
+		{name: "upper case and a trailing dot", domains: []string{"API-38FF-3000.PRG1.ZEROPS.APP."}},
+		{name: "a custom domain beside it", domains: []string{"api-38ff-3000.prg1.zerops.app", "shop.example.com"}, want: []string{"shop.example.com"}},
+		{name: "a custom domain that only ends like one", domains: []string{"notzerops.app"}, want: []string{"notzerops.app"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var domains []platform.PublicHTTPDomain
+			for _, d := range tt.domains {
+				domains = append(domains, platform.PublicHTTPDomain{Name: d})
+			}
+			mock := platform.NewMock().WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+				ID:        "routing-1",
+				Domains:   domains,
+				Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 3000, ServiceID: "svc-1"}},
+			})
+			got, err := ObservePublicAccess(context.Background(), mock, "proj-1", &platform.ServiceStack{ID: "svc-1", Name: "api"})
+			if err != nil {
+				t.Fatalf("ObservePublicAccess: %v", err)
+			}
+			if !slices.Equal(got.Observed.Domains, tt.want) {
+				t.Errorf("Observed.Domains = %v, want %v", got.Observed.Domains, tt.want)
+			}
+			if len(got.Domains) != len(tt.want) {
+				t.Errorf("Domains = %+v, want one route per custom domain %v", got.Domains, tt.want)
+			}
+		})
 	}
 }
 

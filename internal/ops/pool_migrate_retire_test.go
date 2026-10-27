@@ -60,3 +60,24 @@ func TestPoolMigrateDevDomains_RoutedToTheDevByID(t *testing.T) {
 		t.Errorf("domains = %q, want %q", got, want)
 	}
 }
+
+// TestPoolMigrateDevDomains_OwnPlatformSubdomain_NotACustomDomain pins that
+// the dev's own zerops.app subdomains in the routing list are no domain the
+// retire waits on: they die with the service, so the retire names them under
+// what goes with it, never as a custom domain to move first.
+func TestPoolMigrateDevDomains_OwnPlatformSubdomain_NotACustomDomain(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithPublicHTTPRoutings(
+		platform.PublicHTTPRouting{
+			Domains:   []platform.PublicHTTPDomain{{Name: "appdev-38ff-3000.prg1.zerops.app"}, {Name: "appdev-38ff.prg1.zerops.app"}},
+			Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 3000, ServiceID: "svc-dev"}},
+		},
+	)
+	got, err := PoolMigrateDevDomains(context.Background(), mock, "proj-1", "svc-dev")
+	if err != nil {
+		t.Fatalf("PoolMigrateDevDomains: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("domains = %q, want none: a service's own zerops.app subdomain is no custom domain", got)
+	}
+}
