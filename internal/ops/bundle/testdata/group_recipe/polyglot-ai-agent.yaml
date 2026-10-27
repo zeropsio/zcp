@@ -1,0 +1,226 @@
+# The AI Agent tier. The project a Zerops Mate works in: every part as its dev
+# pool or dev service and its stage, with the services they share.
+#
+# zcp wrote this file from the Mate "Noola - Odin". It is the group's now: a
+# person may edit it. zcp adds only a whole tier the group repo lacks; into a
+# tier it already carries, zcp proposes only a service's scale (group-recipe
+# scaling=<hostname>) or a managed service added to the Mate's project
+# (group-recipe service=<hostname>), as a change a person reviews.
+#
+# Priority is the order services are created in, each wave deployed before the
+# next starts: the managed services first, then every runtime before the
+# runtimes whose build reads it.
+#
+# The line below is zcp's mark: the Mate's project this file was composed from
+# and a digest of the file. While the file stays exactly as zcp wrote it, zcp
+# proposes it anew, as a change a person reviews, when that Mate's project
+# changes shape — a part added or removed, a dev pool, a runtime's type; an
+# edit of any line makes the file the group's alone.
+# zcp-recipe: p-odin sha256=11d2e9f27bf59251f762f90b4af0bfb633c89589ba0001237e1b47ca3cb0469b
+
+project:
+  name: Noola - Odin
+  corePackage: LIGHT
+  vault:
+    API_INTERNAL_URL: http://apistage:3000
+    SMTP_HOST: mailpit
+    SMTP_PORT: "1025"
+
+services:
+  - hostname: cache
+    type: valkey:single@7.2
+    priority: 10
+    profile: hobby
+
+  - hostname: db
+    type: postgresql:single@18
+    priority: 10
+    profile: oltp-hobby
+
+  # A dev pool: one container leased per branch of the repository its stage
+  # builds from. Its image is that repository's setup "apipool", deployed from a
+  # lease once the Mate runs; this import builds nothing.
+  - hostname: apipool
+    type: swarm@1
+    priority: 1
+    minContainers: 0
+    maxContainers: 3
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 4
+      maxRam: 16
+      minDisk: 1
+      maxDisk: 100
+    vault:
+      NODE_ENV: development
+      sshIsolation: vpn service@zcp
+
+  - hostname: apistage
+    type: ubuntu/nodejs@24
+    priority: 1
+    zeropsSetup: apiprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  # A dev pool: one container leased per branch of the repository its stage
+  # builds from. Its image is that repository's setup "edgepool", deployed from
+  # a lease once the Mate runs; this import builds nothing.
+  - hostname: edgepool
+    type: swarm@1
+    priority: 1
+    minContainers: 0
+    maxContainers: 3
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 4
+      maxRam: 16
+      minDisk: 1
+      maxDisk: 100
+    vault:
+      NODE_ENV: development
+      sshIsolation: vpn service@zcp
+
+  - hostname: edgestage
+    type: alpine/elixir@1.16.3
+    priority: 1
+    zeropsSetup: edgeprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  # A dev pool: one container leased per branch of the repository its stage
+  # builds from. Its image is that repository's setup "geopool", deployed from a
+  # lease once the Mate runs; this import builds nothing.
+  - hostname: geopool
+    type: swarm@1
+    priority: 1
+    minContainers: 0
+    maxContainers: 3
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 4
+      maxRam: 16
+      minDisk: 1
+      maxDisk: 100
+    vault:
+      NODE_ENV: development
+      sshIsolation: vpn service@zcp
+
+  - hostname: geostage
+    type: nodejs@24
+    priority: 1
+    zeropsSetup: geoprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+
+  # A dev pool: one container leased per branch of the repository its stage
+  # builds from. Its image is that repository's setup "sitepool", deployed from
+  # a lease once the Mate runs; this import builds nothing.
+  - hostname: sitepool
+    type: swarm@1
+    priority: 1
+    minContainers: 0
+    maxContainers: 3
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 4
+      maxRam: 16
+      minDisk: 1
+      maxDisk: 100
+    vault:
+      NODE_ENV: development
+      sshIsolation: vpn service@zcp
+
+  - hostname: sitestage
+    type: alpine/static@1.0
+    priority: 1
+    zeropsSetup: siteprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  # A dev pool: one container leased per branch of the repository its stage
+  # builds from. Its image is that repository's setup "webpool", deployed from a
+  # lease once the Mate runs; this import builds nothing.
+  - hostname: webpool
+    type: swarm@1
+    priority: 1
+    minContainers: 0
+    maxContainers: 3
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 4
+      maxRam: 16
+      minDisk: 1
+      maxDisk: 100
+    vault:
+      NODE_ENV: development
+      sshIsolation: vpn service@zcp
+
+  - hostname: webstage
+    type: alpine/static@1.0
+    priority: 1
+    zeropsSetup: webprod
+    buildFromGit: https://hq.example.com/git/org-1/app-2/noola
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 1
+      maxRam: 48
+      minDisk: 1
+      maxDisk: 250
+
+  - hostname: mailpit
+    type: alpine@3.24
+    priority: 1
+    buildFromGit: https://github.com/zeropsio/recipe-mailpit
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 10
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 8
+      minRam: 0.125
+      maxRam: 48

@@ -418,13 +418,17 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 		"name: " + labApp + " stage",
 		"API_URL: https://app-${zeropsSubdomainHost}-3000.prg1.zerops.app",
 		"JWT_SECRET: {value: <@generateRandomString(<25>)>, sensitive: true}",
-		"hostname: mailpit",
 		"objectStoragePolicy: public-read",
 		"corePackage: SERIOUS",
 	} {
 		if !strings.Contains(stage, want) {
 			t.Errorf("the Stage tier is missing %q:\n%s", want, stage)
 		}
+	}
+	// The mail catcher is the Mate's own dev tooling: its project keeps it,
+	// a stage and a production never run it.
+	if !strings.Contains(files["0 — AI Agent/import.yaml"], "hostname: mailpit") || strings.Contains(stage, "hostname: mailpit") {
+		t.Errorf("mailpit belongs to the AI Agent tier alone:\n%s", stage)
 	}
 	for path, body := range files {
 		for _, secret := range []string{"live-jwt-value-0123456789", "live-zcp-key", "live-gitea-token", "live-git-token", "admin:pw", labCredential} {
