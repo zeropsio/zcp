@@ -617,6 +617,9 @@ func TestBrowserBatch_EvalReturnsItsValueAsText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// The document's status, read once after the paint wait, is no step of
+	// the walk (TestRunBrowserSteps_HealthyPage_RunsEveryCommand).
+	seen = slices.DeleteFunc(seen, func(args []string) bool { return slices.Equal(args, browserDocumentStatusProbe) })
 	if len(seen) < 3+len(commands) || !slices.EqualFunc(seen[3:3+len(commands)], commands, slices.Equal) {
 		t.Fatalf("the caller's commands must run in order after open and the paint wait, ran %v", seen)
 	}

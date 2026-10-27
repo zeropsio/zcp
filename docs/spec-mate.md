@@ -711,7 +711,21 @@ subcommand or `find` action agent-browser does not know — the call was wrong, 
 `script-timeout` (an `eval` that ran into the CDP timeout while the page still answered a
 trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
 alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
-`selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
+`slow-page` (an `open` agent-browser's client gave up on — "no response came back" — while one
+plain request to the page, bounded at 30 s, got an answer: the step names its time to first byte
+and status, the page is slow and not Chrome, the walk goes on within `timeoutSeconds` so the
+caller's waits give the page its time, a later unanswered step on that page is `slow-page` too,
+and the service is kept; a request that gets no answer leaves the open `wedge`), `server-error`
+(the page answered 5xx — the document's status read once after the first-paint wait, never a
+step, or that plain request's — so each caller command after it comes back as a `server-error`
+step that did not run while the screenshot and the canned tail run, and the service is kept),
+`selector-not-found`, `not-editable`, `timeout` or `other`. A slow page and a server error each
+put a message on the result: the time to first byte and that the walk went on within
+`timeoutSeconds`, or the status and where to read the server's logs. Measured 2026-10-27: a
+Vite dev server's first request took 30 s and its open recycled Chrome as wedged twice, and a
+wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage`,
+`TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands`,
+`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). Only `wait` polls (agent-browser's
 25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
