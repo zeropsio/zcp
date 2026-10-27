@@ -16,7 +16,7 @@ project:
   name: mono production
   vault:
     API_URL: http://api:8080
-    WEB_URL: https://app-${zeropsSubdomainHost}-3000.prg1.zerops.app
+    WEB_URL: https://web-${zeropsSubdomainHost}-3000.prg1.zerops.app
 
 services:
   - hostname: db
@@ -24,7 +24,7 @@ services:
     priority: 10
     profile: oltp-staging
 
-  - hostname: app
+  - hostname: web
     type: nodejs@22
     priority: 1
     zeropsSetup: web

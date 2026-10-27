@@ -36,9 +36,13 @@ type recipeOutcome struct {
 	// Branch is the branch of the change that carries the proposal, "" when
 	// nothing is proposed.
 	Branch string
-	// Proposed names what the proposal adds to main: tier directories, and a
-	// top-level file main has none of.
+	// Proposed names what the proposal writes to main: tier directories, a
+	// top-level file main has none of, and a tier zcp proposes anew.
 	Proposed []string
+	// Replaced names the tier directories among Proposed that main carries
+	// and zcp proposes anew: its own, from this Mate, whose shape changed
+	// (recipeReplacements).
+	Replaced []string
 	// Change is the number of the Mate's change in the recipe repository, 0
 	// when none is open; ChangeURL its address at HQ.
 	Change    int
@@ -48,7 +52,8 @@ type recipeOutcome struct {
 	Committed bool
 	Created   bool
 	// OnMain is true when the recipe repository's main already carries every
-	// tier this Mate would propose, so nothing is.
+	// tier this Mate would propose, and none of zcp's own there needs
+	// proposing anew, so nothing is.
 	OnMain bool
 	// Warnings are the reader's and the composer's — a runtime left out, a
 	// storage policy unread, an unverified setup, an unreadable scaling shape.
@@ -56,6 +61,13 @@ type recipeOutcome struct {
 	// Blocked names why nothing happened, for the action to report. Empty on
 	// a pass that reached HQ.
 	Blocked string
+	// Required is the step the Mate's setup is not done without: a tier main
+	// lacks that the recipe cannot propose, what is missing and the call that
+	// fixes it (recipeRequiredStep). Empty when nothing is.
+	Required []string
+	// decided is a pass that composed against main — whether or not the
+	// recipe composed — so Required is its verdict, and recorded.
+	decided bool
 }
 
 // reconcileGroupRecipe proposes to the application's recipe repository the
@@ -138,33 +150,48 @@ func groupRecipeOutcome(
 	stateDir string,
 ) recipeOutcome {
 	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	if early.decided {
+		writeRecipeRequired(stateDir, early.Required)
+	}
 	if !ok {
 		return early
 	}
 	defer comp.close()
-	outcome := recipeOutcome{Warnings: comp.warnings}
+	outcome := recipeOutcome{Warnings: comp.warnings, Required: early.Required}
 	open := openRecipeChange(comp.state)
 	if open != nil {
 		outcome.Change = open.Number
 		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, open.Number)
 	}
-	var missing []recipe.File
+	var missing, replaced []recipe.File
 	written, err := writeRecipeChange(ctx, comp, open, hq.RecipeProposalTitle,
-		"recipe: the tiers "+hq.RecipeRepo+" lacks, from "+comp.inputs.MateProjectName,
-		func(_ context.Context, _ *hq.Scratch, _ string, paths []string) (map[string]string, error) {
+		"recipe: the tiers "+hq.RecipeRepo+" lacks, or zcp wrote from this Mate before its project changed shape, from "+comp.inputs.MateProjectName,
+		func(ctx context.Context, _ *hq.Scratch, _ string, paths []string) (map[string]string, error) {
 			missing = recipe.Missing(comp.files, paths)
-			added := make(map[string]string, len(missing))
-			for _, file := range missing {
-				added[file.Path] = file.Body
+			// What main lacks goes first and alone: a change that only adds
+			// is the kind Core lands by itself. A tier of zcp's own to
+			// propose anew follows once main has every tier — unless a
+			// person closed such a proposal unmerged and no recipe change
+			// of this Mate's merged since.
+			if len(missing) == 0 && !recipeDeclined(comp.state, hq.RecipeProposalTitle) {
+				var err error
+				if replaced, err = recipeReplacements(ctx, comp); err != nil {
+					return nil, err
+				}
 			}
-			return added, nil
+			written := make(map[string]string, len(missing)+len(replaced))
+			for _, file := range append(append([]recipe.File(nil), missing...), replaced...) {
+				written[file.Path] = file.Body
+			}
+			return written, nil
 		})
 	if err != nil {
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return outcome
 	}
-	outcome.Proposed = recipeEntries(missing)
-	outcome.OnMain = len(missing) == 0
+	outcome.Proposed = recipeEntries(append(append([]recipe.File(nil), missing...), replaced...))
+	outcome.Replaced = recipeEntries(replaced)
+	outcome.OnMain = len(missing) == 0 && len(replaced) == 0
 	if written.other != nil {
 		// The Mate's open change there is another proposal of its own, and
 		// this Mate keeps one recipe proposal open at a time: it is left as
@@ -183,6 +210,9 @@ func groupRecipeOutcome(
 		outcome.Branch = written.branch
 	}
 	switch {
+	case outcome.Created && len(replaced) > 0:
+		outcome.Line = fmt.Sprintf("the tiers zcp wrote from this Mate on main of the recipe repository %q (%s) no longer describe its project — the services they create changed — so change #%d (%s) proposes them anew; it changes files main carries, so a person reviews and merges it, and a tier a person or another Mate wrote or changed is left as it is",
+			hq.RecipeRepo, strings.Join(outcome.Replaced, ", "), outcome.Change, outcome.ChangeURL)
 	case outcome.Created:
 		outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) is proposed as change #%d (%s); it only adds files, so a tier the group already has is never touched",
 			hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), outcome.Change, outcome.ChangeURL)
@@ -194,7 +224,11 @@ func groupRecipeOutcome(
 	}
 	// A part the tiers on main lack or still carry, and a managed service
 	// they lack, is the targeted proposal's, never this one's
-	// (hq_recipe_parts.go, hq_recipe_managed.go): said, with its call.
+	// (hq_recipe_parts.go, hq_recipe_managed.go): said, with its call — but
+	// not beside tiers this change proposes anew, which carry them already.
+	if len(replaced) > 0 {
+		return outcome
+	}
 	for _, steerOf := range []func(context.Context, groupRecipeComposition) (string, error){recipePartSteer, recipeManagedSteer} {
 		steer, err := steerOf(ctx, comp)
 		switch {
@@ -215,15 +249,24 @@ func groupRecipeOutcome(
 // scratch fetched it, and the recipe composed from this Mate's project with
 // the hostnames main's tiers hold. close releases the scratch.
 type groupRecipeComposition struct {
-	hqc      hq.Client
-	appID    string
-	state    hq.MateState
-	scratch  *hq.Scratch
-	main     string
-	paths    []string
-	inputs   bundle.GroupRecipeInputs
-	files    []recipe.File
-	warnings []string
+	hqc     hq.Client
+	appID   string
+	state   hq.MateState
+	scratch *hq.Scratch
+	main    string
+	paths   []string
+	// mateID is this Mate's project, which zcp's mark on a tier names;
+	// owned the tier files on main zcp wrote from it and nobody changed
+	// since (recipeOwnedTiers).
+	mateID string
+	owned  map[string]bool
+	// retiredDevs are the dev services a pool took over (a pool-keyed
+	// pair's migratedFrom): a tier the group keeps may still name one as its
+	// dev half, which no targeted proposal removes.
+	retiredDevs map[string]bool
+	inputs      bundle.GroupRecipeInputs
+	files       []recipe.File
+	warnings    []string
 }
 
 func (c groupRecipeComposition) close() { c.scratch.Close() }
@@ -253,10 +296,16 @@ func openRecipeMain(ctx context.Context, hqc hq.Client, appID string) (*hq.Scrat
 
 // recipeHeld is what the group tiers on main hold of the app's parts: the
 // hostname each gave a part when it entered it (spec-mate §2.8a.5), which the
-// composer reads back rather than derives again.
-func recipeHeld(ctx context.Context, scratch *hq.Scratch, main string) ([]bundle.HeldRuntime, error) {
+// composer reads back rather than derives again. A tier zcp owns there
+// (owned) holds nothing: it is zcp's own composition, named by the rule it
+// still follows, and holding its names would keep a name an older rule gave
+// (a part named after its repository) in the tier proposed in its place.
+func recipeHeld(ctx context.Context, scratch *hq.Scratch, main string, owned map[string]bool) ([]bundle.HeldRuntime, error) {
 	var held []bundle.HeldRuntime
 	for _, tier := range []string{hq.RecipeTierStage, hq.RecipeTierProduction} {
+		if owned[hq.RecipeTierPaths[tier]] {
+			continue
+		}
 		body, found, err := scratch.File(ctx, main, hq.RecipeTierPaths[tier])
 		if err != nil {
 			return nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hq.RecipeTierPaths[tier], hq.RecipeRepo, err)
@@ -316,7 +365,7 @@ func composeGroupRecipe(
 	}
 	var outcome recipeOutcome
 	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
-		recipePairMountRoot, hqc.Address(), hqc.OrgID(), repo.AppID, metas, wired)
+		recipePairMountRoot, hqc.Address(), hqc.OrgID(), repo.AppID, metas, wired, recipeMainYAML(hqc, repo.AppID, stateDir))
 	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
@@ -327,8 +376,18 @@ func composeGroupRecipe(
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return groupRecipeComposition{}, outcome, false
 	}
-	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths}
-	if inputs.Held, err = recipeHeld(ctx, scratch, main); err != nil {
+	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths, mateID: rt.ProjectID, retiredDevs: map[string]bool{}}
+	for _, m := range wired {
+		if m.DevIsPool() && m.DevPool.MigratedFrom != nil {
+			comp.retiredDevs[m.DevPool.MigratedFrom.Hostname] = true
+		}
+	}
+	if comp.owned, err = recipeOwnedTiers(ctx, scratch, main, comp.mateID); err != nil {
+		comp.close()
+		outcome.Line = err.Error() + " — retrying on the next pass."
+		return groupRecipeComposition{}, outcome, false
+	}
+	if inputs.Held, err = recipeHeld(ctx, scratch, main, comp.owned); err != nil {
 		comp.close()
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return groupRecipeComposition{}, outcome, false
@@ -337,6 +396,10 @@ func composeGroupRecipe(
 	// export and launch flows ask the agent to, so the composer decides each
 	// one itself: config as written, a secret as a generator — never its value.
 	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
+	// A tier main lacks that the recipe cannot propose is a step the
+	// Mate's setup is not done without: required, until a pass proposes it.
+	outcome.decided = true
+	outcome.Required = recipeRequired(inputs, layout, paths)
 	if err != nil {
 		comp.close()
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
@@ -351,6 +414,32 @@ func composeGroupRecipe(
 	}
 	comp.inputs, comp.files, comp.warnings = inputs, files, outcome.Warnings
 	return comp, outcome, true
+}
+
+// recipeRequired is the required step for the tiers main (holding paths)
+// lacks and layout does not compose — withheld by a part whose stage setup
+// nothing tells (bundle.GroupRecipeBlockers) — none when main has them, the
+// recipe composes them, or nothing names why.
+func recipeRequired(inputs bundle.GroupRecipeInputs, layout recipe.Layout, paths []string) []string {
+	composed := map[string]bool{}
+	for _, tier := range layout.Tiers {
+		composed[fmt.Sprintf("%d — %s", tier.Index, tier.Title)] = true
+	}
+	var withheld []string
+	for _, dir := range recipeTiersLacking(paths) {
+		if !composed[dir] {
+			withheld = append(withheld, dir)
+		}
+	}
+	blockers := bundle.GroupRecipeBlockers(inputs)
+	if len(withheld) == 0 || len(blockers) == 0 {
+		return nil
+	}
+	pooled := map[string]bool{}
+	for _, r := range inputs.Runtimes {
+		pooled[r.DevHostname] = r.DevPool
+	}
+	return []string{recipeRequiredStep(blockers, pooled, withheld)}
 }
 
 // openRecipeChange is the Mate's open change in the recipe repository, nil
@@ -403,6 +492,13 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 	written, err := files(ctx, scratch, main, comp.paths)
 	if err != nil {
 		return recipeWrite{}, err
+	}
+	// A tier zcp owns stays its own through zcp's own edits of it — a
+	// part's, a managed service's, a scale's: its mark follows the edit.
+	for path, body := range written {
+		if comp.owned[path] {
+			written[path] = bundle.StampTier(body, comp.mateID)
+		}
 	}
 	tree, err := scratch.TreeWith(ctx, main, written)
 	if err != nil {
@@ -607,6 +703,9 @@ func handleGroupRecipe(
 	}
 	if len(outcome.Warnings) > 0 {
 		result["warnings"] = outcome.Warnings
+	}
+	if len(outcome.Required) > 0 {
+		result["required"] = outcome.Required
 	}
 	switch {
 	case outcome.Line != "":

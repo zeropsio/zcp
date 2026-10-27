@@ -1,6 +1,6 @@
 #zeropsPreprocessor=on
-# The AI Agent tier. The project a Zerops Mate works in: every runtime as a
-# dev/stage pair, with the managed services they share.
+# The AI Agent tier. The project a Zerops Mate works in: every part as its dev
+# pool or dev service and its stage, with the services they share.
 #
 # zcp wrote this file from the Mate "medusa-juno". It is the group's now: a
 # person may edit it. zcp adds only a whole tier the group repo lacks; into a
