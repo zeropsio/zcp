@@ -25,6 +25,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // completionHQ is the HQ address the completion tests' lease records name.
@@ -130,7 +131,7 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 			want: []releaseCall{{completionRepoURL("appdev"), "fix-login"}}, wantLine: []string{"change #4", "closed", "hqpool-4", "boxpool-6", "released"}},
 		{name: "open", changes: []hq.MateChange{open}},
 		{name: "another open change uses the branch", changes: []hq.MateChange{open, merged}},
-		{name: "no change on the branch", changes: []hq.MateChange{{Repo: "appdev", Number: 2, State: hq.ChangeMerged, Branch: "other-work"}}},
+		{name: "no change on the branch", changes: []hq.MateChange{{Repo: "appdev", Number: 2, State: hq.ChangeMerged, Branch: "unleased-work"}}},
 		{name: "leased again after the change settled", changes: []hq.MateChange{merged}, acquiredAt: "2026-10-26T11:00:00Z"},
 	}
 	for _, tt := range tests {
@@ -375,8 +376,8 @@ func TestHQPass_MergedChangesLeasesReleasedByThePass(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := fake.called(); !slices.Equal(got, []releaseCall{{repo, "fix-login"}}) {
-				t.Fatalf("releases = %+v, want the merged change's branch once", got)
+			if got := fake.called(); len(got) != 1 || got[0].branch != "fix-login" || !topology.SameRepoURL(got[0].repo, repo) {
+				t.Fatalf("releases = %+v, want the merged change's branch of %s once", got, repo)
 			}
 			for _, want := range []string{"change #1 is merged", "hqpool-4", "boxpool-6", "released"} {
 				if !strings.Contains(report, want) {

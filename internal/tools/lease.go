@@ -160,18 +160,8 @@ func WithLeaseHQ(httpClient ops.HTTPDoer) LeaseOption {
 // creates and clones run in the background and outlive the call that started
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
 func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP ops.HTTPDoer) {
+	deps = leaseDepsIn(deps, rt)
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
-	// The HQ a repository is recognised on is the one the container rt
-	// presents itself to, read at each acquire, as git-push-setup reads it
-	// for a dev service.
-	deps.HQAddress = func() string { return hqAddress(rt) }
-	if rt.MateEnabled {
-		// Inside a Mate an acquire of an HQ repository puts the Mate
-		// credential on the pool (ops.PoolHQCredentialEnvKey), as
-		// git-push-setup puts it on a wired dev service (DP-16); outside one
-		// zcp writes nothing, and the pool's GIT_TOKEN is the user's always.
-		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential(rt), Kept: pairKeptPoolCredential(stateDir)}
-	}
 	// envelope is the result's lifecycle envelope; read are the views this
 	// call read checkouts for, whose activity and unsaved work ride leases[]
 	// (the envelope's own lease reader never reads a checkout).
@@ -256,9 +246,9 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"release takes lease or branch, not both", "Pass one lease by its alias as lease, or every lease of a branch as branch")), nil, nil
 			case input.Branch != "":
-				change, err := ops.LeaseReleaseGroupChange(ctx, deps, input.Repo, input.Branch, force)
+				change, err := releaseLeaseBranch(ctx, deps, input.Repo, input.Branch, force)
 				if err != nil {
-					return convertError(withLeaseSSHStderr(err)), nil, nil
+					return convertError(err), nil, nil
 				}
 				return jsonResult(leaseToolResult{
 					Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,

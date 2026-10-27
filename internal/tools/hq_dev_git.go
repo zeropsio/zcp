@@ -38,6 +38,9 @@ type devGitDeps struct {
 	ssh        ops.SSHDeployer
 	rt         runtime.Info
 	stateDir   string
+	// release releases a finished change's leases (followLeaseCompletion,
+	// DP-34); nil releases none.
+	release leaseBranchRelease
 }
 
 // devGitSSHWithin bounds each command the Mate's service runs on a dev
@@ -50,7 +53,9 @@ const devGitSSHWithin = 15 * time.Second
 const devGitLookEvery = 10 * time.Second
 
 // KeepMateDevGit keeps every wired pair's dev service on this Mate's HQ
-// (keepMateDevGit) for as long as ctx lasts: the Mate's own service runs it
+// (keepMateDevGit) for as long as ctx lasts, and releases the leases of every
+// branch whose change in HQ is merged or closed (followLeaseCompletion,
+// docs/spec-workflows.md §8 DP-34): the Mate's own service runs it
 // beside the server it supervises. env is the container's live env store as
 // it is at each call — the unit's own environment carries neither the key nor
 // the project — and a container that is no Mate returns at once. Each line
@@ -76,6 +81,7 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 	)
 	httpClient := &http.Client{Timeout: hqCallTimeout}
 	sshDeployer := platform.NewSystemSSHDeployer()
+	mounter := platform.NewSystemMounter()
 	stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
 	return func(ctx context.Context) (devGitDeps, bool) {
 		lookup := env()
@@ -102,7 +108,10 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 			key, client, orgID = current, built, bound
 		}
 		rt.OrgID = orgID
-		return devGitDeps{client: client, httpClient: httpClient, ssh: sshDeployer, rt: rt, stateDir: stateDir}, true
+		// A lease's release runs git over its own ssh, never the look's
+		// bounded one: its guard and its rewire have bounds of their own.
+		release := leaseBranchReleaseFor(client, rt.ProjectID, stateDir, mounter, sshDeployer, rt)
+		return devGitDeps{client: client, httpClient: httpClient, ssh: sshDeployer, rt: rt, stateDir: stateDir, release: release}, true
 	}
 }
 
@@ -122,6 +131,9 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		// renewals are the pairs whose last renewal failed, with its record:
 		// each is tried again on hqAttemptDue's backoff.
 		renewals = map[string]hqPairState{}
+		// completed is when the look for finished changes last read HQ
+		// (followLeaseCompletion).
+		completed time.Time
 	)
 	look := func(at time.Time) {
 		d, ok := deps(ctx)
@@ -137,6 +149,9 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			retry = nextHQAttempt(retry, at, "", false)
 		}
 		lines = append(lines, followPoolCredentials(ctx, d.client, d.rt, d.stateDir, at, renewals)...)
+		var released []string
+		released, completed = followLeaseCompletion(ctx, d, at, completed)
+		lines = append(lines, released...)
 		saying := make(map[string]bool, len(lines))
 		for _, line := range lines {
 			if !said[line] {

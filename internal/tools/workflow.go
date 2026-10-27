@@ -411,9 +411,10 @@ func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
 // back before develop takes its scope (spec-mate §2.8a.4), and a dev service
 // whose credential HQ revoked gets the current one. The group recipe stays
 // with bootstrap and adopt, which change what it composes.
-func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
+func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, mounter ops.Mounter, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow)
+	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow,
+		withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt)))
 	lines = append(lines, hqKeptOnGitHub(stateDir)...)
 	result, _, err := handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	return withRepositoryReport(result, lines), nil, err
@@ -561,7 +562,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handlePoolMigrate(ctx, projectID, client, sshDeployer, input, stateDir, rt)
 		}
 		if input.Workflow == workflowDevelop {
-			return handleDevelopStart(ctx, projectID, engine, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer)
+			return handleDevelopStart(ctx, projectID, engine, client, httpClient, schemaCache, input, stateDir, rt, mounter, sshDeployer)
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	case "reset":
