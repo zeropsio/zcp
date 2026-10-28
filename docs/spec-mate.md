@@ -5379,7 +5379,10 @@ the bound) or answers 502, 503 or 504 — never on HQ's own refusal, a 4xx or a 
 connected for and left unanswered; when the minute is spent, the answer says plainly that the
 description did not land and the change is still a draft, the words kept — or, when a try may have
 reached HQ (a connection dropped after the words were sent, a balancer's 502 or 504), that it may
-not have landed, since HQ has no read of a change's words to check. With no change on record, the
+not have landed, since HQ has no read of a change's words to check. A try HQ took and left
+unanswered past its bound is not tried again, and is said the same way — the words may not have
+landed — never as HQ not taking them, since HQ may have put them on (`describeAwayOf`,
+`TestDescribeAwayOf`, `TestDescribeNotLanded_Unanswered`). With no change on record, the
 read of the Mate's own state that names the open one is tried the same way, and HQ staying away is
 said as not knowing, never as "no change is open". `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
 `hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`,
