@@ -4839,7 +4839,13 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (`hq.RepoOfURL`) and its branch, never `main` — or a pair, which names the repository; with
   neither, the one repository of the Mate's wired pairs and HQ leases, pairs that share one counting
   once (`resolveChangeTarget`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`,
-  `TestResolveChange_PairsSharingARepositoryAreOne`). HQ answers the change already open on the
+  `TestResolveChange_PairsSharingARepositoryAreOne`). The `service` an open-change or
+  describe-change answer names is the pair or lease alias the call named; else the repository's
+  only pair; else the part whose dev pool leases the change's branch — never the repository's first
+  pair: a branch leased in several parts names none and lists their pools in `parts`, and a branch
+  no lease holds names none, since zcp records no part's directory to judge a change's paths by
+  (`changeService`, `TestChangeService_NamesOnePartOrNone`,
+  `TestChangeService_MonorepoNamesThePartOfItsBranch`). HQ answers the change already open on the
   branch named, `created: false` — it stays, and its work goes on by a push and a describe — and a
   second branch opens a change of its own (`TestOpenChange_SecondBranchOpensItsOwnChange`,
   `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`,

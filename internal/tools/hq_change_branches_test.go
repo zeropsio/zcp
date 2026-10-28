@@ -268,6 +268,78 @@ func TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch(t *testing.T) {
 	}
 }
 
+// noolaLab is the Noola case: a monorepo's seven parts, each a pair keyed by
+// its dev pool and wired to the one repository, on an HQ that keeps an open
+// change per branch. The dev service the parts moved off is retired, so only
+// the pool-keyed pairs remain.
+func noolaLab(t *testing.T) *hqLab {
+	t.Helper()
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	for _, part := range []string{"api", "edge", "embedder", "geo", "runner", "site", "web"} {
+		lab.wirePoolPair(part+"pool", part+"stage")
+	}
+	if err := workflow.DeleteServiceMeta(lab.stateDir, "appdev"); err != nil {
+		t.Fatal(err)
+	}
+	return lab
+}
+
+// TestChangeService_MonorepoNamesThePartOfItsBranch: in the Noola monorepo a
+// change opened and described by its branch names the part whose dev pool
+// leases that branch — runnerpool for work leased only there — never the
+// repository's first pair by hostname (apipool). A branch leased in two parts
+// names no service and lists both; a branch no lease holds names none.
+func TestChangeService_MonorepoNamesThePartOfItsBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name, branch string
+		leasedIn     []string
+		wantService  string
+		wantParts    string
+	}{
+		{name: "leased in one part", branch: "runner-retry", leasedIn: []string{"runnerpool"}, wantService: "runnerpool"},
+		{name: "leased in two parts", branch: "shared-schema", leasedIn: []string{"runnerpool", "apipool"},
+			wantParts: `"parts":["apipool","runnerpool"]`},
+		{name: "leased in no part", branch: "orphan-work"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := noolaLab(t)
+			for i, pool := range tc.leasedIn {
+				lab.leaseOf(pool, i+2, tc.branch)
+			}
+			lab.pushFromMain(tc.branch, map[string]string{"runner/retry.go": "package runner\n"})
+
+			opened, text, isError := lab.openFrom("", tc.branch, "Retry the runner")
+
+			if isError || !opened.Created {
+				t.Fatalf("open %s: %s", tc.branch, text)
+			}
+			if opened.Service != tc.wantService {
+				t.Errorf("open-change names service %q, want %q: %s", opened.Service, tc.wantService, text)
+			}
+			if tc.wantParts != "" && !strings.Contains(text, tc.wantParts) {
+				t.Errorf("open-change lists no %s: %s", tc.wantParts, text)
+			}
+
+			text, isError = lab.describeOn(tc.branch)
+
+			if isError || !strings.Contains(text, `"described":true`) {
+				t.Fatalf("describe %s: %s", tc.branch, text)
+			}
+			if want := fmt.Sprintf(`"service":%q`, tc.wantService); !strings.Contains(text, want) {
+				t.Errorf("describe-change names another service than %s: %s", want, text)
+			}
+			if tc.wantParts != "" && !strings.Contains(text, tc.wantParts) {
+				t.Errorf("describe-change lists no %s: %s", tc.wantParts, text)
+			}
+			if tc.wantParts == "" && strings.Contains(text, `"parts"`) {
+				t.Errorf("describe-change lists parts for a change of one part or none: %s", text)
+			}
+		})
+	}
+}
+
 // TestDescribeChange_ByBranch: with several changes open, describe-change by
 // branch describes that one and leaves the others as they are.
 func TestDescribeChange_ByBranch(t *testing.T) {
