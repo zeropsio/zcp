@@ -67,8 +67,12 @@ func composeGroupRecipeInputs(
 		return bundle.GroupRecipeInputs{}, waits, fmt.Errorf("pairs not wired yet: %s", strings.Join(names, ", "))
 	}
 	live := make(map[string]ops.ServiceInfo, len(discovered.Services))
+	// Every service the project runs is what a tier's runtimes may read: the
+	// composer refuses a tier whose runtime reads one the tier lacks.
+	projectHostnames := make([]string, 0, len(discovered.Services))
 	for _, svc := range discovered.Services {
 		live[svc.Hostname] = svc
+		projectHostnames = append(projectHostnames, svc.Hostname)
 	}
 
 	// The project's subdomain host tells an address of the Mate's own
@@ -81,6 +85,8 @@ func composeGroupRecipeInputs(
 		MateSubdomainHost: project.SubdomainHost,
 		CorePackage:       project.Mode,
 		ProjectEnvs:       groupRecipeProjectEnvs(projectEnvs),
+		// The composer tells a service from a project variable by it.
+		ProjectHostnames: projectHostnames,
 	}
 	warnings := leftOut
 	mainYAML := map[string]string{}

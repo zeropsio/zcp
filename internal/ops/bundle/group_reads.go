@@ -25,7 +25,14 @@ import (
 // `SMTP_HOST: mailpit` and `SANDBOX_KIND: box` read alike — so it reads
 // nothing.
 //
-// A tier carries the Zerops Box a runtime it carries reads (GroupBox).
+// A tier has to carry what its runtimes read, or an environment made from it
+// starts an app that cannot reach it. So a tier carries the Zerops Box a
+// runtime it carries reads (GroupBox), and a read of any other service the
+// Mate's project runs that the tier does not carry refuses the whole recipe
+// (groupTierClosure): a tier on the group repository stays there. Only a
+// hostname the project runs is a service, so a project variable
+// (`${zeropsSubdomainHost}`) or a group environment's own runtime under its
+// own name never is.
 
 // serviceReader finds the services among a set of hostnames a setup's
 // variables read, its patterns built once per recipe.
@@ -127,10 +134,50 @@ func (sr *serviceReader) hostsIn(value string) []string {
 }
 
 // tierReader is an entry of a tier that builds a setup of its pair's
-// zerops.yaml: a runtime, or a part's dev pool, whose leases deploy the
-// setup its image is.
+// zerops.yaml: a runtime, or a part's dev pool (pool), whose leases deploy
+// the setup its image is.
 type tierReader struct {
 	hostname, setup, body string
+	pool                  bool
+}
+
+// groupTierClosure is each read by a reader of a tier — by the setup the tier
+// builds for it — of a service the project runs (project) that the tier does
+// not carry (carried), said as `tier "<title>": runtime "<host>" builds setup
+// "<setup>", whose <variable> names "<service>"`, in the tier's order, each
+// once. A hostname no service of the project has is no service: a project
+// variable, or a group environment's own runtime under its own name.
+func groupTierClosure(sr *serviceReader, readers []tierReader, carried, project map[string]bool, title string) []string {
+	var out []string
+	for _, reader := range readers {
+		builds := fmt.Sprintf("runtime %q builds", reader.hostname)
+		if reader.pool {
+			builds = fmt.Sprintf("dev pool %q deploys", reader.hostname)
+		}
+		for _, read := range sr.reads(reader.body, reader.setup) {
+			if !project[read.host] || carried[read.host] {
+				continue
+			}
+			line := fmt.Sprintf("tier %q: %s setup %q, whose %s names %q", title, builds, reader.setup, read.variable, read.host)
+			if !slices.Contains(out, line) {
+				out = append(out, line)
+			}
+		}
+	}
+	return out
+}
+
+// tierHostnames is the hostnames a tier's services carry.
+func tierHostnames(services []yamlItem) map[string]bool {
+	hosts := make(map[string]bool, len(services))
+	for _, item := range services {
+		for _, field := range item.fields {
+			if host, ok := field.value.(string); ok && field.key == "hostname" {
+				hosts[host] = true
+			}
+		}
+	}
+	return hosts
 }
 
 // tierReads is what the readers of a tier read among sr's hostnames, by
@@ -181,17 +228,24 @@ func boxHostnames(boxes []GroupBox) []string {
 // builds for a runtime reads — the dev half's, and each part's stage and
 // group-environment setup — sorted. A group environment's part never takes
 // such a Box's hostname.
-func boxesAnyPartReads(sr *serviceReader, runtimes []GroupRuntime, parts map[string][]groupPart) []string {
+func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRuntime, parts map[string][]groupPart) []string {
 	readers := make([]tierReader, 0, 3*len(runtimes))
 	for _, r := range runtimes {
-		readers = append(readers, tierReader{r.DevHostname, r.SetupName, r.ZeropsYAMLBody})
+		readers = append(readers, tierReader{r.DevHostname, r.SetupName, r.ZeropsYAMLBody, r.DevPool})
 		for _, part := range parts[r.DevHostname] {
 			readers = append(readers,
-				tierReader{r.DevHostname, part.setup, r.ZeropsYAMLBody},
-				tierReader{r.DevHostname, part.environmentSetup, r.ZeropsYAMLBody})
+				tierReader{r.DevHostname, part.setup, r.ZeropsYAMLBody, false},
+				tierReader{r.DevHostname, part.environmentSetup, r.ZeropsYAMLBody, false})
 		}
 	}
-	return slices.Sorted(maps.Keys(tierReads(sr, readers)))
+	read := tierReads(sr, readers)
+	var hosts []string
+	for _, b := range boxes {
+		if len(read[b.Hostname]) > 0 {
+			hosts = append(hosts, b.Hostname)
+		}
+	}
+	return hosts
 }
 
 // groupBoxEntry writes a Box as a Box import takes it: its hostname and
