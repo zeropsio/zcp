@@ -97,12 +97,19 @@ func LabelOfKey(key string) string {
 	return strings.Join(parts, " ")
 }
 
-// requestLabelMax bounds the label to a name; requestWhyMax the why to a
-// short line Mate shows whole after it.
+// requestLabelMax bounds the label to a name. requestWhyMax bounds the why
+// to what Mate's engine keeps of it (REASON_MAX in mate's
+// apps/server/src/engine/pump/vaultAsk.ts and originAsk.ts), so every
+// character zcp lets through is one the person reads: what the value is for
+// and where they find it. Steps belong in the chat.
 const (
 	requestLabelMax = 60
-	requestWhyMax   = 160
+	requestWhyMax   = 280
 )
+
+// replacingWords joins a replace request's why and its replaceWhy into the
+// one line Mate shows after the label.
+const replacingWords = " — replacing the saved value: "
 
 // The names Mate's vault never lists: the keys Mate and zcp keep for
 // themselves (zcp's admin token, Mate's git and setup keys). A value asked for
@@ -148,7 +155,32 @@ func ValidateRequestWords(label, why string) error {
 		return err
 	}
 	return validateRequestLine("why", why, requestWhyMax,
-		"why: what it is for, one short line (for checkout). Never a value.")
+		"why: what it is for and where the person finds it, one line Mate shows whole (for checkout, from the Stripe dashboard's API keys). Steps go in the chat; never a value.")
+}
+
+// validateReplace refuses a replace that does not say what is wrong with the
+// saved value, and a replaceWhy without replace.
+func validateReplace(replace bool, replaceWhy string) error {
+	switch {
+	case replace && strings.TrimSpace(replaceWhy) == "":
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"replace=true needs a replaceWhy", replaceWhyHint)
+	case !replace && strings.TrimSpace(replaceWhy) != "":
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"replaceWhy goes with replace=true",
+			"Pass replace=true to ask the person to replace the saved value, or leave replaceWhy out.")
+	case replace:
+		return validateRequestLine("replaceWhy", replaceWhy, requestWhyMax, replaceWhyHint)
+	}
+	return nil
+}
+
+const replaceWhyHint = "replaceWhy: what is wrong with the saved value, one line the person reads (it is not in Google's format). Never a value."
+
+// replacingWhy is the line Mate shows for a replace request: the why, then
+// what is wrong with the saved value.
+func replacingWhy(why, replaceWhy string) string {
+	return strings.TrimRight(strings.TrimSpace(why), ". ") + replacingWords + strings.TrimSpace(replaceWhy)
 }
 
 func validateRequestLine(field, text string, limit int, hint string) error {
@@ -199,13 +231,17 @@ func EnvRequest(ctx context.Context, client platform.Client, projectID string, i
 	if err := ValidateRequestWords(label, why); err != nil {
 		return nil, err
 	}
+	if err := validateReplace(in.Replace, in.ReplaceWhy); err != nil {
+		return nil, err
+	}
 	if in.Hostname == "" && !in.Project {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
 			"Provide serviceHostname or set project=true",
 			"project=true asks for a Shared value; serviceHostname for one service's own.")
 	}
 
-	result := &EnvRequestResult{Key: key, Label: strings.TrimSpace(label), Why: strings.TrimSpace(why), Sensitive: resolveSensitive(key, "", in.Sensitive)}
+	asked := resolveSensitive(key, "", in.Sensitive)
+	result := &EnvRequestResult{Key: key, Label: strings.TrimSpace(label), Why: strings.TrimSpace(why), Sensitive: asked}
 	if in.Project {
 		result.Scope = EnvRequestScopeShared
 		envs, err := client.GetProjectEnv(ctx, projectID)
@@ -213,30 +249,51 @@ func EnvRequest(ctx context.Context, client platform.Client, projectID string, i
 			return nil, fmt.Errorf("read the Shared vault: %w", err)
 		}
 		markAlreadySet(result, envs)
-		return result, nil
+	} else {
+		svc, err := resolveService(ctx, client, projectID, in.Hostname)
+		if err != nil {
+			return nil, err
+		}
+		result.Scope = EnvRequestScopeService
+		result.ServiceHostname = svc.Name
+		envs, err := client.GetServiceEnv(ctx, svc.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read %s's vault: %w", svc.Name, err)
+		}
+		markAlreadySet(result, envs)
 	}
+	if in.Replace && result.AlreadySet {
+		return replacing(result, in.ReplaceWhy, asked)
+	}
+	return result, nil
+}
 
-	svc, err := resolveService(ctx, client, projectID, in.Hostname)
-	if err != nil {
-		return nil, err
+// replacing turns a request for a held key into the ask to replace its value:
+// the person reads the why and what is wrong with the saved value as one line,
+// and a held secret stays secret.
+func replacing(result *EnvRequestResult, replaceWhy string, asked bool) (*EnvRequestResult, error) {
+	why := replacingWhy(result.Why, replaceWhy)
+	if utf8.RuneCountInString(why) > requestWhyMax {
+		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("The why and the replaceWhy together are longer than %d characters", requestWhyMax),
+			"Mate shows them as one line: the why says what the value is for, the replaceWhy what is wrong with the saved one. Shorten either.")
 	}
-	result.Scope = EnvRequestScopeService
-	result.ServiceHostname = svc.Name
-	envs, err := client.GetServiceEnv(ctx, svc.ID)
-	if err != nil {
-		return nil, fmt.Errorf("read %s's vault: %w", svc.Name, err)
-	}
-	markAlreadySet(result, envs)
+	result.AlreadySet = false
+	result.Replace = true
+	result.Why = why
+	result.Sensitive = asked || result.Sensitive
 	return result, nil
 }
 
 // markAlreadySet flags the result when the key is in envs, taking the stored
-// row's sensitive flag.
+// row's sensitive flag, its id and when it last changed — never its value.
 func markAlreadySet[T platform.EnvAccessor](result *EnvRequestResult, envs []T) {
 	for _, e := range envs {
 		if e.GetKey() == result.Key {
 			result.AlreadySet = true
 			result.Sensitive = e.IsSensitive()
+			result.HeldID = e.GetID()
+			result.HeldChanged = e.GetLastUpdate()
 			return
 		}
 	}

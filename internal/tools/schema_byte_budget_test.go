@@ -189,7 +189,14 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +39 (2546→2585): request says to ask when the feature using
 		// the value is being built — the env model's when-to-ask lines render
 		// only before the first deploy, so a later request never saw them.
-		"zerops_env": 2585,
+		// Raised +402 (2585→2987) for request's three new inputs
+		// (docs/spec-mate.md §5.8): `replace` + `replaceWhy` ask the person
+		// to replace a wrong saved value, `again` asks after a decline while
+		// an open ask is refused (two FlexBools published as
+		// oneOf[boolean,string]); `why` names where to find the value, which
+		// the 280-character limit now fits. What a refusal and the restart
+		// after a save say lives in the answers.
+		"zerops_env": 2987,
 		// Raised +421 (2242→2663): confirmDestructive, the diagnose-before-
 		// destruct ack a lowering of a pool's maxContainers over a lease needs
 		// (the lowering deletes the leased container with its /var/www); the

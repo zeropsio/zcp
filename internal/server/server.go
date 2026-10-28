@@ -525,10 +525,12 @@ func (s *Server) registerTools() {
 		tools.WithPoolOrchestratorsForScale(stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A Mate puts its organization's AI key in the Shared vault for an app
 	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
-	// Mate effect (§2.0), its key asked of HQ under the project key.
+	// Mate effect (§2.0), its key asked of HQ under the project key. A Mate's
+	// zcp also records each ask a request opens under the state dir, so a
+	// second request for a key whose ask is open shows no second prompt.
 	var envOpts []tools.EnvOption
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient))
+		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient), tools.WithVaultAsks(stateDir))
 	}
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName, envOpts...)
 

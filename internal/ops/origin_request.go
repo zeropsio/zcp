@@ -32,7 +32,7 @@ func NewOriginRequest(rawURL, repo, why string) (OriginRequest, error) {
 		return OriginRequest{}, perr
 	}
 	if err := validateRequestLine("why", why, requestWhyMax,
-		"why: why finished work would go back there, one short line."); err != nil {
+		"why: why finished work would go back there, one line Mate shows whole."); err != nil {
 		return OriginRequest{}, err
 	}
 	return OriginRequest{URL: origin, Repo: repo, Why: strings.TrimSpace(why)}, nil

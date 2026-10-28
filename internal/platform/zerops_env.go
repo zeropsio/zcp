@@ -35,11 +35,12 @@ func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]S
 	envs := make([]ServiceEnvVar, 0, len(out.Items))
 	for _, e := range out.Items {
 		envs = append(envs, ServiceEnvVar{
-			ID:        e.Id.TypedString().String(),
-			Key:       e.Key.String(),
-			Content:   string(e.Content),
-			Type:      ServiceEnvType(e.Type),
-			Sensitive: bool(e.Sensitive),
+			ID:         e.Id.TypedString().String(),
+			Key:        e.Key.String(),
+			Content:    string(e.Content),
+			Type:       ServiceEnvType(e.Type),
+			Sensitive:  bool(e.Sensitive),
+			LastUpdate: e.LastUpdate.Native(),
 		})
 	}
 	return envs, nil
@@ -229,12 +230,13 @@ func (z *ZeropsClient) GetProjectEnv(ctx context.Context, projectID string) ([]P
 	envs := make([]ProjectEnvVar, 0, len(project.EnvList))
 	for _, e := range project.EnvList {
 		envs = append(envs, ProjectEnvVar{
-			ID:        e.Id.TypedString().String(),
-			Key:       e.Key.String(),
-			Content:   string(e.Content),
-			Type:      ProjectEnvType(e.Type),
-			Sensitive: bool(e.Sensitive),
-			Editable:  bool(e.Editable),
+			ID:         e.Id.TypedString().String(),
+			Key:        e.Key.String(),
+			Content:    string(e.Content),
+			Type:       ProjectEnvType(e.Type),
+			Sensitive:  bool(e.Sensitive),
+			Editable:   bool(e.Editable),
+			LastUpdate: e.LastUpdate.Native(),
 		})
 	}
 	return envs, nil

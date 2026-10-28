@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -88,8 +87,14 @@ func envInputSchema(orgAIKey bool) *jsonschema.Schema {
 		"reason": {Type: "string"},
 		"why": {
 			Type:        "string",
-			Description: "request: what for. Never a value.",
+			Description: "request: what for, where to find it. Never a value.",
 		},
+		"replace": flexBoolSchema("request: ask for a held key whose saved value is wrong; needs replaceWhy."),
+		"replaceWhy": {
+			Type:        "string",
+			Description: "replace: what is wrong with the saved value; the person reads it.",
+		},
+		"again": flexBoolSchema("request: ask anew after a message said declined."),
 		"setup": {
 			Type:        "string",
 			Description: "generate-dotenv: name of the zerops.yaml setup block to render. Recipe / multi-setup yaml uses setup names like 'dev', 'prod', 'worker' that are not always service hostnames. Empty + single-block yaml: auto-pick. Empty + multi-block yaml: refuses with the available names. Empty + zero-block yaml: falls back to serviceHostname.",
@@ -337,18 +342,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
-			req, err := ops.EnvRequest(ctx, client, projectID, ops.EnvRequestInput{
-				Hostname:  input.ServiceHostname,
-				Project:   input.Project.Bool(),
-				Key:       input.Key,
-				Label:     input.Label,
-				Why:       cmp.Or(input.Why, input.Reason),
-				Sensitive: input.Sensitive.Ptr(),
-			})
-			if err != nil {
-				return convertError(err), nil, nil
-			}
-			return jsonResult(envRequestAnswer(req)), nil, nil
+			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls
 			// through with a deprecation warning so existing callers
@@ -384,37 +378,6 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				"Valid actions: get, set, delete, request, generate-dotenv. To read env vars for a service use get (or zerops_discover includeEnvs=true for all services at once). generate-dotenv is only for writing a local .env file from a local zerops.yaml.")), nil, nil
 		}
 	})
-}
-
-// envRequestResult is the answer to action=request: Requested when the
-// person was asked, AlreadySet when the key is in that vault already.
-type envRequestResult struct {
-	Requested   *ops.EnvRequestResult `json:"requested,omitempty"`
-	AlreadySet  *ops.EnvRequestResult `json:"alreadySet,omitempty"`
-	NextActions string                `json:"nextActions"`
-}
-
-func envRequestAnswer(req *ops.EnvRequestResult) envRequestResult {
-	if req.AlreadySet {
-		where := "the Shared vault"
-		if req.Scope == ops.EnvRequestScopeService {
-			where = req.ServiceHostname + "'s vault"
-		}
-		return envRequestResult{
-			AlreadySet: req,
-			NextActions: fmt.Sprintf("%s is already in %s; nothing was asked. Reference it by name (`NAME: ${%s}` in run.envVariables) — its value is never read.",
-				req.Key, where, req.Key),
-		}
-	}
-	vault := "Shared"
-	if req.Scope == ops.EnvRequestScopeService {
-		vault = req.ServiceHostname
-	}
-	return envRequestResult{
-		Requested: req,
-		NextActions: fmt.Sprintf("Now waiting on the person for the %[3]s (%[1]s). Tell them in one sentence why you need it, and nothing about how they give it. Never ask for the value in the chat. A message of its own tells you how it ended: saved to %[2]s/%[1]s, or declined. Continue with what does not need it, or end your turn.",
-			req.Key, vault, req.Label),
-	}
 }
 
 // applyAutoRestart restarts the services that read the changed keys so the
@@ -527,6 +490,15 @@ type restartPlan struct {
 	// applies them at once, or on a reload for its API key, never through a
 	// restart (PS-8).
 	boxOwner bool
+	// unlisted is true when the project's services could not be listed, so
+	// no reader is known.
+	unlisted bool
+	// selfReads is true when the service running this session reads a key:
+	// it is never restarted.
+	selfReads bool
+	// idle are the readers that are not live: each reads the value when it
+	// starts.
+	idle []string
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -539,6 +511,7 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 	plan := restartPlan{readers: map[string][]string{}}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
+		plan.unlisted = true
 		plan.warnings = append(plan.warnings, fmt.Sprintf("could not list services to find the readers: %v — restart the services that read the key manually", err))
 		return plan
 	}
@@ -592,9 +565,11 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 			svc := byName[name]
 			switch {
 			case selfHostname != "" && name == selfHostname:
+				plan.selfReads = true
 				plan.warnings = append(plan.warnings, fmt.Sprintf("%s reads %s but runs this session — not restarted; it picks the value up at its next restart or deploy", name, key))
 			case !isAutoRestartEligible(svc, selfHostname):
 				if !svc.IsLive() {
+					plan.idle = append(plan.idle, name)
 					plan.warnings = append(plan.warnings, fmt.Sprintf("%s reads %s but is %s (not live) — it picks the value up when it starts", name, key, svc.Status))
 				}
 			default:
