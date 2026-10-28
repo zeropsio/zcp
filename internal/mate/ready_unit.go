@@ -11,19 +11,34 @@ import (
 
 // RestartReadiness observes only the unit attempt started after its snapshot.
 // Take a fresh snapshot before each nonblocking restart, including rollback.
-type RestartReadiness struct{ before readinessUnitState }
+type RestartReadiness struct {
+	before readinessUnitState
+	// show runs the unit-properties query; nil runs it as a process.
+	show unitQuery
+}
+
+// unitQuery runs the command name with args and returns its standard output.
+type unitQuery func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+func execUnitQuery(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
+}
 
 // ObserveRestart captures the old unit identity before requesting a restart.
 // An unavailable observation is not proof of exit: HTTP readiness and its
 // existing deadline still decide the result when unit state cannot be read.
 func ObserveRestart(ctx context.Context) RestartReadiness {
-	return RestartReadiness{before: readReadinessUnit(ctx)}
+	return observeRestart(ctx, execUnitQuery)
+}
+
+func observeRestart(ctx context.Context, show unitQuery) RestartReadiness {
+	return RestartReadiness{before: readReadinessUnit(ctx, show), show: show}
 }
 
 // WaitReady retains the complete readiness proof, but stops when the restarted
 // unit's process has exited or the new unit attempt has failed.
 func (r RestartReadiness) WaitReady(version, oldBoot string, deadline time.Time) error {
-	return waitReady(version, oldBoot, deadline, &r.before)
+	return waitReady(version, oldBoot, deadline, &r)
 }
 
 const failedUnitState = "failed"
@@ -36,11 +51,14 @@ type readinessUnitState struct {
 	status                  int
 }
 
-func readReadinessUnit(ctx context.Context) readinessUnitState {
+func readReadinessUnit(ctx context.Context, show unitQuery) readinessUnitState {
+	if show == nil {
+		show = execUnitQuery
+	}
 	// Use the existing one-second probe bound within the overall startup budget.
 	probeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(probeCtx, "systemctl", "show", "zerops@mate.service", "--property=MainPID,ActiveState,SubState,ExecMainStatus,InvocationID,ExecMainStartTimestampMonotonic").Output()
+	out, err := show(probeCtx, "systemctl", "show", "zerops@mate.service", "--property=MainPID,ActiveState,SubState,ExecMainStatus,InvocationID,ExecMainStartTimestampMonotonic")
 	if err != nil {
 		return readinessUnitState{}
 	}
@@ -60,11 +78,12 @@ func readReadinessUnit(ctx context.Context) readinessUnitState {
 	return readinessUnitState{valid: true, mainPID: pid, active: values["ActiveState"], sub: values["SubState"], status: status, invocation: values["InvocationID"], start: start}
 }
 
-func exitedReadinessUnit(ctx context.Context, before *readinessUnitState) error {
-	if before == nil || !before.valid {
+func exitedReadinessUnit(ctx context.Context, restart *RestartReadiness) error {
+	if restart == nil || !restart.before.valid {
 		return nil
 	}
-	current := readReadinessUnit(ctx)
+	before := restart.before
+	current := readReadinessUnit(ctx, restart.show)
 	if !current.valid {
 		// Unknown state cannot prove that a process exited.
 		return nil
