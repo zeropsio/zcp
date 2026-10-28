@@ -4703,8 +4703,9 @@ one above the longest chain of runtimes whose builds read it — a read being a 
 setup's build variables of its zerops.yaml, directly, through a runtime variable the build lifts
 (`${RUNTIME_X}`, from the setup's run variables or its own service variables) or through project
 variables (`bundle.BuildReadValues`, `bundle.ReferencedHosts`). What a runtime reads only once it runs
-orders nothing, so services with no build-time read between them share a priority; runtimes whose
-builds read each other share a rank. The import format has no field for the reads themselves, so
+orders nothing, so services with no build-time read between them share a priority — but for another
+service's public address, which each tier orders on top (below); runtimes whose builds read each
+other share a rank. The import format has no field for the reads themselves, so
 the tier carries only the priorities they give, and its header says what they mean; the stand-up reads them
 again from the same zerops.yaml. A managed service keeps its live scale (Small Production's
 production profile replaces a profile-bearing one's), an object storage its size and its policy when
@@ -4726,17 +4727,37 @@ environment the tier makes: `${<host>_zeropsSubdomain}` for another service, `<h
 name for it after the rename (flipstage → flip), `${zeropsSubdomain}` for the service's own, and a
 path or query after it kept. `zeropsSubdomain` is the whole `https://` address with no slash after
 it, one line for each HTTP port the service serves, and no variable names a single port
-(`TestE2E_SubdomainLifecycle`, `TestE2E_Import_Box_FinishesSetup`); another service's reference
-resolves in a service variable (docs/spec-workflows.md §8 DP-3) and stays literal in a project
-variable (knowledge playbook `monorepo` §5). So the reference stands for the address only where the
-tier's service builds a setup declaring exactly one HTTP port, the one the address names (80 when it
-names none), and the value writes it `https://` with no port after it. Anything else — several HTTP
-ports, another one or none, a service whose setup the recipe does not read (a utility, a managed
-service, a Box, a dev pool), a bare host or another scheme, any address in a project variable — is
-kept as written and the pass says so, naming the variable, the address, the tiers and why, never
-guessed. An address of a service the tier does not carry is kept as it is: an address written out
-reads nothing (docs/spec-workflows.md §8 PS-3) and a reference the rewrite writes names only what
-the tier carries, so the rewrite adds no read the closure check (PS-3a) or the Box rule would see.
+(`TestE2E_SubdomainLifecycle`, `TestE2E_Import_Box_FinishesSetup`). A `${…}` in an import's `vault:`
+under `#zeropsPreprocessor=on` is stored as written, at project and service level, sensitive or not
+(a `<@…>` still expands); a service's zeropsSubdomain exists from its first build, subdomain access
+on or not; a service's own `${zeropsSubdomain}` resolves on its first boot; and another service's
+`${A_zeropsSubdomain}` — in a service variable, a setup's variables or a project variable, which
+resolves per service — resolves in B only when A was deployed before B's container started: else B
+reads the literal text and keeps it until it restarts. The order services are written in decides
+nothing; their priorities do — A at 9, its reader at 1, resolved on the first boot (live, Mate2 lab,
+2026-10-28). So the reference stands for the address only where the tier's service builds a setup
+declaring exactly one HTTP port, the one the address names (80 when it names none), and the value
+writes it `https://` with no port after it. Anything else — several HTTP ports, another one or none,
+a service whose setup the recipe does not read (a utility, a managed service, a Box, a dev pool), a
+bare host or another scheme — is kept as written and the pass says so, naming the variable, the
+address, the tiers and why, never guessed. And every tier creates the service a runtime reads that
+way before the runtime: each runtime of a tier that another reads through
+`${<host>_zeropsSubdomain}` — a reference the rewrite writes, one a person wrote in the runtime's own
+variables, or one in the build or run variables of the setup the tier builds for it — gets a higher
+priority than every runtime reading it, on top of the ranks the build reads give, a runtime lifted
+lifting what its build reads above it in turn (flip's Stage: `flip` at 2, `agentrunner`, which
+reads it, at 1); a managed service or a Box is created first anyway. Two runtimes that read each
+other, directly or through their builds, cannot both come first: the reads a person wrote are
+ordered first and kept whatever comes of them, said when no priority orders them; the rewrite's
+are ordered after, and one no priority orders — or that a chain deeper than the priorities below
+the managed services leaves unordered — keeps its address as written and is said, rather than
+written as a reference certain to reach its reader as the literal text. A project variable is
+read by every service, so no priority puts the service it names before all of them: an address in
+one is kept as written and said, and a person's `${<host>_zeropsSubdomain}` there is said
+(`bundle.orderSubdomainReads`). An address of a service the tier does not carry is kept as it is:
+an address written out reads nothing (docs/spec-workflows.md §8 PS-3) and a reference the rewrite
+writes names only what the tier carries, so the rewrite adds no read the closure check (PS-3a) or
+the Box rule would see.
 The address is as public as its subdomain, so its label — `1df2` as often as `3901` — never makes
 a value a secret the tier generates; a value the platform flags sensitive or reads back masked is
 generated as before, never rewritten or said (`bundle.tierAddresses`, `bundle.mateAddresses`;
@@ -4744,6 +4765,9 @@ generated as before, never rewritten or said (`bundle.tierAddresses`, `bundle.ma
 `TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference`,
 `TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid`,
 `TestBuildGroupRecipe_MateAddress_RewriteAndReadsAgree`,
+`TestBuildGroupRecipe_SubdomainReference_TheServiceItNamesComesFirst`,
+`TestBuildGroupRecipe_SubdomainReference_ACycleKeepsOneSideAsWritten`,
+`TestBuildGroupRecipe_SubdomainReference_InAProjectVariable_Said`,
 `TestGroupRecipe_AnAddressOfTheMatesProject_IsTheEnvironmentsReference`). A string a YAML 1.1
 reader would reinterpret (`yes`, `on`, `1:30`) is quoted.
 A read that decides what a tier carries fails the pass rather than propose a tier with a gap `main`
