@@ -215,3 +215,51 @@ func TestHQNotReached(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribeAwayOf: what a describe knows of its words once its tries
+// end. A try HQ connected for and then left unanswered past its bound is
+// not tried again, yet HQ may have put the words on before the bound ended
+// it — the answer says they may not have landed, never that HQ did not take
+// them; HQ's own refusal, a 4xx or a 500, is that.
+func TestDescribeAwayOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		err         error
+		unconfirmed bool
+		want        describeAway
+	}{
+		{"served", nil, false, describeServed},
+		{"HQ's own refusal", &hq.RefusedError{Status: http.StatusUnprocessableEntity, Code: "invalid"}, false, describeServed},
+		{"a 500 is HQ's own failure", &hq.RefusedError{Status: http.StatusInternalServerError}, false, describeServed},
+		{"connected, no answer within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/x", Connected: true, Within: 30 * time.Second}}, false, describeUnanswered},
+		{"away, no try reached HQ", &hq.UnavailableError{Err: fmt.Errorf("hq /x: %w", syscall.ECONNREFUSED)}, false, describeNotReached},
+		{"away, a try may have reached HQ", &hq.RefusedError{Status: http.StatusBadGateway}, true, describeUnconfirmed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := describeAwayOf(tt.err, tt.unconfirmed); got != tt.want {
+				t.Errorf("describeAwayOf(%v, %v) = %v, want %v", tt.err, tt.unconfirmed, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDescribeNotLanded_Unanswered: a describe HQ took and left unanswered
+// says the words may not have landed, after one try, and keeps them.
+func TestDescribeNotLanded_Unanswered(t *testing.T) {
+	t.Parallel()
+	err := &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/api/mate/changes/appdev/1", Connected: true, Within: 30 * time.Second}}
+	text := describeNotLanded("https://hq.example", 1, 1, describeUnanswered, err)
+	for _, want := range []string{"may not have landed", "no answer within 30s", "may still be a draft", "describe-change again"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the answer misses %q: %s", want, text)
+		}
+	}
+	for _, not := range []string{"about a minute", "did not take", "did not land:"} {
+		if strings.Contains(text, not) {
+			t.Errorf("the answer says %q: %s", not, text)
+		}
+	}
+}
