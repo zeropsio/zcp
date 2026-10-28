@@ -31,11 +31,16 @@ import (
 // over it, another Mate's zcp, a mark another Mate's or one the file no
 // longer matches — is the group's alone.
 
+// recipeOwnTitles is the titles zcp gives its recipe proposals, as a regular
+// expression's alternatives: the additive one's, a part's or a managed
+// service's, a scale's (recipeServiceTitle, recipeScalingTitle).
+func recipeOwnTitles() string {
+	return regexp.QuoteMeta(hq.RecipeProposalTitle) + `|Mate: \S+ in the group recipe|Mate: \S+'s scale in the group recipe`
+}
+
 // recipeOwnSubject is the subject Core's squash gives one of zcp's recipe
-// proposals: the additive one's title, a part's or a managed service's, or a
-// scale's, with the change's number.
-var recipeOwnSubject = regexp.MustCompile(`^(` + regexp.QuoteMeta(hq.RecipeProposalTitle) +
-	`|Mate: \S+ in the group recipe|Mate: \S+'s scale in the group recipe) \(#\d+\)$`)
+// proposals: one of its titles, with the change's number.
+var recipeOwnSubject = regexp.MustCompile(`^(` + recipeOwnTitles() + `) \(#\d+\)$`)
 
 // recipeOwnedTiers reads which tier files on main zcp wrote from the Mate
 // mateID and nobody changed since, by path. A tier main does not hold is not

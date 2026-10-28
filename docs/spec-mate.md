@@ -4642,6 +4642,43 @@ of a pool, whose hostname reaches a random container.
   zcp's own once on main. Named limit: a change an older zcp pushed into a tier its mark does not
   cover — a targeted edit of the group's tier — reads as someone else's; closed in HQ, a new call
   proposes afresh (`hq_recipe_respect.go`).
+- **A tier edit of the Mate's own (2026-10-28).** Every recipe call of zcp's proposes only what it
+  composes from the Mate's project — a tier main lacks, its own tier anew, one host's scale with the
+  tier's floors applied, a part, a managed service — so none can make a tier say what the Mate does
+  not run: production leaner than its floors, a service's settings, an address of its own. HQ takes
+  a Mate's push in `group` as in any repository of its application: on a branch outside `mate/`
+  unless another Mate's open change holds it, and under `mate/` only on the branch of an open change
+  of its own (mate-hq `packages/hq-git/src/rules.ts` `allowRefUpdate`, `apps/hq/src/gitHost.ts`
+  `authorize`; flip.studio, 2026-10-25: Small Production merged with HA PostgreSQL and two
+  dedicated-CPU containers; the correction was refused on the merged change's branch,
+  `change_closed`, and on a `mate/` branch no change binds, `unknown_change`, and `scaling=` found
+  nothing to propose). HQ's open route sets the recipe repository apart in nothing either
+  (`POST /api/mate/changes`, `apps/hq/src/changes.ts` `open`), and zcp's fake HQ keeps both rules.
+  `zerops_workflow action="group-recipe" branch=<branch> title=<title>` opens the Mate's change in
+  `group` for the agent's own edit: the branch is the agent's — never `main`, a tag, a full ref or
+  `mate/`, which HQ refuses (`protected_ref`) — and the title is its own, never one zcp gives its
+  proposals (the additive one's, a part's, a scale's), since zcp reads such a change, and the squash
+  it lands, as its own. Under the recipe pass lock, a recipe change of the Mate's already open is
+  answered — the edit goes on its branch, and once the agent's commit is on it the change is the
+  agent's (*A change zcp no longer holds*) — and nothing else is opened; otherwise HQ opens the
+  change on the branch (on an HQ that binds its own, on that one, with the push's refspec). The
+  answer names the change, its address, the recipe repository's address and how to clone it in the
+  agent's own shell (`zcp hq git-credential`), and where to push — after the answer: HQ judges a
+  recipe change on each push to its branch (`apps/hq/src/refMoves/recipes.ts`), so a branch pushed
+  before the change opened waits for one more push. Core lands it by the landing rule whatever its
+  title or branch (`apps/hq/src/permissions/recipes.ts`: which tiers a Mate may propose over is
+  zcp's rule, not HQ's), and HQ counts a recipe change ready without a description. zcp writes
+  nothing on it: a recipe pass and a targeted
+  proposal find it as the Mate's other recipe change and leave it as it is, and a tier it lands is
+  the group's — its squash carries the agent's title, and an edit of a marked tier breaks the mark —
+  so no pass proposes zcp's composition over it again, a project that changed shape included. Every
+  recipe call that finds nothing to propose over the tiers on main names this call
+  (`hq_recipe_edit.go`; `TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlone`,
+  `TestGroupRecipeEdit_TheMatesRecipeChangeOpen_GoesOnIt`, `TestGroupRecipeEdit_Refusals`,
+  `TestGroupRecipe_NothingToPropose_NamesTheTierEdit`). Named limits: the change is not in the change
+  ledger, so describe-change does not reach it — its title is what the person reviews by; a
+  scaling proposal of a host the edited tier names still composes the floors, and is made only when
+  the agent asks.
 - **The recipe follows a service change (2026-10-28).** A second Mate, a stage and a production
   are made from the tiers, so the recipe pass runs again after a tool call that changes what the
   recipe reads, without the agent asking. (The Noola Mate's agent imported its Box and a runner

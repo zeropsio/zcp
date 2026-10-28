@@ -795,6 +795,10 @@ func handleGroupRecipeAction(
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
 	switch {
+	case input.Branch != "":
+		// The agent's own edit of a tier main carries, on its branch
+		// (hq_recipe_edit.go).
+		return handleGroupRecipeEdit(ctx, httpClient, rt, stateDir, input.Branch, input.Title)
 	case len(input.MateOnly) > 0:
 		// The person's choice of what serves only this Mate, recorded, then
 		// the recipe pass (hq_recipe_mate_only.go).
@@ -874,7 +878,7 @@ func groupRecipeAnswer(outcome recipeOutcome) map[string]any {
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
 	case outcome.OnMain:
 		result["message"] = fmt.Sprintf(
-			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as the Mate's recipe change. To carry a managed service this project gained (a database, a cache, a storage), or a part of the app added or removed, call it with service set to the hostname: it proposes only that service added to, or removed from, each tier on main, as the Mate's recipe change.",
+			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as the Mate's recipe change. To carry a managed service this project gained (a database, a cache, a storage), or a part of the app added or removed, call it with service set to the hostname: it proposes only that service added to, or removed from, each tier on main, as the Mate's recipe change."+recipeEditSteer,
 			hq.RecipeRepo)
 	default:
 		result["message"] = fmt.Sprintf(

@@ -708,11 +708,21 @@ func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
 	for _, kv := range [][2]string{{"http.receivepack", "true"}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
 		f.git(ctx, dir, "config", kv[0], kv[1])
 	}
-	// A Mate pushes any branch but main, a tag, or another Mate's open
-	// change's; HQ itself (FAKE_HQ_AS_HQ) moves anything.
+	// HQ's ref rules for a Mate's push (mate-hq packages/hq-git/src/rules.ts
+	// allowRefUpdate, apps/hq/src/gitHost.ts authorize), in every
+	// repository alike, the recipe repository included: a branch, never
+	// main or anything outside refs/heads/ (protected_ref); never another
+	// Mate's open change's branch (not_your_ref); in HQ's mate/ namespace
+	// only the branch of an open change of its own — a merged or closed
+	// one's is change_closed, one no change binds unknown_change. HQ itself
+	// (FAKE_HQ_AS_HQ) moves anything.
 	hook := "#!/bin/sh\n[ -n \"$FAKE_HQ_AS_HQ\" ] && exit 0\nrepo=$(basename \"$(pwd)\")\nwhile read old new ref; do\n" +
-		"case $ref in refs/heads/main|refs/tags/*) echo \"$ref is HQ's\" >&2; exit 1;; esac\n" +
-		"grep -qxF \"$repo $ref\" \"$FAKE_HQ_REFS\" && { echo \"$ref is another Mate's open change\" >&2; exit 1; }\ndone\nexit 0\n"
+		"case $ref in refs/heads/main) echo \"protected_ref: $ref is HQ's\" >&2; exit 1;; refs/heads/*) ;; *) echo \"protected_ref: $ref is HQ's\" >&2; exit 1;; esac\n" +
+		"grep -qxF \"taken $repo $ref\" \"$FAKE_HQ_REFS\" && { echo \"not_your_ref: $ref is another Mate's open change\" >&2; exit 1; }\n" +
+		"case $ref in refs/heads/mate|refs/heads/mate/*)\n" +
+		"grep -qxF \"own $repo $ref\" \"$FAKE_HQ_REFS\" && continue\n" +
+		"grep -qxF \"closed $repo $ref\" \"$FAKE_HQ_REFS\" && { echo \"change_closed: $ref is a change no longer open\" >&2; exit 1; }\n" +
+		"echo \"unknown_change: no change binds $ref\" >&2; exit 1;;\nesac\ndone\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
 		f.t.Fatal(err)
 	}
@@ -722,13 +732,20 @@ func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
 
 func (f *fakeHQ) repoDir(app, name string) string { return filepath.Join(f.root, app, name+".git") }
 
-// writeRefs writes the branches the lab's Mate may not push, by repository:
-// other Mates' open changes'. f.mu is held, or the fake is not serving yet.
+// writeRefs writes what the push hook decides the lab's Mate's pushes by,
+// per repository: other Mates' open changes' branches (taken), its own open
+// changes' (own), and the mate/ branches of changes merged or closed
+// (closed). f.mu is held, or the fake is not serving yet.
 func (f *fakeHQ) writeRefs() {
 	var refs []string
 	for _, c := range f.changes {
-		if c.State == hq.ChangeOpen && c.MateProjectID != labMate {
-			refs = append(refs, fmt.Sprintf("%s.git %s", c.Repo, c.Branch))
+		switch {
+		case c.State == hq.ChangeOpen && c.MateProjectID != labMate:
+			refs = append(refs, fmt.Sprintf("taken %s.git %s", c.Repo, c.Branch))
+		case c.State == hq.ChangeOpen:
+			refs = append(refs, fmt.Sprintf("own %s.git %s", c.Repo, c.Branch))
+		case strings.HasPrefix(c.Branch, "refs/heads/mate/"):
+			refs = append(refs, fmt.Sprintf("closed %s.git %s", c.Repo, c.Branch))
 		}
 	}
 	if err := os.WriteFile(f.refsFile, []byte(strings.Join(refs, "\n")+"\n"), 0o600); err != nil {

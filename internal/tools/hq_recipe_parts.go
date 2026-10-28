@@ -328,7 +328,7 @@ func handleGroupRecipeService(
 		if written.pushed {
 			message += fmt.Sprintf(" Change #%d, which proposed it before, now adds nothing.", written.number)
 		}
-		result["message"] = message + refusedServiceTiers(tiers)
+		result["message"] = message + refusedServiceTiers(tiers) + recipeEditSteer
 		return jsonResult(result), nil, nil
 	}
 	result["branch"] = written.branch
