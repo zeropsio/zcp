@@ -341,7 +341,10 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		}
 	}
 	reader := newServiceReader(slices.Sorted(maps.Keys(projectServices)))
-	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities))
+	// A public address of a service of the Mate's own project written out is
+	// what every tier writes as the environment's own (tierAddresses).
+	mate := mateAddressReader{label: mateLabel, hosts: mateServiceHosts(inputs, boxes)}
+	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities, mate))
 	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, utilityWires, inputs.MateOnly)
 	for _, host := range wired {
 		if !utilityWires[host].chosen {
@@ -364,7 +367,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, parts)...)
 	warnings = append(warnings, nameWarnings...)
-	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, parts, utilities), inputs.ProjectEnvs)
+	ranking, priorityWarnings := rankGroupApps(groupApps(runtimes, parts, utilities), inputs.ProjectEnvs)
 	warnings = append(warnings, priorityWarnings...)
 	haIncapable := make(map[string]bool, len(inputs.HAIncapable))
 	for _, host := range inputs.HAIncapable {
@@ -372,9 +375,10 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 	plan := groupPlan{
 		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
-		managed: managed, haIncapable: haIncapable, parts: parts, priorities: priorities,
+		managed: managed, haIncapable: haIncapable, parts: parts, ranking: ranking,
 		promoter: newPairPromoter(pairRenames(runtimes, parts)),
 		boxes:    boxes, reader: reader, projectServices: projectServices,
+		mate: mate,
 	}
 
 	layout := recipe.Layout{
@@ -385,6 +389,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	withheld := map[string][]string{}
 	carriedBoxes := map[string]bool{}
 	var unclosed []string
+	var kept []keptAddress
+	var notes []orderNote
 	for _, policy := range groupTiers {
 		if blockers := groupTierBlockers(runtimes, policy, unresolved); len(blockers) > 0 {
 			for _, host := range blockers {
@@ -405,6 +411,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 			carriedBoxes[host] = true
 		}
 		unclosed = append(unclosed, tier.unclosed...)
+		kept = append(kept, tier.kept...)
+		notes = append(notes, tier.notes...)
 		layout.Tiers = append(layout.Tiers, recipe.Tier{
 			Index:      policy.index,
 			Title:      policy.title,
@@ -430,6 +438,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: no tier composes: %s", inputs.Name, strings.Join(reasons, "; "))
 	}
 	warnings = append(warnings, groupBoxWarnings(boxes, carriedBoxes)...)
+	warnings = append(warnings, keptAddressWarnings(kept)...)
+	warnings = append(warnings, orderNoteWarnings(notes)...)
 	return layout, append(warnings, reasons...), nil
 }
 
@@ -731,8 +741,11 @@ type groupPlan struct {
 	managed     []ManagedServiceEntry
 	haIncapable map[string]bool
 	// parts are each resolved runtime's parts, by dev hostname.
-	parts      map[string][]groupPart
-	priorities map[string]int
+	parts map[string][]groupPart
+	// ranking is the priority the build reads give each app, and the reads
+	// themselves, which each tier orders its public-address reads on top of
+	// (orderSubdomainReads).
+	ranking groupRanking
 	// promoter names a group environment's own runtimes in a value.
 	promoter *pairPromoter
 	// boxes are the Boxes the project runs, sorted.
@@ -741,41 +754,96 @@ type groupPlan struct {
 	// and reader reads them in a setup's variables.
 	projectServices map[string]bool
 	reader          *serviceReader
+	// mate tells a public address of a service of the Mate's own project
+	// written out in a value, which every tier writes as the environment's
+	// own (tierAddresses).
+	mate mateAddressReader
 }
 
 // groupTier is one composed tier: its import.yaml, its warnings, the Boxes
-// it carries, and each read of a service the project runs that it does not
-// carry (groupTierClosure).
+// it carries, each read of a service the project runs that it does not
+// carry (groupTierClosure), each address of the Mate's own project it kept
+// as written for a person to set (tierAddresses), and each public-address
+// read it keeps that no priority orders (orderSubdomainReads).
 type groupTier struct {
 	body     string
 	warnings []string
 	boxes    []string
 	unclosed []string
+	kept     []keptAddress
+	notes    []orderNote
+}
+
+// addressWriter is the writer of the Mate's own addresses for the tier
+// policy names, promote naming a group environment's own runtimes (nil on
+// the AI Agent tier): it knows what the tier carries and builds once the
+// tier's services are composed.
+func (plan groupPlan) addressWriter(policy groupTierPolicy, promote func(string) string) *tierAddresses {
+	t := &tierAddresses{
+		mate: plan.mate, title: policy.title, promote: promote,
+		builds: map[string]addressBuild{}, unordered: map[[2]string]string{},
+	}
+	if promote != nil {
+		t.renames = plan.promoter.renames
+	}
+	return t
+}
+
+// mateServiceHosts is every service of the Mate's own project the inputs
+// name, lowercase: each hostname the project runs, each pair's halves, the
+// managed services, the utilities and the Boxes.
+func mateServiceHosts(inputs GroupRecipeInputs, boxes []GroupBox) map[string]bool {
+	hosts := map[string]bool{}
+	add := func(host string) {
+		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+			hosts[host] = true
+		}
+	}
+	for _, host := range inputs.ProjectHostnames {
+		add(host)
+	}
+	for _, r := range inputs.Runtimes {
+		add(r.DevHostname)
+		for _, stage := range r.Stages {
+			add(stage.Hostname)
+		}
+	}
+	for _, m := range inputs.ManagedServices {
+		add(m.Hostname)
+	}
+	for _, u := range inputs.Utilities {
+		add(u.Hostname)
+	}
+	for _, b := range boxes {
+		add(b.Hostname)
+	}
+	return hosts
 }
 
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
 func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, error) {
-	inputs, runtimes, priorities := plan.inputs, plan.runtimes, plan.priorities
+	inputs, runtimes, priorities := plan.inputs, plan.runtimes, plan.ranking.priorities
 	warnings := make([]string, 0, len(runtimes))
 	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
-	// The AI Agent tier re-creates the Mate's pairs and keeps every value as
-	// written; a group environment names its own runtimes.
+	// The AI Agent tier re-creates the Mate's pairs under their own names; a
+	// group environment names its own runtimes. Both write an address of a
+	// service of the Mate's own project as the address of the service in the
+	// environment the tier makes (tierAddresses).
 	var promote func(string) string
 	if !policy.pairs {
 		promote = plan.promoter.promote
 	}
+	addresses := plan.addressWriter(policy, promote)
 
 	// Every entry carries its priority, and the file lists the services in
-	// the order the platform creates them: highest first, a pair's halves
-	// together, the composer's own order kept among equals.
-	type rankedItem struct {
-		priority int
-		item     yamlItem
-	}
-	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed)+len(plan.boxes))
+	// the order the platform creates them: highest first, the composer's own
+	// order kept among equals (tierEntry, rankTierEntries).
+	ranked := make([]tierEntry, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed)+len(plan.boxes))
 	// readers are the tier's runtimes, pools and utilities and what they read
 	// with (tierReader): the tier carries the Box they read, and must carry
-	// what the setups it builds read (groupTierClosure).
+	// what the setups it builds read (groupTierClosure). An address of the
+	// Mate's own project written out reads nothing, so they read the values
+	// as written, renamed.
 	var readers []tierReader
 	for _, r := range runtimes {
 		type half struct {
@@ -786,10 +854,14 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		var halves []half
 		if policy.pairs {
 			if r.DevPool {
-				entry, comment := groupPoolEntry(r, priorities[r.DevHostname], source)
-				ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+				entry, comment := groupPoolEntry(r, priorities[r.DevHostname])
+				ranked = append(ranked, tierEntry{
+					priority: priorities[r.DevHostname], comment: comment, entry: entry,
+					owner: fmt.Sprintf("dev pool %q", r.DevHostname), own: r.DevHostname, app: r.DevHostname,
+					vault: func(write valueWriter) []yamlField { return groupPoolVault(r.ServiceEnvs, source, write) },
+				})
 				// Its leases deploy the setup its image is.
-				readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, pool: true, vault: writtenValues(r.ServiceEnvs, nil)})
+				readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, pool: true, vault: writtenValues(r.ServiceEnvs, nil, plan.mate)})
 			} else {
 				halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs, devHalfFacts(r)})
 			}
@@ -809,28 +881,34 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 			}
 		}
 		for _, half := range halves {
-			readers = append(readers, tierReader{hostname: half.hostname, setup: half.setup, body: r.ZeropsYAMLBody, vault: writtenValues(half.envs, promote)})
+			readers = append(readers, tierReader{hostname: half.hostname, setup: half.setup, body: r.ZeropsYAMLBody, vault: writtenValues(half.envs, promote, plan.mate)})
 			entry, entryWarnings := groupRuntimeEntry(r, half.facts, half.hostname, half.setup, policy)
-			if vault := groupVaultFields(half.envs, source, promote); len(vault) > 0 {
-				entry["vault"] = vault
-			}
 			warnings = append(warnings, entryWarnings...)
 			entry["priority"] = priorities[r.DevHostname]
-			item := yamlItem{fields: orderedFields(entry, serviceKeyOrder)}
+			comment := ""
 			if _, built := entry["buildFromGit"]; !built {
-				item.comment = privateBuildComment(source)
+				comment = privateBuildComment(source)
 			}
-			ranked = append(ranked, rankedItem{priorities[r.DevHostname], item})
+			addresses.builds[half.hostname] = addressBuild{body: r.ZeropsYAMLBody, setup: half.setup}
+			ranked = append(ranked, tierEntry{
+				priority: priorities[r.DevHostname], comment: comment, entry: entry,
+				owner: fmt.Sprintf("runtime %q", half.hostname), own: half.hostname, app: r.DevHostname,
+				vault: func(write valueWriter) []yamlField { return groupVaultFields(half.envs, source, write) },
+			})
 		}
 	}
 	for _, u := range plan.utilities {
 		if !policy.pairs && plan.mateOnly[u.Hostname] {
 			continue
 		}
-		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
-		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source)
+		ranked = append(ranked, tierEntry{
+			priority: priorities[u.Hostname], comment: comment, entry: entry,
+			owner: fmt.Sprintf("runtime %q", u.Hostname), own: u.Hostname, app: u.Hostname,
+			vault: func(write valueWriter) []yamlField { return groupVaultFields(u.ServiceEnvs, source, write) },
+		})
 		// Its own variables are all the recipe reads of it.
-		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, promote)})
+		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, promote, plan.mate)})
 	}
 	for _, m := range plan.managed {
 		if !policy.pairs && plan.mateOnly[m.Hostname] {
@@ -848,7 +926,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		if vertical := managedVertical(m, policy); len(vertical) > 0 {
 			entry["verticalAutoscaling"] = vertical
 		}
-		ranked = append(ranked, rankedItem{managedPriority, yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+		ranked = append(ranked, tierEntry{priority: managedPriority, entry: entry})
 	}
 	// A Box only where a runtime of this tier reads it.
 	var carriedBoxes []string
@@ -858,13 +936,21 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 			continue
 		}
 		entry, comment := groupBoxEntry(b, read[b.Hostname])
-		ranked = append(ranked, rankedItem{managedPriority, yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+		ranked = append(ranked, tierEntry{priority: managedPriority, comment: comment, entry: entry})
 		carriedBoxes = append(carriedBoxes, b.Hostname)
 	}
+	// What the tier carries is now known: the closure check reads it from the
+	// services as written, and so do the rewrite and the order.
+	notes := rankTierEntries(plan, ranked, addresses, source, policy.title)
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
 	services := make([]yamlItem, 0, len(ranked))
 	for _, r := range ranked {
-		services = append(services, r.item)
+		if r.vault != nil {
+			if vault := r.vault(addresses.writer(r.owner, r.own)); len(vault) > 0 {
+				r.entry["vault"] = vault
+			}
+		}
+		services = append(services, yamlItem{comment: r.comment, fields: orderedFields(r.entry, serviceKeyOrder)})
 	}
 	unclosed := groupTierClosure(plan.reader, readers, tierHostnames(services), plan.projectServices, policy.title)
 
@@ -872,7 +958,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
 		project = append(project, yamlField{key: "corePackage", value: core})
 	}
-	if vault := groupVaultFields(inputs.ProjectEnvs, source, promote); len(vault) > 0 {
+	if vault := groupVaultFields(inputs.ProjectEnvs, source, addresses.writer("", "")); len(vault) > 0 {
 		project = append(project, yamlField{key: "vault", value: vault})
 	}
 
@@ -884,7 +970,59 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 	if err != nil {
 		return groupTier{}, err
 	}
-	return groupTier{body: body, warnings: warnings, boxes: carriedBoxes, unclosed: unclosed}, nil
+	return groupTier{body: body, warnings: warnings, boxes: carriedBoxes, unclosed: unclosed, kept: addresses.kept, notes: notes}, nil
+}
+
+// tierEntry is one service of a tier as it is composed: its priority, the
+// comment above it and its entry, and — for a runtime — the app it is of
+// (groupApp.key), whose rank its priority starts from. Its own variables are
+// written once the tier knows everything it carries — the Boxes its
+// runtimes read among it — since an address names only what the tier
+// carries (tierAddresses): vault writes them through the tier's writer for
+// owner, whose own address is own's.
+type tierEntry struct {
+	priority   int
+	comment    string
+	entry      map[string]any
+	owner, own string
+	app        string
+	vault      func(write valueWriter) []yamlField
+}
+
+// rankTierEntries gives a tier's entries their priorities once the tier
+// knows what it carries: it records that (tierAddresses.carry), collects the
+// public-address reads of every value the tier writes by a dry run of each
+// entry's vault and the project's, and lifts each runtime above the
+// runtimes reading its address (orderTierReads). It says each read the tier
+// keeps that no priority orders.
+func rankTierEntries(plan groupPlan, entries []tierEntry, addresses *tierAddresses, source, title string) []orderNote {
+	carried := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if host, ok := e.entry["hostname"].(string); ok {
+			carried = append(carried, host)
+		}
+	}
+	addresses.carry(carried)
+	addresses.collecting = true
+	ranks := make([]tierRank, 0, len(entries))
+	for _, e := range entries {
+		if e.vault != nil {
+			e.vault(addresses.writer(e.owner, e.own))
+		}
+		if e.app != "" {
+			ranks = append(ranks, tierRank{host: e.own, app: e.app, base: e.priority})
+		}
+	}
+	groupVaultFields(plan.inputs.ProjectEnvs, source, addresses.writer("", ""))
+	addresses.collecting = false
+	priorityOf, notes := orderTierReads(plan.ranking, ranks, addresses, title)
+	for i := range entries {
+		if p, ok := priorityOf[entries[i].own]; ok && entries[i].app != "" {
+			entries[i].priority = p
+			entries[i].entry["priority"] = p
+		}
+	}
+	return notes
 }
 
 // groupTierHeader is what a tier says about itself above its project: what
@@ -910,7 +1048,7 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 		"The " + policy.title + " tier. " + policy.summary,
 		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as the Mate's change%s.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes, anew),
-		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
+		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it or whose variables name its public address, which resolves only in a service started after it is deployed.",
 	}
 	if marked {
 		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
@@ -1021,11 +1159,12 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 }
 
 // groupUtilityEntry writes a utility as the project runs it: its public build
-// and its own scale, on every tier alike. A build URL that carried a user
-// carried a credential, so the repository is private: the entry names no
-// build — nor the setup, which the platform builds only from a repository —
-// and the comment it returns says the source is set by hand.
-func groupUtilityEntry(u GroupUtility, priority int, source string, promote func(string) string) (map[string]any, string) {
+// and its own scale, on every tier alike; the tier writes its own variables
+// beside them. A build URL that carried a user carried a credential, so the
+// repository is private: the entry names no build — nor the setup, which the
+// platform builds only from a repository — and the comment it returns says
+// the source is set by hand.
+func groupUtilityEntry(u GroupUtility, priority int, source string) (map[string]any, string) {
 	entry := map[string]any{
 		"hostname": u.Hostname,
 		"type":     u.ServiceType,
@@ -1044,9 +1183,6 @@ func groupUtilityEntry(u GroupUtility, priority int, source string, promote func
 		entry["enableSubdomainAccess"] = true
 	}
 	projectScaling(entry, u.Scaling)
-	if vault := groupVaultFields(u.ServiceEnvs, source, promote); len(vault) > 0 {
-		entry["vault"] = vault
-	}
 	return entry, comment
 }
 

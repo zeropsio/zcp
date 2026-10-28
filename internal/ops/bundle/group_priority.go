@@ -29,9 +29,11 @@ import (
 // zerops.yaml — a storefront's build bakes the backend's publishable key and
 // pre-renders from its API — directly, through a runtime variable the build
 // lifts (`${RUNTIME_X}`), or through a project variable. What a runtime reads
-// only once it runs orders nothing: it starts in the same wave as what it
-// reads. Any hostname a pair goes by names the pair: its dev half, its stage
-// half, and the promoted name a group environment gives it.
+// only once it runs orders nothing here: it starts in the same wave as what
+// it reads — but for another service's public address, which each tier
+// orders on top of these ranks (orderSubdomainReads). Any hostname a pair
+// goes by names the pair: its dev half, its stage half, and the promoted name
+// a group environment gives it.
 // Runtimes that reference each other share a rank, and the composer says so;
 // a chain deeper than the ranks below the managed services stops at the last
 // one, said too. The ranks are computed from sorted inputs, so the same
@@ -54,9 +56,45 @@ type groupApp struct {
 	sources []string
 }
 
+// groupRanking is what the build reads give the apps: each app's priority,
+// which app's build reads which (references, by app key), and the reference
+// cycle each app is in (component): apps of one cycle share a rank.
+type groupRanking struct {
+	priorities map[string]int
+	references map[string]map[string]bool
+	component  map[string]int
+}
+
+// reads reports whether app a's build reads app b, directly or through
+// other apps' builds.
+func (g groupRanking) reads(a, b string) bool {
+	seen := map[string]bool{a: true}
+	queue := []string{a}
+	for len(queue) > 0 {
+		x := queue[0]
+		queue = queue[1:]
+		for y := range g.references[x] {
+			if y == b {
+				return true
+			}
+			if !seen[y] {
+				seen[y] = true
+				queue = append(queue, y)
+			}
+		}
+	}
+	return false
+}
+
 // groupPriorities ranks every app by the runtimes that reference it, and says
 // where the ranking had to compromise: a reference cycle, a chain too deep.
 func groupPriorities(apps []groupApp, projectEnvs []ProjectEnvVar) (map[string]int, []string) {
+	ranking, warnings := rankGroupApps(apps, projectEnvs)
+	return ranking.priorities, warnings
+}
+
+// rankGroupApps is groupPriorities with the reads the ranks come from.
+func rankGroupApps(apps []groupApp, projectEnvs []ProjectEnvVar) (groupRanking, []string) {
 	sorted := append([]groupApp(nil), apps...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].key < sorted[j].key })
 
@@ -142,7 +180,7 @@ func groupPriorities(apps []groupApp, projectEnvs []ProjectEnvVar) (map[string]i
 			"runtimes %s sit deeper in a chain of references than the ranks below the managed services, so they share priority %d",
 			quoteAnd(capped), managedPriority-1))
 	}
-	return priorities, warnings
+	return groupRanking{priorities: priorities, references: references, component: componentOf}, warnings
 }
 
 // canonicalRefHost is a hostname as a reference spells it: the platform's

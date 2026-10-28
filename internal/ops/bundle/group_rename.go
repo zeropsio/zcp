@@ -21,8 +21,11 @@ import (
 //     `.`, which would make it a custom domain — names the promoted runtime.
 //
 // A bare word, another service's reference and a longer hostname stay as
-// written. The AI Agent tier re-creates the Mate's pairs and keeps every
-// value as it is.
+// written. The AI Agent tier re-creates the Mate's pairs under their own
+// names and renames nothing. A public address of a service of the Mate's own
+// project written out (`https://flipstage-3901-5195.prg1.zerops.app`) is
+// never renamed here: every tier writes it as the environment's own
+// reference, or keeps it as written (tierAddresses).
 
 // promotePairHostnames rewrites a value for a group environment. renames maps
 // each pair half's hostname to its pair's promoted one.

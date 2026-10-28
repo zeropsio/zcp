@@ -177,8 +177,11 @@ func TestBuildGroupRecipe_PriorityFollowsReferences(t *testing.T) {
 
 // The order a recipe is written in is designed from what each runtime's build
 // reads: a service read at build time outranks its readers, and services with
-// no build-time read between them share a priority — a runtime read only once
-// it runs waits for nothing.
+// no build-time read between them share a priority. What a runtime reads
+// only once it runs waits for nothing, but for another service's public
+// address: ${<host>_zeropsSubdomain} resolves only in a container started
+// after that service was deployed (live, 2026-10-28), so the service it names
+// outranks the runtime that reads it.
 func TestBuildGroupRecipe_PriorityFollowsBuildReads(t *testing.T) {
 	t.Parallel()
 	pair := func(name, prodYAML string) GroupRuntime {
@@ -203,10 +206,18 @@ func TestBuildGroupRecipe_PriorityFollowsBuildReads(t *testing.T) {
 			want: map[string]int{"apidev": 2, "apistage": 2, "storedev": 1, "storestage": 1},
 		},
 		{
-			name: "a storefront that reads the backend only once it runs: one priority",
+			name: "a storefront that reads the backend's public address once it runs: the backend's stage first",
 			runtimes: []GroupRuntime{
 				pair("api", "    run:\n      start: node api.js\n"),
 				pair("store", "    run:\n      envVariables:\n        API: https://${apistage_zeropsSubdomain}\n      start: node store.js\n"),
+			},
+			want: map[string]int{"apidev": 1, "apistage": 2, "storedev": 1, "storestage": 1},
+		},
+		{
+			name: "a storefront that reads the backend's variable once it runs: one priority",
+			runtimes: []GroupRuntime{
+				pair("api", "    run:\n      start: node api.js\n"),
+				pair("store", "    run:\n      envVariables:\n        API: http://${apistage_hostname}:3000\n      start: node store.js\n"),
 			},
 			want: map[string]int{"apidev": 1, "apistage": 1, "storedev": 1, "storestage": 1},
 		},

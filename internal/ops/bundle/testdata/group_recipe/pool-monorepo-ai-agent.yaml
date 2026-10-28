@@ -11,14 +11,15 @@
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
-# runtimes whose build reads it.
+# runtimes whose build reads it or whose variables name its public address,
+# which resolves only in a service started after it is deployed.
 #
 # The line below is zcp's mark: the Mate's project this file was composed from
 # and a digest of the file. While the file stays exactly as zcp wrote it, zcp
 # proposes it anew when that Mate's project changes shape — a part added or
 # removed, a dev pool, a runtime's type; an edit of any line makes the file the
 # group's alone.
-# zcp-recipe: p-jago sha256=c9cce7ebe9d4e09c5297e463517bfe03324516ed462f80bb960e02b946e73ba3
+# zcp-recipe: p-jago sha256=734c291685c269e5a041269d93aef6a437514834bc59fbda1bc4307e4955318d
 
 project:
   name: Zerops Apps - Jago

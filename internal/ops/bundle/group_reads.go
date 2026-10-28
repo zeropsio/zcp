@@ -154,12 +154,16 @@ type tierReader struct {
 }
 
 // writtenValues is the values of envs a tier writes as written, each through
-// promote (nil keeps it as it is): a secret the tier generates
-// (recipeSecret) is never written, so it names nothing.
-func writtenValues(envs []ProjectEnvVar, promote func(string) string) []string {
+// promote (nil keeps it as it is): a secret the tier generates (tierSecret,
+// which judges an address of the Mate's own project public as the tier does)
+// is never written, so it names nothing. An address of the Mate's own
+// project written out reads nothing, so what the tier writes for one — a
+// reference to a service the tier carries, or the address as written — reads
+// nothing more than it does.
+func writtenValues(envs []ProjectEnvVar, promote func(string) string, mate mateAddressReader) []string {
 	values := make([]string, 0, len(envs))
 	for _, env := range envs {
-		if secret, _ := recipeSecret(env); secret {
+		if secret, _ := tierSecret(env, mate); secret {
 			continue
 		}
 		value := env.Value
@@ -310,19 +314,19 @@ func boxHostnames(boxes []GroupBox) []string {
 // any tier builds for a runtime reads — the dev half's, and each part's
 // stage and group-environment setup — or a runtime's or a utility's own
 // variables do. A group environment's part never takes such a Box's
-// hostname.
-func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRuntime, parts map[string][]groupPart, utilities []GroupUtility) []string {
+// hostname. mate judges what a tier writes as written (writtenValues).
+func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRuntime, parts map[string][]groupPart, utilities []GroupUtility, mate mateAddressReader) []string {
 	readers := make([]tierReader, 0, 3*len(runtimes)+len(utilities))
 	for _, r := range runtimes {
-		readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, vault: writtenValues(r.ServiceEnvs, nil)})
+		readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, vault: writtenValues(r.ServiceEnvs, nil, mate)})
 		for _, part := range parts[r.DevHostname] {
 			readers = append(readers,
-				tierReader{hostname: r.DevHostname, setup: part.setup, body: r.ZeropsYAMLBody, vault: writtenValues(part.envs, nil)},
+				tierReader{hostname: r.DevHostname, setup: part.setup, body: r.ZeropsYAMLBody, vault: writtenValues(part.envs, nil, mate)},
 				tierReader{hostname: r.DevHostname, setup: part.environmentSetup, body: r.ZeropsYAMLBody})
 		}
 	}
 	for _, u := range utilities {
-		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, nil)})
+		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, nil, mate)})
 	}
 	read := tierReads(sr, readers)
 	var hosts []string
