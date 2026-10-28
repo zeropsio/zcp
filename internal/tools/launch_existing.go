@@ -233,9 +233,8 @@ func executeExistingProjectMutation(
 		// Graceful refusal — bundle-compose error is packaged into the
 		// MCP tool response so the structured payload reaches the client.
 		// Mirrors the new-project path's executeLaunchMutation pattern.
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"bundle-compose-failed",
-			"Launch bundle composition failed: "+err.Error())
+		blocker := bundleComposeBlocker(err)
+		return launchFailedResponse(corpus, blocker.Category, blocker.ID, blocker.Message)
 	}
 	if len(launchBundle.Errors) > 0 {
 		_ = appendAuditLog(stateDir, launchAuditEntry{

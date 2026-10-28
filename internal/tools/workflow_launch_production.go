@@ -416,6 +416,9 @@ func handleLaunchProduction(
 	var haveCurrent bool
 	var readyBundle *ops.LaunchBundle
 	var readyBundleInputs ops.LaunchBundleInputs
+	// readyComposeErr is the composer's refusal of the bundle publish would
+	// build (P-LP-19): ready-to-launch blocks on it before any key is asked.
+	var readyComposeErr error
 	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
 	if len(resolvedForBaseline) > 0 {
 		_, transientRead, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false)
@@ -461,12 +464,14 @@ func handleLaunchProduction(
 				bundleInputs.Location = input.Region
 				bundleInputs.LaunchID = launchID
 				if composeErr == nil {
-					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
+					b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications)
+					if bundleErr == nil {
 						current = b.SourceSnapshot
 						haveCurrent = true
 						readyBundle = b
 						readyBundleInputs = bundleInputs
 					}
+					readyComposeErr = bundleErr
 				}
 			}
 		}
@@ -515,6 +520,16 @@ func handleLaunchProduction(
 	}
 
 	if !publishing {
+		// A bundle the composer refuses — a launched runtime reading a
+		// service it does not carry, a Box outside its region — refuses the
+		// publish too, so it blocks HERE, before the manual path asks the
+		// person to paste a production credential or a delegation is
+		// offered: the same blocker publish fails with, no baseline written
+		// (spec-workflows.md §10.3 P-LP-19).
+		if readyComposeErr != nil {
+			return launchSourceControlRequiredResponse(input, sourceContext,
+				[]topology.Blocker{bundleComposeBlocker(readyComposeErr)}), nil, nil
+		}
 		// Persist the ready-to-launch baseline on first transition when
 		// the source state was readable. Idempotent: subsequent calls
 		// without publish credentials reuse the existing baseline rather
@@ -904,9 +919,8 @@ func executeLaunchMutation(
 			Result:            "failure",
 			ErrorMessage:      "bundle compose: " + err.Error(),
 		})
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"bundle-compose-failed",
-			"Launch bundle composition failed: "+err.Error()), nil, nil
+		blocker := bundleComposeBlocker(err)
+		return launchFailedResponse(corpus, blocker.Category, blocker.ID, blocker.Message), nil, nil
 	}
 	launchBundle.Warnings = append(launchBundle.Warnings, composeWarnings...)
 	if len(launchBundle.Errors) > 0 {
@@ -2102,6 +2116,19 @@ func launchSourceControlBlockerResponse(corpus []workflow.KnowledgeAtom, msg str
 			Message:  msg,
 		}},
 	})
+}
+
+// bundleComposeBlocker is a launch bundle the composer refuses, as the
+// block-severity blocker that carries the composer's own message
+// (spec-workflows.md §10.3 P-LP-19): ready-to-launch returns it before any
+// key is asked, and publish fails with the same one.
+func bundleComposeBlocker(err error) topology.Blocker {
+	return topology.Blocker{
+		ID:       "bundle-compose-failed",
+		Severity: topology.BlockerSeverityBlock,
+		Category: topology.BlockerCategoryOther,
+		Message:  "Launch bundle composition failed: " + err.Error(),
+	}
 }
 
 // launchFailedResponse builds a generic failed-status response with a
