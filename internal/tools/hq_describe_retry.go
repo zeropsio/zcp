@@ -22,7 +22,9 @@ import (
 // are tried again, a growing wait apart for about a minute in all, while HQ
 // could not be reached — refused, reset, no connection within the bound — or
 // answered 502, 503 or 504. HQ's own refusal, any 4xx or a 500, is final, and
-// so is a try HQ connected for and then left unanswered past its bound.
+// so is a try HQ connected for and then left unanswered past its bound —
+// which HQ may have acted on, so its answer says the words may not have
+// landed, never that HQ did not take them.
 
 // describeRetry paces a describe's tries: eight, the waits between them
 // adding up to a minute. A var so tests do not wait it out.
@@ -44,7 +46,28 @@ const (
 	// after the words were sent, a balancer's 502 or 504 — and HQ never
 	// said whether they landed.
 	describeUnconfirmed
+	// describeUnanswered: HQ took the try and left it unanswered past its
+	// bound — never tried again, since HQ may still be putting the words on
+	// — so whether they landed is unknown.
+	describeUnanswered
 )
+
+// describeAwayOf is what a describe knows of its words once its tries end
+// with err: served or refused by HQ — a 4xx or a 500 — when err is nil or
+// no moment's absence (describeTransient), but for a try HQ took and left
+// unanswered; else whether any try (unconfirmed) may have reached HQ.
+func describeAwayOf(err error, unconfirmed bool) describeAway {
+	var noAnswer *hq.NoAnswerError
+	switch {
+	case errors.As(err, &noAnswer) && noAnswer.Connected:
+		return describeUnanswered
+	case !describeTransient(err):
+		return describeServed
+	case unconfirmed:
+		return describeUnconfirmed
+	}
+	return describeNotReached
+}
 
 // describeClient is hqc as a describe calls HQ: each call sent once — no 503
 // wait of the client's own stacks beneath describeRetry's tries — and
@@ -70,13 +93,7 @@ func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, 
 		unconfirmed = unconfirmed || !hqNotReached(err)
 		return hqNotServing
 	})
-	switch {
-	case !describeTransient(err):
-		return tries, describeServed, err
-	case unconfirmed:
-		return tries, describeUnconfirmed, err
-	}
-	return tries, describeNotReached, err
+	return tries, describeAwayOf(err, unconfirmed), err
 }
 
 // describeSelf is the Mate's own state as a describe reads it: once while
@@ -144,15 +161,22 @@ func describeTransient(err error) bool {
 
 // describeNotLanded is describe-change's answer when HQ stayed away through
 // every try: the words did not land and the change is still a draft — or,
-// when a try may have reached HQ, that HQ never said whether they did — and
-// they are kept for it.
+// when a try may have reached HQ, that HQ never said whether they did, and
+// when HQ took a try and left it unanswered, that whether they did is
+// unknown — and they are kept for it.
 func describeNotLanded(address string, number, tries int, away describeAway, err error) string {
 	outcome := fmt.Sprintf("The description did not land: HQ at %s did not answer for about a minute (%d tries; the last: %s). "+
 		"Change #%d is still a draft — the person is not asked to review it.", address, tries, hqNotServingWords(err), number)
-	if away == describeUnconfirmed {
+	switch away {
+	case describeUnconfirmed:
 		outcome = fmt.Sprintf("The description may not have landed: HQ at %s did not answer for about a minute (%d tries; the last: %s), "+
 			"and a try may have reached it without HQ saying so. Change #%d may still be a draft — the person is not asked to review it until it lands.",
 			address, tries, hqNotServingWords(err), number)
+	case describeUnanswered:
+		outcome = fmt.Sprintf("The description may not have landed: HQ at %s took it and gave %s, and HQ has no read of a change's words to check. "+
+			"Change #%d may still be a draft — the person is not asked to review it until it lands.",
+			address, hqNotServingWords(err), number)
+	case describeServed, describeNotReached:
 	}
 	return outcome + ` The words are kept for it: call describe-change again to put them on — the same words again change nothing — and if HQ still does not answer, tell the person HQ is not answering.`
 }

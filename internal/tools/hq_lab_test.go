@@ -110,6 +110,13 @@ type fakeHQ struct {
 	// with f.mu held, so a test orders requests of passes running at once
 	// and acts as HQ between them (around).
 	before, after func(*http.Request)
+	// losing is how many of the next API requests loseOn matches — any,
+	// when nil — HQ serves whole and then never answers: the connection is
+	// dropped, or answered loseStatus (a balancer's 502 or 504) when one is
+	// set, as a call that timed out after HQ acted on it meets.
+	losing     int
+	loseStatus int
+	loseOn     func(*http.Request) bool
 }
 
 // labOpenCap is how many open changes a Mate holds in a repository on an HQ
@@ -220,6 +227,18 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.losing > 0 && (f.loseOn == nil || f.loseOn(r)) {
+		f.losing--
+		f.api(httptest.NewRecorder(), r)
+		if f.loseStatus != 0 {
+			writeHQJSON(w, f.loseStatus, map[string]string{})
+			return
+		}
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+		return
+	}
 	f.api(w, r)
 }
 
@@ -876,6 +895,15 @@ func (f *fakeHQ) refuseWith(status int, code, reason string, n int, on func(*htt
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing, f.failStatus, f.failCode, f.failReason, f.failOn = n, status, code, reason, on
+}
+
+// loseAnswers makes HQ serve the next n API requests on matches and lose
+// their answers: the connection dropped when status is 0, else answered
+// status with no body of HQ's (a balancer's 502 or 504).
+func (f *fakeHQ) loseAnswers(n, status int, on func(*http.Request) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.losing, f.loseStatus, f.loseOn = n, status, on
 }
 
 // around runs before as each request arrives and after once it is served,
