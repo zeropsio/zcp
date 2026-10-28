@@ -986,17 +986,25 @@ setup's lines on a first deploy or a re-pin, and with a first start's move onto 
 a kept server's carry) also `.zcp/dev-servers.json` — the reply names once, file by file, with why,
 and zcp commits it before the push or redeploy, so that deploy ships it from git: a commit of its
 own on the checked-out branch holding only those files, whatever else is staged, signed `Zerops
-Agent <agent@zerops.io>`, with `--no-verify` — the repository's commit checks check the person's
-work, and a deploy never waits on the app's typecheck for zcp's lines. Where each branch is one
-change the person merges (HQ, §10.10), the commit rides with the branch's change apart from the
-person's own commits, and once merged `main` carries it, so no branch cut from `main` needs the
-edit again. zcp commits nothing, and says what to commit with the command, when the checkout is on
-`main` or `master` — only a merged change moves it, and a commit there could not be pushed — when
-one of the files held uncommitted lines before zcp's edit, on a detached HEAD, or when git refuses
+Agent <agent@zerops.io>`. The repository's commit checks run: a person's hooks are their policy, and
+zcp never bypasses one (no `--no-verify`); since a pin no longer moves on its own, the commit is
+rare — a first deploy, a supervisor that cannot run what zcp writes — so their cost is acceptable.
+The container bounds the commit at the build-poll horizon (`ops.OwnEditCommitBudget`, 15 minutes),
+and a client that asked for progress hears that zcp is committing and that the checks run, then
+every 30 seconds that they still run. A check that refuses, or runs past the bound, commits nothing:
+the files stay staged, and the reply gives the check's reason (the tail of its output) beside the
+exact command to commit them once it is fixed. Where each branch is one change the person merges
+(HQ, §10.10), the commit rides with the branch's change apart from the person's own commits, and
+once merged `main` carries it, so no branch cut from `main` needs the edit again. zcp commits
+nothing, and says what to commit with the command, when the checkout is on `main` or `master` —
+only a merged change moves it, and a commit there could not be pushed — when one of the files held
+uncommitted lines before zcp's edit, on a detached HEAD, or when git or a commit check refuses
 (`TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn`,
+`TestDeploy_ZcpsOwnCommit_SaysTheCommitChecksRunBeforeThePush`,
 `TestDevServer_TheMoveOntoTheSupervisor_CommitsBothFilesOnTheWorkBranch`,
-`TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp`). Left uncommitted, such a file blocks
-a checkout of every branch that changes it and ships with every deploy from outside git.
+`TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp`,
+`TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing`). Left uncommitted, such a file blocks a
+checkout of every branch that changes it and ships with every deploy from outside git.
 
 **Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
 
