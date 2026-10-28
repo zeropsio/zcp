@@ -33,7 +33,7 @@ func TestFetchLogs_Success(t *testing.T) {
 		{Timestamp: recentTS(-60), Severity: "info", Facility: "local0", Message: "ready"},
 	})
 
-	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 100, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestFetchLogs_ServiceNotFound(t *testing.T) {
 
 	fetcher := platform.NewMockLogFetcher()
 
-	_, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "missing", "", "", 100, "")
+	_, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "missing", "", "", "", 100, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -81,7 +81,7 @@ func TestFetchLogs_EmptyResult(t *testing.T) {
 
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
 
-	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 100, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestFetchLogs_HasMore(t *testing.T) {
 
 	fetcher := platform.NewMockLogFetcher().WithEntries(entries)
 
-	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 100, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestFetchLogs_HasMore_ExactBoundary(t *testing.T) {
 
 	fetcher := platform.NewMockLogFetcher().WithEntries(entries)
 
-	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 100, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestFetchLogs_InvalidSince(t *testing.T) {
 
 	fetcher := platform.NewMockLogFetcher()
 
-	_, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "badformat", 100, "")
+	_, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "badformat", 100, "")
 	if err == nil {
 		t.Fatal("expected error for bad since format")
 	}
@@ -183,7 +183,7 @@ func TestFetchLogs_DefaultLimit(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
 
 	// limit=0 should default to 100
-	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 0, "")
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 0, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestFetchLogs_EmptyResultEnrichment(t *testing.T) {
 				})
 			}
 			fetcher := platform.NewMockLogFetcher() // no entries → empty
-			result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+			result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", "", 100, "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -259,7 +259,7 @@ func TestFetchLogs_LimitKeepsTheNewestLines(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1"}}).
 		WithLogAccess(&platform.LogAccess{URL: "https://logs.example.com"})
 
-	result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", 100, "")
+	result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", "", 100, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestFetchLogs_SearchSaysWhereReadingStoppedWhenTheWindowIsCut(t *testing.T)
 				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: platform.ServiceStatusActive}}).
 				WithLogAccess(&platform.LogAccess{URL: "https://logs.example.com"})
 
-			result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", 10, "Migrat")
+			result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", "", 10, "Migrat")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
