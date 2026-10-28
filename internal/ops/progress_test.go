@@ -82,6 +82,22 @@ func testConfig() pollConfig {
 	}
 }
 
+// steppedConfig is testConfig on a clock the test drives: each wait advances
+// the poll's time by exactly its interval and fires at once, so elapsed time
+// counts polls, never wall time.
+func steppedConfig() pollConfig {
+	cfg := testConfig()
+	now := time.Unix(0, 0)
+	cfg.now = func() time.Time { return now }
+	cfg.after = func(d time.Duration) <-chan time.Time {
+		now = now.Add(d)
+		fired := make(chan time.Time, 1)
+		fired <- now
+		return fired
+	}
+	return cfg
+}
+
 func TestPollProcess_ImmediateFinish(t *testing.T) {
 	t.Parallel()
 
@@ -286,9 +302,12 @@ type appVersionSequencer struct {
 	mu       sync.Mutex
 	sequence [][]platform.AppVersionEvent
 	idx      int
+	// pollDelay is wall time each poll takes, standing in for a loaded machine.
+	pollDelay time.Duration
 }
 
 func (s *appVersionSequencer) SearchAppVersions(_ context.Context, _ string, _ int) ([]platform.AppVersionEvent, error) {
+	time.Sleep(s.pollDelay)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.idx >= len(s.sequence) {
@@ -394,9 +413,12 @@ func TestPollBuild_FullLifecycleThroughActive(t *testing.T) {
 		statusBuilding, "PREPARING_RUNTIME", "WAITING_TO_DEPLOY",
 		"DEPLOYING", statusActive,
 	)
+	// Eight polls of 10 ms each outlast the 50 ms timeout in wall time; the
+	// poll's own time comes from the test, so machine speed never decides.
+	seq.pollDelay = 10 * time.Millisecond
 	ctx := context.Background()
 
-	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, steppedConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

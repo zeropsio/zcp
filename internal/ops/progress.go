@@ -29,6 +29,24 @@ type pollConfig struct {
 	stepUpInterval  time.Duration
 	stepUpAfter     time.Duration
 	timeout         time.Duration
+	// now and after are the poll's clock (nil: the wall clock); a test drives
+	// them so a poll's timing never depends on machine speed.
+	now   func() time.Time
+	after func(time.Duration) <-chan time.Time
+}
+
+func (c pollConfig) clockNow() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+func (c pollConfig) wait(d time.Duration) <-chan time.Time {
+	if c.after == nil {
+		return time.After(d)
+	}
+	return c.after(d)
 }
 
 var defaultPollConfig = pollConfig{
@@ -86,7 +104,7 @@ func pollBuild(
 	onProgress ProgressCallback,
 	cfg pollConfig,
 ) (*platform.AppVersionEvent, error) {
-	start := time.Now()
+	start := cfg.clockNow()
 	interval := cfg.initialInterval
 
 	for {
@@ -129,7 +147,7 @@ func pollBuild(
 		// Race avoidance — see pollProcess for the full rationale. Every return
 		// path in this loop runs BEFORE onProgress so progress notifications are
 		// always at least one poll interval before any response on the wire.
-		elapsed := time.Since(start)
+		elapsed := cfg.clockNow().Sub(start)
 		if elapsed > cfg.timeout {
 			return latest, platform.NewPlatformError(
 				platform.ErrAPITimeout,
@@ -162,7 +180,7 @@ func pollBuild(
 		select {
 		case <-ctx.Done():
 			return latest, ctx.Err()
-		case <-time.After(interval):
+		case <-cfg.wait(interval):
 		}
 	}
 }
@@ -194,7 +212,7 @@ func pollProcess(
 	onProgress ProgressCallback,
 	cfg pollConfig,
 ) (*platform.Process, error) {
-	start := time.Now()
+	start := cfg.clockNow()
 	interval := cfg.initialInterval
 
 	for {
@@ -253,7 +271,7 @@ func pollProcess(
 			return proc, nil
 		}
 
-		elapsed := time.Since(start)
+		elapsed := cfg.clockNow().Sub(start)
 		if elapsed > cfg.timeout {
 			return nil, platform.NewPlatformError(
 				platform.ErrAPITimeout,
@@ -282,7 +300,7 @@ func pollProcess(
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(interval):
+		case <-cfg.wait(interval):
 		}
 	}
 }
