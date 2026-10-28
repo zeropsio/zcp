@@ -9,6 +9,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -158,11 +159,11 @@ func committedBeforePush(t *testing.T, c *devservertest.Container) {
 // first deploy — it says once which file and why, and lands it as a commit of
 // its own on the checkout's work branch, so the edit rides with that branch's
 // change and main carries it once the person merges it. It commits only its
-// own lines, skips the repository's commit checks (a deploy never waits on the
-// app's typecheck) and signs as zcp. On main, which only a merged change
-// moves, beside uncommitted lines of the person's in the same file, on a
-// detached HEAD, or when git refuses, it commits nothing and says what to
-// commit.
+// own lines, signs as zcp and runs the repository's commit checks — the
+// person's hooks are their policy. On main, which only a merged change moves,
+// beside uncommitted lines of the person's in the same file, on a detached
+// HEAD, or when git or a commit check refuses, it commits nothing and says what
+// to commit and why.
 func TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn(t *testing.T) {
 	t.Parallel()
 	const subject = "zcp: run setup dev under the dev-server supervisor (zcp-devsup v9.300.0)"
@@ -198,6 +199,13 @@ func TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn(t *testing.T) {
 			name:     "git refuses the commit",
 			repo:     &devservertest.Repo{Branch: "feat-x", CommitFails: "fatal: Unable to create '/var/www/.git/index.lock': File exists."},
 			wantSays: []string{`zerops.yml is not committed: the commit failed`, `index.lock`, `git commit -m '` + subject + `' -- zerops.yml`},
+		},
+		{
+			// The person's hooks are their policy: zcp's commit runs them and
+			// never bypasses one that fails.
+			name:     "a commit check of the repository refuses it",
+			repo:     &devservertest.Repo{Branch: "feat-x", HookFails: "typecheck: 3 errors in app/src/main.ts"},
+			wantSays: []string{`zerops.yml is not committed: the commit failed`, `typecheck: 3 errors in app/src/main.ts`, `git commit -m '` + subject + `' -- zerops.yml`},
 		},
 	}
 	for _, tt := range tests {
@@ -235,10 +243,13 @@ func TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn(t *testing.T) {
 				t.Fatalf("commits = %q, want exactly one", c.Git.Commits)
 			}
 			commit := c.Git.Commits[0]
-			for _, want := range []string{"--no-verify", "'zerops.yml'", "Zerops Agent", subject} {
+			for _, want := range []string{"'zerops.yml'", "Zerops Agent", subject} {
 				if !strings.Contains(commit, want) {
 					t.Errorf("zcp's commit %q lacks %q", commit, want)
 				}
+			}
+			if strings.Contains(commit, "--no-verify") {
+				t.Errorf("zcp's commit %q skips the repository's commit checks; the person's hooks are their policy", commit)
 			}
 			committedBeforePush(t, c)
 		})
@@ -271,4 +282,46 @@ func TestDevServer_TheMoveOntoTheSupervisor_CommitsBothFilesOnTheWorkBranch(t *t
 		t.Errorf("commits = %q, want one holding both files", c.Git.Commits)
 	}
 	committedBeforePush(t, c)
+}
+
+// TestDeploy_ZcpsOwnCommit_SaysTheCommitChecksRunBeforeThePush: zcp's commit
+// runs the repository's commit checks, which can take minutes; a client that
+// asked for progress hears that zcp is committing and that the checks run,
+// before the push.
+func TestDeploy_ZcpsOwnCommit_SaysTheCommitChecksRunBeforeThePush(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup, Git: &devservertest.Repo{Branch: "feat-x"}}
+	srv := ownEditDeployServer(t, c, false)
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(t.Context(), st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	var mu sync.Mutex
+	var said []string
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, &mcp.ClientOptions{
+		ProgressNotificationHandler: func(_ context.Context, req *mcp.ProgressNotificationClientRequest) {
+			mu.Lock()
+			defer mu.Unlock()
+			said = append(said, req.Params.Message)
+		},
+	})
+	session, err := client.Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	params := &mcp.CallToolParams{Name: "zerops_deploy", Arguments: map[string]any{"targetService": "appdev", "setup": "dev"}}
+	params.SetProgressToken("deploy-1")
+	result, err := session.CallTool(t.Context(), params)
+	if err != nil || result.IsError {
+		t.Fatalf("zerops_deploy: %v %+v", err, result)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	const want = "committing zerops.yml on branch feat-x as a commit of zcp's own: the repository's commit checks run first"
+	if !slices.Contains(said, want) {
+		t.Errorf("progress said %q, want %q", said, want)
+	}
 }

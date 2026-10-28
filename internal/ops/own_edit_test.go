@@ -39,9 +39,11 @@ func (ownEditShell) ExecSSHBackground(context.Context, string, string, time.Dura
 // TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp runs zcp's read
 // and commit of its own edit against a real repository (docs/spec-mate.md
 // §2.8a.2): the read names the branch and which of the asked-about files hold
-// uncommitted changes; the commit holds exactly zcp's files — a new one
-// included — signed as zcp, past a commit check that would refuse it, and
-// leaves the person's own staged and unstaged work as it was.
+// uncommitted changes; the commit runs the repository's commit checks — the
+// person's hooks are their policy — and a check that refuses leaves nothing
+// committed, with its reason; once the checks pass the commit holds exactly
+// zcp's files — a new one included — signed as zcp, and leaves the person's
+// own staged and unstaged work as it was.
 func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -55,17 +57,19 @@ func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	hook := func(body string) {
+		t.Helper()
+		write(".git/hooks/pre-commit", "#!/bin/sh\n"+body)
+		if err := os.Chmod(filepath.Join(root, ".git/hooks/pre-commit"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	origintest.Git(t, root, "init", "-q", "-b", "feat-x")
 	write("zerops.yaml", "zerops:\n  - setup: dev\n")
 	write("app.txt", "app\n")
 	origintest.Git(t, root, "add", "-A")
 	origintest.Git(t, root, "commit", "-q", "-m", "app")
-	// The repository's commit check refuses every commit: zcp's commit holds
-	// only its own lines and never runs it.
-	write(".git/hooks/pre-commit", "#!/bin/sh\necho typecheck failed >&2\nexit 1\n")
-	if err := os.Chmod(filepath.Join(root, ".git/hooks/pre-commit"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	first := origintest.Git(t, root, "rev-parse", "HEAD")
 	// The person's own work: an unstaged change and a staged new file.
 	write("app.txt", "app, changed\n")
 	write("staged.txt", "staged\n")
@@ -82,13 +86,32 @@ func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
 
 	write("zerops.yaml", "zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n")
 	write(".zcp/dev-servers.json", `{"version":1,"servers":[]}`+"\n")
-	sha, err := CommitOwnEdit(ctx, ssh, "appdev", "", []string{"zerops.yaml", ".zcp/dev-servers.json"}, "zcp: run setup dev under the dev-server supervisor", "Only zcp's lines.")
+	paths := []string{"zerops.yaml", ".zcp/dev-servers.json"}
+	const subject = "zcp: run setup dev under the dev-server supervisor"
+
+	// A commit check that refuses: nothing is committed, and its reason is
+	// the answer.
+	hook("echo 'typecheck: 3 errors in app/src/main.ts' >&2\nexit 1\n")
+	if _, err := CommitOwnEdit(ctx, ssh, "appdev", "", paths, subject, "Only zcp's lines."); err == nil || !strings.Contains(err.Error(), "typecheck: 3 errors in app/src/main.ts") {
+		t.Fatalf("CommitOwnEdit past a refusing commit check = %v, want its reason", err)
+	}
+	if head := origintest.Git(t, root, "rev-parse", "HEAD"); head != first {
+		t.Fatalf("a refusing commit check let a commit through: HEAD %s, was %s", head, first)
+	}
+
+	// Checks that pass run, and the commit goes through.
+	hook("touch .git/zcp-hook-ran\n")
+	sha, err := CommitOwnEdit(ctx, ssh, "appdev", "", paths, subject, "Only zcp's lines.")
 	if err != nil {
 		t.Fatalf("CommitOwnEdit: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git/zcp-hook-ran")); err != nil {
+		t.Errorf("the repository's commit check did not run for zcp's commit: %v", err)
 	}
 	if head := origintest.Git(t, root, "rev-parse", "--short", "HEAD"); sha == "" || !strings.HasPrefix(head, sha) {
 		t.Errorf("sha = %q, HEAD = %q", sha, head)
 	}
+
 	files := strings.Fields(origintest.Git(t, root, "show", "--name-only", "--format=", "HEAD"))
 	slices.Sort(files)
 	if want := []string{".zcp/dev-servers.json", "zerops.yaml"}; !slices.Equal(files, want) {

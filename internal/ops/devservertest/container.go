@@ -125,6 +125,10 @@ type Repo struct {
 	Commits []string
 	// CommitFails, when set, is the error git ends a commit with.
 	CommitFails string
+	// HookFails, when set, is the output of the repository's pre-commit
+	// check, which refuses every commit; a commit with --no-verify skips it,
+	// as git does.
+	HookFails string
 }
 
 // SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
@@ -298,6 +302,9 @@ func (c *Container) ownEditBase() string {
 func (c *Container) commitOwnEdit(command string) ([]byte, error) {
 	if c.Git == nil {
 		return []byte("fatal: not a git repository"), errors.New("exit status 128")
+	}
+	if c.Git.HookFails != "" && !strings.Contains(command, "--no-verify") {
+		return []byte(c.Git.HookFails), &platform.SSHExecError{Output: c.Git.HookFails, Err: errors.New("exit status 1")}
 	}
 	if c.Git.CommitFails != "" {
 		return []byte(c.Git.CommitFails), &platform.SSHExecError{Output: c.Git.CommitFails, Err: errors.New("exit status 1")}
