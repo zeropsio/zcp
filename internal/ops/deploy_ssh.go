@@ -414,7 +414,7 @@ func deploySSH(
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
 		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty,
-		warnings:   withUploadWarning(stageMain.withNote(warnings, versionName, dirty), upload.size),
+		warnings:   withUploadWarning(stageMain.withNote(warnings, versionName, dirty), upload),
 		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toPool: toPool, poolLease: poolLease,
 		upload: upload.size,
 	}

@@ -72,23 +72,23 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 			within = "within " + upload.budget.String()
 		}
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s %s %s %s; the push was stopped and started no build",
-			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload.size), within)
+			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload), within)
 		pe.Suggestion = uploadUnfinishedSuggestion
 	case errors.Is(sshErr.Err, context.DeadlineExceeded):
 		// The ssh client was stopped at its ceiling, not the remote command: a
 		// push stopped before zcli said it was deploying is ended by stopPush.
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s timed out: it %s %s; the push was stopped and started no build",
-			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload.size))
+			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload))
 		pe.Suggestion = uploadUnfinishedSuggestion
 	case errors.Is(sshErr.Err, context.Canceled):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s was cancelled before it finished uploading %s; the push was stopped and started no build",
-			sourceService, targetService, uploadWhat(upload.size))
+			sourceService, targetService, uploadWhat(upload))
 		pe.Suggestion = "Nothing is building from this deploy. Deploy again when ready."
 	case strings.Contains(output, zcliClosedPipe):
 		// zcli's upload connection closed while it still sent the package;
 		// the signal transport:zcli-upload-closed says what to try.
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: the connection carrying the upload of %s closed before it was sent; no build started:\n%s",
-			sourceService, targetService, uploadWhat(upload.size), lastLines(output, 5))
+			sourceService, targetService, uploadWhat(upload), lastLines(output, 5))
 		pe.Suggestion = "Check the failureClassification for what to try."
 	case strings.Contains(exitMsg, "signal: killed"):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s killed (likely OOM)", sourceService, targetService)

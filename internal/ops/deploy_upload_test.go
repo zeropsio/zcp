@@ -76,8 +76,8 @@ func TestBuildSSHCommand_MeasuresWhatTheUploadCarries(t *testing.T) {
 			if size.Bytes-size.UntrackedBytes != tracked {
 				t.Errorf("tracked bytes = %d, want %d (export-ignored fixtures/ left out)", size.Bytes-size.UntrackedBytes, tracked)
 			}
-			if size.UntrackedBytes < 512<<10 || size.UntrackedBytes >= 1<<20 {
-				t.Errorf("untracked bytes = %d, want about 512 KiB (notes/, never the ignored dist/)", size.UntrackedBytes)
+			if size.UntrackedBytes != 512<<10 {
+				t.Errorf("untracked bytes = %d, want exactly 512 KiB, the files' length (notes/, never the ignored dist/)", size.UntrackedBytes)
 			}
 			if size.Files != 4 {
 				t.Errorf("files = %d, want the 4 tracked files the archive carries", size.Files)

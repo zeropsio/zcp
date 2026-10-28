@@ -72,7 +72,7 @@ func TestBuildSSHCommand_MeasurementFails_PushGoesOnUnmeasured(t *testing.T) {
 }
 
 // TestBuildSSHCommand_MeasurementHangs_PushGoesOnWithinItsBound: a
-// measurement that hangs (its du never returns) is given up at its bound, and
+// measurement that hangs (its ls never returns) is given up at its bound, and
 // the push goes on right then, waited for by the unmeasured default.
 func TestBuildSSHCommand_MeasurementHangs_PushGoesOnWithinItsBound(t *testing.T) {
 	t.Parallel()
@@ -84,7 +84,7 @@ func TestBuildSSHCommand_MeasurementHangs_PushGoesOnWithinItsBound(t *testing.T)
 			t.Parallel()
 			r := newPushRig(t, "echo 'Deploying service'\n")
 			r.shell = shell
-			rigTool(t, r, "du", "exec sleep 8\n")
+			rigTool(t, r, "ls", "exec sleep 30\n")
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			start := time.Now()
@@ -93,8 +93,8 @@ func TestBuildSSHCommand_MeasurementHangs_PushGoesOnWithinItsBound(t *testing.T)
 			if code != 0 || !isSSHBuildTriggered(out) {
 				t.Fatalf("push = exit %d, want zcli run to its upload: %s", code, out)
 			}
-			if took > 6*time.Second {
-				t.Errorf("push with a hung measurement took %s, want it on its way soon after the 2 s bound", took)
+			if took > 15*time.Second {
+				t.Errorf("push with a hung measurement took %s, want it on its way soon after the 2 s bound, long before the 30 s hang ends", took)
 			}
 			report, _ := splitUploadReport(out)
 			if report.unmeasured != "timeout" || report.budget != 7*time.Second {
