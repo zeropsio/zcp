@@ -82,13 +82,12 @@ type originRead struct {
 type originReadsKey struct{}
 
 // withOriginReads gives ctx a tool call's origin reads, keeping the ones ctx
-// already carries, and answers them.
-func withOriginReads(ctx context.Context) (context.Context, *originReads) {
-	if r, ok := ctx.Value(originReadsKey{}).(*originReads); ok {
-		return ctx, r
+// already carries.
+func withOriginReads(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(originReadsKey{}).(*originReads); ok {
+		return ctx
 	}
-	r := &originReads{reads: map[string]originRead{}}
-	return context.WithValue(ctx, originReadsKey{}, r), r
+	return context.WithValue(ctx, originReadsKey{}, &originReads{reads: map[string]originRead{}})
 }
 
 // readPoolPartOrigin reads the origin of the part whose pair meta is keyed by

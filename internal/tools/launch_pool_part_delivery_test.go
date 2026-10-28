@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/cgi"
+	"net/http/cgi" //nolint:gosec // G504: a test serves its own fixture through git-http-backend; Go is far past 1.6.3
 	"net/http/httptest"
 	"net/url"
 	"os"

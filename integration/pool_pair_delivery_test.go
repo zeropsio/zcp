@@ -117,7 +117,7 @@ func TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH(t *testing.T) {
 	if res.IsError || !strings.Contains(text, `"status":"released"`) {
 		t.Fatalf("release of the pool-keyed pair did not tag its origin: %s", text)
 	}
-	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "-q", "v1.0.1^{commit}") //nolint:gosec // G204: a test's own git
+	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "-q", "v1.0.1^{commit}")
 	cmd.Dir = strings.TrimPrefix(origin, "file://")
 	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) == "" {
 		t.Errorf("the origin holds no v1.0.1: %v", err)

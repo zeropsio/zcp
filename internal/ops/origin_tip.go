@@ -51,19 +51,19 @@ func ReadOriginTip(ctx context.Context, remoteURL, ref, token string) (OriginTip
 		return OriginTip{}, err
 	}
 	defer s.close()
-	tip, err := s.fetchTip(ref)
+	tip, err := s.fetchTip(ctx, ref)
 	if err != nil {
 		return OriginTip{}, err
 	}
 	for _, name := range []string{"zerops.yaml", "zerops.yml"} {
-		entry, err := s.run("ls-tree", "--name-only", tip.CommitSHA, "--", name)
+		entry, err := s.run(ctx, "ls-tree", "--name-only", tip.CommitSHA, "--", name)
 		if err != nil {
 			return OriginTip{}, fmt.Errorf("list %s at %s: %w", name, tip.CommitSHA, err)
 		}
 		if strings.TrimSpace(entry) == "" {
 			continue
 		}
-		body, err := s.run("cat-file", "blob", tip.CommitSHA+":"+name)
+		body, err := s.run(ctx, "cat-file", "blob", tip.CommitSHA+":"+name)
 		if err != nil {
 			return OriginTip{}, fmt.Errorf("read %s at %s: %w", name, tip.CommitSHA, err)
 		}
@@ -83,7 +83,7 @@ func ReadOriginTags(ctx context.Context, remoteURL, pattern, token string) ([]st
 		return nil, err
 	}
 	defer s.close()
-	out, err := s.run("ls-remote", "--tags", "--", remoteURL, pattern)
+	out, err := s.run(ctx, "ls-remote", "--tags", "--", remoteURL, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("list the tags of %s: %w", s.where(), err)
 	}
@@ -105,8 +105,8 @@ func ReadOriginTags(ctx context.Context, remoteURL, pattern, token string) ([]st
 	return tags, nil
 }
 
-// TagOriginTip tags the tip of the origin's ref with the annotated tag tag —
-// by zcp's deploy identity (DeployGitIdentity), with message — and pushes it
+// TagOriginTip tags the tip of the origin's ref with an annotated tag named
+// tag — by zcp's deploy identity (DeployGitIdentity), with message — and pushes it
 // to the origin, answering the tip it tagged: the release of a pool-keyed
 // part (docs/spec-workflows.md §10 P-LP-20), whose pushed state is the
 // origin's tip itself. A tag the origin already holds is refused by the
@@ -122,22 +122,22 @@ func TagOriginTip(ctx context.Context, remoteURL, ref, tag, message, token strin
 	defer s.close()
 	// Check before mutate: a push of an identical tag object answers
 	// "up to date", so a tag the origin holds is refused by name first.
-	held, err := s.run("ls-remote", "--tags", "--", remoteURL, "refs/tags/"+tag)
+	held, err := s.run(ctx, "ls-remote", "--tags", "--", remoteURL, "refs/tags/"+tag)
 	if err != nil {
 		return OriginTip{}, fmt.Errorf("read the tags of %s: %w", s.where(), err)
 	}
 	if strings.TrimSpace(held) != "" {
 		return OriginTip{}, fmt.Errorf("tag %s on %s: %w", tag, s.where(), ErrOriginTagExists)
 	}
-	tip, err := s.fetchTip(ref)
+	tip, err := s.fetchTip(ctx, ref)
 	if err != nil {
 		return OriginTip{}, err
 	}
-	if _, err := s.run("-c", "user.name="+DeployGitIdentity.Name, "-c", "user.email="+DeployGitIdentity.Email,
+	if _, err := s.run(ctx, "-c", "user.name="+DeployGitIdentity.Name, "-c", "user.email="+DeployGitIdentity.Email,
 		"tag", "-a", "-m", message, "--", tag, tip.CommitSHA); err != nil {
 		return OriginTip{}, fmt.Errorf("tag %s at %s: %w", tag, tip.CommitSHA, err)
 	}
-	if _, err := s.run("push", "-q", "--", remoteURL, "refs/tags/"+tag+":refs/tags/"+tag); err != nil {
+	if _, err := s.run(ctx, "push", "-q", "--", remoteURL, "refs/tags/"+tag+":refs/tags/"+tag); err != nil {
 		return OriginTip{}, fmt.Errorf("push %s to %s: %w", tag, s.where(), err)
 	}
 	return tip, nil
@@ -145,7 +145,6 @@ func TagOriginTip(ctx context.Context, remoteURL, ref, tag, message, token strin
 
 // originScratch is a bare repository of zcp's own working on one origin.
 type originScratch struct {
-	ctx        context.Context
 	dir        string
 	remoteURL  string
 	token      string
@@ -161,8 +160,8 @@ func openOriginScratch(ctx context.Context, remoteURL, token string) (*originScr
 		return nil, fmt.Errorf("origin scratch repository: %w", err)
 	}
 	args, env := originTipGit(remoteURL, token)
-	s := &originScratch{ctx: ctx, dir: dir, remoteURL: remoteURL, token: token, args: args, env: env, tokenForms: originTokenForms(token)}
-	if _, err := s.run("init", "--bare", "-q"); err != nil {
+	s := &originScratch{dir: dir, remoteURL: remoteURL, token: token, args: args, env: env, tokenForms: originTokenForms(token)}
+	if _, err := s.run(ctx, "init", "--bare", "-q"); err != nil {
 		s.close()
 		return nil, fmt.Errorf("origin scratch repository: %w", err)
 	}
@@ -176,14 +175,14 @@ func (s *originScratch) where() string { return topology.RedactRepoURLCredential
 
 // fetchTip fetches ref's tip alone — depth 1, no tags — and answers its
 // commit; an absent ref is ErrOriginRefMissing.
-func (s *originScratch) fetchTip(ref string) (OriginTip, error) {
-	if _, err := s.run("fetch", "-q", "--no-tags", "--depth=1", "--", s.remoteURL, "+"+ref+":"+originTipRef); err != nil {
+func (s *originScratch) fetchTip(ctx context.Context, ref string) (OriginTip, error) {
+	if _, err := s.run(ctx, "fetch", "-q", "--no-tags", "--depth=1", "--", s.remoteURL, "+"+ref+":"+originTipRef); err != nil {
 		if strings.Contains(err.Error(), "couldn't find remote ref") {
 			return OriginTip{}, fmt.Errorf("fetch %s of %s: %w", ref, s.where(), ErrOriginRefMissing)
 		}
 		return OriginTip{}, fmt.Errorf("fetch %s of %s: %w", ref, s.where(), err)
 	}
-	sha, err := s.run("rev-parse", "--verify", originTipRef+"^{commit}")
+	sha, err := s.run(ctx, "rev-parse", "--verify", originTipRef+"^{commit}")
 	if err != nil {
 		return OriginTip{}, fmt.Errorf("read the fetched tip of %s: %w", s.where(), err)
 	}
@@ -194,8 +193,8 @@ func (s *originScratch) fetchTip(ref string) (OriginTip, error) {
 // git's own words with the token taken out in every form a remote could
 // echo it back in (originTokenForms) — git's stderr is surfaced, never the
 // credential it carried.
-func (s *originScratch) run(gitArgs ...string) (string, error) {
-	cmd := exec.CommandContext(s.ctx, "git", append(append([]string(nil), s.args...), gitArgs...)...)
+func (s *originScratch) run(ctx context.Context, gitArgs ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append(append([]string(nil), s.args...), gitArgs...)...) //nolint:gosec // G204: the git binary, an argv this file builds, no shell
 	cmd.Dir = s.dir
 	cmd.Env = s.env
 	var stdout, stderr bytes.Buffer

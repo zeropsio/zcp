@@ -62,7 +62,7 @@ func handleExport(
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	// A pool-keyed part's origin is fetched once per call (§9 E10, §10 P-LP-19).
-	ctx, _ = withOriginReads(ctx)
+	ctx = withOriginReads(ctx)
 	if client == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
