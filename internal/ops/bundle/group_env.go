@@ -193,13 +193,31 @@ var recipeAppSecretEndings = []string{"SECRET", "SALT", "PEPPER", "KEY_BASE"}
 // password, a passcode or a passphrase is someone's — a person signs in with
 // it, or another service checks it (SMTP_PASS is the mail provider's) — so no
 // random value serves it, and the name alone cannot tell the one from the
-// other: it is set by hand.
+// other: it is set by hand — but for a service's own UI sign-in
+// (recipeOwnUISignIn).
 func recipeAppSecret(key, value string) bool {
 	upper := strings.ToUpper(key)
 	if recipeThirdPartySecretName.MatchString(upper) || matchesAny(recipeExternalShapes, value) {
 		return false
 	}
-	return upper == "APP_KEY" || upper == "APP_KEYS" || hasAnySuffix(upper, recipeAppSecretEndings)
+	return upper == "APP_KEY" || upper == "APP_KEYS" || hasAnySuffix(upper, recipeAppSecretEndings) || recipeOwnUISignIn(key, value)
+}
+
+// recipeOwnUISignIn reports a service's own access credential for its own
+// UI: a name whose last word is AUTH with UI a word before it (mailpit's
+// MP_UI_AUTH), holding one basic-auth pair of a plain-word user
+// (basicAuthPair). The service checks it, so any random password serves it,
+// and left out the UI answers anyone — mailpit's shows every mail the app
+// sends, sign-up links and password resets among them, on a public
+// subdomain. A pair under any other name may be a third party's, and is set
+// by hand.
+func recipeOwnUISignIn(key, value string) bool {
+	words := recipeNameWords(key)
+	if len(words) < 2 || words[len(words)-1] != "AUTH" || !slices.Contains(words[:len(words)-1], "UI") {
+		return false
+	}
+	_, _, pair := basicAuthPair(value)
+	return pair
 }
 
 // recipeThirdPartySecretName is a secret a vendor issues under a name that

@@ -4692,9 +4692,14 @@ words that name no credential), or when its name is public by design (`NEXT_PUBL
 `*_PUBLISHABLE_KEY`) with no SECRET, PASSWORD or PRIVATE beside it, the value is no private or
 vendor key, and the platform neither flags nor masks it. Everything else stays out of the file. A
 secret the app makes and reads itself — a name ending in SECRET (not a client's or a webhook's, and
-in no vendor's format), SALT, PEPPER or KEY_BASE, or `APP_KEY`/`APP_KEYS` — is written as
+in no vendor's format), SALT, PEPPER or KEY_BASE, or `APP_KEY`/`APP_KEYS` — and a service's own
+sign-in to its own UI — one basic-auth pair of a plain-word user under a name whose last word is AUTH
+with UI before it, mailpit's `MP_UI_AUTH`, whose UI shows every mail the app sends (sign-up links,
+password resets) on a public subdomain and, left out, would answer anyone — is written as
 `<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), a `user:password`
-keeping only a plain-word user: any random value serves it, and each environment makes its own.
+keeping only a plain-word user: any random value serves it, and each environment makes its own
+(`bundle.recipeOwnUISignIn`, `TestBuildGroupRecipe_AUIsOwnSignIn_StaysGenerated`); a pair under
+any other name may be a third party's, and is set by hand.
 Every other secret a person set by hand — a vendor's key, an OAuth client's ID or secret, a
 password (a person signs in with it or another service checks it: `SMTP_PASS` is the mail
 provider's, and no name tells the one from the other), an opaque value — no random value serves,
