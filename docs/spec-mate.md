@@ -524,6 +524,16 @@ Missing worker or old-boot identity, an incompatible switch, or an incomplete re
 proof leaves the switch untouched. Status probes once, bounded by one second; a later
 ordinary status can observe late readiness. It never restarts or installs a bundle.
 
+Decision: A Mate whose process exits during an update is rolled back without waiting for the deadline.
+Decision: A Mate whose process is still running is waited for until it is ready or the deadline passes.
+
+Candidate, rollback and recovery share the readiness wait. Before each restart it records the
+unit's invocation and process-start identity. A new process with MainPID zero, a transition
+into failed, or a new unit invocation that failed or entered auto-restart ends the wait
+immediately, including a clean process exit. Stale exit status and the old process stopping
+during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
+HTTP proof and deadline remain authoritative. No startup-progress receipt is assumed.
+
 The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
 worker process identity, last proved running version and remembered failure), syncs them, and
 atomically moves `current`. Only then is the lock released and a nonblocking unit restart

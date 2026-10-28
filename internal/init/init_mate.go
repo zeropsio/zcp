@@ -267,17 +267,19 @@ func switchRunningMate(candidate mate.Manifest, release func()) error {
 		return fmt.Errorf("init Mate switch postponed: %w", errors.Join(err, cancelErr, stateErr))
 	}
 	var deadline time.Time
+	var readiness mate.RestartReadiness
 	return mate.SwitchUpdate(candidate.Version, drain.BootID, mate.SwitchHooks{
 		PreventRollback: !mate.RollbackAllowed(installed, candidate),
 		Restart: func() error {
 			release()
+			readiness = mate.ObserveRestart(context.Background())
 			deadline = time.Now().Add(mateReadyWait)
 			if err := commandRunner("sudo", "systemctl", "restart", "--no-block", "zerops@"+mate.UnitName+".service"); err != nil {
 				return fmt.Errorf("request Mate restart: %w", err)
 			}
 			return nil
 		},
-		Ready:  func(version, boot string) error { return mateWaitReady(version, boot, deadline) },
+		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, deadline) },
 		Commit: func() error { return post("commit") },
 		Cancel: func() error { return post("cancel") },
 	})

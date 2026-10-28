@@ -146,6 +146,7 @@ func runMateUpdateWorker(args []string) int {
 	// must be released: the new unit takes the same lock before its launch.
 
 	var readinessDeadline time.Time
+	var readiness mate.RestartReadiness
 	err = mate.SwitchUpdate(desired.Version, drain.BootID, mate.SwitchHooks{
 		PreventRollback: !mate.RollbackAllowed(installed, desired),
 		Restart: func() error {
@@ -153,6 +154,7 @@ func runMateUpdateWorker(args []string) int {
 				unlock()
 				locked = false
 			}
+			readiness = mate.ObserveRestart(context.Background())
 			readinessDeadline = time.Now().Add(mateUpdateStartupBudget)
 			ctx, cancel := context.WithDeadline(context.Background(), readinessDeadline)
 			defer cancel()
@@ -164,7 +166,7 @@ func runMateUpdateWorker(args []string) int {
 			}
 			return nil
 		},
-		Ready: func(version, boot string) error { return mate.WaitReady(version, boot, readinessDeadline) }, Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
+		Ready: func(version, boot string) error { return readiness.WaitReady(version, boot, readinessDeadline) }, Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
 	})
 	if err != nil {
 		return failMateUpdate(false, err.Error())
@@ -188,12 +190,14 @@ func runMateUpdateRecovery() int {
 		}
 	}()
 	var deadline time.Time
+	var readiness mate.RestartReadiness
 	err = mate.RecoverStoppedUpdate(mate.SwitchHooks{
 		Restart: func() error {
 			if locked {
 				unlock()
 				locked = false
 			}
+			readiness = mate.ObserveRestart(context.Background())
 			deadline = time.Now().Add(mateUpdateStartupBudget)
 			ctx, cancel := context.WithDeadline(context.Background(), deadline)
 			defer cancel()
@@ -205,7 +209,7 @@ func runMateUpdateRecovery() int {
 			}
 			return nil
 		},
-		Ready:  func(version, boot string) error { return mate.WaitReady(version, boot, deadline) },
+		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, deadline) },
 		Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
 	})
 	if err != nil {

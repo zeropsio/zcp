@@ -89,19 +89,29 @@ func (e *UpdateHTTPError) Error() string {
 // a boot id different from oldBoot (empty accepts any nonempty id), engine/database readiness
 // and C-4, all before deadline.
 func WaitReady(version, oldBoot string, deadline time.Time) error {
+	return waitReady(version, oldBoot, deadline, nil)
+}
+
+func waitReady(version, oldBoot string, deadline time.Time, before *readinessUnitState) error {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var lastObservation error
 	for {
+		if err := exitedReadinessUnit(ctx, before); err != nil {
+			return fmt.Errorf("readiness for %s: %w", version, err)
+		}
 		// One startup connection must not consume the whole readiness budget.
 		// The capability probe uses the same transport bound; only a factual
 		// exact-version/new-boot response can accept the candidate.
 		probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
 		lastObservation = probeReady(probeCtx, version, oldBoot)
 		probeCancel()
-		if lastObservation == nil {
+		if err := exitedReadinessUnit(ctx, before); err != nil {
+			return fmt.Errorf("readiness for %s: %w", version, err)
+		}
+		if lastObservation == nil && ctx.Err() == nil {
 			return nil
 		}
 		select {
