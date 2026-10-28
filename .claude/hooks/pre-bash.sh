@@ -80,7 +80,8 @@ if echo "$COMMAND" | grep -qE '^git\s+push'; then
     cd "$MODULE_ROOT" || exit 0
     [ -f "go.mod" ] || exit 0
 
-    TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=60s 2>&1)
+    # Per-package bound inside the hook's own 120 s (.claude/settings.json).
+    TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=100s 2>&1)
     if echo "$TEST_OUTPUT" | grep -qE 'FAIL'; then
         echo "BLOCKED: Tests failing. Fix before pushing." >&2
         echo "$TEST_OUTPUT" | grep -E 'FAIL|---' | tail -5 >&2
