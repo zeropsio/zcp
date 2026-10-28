@@ -323,7 +323,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		}
 	}
 	reader := newServiceReader(slices.Sorted(maps.Keys(projectServices)))
-	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts))
+	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities))
 	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateSubdomainLabel(inputs.MateSubdomainHost))
 	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
 
@@ -755,7 +755,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 				entry, comment := groupPoolEntry(r, priorities[r.DevHostname], source)
 				ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
 				// Its leases deploy the setup its image is.
-				readers = append(readers, tierReader{r.DevHostname, r.SetupName, r.ZeropsYAMLBody, true})
+				readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, pool: true, vault: writtenValues(r.ServiceEnvs, nil)})
 			} else {
 				halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs, devHalfFacts(r)})
 			}
@@ -775,7 +775,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 			}
 		}
 		for _, half := range halves {
-			readers = append(readers, tierReader{half.hostname, half.setup, r.ZeropsYAMLBody, false})
+			readers = append(readers, tierReader{hostname: half.hostname, setup: half.setup, body: r.ZeropsYAMLBody, vault: writtenValues(half.envs, promote)})
 			entry, entryWarnings := groupRuntimeEntry(r, half.facts, half.hostname, half.setup, policy)
 			if vault := groupVaultFields(half.envs, source, promote); len(vault) > 0 {
 				entry["vault"] = vault
@@ -795,6 +795,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		}
 		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
 		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+		// Its own variables are all the recipe reads of it.
+		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, promote)})
 	}
 	for _, m := range plan.managed {
 		if !policy.pairs && plan.mateOnly[m.Hostname] {

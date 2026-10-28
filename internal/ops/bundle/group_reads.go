@@ -13,26 +13,31 @@ import (
 
 // What a tier's runtimes read of the project's services.
 //
-// A runtime reads a service through the variables of the setup it builds —
-// the setup a tier names for it, with those of every setup it extends: a
-// `${host_key}` reference (the platform's interpolator spells `my-db` as
-// `my_db`), or the service as the host of an address on the project network
-// — right after `://` or `@`, or opening a `host:port` value, as the hostname
-// alone or `host.zerops`, and followed by what ends a hostname (`:`, `/`,
-// the end). A `-` or a `.` after it makes it another name: a subdomain URL
-// (`box-${zeropsSubdomainHost}-8080.prg1.zerops.app`) reaches the service
-// from outside, a domain is not the project's. A bare word stays a word —
-// `SMTP_HOST: mailpit` and `SANDBOX_KIND: box` read alike — so it reads
-// nothing.
+// A runtime reads a service through a variable: one of the setup it builds —
+// the setup a tier names for it, with those of every setup it extends — or
+// one of its own the tier writes as written in its vault. A variable reads
+// a service by a `${host_key}` reference (the platform's interpolator spells
+// `my-db` as `my_db`), or by the service as the host of an address on the
+// project network — right after `://` or `@`, or opening a `host:port`
+// value, as the hostname alone or `host.zerops`, and followed by what ends a
+// hostname (`:`, `/`, the end). A `-` or a `.` after it makes it another
+// name: a subdomain URL (`box-${zeropsSubdomainHost}-8080.prg1.zerops.app`)
+// reaches the service from outside, a domain is not the project's. A bare
+// word stays a word — `SMTP_HOST: mailpit` and `SANDBOX_KIND: box` read
+// alike — so it reads nothing.
 //
 // A tier has to carry what its runtimes read, or an environment made from it
 // starts an app that cannot reach it. So a tier carries the Zerops Box a
-// runtime it carries reads (GroupBox), and a read of any other service the
-// Mate's project runs that the tier does not carry refuses the whole recipe
-// (groupTierClosure): a tier on the group repository stays there. Only a
-// hostname the project runs is a service, so a project variable
-// (`${zeropsSubdomainHost}`) or a group environment's own runtime under its
-// own name never is.
+// runtime it carries reads, by either kind of variable (GroupBox) — a
+// runtime it does not carry, such as one serving the Mate itself, takes its
+// Box nowhere — and a read by a setup the tier builds of any other service
+// the Mate's project runs that the tier does not carry refuses the whole
+// recipe (groupTierClosure): a tier on the group repository stays there. A
+// runtime's own variables never refuse it — a value the composer carries
+// knowing it points nowhere until a person sets it, such as one naming the
+// Mate's dev tooling, stays a warning. Only a hostname the project runs is a
+// service, so a project variable (`${zeropsSubdomainHost}`) or a group
+// environment's own runtime under its own name never is.
 
 // serviceReader finds the services among a set of hostnames a setup's
 // variables read, its patterns built once per recipe.
@@ -133,12 +138,33 @@ func (sr *serviceReader) hostsIn(value string) []string {
 	return slices.Sorted(maps.Keys(found))
 }
 
-// tierReader is an entry of a tier that builds a setup of its pair's
-// zerops.yaml: a runtime, or a part's dev pool (pool), whose leases deploy
-// the setup its image is.
+// tierReader is an entry of a tier and what it reads with: the setup of its
+// pair's zerops.yaml the tier builds for it — a runtime's, or the one a
+// part's dev pool (pool) has its leases deploy; none for a utility, whose
+// zerops.yaml the recipe never reads — and the values of its own variables
+// the tier writes as written (writtenValues).
 type tierReader struct {
 	hostname, setup, body string
 	pool                  bool
+	vault                 []string
+}
+
+// writtenValues is the values of envs a tier writes as written, each through
+// promote (nil keeps it as it is): a secret the tier generates
+// (recipeSecret) is never written, so it names nothing.
+func writtenValues(envs []ProjectEnvVar, promote func(string) string) []string {
+	values := make([]string, 0, len(envs))
+	for _, env := range envs {
+		if secret, _ := recipeSecret(env); secret {
+			continue
+		}
+		value := env.Value
+		if promote != nil {
+			value = promote(value)
+		}
+		values = append(values, value)
+	}
+	return values
 }
 
 // groupTierClosure is each read by a reader of a tier — by the setup the tier
@@ -180,14 +206,23 @@ func tierHostnames(services []yamlItem) map[string]bool {
 	return hosts
 }
 
-// tierReads is what the readers of a tier read among sr's hostnames, by
-// hostname: the readers that read it, in the tier's order.
+// tierReads is what the readers of a tier read among sr's hostnames — through
+// the setup the tier builds for them or the variables it writes for them —
+// by hostname: the readers that read it, in the tier's order.
 func tierReads(sr *serviceReader, readers []tierReader) map[string][]string {
 	out := map[string][]string{}
+	add := func(host, reader string) {
+		if !slices.Contains(out[host], reader) {
+			out[host] = append(out[host], reader)
+		}
+	}
 	for _, reader := range readers {
 		for _, read := range sr.reads(reader.body, reader.setup) {
-			if !slices.Contains(out[read.host], reader.hostname) {
-				out[read.host] = append(out[read.host], reader.hostname)
+			add(read.host, reader.hostname)
+		}
+		for _, value := range reader.vault {
+			for _, host := range sr.hostsIn(value) {
+				add(host, reader.hostname)
 			}
 		}
 	}
@@ -224,19 +259,23 @@ func boxHostnames(boxes []GroupBox) []string {
 	return hosts
 }
 
-// boxesAnyPartReads is the Boxes some tier may carry: those a setup any tier
-// builds for a runtime reads — the dev half's, and each part's stage and
-// group-environment setup — sorted. A group environment's part never takes
-// such a Box's hostname.
-func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRuntime, parts map[string][]groupPart) []string {
-	readers := make([]tierReader, 0, 3*len(runtimes))
+// boxesAnyPartReads is the Boxes some tier may carry, sorted: those a setup
+// any tier builds for a runtime reads — the dev half's, and each part's
+// stage and group-environment setup — or a runtime's or a utility's own
+// variables do. A group environment's part never takes such a Box's
+// hostname.
+func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRuntime, parts map[string][]groupPart, utilities []GroupUtility) []string {
+	readers := make([]tierReader, 0, 3*len(runtimes)+len(utilities))
 	for _, r := range runtimes {
-		readers = append(readers, tierReader{r.DevHostname, r.SetupName, r.ZeropsYAMLBody, r.DevPool})
+		readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, vault: writtenValues(r.ServiceEnvs, nil)})
 		for _, part := range parts[r.DevHostname] {
 			readers = append(readers,
-				tierReader{r.DevHostname, part.setup, r.ZeropsYAMLBody, false},
-				tierReader{r.DevHostname, part.environmentSetup, r.ZeropsYAMLBody, false})
+				tierReader{hostname: r.DevHostname, setup: part.setup, body: r.ZeropsYAMLBody, vault: writtenValues(part.envs, nil)},
+				tierReader{hostname: r.DevHostname, setup: part.environmentSetup, body: r.ZeropsYAMLBody})
 		}
+	}
+	for _, u := range utilities {
+		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, nil)})
 	}
 	read := tierReads(sr, readers)
 	var hosts []string
@@ -262,7 +301,7 @@ func groupBoxEntry(b GroupBox, readers []string) (map[string]any, string) {
 	if b.SubdomainEnabled {
 		entry["enableSubdomainAccess"] = true
 	}
-	comment := fmt.Sprintf("A Zerops Box, which the setups of %s read. A Box can be created only in a project in region prg1, and it comes up with no base: finish its setup with `zbox setup` (zcp's zerops_import does it itself).",
+	comment := fmt.Sprintf("A Zerops Box, read by %s. A Box can be created only in a project in region prg1, and it comes up with no base: finish its setup with `zbox setup` (zcp's zerops_import does it itself).",
 		quoteAnd(readers))
 	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
 }
