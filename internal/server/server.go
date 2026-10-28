@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -68,6 +69,16 @@ type Server struct {
 	// stop ends the context New's own background work runs under (Stop);
 	// nil for a server New did not make.
 	stop context.CancelFunc
+	// recipeFollower is told of every tool call (followRecipe): a Mate's
+	// tools.RecipeFollower, nil outside a Mate.
+	recipeFollower callWatcher
+}
+
+// callWatcher is told of a tool call as it starts — its tool and raw
+// arguments — and answers what to tell it once the call answered: whether it
+// failed.
+type callWatcher interface {
+	Watch(tool string, args json.RawMessage) func(failed bool)
 }
 
 // CallCount returns the number of tool calls served during this server's lifetime.
@@ -77,7 +88,8 @@ func (s *Server) CallCount() int64 { return s.calls.Load() }
 // started off the startup path — the dev-server keeper's retire, a Mate's
 // recipe pass — and what tool calls started and returned without waiting
 // for: zerops_lease's warm creates and clones (DP-27, DP-32), each bounded by
-// its own deadline. zcp itself never waits for it — a process that ends cuts
+// its own deadline, and the recipe pass a call that changed what the recipe
+// reads asked for (tools.RecipeFollower), which Stop drops while it waits. zcp itself never waits for it — a process that ends cuts
 // it short, and status says so — but a caller that tears down what that work
 // reads or writes (the state directory, the HTTP transport) waits first, or
 // stops the server (Stop).
@@ -161,8 +173,18 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		stop:        stop,
 	}
 
+	// A Mate's group recipe follows its project after every tool call that
+	// changes what the recipe reads (tools.RecipeFollower): the pass runs off
+	// the call's path, as the server's background work under its own
+	// context, which Stop ends; its line goes to the log.
+	if follower := tools.NewRecipeFollower(background, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir, s.background.Go, func(line string) {
+		fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
+	}); follower != nil {
+		s.recipeFollower = follower
+	}
+
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), receive)
+	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), receive)
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
@@ -554,6 +576,30 @@ func (s *Server) observe() mcp.Middleware {
 			elapsed := time.Since(start)
 			s.logger.Info("tool call", "ms", elapsed.Milliseconds())
 			s.emitToolCallTelemetry(req, result, elapsed.Milliseconds())
+			return result, err
+		}
+	}
+}
+
+// followRecipe returns middleware that tells the recipe follower of every
+// tool call: as it starts, before the handler can move what the follower
+// reads, and once the handler returned, whether the call failed — an error
+// result, or none at all. The handler's answer goes back as it was; the
+// follower never waits on a pass. A server with no follower tells nothing.
+func (s *Server) followRecipe() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != methodCallTool || s.recipeFollower == nil || req == nil {
+				return next(ctx, method, req)
+			}
+			raw, ok := req.GetParams().(*mcp.CallToolParamsRaw)
+			if !ok || raw == nil {
+				return next(ctx, method, req)
+			}
+			answered := s.recipeFollower.Watch(raw.Name, raw.Arguments)
+			result, err := next(ctx, method, req)
+			ctr, isTool := result.(*mcp.CallToolResult)
+			answered(err != nil || !isTool || ctr == nil || ctr.IsError)
 			return result, err
 		}
 	}
