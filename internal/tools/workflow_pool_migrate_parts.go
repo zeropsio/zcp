@@ -330,6 +330,11 @@ func poolMigrateOwnerRefusals(stateDir, dev string, parts []poolMigratePart, byN
 	return refusals, nil
 }
 
+// poolMigrateSameRepository says whether two pairs build from one repository.
+func poolMigrateSameRepository(_, _ *workflow.ServiceMeta) bool {
+	return false
+}
+
 // poolMigratePartPool is the pool of the part whose stage is stage: the
 // stage hostname without its `stage` suffix, then `pool` (`webstage` →
 // `webpool`, `web` → `webpool`).

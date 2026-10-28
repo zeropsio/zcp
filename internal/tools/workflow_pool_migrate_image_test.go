@@ -12,6 +12,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -421,5 +422,178 @@ func TestPoolMigrateImageStep_EnvAction_LandsOnTheDeploy(t *testing.T) {
 	}
 	if next, _ := out["next"].(map[string]any); next["tool"] != "zerops_deploy" {
 		t.Fatalf("next = %v, want the image step's deploy", out["next"])
+	}
+}
+
+// poolImageSiblingPair is the pair of a monorepo's other part, moved onto its
+// pool before this one: keyed by pool beside its one stage, recording remote
+// as its origin.
+func poolImageSiblingPair(pool, stage, remote string) *workflow.ServiceMeta {
+	return &workflow.ServiceMeta{
+		Hostname:         pool,
+		Mode:             topology.PlanModeStandard,
+		Stages:           []topology.StageRef{{Hostname: stage, SetupName: stage}},
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        remote,
+		BootstrappedAt:   "2026-10-01T00:00:00Z",
+		PrimarySetupName: pool,
+		DevPool:          &workflow.DevPoolRef{ServiceID: "svc-" + pool, MigratedFrom: &workflow.MigratedDev{Hostname: strings.TrimSuffix(pool, "pool") + "dev"}},
+	}
+}
+
+// TestPoolMigrateImageStep_SiblingPartsPools_NotFindings: a monorepo whose
+// other parts moved onto pools of their own before this one keeps one
+// declaration naming each part's pool on its servers. A server naming the
+// pool of a pair that builds from the dev's own repository is that pool's
+// supervisor's to run, so the image step names the deploy; a pool pair whose
+// records name another repository, or none, proves no sibling, and a stage is
+// no pool — those servers still hold the step (Noola's runner, 2026-10-28:
+// held on its servers' `"service": "runnerpool"` for the six migrated parts'
+// servers naming apipool, edgepool, …).
+func TestPoolMigrateImageStep_SiblingPartsPools_NotFindings(t *testing.T) {
+	t.Parallel()
+	declaration := func(service string) string {
+		return `{"version": 1, "previewPortBase": 4000, "servers": [{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}, {"name": "api", "port": 8080, "command": "go run .", "service": "` + service + `"}]}`
+	}
+	tests := []struct {
+		name       string
+		sibling    *workflow.ServiceMeta
+		service    string // the api server's service
+		wantDeploy bool
+	}{
+		{
+			name:       "a pool pair recording the dev's origin, but for case and suffix",
+			sibling:    poolImageSiblingPair("apipool", "apistage", "https://github.com/Example/app/"),
+			service:    "apipool",
+			wantDeploy: true,
+		},
+		{
+			name:    "a pool pair recording another origin",
+			sibling: poolImageSiblingPair("apipool", "apistage", "https://github.com/example/other.git"),
+			service: "apipool",
+		},
+		{
+			name:    "a pool pair recording no origin",
+			sibling: poolImageSiblingPair("apipool", "apistage", ""),
+			service: "apipool",
+		},
+		{
+			name:    "the stage of a pool pair recording the dev's origin",
+			sibling: poolImageSiblingPair("apipool", "apistage", "https://github.com/example/app.git"),
+			service: "apistage",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := poolImageFixture(t, func(f *poolMigrateFixture) {
+				f.ssh.image = poolMigrateImageReadFor(poolMigrateReadyYAML(), declaration(tt.service))
+				f.services = append(f.services, poolMigratePool("apipool", "svc-apipool"), poolMigrateRuntime("apistage", "svc-apistage"))
+			})
+			if err := workflow.WriteServiceMeta(f.stateDir, tt.sibling); err != nil {
+				t.Fatalf("seed the sibling pair: %v", err)
+			}
+			out, _ := f.run(t)
+
+			if out["status"] != "step" || out["step"] != "image" {
+				t.Fatalf("status/step = %v/%v, want step/image: %v", out["status"], out["step"], out)
+			}
+			image := poolImageBlock(t, out)
+			missing := poolImageChecks(image, "missing")
+			next, _ := out["next"].(map[string]any)
+			if tt.wantDeploy {
+				if len(missing) != 0 || next["tool"] != "zerops_deploy" {
+					t.Fatalf("missing = %v, next = %v; want the deploy: the sibling part's pool runs its server (%v)", missing, next, image["missing"])
+				}
+				return
+			}
+			if next != nil {
+				t.Fatalf("next = %v, want none while the api server names no pool that runs it", next)
+			}
+			if !reflect.DeepEqual(missing, []string{ops.PoolMigrateImageService}) {
+				t.Fatalf("missing = %v, want only the service check", missing)
+			}
+			msg := fmt.Sprint(image["missing"])
+			for _, want := range []string{"api (service " + tt.service + ")", `"service": "apppool"`} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("missing %s does not name %q", msg, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPoolMigrateSameRepository_HQRecordElseOrigin pins how two pairs' records
+// prove one repository: both wired to HQ — one application's repository of
+// one name, whatever host their origins read (HQ moves hosts, and the pass
+// never rewires a pool-keyed pair) — else one origin, compared as
+// topology.SameRepoURL compares. Records that prove neither are no proof.
+func TestPoolMigrateSameRepository_HQRecordElseOrigin(t *testing.T) {
+	t.Parallel()
+	const origin = "https://hq.example/git/org-1/app-1/noola"
+	hq := func(app, repo string) *workflow.HQRepoRef { return &workflow.HQRepoRef{AppID: app, Repo: repo} }
+	pair := func(host string, ref *workflow.HQRepoRef, remote string) *workflow.ServiceMeta {
+		return &workflow.ServiceMeta{Hostname: host, HQ: ref, RemoteURL: remote}
+	}
+	tests := []struct {
+		name string
+		a, b *workflow.ServiceMeta
+		want bool
+	}{
+		{
+			name: "one HQ repository, origins on HQ's former and current host",
+			a:    pair("noola", hq("app-1", "noola"), origin),
+			b:    pair("apipool", hq("app-1", "noola"), "https://hq-former.example/git/app-1/noola.git"),
+			want: true,
+		},
+		{
+			name: "one repository name in two HQ applications",
+			a:    pair("noola", hq("app-1", "noola"), origin),
+			b:    pair("apipool", hq("app-2", "noola"), origin),
+		},
+		{
+			name: "two HQ repositories, one origin",
+			a:    pair("noola", hq("app-1", "noola"), origin),
+			b:    pair("apipool", hq("app-1", "api"), origin),
+		},
+		{
+			name: "one origin but for case and suffix",
+			a:    pair("noola", nil, "https://github.com/fxck/noola.git"),
+			b:    pair("apipool", nil, "https://github.com/FXCK/noola/"),
+			want: true,
+		},
+		{
+			name: "two origins",
+			a:    pair("noola", nil, "https://github.com/fxck/noola"),
+			b:    pair("apipool", nil, "https://github.com/fxck/other"),
+		},
+		{
+			name: "one wired to HQ, both recording one origin",
+			a:    pair("noola", hq("app-1", "noola"), origin),
+			b:    pair("apipool", nil, origin),
+			want: true,
+		},
+		{
+			name: "an HQ record naming no repository, both recording one origin",
+			a:    pair("noola", &workflow.HQRepoRef{AppID: "app-1"}, origin),
+			b:    pair("apipool", hq("app-1", "noola"), origin),
+			want: true,
+		},
+		{
+			name: "neither recording a repository",
+			a:    pair("noola", nil, ""),
+			b:    pair("apipool", nil, ""),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := poolMigrateSameRepository(tt.a, tt.b); got != tt.want {
+				t.Errorf("poolMigrateSameRepository(%s, %s) = %v, want %v", tt.a.Hostname, tt.b.Hostname, got, tt.want)
+			}
+			if got := poolMigrateSameRepository(tt.b, tt.a); got != tt.want {
+				t.Errorf("poolMigrateSameRepository(%s, %s) = %v, want %v", tt.b.Hostname, tt.a.Hostname, got, tt.want)
+			}
+		})
 	}
 }

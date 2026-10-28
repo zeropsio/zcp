@@ -128,6 +128,12 @@ type PoolMigrateImageInput struct {
 	// and nil for a single part. With them the declaration is checked to name
 	// each part's pool as its servers' service.
 	PartPools []string
+	// SiblingPools are the pools keying another pair that builds from the
+	// same repository — a monorepo's parts moved onto pools of their own
+	// before this one. A pool container's supervisor runs the entries
+	// naming its pool, so a server naming one of them is that part's, never
+	// a finding of this part's declaration.
+	SiblingPools []string
 	// InstallURL is the zcp-devsup download this zcp installs (DevsupURL),
 	// asked only when neither the pool setup nor the dev setup carries the
 	// install line; nil or "" names DevsupLatestURL.
