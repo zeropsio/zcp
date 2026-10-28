@@ -1,7 +1,8 @@
 // Tests for: ops/pool_preview_ports.go — a raise of a dev pool's
 // maxContainers past the preview ports the pool opens is refused before
-// anything is sent, and a full pool's offer to raise the maximum says it is
-// the person's call and that every new container needs its preview port.
+// anything is sent; a scale that does not raise it on a pool already past
+// them runs and says so; and a full pool's offer to raise the maximum says it
+// is the person's call and that every new container needs its preview port.
 package ops
 
 import (
@@ -181,5 +182,112 @@ func TestLeaseAcquire_FullPool_RaiseOfferIsThePersonsCallAndNeedsPreviewPorts(t 
 				t.Errorf("limits err %v: suggestion %q lacks %q", limitsErr, pe.Suggestion, want)
 			}
 		}
+	}
+}
+
+// TestScale_PoolPastThePreviewPorts_NonRaiseScalesAndSaysSo: a pool can be
+// past its preview ports already — raised before the raise was checked, or
+// outside zcp (Kara's hqpool: maxContainers 4 over ports 3001-3003, and a
+// lease in container 4 had no preview with nothing saying why). A scale of it
+// that does not raise the maximum — the same maximum again, a lowering that
+// stays past the ports, a scale that leaves the maximum alone — is no raise
+// to refuse: it is sent, and its notice leads with how many containers
+// against how many preview ports, which containers have none, and both
+// fixes: declare the ports in the pool setup's run.ports and deploy the pool,
+// or keep maxContainers at the port count. A maximum within the ports, a pool
+// zcp leases nothing from and ports zcp cannot read as one block say nothing.
+func TestScale_PoolPastThePreviewPorts_NonRaiseScalesAndSaysSo(t *testing.T) {
+	t.Parallel()
+	twoBlocks := append(httpPorts(3001, 3002), httpPorts(4001, 4002)...)
+	plainLast := append(httpPorts(3001, 3002), platform.Port{Port: 3003, Protocol: "tcp", Scheme: "tcp"})
+
+	tests := []struct {
+		name     string
+		curMax   int32
+		params   ScaleParams
+		ports    []platform.Port
+		noRecord bool
+		want     []string // empty: the notice says nothing about preview ports
+	}{
+		{
+			name: "the same maximum again, one container past the ports: named, with both fixes", curMax: 4, params: ScaleParams{MaxContainers: scaleIntPtr(4)}, ports: httpPorts(3001, 3003),
+			want: []string{"Pool 'devpool'", "maxContainers 4", "3 preview ports (3001-3003)", "Container 4 has no preview port",
+				"does not open 3004", "a lease landing there has no preview", "run.ports", "`- port: 3004` with `httpSupport: true`",
+				`zerops_deploy`, `targetService="devpool"`, "keep maxContainers at 3 or below", `zerops_scale serviceHostname="devpool" maxContainers=3`},
+		},
+		{
+			name: "the same maximum again, several containers past the ports: every one and its port is named", curMax: 5, params: ScaleParams{MaxContainers: scaleIntPtr(5)}, ports: httpPorts(3001, 3003),
+			want: []string{"maxContainers 5", "Containers 4 and 5 have no preview port", "does not open 3004 or 3005", "a lease landing in one of them",
+				"declare ports 3004 and 3005", "each as `- port: <n>` with `httpSupport: true`", "keep maxContainers at 3 or below"},
+		},
+		{
+			name: "a lowering that stays past the ports says so", curMax: 5, params: ScaleParams{MaxContainers: scaleIntPtr(4)}, ports: httpPorts(3001, 3003),
+			want: []string{"maxContainers 4", "Container 4 has no preview port"},
+		},
+		{
+			name: "a scale that leaves the maximum alone says so", curMax: 4, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: httpPorts(3001, 3003),
+			want: []string{"maxContainers 4", "Container 4 has no preview port"},
+		},
+		{
+			name: "a port declared without httpSupport opens no preview", curMax: 3, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: plainLast,
+			want: []string{"2 preview ports (3001-3002)", "Container 3", "3003", "keep maxContainers at 2 or below"},
+		},
+		{
+			name: "a single preview port", curMax: 2, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: httpPorts(3001, 3001),
+			want: []string{"only 1 preview port (3001)", "Container 2", "3002", "keep maxContainers at 1 or below"},
+		},
+		{
+			name: "a lowering to the ports says nothing", curMax: 4, params: ScaleParams{MaxContainers: scaleIntPtr(3)}, ports: httpPorts(3001, 3003),
+		},
+		{
+			name: "a pool within its ports says nothing", curMax: 3, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: httpPorts(3001, 3003),
+		},
+		{
+			name: "a pool zcp leases nothing from is not one zcp knows serves previews", curMax: 4, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: httpPorts(3001, 3003),
+			noRecord: true,
+		},
+		{
+			name: "two blocks of the same length: zcp cannot tell the preview ports", curMax: 3, params: ScaleParams{MinRAM: scaleFloatPtr(2)}, ports: twoBlocks,
+		},
+		{
+			name: "a pool declaring no port has no preview to count", curMax: 4, params: ScaleParams{MinRAM: scaleFloatPtr(2)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := previewPoolClient(tt.curMax, tt.ports)
+			stateDir := t.TempDir()
+			if !tt.noRecord {
+				recordLease(t, stateDir, testPoolHost, "svc-pool", 1, "feature")
+			}
+			swarm := &fakeSwarm{containers: containersAt(leasedAt(1), 1, 2, 3, 4, 5)}
+			deps := LeaseDeps{Client: client, ProjectID: "p1", StateDir: stateDir,
+				Swarm: func(string, string) SwarmAPI { return swarm },
+				Env:   func(string) (string, bool) { return "", false }}
+			guard := WithPoolShrinkGuard(deps, func(PoolShrink) error { return nil })
+
+			res, err := Scale(context.Background(), client, "p1", testPoolHost, tt.params, guard)
+			if err != nil {
+				t.Fatalf("Scale: %v — a scale that does not raise the maximum is never refused for preview ports", err)
+			}
+			if client.sent == nil {
+				t.Fatal("nothing was sent to the platform")
+			}
+			if len(tt.want) == 0 {
+				if strings.Contains(res.Notice, "preview port") {
+					t.Errorf("notice speaks of preview ports where zcp knows of no shortfall: %q", res.Notice)
+				}
+				return
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(res.Notice, want) {
+					t.Errorf("notice lacks %q:\n%s", want, res.Notice)
+				}
+			}
+			if !strings.HasPrefix(res.Notice, "Pool 'devpool': maxContainers") {
+				t.Errorf("the preview-port shortfall does not lead the notice:\n%s", res.Notice)
+			}
+		})
 	}
 }
