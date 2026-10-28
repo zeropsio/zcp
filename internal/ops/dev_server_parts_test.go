@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -110,24 +109,48 @@ func TestDevServers_AnotherDevServicesServers_AreNotThisDevServicesServers(t *te
 	}
 }
 
-// localCurl is a dev container whose HTTP probes really run: every command
-// that curls runs in a local sh against a local server, everything else is
-// answered by the fake container. Its PATH puts a date first that answers
-// GNU's +%s%N on every OS, as the container's coreutils do.
+// localCurl executes the production probe shell locally. Its date and curl
+// commands advance a logical clock, so a response or a deadline costs no real
+// wait and the shell's remaining-time calculation still decides the result.
 type localCurl struct {
 	*devservertest.Container
 	bin string
 }
 
-func newLocalCurl(t *testing.T, c *devservertest.Container) *localCurl {
+func newLocalCurl(t *testing.T, c *devservertest.Container, responseSeconds, stallSeconds int) *localCurl {
 	t.Helper()
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl is not installed")
-	}
 	bin := t.TempDir()
-	date := "#!/bin/sh\nif [ \"$1\" = '+%s%N' ]; then echo \"$(/bin/date +%s)000000000\"; else exec /bin/date \"$@\"; fi\n"
-	if err := os.WriteFile(filepath.Join(bin, "date"), []byte(date), 0o755); err != nil {
-		t.Fatal(err)
+	clock := shellQuote(filepath.Join(bin, "clock"))
+	write := func(name, script string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("clock", "100\n")
+	write("date", "#!/bin/sh\nnow=$(cat "+clock+"); case \"$1\" in +%s%N) echo \"${now}000000000\";; +%s) echo \"$now\";; *) exit 1;; esac\n")
+	write("curl", `#!/bin/sh
+limit=0
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --max-time ]; then shift; limit=$1; fi
+  shift
+done
+now=$(cat `+clock+`)
+if [ `+strconv.Itoa(responseSeconds)+` -le "$limit" ]; then
+  echo "$((now + `+strconv.Itoa(responseSeconds)+`))" > `+clock+`
+  printf 200
+else
+  echo "$((now + limit))" > `+clock+`
+  printf 000
+  exit 28
+fi
+`)
+	if stallSeconds > 0 {
+		seq, err := exec.LookPath("seq")
+		if err != nil {
+			t.Skip("seq is not installed")
+		}
+		write("seq", "#!/bin/sh\nnow=$(cat "+clock+"); echo \"$((now + "+strconv.Itoa(stallSeconds)+"))\" > "+clock+"\nexec "+shellQuote(seq)+" \"$@\"\n")
 	}
 	return &localCurl{Container: c, bin: bin}
 }
@@ -149,20 +172,37 @@ func (l *localCurl) ExecSSHStdin(ctx context.Context, hostname, command string, 
 	return l.ExecSSH(ctx, hostname, command)
 }
 
-// slowServer answers every request with 200 after delay; its port.
-func slowServer(t *testing.T, delay time.Duration) int {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-time.After(delay):
-			w.WriteHeader(http.StatusOK)
-		case <-r.Context().Done():
-		}
+// The logical clock proves the policy above curl. This immediate wire witness
+// retains the real curl/HTTP seam without making an assertion race a timer.
+func TestDevServer_ARealCurlResponse_PassesTheStartProbe(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
-	n, _ := strconv.Atoi(port)
-	return n
+	_, portString, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)), 0, 0)
+	if err := os.Remove(filepath.Join(ssh.bin, "curl")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.HealthOK || result.HealthStatus != 200 || result.Reason != "" {
+		t.Errorf("real curl response: healthOK=%v status=%d reason=%q, want a passing probe", result.HealthOK, result.HealthStatus, result.Reason)
+	}
 }
 
 func declaredOn(port int) string {
@@ -171,8 +211,8 @@ func declaredOn(port int) string {
 
 func TestDevServer_AFirstResponseSlowerThanTwoSeconds_PassesTheStartProbe(t *testing.T) {
 	t.Parallel()
-	port := slowServer(t, 3*time.Second)
-	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+	port := 3000
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)), 3, 0)
 
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 6})
@@ -182,12 +222,15 @@ func TestDevServer_AFirstResponseSlowerThanTwoSeconds_PassesTheStartProbe(t *tes
 	if !result.HealthOK || result.HealthStatus != 200 || result.Reason != "" {
 		t.Errorf("a server answering in 3 s within a 6 s wait: healthOK=%v status=%d reason=%q, want a passing probe", result.HealthOK, result.HealthStatus, result.Reason)
 	}
+	if result.StartMillis != 3000 {
+		t.Errorf("startMillis = %d, want 3000 from the probe clock", result.StartMillis)
+	}
 }
 
 func TestDevServer_AListenerThatAnswersSlowerThanTheWait_IsReportedSlowNotConnectionRefused(t *testing.T) {
 	t.Parallel()
-	port := slowServer(t, 10*time.Second)
-	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+	port := 3000
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)), 10, 0)
 
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 2})
@@ -207,22 +250,15 @@ func TestDevServer_AListenerThatAnswersSlowerThanTheWait_IsReportedSlowNotConnec
 // accepts is never reported refused.
 func TestDevServer_AProbeStalledPastItsWaitBeforeItsFirstAttempt_IsReportedSlowNotConnectionRefused(t *testing.T) {
 	t.Parallel()
-	seq, err := exec.LookPath("seq")
-	if err != nil {
-		t.Skip("seq is not installed")
-	}
 	for _, stall := range []string{"1"} {
 		t.Run(stall+"s", func(t *testing.T) {
 			t.Parallel()
-			port := slowServer(t, 10*time.Second)
-			ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
-			// The probe runs seq between taking its deadline and its first
-			// attempt; a seq that takes the whole 1 s wait or more is that
-			// stall.
-			stalled := "#!/bin/sh\nsleep " + stall + "\nexec " + shellQuote(seq) + " \"$@\"\n"
-			if err := os.WriteFile(filepath.Join(ssh.bin, "seq"), []byte(stalled), 0o755); err != nil {
+			port := 3000
+			stallSeconds, err := strconv.Atoi(stall)
+			if err != nil {
 				t.Fatal(err)
 			}
+			ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)), 10, stallSeconds)
 
 			result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 				DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 1})
@@ -238,8 +274,8 @@ func TestDevServer_AProbeStalledPastItsWaitBeforeItsFirstAttempt_IsReportedSlowN
 
 func TestDevServer_StatusOfAServerSlowerThanItsProbe_SaysSlowNotConnectionRefused(t *testing.T) {
 	t.Parallel()
-	port := slowServer(t, 10*time.Second)
-	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+	port := 3000
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)), 10, 0)
 
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{Action: "status", Hostname: "apidev"})

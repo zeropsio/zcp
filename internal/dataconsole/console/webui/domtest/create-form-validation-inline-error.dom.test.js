@@ -35,17 +35,17 @@ async function scenarioInvalidDocumentJSONKeepsModalOpenWithInlineError() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "es" });
-  await waitFor(() => c.document.getElementById("searchlink"), { desc: "search link render" });
+  await waitFor(c, () => c.document.getElementById("searchlink"), { desc: "search link render" });
   click(c.document.getElementById("searchlink"));
-  await waitFor(() => c.document.getElementById("adddoc"), { desc: "add document button render" });
+  await waitFor(c, () => c.document.getElementById("adddoc"), { desc: "add document button render" });
   click(c.document.getElementById("adddoc"));
-  await waitFor(() => c.document.getElementById("docbody"), { desc: "add-document form render" });
+  await waitFor(c, () => c.document.getElementById("docbody"), { desc: "add-document form render" });
 
   c.document.getElementById("docbody").value = "{bad";
   click(c.document.getElementById("modalok"));
-  await waitFor(() => /json/i.test(errText(c)), { desc: "inline validation error renders for invalid JSON" });
+  await waitFor(c, () => /json/i.test(errText(c)), { desc: "inline validation error renders for invalid JSON" });
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "the modal stays open on invalid JSON, never a silent success-looking close");
   assert.strictEqual(c.document.getElementById("docbody").value, "{bad", "the typed (invalid) JSON is preserved in the textarea");
   assert.strictEqual(createCalls.length, 0, "no create request is sent for invalid JSON");
@@ -54,8 +54,8 @@ async function scenarioInvalidDocumentJSONKeepsModalOpenWithInlineError() {
   // Correct it -- a valid create still closes the modal normally.
   c.document.getElementById("docbody").value = '{"title":"ok"}';
   click(c.document.getElementById("modalok"));
-  await waitFor(() => createCalls.length === 1, { desc: "a valid JSON body sends the create request" });
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes on a valid create" });
+  await waitFor(c, () => createCalls.length === 1, { desc: "a valid JSON body sends the create request" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes on a valid create" });
   c.close();
 }
 
@@ -74,15 +74,15 @@ async function scenarioCreateKeyValidationKeepsModalOpen() {
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
   const w = c.window;
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.getElementById("createkeylink"), { desc: "add key link render" });
+  await waitFor(c, () => c.document.getElementById("createkeylink"), { desc: "add key link render" });
 
   // (a) blank name.
   click(c.document.getElementById("createkeylink"));
-  await waitFor(() => c.document.getElementById("kvname"), { desc: "create-key form render" });
+  await waitFor(c, () => c.document.getElementById("kvname"), { desc: "create-key form render" });
   click(c.document.getElementById("modalok"));
-  await waitFor(() => /name/i.test(errText(c)), { desc: "inline error for a blank name" });
+  await waitFor(c, () => /name/i.test(errText(c)), { desc: "inline error for a blank name" });
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "a blank key name keeps the modal open");
   assert.strictEqual(createCalls.length, 0, "no create request for a blank name");
 
@@ -90,9 +90,9 @@ async function scenarioCreateKeyValidationKeepsModalOpen() {
   c.document.getElementById("kvname").value = "h1";
   c.document.getElementById("kvtype").value = "hash";
   c.document.getElementById("kvtype").dispatchEvent(new w.Event("change", { bubbles: true }));
-  await waitFor(() => c.document.getElementById("kvfield"), { desc: "hash field input appears" });
+  await waitFor(c, () => c.document.getElementById("kvfield"), { desc: "hash field input appears" });
   click(c.document.getElementById("modalok"));
-  await waitFor(() => /field/i.test(errText(c)), { desc: "inline error for a missing hash field" });
+  await waitFor(c, () => /field/i.test(errText(c)), { desc: "inline error for a missing hash field" });
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "a missing hash field keeps the modal open");
   assert.strictEqual(createCalls.length, 0, "no create request for a missing hash field");
   assert.strictEqual(c.document.getElementById("kvname").value, "h1", "typed input survives the rejected validation");
@@ -100,19 +100,19 @@ async function scenarioCreateKeyValidationKeepsModalOpen() {
   // (c) zset type, non-numeric score -- then correct it and succeed.
   c.document.getElementById("kvtype").value = "zset";
   c.document.getElementById("kvtype").dispatchEvent(new w.Event("change", { bubbles: true }));
-  await waitFor(() => c.document.getElementById("kvscore"), { desc: "zset score input appears" });
+  await waitFor(c, () => c.document.getElementById("kvscore"), { desc: "zset score input appears" });
   c.document.getElementById("kvfield").value = "m1";
   c.document.getElementById("kvscore").value = "not-a-number";
   click(c.document.getElementById("modalok"));
-  await waitFor(() => /numeric|score/i.test(errText(c)), { desc: "inline error for a non-numeric score" });
+  await waitFor(c, () => /numeric|score/i.test(errText(c)), { desc: "inline error for a non-numeric score" });
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "a non-numeric score keeps the modal open");
   assert.strictEqual(createCalls.length, 0, "no create request for a non-numeric score");
 
   c.document.getElementById("kvscore").value = "4.5";
   click(c.document.getElementById("modalok"));
-  await waitFor(() => createCalls.length === 1, { desc: "a corrected, valid submission sends the create request" });
+  await waitFor(c, () => createCalls.length === 1, { desc: "a corrected, valid submission sends the create request" });
   assert.strictEqual(createCalls[0].score, 4.5);
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes once the submission is valid" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes once the submission is valid" });
   c.close();
 }
 

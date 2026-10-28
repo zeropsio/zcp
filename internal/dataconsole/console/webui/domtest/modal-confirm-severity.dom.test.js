@@ -33,13 +33,13 @@ async function scenarioDeleteRowConfirmIsDanger() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .rowdel"), { desc: "row-delete button render" });
+  await waitFor(c, () => c.document.querySelector("#content .rowdel"), { desc: "row-delete button render" });
   click(c.document.querySelector("#content .rowdel"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
   assert.ok(isDanger(c), "deleting a row is destructive -- Confirm carries .danger");
   c.close();
 }
@@ -60,13 +60,13 @@ async function scenarioInsertRowConfirmIsPrimary() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("insertrow"), { desc: "insert-row button render" });
+  await waitFor(c, () => c.document.getElementById("insertrow"), { desc: "insert-row button render" });
   click(c.document.getElementById("insertrow"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "insert-row modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "insert-row modal renders" });
   assert.ok(!isDanger(c), "inserting a row is a create -- Confirm does NOT carry .danger");
   c.close();
 }
@@ -83,11 +83,11 @@ async function scenarioAddKeyConfirmIsPrimary() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.getElementById("createkeylink"), { desc: "add key link render" });
+  await waitFor(c, () => c.document.getElementById("createkeylink"), { desc: "add key link render" });
   click(c.document.getElementById("createkeylink"));
-  await waitFor(() => c.document.getElementById("kvname"), { desc: "create-key form renders" });
+  await waitFor(c, () => c.document.getElementById("kvname"), { desc: "create-key form renders" });
   assert.ok(!isDanger(c), "adding a key is a create -- Confirm does NOT carry .danger");
   c.close();
 }
@@ -105,13 +105,13 @@ async function scenarioOverwriteBlobSaveConfirmIsDanger() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("saveblob"), { desc: "save button render" });
+  await waitFor(c, () => c.document.getElementById("saveblob"), { desc: "save button render" });
   click(c.document.getElementById("saveblob"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "overwrite confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "overwrite confirm modal renders" });
   assert.ok(isDanger(c), "overwriting a blob on Save is destructive -- Confirm carries .danger");
   c.close();
 }
@@ -132,22 +132,22 @@ async function scenarioRenamePromptPrimaryThenNestedConfirmDanger() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("renameblob"), { desc: "rename button render" });
+  await waitFor(c, () => c.document.getElementById("renameblob"), { desc: "rename button render" });
   click(c.document.getElementById("renameblob"));
-  await waitFor(() => c.document.getElementById("modalinput"), { desc: "rename prompt modal renders" });
+  await waitFor(c, () => c.document.getElementById("modalinput"), { desc: "rename prompt modal renders" });
   assert.ok(!isDanger(c), "the rename PROMPT (typing a new name) is not destructive -- Confirm does NOT carry .danger");
 
   c.document.getElementById("modalinput").value = "new.txt";
   click(c.document.getElementById("modalok"));
   // See nested-confirm-epoch.dom.test.js: the prompt's OK synchronously chains
-  // into the nested confirmAction's showModal(), but a waitFor() that could
+  // into the nested confirmAction's showModal(), but a waitFor(c, ) that could
   // resolve on its own first (synchronous) poll would race ahead of the outer
   // completion -- a real macrotask delay lets the full chain settle first.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await c.settled();
   assert.ok(/Rename.*old\.txt.*new\.txt/.test(c.document.getElementById("modaltitle").textContent || ""), "the nested rename confirm is showing");
   assert.ok(isDanger(c), "the nested rename confirm deletes the source (COPY+DELETE) -- it stays .danger");
   c.close();
@@ -169,18 +169,18 @@ async function scenarioSetTTLPromptAndNestedConfirmBothPrimary() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("setttl"), { desc: "Set TTL button render" });
+  await waitFor(c, () => c.document.getElementById("setttl"), { desc: "Set TTL button render" });
   click(c.document.getElementById("setttl"));
-  await waitFor(() => c.document.getElementById("modalinput"), { desc: "TTL prompt modal renders" });
+  await waitFor(c, () => c.document.getElementById("modalinput"), { desc: "TTL prompt modal renders" });
   assert.ok(!isDanger(c), "the Set TTL PROMPT (typing seconds) is not destructive -- Confirm does NOT carry .danger");
 
   c.document.getElementById("modalinput").value = "120";
   click(c.document.getElementById("modalok"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await c.settled();
   assert.ok(/Set TTL 120s/.test(c.document.getElementById("modaltitle").textContent || ""), "the nested TTL confirm is showing");
   assert.ok(!isDanger(c), "setting a TTL is not destructive -- the nested EXPIRE confirm does NOT carry .danger");
   c.close();
@@ -201,13 +201,13 @@ async function scenarioPersistTTLConfirmIsPrimary() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("clrttl"), { desc: "Persist button render" });
+  await waitFor(c, () => c.document.getElementById("clrttl"), { desc: "Persist button render" });
   click(c.document.getElementById("clrttl"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "persist confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "persist confirm modal renders" });
   assert.ok(!isDanger(c), "Persist (clear TTL) is not destructive -- Confirm does NOT carry .danger");
   c.close();
 }

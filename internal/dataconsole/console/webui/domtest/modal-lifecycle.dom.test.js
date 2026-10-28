@@ -33,20 +33,20 @@ async function scenarioRejectKeepsModalOpenThenSucceeds() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("insertrow"), { desc: "insert row button render" });
+  await waitFor(c, () => c.document.getElementById("insertrow"), { desc: "insert row button render" });
   click(c.document.getElementById("insertrow"));
-  await waitFor(() => c.document.querySelector('#modalbody input[data-col="val"]'), { desc: "insert-row form render" });
+  await waitFor(c, () => c.document.querySelector('#modalbody input[data-col="val"]'), { desc: "insert-row form render" });
 
   const input = c.document.querySelector('#modalbody input[data-col="val"]');
   input.value = "typed-value";
   const okBtn = c.document.getElementById("modalok");
   const cancelBtn = c.document.getElementById("modalcancel");
   click(okBtn);
-  await waitFor(() => rowCalls.length === 1, { desc: "insert request sent" });
+  await waitFor(c, () => rowCalls.length === 1, { desc: "insert request sent" });
 
   // Mid-flight: both buttons disabled, Confirm relabeled, modal still open.
   assert.strictEqual(okBtn.disabled, true, "Confirm is disabled while the write is in flight");
@@ -56,7 +56,7 @@ async function scenarioRejectKeepsModalOpenThenSucceeds() {
 
   // Reject -- a 400 ErrInvalid.
   resolvers[0](jsonRoute({ code: "invalid", message: "bad" }, { status: 400 }));
-  await waitFor(() => !okBtn.disabled, { desc: "buttons re-enable after the rejection" });
+  await waitFor(c, () => !okBtn.disabled, { desc: "buttons re-enable after the rejection" });
 
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "a rejected write keeps the modal open");
   assert.strictEqual(c.document.querySelector('#modalbody input[data-col="val"]').value, "typed-value", "the typed input survives a rejected write");
@@ -68,10 +68,10 @@ async function scenarioRejectKeepsModalOpenThenSucceeds() {
 
   // Retry -- this time it succeeds; the SAME typed value is resent.
   click(okBtn);
-  await waitFor(() => rowCalls.length === 2, { desc: "retry insert request sent" });
+  await waitFor(c, () => rowCalls.length === 2, { desc: "retry insert request sent" });
   assert.ok(/typed-value/.test(rowCalls[1]), "the retry resends the preserved typed value");
   resolvers[1](jsonRoute({ statement: "INSERT", affected: 1, key: { id: 9 } }));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes on success" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "modal closes on success" });
   c.close();
 }
 
@@ -88,16 +88,16 @@ async function scenarioTimeoutClosesWithWarnToast() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("saveblob"), { desc: "save button render" });
+  await waitFor(c, () => c.document.getElementById("saveblob"), { desc: "save button render" });
   click(c.document.getElementById("saveblob"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "overwrite confirm modal render" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "overwrite confirm modal render" });
   click(c.document.getElementById("modalok"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "timeout closes the modal (not a failure, U-14)" });
-  await waitFor(() => c.document.querySelector(".toast.warn"), { desc: "the existing warn toast still fires on timeout" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "timeout closes the modal (not a failure, U-14)" });
+  await waitFor(c, () => c.document.querySelector(".toast.warn"), { desc: "the existing warn toast still fires on timeout" });
   c.close();
 }
 

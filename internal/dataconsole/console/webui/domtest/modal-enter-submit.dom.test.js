@@ -32,21 +32,21 @@ async function scenarioEnterOnInsertRowInputSubmits() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("insertrow"), { desc: "insert row button render" });
+  await waitFor(c, () => c.document.getElementById("insertrow"), { desc: "insert row button render" });
   click(c.document.getElementById("insertrow"));
-  await waitFor(() => c.document.querySelector('#modalbody input[data-col="val"]'), { desc: "insert-row form render" });
+  await waitFor(c, () => c.document.querySelector('#modalbody input[data-col="val"]'), { desc: "insert-row form render" });
 
   const input = c.document.querySelector('#modalbody input[data-col="val"]');
   input.value = "enter-submitted";
   const w = c.window;
   input.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-  await waitFor(() => rowCalls.length === 1, { desc: "Enter on an input submits the insert-row form" });
+  await waitFor(c, () => rowCalls.length === 1, { desc: "Enter on an input submits the insert-row form" });
   assert.ok(/enter-submitted/.test(rowCalls[0]), "the submitted body carries the typed value");
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "the modal closes on the Enter-triggered success" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "the modal closes on the Enter-triggered success" });
   c.close();
 }
 
@@ -60,30 +60,33 @@ async function scenarioEnterInTextareaDoesNotSubmitButInputDoes() {
   const createCalls = [];
   const routes = (method, p, body) => {
     if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [service], allowWrites: true });
-    if (p.startsWith("/api/tree")) return jsonRoute({ nodes: [{ name: "articles", kind: "container", path: { service: "es", segments: ["articles"] }, hasChildren: true }] });
+    if (p.startsWith("/api/tree")) {
+      const segments = JSON.parse(new URL(p, "http://localhost").searchParams.get("segs") || "[]");
+      return jsonRoute({ nodes: segments.length === 0 ? [{ name: "articles", kind: "container", path: { service: "es", segments: ["articles"] }, hasChildren: true }] : [] });
+    }
     if (method === "POST" && p === "/api/document/create") { createCalls.push(body); return jsonRoute({ id: "doc1" }); }
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "es" });
-  await waitFor(() => c.document.getElementById("searchlink"), { desc: "search link render" });
+  await waitFor(c, () => c.document.getElementById("searchlink"), { desc: "search link render" });
   click(c.document.getElementById("searchlink"));
-  await waitFor(() => c.document.getElementById("adddoc"), { desc: "add document link render" });
+  await waitFor(c, () => c.document.getElementById("adddoc"), { desc: "add document link render" });
   click(c.document.getElementById("adddoc"));
-  await waitFor(() => c.document.getElementById("docbody"), { desc: "add-document form render" });
+  await waitFor(c, () => c.document.getElementById("docbody"), { desc: "add-document form render" });
 
   const w = c.window;
   const textarea = c.document.getElementById("docbody");
   textarea.value = '{"title":"x"}';
   textarea.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.strictEqual(createCalls.length, 0, "Enter inside a <textarea> must not submit the modal form");
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "the modal is still open after Enter in the textarea");
 
   const idInput = c.document.getElementById("docid");
   idInput.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-  await waitFor(() => createCalls.length === 1, { desc: "Enter on the id INPUT submits the form" });
+  await waitFor(c, () => createCalls.length === 1, { desc: "Enter on the id INPUT submits the form" });
   c.close();
 }
 

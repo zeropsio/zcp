@@ -7,9 +7,9 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -95,37 +95,23 @@ func TestAttachRollbackInfo_NeverDeployed_StaysNil(t *testing.T) {
 	}
 }
 
-// slowAppVersionsClient wraps a platform.Client and sleeps for Delay on
-// every ListServiceAppVersions call before delegating — used to prove
-// attachRollbackInfo reads services concurrently rather than one
-// AppVersionCandidates round trip at a time.
-type slowAppVersionsClient struct {
+// barrierAppVersionsClient holds platform reads until their entry receipts
+// prove the bounded first wave overlaps.
+type barrierAppVersionsClient struct {
 	platform.Client
-	delay time.Duration
+	barrier *readBarrier
 }
 
-func (c *slowAppVersionsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]platform.AppVersionEvent, error) {
-	select {
-	case <-time.After(c.delay):
-	case <-ctx.Done():
-		return nil, ctx.Err()
+func (c *barrierAppVersionsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]platform.AppVersionEvent, error) {
+	if err := c.barrier.enter(ctx); err != nil {
+		return nil, fmt.Errorf("app versions read barrier: %w", err)
 	}
 	return c.Client.ListServiceAppVersions(ctx, serviceID)
 }
 
-// TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently proves the
-// per-service AppVersionCandidates reads overlap instead of running one
-// at a time: 5 services each behind a ~150ms platform read finish in
-// well under 5x150ms if (and only if) they run concurrently. Concurrency
-// is bounded at attachRollbackInfoConcurrency (4), so 5 services still
-// take two waves (~2x150ms wall-clock) rather than one — the threshold
-// below sits comfortably above that 2-wave floor and well below the
-// 5x150ms serial floor, so scheduler jitter around the 2-wave boundary
-// can't flake it.
 func TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently(t *testing.T) {
 	t.Parallel()
-	const delay = 150 * time.Millisecond
-	const wantUnder = 4 * delay // serial would take 5*delay=750ms; 2 waves (bounded at attachRollbackInfoConcurrency=4) land near 2*delay=300ms
+	barrier := &readBarrier{entered: make(chan struct{}, 5), release: make(chan struct{})}
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "s1", Name: "svc1"},
@@ -139,7 +125,7 @@ func TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently(t *testing.T) {
 			{ID: "av-" + id, ServiceStackID: id, Status: platform.ServiceStatusActive, Sequence: 1},
 		})
 	}
-	client := &slowAppVersionsClient{Client: mock, delay: delay}
+	client := &barrierAppVersionsClient{Client: mock, barrier: barrier}
 	services := []workflow.ServiceSnapshot{
 		{Hostname: "svc1", RuntimeClass: topology.RuntimeDynamic},
 		{Hostname: "svc2", RuntimeClass: topology.RuntimeDynamic},
@@ -148,12 +134,18 @@ func TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently(t *testing.T) {
 		{Hostname: "svc5", RuntimeClass: topology.RuntimeDynamic},
 	}
 
-	start := time.Now()
-	attachRollbackInfo(context.Background(), services, client, "proj-1")
-	elapsed := time.Since(start)
-
-	if elapsed >= wantUnder {
-		t.Errorf("elapsed = %v, want < %v (serial reads would take >= %v)", elapsed, wantUnder, 5*delay)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		attachRollbackInfo(context.Background(), services, client, "proj-1")
+	}()
+	for range attachRollbackInfoConcurrency {
+		<-barrier.entered
+	}
+	close(barrier.release)
+	<-done
+	if peak := barrier.peak.Load(); peak != attachRollbackInfoConcurrency {
+		t.Errorf("peak concurrent reads = %d, want %d", peak, attachRollbackInfoConcurrency)
 	}
 	for _, svc := range services {
 		if svc.Rollback == nil || svc.Rollback.Active == "" {

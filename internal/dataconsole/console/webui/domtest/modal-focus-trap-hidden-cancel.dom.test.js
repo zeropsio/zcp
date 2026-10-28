@@ -45,13 +45,13 @@ async function scenarioCellViewModalNeverFocusesHiddenCancel() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "ch" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content tbody.gridbody td"), { desc: "grid cell render" });
+  await waitFor(c, () => c.document.querySelector("#content tbody.gridbody td"), { desc: "grid cell render" });
   click(c.document.querySelector("#content tbody.gridbody td"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "cell view modal opens" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "cell view modal opens" });
 
   const cancelBtn = c.document.getElementById("modalcancel");
   const okBtn = c.document.getElementById("modalok");
@@ -85,15 +85,15 @@ async function scenarioZeroFocusablesTrapsTabOnModalbox() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.getElementById("delblob"), { desc: "delete button render" });
+  await waitFor(c, () => c.document.getElementById("delblob"), { desc: "delete button render" });
   click(c.document.getElementById("delblob"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal opens" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal opens" });
   click(c.document.getElementById("modalok"));
-  await waitFor(() => resolvers.length === 1, { desc: "delete request in flight" });
+  await waitFor(c, () => resolvers.length === 1, { desc: "delete request in flight" });
 
   assert.strictEqual(c.document.getElementById("modalok").disabled, true, "precondition: OK disabled mid-flight");
   assert.strictEqual(c.document.getElementById("modalcancel").disabled, true, "precondition: Cancel disabled mid-flight");

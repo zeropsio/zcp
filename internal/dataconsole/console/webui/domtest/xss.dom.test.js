@@ -38,7 +38,7 @@ async function scenarioRailHostname() {
       : null),
   });
   c.window.__xssFired = false;
-  await waitFor(() => c.document.querySelectorAll("#services li").length > 0, { desc: "services rail render" });
+  await waitFor(c, () => c.document.querySelectorAll("#services li").length > 0, { desc: "services rail render" });
   const rail = c.document.getElementById("services");
   assertSafelyRendered(c.window, rail, "service hostname (rail)");
   assert.strictEqual(rail.querySelector("li span").textContent, XSS_PAYLOAD, "rail hostname: textContent recovers the raw value — escaping did not corrupt it");
@@ -55,7 +55,7 @@ async function scenarioTreeNodeName() {
     },
   });
   c.window.__xssFired = false;
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   const tree = c.document.getElementById("tree");
   assertSafelyRendered(c.window, tree, "tree node name");
   assert.strictEqual(tree.querySelector(".nname").textContent, XSS_PAYLOAD, "tree node name: textContent recovers the raw value");
@@ -73,9 +73,9 @@ async function scenarioGridColumnAndCell() {
     },
   });
   c.window.__xssFired = false;
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
   const grid = c.document.querySelector("#content .gridwrap");
   assertSafelyRendered(c.window, grid, "grid column/cell");
   assert.strictEqual(grid.querySelector("th").textContent, XSS_PAYLOAD, "column header: textContent recovers the raw value");
@@ -94,9 +94,9 @@ async function scenarioBlobName() {
     },
   });
   c.window.__xssFired = false;
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
+  await waitFor(c, () => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
   const toolbar = c.document.querySelector("#content .toolbar");
   assertSafelyRendered(c.window, toolbar, "blob name (toolbar)");
   assert.strictEqual(toolbar.querySelector("b").textContent, XSS_PAYLOAD, "blob name: textContent recovers the raw value");

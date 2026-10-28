@@ -40,12 +40,12 @@ function fixture(callLog) {
 async function openGrid(vscodeState) {
   const calls = [];
   const c = buildConsole({ embedded: true, vscodeState, routes: fixture(calls) });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid tbody td"), { desc: "grid" });
-  await waitFor(() => c.document.querySelector(".paginator.exact"), { desc: "exact paginator" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid tbody td"), { desc: "grid" });
+  await waitFor(c, () => c.document.querySelector(".paginator.exact"), { desc: "exact paginator" });
   return { c, calls };
 }
 
@@ -108,14 +108,14 @@ async function scenarioPointerKeyboardPersistenceAndSortIsolation() {
   assertEffectiveTableWidth(c, [230, 250, ACTION_WIDTH]);
 
   click(c.document.querySelector("th[data-column-index='0'] button.sortable"));
-  await waitFor(() => calls.some((line) => /[?&]sort=id(?:&|$)/.test(line)), { desc: "sorted relation request" });
-  await waitFor(() => c.document.querySelector("th[data-column-index='0']")?.getAttribute("aria-sort") === "ascending", { desc: "sorted relation render" });
-  await waitFor(() => c.document.querySelector("th .column-resizer")?.getAttribute("aria-valuenow") === "230", { desc: "width restored after sort render" });
+  await waitFor(c, () => calls.some((line) => /[?&]sort=id(?:&|$)/.test(line)), { desc: "sorted relation request" });
+  await waitFor(c, () => c.document.querySelector("th[data-column-index='0']")?.getAttribute("aria-sort") === "ascending", { desc: "sorted relation render" });
+  await waitFor(c, () => c.document.querySelector("th .column-resizer")?.getAttribute("aria-valuenow") === "230", { desc: "width restored after sort render" });
   assertEffectiveTableWidth(c, [230, 250, ACTION_WIDTH]);
 
   click(c.document.querySelector(".paginator .page-next"));
-  await waitFor(() => calls.some((line) => /[?&]cursor=100(?:&|$)/.test(line)), { desc: "next relation page" });
-  await waitFor(() => c.document.querySelector("th .column-resizer")?.getAttribute("aria-valuenow") === "230", { desc: "width restored after page render" });
+  await waitFor(c, () => calls.some((line) => /[?&]cursor=100(?:&|$)/.test(line)), { desc: "next relation page" });
+  await waitFor(c, () => c.document.querySelector("th .column-resizer")?.getAttribute("aria-valuenow") === "230", { desc: "width restored after page render" });
   assertEffectiveTableWidth(c, [230, 250, ACTION_WIDTH]);
 
   const persisted = c.getState();

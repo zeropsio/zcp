@@ -105,6 +105,41 @@ function buildConsole({
   const dom = new JSDOM(html, { url, runScripts: "outside-only" });
   const window = dom.window;
   const document = window.document;
+  // A marker crosses the real postMessage task queue after the current promise
+  // continuations. Count messages posted by those continuations too: if one
+  // lands behind the marker, its delivery schedules a fresh drain receipt.
+  const postMessage = window.postMessage.bind(window);
+  let pendingMessages = 0;
+  let drainQueued = false;
+  const drains = new Set();
+  function queueDrain() {
+    if (drainQueued || drains.size === 0) return;
+    drainQueued = true;
+    window.postMessage({ type: "domtest-drain" }, "*");
+  }
+  window.postMessage = (...args) => {
+    pendingMessages++;
+    return postMessage(...args);
+  };
+  window.addEventListener("message", (event) => {
+    pendingMessages--;
+    if (event.data && event.data.type === "domtest-drain") {
+      drainQueued = false;
+      if (pendingMessages === 0) {
+        const ready = Array.from(drains);
+        drains.clear();
+        for (const resolve of ready) resolve();
+        return;
+      }
+    }
+    queueDrain();
+  });
+  const settled = () => new Promise((resolve) => { drains.add(resolve); queueDrain(); });
+  const progress = new window.EventTarget();
+  const signal = () => progress.dispatchEvent(new window.Event("progress"));
+  // Messages and transport entry/completion are receipts even when a test is
+  // waiting for a held request rather than a rendered DOM mutation.
+  window.addEventListener("message", () => queueMicrotask(signal));
   const localStorageKey = "zcp.dataconsole.layout.v1";
 
   if (localStorageState !== undefined) {
@@ -114,7 +149,10 @@ function buildConsole({
   window.fetch = async (input, init) => {
     const u = new window.URL(String(input), window.location.href);
     const method = (init && init.method) || "GET";
-    const rr = (await routes(method, u.pathname + u.search, init && init.body)) || notFound(method, u.pathname + u.search);
+    const pending = routes(method, u.pathname + u.search, init && init.body);
+    signal();
+    const rr = (await pending) || notFound(method, u.pathname + u.search);
+    signal();
     return fakeFetchResponse(window, rr);
   };
 
@@ -129,8 +167,12 @@ function buildConsole({
       },
       postMessage: (msg) => {
         rpcLog.push(msg);
+        signal();
         if (msg.type !== "dc-rpc") return; // dc-ready / dc-write-mode / dc-download / dc-upload: no default host behavior
-        Promise.resolve(routes(msg.method || "GET", msg.path, msg.body)).then((rr) => {
+        const pending = routes(msg.method || "GET", msg.path, msg.body);
+        signal();
+        Promise.resolve(pending).then((rr) => {
+          signal();
           const resolved = rr || notFound(msg.method || "GET", msg.path);
           const bytes = resolved.bodyBytes || Buffer.alloc(0);
           window.postMessage({
@@ -155,6 +197,8 @@ function buildConsole({
     window,
     document,
     rpcLog,
+    progress,
+    settled,
     getState: () => webviewState,
     getLocalStorageState: () => {
       const raw = window.localStorage.getItem(localStorageKey);
@@ -164,21 +208,29 @@ function buildConsole({
   };
 }
 
-// waitFor polls `check()` (real timers, not a fixed tick count — robust to
-// however many microtask/macrotask hops the render path takes) until it
-// returns a truthy value or `timeoutMs` elapses, in which case it throws
-// with `desc` so a failing test names what it was waiting for.
-function waitFor(check, { timeoutMs = 2000, intervalMs = 5, desc = "condition" } = {}) {
-  const start = Date.now();
+// Observe actual DOM mutations and transport/message receipts. No settling
+// interval decides when a condition is ready. If Node drains all work without
+// producing it, beforeExit reports the missing completion instead of allowing
+// an unresolved test promise to exit successfully.
+function waitFor(console, check, { desc = "condition" } = {}) {
   return new Promise((resolve, reject) => {
-    const tick = () => {
-      let v;
-      try { v = check(); } catch (_) { v = undefined; }
-      if (v) { resolve(v); return; }
-      if (Date.now() - start >= timeoutMs) { reject(new Error("waitFor timed out after " + timeoutMs + "ms: " + desc)); return; }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
+    const observer = new console.window.MutationObserver(evaluate);
+    const stalled = () => finish(new Error("waitFor has no pending work: " + desc));
+    function finish(error, value) {
+      observer.disconnect();
+      console.progress.removeEventListener("progress", evaluate);
+      process.removeListener("beforeExit", stalled);
+      if (error) reject(error); else resolve(value);
+    }
+    function evaluate() {
+      let value;
+      try { value = check(); } catch (_) { return; }
+      if (value) finish(null, value);
+    }
+    observer.observe(console.document, { subtree: true, childList: true, attributes: true, characterData: true });
+    console.progress.addEventListener("progress", evaluate);
+    process.once("beforeExit", stalled);
+    evaluate();
   });
 }
 

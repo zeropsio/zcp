@@ -28,12 +28,12 @@ async function selectAndCheckSearchLink(service) {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: false, service: service.hostname });
   // Wait for THIS service's own selection, not just any placeholder -- the
   // static index.html markup already ships a #content .placeholder before
   // any service is picked, so that alone is not proof selectService ran.
-  await waitFor(() => c.document.getElementById("activesvc").textContent.includes(service.hostname), { desc: "service selected" });
+  await waitFor(c, () => c.document.getElementById("activesvc").textContent.includes(service.hostname), { desc: "service selected" });
   const present = !!c.document.getElementById("searchlink");
   c.close();
   return present;

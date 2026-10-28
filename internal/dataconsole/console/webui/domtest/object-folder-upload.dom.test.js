@@ -40,9 +40,9 @@ async function scenarioExpandedFolderGetsItsOwnUploadBar() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node-wrap").length === 2, { desc: "root tree renders both nodes" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node-wrap").length === 2, { desc: "root tree renders both nodes" });
 
   // Before expanding: no upload bar exists INSIDE any .children container (the
   // root's own bar, if any, is a direct child of #tree, not of .children).
@@ -50,7 +50,7 @@ async function scenarioExpandedFolderGetsItsOwnUploadBar() {
 
   const folderRow = c.document.querySelector("#tree .node-wrap .node");
   click(folderRow);
-  await waitFor(() => c.document.querySelector("#tree .children .node-wrap"), { desc: "folder expands and its child renders" });
+  await waitFor(c, () => c.document.querySelector("#tree .children .node-wrap"), { desc: "folder expands and its child renders" });
 
   const kids = c.document.querySelector("#tree .node-wrap .children");
   const bar = kids.querySelector(":scope > .uploadbar");
@@ -69,9 +69,9 @@ async function scenarioExpandedFolderGetsItsOwnUploadBar() {
 
   // One bar per expanded container: collapsing + re-expanding must not add a second.
   click(folderRow); // collapse
-  await waitFor(() => kids.classList.contains("hidden"), { desc: "folder collapses" });
+  await waitFor(c, () => kids.classList.contains("hidden"), { desc: "folder collapses" });
   click(folderRow); // re-expand
-  await waitFor(() => !kids.classList.contains("hidden"), { desc: "folder re-expands" });
+  await waitFor(c, () => !kids.classList.contains("hidden"), { desc: "folder re-expands" });
   assert.strictEqual(kids.querySelectorAll(":scope > .uploadbar").length, 1, "collapsing and re-expanding an already-loaded folder never duplicates its upload bar");
   c.close();
 }

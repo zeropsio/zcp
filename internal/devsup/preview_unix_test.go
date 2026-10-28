@@ -133,12 +133,15 @@ func TestSupervisor_PreviewForward_AbsentBase_NoForward(t *testing.T) {
 				base = `"previewPortBase":` + strconv.Itoa(probe-3) + `,`
 			}
 			r.writeDeclaration(`{"version":1,` + base + `"servers":[` +
-				`{"name":"web","port":` + strconv.Itoa(web) + `,"command":` + strconv.Quote(r.echoer("web", web).Command) + `}]}`)
+				`{"name":"web","port":` + strconv.Itoa(web) + `,"command":` + strconv.Quote("exec sleep 300") + `}]}`)
 			s := r.supervisor()
 			s.Boot()
-			eventually(t, "web to listen", func() bool { return listening(web) })
-			// The forward, were there one, opens as web starts listening.
-			time.Sleep(600 * time.Millisecond)
+			// Drive the port-accepted receipt directly: forwarding eligibility does
+			// not depend on how long a child takes to listen.
+			s.mu.Lock()
+			s.servers["web"].listened = true
+			s.mu.Unlock()
+			s.syncPreview()
 
 			if listening(probe) {
 				t.Fatalf("something listens on %d with no preview forward configured", probe)

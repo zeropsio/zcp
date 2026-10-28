@@ -43,28 +43,28 @@ async function scenarioStaleLoadMoreMustNotAppendUnderADifferentTable() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
 
   // Open table A -- it has a nextCursor, so a "Load more" button renders.
   click(c.document.querySelectorAll("#tree .node")[0]);
-  await waitFor(() => c.document.querySelector(".loadmore"), { desc: "A's load-more button renders" });
+  await waitFor(c, () => c.document.querySelector(".loadmore"), { desc: "A's load-more button renders" });
   assert.strictEqual(c.document.querySelector("#content tbody.gridbody tr").textContent, "a-row1", "precondition: A's row is showing");
 
   // Click Load more -- A's next page hangs.
   click(c.document.querySelector(".loadmore"));
-  await waitFor(() => loadMoreResolvers.length === 1, { desc: "A's load-more fetch in flight" });
+  await waitFor(c, () => loadMoreResolvers.length === 1, { desc: "A's load-more fetch in flight" });
 
   // Before it resolves, navigate to table B.
   click(c.document.querySelectorAll("#tree .node")[1]);
-  await waitFor(() => /^b$/.test((c.document.querySelector("#content .toolbar b") || {}).textContent || ""), { desc: "B's table view renders" });
+  await waitFor(c, () => /^b$/.test((c.document.querySelector("#content .toolbar b") || {}).textContent || ""), { desc: "B's table view renders" });
   const bRowCountBefore = c.document.querySelectorAll("#content tbody.gridbody tr").length;
   assert.strictEqual(bRowCountBefore, 1, "precondition: B's grid shows exactly its own one row");
 
   // NOW A's stale load-more resolves.
   loadMoreResolvers[0](jsonRoute({ columns: [{ name: "val", dataType: "text", pk: false, editable: false, reason: "" }], rows: [["a-row2"]], rowKeyCols: [] }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.ok(/^b$/.test(c.document.querySelector("#content .toolbar b").textContent), "B's table view must still be showing after A's stale load-more resolves");
   const rows = Array.from(c.document.querySelectorAll("#content tbody.gridbody tr")).map((tr) => tr.textContent);

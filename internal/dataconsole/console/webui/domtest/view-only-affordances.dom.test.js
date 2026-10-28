@@ -35,14 +35,14 @@ async function scenarioObjectFamilyDisabledRendersNothing() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
 
   assert.strictEqual(c.document.querySelector("#tree .uploadbar"), null, "a view-only service's root tree renders NO upload bar (not even a disabled one)");
 
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
+  await waitFor(c, () => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
   assert.strictEqual(c.document.getElementById("saveblob"), null, "writeBlob disabled -> no Save button");
   assert.strictEqual(c.document.getElementById("renameblob"), null, "renameObject disabled -> no Rename button (not even disabled-with-reason)");
   assert.strictEqual(c.document.getElementById("delblob"), null, "deleteNode disabled -> no Delete button (not even disabled-with-reason)");
@@ -64,16 +64,16 @@ async function scenarioObjectFamilyEnabledRendersControls() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
 
   const bar = c.document.querySelector("#tree .uploadbar");
   assert.ok(bar, "a full-write service's root tree renders the upload bar");
   assert.strictEqual(bar.querySelector("button[disabled]"), null, "the upload control is not disabled when the action is enabled");
 
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
+  await waitFor(c, () => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
   assert.ok(c.document.getElementById("saveblob"), "writeBlob enabled -> Save button renders");
   const rename = c.document.getElementById("renameblob");
   const del = c.document.getElementById("delblob");
@@ -101,11 +101,11 @@ async function scenarioTabularFamilyDisabledRendersNothing() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "ch" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
 
   assert.strictEqual(c.document.getElementById("insertrow"), null, "insertRow disabled -> no Insert row button (not even disabled-with-reason)");
   assert.strictEqual(c.document.querySelectorAll("#content .rowdel").length, 0, "deleteRow disabled -> no per-row delete button, and no delete column at all");
@@ -130,11 +130,11 @@ async function scenarioTabularFamilyEnabledRendersControls() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
 
   const insert = c.document.getElementById("insertrow");
   assert.ok(insert && !insert.disabled, "insertRow enabled -> Insert row button renders enabled");
@@ -161,11 +161,11 @@ async function scenarioTTLDisabledRendersNothing() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .ttlbar"), { desc: "ttl bar render" });
+  await waitFor(c, () => c.document.querySelector("#content .ttlbar"), { desc: "ttl bar render" });
   assert.strictEqual(c.document.getElementById("setttl"), null, "setTTL disabled -> no Set TTL button (not even disabled-with-reason)");
   assert.strictEqual(c.document.getElementById("clrttl"), null, "setTTL disabled -> no Persist button (not even disabled-with-reason)");
   c.close();
@@ -187,11 +187,11 @@ async function scenarioTTLEnabledRendersControls() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .ttlbar"), { desc: "ttl bar render" });
+  await waitFor(c, () => c.document.querySelector("#content .ttlbar"), { desc: "ttl bar render" });
   const setttl = c.document.getElementById("setttl");
   const clrttl = c.document.getElementById("clrttl");
   assert.ok(setttl && !setttl.disabled, "setTTL enabled -> Set TTL button renders enabled");

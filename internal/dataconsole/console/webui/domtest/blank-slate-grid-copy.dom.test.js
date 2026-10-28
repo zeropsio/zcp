@@ -28,11 +28,11 @@ async function scenarioEmptyTableCopyAndColspan() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "table node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "table node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.state.empty"), { desc: "empty table slate" });
+  await waitFor(c, () => c.document.querySelector("#content td.state.empty"), { desc: "empty table slate" });
 
   const empty = c.document.querySelector("#content td.state.empty");
   assert.strictEqual(empty.querySelector(".state-title").textContent, "No rows yet", "a table's own emptiness uses table copy");
@@ -55,12 +55,12 @@ async function scenarioEmptyQueryCopyAndColspan() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=db", routes });
-  await waitFor(() => c.document.getElementById("querylink"), { desc: "query link" });
+  await waitFor(c, () => c.document.getElementById("querylink"), { desc: "query link" });
   click(c.document.getElementById("querylink"));
-  await waitFor(() => c.document.getElementById("qtext"), { desc: "query console" });
+  await waitFor(c, () => c.document.getElementById("qtext"), { desc: "query console" });
   c.document.getElementById("qtext").value = "SELECT id, name FROM people WHERE false";
   click(c.document.getElementById("runq"));
-  await waitFor(() => c.document.querySelector("#qresult td.state.empty"), { desc: "empty query result slate" });
+  await waitFor(c, () => c.document.querySelector("#qresult td.state.empty"), { desc: "empty query result slate" });
 
   const empty = c.document.querySelector("#qresult td.state.empty");
   assert.strictEqual(empty.querySelector(".state-title").textContent, "Query returned no rows", "query-result emptiness is worded distinctly from table emptiness");

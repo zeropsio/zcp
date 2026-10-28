@@ -90,7 +90,7 @@ async function scenarioStandaloneUsesLocalStorageFallback() {
     ? jsonRoute({ project: { id: "p1", name: "Proj" }, services: [], allowWrites: false })
     : null;
   const first = buildConsole({ url: "http://localhost/#t=read-token", routes });
-  await waitFor(() => first.document.getElementById("project").textContent === "Proj", { desc: "first standalone start" });
+  await waitFor(first, () => first.document.getElementById("project").textContent === "Proj", { desc: "first standalone start" });
   setMainWidth(first, MAIN_WIDTH);
   const divider = first.document.getElementById("tree-divider");
   pointer(first, divider, "pointerdown", 320);
@@ -101,7 +101,7 @@ async function scenarioStandaloneUsesLocalStorageFallback() {
   first.close();
 
   const second = buildConsole({ url: "http://localhost/#t=read-token", localStorageState: stored, routes });
-  await waitFor(() => second.document.getElementById("project").textContent === "Proj", { desc: "second standalone start" });
+  await waitFor(second, () => second.document.getElementById("project").textContent === "Proj", { desc: "second standalone start" });
   setMainWidth(second, MAIN_WIDTH);
   assert.strictEqual(treeWidth(second), 410, "a fresh standalone SPA restores localStorage");
   second.close();
@@ -123,11 +123,11 @@ async function scenarioTabularGridConsumesRemainingPanelHeight() {
     return null;
   };
   const c = buildConsole({ embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: false, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector(".paginator.exact"), { desc: "tabular paginator" });
+  await waitFor(c, () => c.document.querySelector(".paginator.exact"), { desc: "tabular paginator" });
 
   const content = c.document.getElementById("content");
   const tree = c.document.getElementById("tree");

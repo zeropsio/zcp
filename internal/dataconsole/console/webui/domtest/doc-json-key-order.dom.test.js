@@ -23,9 +23,9 @@ async function openJSONDoc(text) {
   // Standalone (no write token): editing() is always false, so this lands in
   // the non-editable pre.blob branch -- the doc-detail VIEW path.
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=es", routes });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content pre.blob"), { desc: "doc detail renders" });
+  await waitFor(c, () => c.document.querySelector("#content pre.blob"), { desc: "doc detail renders" });
   const out = c.document.querySelector("#content pre.blob").textContent;
   c.close();
   return out;
@@ -59,9 +59,9 @@ async function scenarioNonJSONTextUnaffected() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=storage", routes });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content pre.blob"), { desc: "blob detail renders" });
+  await waitFor(c, () => c.document.querySelector("#content pre.blob"), { desc: "blob detail renders" });
   assert.strictEqual(c.document.querySelector("#content pre.blob").textContent, raw, "non-JSON textual content renders verbatim, untouched by the doc-detail sort");
   c.close();
 }

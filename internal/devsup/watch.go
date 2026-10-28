@@ -45,21 +45,41 @@ type debouncer struct {
 	firstAt, last time.Time
 	paths         map[string]bool
 	overflow      bool
-	timer         *time.Timer
+	timer         watchTimer
+	clock         watchClock
 	gen           int
 	closed        bool
+}
+
+// watchClock supplies the time and completion receipt for one burst.
+type watchClock interface {
+	now() time.Time
+	afterFunc(time.Duration, func()) watchTimer
+}
+
+type watchTimer interface{ Stop() bool }
+
+type realWatchClock struct{}
+
+func (realWatchClock) now() time.Time { return time.Now() }
+func (realWatchClock) afterFunc(wait time.Duration, f func()) watchTimer {
+	return time.AfterFunc(wait, f)
 }
 
 func (d *debouncer) changed(rel string) {
 	if !d.w.covers(rel) || d.w.ignored(rel) {
 		return
 	}
-	now := time.Now()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
 		return
 	}
+	clock := d.clock
+	if clock == nil {
+		clock = realWatchClock{}
+	}
+	now := clock.now()
 	if !d.open {
 		d.open, d.first, d.firstAt = true, rel, now
 		d.paths, d.overflow = map[string]bool{}, false
@@ -78,7 +98,7 @@ func (d *debouncer) changed(rel string) {
 	}
 	d.gen++
 	gen := d.gen
-	d.timer = time.AfterFunc(max(wait, 0), func() { d.settled(gen) })
+	d.timer = clock.afterFunc(max(wait, 0), func() { d.settled(gen) })
 }
 
 // settled ends the burst its timer gen belongs to, unless a later change

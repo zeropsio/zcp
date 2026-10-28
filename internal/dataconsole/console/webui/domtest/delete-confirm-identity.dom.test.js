@@ -24,11 +24,11 @@ async function openGrid(service, table) {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: service.hostname });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
   return c;
 }
 
@@ -44,7 +44,7 @@ async function scenarioSingleColumnKeyIdentity() {
   };
   const c = await openGrid(service, table);
   click(c.document.querySelector("#content .rowdel"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
   assert.strictEqual(c.document.getElementById("modaltitle").textContent, "Delete row id=4?", "the confirm title names the row's key");
   assert.strictEqual(c.document.querySelector("#modalbody .action").textContent, "DELETE row WHERE id=4", "the confirm action line names the row's key");
   c.close();
@@ -66,7 +66,7 @@ async function scenarioMultiColumnKeyIdentity() {
   };
   const c = await openGrid(service, table);
   click(c.document.querySelector("#content .rowdel"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
   assert.strictEqual(c.document.getElementById("modaltitle").textContent, "Delete row a=1, b=2?", "a multi-column key joins every key column");
   c.close();
 }
@@ -84,7 +84,7 @@ async function scenarioKVEntryIdentity() {
   };
   const c = await openGrid(service, table);
   click(c.document.querySelector("#content .rowdel"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "delete confirm modal renders" });
   assert.strictEqual(c.document.getElementById("modaltitle").textContent, "Delete field1?", "a KV entry delete names the field/member");
   assert.strictEqual(c.document.querySelector("#modalbody .action").textContent, "DELETE field1", "the KV entry delete's action line names the field/member");
   c.close();

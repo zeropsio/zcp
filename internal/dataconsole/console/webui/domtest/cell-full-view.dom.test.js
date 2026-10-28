@@ -31,11 +31,11 @@ async function openGrid(service, table) {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: service.hostname });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
   return c;
 }
 
@@ -62,7 +62,7 @@ async function scenarioLockedCellOpensViewModalEditableUnchanged() {
   assert.strictEqual(lockedCell.title, "primary key", "the locked cell's title is its lock reason, never the raw value");
 
   click(lockedCell);
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "locked-cell click opens a modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "locked-cell click opens a modal" });
   assert.strictEqual(c.document.getElementById("modaltitle").textContent, "id", "the view modal's title is the column name");
   const pre = c.document.querySelector("#modalbody pre.blob");
   assert.ok(pre, "the view modal body is a <pre class=\"blob\">");
@@ -72,11 +72,11 @@ async function scenarioLockedCellOpensViewModalEditableUnchanged() {
   assert.strictEqual(c.document.getElementById("modalok").classList.contains("danger"), false, "the view modal's OK button carries no destructive styling");
 
   click(c.document.getElementById("modalok"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "OK closes the view modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "OK closes the view modal" });
 
   // The editable sibling cell still opens the inline editor, unchanged.
   click(editableCell);
-  await waitFor(() => editableCell.querySelector("input.celledit"), { desc: "editable cell still opens the inline editor" });
+  await waitFor(c, () => editableCell.querySelector("input.celledit"), { desc: "editable cell still opens the inline editor" });
   c.close();
 }
 
@@ -96,7 +96,7 @@ async function scenarioViewOnlyServiceCellOpensViewModal() {
   assert.ok(!cell.classList.contains("editable"), "a view-only-service cell is never editable");
   assert.strictEqual(cell.title, "Click to view full value", "a view-only cell hints the click-to-view path");
   click(cell);
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "view-only-service cell click opens a modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "view-only-service cell click opens a modal" });
   assert.strictEqual(c.document.querySelector("#modalbody pre.blob").textContent, "plain", "the modal shows the full value");
   c.close();
 }
@@ -116,7 +116,7 @@ async function scenarioLongValueReadableViaModal() {
   const cell = c.document.querySelector("#content tbody.gridbody td");
   assert.strictEqual(cell.title, "Click to view full value", "the long-value title is the static hint, never the raw value");
   click(cell);
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "long-value cell click opens the view modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "long-value cell click opens the view modal" });
   assert.strictEqual(c.document.querySelector("#modalbody pre.blob").textContent, LONG_VAL, "the view modal shows the complete long value");
   c.close();
 }
@@ -162,7 +162,7 @@ async function scenarioHTMLSpecialValueNeverRawInMarkup() {
   assert.strictEqual(cell.textContent, evil, "the cell's textContent still recovers the raw value exactly");
 
   click(cell);
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "evil-value cell click opens the view modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden") === false, { desc: "evil-value cell click opens the view modal" });
   const body = c.document.getElementById("modalbody");
   assert.strictEqual(body.querySelector("pre.blob").textContent, evil, "the view modal recovers the full value via textContent");
   assert.ok(!body.innerHTML.includes("<script>"), "no raw <script> substring in the view-modal markup either");

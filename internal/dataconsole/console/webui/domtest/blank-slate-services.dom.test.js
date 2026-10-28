@@ -17,7 +17,7 @@ async function main() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#content > .state.empty"), { desc: "no-services content slate" });
+  await waitFor(c, () => c.document.querySelector("#content > .state.empty"), { desc: "no-services content slate" });
 
   const railNote = c.document.querySelector("#services .service-empty");
   assert.ok(railNote, "the managed-services rail contains an explicit empty note");
@@ -33,7 +33,7 @@ async function main() {
   assert.strictEqual(slate.querySelector("button"), null, "the no-services slate invents no CTA");
 
   click(c.document.getElementById("refresh"));
-  await waitFor(() => c.document.querySelector("#services li span"), { desc: "refreshed service rail" });
+  await waitFor(c, () => c.document.querySelector("#services li span"), { desc: "refreshed service rail" });
   assert.strictEqual(c.document.querySelector("#services li span").textContent, "db", "0-to-N refresh renders the newly discovered service in the rail");
   assert.strictEqual(content.querySelector(":scope > .state.empty"), null, "0-to-N refresh removes the stale no-services slate");
   const placeholder = content.querySelector(":scope > .placeholder");

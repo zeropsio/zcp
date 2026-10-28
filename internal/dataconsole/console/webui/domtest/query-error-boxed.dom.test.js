@@ -31,12 +31,12 @@ async function scenarioQueryErrorIsBoxedWithDetail() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=db", routes });
-  await waitFor(() => c.document.getElementById("querylink"), { desc: "query link render" });
+  await waitFor(c, () => c.document.getElementById("querylink"), { desc: "query link render" });
   click(c.document.getElementById("querylink"));
-  await waitFor(() => c.document.getElementById("runq"), { desc: "query console render" });
+  await waitFor(c, () => c.document.getElementById("runq"), { desc: "query console render" });
   c.document.getElementById("qtext").value = "SELEKT * FROM t";
   click(c.document.getElementById("runq"));
-  await waitFor(() => c.document.querySelector("#qresult .err"), { desc: "query error renders" });
+  await waitFor(c, () => c.document.querySelector("#qresult .err"), { desc: "query error renders" });
   const err = c.document.querySelector("#qresult .err");
   assert.ok(err, "the query error renders inside #qresult carrying the shared boxed .err class");
   assert.ok(

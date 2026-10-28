@@ -27,10 +27,9 @@ Or via Go (same skip-clean behavior as CI):
 go test ./internal/dataconsole/console/webui/... -run TestDataConsoleSPADOM -v
 ```
 
-`go test` (without `-short`) skips this suite cleanly if `node` is missing
-from PATH or `npm ci` hasn't been run in this directory yet (no
-`node_modules/jsdom`) — see `../spa_domtest_test.go`. It never hard-fails a
-node-less or npm-ci-less environment.
+Locally, `go test` (without `-short`) skips this suite if `node` or
+`node_modules/jsdom` is missing. CI sets `ZCP_JS_REQUIRED=1` on its single
+Go test invocation, so missing dependencies fail — see `../spa_domtest_test.go`.
 
 ## Files
 
@@ -58,11 +57,3 @@ node-less or npm-ci-less environment.
 These are behavior invariants from `plans/dataconsole-contracts-draft-2026-07-16.md`,
 not characterizations of today's exact markup — S15 may change IDs/structure
 as long as the invariant holds; update the selectors here, not the assertion.
-
-## Known gap
-
-CI (`.github/workflows/ci.yml`) does not yet run `npm ci` for this package,
-so `TestDataConsoleSPADOM` currently skips in CI (no `node_modules/jsdom`).
-Wiring a `setup-node` + `npm ci` step is a follow-up (DD-7 also calls for a
-pinned Node version in CI) — out of scope for the harness slice that added
-this suite.

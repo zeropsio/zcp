@@ -32,12 +32,12 @@ async function scenarioSingleFolderRootStillGetsRootUploadBar() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "storage" });
 
   // The lone-container auto-expand drills straight through -- wait for the
   // folder's own (nested) child to render.
-  await waitFor(() => c.document.querySelector("#tree .children .node-wrap"), { desc: "the auto-expanded folder's child renders" });
+  await waitFor(c, () => c.document.querySelector("#tree .children .node-wrap"), { desc: "the auto-expanded folder's child renders" });
 
   const rootBar = c.document.querySelector("#tree > .uploadbar");
   assert.ok(rootBar, "the root -- even though it auto-expanded through a single folder -- still gets its own root-level upload bar");

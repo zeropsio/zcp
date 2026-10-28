@@ -37,11 +37,11 @@ function routes(method, p) {
 // 1. Default jsdom (offsetWidth always 0): use the known useful 160px fallback.
 async function scenarioUnmeasurableLayoutUsesUsefulFallback() {
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid renders" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid renders" });
   const table = c.document.querySelector("#content table.grid");
   const cols = Array.from(table.querySelectorAll("colgroup col"), (col) => col.style.width);
   assert.deepStrictEqual(cols, ["160px", "160px", "44px"], "unmeasurable data columns receive the useful fallback; action stays locked");
@@ -59,11 +59,11 @@ async function scenarioMeasurableLayoutPreservesWidthsAcrossEdit() {
   // the tree-node click below, so the stub must already be in place when
   // that happens (there is no reachable seam to inject it in between).
   Object.defineProperty(c.window.HTMLElement.prototype, "offsetWidth", { configurable: true, get() { return 120; } });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid renders" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid renders" });
 
   const table = c.document.querySelector("#content table.grid");
   const headerCount = table.querySelectorAll("thead th").length;
@@ -79,7 +79,7 @@ async function scenarioMeasurableLayoutPreservesWidthsAcrossEdit() {
   assert.ok(input, "editable value opens the real cell editor");
   input.value = "a much longer committed value that must not reflow columns";
   input.blur();
-  await waitFor(() => table.querySelector("tbody td:nth-child(2)").textContent.includes("much longer committed"), { desc: "cell commit" });
+  await waitFor(c, () => table.querySelector("tbody td:nth-child(2)").textContent.includes("much longer committed"), { desc: "cell commit" });
   assert.deepStrictEqual(Array.from(cols, (col) => col.style.width), ["120px", "120px", "44px"], "committing content cannot reflow any column");
   assert.strictEqual(table.style.width, "284px", "effective table width is stable after edit");
   c.close();

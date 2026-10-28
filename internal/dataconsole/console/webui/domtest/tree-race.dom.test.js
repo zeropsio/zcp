@@ -28,27 +28,27 @@ async function scenarioSameServiceRace() {
   const treePage = () => jsonRoute({ nodes: [{ name: "f.txt", kind: "blob", path: { service: "db", segments: ["f.txt"] }, meta: { size: 5 } }] });
 
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
 
   // Boot: dataconsole-init deep-links straight into "db" -- selectService() fires
   // loadTree() as the FIRST root tree load, which hangs on treeResolvers[0].
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => treeResolvers.length === 1, { desc: "first (boot) tree fetch in flight" });
+  await waitFor(c, () => treeResolvers.length === 1, { desc: "first (boot) tree fetch in flight" });
 
   // A write-mode confirmation from the host re-triggers loadTree() for the same
   // active service -- the SECOND root tree load, racing the first.
   hostPostMessage(c.window, { type: "dataconsole-write-mode", writeEnabled: true });
-  await waitFor(() => treeResolvers.length === 2, { desc: "second (write-mode refresh) tree fetch in flight" });
+  await waitFor(c, () => treeResolvers.length === 2, { desc: "second (write-mode refresh) tree fetch in flight" });
 
   // Resolve the SECOND (faster) response first -- it renders the live tree.
   treeResolvers[1](treePage());
-  await waitFor(() => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "second response renders its node" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "second response renders its node" });
 
   // Now resolve the FIRST (slower) response -- STALE by the time it lands.
   treeResolvers[0](treePage());
   // No event to wait on for "nothing happened"; give the stale continuation's
   // microtasks a chance to run, then assert it did not duplicate the node.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   const count = c.document.querySelectorAll("#tree .node-wrap").length;
   c.close();
@@ -81,22 +81,22 @@ async function scenarioCrossServiceRaceClickQueriesCurrentService() {
   const nodeFor = (svc) => jsonRoute({ nodes: [{ name: "f.txt", kind: "blob", path: { service: svc, segments: ["f.txt"] }, meta: { size: 5 } }] });
 
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => (treeResolvers.db || []).length === 1, { desc: "db tree fetch in flight" });
+  await waitFor(c, () => (treeResolvers.db || []).length === 1, { desc: "db tree fetch in flight" });
 
   // Switch to mariadb via a REAL sidebar click while db's tree fetch is pending.
-  await waitFor(() => c.document.querySelectorAll("#services li").length === 2, { desc: "services rail render" });
+  await waitFor(c, () => c.document.querySelectorAll("#services li").length === 2, { desc: "services rail render" });
   click(c.document.querySelectorAll("#services li")[1]); // [dbSvc, mariaSvc] -> index 1 is mariadb
-  await waitFor(() => (treeResolvers.mariadb || []).length === 1, { desc: "mariadb tree fetch in flight" });
+  await waitFor(c, () => (treeResolvers.mariadb || []).length === 1, { desc: "mariadb tree fetch in flight" });
 
   // mariadb (the now-current service) resolves FIRST.
   treeResolvers.mariadb[0](nodeFor("mariadb"));
-  await waitFor(() => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "mariadb node renders" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "mariadb node renders" });
 
   // db (stale -- superseded by the switch) resolves LAST.
   treeResolvers.db[0](nodeFor("db"));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   const count = c.document.querySelectorAll("#tree .node-wrap").length;
   assert.strictEqual(count, 1, "a cross-service stale response must not add a second (wrong-service) node; got " + count);
@@ -104,7 +104,7 @@ async function scenarioCrossServiceRaceClickQueriesCurrentService() {
   // Click the sole rendered node -- its closure must query the CURRENT service,
   // never a stale closure bound to the superseded "db".
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => blobCalls.length === 1, { desc: "blob request fired" });
+  await waitFor(c, () => blobCalls.length === 1, { desc: "blob request fired" });
   c.close();
   assert.strictEqual(blobCalls[0], "mariadb", "clicking the rendered node must query the CURRENT service (mariadb), never a stale closure bound to the superseded service (db)");
 }
@@ -125,26 +125,26 @@ async function scenarioSwitchThenRefreshRace() {
   const treePage = () => jsonRoute({ nodes: [{ name: "f.txt", kind: "blob", path: { service: "db", segments: ["f.txt"] }, meta: { size: 5 } }] });
 
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
 
   // The initial deep-link select is the "switch" -- its tree load hangs.
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => treeResolvers.length === 1, { desc: "first (switch) tree fetch in flight" });
+  await waitFor(c, () => treeResolvers.length === 1, { desc: "first (switch) tree fetch in flight" });
 
   // #refresh fires a SECOND loadTree for the same (still-active) service while
   // the first is still in flight.
-  await waitFor(() => c.document.getElementById("refresh"), { desc: "refresh button present" });
+  await waitFor(c, () => c.document.getElementById("refresh"), { desc: "refresh button present" });
   click(c.document.getElementById("refresh"));
-  await waitFor(() => refreshCalls === 1, { desc: "/api/refresh was called" });
-  await waitFor(() => treeResolvers.length === 2, { desc: "second (refresh) tree fetch in flight" });
+  await waitFor(c, () => refreshCalls === 1, { desc: "/api/refresh was called" });
+  await waitFor(c, () => treeResolvers.length === 2, { desc: "second (refresh) tree fetch in flight" });
 
   // The second (refresh) load resolves first.
   treeResolvers[1](treePage());
-  await waitFor(() => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "refresh's response renders" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node-wrap").length === 1, { desc: "refresh's response renders" });
 
   // The first (switch) load resolves last -- stale.
   treeResolvers[0](treePage());
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   const count = c.document.querySelectorAll("#tree .node-wrap").length;
   c.close();

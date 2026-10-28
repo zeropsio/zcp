@@ -25,7 +25,7 @@ async function main() {
     url: "http://localhost/#t=FAKE",
     routes: (method, p) => (p === "/api/services" ? EMPTY_SERVICES() : null),
   });
-  await waitFor(() => c1.document.getElementById("writemode").textContent !== "", { desc: "write-mode chrome render" });
+  await waitFor(c1, () => c1.document.getElementById("writemode").textContent !== "", { desc: "write-mode chrome render" });
   const badge1 = c1.document.getElementById("writemode");
   const sw1 = c1.document.getElementById("editswitch");
   assert.strictEqual(badge1.classList.contains("hidden"), false, "standalone: the read-only badge is visible");
@@ -40,7 +40,7 @@ async function main() {
   // the authenticated session.
   const contentBefore = c1.document.getElementById("content").innerHTML;
   hostPostMessage(c1.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c1.settled();
   assert.strictEqual(c1.document.getElementById("content").innerHTML, contentBefore, "standalone: a forged host message must not touch the session (no error render, no embedded takeover)");
   assert.strictEqual(badge1.classList.contains("hidden"), false, "standalone: a forged host message must not hide the read-only badge");
   assert.strictEqual(sw1.classList.contains("hidden"), true, "standalone: a forged host message must not reveal the write-mode toggle");
@@ -53,9 +53,9 @@ async function main() {
       embedded: true,
       routes: (method, p) => (p === "/api/services" ? EMPTY_SERVICES() : null),
     });
-    await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
+    await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
     hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled });
-    await waitFor(() => c.document.getElementById("editswitch").classList.contains("hidden") === false, { desc: "embedded chrome render" });
+    await waitFor(c, () => c.document.getElementById("editswitch").classList.contains("hidden") === false, { desc: "embedded chrome render" });
     const badge = c.document.getElementById("writemode");
     const sw = c.document.getElementById("editswitch");
     assert.strictEqual(sw.classList.contains("hidden"), false, "embedded (writeEnabled=" + writeEnabled + "): the write-mode toggle is visible");

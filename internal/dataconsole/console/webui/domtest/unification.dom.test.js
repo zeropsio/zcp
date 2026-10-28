@@ -44,12 +44,12 @@ async function scenarioQueryReusesGrid() {
       return null;
     },
   });
-  await waitFor(() => c.document.getElementById("querylink"), { desc: "query link render" });
+  await waitFor(c, () => c.document.getElementById("querylink"), { desc: "query link render" });
   click(c.document.getElementById("querylink"));
-  await waitFor(() => c.document.getElementById("runq"), { desc: "query console render" });
+  await waitFor(c, () => c.document.getElementById("runq"), { desc: "query console render" });
   c.document.getElementById("qtext").value = "SELECT 1";
   click(c.document.getElementById("runq"));
-  await waitFor(() => c.document.querySelector("#qresult .gridwrap table.grid"), { desc: "query grid render" });
+  await waitFor(c, () => c.document.querySelector("#qresult .gridwrap table.grid"), { desc: "query grid render" });
   const qres = c.document.getElementById("qresult");
   assert.ok(qres.querySelector(".gridwrap table.grid"), "query result reuses the shared grid markup (.gridwrap table.grid)");
   assert.strictEqual(qres.querySelectorAll("td.editable").length, 0, "query grid has NO editable cell — editable:false is honored (U-01)");
@@ -81,11 +81,11 @@ async function scenarioServerTruthEditability() {
       return null;
     },
   });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid rows" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid rows" });
   const cells = c.document.querySelectorAll("#content tbody.gridbody tr:first-child td");
   assert.ok(cells[0].classList.contains("locked"), "PK column cell (editable:false) renders LOCKED, not editable");
   assert.ok(!cells[0].classList.contains("editable"), "PK column cell is NOT editable (server truth, not a client guess)");
@@ -107,9 +107,9 @@ async function scenarioViewOnlyNoKey() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "grid render" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "grid render" });
   const badge = c.document.querySelector("#content .toolbar .badge.view-only");
   assert.ok(badge, "a PK-less table renders the distinct view-only badge");
   assert.ok(/no row key/i.test(badge.textContent), "the badge names the reason (no row key), never a shared silence (U-02/D-03)");
@@ -132,7 +132,7 @@ async function scenarioTreeTypeGlyphs() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelectorAll("#tree .node .kind").length >= 2, { desc: "kv tree render" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node .kind").length >= 2, { desc: "kv tree render" });
   const glyphs = Array.from(c.document.querySelectorAll("#tree .node .kind")).map((el) => el.textContent);
   assert.notStrictEqual(glyphs[0], glyphs[1], "a hash and a list get visually distinct glyphs in the tree (not one collapsed kind-glyph)");
   assert.strictEqual(c.document.querySelector("#tree .node .kind").getAttribute("title"), "hash", "the glyph carries the redis type as a title");
@@ -150,7 +150,7 @@ async function scenarioEmptyTreeState() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#tree .state.empty"), { desc: "empty tree state" });
+  await waitFor(c, () => c.document.querySelector("#tree .state.empty"), { desc: "empty tree state" });
   assert.strictEqual(c.document.querySelectorAll("#tree > .state.empty").length, 1, "an empty tree renders exactly one canonical state root");
   assert.strictEqual(c.document.querySelector("#tree .state-title").textContent, "No tables yet", "the state uses the server-declared tabular family copy");
   c.close();
@@ -168,9 +168,9 @@ async function scenarioVectorCollapse() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .vectorbox"), { desc: "vector view render" });
+  await waitFor(c, () => c.document.querySelector("#content .vectorbox"), { desc: "vector view render" });
   const box = c.document.querySelector("#content .vectorbox");
   assert.ok(/4 dims/.test(box.querySelector(".vecsummary").textContent), "the vector view summarizes the dimension count (4 dims), not a wall of floats");
   const raw = box.querySelector("pre.vecraw");

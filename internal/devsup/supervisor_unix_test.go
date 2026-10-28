@@ -535,26 +535,30 @@ func TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes(t
 func TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	api := freePort(t)
 	r.write("apps/api/main.go", "v1")
-	srv := r.listener("api", api)
-	srv.Watch = &Watch{Paths: []string{"apps/api"}}
-	r.declare(srv)
+	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
 	s := r.supervisor()
 	s.Boot()
-	eventually(t, "api to listen", func() bool { return listening(api) })
-
-	// Truncate, then the bytes, then the close: each a change, the gaps
-	// longer than one settle, never as long as the quiet that ends a burst.
-	for i, body := range []string{"", "v2", "v2 done"} {
+	clock := &manualWatchClock{at: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	d := s.servers["api"].watch.d
+	d.mu.Lock()
+	d.clock = clock
+	d.mu.Unlock()
+	// Truncate, bytes and close enter the real debouncer. Advance the injected
+	// clock between them, without allowing an obsolete timer to end the burst.
+	for i := range 3 {
 		if i > 0 {
-			time.Sleep(300 * time.Millisecond)
+			clock.advance(300 * time.Millisecond)
 		}
-		r.write("apps/api/main.go", body)
+		d.changed("apps/api/main.go")
 	}
-	eventually(t, "api to restart", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
-	eventually(t, "api to listen again", func() bool { return listening(api) })
-	time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+	// The event timestamps follow this server's start, independently of boot speed.
+	s.mu.Lock()
+	start := clock.at.Add(-time.Second)
+	s.servers["api"].startBegun, s.servers["api"].startedAt = start, &start
+	s.mu.Unlock()
+	clock.advance(watchSettle)
+	clock.advance(2 * time.Second)
 	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
 		t.Fatalf("api = %d restart(s), reason %q; want one restart for the one write, naming apps/api/main.go", sv.Restarts, sv.LastRestartReason)
 	}
@@ -583,23 +587,28 @@ func TestSupervisor_AReloadOrAStartOfAnotherServerKeepsAWatchedChangeStillSettli
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t)
-			api, web := freePort(t), freePort(t)
 			r.write("apps/api/main.go", "v1")
-			srv := r.listener("api", api)
-			srv.Watch = &Watch{Paths: []string{"apps/api"}}
-			other := r.listener("web", web)
 			off := false
-			other.Autostart = &off
-			r.declare(srv, other)
+			r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}}, Server{Name: "web", Command: "exec sleep 300", Autostart: &off})
 			s := r.supervisor()
 			s.Boot()
-			eventually(t, "api to listen", func() bool { return listening(api) })
-
-			r.write("apps/api/main.go", "v2 (fast-forward)")
-			time.Sleep(200 * time.Millisecond) // the watch saw it; its burst is settling
+			clock := &manualWatchClock{at: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+			d := s.servers["api"].watch.d
+			d.mu.Lock()
+			d.clock = clock
+			d.mu.Unlock()
+			d.changed("apps/api/main.go")
+			clock.advance(200 * time.Millisecond)
 			tc.act(t, s)
-			eventually(t, "the watched change to restart api", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
-			time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+			if got := s.servers["api"].watch.d; got != d {
+				t.Fatal("the unchanged watch lost its pending burst")
+			}
+			s.mu.Lock()
+			start := clock.at.Add(-time.Second)
+			s.servers["api"].startBegun, s.servers["api"].startedAt = start, &start
+			s.mu.Unlock()
+			clock.advance(watchSettle)
+			clock.advance(2 * time.Second)
 			if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
 				t.Fatalf("api = %d restart(s), reason %q; want one, for the change", sv.Restarts, sv.LastRestartReason)
 			}
@@ -616,37 +625,29 @@ func TestSupervisor_AChangeMadeWhileARestartStopsTheServerRestartsNothingMore(t 
 	t.Parallel()
 	r := newRig(t)
 	r.grace = 3 * time.Second
-	api := freePort(t)
-	r.write("apps/api/main.go", "v1")
-	r.write("apps/api/util.go", "v1")
-	r.write("apps/api/late.go", "v1")
-	srv := Server{Name: "api", Port: api, Command: helperCmd(t, "ignore-term", "PORT="+strconv.Itoa(api)), Watch: &Watch{Paths: []string{"apps/api"}}}
-	r.declare(srv)
+	r.declare(Server{Name: "api", Command: "exec sleep 300"})
 	s := r.supervisor()
 	s.Boot()
-	eventually(t, "api to listen", func() bool { return listening(api) })
-
-	r.write("apps/api/main.go", "v2")
-	// The restart is stopping api, which waits out its grace: two more
-	// changes, each settling on its own, come meanwhile.
-	time.Sleep(time.Second)
-	r.write("apps/api/util.go", "v2")
-	time.Sleep(time.Second)
-	r.write("apps/api/main.go", "v3")
-	eventually(t, "api to restart", func() bool {
-		sv := mustServer(t, s.State(), "api")
-		return sv.Restarts >= 1 && sv.Status == StatusRunning && listening(api)
-	})
-	time.Sleep(r.grace + time.Second) // a second restart would wait out the grace again
+	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.mu.Lock()
+	s.servers["api"].startBegun, s.servers["api"].startedAt = started, &started
+	s.mu.Unlock()
+	// The first change completed one restart. Its successor starts after the
+	// stop grace; queued bursts retain their original last-change timestamps.
+	s.watchFired("api", "apps/api/main.go", started, []string{"apps/api/main.go"})
+	s.mu.Lock()
+	next := started.Add(r.grace)
+	s.servers["api"].startBegun, s.servers["api"].startedAt = next, &next
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/util.go", started.Add(time.Second), []string{"apps/api/util.go"})
+	s.watchFired("api", "apps/api/main.go", started.Add(2*time.Second), []string{"apps/api/main.go"})
 	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
 		t.Fatalf("api = %d restart(s), reason %q; want one: the start after the stop already runs every change made during it", sv.Restarts, sv.LastRestartReason)
 	}
-
-	r.write("apps/api/late.go", "v2")
-	eventually(t, "a change after the start to restart api", func() bool {
-		sv := mustServer(t, s.State(), "api")
-		return sv.Restarts == 2 && sv.LastRestartReason == "apps/api/late.go changed"
-	})
+	s.watchFired("api", "apps/api/late.go", started.Add(r.grace+time.Second), []string{"apps/api/late.go"})
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 2 || sv.LastRestartReason != "apps/api/late.go changed" {
+		t.Fatalf("api = %+v; want a change after the start to restart api", sv)
+	}
 }
 
 func TestSupervisor_StateSaysWhyTheSupervisorLastRestartedAServer(t *testing.T) {
@@ -993,18 +994,19 @@ func TestSupervisor_AServerThatCrashedWhileStartingSaysItsOneMoreStartIsPendingU
 func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.window = 2 * time.Second // a start, its write, the poll and the settle fit in it under -race
-	r.write("apps/api/main.py", "v1")
-	r.write("apps/api/pkg/PKG-INFO", "")
-	srv := Server{Name: "api", Command: "sleep 0.2; echo $$ > apps/api/pkg/PKG-INFO; exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}}
-	r.declare(srv)
+	r.window = 2 * time.Second
+	r.declare(Server{Name: "api", Command: "exec sleep 300"})
 	s := r.supervisor()
 	s.Boot()
-
-	eventually(t, "the self-caused restarts to stop", func() bool {
-		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit
-	})
-	time.Sleep(r.window + 4*watchSettle) // a restart that should not happen has no event to wait on
+	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range watchLoopLimit + 2 {
+		s.mu.Lock()
+		sv := s.servers["api"]
+		at := started.Add(time.Duration(i) * r.window)
+		sv.startBegun, sv.startedAt = at, &at
+		s.mu.Unlock()
+		s.watchFired("api", "apps/api/pkg/PKG-INFO", at.Add(200*time.Millisecond), []string{"apps/api/pkg/PKG-INFO"})
+	}
 	sv := mustServer(t, s.State(), "api")
 	if sv.Restarts != watchLoopLimit || sv.Status != StatusRunning || sv.Pid == 0 {
 		t.Fatalf("api = %+v, want running after %d restarts", sv, watchLoopLimit)
@@ -1012,12 +1014,10 @@ func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedB
 	if want := "restarts stopped: apps/api/pkg/PKG-INFO changed during each of its last 10 starts; add the path to watch.ignore"; sv.LastRestartReason != want {
 		t.Fatalf("reason = %q, want %q", sv.LastRestartReason, want)
 	}
-
-	r.write("apps/api/main.py", "v2")
-	eventually(t, "a change after the start window to restart api", func() bool {
-		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit+1
-	})
-	time.Sleep(r.window + 4*watchSettle)
+	s.mu.Lock()
+	lastStart := *s.servers["api"].startedAt
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/main.py", lastStart.Add(r.window+4*watchSettle), []string{"apps/api/main.py"})
 	if sv := mustServer(t, s.State(), "api"); sv.Restarts != watchLoopLimit+1 || sv.Status != StatusRunning {
 		t.Fatalf("api = %+v, want one restart for the edit", sv)
 	}
@@ -1033,20 +1033,14 @@ func TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterI
 	t.Parallel()
 	r := newRig(t)
 	r.window = 2 * time.Second
-	r.write("apps/api/main.py", "v1")
-	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
 	s := r.supervisor()
-	s.Boot()
-	eventually(t, "api to run", func() bool {
-		sv := mustServer(t, s.State(), "api")
-		return sv.Status == StatusRunning && sv.Pid != 0
-	})
-	before := mustServer(t, s.State(), "api").Restarts
+	s.servers["api"] = &server{spec: Server{Name: "api"}, desired: DesiredRunning, starts: 1}
+	before := 0
 
 	// Each of its last watchLoopLimit starts saw a change of its own; this
 	// start began a window and a settle ago, and its change came just
 	// inside the window — its burst settled after it.
-	started := time.Now().Add(-r.window - watchSettle)
+	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s.mu.Lock()
 	sv := s.servers["api"]
 	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started

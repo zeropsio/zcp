@@ -53,14 +53,14 @@ async function scenarioTreeThumbFallsBackToGlyphOnDecodeError() {
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=storage", routes });
   stubObjectURLs(c.window);
-  await waitFor(() => c.document.querySelector("#tree img.thumb"), { desc: "lazy thumbnail renders" });
+  await waitFor(c, () => c.document.querySelector("#tree img.thumb"), { desc: "lazy thumbnail renders" });
   const row = c.document.querySelector("#tree .node");
   const img = row.querySelector("img.thumb");
   assert.ok(img, "precondition: the thumbnail img is present");
 
   const w = c.window;
   img.dispatchEvent(new w.Event("error"));
-  await waitFor(() => !row.querySelector("img.thumb"), { desc: "the failed thumb is replaced" });
+  await waitFor(c, () => !row.querySelector("img.thumb"), { desc: "the failed thumb is replaced" });
   const fallback = row.querySelector(".kind");
   assert.ok(fallback, "a decode-failed thumb falls back to the standard type glyph, never an invisible chip");
   assert.strictEqual(fallback.textContent, "◇", "the fallback shows the blob's normal kind glyph (◇)");
@@ -81,15 +81,15 @@ async function scenarioPreviewShowsDimensionsOnLoad() {
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=storage", routes });
   stubObjectURLs(c.window);
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content img.imgpreview"), { desc: "preview renders" });
+  await waitFor(c, () => c.document.querySelector("#content img.imgpreview"), { desc: "preview renders" });
   const img = c.document.querySelector("#content img.imgpreview");
   const w = c.window;
   Object.defineProperty(img, "naturalWidth", { value: 800, configurable: true });
   Object.defineProperty(img, "naturalHeight", { value: 600, configurable: true });
   img.dispatchEvent(new w.Event("load"));
-  await waitFor(() => c.document.querySelector(".imgdim") && /800/.test(c.document.querySelector(".imgdim").textContent), { desc: "dimension label populates" });
+  await waitFor(c, () => c.document.querySelector(".imgdim") && /800/.test(c.document.querySelector(".imgdim").textContent), { desc: "dimension label populates" });
   assert.strictEqual(c.document.querySelector(".imgdim").textContent, "800 × 600 px", "the preview states its pixel dimensions once loaded");
   c.close();
 }

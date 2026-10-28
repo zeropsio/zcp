@@ -27,13 +27,13 @@ function routes(method, pathWithQuery) {
 }
 
 async function openEmbeddedBlob(c, index) {
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "embedded ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "embedded ready" });
   if (!c.document.querySelectorAll("#tree .node").length) {
     hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: false, service: "store" });
-    await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "embedded object tree" });
+    await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "embedded object tree" });
   }
   click(c.document.querySelectorAll("#tree .node")[index]);
-  await waitFor(() => c.document.getElementById("dlblob"), { desc: "blob download button" });
+  await waitFor(c, () => c.document.getElementById("dlblob"), { desc: "blob download button" });
 }
 
 async function scenarioEmbeddedResultIsCorrelatedAndVisible() {
@@ -41,7 +41,7 @@ async function scenarioEmbeddedResultIsCorrelatedAndVisible() {
   await openEmbeddedBlob(c, 0);
 
   click(c.document.getElementById("dlblob"));
-  const first = await waitFor(
+  const first = await waitFor(c,
     () => c.rpcLog.find((m) => m.type === "dc-download"),
     { desc: "embedded download request" }
   );
@@ -50,11 +50,11 @@ async function scenarioEmbeddedResultIsCorrelatedAndVisible() {
   assert.ok(!("b64" in first) && !("url" in first) && !("token" in first), "download request carries no bytes, ticket URL, or credential");
 
   hostPostMessage(c.window, { type: "dataconsole-download-result", id: first.id, ok: true, code: "completed" });
-  const good = await waitFor(() => c.document.querySelector(".toast.good"), { desc: "download success toast" });
+  const good = await waitFor(c, () => c.document.querySelector(".toast.good"), { desc: "download success toast" });
   assert.strictEqual(good.textContent, "Downloaded.");
 
   click(c.document.getElementById("dlblob"));
-  const second = await waitFor(
+  const second = await waitFor(c,
     () => c.rpcLog.filter((m) => m.type === "dc-download")[1],
     { desc: "second embedded download request" }
   );
@@ -66,7 +66,7 @@ async function scenarioEmbeddedResultIsCorrelatedAndVisible() {
     code: "source-failed",
     message: "The download source failed.",
   });
-  const bad = await waitFor(() => c.document.querySelector(".toast.bad"), { desc: "download failure toast" });
+  const bad = await waitFor(c, () => c.document.querySelector(".toast.bad"), { desc: "download failure toast" });
   assert.strictEqual(bad.textContent, "The download source failed.");
   c.close();
 }
@@ -75,10 +75,10 @@ async function scenarioStaleAndUnknownResultsAreIgnored() {
   const c = buildConsole({ embedded: true, routes });
   await openEmbeddedBlob(c, 0);
   click(c.document.getElementById("dlblob"));
-  const request = await waitFor(() => c.rpcLog.find((m) => m.type === "dc-download"), { desc: "download before navigation" });
+  const request = await waitFor(c, () => c.rpcLog.find((m) => m.type === "dc-download"), { desc: "download before navigation" });
 
   click(c.document.querySelectorAll("#tree .node")[1]);
-  await waitFor(
+  await waitFor(c,
     () => (c.document.querySelector("#content .toolbar b") || {}).textContent === "two.txt",
     { desc: "newer blob view" }
   );
@@ -95,7 +95,7 @@ async function scenarioStaleAndUnknownResultsAreIgnored() {
     ok: true,
     code: "completed",
   });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
   assert.strictEqual(c.document.querySelector("#content .toolbar b").textContent, "two.txt", "late download results never overwrite the current view");
   assert.strictEqual(c.document.querySelector(".toast"), null, "stale and unknown download results produce no misleading feedback");
   c.close();
@@ -113,11 +113,11 @@ async function scenarioStandaloneKeepsDirectBrowserFallback() {
   c.window.URL.revokeObjectURL = () => {};
   c.window.HTMLAnchorElement.prototype.click = function () { clickedAnchor = this; };
 
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "standalone object tree" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "standalone object tree" });
   click(c.document.querySelectorAll("#tree .node")[0]);
-  await waitFor(() => c.document.getElementById("dlblob"), { desc: "standalone blob download button" });
+  await waitFor(c, () => c.document.getElementById("dlblob"), { desc: "standalone blob download button" });
   click(c.document.getElementById("dlblob"));
-  await waitFor(() => clickedAnchor, { desc: "standalone object URL download" });
+  await waitFor(c, () => clickedAnchor, { desc: "standalone object URL download" });
 
   assert.ok(paths.some((p) => p.startsWith("/api/download?")), "standalone downloads full content through /api/download");
   assert.strictEqual(paths.filter((p) => p.startsWith("/api/blob?")).length, 1, "/api/blob remains the preview request only");

@@ -33,21 +33,21 @@ async function scenarioSlowRefreshMustNotClobberInFlightNavigation() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
 
   // Kick off refresh -- it hangs.
   click(c.document.getElementById("refresh"));
-  await waitFor(() => refreshResolvers.length === 1, { desc: "refresh request in flight" });
+  await waitFor(c, () => refreshResolvers.length === 1, { desc: "refresh request in flight" });
 
   // Before it resolves, open the table.
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "table view renders" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "table view renders" });
 
   // NOW the stale refresh resolves.
   refreshResolvers[0](jsonRoute({ services: [service] }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.ok(c.document.querySelector("#content table.grid"), "the table view must survive a stale refresh's late resolution");
   assert.strictEqual(c.document.querySelectorAll("#services li").length, 1, "the services rail is still refreshed from the (stale) response");

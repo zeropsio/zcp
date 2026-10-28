@@ -17,9 +17,9 @@ function treeRoute() {
 
 async function boot(routes, writeEnabled = false) {
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "table node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "table node" });
   click(c.document.querySelector("#tree .node"));
   return c;
 }
@@ -50,14 +50,14 @@ async function scenarioMutationsPreserveRelationStateAndRefreshCount() {
     return null;
   };
   const c = await boot(routes, true);
-  await waitFor(() => c.document.querySelector('th[data-column-index="1"] button.sortable'), { desc: "mutable relation grid" });
+  await waitFor(c, () => c.document.querySelector('th[data-column-index="1"] button.sortable'), { desc: "mutable relation grid" });
   click(c.document.querySelector('th[data-column-index="1"] button.sortable'));
-  await waitFor(() => c.document.querySelector(".page-number") && Array.from(c.document.querySelectorAll(".page-number")).some((b) => b.textContent === "2"), { desc: "sorted paginator" });
+  await waitFor(c, () => c.document.querySelector(".page-number") && Array.from(c.document.querySelectorAll(".page-number")).some((b) => b.textContent === "2"), { desc: "sorted paginator" });
   click(Array.from(c.document.querySelectorAll(".page-number")).find((b) => b.textContent === "2"));
-  await waitFor(() => pageRequests.at(-1).searchParams.get("cursor") === "100", { desc: "mutation precondition page two" });
+  await waitFor(c, () => pageRequests.at(-1).searchParams.get("cursor") === "100", { desc: "mutation precondition page two" });
 
   const assertRefresh = async (before, label) => {
-    await waitFor(() => countCalls > before && pageRequests.at(-1).searchParams.get("cursor") === "100" &&
+    await waitFor(c, () => countCalls > before && pageRequests.at(-1).searchParams.get("cursor") === "100" &&
       pageRequests.at(-1).searchParams.get("sort") === "name" && pageRequests.at(-1).searchParams.get("direction") === "asc", { desc: label + " preserves sort/page and refreshes count" });
   };
 
@@ -66,24 +66,24 @@ async function scenarioMutationsPreserveRelationStateAndRefreshCount() {
   const input = c.document.querySelector("input.celledit");
   input.value = "edited";
   input.blur();
-  await waitFor(() => mutationCalls.includes("POST /api/cell"), { desc: "cell edit applied" });
+  await waitFor(c, () => mutationCalls.includes("POST /api/cell"), { desc: "cell edit applied" });
   await assertRefresh(before, "cell edit");
 
   before = countCalls;
   click(c.document.querySelector("button.rowdel"));
-  await waitFor(() => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "delete confirm" });
+  await waitFor(c, () => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "delete confirm" });
   click(c.document.getElementById("modalok"));
-  await waitFor(() => mutationCalls.includes("DELETE /api/row"), { desc: "row delete applied" });
+  await waitFor(c, () => mutationCalls.includes("DELETE /api/row"), { desc: "row delete applied" });
   await assertRefresh(before, "row delete");
 
   before = countCalls;
   click(c.document.getElementById("insertrow"));
-  await waitFor(() => c.document.querySelector("#modalbody input[data-col]"), { desc: "insert form" });
+  await waitFor(c, () => c.document.querySelector("#modalbody input[data-col]"), { desc: "insert form" });
   const fields = c.document.querySelectorAll("#modalbody input[data-col]");
   fields[0].value = "new";
   fields[1].value = "value";
   click(c.document.getElementById("modalok"));
-  await waitFor(() => mutationCalls.includes("POST /api/row"), { desc: "row insert applied" });
+  await waitFor(c, () => mutationCalls.includes("POST /api/row"), { desc: "row insert applied" });
   await assertRefresh(before, "row insert");
   c.close();
 }
@@ -104,7 +104,7 @@ async function scenarioExactCountSortAndBoundedPages() {
     return null;
   };
   const c = await boot(routes);
-  await waitFor(() => /1.100 of 50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "exact total range" });
+  await waitFor(c, () => /1.100 of 50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "exact total range" });
 
   const sort = c.document.querySelector('th[data-column-index="1"] button.sortable');
   assert.ok(sort, "sortable server-declared column renders a real button");
@@ -117,17 +117,17 @@ async function scenarioExactCountSortAndBoundedPages() {
   assert.ok(c.document.querySelector(".page-last"), "exact paginator exposes a last-page control");
 
   click(sort);
-  await waitFor(() => pageRequests.some((u) => u.searchParams.get("sort") === "name" && u.searchParams.get("direction") === "asc"), { desc: "ascending server sort request" });
-  await waitFor(() => c.document.querySelector('th[data-column-index="1"]').getAttribute("aria-sort") === "ascending", { desc: "ascending aria-sort" });
+  await waitFor(c, () => pageRequests.some((u) => u.searchParams.get("sort") === "name" && u.searchParams.get("direction") === "asc"), { desc: "ascending server sort request" });
+  await waitFor(c, () => c.document.querySelector('th[data-column-index="1"]').getAttribute("aria-sort") === "ascending", { desc: "ascending aria-sort" });
   click(c.document.querySelector('th[data-column-index="1"] button.sortable'));
-  await waitFor(() => pageRequests.some((u) => u.searchParams.get("sort") === "name" && u.searchParams.get("direction") === "desc"), { desc: "descending server sort request" });
-  await waitFor(() => c.document.querySelector('th[data-column-index="1"]') && c.document.querySelector('th[data-column-index="1"]').getAttribute("aria-sort") === "descending", { desc: "descending page render" });
+  await waitFor(c, () => pageRequests.some((u) => u.searchParams.get("sort") === "name" && u.searchParams.get("direction") === "desc"), { desc: "descending server sort request" });
+  await waitFor(c, () => c.document.querySelector('th[data-column-index="1"]') && c.document.querySelector('th[data-column-index="1"]').getAttribute("aria-sort") === "descending", { desc: "descending page render" });
   assert.strictEqual(pageRequests.at(-1).searchParams.get("cursor"), "0", "sorting resets the global relation page to offset zero");
 
   const page2 = Array.from(c.document.querySelectorAll(".page-number")).find((b) => b.textContent === "2");
   click(page2);
-  await waitFor(() => pageRequests.at(-1).searchParams.get("cursor") === "100", { desc: "numbered page offset" });
-  await waitFor(() => /101.200 of 50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "exact range follows numbered page" });
+  await waitFor(c, () => pageRequests.at(-1).searchParams.get("cursor") === "100", { desc: "numbered page offset" });
+  await waitFor(c, () => /101.200 of 50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "exact range follows numbered page" });
   c.close();
 }
 
@@ -140,7 +140,7 @@ async function scenarioCountFailureFallsBackAndNoPKIsHonest() {
     return null;
   };
   const c = await boot(routes);
-  await waitFor(() => c.document.querySelector(".paginator.fallback"), { desc: "fallback paginator" });
+  await waitFor(c, () => c.document.querySelector(".paginator.fallback"), { desc: "fallback paginator" });
   assert.ok(/live.*best-effort/i.test(c.document.querySelector("#content").textContent), "a no-PK relation is visibly live/best-effort");
   assert.ok(c.document.querySelector(".page-prev").disabled, "fallback starts with previous disabled");
   assert.ok(!c.document.querySelector(".page-next").disabled, "fallback preserves next from the readable page");
@@ -165,19 +165,19 @@ async function scenarioCountCompletionNeverLabelsPendingPageRows() {
     return null;
   };
   const c = await boot(routes);
-  await waitFor(() => c.document.querySelector(".paginator.fallback .page-next"), { desc: "fallback next before count" });
+  await waitFor(c, () => c.document.querySelector(".paginator.fallback .page-next"), { desc: "fallback next before count" });
   click(c.document.querySelector(".page-next"));
-  await waitFor(() => typeof resolvePageTwo === "function", { desc: "page two held" });
+  await waitFor(c, () => typeof resolvePageTwo === "function", { desc: "page two held" });
 
   resolveCount(jsonRoute({ count: 500 }));
-  await waitFor(() => c.document.querySelector(".paginator.exact"), { desc: "count completes while page two pending" });
+  await waitFor(c, () => c.document.querySelector(".paginator.exact"), { desc: "count completes while page two pending" });
   assert.strictEqual(c.document.querySelector(".page-range").textContent, "1–100 of 500",
     "the exact range must continue to describe the still-visible first-page rows");
   assert.strictEqual(c.document.querySelector("tbody td").textContent, "1", "first-page rows remain visible while page two is pending");
 
   const secondRows = Array.from({ length: 100 }, (_, i) => [String(i + 101), "second", "1"]);
   resolvePageTwo(jsonRoute({ columns: COLS, rows: secondRows, rowKeyCols: ["id"], nextCursor: "200", numbered: true }));
-  await waitFor(() => c.document.querySelector(".page-range").textContent === "101–200 of 500", { desc: "page two range lands with rows" });
+  await waitFor(c, () => c.document.querySelector(".page-range").textContent === "101–200 of 500", { desc: "page two range lands with rows" });
   assert.strictEqual(c.document.querySelector("tbody td").textContent, "101", "page-two range and rows publish together");
   c.close();
 }
@@ -198,12 +198,12 @@ async function scenarioPageSizeRetainsExactTotalWithoutRecount() {
     return null;
   };
   const c = await boot(routes);
-  await waitFor(() => c.document.querySelector(".page-range").textContent === "1–100 of 500", { desc: "initial exact total" });
+  await waitFor(c, () => c.document.querySelector(".page-range").textContent === "1–100 of 500", { desc: "initial exact total" });
 
   const select = c.document.querySelector(".page-size select");
   select.value = "25";
   select.dispatchEvent(new c.window.Event("change", { bubbles: true }));
-  await waitFor(() => typeof resolveSmallPage === "function", { desc: "25-row page held" });
+  await waitFor(c, () => typeof resolveSmallPage === "function", { desc: "25-row page held" });
   assert.strictEqual(countCalls, 1, "changing only the window size must reuse the known relation total");
   assert.strictEqual(c.document.querySelector(".page-range").textContent, "1–100 of 500",
     "the old range remains truthful until the smaller page rows land");
@@ -212,7 +212,7 @@ async function scenarioPageSizeRetainsExactTotalWithoutRecount() {
 
   const rows = Array.from({ length: 25 }, (_, i) => [String(i + 1), "small", "1"]);
   resolveSmallPage(jsonRoute({ columns: COLS, rows, rowKeyCols: ["id"], nextCursor: "25", numbered: true }));
-  await waitFor(() => c.document.querySelector(".page-range").textContent === "1–25 of 500", { desc: "small page lands" });
+  await waitFor(c, () => c.document.querySelector(".page-range").textContent === "1–25 of 500", { desc: "small page lands" });
   assert.strictEqual(c.document.querySelector(".page-size select").value, "25", "new page size publishes with its rows");
   assert.strictEqual(countCalls, 1, "page-size response does not trigger a late recount");
   c.close();
@@ -235,12 +235,12 @@ async function scenarioSharedNonRelationGridsHaveNoSortARIA() {
       return null;
     },
   });
-  await waitFor(() => queryConsole.document.getElementById("querylink"), { desc: "query link" });
+  await waitFor(queryConsole, () => queryConsole.document.getElementById("querylink"), { desc: "query link" });
   click(queryConsole.document.getElementById("querylink"));
-  await waitFor(() => queryConsole.document.getElementById("runq"), { desc: "query console" });
+  await waitFor(queryConsole, () => queryConsole.document.getElementById("runq"), { desc: "query console" });
   queryConsole.document.getElementById("qtext").value = "SELECT 42";
   click(queryConsole.document.getElementById("runq"));
-  await waitFor(() => queryConsole.document.querySelector("#qresult th"), { desc: "query result header" });
+  await waitFor(queryConsole, () => queryConsole.document.querySelector("#qresult th"), { desc: "query result header" });
   assert.ok(!queryConsole.document.querySelector("#qresult th").hasAttribute("aria-sort"),
     "a query-result header exposes no relation sorting semantics");
   queryConsole.close();
@@ -259,9 +259,9 @@ async function scenarioSharedNonRelationGridsHaveNoSortARIA() {
       return null;
     },
   });
-  await waitFor(() => kvConsole.document.querySelector("#tree .node"), { desc: "kv node" });
+  await waitFor(kvConsole, () => kvConsole.document.querySelector("#tree .node"), { desc: "kv node" });
   click(kvConsole.document.querySelector("#tree .node"));
-  await waitFor(() => kvConsole.document.querySelector("#content th"), { desc: "kv header" });
+  await waitFor(kvConsole, () => kvConsole.document.querySelector("#content th"), { desc: "kv header" });
   assert.ok(!kvConsole.document.querySelector("#content th").hasAttribute("aria-sort"),
     "a KV header exposes no relation sorting semantics");
   kvConsole.close();
@@ -290,26 +290,26 @@ async function scenarioRowAndCountEpochsClampAfterRefresh() {
     return null;
   };
   const c = await boot(routes);
-  await waitFor(() => c.document.querySelector(".page-refresh"), { desc: "relation refresh" });
+  await waitFor(c, () => c.document.querySelector(".page-refresh"), { desc: "relation refresh" });
   click(c.document.querySelector(".page-refresh"));
-  await waitFor(() => /50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "fresh count epoch" });
+  await waitFor(c, () => /50,000/.test((c.document.querySelector(".page-range") || {}).textContent || ""), { desc: "fresh count epoch" });
   counts[0](jsonRoute({ count: 99999 }));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.ok(/50,000/.test(c.document.querySelector(".page-range").textContent), "stale count epoch cannot overwrite the refreshed total");
 
   const page2 = Array.from(c.document.querySelectorAll(".page-number")).find((b) => b.textContent === "2");
   click(page2);
-  await waitFor(() => heldRows.length === 1, { desc: "older row request held" });
+  await waitFor(c, () => heldRows.length === 1, { desc: "older row request held" });
   click(c.document.querySelector('th[data-column-index="1"] button.sortable'));
-  await waitFor(() => /sorted/.test(c.document.querySelector("tbody").textContent), { desc: "newer sorted page" });
+  await waitFor(c, () => /sorted/.test(c.document.querySelector("tbody").textContent), { desc: "newer sorted page" });
   heldRows[0](jsonRoute({ columns: COLS, rows: [["101", "stale", "1"]], rowKeyCols: ["id"], nextCursor: "200", numbered: true }));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.ok(/sorted/.test(c.document.querySelector("tbody").textContent), "stale row epoch cannot overwrite newer sorted data");
 
   click(c.document.querySelector(".page-last"));
-  await waitFor(() => /49901.50000 of 50,000/.test(c.document.querySelector(".page-range").textContent), { desc: "last page before shrink" });
+  await waitFor(c, () => /49901.50000 of 50,000/.test(c.document.querySelector(".page-range").textContent), { desc: "last page before shrink" });
   click(c.document.querySelector(".page-refresh"));
-  await waitFor(() => /1.50 of 50/.test(c.document.querySelector(".page-range").textContent), { desc: "shrinking total clamps and refetches page zero" });
+  await waitFor(c, () => /1.50 of 50/.test(c.document.querySelector(".page-range").textContent), { desc: "shrinking total clamps and refetches page zero" });
   c.close();
 }
 

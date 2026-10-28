@@ -37,11 +37,11 @@ async function openEditableGrid() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
+  await waitFor(c, () => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
   return { c, cellEdits };
 }
 
@@ -50,17 +50,17 @@ async function scenarioNullButtonCommitsJSONNull() {
   const { c, cellEdits } = await openEditableGrid();
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const nullBtn = cell.querySelector("button.cellnull");
   assert.ok(nullBtn, "the inline editor renders a NULL ghost button for a tabular cell");
   assert.ok(nullBtn.classList.contains("ghost"), "the NULL button carries the ghost style");
   assert.strictEqual(nullBtn.tabIndex, 0, "the NULL button is tab-reachable");
 
   click(nullBtn);
-  await waitFor(() => cellEdits.length === 1, { desc: "the NULL button commits a request" });
+  await waitFor(c, () => cellEdits.length === 1, { desc: "the NULL button commits a request" });
   assert.strictEqual(Object.prototype.hasOwnProperty.call(cellEdits[0], "newValue"), true, "the request carries a newValue field");
   assert.strictEqual(cellEdits[0].newValue, null, "the NULL button sends a true JSON null, not an empty string");
-  await waitFor(() => cell.textContent === "∅", { desc: "the cell renders the null presentation (∅) afterward" });
+  await waitFor(c, () => cell.textContent === "∅", { desc: "the cell renders the null presentation (∅) afterward" });
   c.close();
 }
 
@@ -82,16 +82,16 @@ async function scenarioNullRejectionReportsHonestly() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
+  await waitFor(c, () => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("button.cellnull"), { desc: "NULL button renders" });
+  await waitFor(c, () => cell.querySelector("button.cellnull"), { desc: "NULL button renders" });
   click(cell.querySelector("button.cellnull"));
-  await waitFor(() => cell.textContent === "hello", { desc: "a rejected NULL commit restores the old value" });
+  await waitFor(c, () => cell.textContent === "hello", { desc: "a rejected NULL commit restores the old value" });
   assert.ok(c.document.querySelector(".toast.bad"), "a rejected NULL commit reports failure honestly (not silently swallowed)");
   c.close();
 }
@@ -113,14 +113,14 @@ async function scenarioKVCellEditorHasNoNullButton() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
+  await waitFor(c, () => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   assert.strictEqual(cell.querySelector("button.cellnull"), null, "a KV entry cell editor renders no NULL button");
   c.close();
 }
@@ -131,13 +131,13 @@ async function scenarioEscapeStillCancelsUnaffected() {
   const { c } = await openEditableGrid();
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const input = cell.querySelector("input.celledit");
   input.value = "typed-but-cancelled";
   const w = c.window;
   input.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   input.dispatchEvent(new w.FocusEvent("blur"));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.strictEqual(cell.textContent, "hello", "Escape still restores the original value with the NULL button present");
   c.close();
 }
@@ -154,7 +154,7 @@ async function scenarioNullButtonMousedownPreventsDefault() {
   const { c } = await openEditableGrid();
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("button.cellnull"), { desc: "NULL button renders" });
+  await waitFor(c, () => cell.querySelector("button.cellnull"), { desc: "NULL button renders" });
   const w = c.window;
   const ev = new w.MouseEvent("mousedown", { bubbles: true, cancelable: true });
   cell.querySelector("button.cellnull").dispatchEvent(ev);

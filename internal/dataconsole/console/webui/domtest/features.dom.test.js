@@ -38,9 +38,9 @@ async function scenarioStreamCard() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .streamcard"), { desc: "stream card render" });
+  await waitFor(c, () => c.document.querySelector("#content .streamcard"), { desc: "stream card render" });
   const card = c.document.querySelector("#content .streamcard");
   assert.ok(card.querySelector(".streamlabel"), "the stream summary renders a LABELLED card (not a bare blob)");
   assert.ok(/not message content/i.test(card.querySelector(".streamlabel").textContent), "the card states it is metadata, not message content (U-04)");
@@ -62,9 +62,9 @@ async function scenarioStreamConsumerUnavailable() {
       return null;
     },
   });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .streamcard"), { desc: "stream card render" });
+  await waitFor(c, () => c.document.querySelector("#content .streamcard"), { desc: "stream card render" });
   const card = c.document.querySelector("#content .streamcard");
   assert.ok(/unavailable/i.test(card.textContent), "consumer groups unavailable-by-privilege is shown honestly as 'unavailable', never a false zero");
   assert.ok(/6/.test(card.textContent), "the partition count is shown");
@@ -91,12 +91,12 @@ async function scenarioDocumentSearch() {
       return null;
     },
   });
-  await waitFor(() => c.document.getElementById("searchlink"), { desc: "search link render" });
+  await waitFor(c, () => c.document.getElementById("searchlink"), { desc: "search link render" });
   click(c.document.getElementById("searchlink"));
-  await waitFor(() => c.document.getElementById("runs"), { desc: "search pane render" });
+  await waitFor(c, () => c.document.getElementById("runs"), { desc: "search pane render" });
   c.document.getElementById("sq").value = "hello";
   click(c.document.getElementById("runs"));
-  await waitFor(() => c.document.querySelector("#sresult .node"), { desc: "search result render" });
+  await waitFor(c, () => c.document.querySelector("#sresult .node"), { desc: "search result render" });
   assert.ok(!c.window.__xssFired, "an untrusted match id never executes as markup (search results are escaped)");
   assert.strictEqual(c.document.querySelector("#sresult .node .nname").textContent, evil, "the match id renders as escaped text (recovered verbatim via textContent)");
   c.close();

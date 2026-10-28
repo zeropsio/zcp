@@ -33,12 +33,12 @@ async function saveButtonPresent({ embedded, writeEnabled, actionEnabled }) {
   const url = embedded ? "http://localhost/" : "http://localhost/#t=FAKE&svc=db";
   const c = buildConsole({ url, embedded, routes });
   if (embedded) {
-    await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
+    await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready sent to host" });
     hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled, service: "db" });
   }
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
+  await waitFor(c, () => c.document.querySelector("#content .toolbar"), { desc: "blob toolbar render" });
   const present = !!c.document.getElementById("saveblob");
   c.close();
   return present;

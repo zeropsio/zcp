@@ -32,11 +32,11 @@ async function scenarioEmptyStateSpansFullWidthWithDeleteColumn() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.state.empty"), { desc: "empty grid state renders" });
+  await waitFor(c, () => c.document.querySelector("#content td.state.empty"), { desc: "empty grid state renders" });
 
   const headerCells = c.document.querySelectorAll("#content table.grid thead th").length;
   assert.strictEqual(headerCells, 3, "precondition: 2 data columns + 1 delete column render in the header");

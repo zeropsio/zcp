@@ -59,12 +59,12 @@ function pointer(c, target, type, clientX) {
 
 async function scenarioQueryColumnWidthsScopedByResultShape() {
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=db", routes });
-  await waitFor(() => c.document.getElementById("querylink"), { desc: "query link render" });
+  await waitFor(c, () => c.document.getElementById("querylink"), { desc: "query link render" });
   click(c.document.getElementById("querylink"));
-  await waitFor(() => c.document.getElementById("runq"), { desc: "query console render" });
+  await waitFor(c, () => c.document.getElementById("runq"), { desc: "query console render" });
 
   runSQL(c, "SELECT id, name FROM t");
-  await waitFor(() => c.document.getElementById("grid-column-label-1")?.textContent === "name", { desc: "first query grid render" });
+  await waitFor(c, () => c.document.getElementById("grid-column-label-1")?.textContent === "name", { desc: "first query grid render" });
   assert.deepStrictEqual(widths(c), [DATA_DEFAULT, DATA_DEFAULT], "fresh query grid starts at the default column width");
 
   // Widen the "id" column of this query result.
@@ -77,12 +77,12 @@ async function scenarioQueryColumnWidthsScopedByResultShape() {
   // A differently-shaped query result (still has an "id" column) must NOT
   // inherit the width persisted above -- the collision the fix closes.
   runSQL(c, "SELECT id, status FROM t");
-  await waitFor(() => c.document.getElementById("grid-column-label-1")?.textContent === "status", { desc: "second query grid render" });
+  await waitFor(c, () => c.document.getElementById("grid-column-label-1")?.textContent === "status", { desc: "second query grid render" });
   assert.deepStrictEqual(widths(c), [DATA_DEFAULT, DATA_DEFAULT], "a differently-shaped query result does not inherit another query's column widths");
 
   // Re-running the FIRST shape still restores its own persisted width.
   runSQL(c, "SELECT id, name FROM t");
-  await waitFor(() => c.document.getElementById("grid-column-label-1")?.textContent === "name", { desc: "first query grid re-render" });
+  await waitFor(c, () => c.document.getElementById("grid-column-label-1")?.textContent === "name", { desc: "first query grid re-render" });
   assert.deepStrictEqual(widths(c), [260, DATA_DEFAULT], "re-running a query with the same result shape restores its own persisted width");
 
   c.close();

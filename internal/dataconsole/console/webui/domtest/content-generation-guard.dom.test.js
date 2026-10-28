@@ -40,30 +40,30 @@ async function scenarioSlowReopenMustNotClobberSubsequentNavigation() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: false, service: "db" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
 
   // Open the blob -- first /api/blob call -- and resolve it so state.reopen
   // is set to this blob's opener.
   click(c.document.querySelectorAll("#tree .node")[0]);
-  await waitFor(() => blobResolvers.length === 1, { desc: "first blob fetch in flight" });
+  await waitFor(c, () => blobResolvers.length === 1, { desc: "first blob fetch in flight" });
   blobResolvers[0](blobRoute("hello", { contentType: "text/plain" }));
-  await waitFor(() => c.document.querySelector("#content .toolbar"), { desc: "blob view renders" });
+  await waitFor(c, () => c.document.querySelector("#content .toolbar"), { desc: "blob view renders" });
 
   // A write-mode confirmation re-fires state.reopen() -- the SAME blob opener
   // again -- but this second fetch hangs.
   hostPostMessage(c.window, { type: "dataconsole-write-mode", writeEnabled: true });
-  await waitFor(() => blobResolvers.length === 2, { desc: "reopen's (second) blob fetch in flight" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree refresh after write mode" });
+  await waitFor(c, () => blobResolvers.length === 2, { desc: "reopen's (second) blob fetch in flight" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree refresh after write mode" });
 
   // Before it resolves, the user navigates to the table.
   click(c.document.querySelectorAll("#tree .node")[1]);
-  await waitFor(() => c.document.querySelector("#content table.grid"), { desc: "table view renders" });
+  await waitFor(c, () => c.document.querySelector("#content table.grid"), { desc: "table view renders" });
 
   // NOW the stale reopen resolves -- it must NOT clobber the table view.
   blobResolvers[1](blobRoute("hello", { contentType: "text/plain" }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.ok(c.document.querySelector("#content table.grid"), "the table view must survive a stale reopen's late resolution");
   assert.strictEqual(c.document.getElementById("dlblob"), null, "a stale blob reopen must not re-render the blob toolbar over the table view");
@@ -98,23 +98,23 @@ async function scenarioStaleMaybeTTLMustNotAppendToSupersededView() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree nodes render" });
 
   // Open k1 -- its maybeTTL /api/stat fetch hangs.
   click(c.document.querySelectorAll("#tree .node")[0]);
-  await waitFor(() => k1StatResolvers.length === 1, { desc: "k1's TTL stat fetch in flight" });
+  await waitFor(c, () => k1StatResolvers.length === 1, { desc: "k1's TTL stat fetch in flight" });
 
   // Navigate to k2 before k1's stat resolves -- k2's own TTL bar renders
   // normally (proves the guard doesn't just suppress ALL ttl bars).
   click(c.document.querySelectorAll("#tree .node")[1]);
-  await waitFor(() => c.document.querySelectorAll("#content .ttlbar").length === 1, { desc: "k2's own TTL bar renders" });
+  await waitFor(c, () => c.document.querySelectorAll("#content .ttlbar").length === 1, { desc: "k2's own TTL bar renders" });
 
   // k1's stale stat resolves now -- it must not append a SECOND TTL bar (for
   // k1) onto k2's (the current) view.
   k1StatResolvers[0](jsonRoute({ name: "k1", kind: "blob", path: { service: "cache", segments: ["k1"] }, meta: { ttlSeconds: null } }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.strictEqual(c.document.querySelectorAll("#content .ttlbar").length, 1, "a stale maybeTTL completion must not append a second TTL bar onto a superseded view");
   c.close();
@@ -157,11 +157,11 @@ async function runStaleMutationCompletionCase(kind) {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "table and blob nodes" });
+  await waitFor(c, () => c.document.querySelectorAll("#tree .node").length === 2, { desc: "table and blob nodes" });
   click(c.document.querySelectorAll("#tree .node")[0]);
-  await waitFor(() => c.document.querySelector("tbody td.editable"), { desc: "editable table" });
+  await waitFor(c, () => c.document.querySelector("tbody td.editable"), { desc: "editable table" });
   if (kind === "edit") {
     click(c.document.querySelector("tbody td.editable"));
     const input = c.document.querySelector("input.celledit");
@@ -169,23 +169,23 @@ async function runStaleMutationCompletionCase(kind) {
     input.blur();
   } else if (kind === "delete") {
     click(c.document.querySelector("button.rowdel"));
-    await waitFor(() => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "delete confirmation" });
+    await waitFor(c, () => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "delete confirmation" });
     click(c.document.getElementById("modalok"));
   } else {
     click(c.document.getElementById("insertrow"));
-    await waitFor(() => c.document.querySelector("#modalbody input[data-col]"), { desc: "insert form" });
+    await waitFor(c, () => c.document.querySelector("#modalbody input[data-col]"), { desc: "insert form" });
     const fields = c.document.querySelectorAll("#modalbody input[data-col]");
     fields[0].value = "2";
     fields[1].value = "inserted";
     click(c.document.getElementById("modalok"));
   }
-  await waitFor(() => typeof resolveMutation === "function", { desc: kind + " mutation held" });
+  await waitFor(c, () => typeof resolveMutation === "function", { desc: kind + " mutation held" });
 
   click(c.document.querySelectorAll("#tree .node")[1]);
-  await waitFor(() => /^new\.txt$/.test((c.document.querySelector("#content .toolbar b") || {}).textContent || ""), { desc: "newer blob view" });
+  await waitFor(c, () => /^new\.txt$/.test((c.document.querySelector("#content .toolbar b") || {}).textContent || ""), { desc: "newer blob view" });
   const callsBeforeCompletion = browseCalls;
   resolveMutation(jsonRoute({ affected: 1, key: { id: "2" } }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.strictEqual((c.document.querySelector("#content .toolbar b") || {}).textContent, "new.txt",
     "a stale " + kind + " completion must preserve the newer blob view");

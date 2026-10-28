@@ -29,15 +29,15 @@ async function main() {
   };
 
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
+  await waitFor(c, () => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
 
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const input = cell.querySelector("input.celledit");
   input.value = "typed-but-should-not-save";
 
@@ -47,7 +47,7 @@ async function main() {
 
   // Give any wrongly-fired async commit() a chance to reach the network before
   // asserting it did not.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await c.settled();
 
   assert.strictEqual(cellEdits.length, 0, "Escape must not commit -- no /api/cell request may be issued");
   assert.strictEqual(cell.textContent, "hello", "Escape must restore the original cell value, not the typed one");
@@ -55,11 +55,11 @@ async function main() {
   // Companion: a NORMAL blur (no Escape) must still commit -- proves the fix
   // does not also break the legitimate commit-on-blur path.
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor re-opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor re-opens" });
   const input2 = cell.querySelector("input.celledit");
   input2.value = "changed-for-real";
   input2.dispatchEvent(new w.FocusEvent("blur"));
-  await waitFor(() => cellEdits.length === 1, { desc: "normal blur still commits" });
+  await waitFor(c, () => cellEdits.length === 1, { desc: "normal blur still commits" });
   assert.strictEqual(JSON.parse(cellEdits[0]).newValue, "changed-for-real", "the legitimate blur-commit path still sends the typed value");
 
   c.close();

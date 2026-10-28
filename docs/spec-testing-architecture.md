@@ -308,6 +308,8 @@ empty successful check. An incomplete Go graph widens selection as well.
 Selector contracts live in `scripts/test_check_changed.py`; complete all-package
 test and lint Makefile targets remain available for manual diagnostics.
 
+Decision: A zcp test drives time through an injected clock or an explicit completion signal; CI runs each test file once.
+
 ## 8. Invariants (pin with tests)
 
 - **I1** Every behavior has exactly one verification home, chosen by the tier

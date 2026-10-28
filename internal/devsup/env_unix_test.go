@@ -199,28 +199,22 @@ func TestSupervisor_EnvOverlay_SameOverlay_NoRestart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t)
-			web := freePort(t)
-			r.declare(r.envServer("web", web))
 			s := r.supervisor()
-			s.Boot()
-			eventually(t, "web to listen", func() bool { return listening(web) })
+			s.env = maps.Clone(tt.first)
 			restarts := 0
 			if tt.first != nil {
-				if err := s.SetEnv(tt.first); err != nil {
-					t.Fatal(err)
-				}
 				restarts = 1
-				eventually(t, "web to restart under the first overlay", func() bool {
-					sv := mustServer(t, s.State(), "web")
-					return sv.Restarts == 1 && sv.Status == StatusRunning
-				})
 			}
+			s.servers["web"] = &server{spec: Server{Name: "web"}, desired: DesiredRunning, starts: restarts + 1}
 			pid := mustServer(t, s.State(), "web").Pid
 
 			if err := s.SetEnv(tt.again); err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(500 * time.Millisecond) // a restart that should not happen has no event to wait on
+			// Equality returns synchronously, without scheduling the restart worker.
+			if s.envRestarting {
+				t.Fatal("an unchanged overlay scheduled a restart")
+			}
 
 			if sv := mustServer(t, s.State(), "web"); sv.Restarts != restarts || sv.Pid != pid || sv.Status != StatusRunning {
 				t.Fatalf("an unchanged overlay restarted web: %+v", sv)

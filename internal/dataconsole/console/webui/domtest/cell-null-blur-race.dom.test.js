@@ -52,11 +52,11 @@ async function openEditableGrid(rows) {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
-  await waitFor(() => c.document.querySelector("#tree .node"), { desc: "tree node render" });
+  await waitFor(c, () => c.document.querySelector("#tree .node"), { desc: "tree node render" });
   click(c.document.querySelector("#tree .node"));
-  await waitFor(() => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
+  await waitFor(c, () => c.document.querySelector("#content td.editable"), { desc: "editable cell render" });
   return { c, cellEdits };
 }
 
@@ -66,7 +66,7 @@ async function scenarioNullButtonSurvivesUnchangedInputBlur() {
   const { c, cellEdits } = await openEditableGrid([["1", "hello"]]);
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const nullBtn = cell.querySelector("button.cellnull");
   assert.ok(nullBtn, "precondition: the NULL button renders");
 
@@ -76,7 +76,7 @@ async function scenarioNullButtonSurvivesUnchangedInputBlur() {
   assert.strictEqual(cellEdits.length, 0, "focus moving to the NULL button must not itself commit a request");
 
   click(nullBtn);
-  await waitFor(() => cellEdits.length === 1, { desc: "activating the NULL button (now reachable) commits" });
+  await waitFor(c, () => cellEdits.length === 1, { desc: "activating the NULL button (now reachable) commits" });
   assert.strictEqual(cellEdits[0].newValue, null, "the NULL button's own commit carries a true null");
   c.close();
 }
@@ -87,7 +87,7 @@ async function scenarioChangedInputThenNullCommitsExactlyOnce() {
   const { c, cellEdits } = await openEditableGrid([["1", "hello"]]);
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const input = cell.querySelector("input.celledit");
   input.value = "typed-then-null";
   const nullBtn = cell.querySelector("button.cellnull");
@@ -96,8 +96,8 @@ async function scenarioChangedInputThenNullCommitsExactlyOnce() {
   // mousedown or Tab would, firing blur first), then the button is activated.
   nullBtn.focus();
   click(nullBtn);
-  await waitFor(() => cellEdits.length >= 1, { desc: "at least one request fires" });
-  await new Promise((resolve) => setTimeout(resolve, 30)); // let a second, racing request land if the bug is present
+  await waitFor(c, () => cellEdits.length >= 1, { desc: "at least one request fires" });
+  await c.settled();
   assert.strictEqual(cellEdits.length, 1, "changing the input then activating NULL must send exactly ONE request, not a string-write racing the null-write; got " + JSON.stringify(cellEdits));
   assert.strictEqual(cellEdits[0].newValue, null, "the single request sent is the NULL commit, not the stale typed string");
   c.close();
@@ -109,13 +109,13 @@ async function scenarioNullCellTypedEmptyStringCommitsAsRealEdit() {
   const cell = c.document.querySelector("#content td.editable");
   assert.strictEqual(cell.textContent, "∅", "precondition: the cell renders the NULL presentation");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const input = cell.querySelector("input.celledit");
   assert.strictEqual(input.value, "", "a NULL cell's editor opens with an empty input, not the literal word null");
 
   const w = c.window;
   input.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  await waitFor(() => cellEdits.length === 1, { desc: "committing empty string on a NULL cell sends a request" });
+  await waitFor(c, () => cellEdits.length === 1, { desc: "committing empty string on a NULL cell sends a request" });
   assert.strictEqual(Object.prototype.hasOwnProperty.call(cellEdits[0], "newValue"), true, "the request carries a newValue field");
   assert.strictEqual(cellEdits[0].newValue, "", "the committed value is a real empty string, not swallowed as a no-op on a null cell");
   c.close();
@@ -128,11 +128,11 @@ async function scenarioNormalBlurStillCommitsUnaffected() {
   const { c, cellEdits } = await openEditableGrid([["1", "hello"]]);
   const cell = c.document.querySelector("#content td.editable");
   click(cell);
-  await waitFor(() => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
+  await waitFor(c, () => cell.querySelector("input.celledit"), { desc: "inline editor opens" });
   const input = cell.querySelector("input.celledit");
   input.value = "changed-for-real";
   input.blur();
-  await waitFor(() => cellEdits.length === 1, { desc: "a normal blur (not moving to the NULL button) still commits" });
+  await waitFor(c, () => cellEdits.length === 1, { desc: "a normal blur (not moving to the NULL button) still commits" });
   assert.strictEqual(cellEdits[0].newValue, "changed-for-real", "the legitimate blur-commit path still sends the typed value");
   c.close();
 }

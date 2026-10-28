@@ -26,11 +26,11 @@ function kvService() {
 
 async function openCreateKeyModal(routes) {
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.getElementById("createkeylink"), { desc: "add key link render" });
+  await waitFor(c, () => c.document.getElementById("createkeylink"), { desc: "add key link render" });
   click(c.document.getElementById("createkeylink"));
-  await waitFor(() => c.document.getElementById("kvname"), { desc: "create-key form render" });
+  await waitFor(c, () => c.document.getElementById("kvname"), { desc: "create-key form render" });
   return c;
 }
 
@@ -44,7 +44,7 @@ async function scenarioEscapeCancels() {
   const c = await openCreateKeyModal(routes);
   const w = c.window;
   c.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "Escape closes an idle modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "Escape closes an idle modal" });
   c.close();
 }
 
@@ -60,12 +60,12 @@ async function scenarioEscapeIgnoredWhileInFlight() {
   const c = await openCreateKeyModal(routes);
   c.document.getElementById("kvname").value = "k1";
   click(c.document.getElementById("modalok"));
-  await waitFor(() => resolvers.length === 1, { desc: "create request in flight" });
+  await waitFor(c, () => resolvers.length === 1, { desc: "create request in flight" });
   assert.strictEqual(c.document.getElementById("modalcancel").disabled, true, "Cancel is disabled mid-flight (precondition)");
 
   const w = c.window;
   c.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "Escape is ignored while a write is in flight");
   c.close();
 }
@@ -79,11 +79,11 @@ async function scenarioBackdropClickCancelsButBoxDoesNot() {
   };
   const c = await openCreateKeyModal(routes);
   click(c.document.querySelector(".modalbox"));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await c.settled();
   assert.strictEqual(c.document.getElementById("modal").classList.contains("hidden"), false, "clicking inside .modalbox must not close the modal");
 
   click(c.document.getElementById("modal"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "clicking the backdrop itself closes the modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "clicking the backdrop itself closes the modal" });
   c.close();
 }
 
@@ -96,16 +96,16 @@ async function scenarioFocusTrapAndRestore() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
-  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "cache" });
-  await waitFor(() => c.document.getElementById("createkeylink"), { desc: "add key link render" });
+  await waitFor(c, () => c.document.getElementById("createkeylink"), { desc: "add key link render" });
 
   const opener = c.document.getElementById("createkeylink");
   opener.focus();
   assert.strictEqual(c.document.activeElement, opener, "precondition: the opener is focused before the modal opens");
 
   click(opener);
-  await waitFor(() => c.document.getElementById("kvname"), { desc: "create-key form render" });
+  await waitFor(c, () => c.document.getElementById("kvname"), { desc: "create-key form render" });
   const box = c.document.querySelector(".modalbox");
   const focusables = Array.from(box.querySelectorAll("input, select, button")).filter((el) => !el.disabled);
   assert.ok(focusables.length >= 2, "the create-key modal has at least two focusable controls");
@@ -122,7 +122,7 @@ async function scenarioFocusTrapAndRestore() {
   assert.strictEqual(c.document.activeElement, last, "Shift+Tab on the first focusable wraps to the last");
 
   click(c.document.getElementById("modalcancel"));
-  await waitFor(() => c.document.getElementById("modal").classList.contains("hidden"), { desc: "Cancel closes the modal" });
+  await waitFor(c, () => c.document.getElementById("modal").classList.contains("hidden"), { desc: "Cancel closes the modal" });
   assert.strictEqual(c.document.activeElement, opener, "closing the modal restores focus to the element that opened it");
   c.close();
 }

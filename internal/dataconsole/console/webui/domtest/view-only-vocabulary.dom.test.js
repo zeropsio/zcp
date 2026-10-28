@@ -24,7 +24,7 @@ async function scenarioRailBadgeSaysViewOnly() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE", routes });
-  await waitFor(() => c.document.querySelector("#services li .badge"), { desc: "rail renders" });
+  await waitFor(c, () => c.document.querySelector("#services li .badge"), { desc: "rail renders" });
   const badge = c.document.querySelector("#services li .badge");
   assert.strictEqual(badge.textContent, "view-only", "the rail tier badge for a view-only service reads the full word, matching the Studio sidebar card");
   c.close();
@@ -41,7 +41,7 @@ async function scenarioOtherRailBadgesUnchanged() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE", routes });
-  await waitFor(() => c.document.querySelectorAll("#services li .badge").length === 2, { desc: "rail renders both services" });
+  await waitFor(c, () => c.document.querySelectorAll("#services li .badge").length === 2, { desc: "rail renders both services" });
   const badges = Array.from(c.document.querySelectorAll("#services li .badge")).map((b) => b.textContent);
   assert.deepStrictEqual(badges, ["ready", "not yet"], "the ready and not-yet labels are unchanged by the view-only wording fix");
   c.close();
@@ -56,9 +56,9 @@ async function scenarioTopbarBadgeShowsForViewOnlyActiveService() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE", routes });
-  await waitFor(() => c.document.querySelector("#services li"), { desc: "rail renders" });
+  await waitFor(c, () => c.document.querySelector("#services li"), { desc: "rail renders" });
   click(c.document.querySelector("#services li"));
-  await waitFor(() => c.document.getElementById("activesvc").textContent.includes("ch"), { desc: "service selected" });
+  await waitFor(c, () => c.document.getElementById("activesvc").textContent.includes("ch"), { desc: "service selected" });
   const badge = c.document.getElementById("activesvcbadge");
   assert.ok(badge, "the topbar carries an active-service view-only badge element");
   assert.strictEqual(badge.classList.contains("hidden"), false, "a view-only active service shows the topbar badge");
@@ -75,9 +75,9 @@ async function scenarioTopbarBadgeHiddenForFullWriteActiveService() {
     return null;
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE", routes });
-  await waitFor(() => c.document.querySelector("#services li"), { desc: "rail renders" });
+  await waitFor(c, () => c.document.querySelector("#services li"), { desc: "rail renders" });
   click(c.document.querySelector("#services li"));
-  await waitFor(() => c.document.getElementById("activesvc").textContent.includes("db"), { desc: "service selected" });
+  await waitFor(c, () => c.document.getElementById("activesvc").textContent.includes("db"), { desc: "service selected" });
   const badge = c.document.getElementById("activesvcbadge");
   assert.ok(badge, "the topbar badge element exists in the markup even when unused");
   assert.strictEqual(badge.classList.contains("hidden"), true, "a full-write active service hides the topbar view-only badge");

@@ -7,6 +7,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,44 +137,62 @@ func TestAttachRepoStatus_PairedStage_DoesNotInheritDevAdoption(t *testing.T) {
 	}
 }
 
-// stubSSHSlow sleeps for Delay on every ExecSSH call before returning
-// Output — used to prove attachRepoStatus reads services concurrently
-// rather than one SSH round trip at a time.
-type stubSSHSlow struct {
-	delay  time.Duration
-	output []byte
+// readBarrier holds each read until the test observes the first concurrent wave.
+// Overlap is proved by entry receipts, independent of the scheduler's speed.
+type readBarrier struct {
+	entered chan struct{}
+	release chan struct{}
+	active  atomic.Int32
+	peak    atomic.Int32
 }
 
-func (s *stubSSHSlow) ExecSSH(ctx context.Context, _ string, _ string) ([]byte, error) {
+func (b *readBarrier) enter(ctx context.Context) error {
+	n := b.active.Add(1)
+	defer b.active.Add(-1)
+	for peak := b.peak.Load(); n > peak; peak = b.peak.Load() {
+		if b.peak.CompareAndSwap(peak, n) {
+			break
+		}
+	}
 	select {
-	case <-time.After(s.delay):
+	case b.entered <- struct{}{}:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return fmt.Errorf("wait for read release: %w", ctx.Err())
+	}
+	select {
+	case <-b.release:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for read release: %w", ctx.Err())
+	}
+}
+
+type stubSSHBarrier struct {
+	barrier *readBarrier
+	output  []byte
+}
+
+func (s *stubSSHBarrier) ExecSSH(ctx context.Context, _ string, _ string) ([]byte, error) {
+	if err := s.barrier.enter(ctx); err != nil {
+		return nil, fmt.Errorf("SSH read barrier: %w", err)
 	}
 	return s.output, nil
 }
 
-func (s *stubSSHSlow) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+func (s *stubSSHBarrier) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
 }
 
-func (s *stubSSHSlow) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+func (s *stubSSHBarrier) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.output, nil
 }
 
-// TestAttachRepoStatus_ManyServices_ReadsRunConcurrently proves the
-// per-service SSH reads overlap instead of running one at a time: 5
-// services each behind a ~150ms SSH read finish in well under 5x150ms if
-// (and only if) they run concurrently. Concurrency is bounded at
-// attachRepoStatusConcurrency (4), so 5 services still take two waves
-// (~2x150ms wall-clock) rather than one — the threshold below sits
-// comfortably above that 2-wave floor and well below the 5x150ms serial
-// floor, so scheduler jitter around the 2-wave boundary can't flake it.
+// TestAttachRepoStatus_ManyServices_ReadsRunConcurrently holds the first
+// bounded wave in SSH until every reader has entered, then releases all reads.
 func TestAttachRepoStatus_ManyServices_ReadsRunConcurrently(t *testing.T) {
 	t.Parallel()
-	const delay = 150 * time.Millisecond
-	const wantUnder = 4 * delay // serial would take 5*delay=750ms; 2 waves land near 2*delay=300ms
-	ssh := &stubSSHSlow{delay: delay, output: []byte("5ba0abc\n")}
+	barrier := &readBarrier{entered: make(chan struct{}, 5), release: make(chan struct{})}
+	ssh := &stubSSHBarrier{barrier: barrier, output: []byte("5ba0abc\n")}
 	services := []workflow.ServiceSnapshot{
 		{Hostname: "svc1", RuntimeClass: topology.RuntimeDynamic},
 		{Hostname: "svc2", RuntimeClass: topology.RuntimeDynamic},
@@ -181,12 +201,18 @@ func TestAttachRepoStatus_ManyServices_ReadsRunConcurrently(t *testing.T) {
 		{Hostname: "svc5", RuntimeClass: topology.RuntimeDynamic},
 	}
 
-	start := time.Now()
-	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
-	elapsed := time.Since(start)
-
-	if elapsed >= wantUnder {
-		t.Errorf("elapsed = %v, want < %v (serial reads would take >= %v)", elapsed, wantUnder, 5*delay)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
+	}()
+	for range attachRepoStatusConcurrency {
+		<-barrier.entered
+	}
+	close(barrier.release)
+	<-done
+	if peak := barrier.peak.Load(); peak != attachRepoStatusConcurrency {
+		t.Errorf("peak concurrent reads = %d, want %d", peak, attachRepoStatusConcurrency)
 	}
 	for _, svc := range services {
 		if svc.Repo == nil || !svc.Repo.Present {

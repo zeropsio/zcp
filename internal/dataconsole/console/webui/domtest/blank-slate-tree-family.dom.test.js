@@ -21,10 +21,10 @@ async function emptyTree(service, { embedded = false, writeEnabled = false } = {
   const url = embedded ? "http://localhost/" : `http://localhost/#t=FAKE&svc=${encodeURIComponent(service.hostname)}`;
   const c = buildConsole({ url, embedded, routes });
   if (embedded) {
-    await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+    await waitFor(c, () => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
     hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled, service: service.hostname });
   }
-  await waitFor(() => c.document.querySelector("#tree > .state.empty"), { desc: `${service.family || "unknown"} empty-tree slate` });
+  await waitFor(c, () => c.document.querySelector("#tree > .state.empty"), { desc: `${service.family || "unknown"} empty-tree slate` });
   return c;
 }
 
@@ -40,7 +40,7 @@ async function scenarioTabularReadCTAOpensQueryConsole() {
   assert.ok(button, "an enabled read action renders without write mode");
   assert.strictEqual(button.textContent, "Open query console", "the tabular next step is the query console");
   click(button);
-  await waitFor(() => c.document.getElementById("qtext"), { desc: "query console opens from the blank slate" });
+  await waitFor(c, () => c.document.getElementById("qtext"), { desc: "query console opens from the blank slate" });
   assert.match(c.document.querySelector("#content .toolbar").textContent, /Query — db/, "the CTA opens this service's query console");
   c.close();
 }
@@ -57,7 +57,7 @@ async function scenarioKVMutationRequiresWriteModeAndCapability() {
   assert.ok(button, "write mode plus an enabled createKey action renders the mutation CTA");
   assert.strictEqual(button.textContent, "Add key", "the KV next step is Add key");
   click(button);
-  await waitFor(() => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "Add key modal opens" });
+  await waitFor(c, () => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "Add key modal opens" });
   assert.strictEqual(c.document.getElementById("modaltitle").textContent, "Add key", "the CTA opens the existing create-key form");
   c.close();
 

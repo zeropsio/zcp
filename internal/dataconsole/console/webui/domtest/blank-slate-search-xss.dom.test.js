@@ -23,19 +23,19 @@ async function main() {
   };
   const c = buildConsole({ url: "http://localhost/#t=FAKE&svc=docs", routes });
   c.window.__blankSlateXSS = false;
-  await waitFor(() => c.document.getElementById("searchlink"), { desc: "search link" });
+  await waitFor(c, () => c.document.getElementById("searchlink"), { desc: "search link" });
   click(c.document.getElementById("searchlink"));
-  await waitFor(() => c.document.getElementById("sq"), { desc: "search console" });
+  await waitFor(c, () => c.document.getElementById("sq"), { desc: "search console" });
 
   click(c.document.getElementById("runs"));
-  await waitFor(() => c.document.querySelector("#sresult > .state.empty"), { desc: "search prompt slate" });
+  await waitFor(c, () => c.document.querySelector("#sresult > .state.empty"), { desc: "search prompt slate" });
   const prompt = c.document.querySelector("#sresult > .state.empty");
   assert.strictEqual(prompt.querySelector(".state-title").textContent, "Enter search text", "an empty search renders the prompt title through the blank-slate canon");
   assert.ok(prompt.querySelector(".state-detail").textContent.length > 0, "the search prompt includes a next-step detail");
 
   c.document.getElementById("sq").value = PAYLOAD;
   click(c.document.getElementById("runs"));
-  await waitFor(() => {
+  await waitFor(c, () => {
     const title = c.document.querySelector("#sresult .state-title");
     return title && title.textContent.includes(PAYLOAD);
   }, { desc: "escaped zero-hit query echo" });
