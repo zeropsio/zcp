@@ -160,6 +160,8 @@ type GroupRecipeInputs struct {
 	// Utilities are the runtimes the project builds from a public repository
 	// and no pair — a mailpit, an adminer.
 	Utilities []GroupUtility
+	// Boxes are the Zerops Boxes the project runs (GroupBox).
+	Boxes []GroupBox
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
 	HAIncapable []string
@@ -187,6 +189,18 @@ type GroupUtility struct {
 	Scaling          *Scaling
 	// ServiceEnvs is its user-set service variables (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
+}
+
+// GroupBox is a Zerops Box the project runs (topology.IsSandboxType):
+// infrastructure an app uses, never a part of it. A tier carries it where a
+// runtime the tier carries reads it, and no tier carries one nothing reads —
+// an agent's own Box is no part of the app.
+type GroupBox struct {
+	Hostname    string
+	ServiceType string
+	// SubdomainEnabled mirrors the Box's public access, which its sandboxes'
+	// port URLs need.
+	SubdomainEnabled bool
 }
 
 // groupTierPolicy is one tier's decision set. A tier is a decision, never an
