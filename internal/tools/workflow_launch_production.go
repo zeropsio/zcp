@@ -1444,7 +1444,7 @@ func readAndValidateSourceState(
 // gone stale, omitting ProdSetupName).
 func launchTargetSetupName(stateDir, targetHostname string, input WorkflowInput) string {
 	meta, _ := workflow.FindServiceMeta(stateDir, targetHostname)
-	name, _ := resolveLaunchSetupName(LaunchPromotableInput{}, strings.TrimSpace(input.ProdSetupNameOverride), meta)
+	name, _ := resolveLaunchSetupName(LaunchPromotableInput{Hostname: targetHostname}, strings.TrimSpace(input.ProdSetupNameOverride), meta)
 	return name
 }
 
