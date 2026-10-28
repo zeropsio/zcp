@@ -89,10 +89,11 @@ func (s *Server) CallCount() int64 { return s.calls.Load() }
 // recipe pass — and what tool calls started and returned without waiting
 // for: zerops_lease's warm creates and clones (DP-27, DP-32), each bounded by
 // its own deadline, and the recipe pass a call that changed what the recipe
-// reads asked for (tools.RecipeFollower), which Stop drops while it waits. zcp itself never waits for it — a process that ends cuts
-// it short, and status says so — but a caller that tears down what that work
-// reads or writes (the state directory, the HTTP transport) waits first, or
-// stops the server (Stop).
+// reads asked for (tools.RecipeFollower), which Stop drops while it waits.
+// zcp itself never waits for it — a process that ends cuts it short, and
+// status says so — but a caller that tears down what that work reads or
+// writes (the state directory, the HTTP transport) waits first, or stops the
+// server (Stop).
 func (s *Server) WaitBackground() { s.background.Wait() }
 
 // Stop ends New's own background work — its context is cancelled, so a
