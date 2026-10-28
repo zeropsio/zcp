@@ -4221,6 +4221,13 @@ registered only in a Mate's container, with no SSH requirement. It presents the 
 100), each message at most 4,096 characters. It reads no CI: a Git environment's push and its CI
 are not zcp's any more, and the note that the pair's change merged carries no CI line until HQ
 records CI on a change's head or on `main`'s new commit (design B §3.3). The first call supplies environment project IDs, the second service IDs. No application ID or Zerops credential is accepted from the model.
+The environment result also carries `changes` and `changesAsLastRead`: the same per-repository
+known-change projection as workflow status, refreshed once from the Mate's own HQ state when it
+has a change or leased branch to name. A change merged since the last pass reads merged; if HQ
+does not answer, the ledger's standing is explicitly as last read. The read does not consume the
+pass's next notification. Before advising a merge, the agent uses current change status or says
+it is unknown; an absent change or one only as last read cannot establish its current status
+(`TestObserve_Environments_CurrentChanges`).
 HQ resolves the Mate's current placement by ID on each call and permits only environments of
 that application that every active person able to operate the Mate may read in Zerops. These
 permission facts are read for the call, never served from the outage fallback. HQ opens and checks

@@ -5,19 +5,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 	// non-parallel: the Mate's identity is the process environment.
 	ctx := context.Background()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	RegisterObserve(srv, nil, "P_MATE")
+	RegisterObserve(srv, nil, "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {
@@ -35,7 +38,7 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 		t.Fatalf("list observe tool: result=%+v err=%v", listed, err)
 	}
 	tool := listed.Tools[0]
-	wantDescription := "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal."
+	wantDescription := "Observe stage and production through HQ. environments lists project IDs and known change status; changesAsLastRead marks unrefreshed status. Merge advice requires current status; absent changes or changesAsLastRead mean unknown. status reads services and versions; logs reads up to 100 entries. Read only, without secrets. Failures say fix input, retry later, or accept HQ's refusal."
 	if tool == nil || tool.Description != wantDescription {
 		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
 	}
@@ -84,7 +87,7 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			RegisterObserve(srv, fake.Client(), "P_MATE")
+			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": tt.action, "projectId": tt.project, "serviceId": tt.service, "limit": 2})
 			if reads.Load() != 1 {
 				t.Fatalf("reads = %d, want one attempt", reads.Load())
@@ -114,6 +117,100 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 	}
 }
 
+// The environment read already made by the agent must name a change merged
+// since its last pass as merged; an unread standing is explicitly as last read.
+func TestObserve_Environments_CurrentChanges(t *testing.T) {
+	// non-parallel: the Mate's identity is the process environment.
+	for _, tt := range []struct {
+		name, state    string
+		status         int
+		merged, unread bool
+		labels         []string
+	}{
+		{"merged since the last pass", "merged", http.StatusOK, true, false, nil},
+		{"open with current standing", "open", http.StatusOK, false, false, []string{"ready", "behind main"}},
+		{"unknown while HQ cannot refresh", "", http.StatusServiceUnavailable, false, true, []string{"draft"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			ready := false
+			if err := workflow.RecordHQChange(stateDir, workflow.HQChange{
+				AppID: "a1", Repo: "group", Number: 1, Branch: "setup",
+				Told: &workflow.HQChangeTold{Ready: &ready},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var environmentReads, selfReads atomic.Int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Project good" {
+					t.Errorf("unexpected request method or authorization")
+				}
+				switch r.URL.Path {
+				case "/api/mate/environments":
+					environmentReads.Add(1)
+					writeHQJSON(w, http.StatusOK, map[string]any{"appId": "a1", "environments": []any{}})
+				case "/api/mate/self":
+					selfReads.Add(1)
+					if tt.status != http.StatusOK {
+						writeHQJSON(w, tt.status, map[string]any{"code": "not_active"})
+						return
+					}
+					writeHQJSON(w, http.StatusOK, map[string]any{
+						"appId": "a1", "projectId": "P_MATE", "openPerBranch": true,
+						"changes": []map[string]any{{"repo": "group", "number": 1, "branch": "setup", "state": tt.state, "head": "abc123", "ready": true, "mergeability": "clean", "behind": true}},
+					})
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer fake.Close()
+			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterObserve(srv, fake.Client(), "P_MATE", stateDir, runtime.Info{InContainer: true, MateEnabled: true})
+			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "environments"})
+			text := result.Content[0].(*mcp.TextContent).Text
+			if result.IsError || result.StructuredContent != nil {
+				t.Fatalf("environment observation failed or used structured content: %s", text)
+			}
+			var got struct {
+				AppID        string `json:"appId"`
+				Environments []any  `json:"environments"`
+				Changes      []struct {
+					Repo    string `json:"repo"`
+					Changes []struct {
+						Number int      `json:"number"`
+						Branch string   `json:"branch"`
+						Merged bool     `json:"merged"`
+						Labels []string `json:"labels"`
+					} `json:"changes"`
+				} `json:"changes"`
+				AsLastRead *bool `json:"changesAsLastRead"`
+			}
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.AppID != "a1" || got.Environments == nil || len(got.Environments) != 0 {
+				t.Fatalf("environment facts changed: %s", text)
+			}
+			if len(got.Changes) != 1 || got.Changes[0].Repo != "group" || len(got.Changes[0].Changes) != 1 || got.AsLastRead == nil {
+				t.Fatalf("environment result lacks known change and freshness: %s", text)
+			}
+			change := got.Changes[0].Changes[0]
+			if change.Number != 1 || change.Branch != "setup" || change.Merged != tt.merged || !reflect.DeepEqual(change.Labels, tt.labels) || *got.AsLastRead != tt.unread {
+				t.Errorf("change standing = %s, want merged=%v labels=%v asLastRead=%v", text, tt.merged, tt.labels, tt.unread)
+			}
+			if environmentReads.Load() != 1 || selfReads.Load() != 1 {
+				t.Errorf("reads: environments=%d self=%d, want one each", environmentReads.Load(), selfReads.Load())
+			}
+			kept, err := workflow.ListHQChanges(stateDir)
+			if err != nil || len(kept) != 1 || kept[0].Told == nil || kept[0].Told.Ready == nil || *kept[0].Told.Ready {
+				t.Errorf("read changed the ledger: %+v, err=%v", kept, err)
+			}
+		})
+	}
+}
+
 func TestObserve_InvalidInputOrNoKey_NoRequest(t *testing.T) {
 	// non-parallel: the Mate's identity is the process environment.
 	hqtest.Link(t, "", "", "")
@@ -123,7 +220,7 @@ func TestObserve_InvalidInputOrNoKey_NoRequest(t *testing.T) {
 		{"action": "environments"},
 	} {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-		RegisterObserve(srv, nil, "P_MATE")
+		RegisterObserve(srv, nil, "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 		result := callTool(t, srv, "zerops_observe", args)
 		if !result.IsError {
 			t.Errorf("input %v should fail visibly", args)
@@ -136,7 +233,7 @@ func TestObserve_InputError_AsksToFixAndCallAgain(t *testing.T) {
 	t.Run("a mistyped action asks the agent to fix it and call zerops_observe again", func(t *testing.T) {
 		t.Parallel()
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-		RegisterObserve(srv, nil, "P_MATE")
+		RegisterObserve(srv, nil, "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 		result := callTool(t, srv, "zerops_observe", map[string]any{"action": "delete", "projectId": "P"})
 		want := "Unknown observation action; fix it and call zerops_observe again."
 		if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || text != want {
@@ -166,7 +263,7 @@ func TestObserve_StatusActiveVersion_PassesIDAndActivationThrough(t *testing.T) 
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			RegisterObserve(srv, fake.Client(), "P_MATE")
+			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "status", "projectId": "P_STAGE"})
 			if text := result.Content[0].(*mcp.TextContent).Text; result.IsError || text != body {
 				t.Fatalf("status = %q (error %v), want %q", text, result.IsError, body)

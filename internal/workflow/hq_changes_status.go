@@ -9,9 +9,9 @@ import (
 // line: each change the ledger keeps there, and each branch zcp's leases hold
 // there with no change yet.
 type HQRepoChanges struct {
-	Repo     string
-	Changes  []HQChangeLine
-	Branches []HQBranchLine
+	Repo     string         `json:"repo"`
+	Changes  []HQChangeLine `json:"changes"`
+	Branches []HQBranchLine `json:"branches"`
 }
 
 // HQChangeLine is one change: its number and branch, its standing (ready or
@@ -19,17 +19,17 @@ type HQRepoChanges struct {
 // branch, by alias. Merged is a change HQ merged since zcp last told it: its
 // leases hold merged work.
 type HQChangeLine struct {
-	Number int
-	Branch string
-	Labels []string
-	Leases []string
-	Merged bool
+	Number int      `json:"number"`
+	Branch string   `json:"branch"`
+	Labels []string `json:"labels"`
+	Leases []string `json:"leases"`
+	Merged bool     `json:"merged"`
 }
 
 // HQBranchLine is a branch leases hold with no change of the Mate's yet.
 type HQBranchLine struct {
-	Branch string
-	Leases []string
+	Branch string   `json:"branch"`
+	Leases []string `json:"leases"`
 }
 
 // renderHQChanges is status's Changes section: one line per repository,

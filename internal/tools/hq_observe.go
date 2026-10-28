@@ -10,6 +10,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // ObserveInput uses HQ's project and service IDs, learned from environments
@@ -23,7 +25,7 @@ type ObserveInput struct {
 
 // RegisterObserve is Mate-gated by the server. Observation needs no SSH:
 // HQ reads Zerops with each environment's deploy key and exposes only facts.
-func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID string) {
+func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string, rt runtime.Info) {
 	const (
 		observeEnvironments = "environments"
 		observeStatus       = "status"
@@ -34,7 +36,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
+		Description: "Observe stage and production through HQ. environments lists project IDs and known change status; changesAsLastRead marks unrefreshed status. Merge advice requires current status; absent changes or changesAsLastRead mean unknown. status reads services and versions; logs reads up to 100 entries. Read only, without secrets. Failures say fix input, retry later, or accept HQ's refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {
@@ -74,7 +76,12 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 			if readErr != nil {
 				return readFailure(readErr, failure), nil, nil
 			}
-			body, err = json.Marshal(out)
+			changes, asLastRead := statusHQChanges(ctx, httpClient, rt, stateDir, hqAddress(rt), time.Now())
+			body, err = json.Marshal(struct {
+				hq.ObservedEnvironments
+				Changes           []workflow.HQRepoChanges `json:"changes"`
+				ChangesAsLastRead bool                     `json:"changesAsLastRead"`
+			}{out, changes, asLastRead})
 		case observeStatus:
 			out, readErr := client.EnvironmentStatus(ctx, in.ProjectID)
 			if readErr != nil {
