@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -113,24 +114,46 @@ func mateOwnHosts(inputs GroupRecipeInputs) map[string]bool {
 	return hosts
 }
 
-// mateWire is the variable that wires a runtime to the Mate and the address
-// it names (wiredToMate).
-type mateWire struct{ key, address string }
+// mateWire is why a runtime serves only the Mate: the person chose it
+// (chosen), or its variable key names address (wiredToMate).
+type mateWire struct {
+	key, address string
+	chosen       bool
+}
 
-// wiredUtilities is the utilities wired to the Mate — their own variables
-// name the address of a service among hosts (wiredToMate) — by hostname,
+// warning says that the runtime host stays on the AI Agent tier, and why.
+func (w mateWire) warning(host string) string {
+	why := fmt.Sprintf("its %s names %s, an address of this Mate's own project, so it serves this Mate", w.key, w.address)
+	if w.chosen {
+		why = "the person said it serves only this Mate"
+	}
+	return fmt.Sprintf(
+		"runtime %q stays on the AI Agent tier only: %s, which a stage or a production is not — a value there naming it points nowhere until a person sets it",
+		host, why)
+}
+
+// wiredUtilities is the utilities that serve only the Mate, by hostname,
 // each of a hostname, type and public build (groupUtilities leaves the rest
-// out); each joins hosts, so a stage naming one is wired too. A utility is
-// read against hosts as they were before any joined, so the order the
-// utilities come in decides nothing.
-func wiredUtilities(utilities []GroupUtility, hosts map[string]bool, label string) map[string]mateWire {
+// out): one the person chose so (choices true), and one they said nothing
+// of whose own variables name the address of a service among hosts
+// (wiredToMate) — never one they chose to carry (choices false). Each joins
+// hosts, so a stage naming one is wired too. A utility is read against
+// hosts as they were before any joined, so the order the utilities come in
+// decides nothing.
+func wiredUtilities(utilities []GroupUtility, hosts map[string]bool, label string, choices map[string]bool) map[string]mateWire {
 	wires := map[string]mateWire{}
 	for _, u := range utilities {
 		if strings.TrimSpace(u.Hostname) == "" || strings.TrimSpace(u.ServiceType) == "" || strings.TrimSpace(u.BuildFromGit) == "" {
 			continue
 		}
+		if chosen, said := choices[u.Hostname]; said {
+			if chosen {
+				wires[u.Hostname] = mateWire{chosen: true}
+			}
+			continue
+		}
 		if key, address := wiredToMate(u.ServiceEnvs, label, hosts); key != "" {
-			wires[u.Hostname] = mateWire{key, address}
+			wires[u.Hostname] = mateWire{key: key, address: address}
 		}
 	}
 	for host := range wires {
@@ -139,22 +162,16 @@ func wiredUtilities(utilities []GroupUtility, hosts map[string]bool, label strin
 	return wires
 }
 
-// mateWiredWarning says that the runtime host stays on the AI Agent tier:
-// its variable key names address, an address of the Mate's own project.
-func mateWiredWarning(host, key, address string) string {
-	return fmt.Sprintf(
-		"runtime %q stays on the AI Agent tier only: its %s names %s, an address of this Mate's own project, so it serves this Mate, which a stage or a production is not — a value there naming it points nowhere until a person sets it",
-		host, key, address)
-}
-
-// markMateWiredStages marks each part whose stage is wired to the Mate
-// (wiredToMate against hosts, label the Mate's subdomain label): no group
+// markMateWiredStages marks each part whose stage serves only the Mate: one
+// the person chose so (choices true), and one they said nothing of that is
+// wired to the Mate (wiredToMate against hosts, label the Mate's subdomain
+// label) — never one they chose to carry (choices false). No group
 // environment runs it, so nameGroupParts gives it no name and only the AI
-// Agent tier carries its stage. It returns those stages, sorted, and says
-// each. A pair's dev half is never read so: a dev service naming another's
-// dev address is the Mate's own dev loop, and a pair with no stage runs its
-// part on it.
-func markMateWiredStages(runtimes []GroupRuntime, parts map[string][]groupPart, hosts map[string]bool, label string) (wired, warnings []string) {
+// Agent tier carries its stage. It returns those stages and those the
+// address rule alone decided (ruled), each sorted, and says each. A pair's
+// dev half is never read so: a dev service naming another's dev address is
+// the Mate's own dev loop, and a pair with no stage runs its part on it.
+func markMateWiredStages(runtimes []GroupRuntime, parts map[string][]groupPart, hosts map[string]bool, label string, choices map[string]bool) (wired, ruled, warnings []string) {
 	for _, r := range runtimes {
 		list := parts[r.DevHostname]
 		for i := range list {
@@ -162,17 +179,47 @@ func markMateWiredStages(runtimes []GroupRuntime, parts map[string][]groupPart, 
 			if part.stage == "" {
 				continue
 			}
-			key, address := wiredToMate(part.envs, label, hosts)
-			if key == "" {
+			var wire mateWire
+			if chosen, said := choices[part.stage]; said {
+				if !chosen {
+					continue
+				}
+				wire.chosen = true
+			} else if wire.key, wire.address = wiredToMate(part.envs, label, hosts); wire.key == "" {
 				continue
+			} else {
+				ruled = append(ruled, part.stage)
 			}
 			part.mateWired = true
 			wired = append(wired, part.stage)
-			warnings = append(warnings, mateWiredWarning(part.stage, key, address))
+			warnings = append(warnings, wire.warning(part.stage))
 		}
 	}
 	sort.Strings(wired)
-	return wired, warnings
+	sort.Strings(ruled)
+	return wired, ruled, warnings
+}
+
+// mateRuleLine is the one line that says which runtimes zcp's address rule
+// alone kept on the AI Agent tier (ruled) — the person said nothing of them
+// — and that the choice is the person's, with the call that records it; ""
+// when the rule decided none.
+func mateRuleLine(ruled []string) string {
+	if len(ruled) == 0 {
+		return ""
+	}
+	hosts := slices.Sorted(slices.Values(ruled))
+	quoted := make([]string, len(hosts))
+	for i, host := range hosts {
+		quoted[i] = strconv.Quote(host)
+	}
+	which := "it"
+	if len(hosts) > 1 {
+		which = "each"
+	}
+	return fmt.Sprintf(
+		"zcp's address rule alone decided what serves only this Mate here (%s): Stage and Small Production leave %s out, with a volume only it uses. That is the person's call, not zcp's: ask them, and record their answer — zerops_workflow action=\"group-recipe\" mateOnly={%q: false} carries one in every tier, mateOnly={%q: true} keeps it on the AI Agent tier whatever the rule reads.",
+		strings.Join(quoted, ", "), which, hosts[0], hosts[0])
 }
 
 // markMateOwnVolumes adds to mateOnly the volumes — a local or a shared

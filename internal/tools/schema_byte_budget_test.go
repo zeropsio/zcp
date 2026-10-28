@@ -142,7 +142,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// (docs/spec-mate.md §10.10): a FlexBool published as
 		// oneOf[boolean,string] and one line of when; the refusal it answers
 		// carries the corrected plan.
-		"zerops_workflow":    20709,
+		// Raised +344 (20709→21053) for `mateOnly`, the person's answer to
+		// what serves only their Mate in the group recipe (docs/spec-mate.md
+		// §2.8a.5): a hostname→boolean map and one line of what each value
+		// does; what the choice overrides and the warning that offers it live
+		// in the composer's answers and the spec.
+		"zerops_workflow":    21053,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

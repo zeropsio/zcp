@@ -461,6 +461,12 @@ func composeGroupRecipe(
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
 		return groupRecipeComposition{}, outcome, false
 	}
+	// What serves only this Mate is the person's choice, kept beside the other
+	// recipe records: every pass composes with it.
+	if inputs.MateOnly, err = readRecipeChoices(stateDir); err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
+		return groupRecipeComposition{}, outcome, false
+	}
 	scratch, main, paths, err := openRecipeMain(ctx, hqc, repo.AppID)
 	if err != nil {
 		outcome.Line = err.Error() + " — retrying on the next pass."
@@ -778,6 +784,35 @@ func recipeEntries(files []recipe.File) []string {
 	return entries
 }
 
+// handleGroupRecipeAction routes the agent's `zerops_workflow
+// action="group-recipe"` by what it names.
+func handleGroupRecipeAction(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	rt runtime.Info,
+	stateDir string,
+	input WorkflowInput,
+) (*mcp.CallToolResult, any, error) {
+	switch {
+	case len(input.MateOnly) > 0:
+		// The person's choice of what serves only this Mate, recorded, then
+		// the recipe pass (hq_recipe_mate_only.go).
+		return handleGroupRecipeMateOnly(ctx, client, httpClient, rt, stateDir, input.MateOnly)
+	case input.Scaling != "":
+		// That host's scale into the tiers on main (hq_recipe_scaling.go).
+		return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
+	case input.Service != "":
+		// That host's part added to or removed from the tiers on main
+		// (hq_recipe_parts.go).
+		return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service)
+	default:
+		// A2: the group's recipe outright — the same reconcile every
+		// bootstrap and adopt pass runs, reported to whoever asked.
+		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	}
+}
+
 // handleGroupRecipe is the agent's way to ask for the recipe outright
 // (`zerops_workflow action="group-recipe"`). The reconcile already runs on
 // every bootstrap and adopt pass and after every service change, so this
@@ -804,7 +839,13 @@ func handleGroupRecipe(
 			"The recipe is proposed automatically once a dev pair has its repository in HQ; nothing else is blocked meanwhile.",
 		), WithRecoveryStatus()), nil, nil
 	}
+	return jsonResult(groupRecipeAnswer(outcome)), nil, nil
+}
 
+// groupRecipeAnswer is what the agent's group-recipe answers of a pass that
+// ran (outcome.Blocked empty): the change, what main carries, the warnings
+// and required steps, and one message saying where the recipe is.
+func groupRecipeAnswer(outcome recipeOutcome) map[string]any {
 	result := map[string]any{
 		"groupRepo": hq.RecipeRepo,
 		"committed": outcome.Committed,
@@ -840,5 +881,5 @@ func handleGroupRecipe(
 			"What main lacks of the group recipe (%s) is already proposed; change #%d (%s) carries it.",
 			strings.Join(outcome.Proposed, ", "), outcome.Change, outcome.ChangeURL)
 	}
-	return jsonResult(result), nil, nil
+	return result
 }
