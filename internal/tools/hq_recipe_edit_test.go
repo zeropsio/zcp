@@ -6,6 +6,9 @@ package tools
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -42,22 +45,35 @@ func (l *hqLab) editRecipe(client platform.Client, branch, title string) (*recip
 	return &answer, text, false
 }
 
-// pushRecipeBranch is the agent's own push of branch in the recipe
-// repository: path edited over main, one commit under the robot identity
-// zcp's own commits carry too. It answers the commit.
-func (f *fakeHQ) pushRecipeBranch(branch, path string, edit func(string) string) string {
+// matePush is the agent's own push of branch to the recipe repository, as
+// plain git in its shell makes it: path edited over base (main, or a branch
+// the repository holds), one commit under the robot identity zcp's own
+// commits carry too, pushed over HQ's git with the Mate's key, so HQ's ref
+// rules decide it (the push hook, newFakeHQ). It answers the commit, git's
+// output, and an error when HQ refused it.
+func (f *fakeHQ) matePush(base, branch, path string, edit func(string) string) (commit, out string, err error) {
 	f.t.Helper()
-	body := f.recipeFiles("main")[path]
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	dir := f.repoDir(f.appID, hq.RecipeRepo)
-	main := f.git(f.t.Context(), dir, "rev-parse", "refs/heads/main")
-	tree := f.recipeTreeWith(main, path, edit(body))
-	commit := f.git(f.t.Context(), dir, "-c", "user.name="+ops.DeployGitIdentity.Name, "-c", "user.email="+ops.DeployGitIdentity.Email,
-		"commit-tree", tree, "-p", main, "-m", "recipe: lean production")
-	f.git(f.t.Context(), dir, "update-ref", "refs/heads/"+branch, commit)
-	f.writeRefs()
-	return commit
+	work := filepath.Join(f.t.TempDir(), "recipe")
+	f.git(f.t.Context(), "", "clone", "-q", f.repoDir(labApp, hq.RecipeRepo), work)
+	f.git(f.t.Context(), work, "checkout", "-q", "-B", "work", "origin/"+base)
+	file := filepath.Join(work, path)
+	body, readErr := os.ReadFile(file)
+	if readErr != nil {
+		f.t.Fatal(readErr)
+	}
+	if writeErr := os.WriteFile(file, []byte(edit(string(body))), 0o600); writeErr != nil {
+		f.t.Fatal(writeErr)
+	}
+	f.git(f.t.Context(), work, "add", "-A")
+	f.git(f.t.Context(), work, "-c", "user.name="+ops.DeployGitIdentity.Name, "-c", "user.email="+ops.DeployGitIdentity.Email,
+		"commit", "-qm", "recipe: lean production")
+	commit = f.git(f.t.Context(), work, "rev-parse", "HEAD")
+	cmd := exec.CommandContext(f.t.Context(), "git", "-C", work, "-c", "http.sslCAInfo="+f.caFile, //nolint:gosec // G204: a test's own git
+		"-c", "http.extraHeader=Authorization: Project "+labKey,
+		"push", f.srv.URL+"/git/"+labOrg+"/"+labApp+"/"+hq.RecipeRepo+".git", "HEAD:refs/heads/"+branch)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	output, err := cmd.CombinedOutput()
+	return commit, string(output), err
 }
 
 // leanProduction is flip.studio's correction of its Small Production tier
@@ -103,6 +119,16 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 			if !strings.Contains(lab.hq.recipeFiles("main")[recipeProdTier], "cpuMode: DEDICATED") {
 				t.Fatalf("the merged Small Production carries no dedicated CPU:\n%s", lab.hq.recipeFiles("main")[recipeProdTier])
 			}
+			// flip.studio's two pushes, as HQ refused them: onto the merged
+			// change's branch, and to a mate/ branch no change binds.
+			for _, push := range []struct{ base, ref, reason string }{
+				{recipeBranch(1), recipeBranch(1), "change_closed"},
+				{"main", recipeBranch(2), "unknown_change"},
+			} {
+				if _, out, err := lab.hq.matePush(push.base, push.ref, recipeProdTier, leanProduction); err == nil || !strings.Contains(out, push.reason) {
+					t.Fatalf("push to %s: err %v, output %s — want HQ to refuse it (%s)", push.ref, err, out, push.reason)
+				}
+			}
 
 			answer, text, _ := lab.editRecipe(client, "recipe/lean-production", title)
 
@@ -128,7 +154,10 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 				t.Errorf("message %q does not say where the recipe repository is (%s)", answer.Message, repoURL)
 			}
 
-			head := lab.hq.pushRecipeBranch(wantBranch, recipeProdTier, leanProduction)
+			head, out, err := lab.hq.matePush("main", wantBranch, recipeProdTier, leanProduction)
+			if err != nil {
+				t.Fatalf("HQ refused the agent's push to %s: %v\n%s", wantBranch, err, out)
+			}
 
 			if outcome := lab.proposeRecipe(client); outcome.Committed {
 				t.Errorf("a recipe pass pushed onto the Mate's own change: %+v", outcome)
