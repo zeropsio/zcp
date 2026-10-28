@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -62,12 +63,61 @@ func (e *poolPartOriginError) Error() string {
 		origin, e.ref, e.pool, e.said, e.fix)
 }
 
+// originReads is one tool call's reads of pool-keyed parts' origins
+// (docs/spec-workflows.md §10 P-LP-19): each origin's tip is fetched once per
+// call and every reader of the call — the read-side gate, the source read,
+// the baseline, the publish-side gate, export — shares it, and its failure.
+// It rides the call's context (withOriginReads), never a package variable.
+type originReads struct {
+	mu    sync.Mutex
+	reads map[string]originRead
+}
+
+// originRead is one origin read of a call: what it read, or why it could not.
+type originRead struct {
+	source *poolPartSource
+	err    error
+}
+
+type originReadsKey struct{}
+
+// withOriginReads gives ctx a tool call's origin reads, keeping the ones ctx
+// already carries, and answers them.
+func withOriginReads(ctx context.Context) (context.Context, *originReads) {
+	if r, ok := ctx.Value(originReadsKey{}).(*originReads); ok {
+		return ctx, r
+	}
+	r := &originReads{reads: map[string]originRead{}}
+	return context.WithValue(ctx, originReadsKey{}, r), r
+}
+
 // readPoolPartOrigin reads the origin of the part whose pair meta is keyed by
-// its dev pool. Nothing reaches the pool, a lease or the stage: the origin is
-// fetched in zcp's own process (ops.ReadOriginTip), with the pool's GIT_TOKEN
-// as the credential when zcp's token reads it (poolGitTokenFor). A failure is
-// a *poolPartOriginError naming what to fix.
+// its dev pool — once per tool call when ctx carries the call's reads
+// (withOriginReads). Nothing reaches the pool, a lease or the stage: the
+// origin is fetched in zcp's own process (ops.ReadOriginTip), with the pool's
+// GIT_TOKEN as the credential when zcp's token reads it (poolGitTokenFor). A
+// failure is a *poolPartOriginError naming what to fix.
 func readPoolPartOrigin(ctx context.Context, deps poolPartOriginDeps, meta *workflow.ServiceMeta) (*poolPartSource, error) {
+	reads, ok := ctx.Value(originReadsKey{}).(*originReads)
+	if !ok {
+		return fetchPoolPartOrigin(ctx, deps, meta)
+	}
+	key := strings.Join([]string{meta.Hostname, strings.TrimSpace(meta.RemoteURL), launchPushProofRef(meta), string(meta.GitPushState)}, "\x00")
+	reads.mu.Lock()
+	read, done := reads.reads[key]
+	reads.mu.Unlock()
+	if done {
+		return read.source, read.err
+	}
+	source, err := fetchPoolPartOrigin(ctx, deps, meta)
+	reads.mu.Lock()
+	reads.reads[key] = originRead{source: source, err: err}
+	reads.mu.Unlock()
+	return source, err
+}
+
+// fetchPoolPartOrigin is readPoolPartOrigin's one fetch.
+func fetchPoolPartOrigin(ctx context.Context, deps poolPartOriginDeps, meta *workflow.ServiceMeta) (*poolPartSource, error) {
 	ref := launchPushProofRef(meta)
 	remote := strings.TrimSpace(meta.RemoteURL)
 	if remote != "" && hqPairWired(meta) && ops.IsHQRemote(remote, hqAddress(deps.rt)) {

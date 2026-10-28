@@ -135,6 +135,9 @@ func handleLaunchProduction(
 	sshDeployer ops.SSHDeployer,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
+	// A pool-keyed part's origin is fetched once per call, whichever reader
+	// asks first (§10 P-LP-19).
+	ctx, _ = withOriginReads(ctx)
 	if client == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
