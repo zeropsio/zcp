@@ -11,7 +11,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -48,13 +47,8 @@ const poolPartYAML = `zerops:
 // value that must never reach a response, a state file or an audit record.
 const poolPartGitToken = "pool-git-token-leak-canary-5a1f"
 
-// requirePoolPartGit skips a test that needs the git binary.
-func requirePoolPartGit(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-}
+// poolPartRegion is the production region every launch of the part names.
+const poolPartRegion = "eu-central"
 
 // poolPartOriginRepo is the name every test's origin takes on its server.
 const poolPartOriginRepo = "app.git"

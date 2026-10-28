@@ -163,7 +163,7 @@ func TestLaunchProduction_PoolKeyedPart_RefusingOrigin_NeverSurfacesTheToken(t *
 		t.Fatal("the origin was never sent the pool's exact GIT_TOKEN credential; the test proves nothing")
 	}
 	for where, text := range map[string]string{"launch": launchText, "export": exportText} {
-		redacted := strings.Contains(text, "<redacted>") || strings.Contains(text, `<redacted>`)
+		redacted := strings.Contains(text, "<redacted>") || strings.Contains(text, `\u003credacted\u003e`)
 		if !strings.Contains(text, srv.URL) || !redacted {
 			t.Errorf("%s does not refuse naming the origin with the echo taken out: %s", where, text)
 		}
@@ -208,11 +208,11 @@ func poolPartRelease(t *testing.T, srv *mcp.Server, service, version, commit str
 	return out, text, result.IsError
 }
 
-// poolPartPromptedCommit asks service's release prompt and answers the full
-// commit it names.
-func poolPartPromptedCommit(t *testing.T, srv *mcp.Server, service string) (map[string]any, string) {
+// poolPartPromptedCommit asks the stage's release prompt and answers the
+// full commit it names.
+func poolPartPromptedCommit(t *testing.T, srv *mcp.Server) (map[string]any, string) {
 	t.Helper()
-	prompt, text, isErr := poolPartRelease(t, srv, service, "", "")
+	prompt, text, isErr := poolPartRelease(t, srv, "appstage", "", "")
 	if isErr || prompt["status"] != "release-prompt" {
 		t.Fatalf("release prompt = %s, want release-prompt", text)
 	}
@@ -235,7 +235,7 @@ func TestRelease_PoolKeyedPart_TagsTheOriginTip(t *testing.T) {
 	ssh := &hostLogSSH{}
 	srv := poolPartWorkflowServer(t, poolPartClient(), stateDir, ssh)
 
-	prompt, commit := poolPartPromptedCommit(t, srv, "appstage")
+	prompt, commit := poolPartPromptedCommit(t, srv)
 	if prompt["suggestedVersion"] != "v1.0.0" || commit != heads["main"] {
 		t.Errorf("prompt = %v, want v1.0.0 at the origin's main %s", prompt, heads["main"])
 	}
@@ -251,7 +251,7 @@ func TestRelease_PoolKeyedPart_TagsTheOriginTip(t *testing.T) {
 		t.Error("the origin was never sent the pool's GIT_TOKEN")
 	}
 
-	next, _ := poolPartPromptedCommit(t, srv, "appstage")
+	next, _ := poolPartPromptedCommit(t, srv)
 	if next["suggestedVersion"] != "v1.0.1" {
 		t.Errorf("the next prompt = %v, want v1.0.1 suggested after v1.0.0", next)
 	}
@@ -275,7 +275,7 @@ func TestRelease_PoolKeyedPart_TipMovedSinceThePrompt_Refused(t *testing.T) {
 	origin, url, heads := poolPartGuardedOrigin(t)
 	stateDir := poolPartPair(t, url, "main")
 	srv := poolPartWorkflowServer(t, poolPartClient(), stateDir, &hostLogSSH{})
-	_, shown := poolPartPromptedCommit(t, srv, "appstage")
+	_, shown := poolPartPromptedCommit(t, srv)
 
 	if _, text, isErr := poolPartRelease(t, srv, "appstage", "v1.0.0", ""); !isErr || !strings.Contains(text, "releaseCommit") {
 		t.Errorf("a confirm without the prompt's commit = %s, want refused naming releaseCommit", text)
@@ -406,7 +406,10 @@ func TestLaunchReset_PoolKeyedPart_DeletesTheTokenWhereItLanded(t *testing.T) {
 		t.Fatalf("decode state: %v", err)
 	}
 	raw["tokenStagedOn"] = "zcp"
-	data, _ = json.Marshal(raw)
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("encode state: %v", err)
+	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("rewrite state: %v", err)
 	}
@@ -437,7 +440,7 @@ func TestLaunchProduction_PoolKeyedPart_TokenStagedOnZcpsOwnService(t *testing.T
 	client := poolPartClient()
 	defer installMockAdminFactory(t, happyMockAdmin())()
 	input := poolPartReadyInput("appstage")
-	input.Region = "eu-central"
+	input.Region = poolPartRegion
 	input.LaunchKey = sentinelLaunchKey
 
 	result, _, err := handleLaunchProduction(context.Background(), "proj-1", client, nil, nil, input, stateDir,
@@ -481,7 +484,7 @@ func TestLaunchProduction_PoolKeyedPart_ThenReleaseShipsTheFirstBuild(t *testing
 	defer installMockAdminFactory(t, happyMockAdmin())()
 	ssh := &hostLogSSH{}
 	input := poolPartReadyInput("appstage")
-	input.Region = "eu-central"
+	input.Region = poolPartRegion
 	input.LaunchKey = sentinelLaunchKey
 
 	result, _, err := handleLaunchProduction(context.Background(), "proj-1", client, nil, nil, input, stateDir,
@@ -507,7 +510,7 @@ func TestLaunchProduction_PoolKeyedPart_ThenReleaseShipsTheFirstBuild(t *testing
 	}
 
 	srv := poolPartWorkflowServer(t, client, stateDir, ssh)
-	_, commit := poolPartPromptedCommit(t, srv, "appstage")
+	_, commit := poolPartPromptedCommit(t, srv)
 	released, releaseText, isErr := poolPartRelease(t, srv, "appstage", "v1.0.0", commit)
 	if isErr || released["status"] != "released" {
 		t.Fatalf("the first release = %s, want released", releaseText)
@@ -555,7 +558,7 @@ func TestLaunchProduction_PoolKeyedPart_NamedStageCarriedThrough(t *testing.T) {
 		"  - setup: api\n    build:\n      base: nodejs@22\n      deployFiles: ./\n    run:\n      base: nodejs@22\n      start: node api.js\n"
 	_, url, _ := poolPartOriginOn(t, map[string]string{"zerops.yaml": twoStageYAML}, nil)
 	stateDir := poolPartTwoStagePair(t, url)
-	services := append(poolPairServices()[:1],
+	services := append([]platform.ServiceStack{poolPairServices()[0]},
 		platform.ServiceStack{ID: "svc-webstage", Name: "webstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		platform.ServiceStack{ID: "svc-apistage", Name: "apistage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		poolPartZcpService())

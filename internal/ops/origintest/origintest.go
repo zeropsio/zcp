@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cgi" //nolint:gosec // G504: serves git's own http-backend through CGI, for tests only
 	"net/http/httptest"
@@ -36,28 +37,31 @@ type Server struct {
 
 // New starts a server for the test; it skips the test where git is not
 // installed.
-func New(t testing.TB) *Server {
-	t.Helper()
+func New(tb testing.TB) *Server {
+	tb.Helper()
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
-		t.Skip("git is not installed")
+		tb.Skip("git is not installed")
 	}
 	s := &Server{
-		root:  t.TempDir(),
+		root:  tb.TempDir(),
 		works: map[string]string{}, tokens: map[string]string{}, sawToken: map[string]bool{}, fetches: map[string]int{},
 	}
 	backend := &cgi.Handler{
 		Path: gitPath, Args: []string{"http-backend"},
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + s.root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=origintest",
-			"HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1",
+			"HOME=" + tb.TempDir(), "GIT_CONFIG_NOSYSTEM=1",
 		},
 		InheritEnv: []string{"PATH"},
+		// http-backend's own complaints (a repository that does not exist)
+		// are the fixture's, not the code under test's.
+		Stderr: io.Discard,
 	}
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.serve(w, r, backend)
 	}))
-	t.Cleanup(srv.Close)
+	tb.Cleanup(srv.Close)
 	s.URL = srv.URL
 	return s
 }
@@ -94,30 +98,30 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 // Repo makes the bare repository name — main holding files, each named
 // branch main's files with its own written over them — and answers its URL
 // and each branch's head, main's under "main".
-func (s *Server) Repo(t testing.TB, name string, files map[string]string, branches map[string]map[string]string) (string, map[string]string) {
-	t.Helper()
-	work := t.TempDir()
-	Git(t, work, "init", "-q", "-b", "main")
+func (s *Server) Repo(tb testing.TB, name string, files map[string]string, branches map[string]map[string]string) (string, map[string]string) {
+	tb.Helper()
+	work := tb.TempDir()
+	Git(tb, work, "init", "-q", "-b", "main")
 	write := func(fs map[string]string) {
 		for file, body := range fs {
 			if err := os.WriteFile(filepath.Join(work, file), []byte(body), 0o600); err != nil {
-				t.Fatal(err)
+				tb.Fatal(err)
 			}
 		}
-		Git(t, work, "add", "-A")
-		Git(t, work, "commit", "-q", "-m", "fixture")
+		Git(tb, work, "add", "-A")
+		Git(tb, work, "commit", "-q", "-m", "fixture")
 	}
 	write(files)
-	heads := map[string]string{"main": Git(t, work, "rev-parse", "HEAD")}
+	heads := map[string]string{"main": Git(tb, work, "rev-parse", "HEAD")}
 	for branch, fs := range branches {
-		Git(t, work, "checkout", "-q", "-b", branch, "main")
+		Git(tb, work, "checkout", "-q", "-b", branch, "main")
 		write(fs)
-		heads[branch] = Git(t, work, "rev-parse", "HEAD")
-		Git(t, work, "checkout", "-q", "main")
+		heads[branch] = Git(tb, work, "rev-parse", "HEAD")
+		Git(tb, work, "checkout", "-q", "main")
 	}
 	bare := s.Dir(name)
-	Git(t, work, "clone", "-q", "--bare", work, bare)
-	Git(t, bare, "config", "http.receivepack", "true")
+	Git(tb, work, "clone", "-q", "--bare", work, bare)
+	Git(tb, bare, "config", "http.receivepack", "true")
 	s.mu.Lock()
 	s.works[name] = work
 	s.mu.Unlock()
@@ -129,33 +133,33 @@ func (s *Server) Dir(name string) string { return filepath.Join(s.root, name) }
 
 // Commit adds a commit writing files to main of the repository name — a
 // push from elsewhere, a lease's — and answers it.
-func (s *Server) Commit(t testing.TB, name string, files map[string]string) string {
-	t.Helper()
+func (s *Server) Commit(tb testing.TB, name string, files map[string]string) string {
+	tb.Helper()
 	s.mu.Lock()
 	work := s.works[name]
 	s.mu.Unlock()
 	for file, body := range files {
 		if err := os.WriteFile(filepath.Join(work, file), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
-	Git(t, work, "add", "-A")
-	Git(t, work, "commit", "-q", "-m", "pushed from elsewhere")
-	Git(t, work, "push", "-q", s.Dir(name), "main")
-	return Git(t, work, "rev-parse", "HEAD")
+	Git(tb, work, "add", "-A")
+	Git(tb, work, "commit", "-q", "-m", "pushed from elsewhere")
+	Git(tb, work, "push", "-q", s.Dir(name), "main")
+	return Git(tb, work, "rev-parse", "HEAD")
 }
 
 // Tag puts a lightweight tag named tag on rev in the repository name.
-func (s *Server) Tag(t testing.TB, name, tag, rev string) {
-	t.Helper()
-	Git(t, s.Dir(name), "tag", tag, rev)
+func (s *Server) Tag(tb testing.TB, name, tag, rev string) {
+	tb.Helper()
+	Git(tb, s.Dir(name), "tag", tag, rev)
 }
 
 // TagAt is the commit the tag points at in the repository name, "" for no
 // such tag.
-func (s *Server) TagAt(t testing.TB, name, tag string) string {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "-q", "refs/tags/"+tag+"^{commit}") //nolint:gosec // G204: a test's own git
+func (s *Server) TagAt(tb testing.TB, name, tag string) string {
+	tb.Helper()
+	cmd := exec.CommandContext(tb.Context(), "git", "rev-parse", "--verify", "-q", "refs/tags/"+tag+"^{commit}") //nolint:gosec // G204: a test's own git
 	cmd.Dir = s.Dir(name)
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
@@ -163,9 +167,9 @@ func (s *Server) TagAt(t testing.TB, name, tag string) string {
 
 // TagKind is git's type of the tag object named tag ("tag" for an annotated
 // tag, "commit" for a lightweight one).
-func (s *Server) TagKind(t testing.TB, name, tag string) string {
-	t.Helper()
-	return Git(t, s.Dir(name), "cat-file", "-t", "refs/tags/"+tag)
+func (s *Server) TagKind(tb testing.TB, name, tag string) string {
+	tb.Helper()
+	return Git(tb, s.Dir(name), "cat-file", "-t", "refs/tags/"+tag)
 }
 
 // RequireToken makes the repository name answer only requests carrying
@@ -192,14 +196,14 @@ func (s *Server) Fetches(name string) int {
 
 // Git runs a test's own git in dir, failing the test on error, with no
 // system or global configuration.
-func Git(t testing.TB, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}, args...)...) //nolint:gosec // G204: a test's own git
+func Git(tb testing.TB, dir string, args ...string) string {
+	tb.Helper()
+	cmd := exec.CommandContext(tb.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}, args...)...) //nolint:gosec // G204: a test's own git
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
+		tb.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
 }
