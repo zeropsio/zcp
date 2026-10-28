@@ -231,7 +231,7 @@ zerops[]:
   - Recipe uses `./app` + `start: ./app` → with `[.]`: same `start: ./app` (binary at `/var/www/app`)
   - Recipe uses `target/release/~binary` + `start: ./binary` → with `[.]`: `start: ./target/release/binary`
   - Principle: tilde extraction no longer happens, directory structure is preserved as-is. Match `start` to where build output actually lands.
-- **`.deployignore`**: Most projects do NOT need this file. The Zerops builder already excludes `.git/`. Editor metadata (`.idea/`, `.vscode/`), log files (`*.log`), and OS junk belong in `.gitignore`, not `.deployignore`. Use `.deployignore` only for the narrow case where a path is committed to git (so `.gitignore` doesn't catch it) AND must NOT ship to the runtime — e.g. fixture data, test artifacts, build-tool config the runtime doesn't read. **Never list `dist/`, `node_modules/`, or anything `deployFiles` selects** — that filters the deploy artifact and bricks the runtime. Place at repo root (gitignore syntax); not recursive into subdirectories by default. Also works with `zcli service deploy`.
+- **`.deployignore`**: Most projects do NOT need this file. The Zerops builder already excludes `.git/`. Editor metadata (`.idea/`, `.vscode/`), log files (`*.log`), and OS junk belong in `.gitignore`, not `.deployignore`. Use `.deployignore` only for the narrow case where a path is committed to git (so `.gitignore` doesn't catch it) AND must NOT ship to the runtime — e.g. fixture data, test artifacts, build-tool config the runtime doesn't read. **Never list `dist/`, `node_modules/`, or anything `deployFiles` selects** — that filters the deploy artifact and bricks the runtime. Place at repo root (gitignore syntax); not recursive into subdirectories by default. Also works with `zcli service deploy`. It does not make the deploy's upload smaller (see What a deploy uploads below).
 - **Deploy mode determines `deployFiles`**:
 
   | Deploy mode | Who deploys? | deployFiles | start |
@@ -242,6 +242,7 @@ zerops[]:
   | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
 
   Self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yaml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely.
+- **What a deploy uploads**: the source's git snapshot — its tracked files plus untracked files `.gitignore` does not exclude, and on a self-deploy the whole `.git` directory too. `.deployignore` and `deployFiles` do not make it smaller. Its size, how long it may take and how to keep files out of it: `zerops_knowledge uri="zerops://themes/deploy-upload"`.
 
 ---
 
