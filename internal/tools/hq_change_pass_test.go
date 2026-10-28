@@ -207,6 +207,261 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 	}
 }
 
+// The commits of a change HQ brought main into (protocol.md, "A stacked change
+// after a squash"): its head before, HQ's merge commit, the squash it brought
+// in, and a push past HQ's merge commit.
+const (
+	corePushFrom   = "1111111111111111111111111111111111111111"
+	corePushMerge  = "2222222222222222222222222222222222222222"
+	corePushSquash = "3333333333333333333333333333333333333333"
+	corePushLater  = "4444444444444444444444444444444444444444"
+)
+
+// corePushed is change #6 on badge, ready and clean, at head, carrying HQ's
+// push bringing main in after #5 merged when push is set.
+func corePushed(head string, push bool, behind bool) hq.MateChange {
+	yes := true
+	c := hq.MateChange{Repo: "appsdev", Number: 6, State: hq.ChangeOpen, Branch: "badge", Head: &head,
+		Ready: &yes, Mergeability: hq.MergeClean, Behind: &behind}
+	if push {
+		c.CorePush = &hq.CorePush{At: "2026-10-28T10:00:00Z", From: corePushFrom, Head: corePushMerge, Landed: 5, Squash: corePushSquash}
+	}
+	return c
+}
+
+// TestHQChangeStanding_CorePushAtHead_SaidOnce: HQ bringing main into a
+// change by a merge commit of its own leaves the agent's branch where it was,
+// so its next push is refused as non-fast-forward. While HQ's merge commit is
+// the change's head the standing says so once — fetch and fast-forward, where
+// the branch is checked out or in each lease of it — and never again for that
+// commit; a push past it, or a change without the field, reads as today.
+func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
+	t.Parallel()
+	const line = "HQ brought main into #6 after #5 merged: fetch and fast-forward `badge` before your next push"
+	const ff = "`git fetch origin && git merge --ff-only origin/badge`"
+	tests := []struct {
+		name     string
+		now      hq.MateChange
+		leases   []string
+		want     []string
+		never    []string
+		wantHead string
+	}{
+		{name: "at head, the checkout", now: corePushed(corePushMerge, true, false),
+			want:  []string{line, ff, "in your own shell", "never over ssh", "/tmp/badge", "non-fast-forward", "nothing to describe again"},
+			never: []string{"git rebase", "--force", "behind main"}, wantHead: corePushMerge},
+		{name: "at head, leases of it", now: corePushed(corePushMerge, true, false), leases: []string{"boxpool-6", "hqpool-4"},
+			want: []string{line,
+				"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`",
+				"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`"},
+			never: []string{"in your own shell"}, wantHead: corePushMerge},
+		{name: "at head, and main moved on past the squash", now: corePushed(corePushMerge, true, true),
+			want: []string{line, ff, "is behind main"}, wantHead: corePushMerge},
+		{name: "pushed past HQ's merge commit", now: corePushed(corePushLater, true, false), never: []string{"HQ brought main"}},
+		{name: "no corePush, in step", now: corePushed(corePushLater, false, false), never: []string{"HQ brought main"}},
+		{name: "no corePush, behind main", now: corePushed(corePushLater, false, true),
+			want: []string{`change #6 on "badge" is behind main and still merges cleanly`}, never: []string{"HQ brought main"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			yes := true
+			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge",
+				Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &yes, Mergeability: hq.MergeClean}}
+
+			words, now := hqChangeStanding(c, tt.now, tt.leases)
+
+			if len(tt.want) == 0 && words != "" {
+				t.Errorf("said %q, want nothing", words)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(words, want) {
+					t.Errorf("words %q lack %q", words, want)
+				}
+			}
+			for _, never := range tt.never {
+				if strings.Contains(words, never) {
+					t.Errorf("words %q say %q", words, never)
+				}
+			}
+			if strings.Contains(words, "HQ brought main") && strings.Contains(words, "behind main") &&
+				strings.Index(words, "HQ brought main") > strings.Index(words, "behind main") {
+				t.Errorf("words %q bring main in before the fast-forward HQ's push asks for", words)
+			}
+			if now.CoreHead != tt.wantHead {
+				t.Errorf("told HQ's merge commit %q, want %q", now.CoreHead, tt.wantHead)
+			}
+
+			c.Told = &now
+			if again, _ := hqChangeStanding(c, tt.now, tt.leases); again != "" {
+				t.Errorf("the next pass says again: %q", again)
+			}
+		})
+	}
+}
+
+// TestHQPass_CorePushAtHead_ToldOnce: a change cut from another's branch is
+// squashed past when that one merges; HQ brings main into it by a merge
+// commit of its own, a fast-forward of its branch that keeps it described.
+// The pass says once that HQ brought main in — fetch and fast-forward the
+// branch before the next push — never that it is behind main or a draft, and
+// the next pass says nothing more of it. The command it names takes HQ's
+// merge commit, and a push from there goes through.
+func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !answer.Created {
+		t.Fatalf("open fix-login: %s", text)
+	}
+	// Cut from fix-login: it needs the fix.
+	lab.pushBranch("add-signup", map[string]string{"signup.js": "the signup\n"})
+	if answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup"); isError || !answer.Created {
+		t.Fatalf("open add-signup: %s", text)
+	}
+	for _, branch := range []string{"fix-login", "add-signup"} {
+		if text, isError := lab.describeOn(branch); isError || !strings.Contains(text, `"described":true`) {
+			t.Fatalf("describe %s: %s", branch, text)
+		}
+	}
+	lab.passReport()
+	squash := lab.hq.mergeChange("appdev", 1)
+	merge := lab.hq.bringMainIn("appdev", 2, 1, squash)
+
+	report := lab.passReport()
+
+	for _, want := range []string{"change #1 is merged",
+		"HQ brought main into #2 after #1 merged: fetch and fast-forward `add-signup` before your next push",
+		"`git fetch origin && git merge --ff-only origin/add-signup`", "nothing to describe again"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the pass lacks %q:\n%s", want, report)
+		}
+	}
+	for _, never := range []string{`change #2 on "add-signup" is behind main`, `change #2 on "add-signup" is a draft`} {
+		if strings.Contains(report, never) {
+			t.Errorf("the pass says %q of a change HQ brought main into:\n%s", never, report)
+		}
+	}
+	if kept := lab.kept(2); kept == nil || kept.Told == nil || kept.Told.CoreHead != merge {
+		t.Errorf("the ledger keeps #2 told %+v, want HQ's merge commit %s", kept, merge)
+	}
+	if again := lab.passReport(); strings.Contains(again, "#2") {
+		t.Errorf("the next pass says #2 again:\n%s", again)
+	}
+
+	lab.git("checkout", "-q", "add-signup")
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch origin && git merge --ff-only origin/add-signup"); err != nil {
+		t.Fatalf("the fast-forward the pass names: %v\n%s", err, out)
+	}
+	if head := lab.git("rev-parse", "HEAD"); head != merge {
+		t.Fatalf("the fast-forward left add-signup at %s, want HQ's merge commit %s", head, merge)
+	}
+	lab.pushBranch("add-signup", map[string]string{"signup.js": "the signup, polished\n"})
+}
+
+// TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease: lease status names
+// a group's change HQ brought main into the way the pass says it — fetch and
+// fast-forward the branch before the next push, in each lease of the group,
+// over ssh — read from the Mate's state now, or from what the pass last told
+// while HQ does not answer; a change without it reads as today.
+func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	yes := true
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "mate-test-badge",
+		Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &yes, Mergeability: hq.MergeClean, CoreHead: corePushMerge, CoreLanded: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 2, Branch: "pool-previews",
+		Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &yes, Mergeability: hq.MergeClean}}); err != nil {
+		t.Fatal(err)
+	}
+	views := []ops.LeaseView{{Alias: "hqpool-4", Branch: "mate-test-badge"}, {Alias: "boxpool-6", Branch: "mate-test-badge"}, {Alias: "hqpool-3", Branch: "pool-previews"}}
+	head, previews := corePushMerge, corePushLater
+	app := labApp
+	badge := corePushed(head, true, false)
+	badge.Branch = "mate-test-badge"
+	state := &hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{badge,
+		{Repo: "appsdev", Number: 2, State: hq.ChangeOpen, Branch: "pool-previews", Head: &previews, Ready: &yes, Mergeability: hq.MergeClean}}}
+
+	for name, read := range map[string]func() *hq.MateState{
+		"read now":     func() *hq.MateState { return state },
+		"as last read": func() *hq.MateState { return nil },
+	} {
+		got := leaseGroupChanges(stateDir, targetHQ, views, read)
+
+		for _, want := range []string{"group appsdev@mate-test-badge: #6 (ready)",
+			"HQ brought main into #6 after #5 merged: fetch and fast-forward `mate-test-badge` before your next push",
+			"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
+			"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
+			"group appsdev@pool-previews: #2 (ready)"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: lease status lacks %q: %s", name, want, got)
+			}
+		}
+		if strings.Count(got, "HQ brought main") != 1 || strings.Contains(got, "hqpool-3 \"") {
+			t.Errorf("%s: lease status says HQ's push of another group's change: %s", name, got)
+		}
+	}
+}
+
+// TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause: a lease sync's push
+// refused as non-fast-forward names HQ's own push as the cause when the
+// change on the lease's branch carries it at its head — bring origin's branch
+// in over ssh, a fast-forward when the lease has no commits of its own since,
+// never a rebase, then sync again; the Mate's state is read once, and only
+// for that refusal. Any other refusal, a change without it, or no reader
+// leave the refusal as it is.
+func TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	app := labApp
+	nonFF := func() error {
+		return platform.NewPlatformError(platform.ErrGitPushNonFastForward,
+			"Origin's mate-test-badge has commits lease hqpool-4 lacks ([rejected] (fetch first)), so nothing was pushed and no other lease was touched",
+			"Integrate origin/mate-test-badge in hqpool-4 over ssh, then sync again: zerops_lease action=sync lease=hqpool-4")
+	}
+	stateWith := func(push bool) func() *hq.MateState {
+		badge := corePushed(corePushMerge, push, false)
+		badge.Branch = "mate-test-badge"
+		return func() *hq.MateState {
+			return &hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{badge}}
+		}
+	}
+
+	reads := 0
+	read := stateWith(true)
+	named := corePushSyncRefusal(nonFF(), stateDir, targetHQ, "hqpool-4", func() *hq.MateState { reads++; return read() })
+
+	pe := refusalOf(t, named)
+	for _, want := range []string{"HQ brought main into #6 after #5 merged",
+		"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --no-edit origin/mate-test-badge\"`",
+		"never rebase", ops.LeaseSyncCall("hqpool-4")} {
+		if !strings.Contains(pe.Suggestion, want) {
+			t.Errorf("the refusal's suggestion lacks %q: %s", want, pe.Suggestion)
+		}
+	}
+	if pe.Code != platform.ErrGitPushNonFastForward || !strings.Contains(pe.Message, "fetch first") {
+		t.Errorf("the refusal lost its code or message: %+v", pe)
+	}
+	if reads != 1 {
+		t.Errorf("the Mate's state was read %d times, want once", reads)
+	}
+
+	if plain := refusalOf(t, corePushSyncRefusal(nonFF(), stateDir, targetHQ, "hqpool-4", stateWith(false))); strings.Contains(plain.Suggestion, "HQ brought main") {
+		t.Errorf("a change without HQ's push names it: %s", plain.Suggestion)
+	}
+	if none := refusalOf(t, corePushSyncRefusal(nonFF(), stateDir, targetHQ, "hqpool-4", nil)); strings.Contains(none.Suggestion, "HQ brought main") {
+		t.Errorf("with no reader the refusal names HQ's push: %s", none.Suggestion)
+	}
+	other := platform.NewPlatformError(platform.ErrPermissionDenied, "Origin refused branch mate-test-badge", "Push a branch of your own")
+	reads = 0
+	if got := corePushSyncRefusal(other, stateDir, targetHQ, "hqpool-4", func() *hq.MateState { reads++; return read() }); got != other || reads != 0 {
+		t.Errorf("another refusal was changed (%v) or read the Mate's state %d times", got, reads)
+	}
+}
+
 // TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch: on an HQ
 // that keeps an open change per branch, develop's start lists the
 // repository's open changes by number and branch, and says new work goes on

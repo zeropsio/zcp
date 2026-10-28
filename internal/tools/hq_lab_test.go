@@ -103,6 +103,9 @@ type fakeHQ struct {
 	// closes: HQ lets a Mate close its own open change
 	// (POST /api/mate/changes/:repo/:n/close); off, the route is not there.
 	closes bool
+	// corePushes are HQ's own pushes on changes' branches, by repo#number:
+	// what the Mate's state carries as each change's corePush (bringMainIn).
+	corePushes map[string]hq.CorePush
 	// before runs as each request arrives, after once it is served; neither
 	// with f.mu held, so a test orders requests of passes running at once
 	// and acts as HQ between them (around).
@@ -124,7 +127,7 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
-		handed: map[string]bool{}, described: map[string]string{}, verdicts: map[string]string{},
+		handed: map[string]bool{}, described: map[string]string{}, verdicts: map[string]string{}, corePushes: map[string]hq.CorePush{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -408,6 +411,9 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 			change.Title = &c.Title
 		}
 		change.Verdict = f.verdicts[key]
+		if push, ok := f.corePushes[key]; ok {
+			change.CorePush = &push
+		}
 		if f.perBranch {
 			ready := head != nil && f.described[key] == *head
 			behind := c.Behind
@@ -731,6 +737,39 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 		f.rejudge(repo)
 	}
 	return squash
+}
+
+// bringMainIn is HQ bringing main into the Mate's open change number in repo
+// once change landed was squashed onto main as squash (protocol.md, "A
+// stacked change after a squash"): one merge commit on the change's branch,
+// its parents the change's head and then the squash, authored Core, moving
+// the branch to it — a fast-forward — and carried as the change's corePush.
+// A change described at its head stays described (protocol.md, "A
+// description across a push"). It answers the merge commit.
+func (f *fakeHQ) bringMainIn(repo string, number, landed int, squash string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ctx := f.t.Context()
+	change := f.find(f.appID, repo, number, hq.ChangeOpen)
+	if change == nil {
+		f.t.Fatalf("no open change #%d in %s", number, repo)
+	}
+	head := f.branchHead(ctx, change)
+	if head == nil {
+		f.t.Fatalf("no open change #%d with a head in %s", number, repo)
+	}
+	dir := f.repoDir(f.appID, repo)
+	tree := f.git(ctx, dir, "merge-tree", "--write-tree", *head, squash)
+	merge := f.git(ctx, dir, "-c", "user.name=Core", "-c", "user.email=core@hq.invalid", "commit-tree", tree,
+		"-p", *head, "-p", squash, "-m", fmt.Sprintf("Merge main into #%d after #%d", number, landed))
+	f.git(ctx, dir, "update-ref", change.Branch, merge, *head)
+	key := fmt.Sprintf("%s#%d", repo, number)
+	if f.described[key] == *head {
+		f.described[key] = merge
+	}
+	f.corePushes[key] = hq.CorePush{At: time.Now().UTC().Format(time.RFC3339), From: *head, Head: merge, Landed: landed, Squash: squash}
+	f.rejudge(repo)
+	return merge
 }
 
 // rejudge is HQ judging repo's open changes again once its main moved: each

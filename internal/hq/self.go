@@ -111,6 +111,36 @@ type MateChange struct {
 	// files_past_bound, or a git failure's kind; "" while Core refused
 	// nothing, and from an HQ that names none.
 	Verdict string `json:"verdict,omitempty"`
+	// CorePush is HQ's latest own push on the change's branch: nil on a
+	// change whose branch HQ never moved, and from an HQ older than it.
+	CorePush *CorePush `json:"corePush,omitempty"`
+}
+
+// CorePush is HQ's own push on a change's branch (protocol.md, "A stacked
+// change after a squash"). A squash keeps content, not ancestry: right after
+// HQ squashes a change onto `main`, it brings `main` into each open change
+// built on that change's branch by one merge commit of its own on the branch
+// (authored `Core <core@hq.invalid>`), a fast-forward from the head the
+// branch was at. The Mate's checkout still holds that head, so its next push
+// is refused as non-fast-forward until it fetches and fast-forwards. HQ's
+// push keeps a described change described.
+type CorePush struct {
+	// At is when HQ pushed, RFC 3339.
+	At string `json:"at"`
+	// From is the head HQ moved the branch from.
+	From string `json:"from"`
+	// Head is HQ's merge commit, the branch's head once moved.
+	Head string `json:"head"`
+	// Landed is the number of the squashed change it brought in.
+	Landed int `json:"landed"`
+	// Squash is that change's squash on `main`.
+	Squash string `json:"squash"`
+}
+
+// CorePushAtHead reports whether HQ's own push is the change's head still:
+// its branch is at HQ's merge commit, nothing pushed on it since.
+func (c MateChange) CorePushAtHead() bool {
+	return c.CorePush != nil && c.CorePush.Head != "" && c.Head != nil && *c.Head == c.CorePush.Head
 }
 
 // MateChangesPerRepo is how many of a Mate's changes in a repository its own

@@ -170,6 +170,57 @@ func TestClient_Self_Changes_DecodeStandingAndOpenPerBranch(t *testing.T) {
 	}
 }
 
+// TestClient_Self_Changes_DecodeCorePush: a change whose branch HQ moved
+// itself — bringing `main` in after the change it was built on was squashed
+// — carries HQ's push as `corePush` (protocol.md, "A stacked change after a
+// squash"), and whether that merge commit is still the change's head; a
+// change without it, and every change of an older HQ, carries none.
+func TestClient_Self_Changes_DecodeCorePush(t *testing.T) {
+	t.Parallel()
+	const (
+		from   = "1111111111111111111111111111111111111111"
+		merge  = "2222222222222222222222222222222222222222"
+		squash = "3333333333333333333333333333333333333333"
+		later  = "4444444444444444444444444444444444444444"
+	)
+	const state = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","openPerBranch":true,"changes":[` +
+		`{"repo":"appsdev","number":7,"title":"Signup","state":"open","head":"` + merge + `","mergedSha":null,"landedHead":null,"branch":"signup",` +
+		`"ready":true,"mergeability":"clean","behind":false,"updatedAt":"2026-10-28T10:00:00Z",` +
+		`"corePush":{"at":"2026-10-28T10:00:00Z","from":"` + from + `","head":"` + merge + `","landed":6,"squash":"` + squash + `"}},` +
+		`{"repo":"appsdev","number":8,"title":"Moved on","state":"open","head":"` + later + `","mergedSha":null,"landedHead":null,"branch":"moved",` +
+		`"ready":false,"mergeability":"clean","behind":false,"updatedAt":"2026-10-28T10:00:00Z",` +
+		`"corePush":{"at":"2026-10-28T10:00:00Z","from":"` + from + `","head":"` + merge + `","landed":6,"squash":"` + squash + `"}},` +
+		`{"repo":"appsdev","number":9,"title":"Plain","state":"open","head":"` + later + `","mergedSha":null,"landedHead":null,"branch":"plain",` +
+		`"ready":true,"mergeability":"clean","behind":false,"updatedAt":"2026-10-28T10:00:00Z"}]}`
+	client, _ := answering(t, state)
+
+	got, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := CorePush{At: "2026-10-28T10:00:00Z", From: from, Head: merge, Landed: 6, Squash: squash}
+	if c := got.Changes[0]; c.CorePush == nil || *c.CorePush != want || !c.CorePushAtHead() {
+		t.Errorf("#7 corePush = %+v (at head %v), want %+v at its head", c.CorePush, c.CorePushAtHead(), want)
+	}
+	if c := got.Changes[1]; c.CorePush == nil || c.CorePushAtHead() {
+		t.Errorf("#8, pushed past HQ's merge commit, reads it at its head: %+v", c.CorePush)
+	}
+	if c := got.Changes[2]; c.CorePush != nil || c.CorePushAtHead() {
+		t.Errorf("#9 without the field carries a corePush: %+v", c.CorePush)
+	}
+
+	older, _ := answering(t, selfSample)
+	if got, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got.Changes {
+		if c.CorePush != nil || c.CorePushAtHead() {
+			t.Errorf("change #%d from an older HQ carries a corePush: %+v", c.Number, c.CorePush)
+		}
+	}
+}
+
 // The Chief a Mate answers to rides on its state as the project it names,
 // which a Mate compares with its own; no Chief is null.
 func TestClient_IsChief_IsTheChiefNamingThisMatesProject(t *testing.T) {
