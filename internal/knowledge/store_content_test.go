@@ -121,6 +121,61 @@ func TestCore_GenerateRules_ContainsDeployFilesAndTilde(t *testing.T) {
 	}
 }
 
+// TestCore_DeployUploadSize_FactsPresent pins what core teaches about a
+// deploy's upload (docs/spec-workflows.md §8 DM-9): what a zcli push carries,
+// that .deployignore and deployFiles do not shrink it, what does — and its
+// cost on a self-deploy — how long the upload is waited for, and the
+// self-deploy's .git. Root cause it closes: a 1.2 GB tracked tree timed out
+// three deploys and zerops_knowledge had nothing on keeping files out of the
+// upload.
+func TestCore_DeployUploadSize_FactsPresent(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/core")
+	if err != nil {
+		t.Fatalf("Get core: %v", err)
+	}
+	section := doc.H2Sections()["Generate Rules"]
+	for _, fact := range []string{
+		"### Deploy upload size",
+		"git snapshot", "untracked files `.gitignore` does not exclude", "the whole `.git` directory",
+		"do NOT make the upload smaller",
+		"`export-ignore`", "`git checkout -- <path>`",
+		"`sha=`", "`.deployignore` does filter",
+		"object storage",
+		"`upload`", "5 min plus 1 s per MiB", "60 min",
+		"`git count-objects -vH`", "`git repack -a -d`",
+	} {
+		if !strings.Contains(section, fact) {
+			t.Errorf("core Generate Rules missing deploy-upload fact %q", fact)
+		}
+	}
+}
+
+// TestSearch_DeployUploadSize_FindsCore: the query a deploy's large-upload
+// warning names reaches core's upload section.
+func TestSearch_DeployUploadSize_FindsCore(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	results := store.Search("deploy upload size", 5)
+	for _, r := range results[:min(3, len(results))] {
+		if r.URI == "zerops://themes/core" {
+			return
+		}
+	}
+	uris := make([]string, 0, len(results))
+	for _, r := range results {
+		uris = append(uris, r.URI)
+	}
+	t.Errorf("search %q top 3 = %v, want zerops://themes/core", "deploy upload size", uris)
+}
+
 // TestCore_ZscInstall_NeedsSudo: the core reference writes the runtime-side
 // `zsc install` the way run.prepareCommands accepts it — under sudo, since
 // the runtime container runs as the zerops user (without it the deploy ends
