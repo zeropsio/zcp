@@ -134,7 +134,9 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
 
 A part never hardcodes another part's URL. Define the URL as a project variable
 built on `${zeropsSubdomainHost}` and read that variable at build or run time. A
-`${<service>_zeropsSubdomain}` reference stays literal in a project variable.
+`${<service>_zeropsSubdomain}` reference in a project variable resolves only in a
+container started after that service was deployed; one started earlier reads it
+literally until it restarts. The `${zeropsSubdomainHost}` form has no such order.
 
 ## 6. docker-compose
 
