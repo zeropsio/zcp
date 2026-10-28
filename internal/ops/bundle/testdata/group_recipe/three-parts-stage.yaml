@@ -10,7 +10,8 @@
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
-# runtimes whose build reads it.
+# runtimes whose build reads it or whose variables name its public address,
+# which resolves only in a service started after it is deployed.
 
 project:
   name: mono stage

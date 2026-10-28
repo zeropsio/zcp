@@ -33,13 +33,14 @@ import (
 // after it. An address the reference cannot be shown to express is kept as
 // written and said, never guessed: a setup declaring several HTTP ports,
 // another one or none; a service the recipe reads no setup of (a utility, a
-// managed service, a Box, a dev pool); a bare host or another scheme; and any
-// address in a project variable, where another service's
-// `${<host>_zeropsSubdomain}` stays literal. An address of a service the tier
-// does not carry is kept as it is: an address written out reads nothing
-// (spec-workflows.md §8 PS-3), what a tier's runtimes read is the closure
-// check's (PS-3a), and a reference the rewrite writes names only what the
-// tier carries, so it adds no read.
+// managed service, a Box, a dev pool); a bare host or another scheme; a
+// reference no priority orders before its reader (orderSubdomainReads); and
+// any address in a project variable, which every service reads, so no
+// priority creates the service it names before all of its readers. An
+// address of a service the tier does not carry is kept as it is: an address
+// written out reads nothing (spec-workflows.md §8 PS-3), what a tier's
+// runtimes read is the closure check's (PS-3a), and a reference the rewrite
+// writes names only what the tier carries, so it adds no read.
 //
 // The address is as public as the subdomain it names, so it never makes a
 // value look secret: the secret rule reads its label — the platform's name
@@ -248,11 +249,36 @@ type tierAddresses struct {
 	promote func(string) string
 	renames map[string]string
 	// builds is the setup each runtime of the tier builds, and carried every
-	// service the tier carries, by their hostnames in the tier.
-	builds  map[string]addressBuild
-	carried map[string]bool
+	// service the tier carries, by their hostnames in the tier; refHosts
+	// maps a carried hostname as a reference spells it to the hostname.
+	builds   map[string]addressBuild
+	carried  map[string]bool
+	refHosts map[string]string
+	// collecting has write collect the public-address reads of the values it
+	// writes (reads, projectReads) and say nothing of what it keeps: the dry
+	// run the tier orders its priorities from (orderSubdomainReads).
+	collecting   bool
+	reads        []subdomainRead
+	projectReads []projectRead
+	// unordered is why no priority orders a reference the rewrite would
+	// write, by its reader and the service it names: the address is kept as
+	// written instead.
+	unordered map[[2]string]string
 	// kept is what the tier kept as written for a person to set.
 	kept []keptAddress
+}
+
+// projectRead is a project variable's ${<host>_zeropsSubdomain} reference,
+// which every service reads: the variable and the service it names.
+type projectRead struct{ key, target string }
+
+// carry records the services the tier carries, by their hostnames in it.
+func (t *tierAddresses) carry(hosts []string) {
+	t.carried, t.refHosts = map[string]bool{}, map[string]string{}
+	for _, host := range hosts {
+		t.carried[host] = true
+		t.refHosts[canonicalRefHost(host)] = host
+	}
 }
 
 // writer writes the variables of owner — `runtime "flip"`, `dev pool
@@ -265,35 +291,56 @@ func (t *tierAddresses) writer(owner, own string) valueWriter {
 // write writes one value: each address of the Mate's own project as the
 // tier's reference to it, or as written; the rest through promote.
 func (t *tierAddresses) write(owner, own, key, value string) string {
-	found := t.mate.in(value)
-	if len(found) == 0 {
-		return t.rename(value)
-	}
 	var b strings.Builder
 	at := 0
-	for _, a := range found {
-		b.WriteString(t.rename(value[at:a.start]))
+	for _, a := range t.mate.in(value) {
+		b.WriteString(t.rest(own, key, value[at:a.start]))
 		written := value[a.start:a.end]
 		if host := t.tierHost(a.host); t.carried[host] {
-			if ref, why := t.reference(own, host, a); why != "" {
-				t.kept = append(t.kept, keptAddress{owner: owner, key: key, address: a.address, why: why, tier: t.title})
-			} else {
+			ref, why := t.reference(own, host, a)
+			if why == "" && host != own {
+				if t.collecting {
+					t.reads = append(t.reads, subdomainRead{reader: own, target: host, variable: "its " + key, rewritten: true})
+				} else if unordered, ok := t.unordered[[2]string{own, host}]; ok {
+					why = unordered
+				}
+			}
+			switch {
+			case why == "":
 				written = ref
+			case !t.collecting:
+				t.kept = append(t.kept, keptAddress{owner: owner, key: key, address: a.address, why: why, tier: t.title})
 			}
 		}
 		b.WriteString(written)
 		at = a.end
 	}
-	b.WriteString(t.rename(value[at:]))
+	b.WriteString(t.rest(own, key, value[at:]))
 	return b.String()
 }
 
-// rename names a group environment's own runtimes in text.
-func (t *tierAddresses) rename(text string) string {
-	if t.promote == nil {
+// rest writes text of a value that holds no address of the Mate's own
+// project, through promote, and collects the public-address references it
+// holds while the tier collects them.
+func (t *tierAddresses) rest(own, key, text string) string {
+	if t.promote != nil {
+		text = t.promote(text)
+	}
+	if !t.collecting {
 		return text
 	}
-	return t.promote(text)
+	for _, name := range parseDollarBraceRefs(text) {
+		spelled, ok := subdomainRefHost(name)
+		target := t.refHosts[spelled]
+		switch {
+		case !ok || target == "" || target == own:
+		case own == "":
+			t.projectReads = append(t.projectReads, projectRead{key: key, target: target})
+		default:
+			t.reads = append(t.reads, subdomainRead{reader: own, target: target, variable: "its " + key})
+		}
+	}
+	return text
 }
 
 // tierHost is the tier's name for host, a service of the Mate's project.
@@ -308,12 +355,12 @@ func (t *tierAddresses) tierHost(host string) string {
 // service own ("" for a project variable), host the tier's name for a's
 // service; why says why none does.
 func (t *tierAddresses) reference(own, host string, a mateAddress) (ref, why string) {
-	ref = "${" + canonicalRefHost(host) + "_zeropsSubdomain}"
+	ref = subdomainReference(host)
 	if own != "" && own == host {
 		ref = ownSubdomainReference
 	}
 	if own == "" {
-		return "", ref + " stays literal in a project variable"
+		return "", fmt.Sprintf("every service reads a project variable, and %s resolves only in one started after %q is deployed, so no priority orders it", ref, host)
 	}
 	if !a.https {
 		return "", ref + " holds the address as https:// with no port after it, which this value does not write"
@@ -350,33 +397,25 @@ func joinPorts(ports []int) string {
 // to set, once for every tier that kept it for the same reason, in the order
 // the tiers kept them.
 func keptAddressWarnings(kept []keptAddress) []string {
-	type said struct{ owner, key, address, why string }
-	var order []said
-	tiers := map[said][]string{}
-	for _, k := range kept {
-		s := said{k.owner, k.key, k.address, k.why}
-		if _, seen := tiers[s]; !seen {
-			order = append(order, s)
-		}
-		if !slices.Contains(tiers[s], k.tier) {
-			tiers[s] = append(tiers[s], k.tier)
-		}
-	}
+	order, tiers := saidInTiers(kept, func(k keptAddress) (keptAddress, string) {
+		tier := k.tier
+		k.tier = ""
+		return k, tier
+	})
 	warnings := make([]string, 0, len(order))
-	for _, s := range order {
-		variable := "project variable " + s.key
-		if s.owner != "" {
-			variable = s.key + " of " + s.owner
+	for _, k := range order {
+		variable := "project variable " + k.key
+		if k.owner != "" {
+			variable = k.key + " of " + k.owner
 		}
-		titles := tiers[s]
-		keep, them := "the "+titles[0]+" tier keeps", "it"
-		if len(titles) > 1 {
-			keep = "the " + strings.Join(titles[:len(titles)-1], ", ") + " and " + titles[len(titles)-1] + " tiers keep"
-			them = "them"
+		in, several := tierPhrase(tiers[k])
+		keep, them := in+" keeps", "it"
+		if several {
+			keep, them = in+" keep", "them"
 		}
 		warnings = append(warnings, fmt.Sprintf(
 			"%s names %s, an address of this Mate's own project, and %s it as written: %s — set it by hand in an environment made from %s",
-			variable, s.address, keep, s.why, them))
+			variable, k.address, keep, k.why, them))
 	}
 	return warnings
 }

@@ -11,14 +11,15 @@
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
-# runtimes whose build reads it.
+# runtimes whose build reads it or whose variables name its public address,
+# which resolves only in a service started after it is deployed.
 #
 # The line below is zcp's mark: the Mate's project this file was composed from
 # and a digest of the file. While the file stays exactly as zcp wrote it, zcp
 # proposes it anew when that Mate's project changes shape — a part added or
 # removed, a dev pool, a runtime's type; an edit of any line makes the file the
 # group's alone.
-# zcp-recipe: p-odin sha256=be31996847955e2678d2e6bd6905afd177442427568a87c6e16b410a7475c234
+# zcp-recipe: p-odin sha256=e02a4c189112b0c8d057fb406851f31f9272c9d1309268c412bc6b8a500707b9
 
 project:
   name: noola production
