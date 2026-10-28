@@ -5,7 +5,6 @@ package devsup
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -371,46 +370,38 @@ func TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile(t *
 	}
 }
 
-// stalledTarget is a port on 127.0.0.1 whose listener never accepts and whose
-// accept queue is full: a dial to it is neither taken nor refused, it waits —
-// a preview forward's dial to it pends until its own timeout.
-func stalledTarget(t *testing.T) int {
+// stalledTarget accepts a connection on 127.0.0.1 and holds it without reading
+// or answering, leaving a preview forward's copies waiting on either OS.
+// accepted closes once the target has taken the forward's connection.
+func stalledTarget(t *testing.T) (port int, accepted <-chan struct{}) {
 	t.Helper()
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = syscall.Close(fd) })
-	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
-		t.Fatal(err)
-	}
-	// Backlog 1: darwin reads 0 as the system maximum.
-	if err := syscall.Listen(fd, 1); err != nil {
-		t.Fatal(err)
-	}
-	sa, err := syscall.Getsockname(fd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	in4, ok := sa.(*syscall.SockaddrInet4)
+	addr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
-		t.Fatalf("socket address %v is not IPv4", sa)
+		_ = ln.Close()
+		t.Fatalf("listener address %v is not TCP", ln.Addr())
 	}
-	addr := "127.0.0.1:" + strconv.Itoa(in4.Port)
-	for range 16 {
-		d := net.Dialer{Timeout: 300 * time.Millisecond}
-		c, err := d.DialContext(context.Background(), "tcp", addr)
+	taken, stop, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		close(stop)
+		_ = ln.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		c, err := ln.Accept()
 		if err != nil {
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
-				return in4.Port // the queue is full: a dial now waits
-			}
-			t.Fatalf("dial %s: %v, want it taken into the queue or left waiting", addr, err)
+			return
 		}
-		t.Cleanup(func() { _ = c.Close() })
-	}
-	t.Fatalf("the accept queue of %s never filled", addr)
-	return 0
+		defer c.Close()
+		close(taken)
+		<-stop
+	}()
+	return addr.Port, taken
 }
 
 // TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync: a forward that ends
@@ -421,20 +412,27 @@ func stalledTarget(t *testing.T) int {
 // the closing sync returns.
 func TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync(t *testing.T) {
 	t.Parallel()
-	target, listen := stalledTarget(t), freePort(t)
+	target, accepted := stalledTarget(t)
+	listen := freePort(t)
 	seen := &previewSeen{}
 	f, err := openForward(listen, target, seen)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.close)
 	d := net.Dialer{Timeout: time.Second}
 	c, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(listen))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	// The forward took the client and dials the server, which never answers.
+	// The forward took the client and connected to the server, which never answers.
 	eventually(t, "the forward to take the client", func() bool { return previewOpen(seen) == 1 })
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the target never accepted the forward's connection")
+	}
 
 	// web has no live group: its forward is stale.
 	s := &Supervisor{cfg: Config{Log: io.Discard}, servers: map[string]*server{"web": {name: "web", fwd: f, preview: seen}}}
