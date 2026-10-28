@@ -85,10 +85,10 @@ stored name (`$API_KEY` on the service), never a literal in a command.
 
 A value only the person has (an API key, a password, a webhook secret)
 is never asked for in the chat: call `zerops_env action="request"
-key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
+key="STRIPE_SECRET_KEY" project=true why="…"` — one sentence on what
 it is for and where to find it. Request it when the feature using it is
 built, and only if that feature is on the chosen path. The person types it into Mate, which
-writes it to the vault; their next message notes it is set. Until then continue with what does not need it, or end the
+writes it to the vault; a message says saved: restart its readers. Until then continue with what does not need it, or end the
 turn. A key already in that vault is answered `alreadySet` — reference
 it by name.
 
