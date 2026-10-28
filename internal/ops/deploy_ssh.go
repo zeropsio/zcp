@@ -397,7 +397,7 @@ func deploySSH(
 		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
 		// The commit's tree is already extracted and the push reads no git.
 		unlockGit()
-		output, err = sshDeployer.ExecSSHStdin(ctx, sourceName, buildSSHCommandSHA(target.ID, workingDir, setup, versionName), pushKeyInput(authInfo))
+		output, err = execPush(ctx, sshDeployer, sourceName, buildSSHCommandSHA(target.ID, workingDir, setup, versionName), pushKeyInput(authInfo))
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
@@ -405,23 +405,18 @@ func deploySSH(
 		// tree (versionNameFor).
 		versionName = versionNameFor(branch, resolvedSHA, dirty)
 		pushDir := "/tmp/zcp-push-" + rand.Text()
-		output, err = sshDeployer.ExecSSHStdin(ctx, sourceName, buildSSHCommand(target.ID, workingDir, setup, includeGit, versionName, pushDir), pushKeyInput(authInfo))
-		if err != nil && !isSSHBuildTriggered(string(output)) {
-			// The detached zcli outlives the failed call and would still
-			// ask for the build; the git lock is held until it is stopped.
-			output = append(output, stopPush(ctx, sshDeployer, sourceName, pushDir)...)
-		}
-		unlockGit()
-		if err == nil {
-			uploaded = output
-			output, err = sshDeployer.ExecSSH(ctx, sourceName, buildWaitCommand(pushDir))
-		}
+		uploaded, output, err = pushWorkingTree(ctx, sshDeployer, sourceName, pushDir,
+			buildSSHCommand(target.ID, workingDir, setup, includeGit, versionName, pushDir), pushKeyInput(authInfo), unlockGit)
 	}
-	warnings = stageMain.withNote(warnings, versionName, dirty)
+	// What the upload carried, as the push measured it (DM-9); a session
+	// dropped after the build started leaves it in the push's own output.
+	upload, _ := splitUploadReport(string(uploaded) + string(output))
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
-		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty, warnings: warnings,
+		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty,
+		warnings:   withUploadWarning(stageMain.withNote(warnings, versionName, dirty), upload.size),
 		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toPool: toPool, poolLease: poolLease,
+		upload: upload.size,
 	}
 	if err != nil {
 		// A self-deploy's build replaces the source, dropping the wait's
@@ -435,6 +430,26 @@ func deploySSH(
 	}
 
 	return outcome.result(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService)), nil
+}
+
+// pushWorkingTree runs a working-tree push in pushDir (buildSSHCommand) and,
+// once zcli said it is deploying, awaits its build in a call of its own:
+// uploaded is the push's output up to its upload, output the call that ended
+// last. unlockGit runs once zcli's git work is done or stopped.
+func pushWorkingTree(ctx context.Context, sshDeployer SSHDeployer, sourceName, pushDir, command string, key []byte, unlockGit func()) (uploaded, output []byte, err error) {
+	output, err = execPush(ctx, sshDeployer, sourceName, command, key)
+	if err != nil && !isSSHBuildTriggered(string(output)) {
+		// The detached zcli outlives the failed call and would still ask for
+		// the build; the git lock is held until it is stopped.
+		output = append(output, stopPush(ctx, sshDeployer, sourceName, pushDir)...)
+	}
+	unlockGit()
+	if err != nil {
+		return nil, output, err
+	}
+	uploaded = output
+	output, err = sshDeployer.ExecSSH(ctx, sourceName, buildWaitCommand(pushDir))
+	return uploaded, output, err
 }
 
 // resolveDeployHosts is the host a deploy's push runs on and its target
@@ -477,6 +492,8 @@ type sshDeployOutcome struct {
 	toPool bool
 	// poolLease is the source's alias when it is a lease of that pool.
 	poolLease string
+	// upload is what the push uploaded, nil when it measured nothing.
+	upload *UploadSize
 }
 
 // result is the BUILD_TRIGGERED DeployResult carrying message.
@@ -500,6 +517,7 @@ func (o sshDeployOutcome) result(message string) *DeployResult {
 		NotCarried:        o.notCarried,
 		EnvFiles:          o.envFiles,
 		RepoState:         o.repoState,
+		Upload:            o.upload,
 
 		ReachesNewContainersOnly: o.toPool,
 	}
@@ -757,6 +775,11 @@ func shortSHA(sha string) string {
 }
 
 func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string) string {
+	return buildSSHCommandWithin(targetServiceID, workingDir, setup, includeGit, versionName, pushDir, defaultUploadBudget())
+}
+
+// buildSSHCommandWithin is buildSSHCommand waiting for the upload by budget.
+func buildSSHCommandWithin(targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string, budget uploadBudget) string {
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -816,11 +839,18 @@ func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool,
 		shellQuote(path.Dir(pushDir)))
 	spawn := fmt.Sprintf(`{ %[1]s; mkdir %[2]s; } && { %[3]s="$%[3]s" sh -c 'k=$%[3]s; unset %[3]s; d=$1; shift; ZEROPS_TOKEN="$k" "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %[2]s %[4]s > %[2]s/log 2>&1 < /dev/null & }`,
 		sweep, q, pushKeyName, pushArgs)
-	waitUpload := fmt.Sprintf("{ until [ -e %s/rc ] || grep -qF %s %s/log 2>/dev/null; do sleep 1; done; cat %s/log; }",
-		q, shellQuote(zcliDeployingLine), q, q)
+	// The wait on the upload lasts zcp_budget seconds, set by the
+	// measurement before zcli starts (DM-9): an upload still running then
+	// ends the call with uploadUnfinishedExit and its mark, for the caller to
+	// stop zcli, so no slow upload is taken for a broken connection.
+	waitUpload := fmt.Sprintf(`{ zcp_end=$(( $(date +%%s) + zcp_budget )); until [ -e %[1]s/rc ] || grep -qF %[2]s %[1]s/log 2>/dev/null; do `+
+		`[ "$(date +%%s)" -lt "$zcp_end" ] || { cat %[1]s/log; echo "%[3]s budget=$zcp_budget"; exit %[4]d; }; sleep 1; done; cat %[1]s/log; }`,
+		q, shellQuote(zcliDeployingLine), uploadUnfinishedMark, uploadUnfinishedExit)
 	// The key is read after zcp's own git setup, none of which reads stdin,
 	// and before the crew save, which then finds stdin at its end as before.
-	return fmt.Sprintf("%s && %s && %s && %s && %s", gitEnsure, pushKeyRead, crewSaveCommand, spawn, waitUpload)
+	// The measurement reads no stdin either.
+	return fmt.Sprintf("%s && %s && %s && %s && %s && %s", gitEnsure, pushKeyRead, crewSaveCommand,
+		uploadMeasureCommand(includeGit, budget), spawn, waitUpload)
 }
 
 // pushKeyRead reads the Zerops key, the first line of the push call's stdin

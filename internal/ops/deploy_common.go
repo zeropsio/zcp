@@ -102,6 +102,10 @@ type DeployResult struct {
 	// "detached" (GF-12). Empty when the source has no repo yet, or on a
 	// cross-deploy (preflight is self-deploy only).
 	RepoState string `json:"repoState,omitempty"`
+	// Upload is what a working-tree push uploaded, as it measured it in the
+	// source container before zcli started (docs/spec-workflows.md §8 DM-9).
+	// Nil for a deploy of a commit, and for one that measured nothing.
+	Upload *UploadSize `json:"upload,omitempty"`
 	// ReachesNewContainersOnly is true for every deploy whose target is a
 	// pool, whatever its source (docs/spec-workflows.md §8 DP-7): the build
 	// sets the image of the containers the pool creates after it, and

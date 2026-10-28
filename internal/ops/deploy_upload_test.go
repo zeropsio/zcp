@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// writeFile writes size bytes (or content when size is 0) at dir/rel.
+// writeUploadFile writes size bytes (or content when size is 0) at dir/rel.
 func writeUploadFile(t *testing.T, dir, rel string, size int, content string) {
 	t.Helper()
 	path := filepath.Join(dir, rel)
@@ -261,10 +262,10 @@ func TestClassifySSHError_UnfinishedUpload_NamesItsSizeAndIsNoNetworkFailure(t *
 			if cls == nil || cls.Category == topology.FailureClassNetwork {
 				t.Fatalf("classification = %+v, want no network failure", cls)
 			}
-			if cls.Category != topology.FailureClassOther || !containsSignal(cls.Signals, "transport:upload-unfinished") {
+			if cls.Category != topology.FailureClassOther || !slices.Contains(cls.Signals, "transport:upload-unfinished") {
 				t.Errorf("classification = %+v, want other via transport:upload-unfinished", cls)
 			}
-			for _, want := range []string{"smaller", `zerops_knowledge query="deploy upload size"`, "zcli login"} {
+			for _, want := range []string{"smaller", `zerops_knowledge uri="zerops://themes/deploy-upload"`, "zcli login"} {
 				if !strings.Contains(cls.SuggestedAction, want) {
 					t.Errorf("suggested action %q missing %q", cls.SuggestedAction, want)
 				}
@@ -288,7 +289,7 @@ func TestClassifyDeployFailure_ClosedUploadPipe_IsNoNetworkFailure(t *testing.T)
 		t.Errorf("message %q should name the upload's size", pe.Message)
 	}
 	cls := ClassifyDeployFailure(FailureInput{Phase: PhaseTransport, Strategy: "zcli", APIErr: pe, TransportErr: pe})
-	if cls == nil || cls.Category == topology.FailureClassNetwork || !containsSignal(cls.Signals, "transport:zcli-upload-closed") {
+	if cls == nil || cls.Category == topology.FailureClassNetwork || !slices.Contains(cls.Signals, "transport:zcli-upload-closed") {
 		t.Fatalf("classification = %+v, want transport:zcli-upload-closed, not network", cls)
 	}
 	for _, want := range []string{"no build started", "Deploy again", "smaller"} {
@@ -296,15 +297,6 @@ func TestClassifyDeployFailure_ClosedUploadPipe_IsNoNetworkFailure(t *testing.T)
 			t.Errorf("classification %+v missing %q", cls, want)
 		}
 	}
-}
-
-func containsSignal(signals []string, want string) bool {
-	for _, s := range signals {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 // uploadSSH answers every call as mockSSHDeployer does, and a push's call with
@@ -371,7 +363,7 @@ func TestDeploySSH_ReportsWhatTheUploadCarried(t *testing.T) {
 				t.Fatalf("warnings = %q, want a large-upload warning: %v", result.Warnings, tt.wantWarn)
 			}
 			if tt.wantWarn {
-				for _, want := range []string{".deployignore", "deployFiles", `zerops_knowledge query="deploy upload size"`} {
+				for _, want := range []string{".deployignore", "deployFiles", `zerops_knowledge uri="zerops://themes/deploy-upload"`} {
 					if !strings.Contains(warned, want) {
 						t.Errorf("warning %q missing %q", warned, want)
 					}

@@ -246,6 +246,29 @@ func buildSignalLibrary() []failureSignal {
 		// TRANSPORT phase (no build was triggered; source/SSH/zcli failed)
 		// =================================================================
 		{
+			// An upload still running when its time ran out — the push's
+			// size-scaled budget or the call's ceiling (DM-9). Slow, not
+			// broken: never the network baseline, which sent agents to check
+			// connectivity and then around zerops_deploy. First, so the size
+			// in the message never meets a broader pattern.
+			id:            "transport:upload-unfinished",
+			phases:        []DeployFailurePhase{PhaseTransport},
+			logSubstrings: []string{uploadUnfinishedPhrase},
+			requireLog:    true,
+			build:         transportUploadUnfinished,
+		},
+		{
+			// Live incident (flip.studio, 2026-10-28): zcli's upload of a
+			// 1.2 GB tree ended "io: read/write on closed pipe" 65 s in. zcli
+			// opens the upload before it packs the tree, so a large tree
+			// leaves it idle at first. No build was triggered.
+			id:            "transport:zcli-upload-closed",
+			phases:        []DeployFailurePhase{PhaseTransport},
+			logSubstrings: []string{zcliClosedPipe},
+			requireLog:    true,
+			build:         transportUploadClosed,
+		},
+		{
 			id:            "transport:ssh-killed",
 			phases:        []DeployFailurePhase{PhaseTransport},
 			logSubstrings: []string{"signal: killed"},
@@ -687,6 +710,30 @@ func initOOMKilled(_ string) *topology.DeployFailureClassification {
 // =============================================================================
 // transport phase builders
 // =============================================================================
+
+func transportUploadUnfinished(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category: topology.FailureClassOther,
+		LikelyCause: "The upload was still running when its time ran out — slow, not broken; nothing is wrong with the connection. " +
+			"The push waits 5 min plus 1 s per MiB it carries (at most 60 min); no build started.",
+		SuggestedAction: `Make the upload smaller — the error names its size and largest paths; zerops_knowledge uri="zerops://themes/deploy-upload" says what makes it smaller — then deploy again with zerops_deploy. ` +
+			"zerops_deploy is the only push from here: never copy ZCP_API_KEY into a container or `zcli login` with it. " +
+			"If the upload cannot be made smaller, tell the person what blocks the deploy.",
+		Signals: []string{"transport:upload-unfinished"},
+	}
+}
+
+func transportUploadClosed(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category: topology.FailureClassOther,
+		LikelyCause: "The connection carrying zcli's upload closed before the package was sent (io: read/write on closed pipe); no build started. " +
+			"zcli opens the upload first and sends nothing until its `git add -A` has read every file of the tree, so a large tree leaves the upload idle at first.",
+		SuggestedAction: "Deploy again unchanged — a second pack often reads the files from cache and starts sending sooner. " +
+			`If it closes again, make the upload smaller (the error names its size; zerops_knowledge uri="zerops://themes/deploy-upload"). ` +
+			"Never push with zcli yourself or `zcli login` with ZCP_API_KEY.",
+		Signals: []string{"transport:zcli-upload-closed"},
+	}
+}
 
 func transportSSHKilled(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
