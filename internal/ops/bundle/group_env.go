@@ -356,21 +356,27 @@ func matchesAny(patterns []*regexp.Regexp, value string) bool {
 }
 
 // groupVaultFields writes live variables for a tier as a `vault:` block,
-// sorted by key: config as written — through promote, which names a group
-// environment's own runtimes (nil keeps it as it is) — secrets generated,
-// each but an app's own with a line saying it has to be set again. Each
-// value is sensitive per newVaultValue, a generated secret counting as one.
-// The project's vault and each service's own carry the same shape.
-func groupVaultFields(envs []ProjectEnvVar, source string, promote func(string) string) []yamlField {
+// sorted by key: config as written — through w, which judges what is secret
+// and writes an address of the Mate's own project as the environment's own
+// and a group environment's own runtimes by their names (tierAddresses; nil
+// judges by recipeSecret and keeps every value as it is) — secrets
+// generated, each but an app's own with a line saying it has to be set
+// again. Each value is sensitive per newVaultValue, a generated secret
+// counting as one. The project's vault and each service's own carry the
+// same shape.
+func groupVaultFields(envs []ProjectEnvVar, source string, w valueWriter) []yamlField {
 	sorted := append([]ProjectEnvVar(nil), envs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 	fields := make([]yamlField, 0, len(sorted))
 	for _, env := range sorted {
 		secret, setAgain := recipeSecret(env)
+		if w != nil {
+			secret, setAgain = w.secret(env)
+		}
 		if !secret {
 			value := env.Value
-			if promote != nil {
-				value = promote(value)
+			if w != nil {
+				value = w.write(env.Key, value)
 			}
 			fields = append(fields, yamlField{key: env.Key, value: newVaultValue(env.Key, value, false)})
 			continue

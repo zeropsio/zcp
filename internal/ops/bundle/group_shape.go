@@ -29,15 +29,16 @@ const defaultPoolMaxContainers = 3
 // one (pool-migrate's provision stanza; knowledge theme pools-and-box, "A
 // part's dev pool"): its hostname and type, no container until a lease asks
 // for one (a container the platform creates for the minimum cannot be reset,
-// DP-15), its live maximum and vertical scale, and its own service variables
-// — the sshIsolation that admits zcp among them. No build and no setup: a
+// DP-15), and its live maximum and vertical scale; the tier writes its own
+// service variables beside them (groupPoolVault), the sshIsolation that
+// admits zcp among them. No build and no setup: a
 // pool's image is deployed from a lease of it, never by an import, and a
 // runtime built from HQ would read as a dev half to clone into. No
 // credential either: a pool of a repository in HQ gets the Mate's own from
 // zcp at its first acquire (ZCP_HQ_GIT_TOKEN, DP-16), and its GIT_TOKEN stays
 // the person's, so the tier names neither. The comment says which setup its
 // image is.
-func groupPoolEntry(r GroupRuntime, priority int, source string) (map[string]any, string) {
+func groupPoolEntry(r GroupRuntime, priority int) (map[string]any, string) {
 	entry := map[string]any{
 		"hostname":      r.DevHostname,
 		"type":          r.ServiceType,
@@ -58,9 +59,6 @@ func groupPoolEntry(r GroupRuntime, priority int, source string) (map[string]any
 			entry["verticalAutoscaling"] = v
 		}
 	}
-	if vault := groupPoolVault(r.ServiceEnvs, source); len(vault) > 0 {
-		entry["vault"] = vault
-	}
 	comment := fmt.Sprintf("A dev pool: one container leased per branch of the repository its stage builds from. Its image is that repository's setup %q, deployed from a lease once the Mate runs; this import builds nothing.", r.SetupName)
 	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
 }
@@ -70,10 +68,10 @@ func groupPoolEntry(r GroupRuntime, priority int, source string) (map[string]any
 const poolSSHIsolationKey = "sshIsolation"
 
 // groupPoolVault is a pool's service variables as the AI Agent tier writes
-// them (groupVaultFields), its sshIsolation as written: an admission rule
-// naming the zcp service, never a secret, which a generated value would turn
-// into one that admits nobody.
-func groupPoolVault(envs []ProjectEnvVar, source string) []yamlField {
+// them (groupVaultFields, through write), its sshIsolation as written: an
+// admission rule naming the zcp service, never a secret, which a generated
+// value would turn into one that admits nobody.
+func groupPoolVault(envs []ProjectEnvVar, source string, write valueWriter) []yamlField {
 	rest := make([]ProjectEnvVar, 0, len(envs))
 	var admission *yamlField
 	for _, env := range envs {
@@ -83,7 +81,7 @@ func groupPoolVault(envs []ProjectEnvVar, source string) []yamlField {
 		}
 		rest = append(rest, env)
 	}
-	fields := groupVaultFields(rest, source, nil)
+	fields := groupVaultFields(rest, source, write)
 	if admission != nil {
 		fields = append(fields, *admission)
 		sort.SliceStable(fields, func(i, j int) bool { return fields[i].key < fields[j].key })

@@ -36,25 +36,12 @@ func mateSubdomainLabel(subdomainHost string) string {
 }
 
 // mateAddressIn is the first public address in value of a service of the
-// Mate's own project among hosts (mateOwnHosts), written out —
-// `<hostname>-<label>[-<port>].<region>.zerops.app` (zerops.dev on devel),
-// label the project's (mateSubdomainLabel) — "" when it names none. An
-// address through the subdomain variables (`${zeropsSubdomainHost}`) names
-// whichever project reads it, and a hostname holds no dash, so the label
-// after the first one is the project's.
+// Mate's own project among hosts (mateOwnHosts), written out, as
+// mateAddresses reads one — the reader every tier's rewrite of such an
+// address shares (tierAddresses) — "" when it names none.
 func mateAddressIn(value, label string, hosts map[string]bool) string {
-	if label == "" {
-		return ""
-	}
-	for _, address := range zeropsSubdomainAddress.FindAllString(value, -1) {
-		first, _, _ := strings.Cut(strings.ToLower(address), ".")
-		parts := strings.Split(first, "-")
-		switch {
-		case len(parts) < 2 || len(parts) > 3 || !hosts[parts[0]] || parts[1] != label:
-		case len(parts) == 3 && !recipePort.MatchString(parts[2]):
-		default:
-			return address
-		}
+	if found := mateAddresses(value, label, hosts); len(found) > 0 {
+		return found[0].address
 	}
 	return ""
 }
