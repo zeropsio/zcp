@@ -231,6 +231,11 @@ func groupRecipeOutcome(
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
 					return nil, err
 				}
+				// One the change already proposes in that shape is pushed
+				// again only for a new one.
+				if replaced, err = recipeHeldReplacements(ctx, comp, open, replaced); err != nil {
+					return nil, err
+				}
 			}
 			written := make(map[string]string, len(missing)+len(replaced))
 			for _, file := range append(append([]recipe.File(nil), missing...), replaced...) {
