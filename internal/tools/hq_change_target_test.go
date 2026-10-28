@@ -239,3 +239,39 @@ func TestResolveChange_NeverTheNewest(t *testing.T) {
 		t.Errorf("open-change on a pair with no branch: %s, want it to ask for branch=", pe.Message)
 	}
 }
+
+// TestChangeService_NamesOnePartOrNone: the service a change answer names is
+// the pair or lease alias the call named; else a repository's only pair; else
+// the one part whose pool leases the branch — never one of several parts, and
+// never a pool that keys no pair of the repository named as one.
+func TestChangeService_NamesOnePartOrNone(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	writeHQLeaseRecord(t, stateDir, "newpool", 7, targetHQ+"/git/"+labOrg+"/"+labApp+"/appsdev.git", "solo")
+	writeWiredPair(t, stateDir, "docsdev", "docsdev")
+	appsdev := changeTarget{AppID: labApp, Repo: "appsdev"}
+
+	for _, tt := range []struct {
+		name, named, branch string
+		target              changeTarget
+		wantService         string
+		wantParts           []string
+	}{
+		{name: "a pair named", named: "webpool", branch: "mate-test-badge", target: appsdev, wantService: "webpool"},
+		{name: "a lease alias named", named: "hqpool-4", target: appsdev, wantService: "hqpool-4"},
+		{name: "a branch leased in one part", branch: "pool-previews", target: appsdev, wantService: "hqpool"},
+		{name: "a branch leased in two parts", branch: "mate-test-badge", target: appsdev, wantParts: []string{"boxpool", "hqpool"}},
+		{name: "a branch no lease holds", branch: "unleased", target: appsdev},
+		{name: "no branch", target: appsdev},
+		{name: "a lease on a pool keying no pair", branch: "solo", target: appsdev, wantParts: []string{"newpool"}},
+		{name: "a repository's only pair", branch: "anything", target: changeTarget{AppID: labApp, Repo: "docsdev"}, wantService: "docsdev"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			service, parts := changeService(stateDir, targetHQ, tt.target, tt.named, tt.branch)
+			if service != tt.wantService || strings.Join(parts, ",") != strings.Join(tt.wantParts, ",") {
+				t.Errorf("changeService = %q %v, want %q %v", service, parts, tt.wantService, tt.wantParts)
+			}
+		})
+	}
+}

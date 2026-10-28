@@ -234,6 +234,46 @@ func firstPairOf(stateDir, appID, repo string) *workflow.ServiceMeta {
 	return first
 }
 
+// changeService is the service a change call's answer names, and the parts it
+// lists instead when it can name none. It is the pair or lease alias the call
+// named; else the repository's only wired pair; else the part whose dev pool
+// leases the change's branch — a monorepo's parts are pairs keyed by their
+// pools, and a lease is a part's checkout of a branch. Never one of several,
+// and never the repository's first pair: a branch leased in several parts
+// names none and lists their pools (parts, sorted), and a branch no lease
+// holds names none — zcp records no part's directory, so the paths a change
+// touched cannot say whose it is.
+func changeService(stateDir, address string, target changeTarget, named, branch string) (string, []string) {
+	if named = strings.TrimSpace(named); named != "" {
+		return named, nil
+	}
+	metas, _ := workflow.ListServiceMetas(stateDir)
+	var pairs []string
+	for _, m := range metas {
+		if hqPairWired(m) && m.HQ.AppID == target.AppID && m.HQ.Repo == target.Repo {
+			pairs = append(pairs, m.Hostname)
+		}
+	}
+	if len(pairs) == 1 {
+		return pairs[0], nil
+	}
+	var parts []string
+	if branch != "" {
+		leases, _ := ops.LeaseBranches(stateDir)
+		for _, l := range leases {
+			app, repo, ok := hq.RepoOfURL(address, l.Repo)
+			if ok && app == target.AppID && repo == target.Repo && l.Branch == branch && l.Pool != "" && !slices.Contains(parts, l.Pool) {
+				parts = append(parts, l.Pool)
+			}
+		}
+	}
+	slices.Sort(parts)
+	if len(parts) == 1 && slices.Contains(pairs, parts[0]) {
+		return parts[0], nil
+	}
+	return "", parts
+}
+
 // changePick is the change a call means within its repository.
 type changePick struct {
 	Number int
