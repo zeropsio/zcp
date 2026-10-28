@@ -38,16 +38,6 @@ type IntegrationBuildResult struct {
 	TimedOut bool
 }
 
-// buildTerminalStatuses mirror the platform appVersion lifecycle terminals
-// the deploy poll path already keys on.
-func buildStatusTerminal(status string) bool {
-	switch status {
-	case "ACTIVE", "FAILED", "CANCELED", "CANCELLED":
-		return true
-	}
-	return false
-}
-
 // WatchIntegrationBuild discovers the integration-triggered build on the
 // build target (a new appVersion created at-or-after pushedAt) and follows
 // it to a terminal status — the L1 monitoring primitive
@@ -87,7 +77,7 @@ func WatchIntegrationBuild(
 			res.Event = ev
 		}
 
-		if res.Observed && buildStatusTerminal(res.Event.Status) {
+		if res.Observed && isBuildTerminal(res.Event, false) {
 			return res, nil
 		}
 		now := time.Now()

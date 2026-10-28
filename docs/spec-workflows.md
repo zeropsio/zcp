@@ -798,6 +798,17 @@ After the first deploy lands, three recorded dimensions describe the develop ses
 - **Auto-close**: disabled. ZCP still records every `zerops_deploy`/`zerops_verify` you call, but the auto-close gate stays open until you call `action="close"` explicitly.
 - **Good for**: experienced users, external CI/CD systems.
 
+The integration build watch derives known terminal outcomes with ordinary build polling
+(`ops/progress.go`), including phase failures and the authoritative `PipelineFailed`
+timestamp. An observed `BUILD_FAILED` ends observation immediately and reaches the
+Git-push result's failure classification and build logs. A push with no post-push
+build observed remains `PUSHED` / `NOT_OBSERVED`; expiry proves no build outcome,
+and pre-push appVersions cannot establish one. Unknown statuses remain pending in
+the integration watch; ordinary `PollBuild` retains its unknown-is-terminal policy.
+Pinned by `TestWatchIntegrationBuild_Decisions`,
+`TestWatchIntegrationBuild_Lifecycle_KeepsUnknownPending` and
+`TestGitPushBuildWatch_Decisions`.
+
 > **Legacy `git-push` close-mode value** — retired: delivery is now derived from `GitPushState` (above), so the old `git-push` close-mode value is redundant and folds one-way to `auto` at meta-parse (`foldLegacyCloseMode`). `action="close-mode"` still accepts it for one release window with a deprecation note. Git-push **setup** (`action="git-push-setup"`) is unaffected — that capability is what turns delivery into push.
 
 ### 4.4 Setting and Changing Close-Mode + Capabilities

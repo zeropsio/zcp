@@ -133,15 +133,8 @@ func pollBuild(
 		// Terminal states return before onProgress to avoid the Claude Code MCP
 		// JS client race (same-chunk progress+response → "unknown token" error
 		// and transport teardown). See pollProcess for the full rationale.
-		if latest != nil {
-			// Layer 2: PipelineFailed timestamp is a hard signal — stop regardless of status string.
-			if latest.Build != nil && latest.Build.PipelineFailed != nil {
-				return latest, nil
-			}
-			// Layer 1: Inverted check — whitelist in-progress states, treat everything else as terminal.
-			if !isBuildInProgress(latest.Status) {
-				return latest, nil
-			}
+		if latest != nil && isBuildTerminal(latest, true) {
+			return latest, nil
 		}
 
 		// Race avoidance — see pollProcess for the full rationale. Every return
@@ -191,6 +184,30 @@ func pollBuild(
 // a pre-existing ACTIVE as a successful deploy result.
 func isStartWithoutCodeEvent(ev *platform.AppVersionEvent) bool {
 	return ev.Source == "NONE" && ev.Build == nil
+}
+
+// BuildFailed reports an observed pipeline failure or cancellation. The
+// pipelineFailed timestamp is authoritative even when the status has not
+// caught up. Reuse the failure-phase owner rather than another status list.
+func BuildFailed(event *platform.AppVersionEvent) bool {
+	if event.Build != nil && event.Build.PipelineFailed != nil {
+		return true
+	}
+	if FailurePhaseFromStatus(event.Status) != "" {
+		return true
+	}
+	switch event.Status {
+	case "FAILED", "CANCELED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
+// isBuildTerminal shares known lifecycle outcomes while preserving each
+// observer's unknown-status policy: PollBuild stops, integration watch waits.
+func isBuildTerminal(event *platform.AppVersionEvent, unknownIsTerminal bool) bool {
+	return BuildFailed(event) || event.Status == "ACTIVE" ||
+		(unknownIsTerminal && !isBuildInProgress(event.Status))
 }
 
 // isBuildInProgress returns true only for known in-progress build states.

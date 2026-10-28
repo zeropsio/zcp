@@ -878,7 +878,7 @@ func watchIntegrationBuildOn(
 			"Integration build observed on %q (status %s) but did not finish within the watch window. %s",
 			buildHost, watch.Event.Status, manualBridge,
 		)
-	case watch.Event.Status == appVersionActive:
+	case watch.Event.Status == appVersionActive && !ops.BuildFailed(watch.Event):
 		result.Status = gitPushStatusDelivered
 		result.BuildObserved = true
 		result.BuildStatus = watch.Event.Status
