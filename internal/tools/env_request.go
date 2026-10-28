@@ -22,6 +22,9 @@ func WithVaultAsks(stateDir string) EnvOption {
 
 // envRequestResult is the answer to action=request: Requested when the
 // person was asked, AlreadySet when the key is in that vault already.
+// AlreadyAsked (RFC 3339) is when the open ask for this key and vault was
+// made, on a repeat while it is open: the person's prompt is that one — Mate
+// opens no second card for a key and vault whose card is open.
 // Readers are the services whose deployed run.envVariables read the key now;
 // RestartAfterSave the ones the agent restarts once a message says saved —
 // the save writes the vault from the person's own client, restarts nothing,
@@ -29,17 +32,18 @@ func WithVaultAsks(stateDir string) EnvOption {
 type envRequestResult struct {
 	Requested        *ops.EnvRequestResult `json:"requested,omitempty"`
 	AlreadySet       *ops.EnvRequestResult `json:"alreadySet,omitempty"`
+	AlreadyAsked     string                `json:"alreadyAsked,omitempty"`
 	Readers          []string              `json:"readers,omitempty"`
 	RestartAfterSave []string              `json:"restartAfterSave,omitempty"`
 	NextActions      string                `json:"nextActions"`
 }
 
 // requestVaultValue answers action=request. It writes nothing to the
-// platform. With WithVaultAsks it refuses a key and vault whose ask is still
-// open (ErrAlreadyAsked, an error so Mate opens no second ask), counts an ask
-// answered once the vault holds the key written since, and records the ask it
-// opens. A record that cannot be read or written never stops the ask: a
-// second prompt is the lesser harm than none.
+// platform. With WithVaultAsks it records the ask it opens, answers a repeat
+// for a key and vault whose ask is still open as requested with AlreadyAsked
+// and tells the agent not to ask again, and counts an ask answered once the
+// vault holds the key written since. A record that cannot be read or written
+// never stops the ask: a second prompt is the lesser harm than none.
 func requestVaultValue(ctx context.Context, client platform.Client, projectID, selfHostname string, options envOptions, input EnvInput) *mcp.CallToolResult {
 	req, err := ops.EnvRequest(ctx, client, projectID, ops.EnvRequestInput{
 		Hostname:   input.ServiceHostname,
@@ -54,31 +58,42 @@ func requestVaultValue(ctx context.Context, client platform.Client, projectID, s
 	if err != nil {
 		return convertError(err)
 	}
+	var open *ops.VaultAsk
 	if options.vaultAsks != "" {
-		if open, found, _ := ops.ReadVaultAsk(options.vaultAsks, req); found {
-			if !open.AnsweredBy(req) && !input.Again.Bool() {
-				plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
-				return alreadyAsked(open, req, restartAfterSaveWords(req.Key, plan, input, selfHostname))
+		if recorded, found, _ := ops.ReadVaultAsk(options.vaultAsks, req); found {
+			if !recorded.AnsweredBy(req) && !input.Again.Bool() {
+				open = &recorded
+			} else {
+				_ = ops.ForgetVaultAsk(options.vaultAsks, req)
 			}
-			_ = ops.ForgetVaultAsk(options.vaultAsks, req)
 		}
+	}
+	if open != nil && req.AlreadySet {
+		// The open ask replaces the held value: a repeat names that ask.
+		req.AlreadySet, req.Replace = false, true
 	}
 	if req.AlreadySet {
 		return jsonResult(envRequestResult{AlreadySet: req, NextActions: alreadySetWords(req)})
 	}
 	plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
-	if options.vaultAsks != "" {
+	if open == nil && options.vaultAsks != "" {
 		held, claimed, err := ops.ClaimVaultAsk(options.vaultAsks, req, ops.NewVaultAsk(req, time.Now()))
 		if err == nil && !claimed {
-			return alreadyAsked(held, req, restartAfterSaveWords(req.Key, plan, input, selfHostname))
+			open = &held
 		}
 	}
-	return jsonResult(envRequestResult{
+	restart := restartAfterSaveWords(req.Key, plan, input, selfHostname)
+	answer := envRequestResult{
 		Requested:        req,
 		Readers:          plan.readers[req.Key],
 		RestartAfterSave: targetNames(plan.targets),
-		NextActions:      requestedWords(req, restartAfterSaveWords(req.Key, plan, input, selfHostname)),
-	})
+		NextActions:      requestedWords(req, restart),
+	}
+	if open != nil {
+		answer.AlreadyAsked = open.AskedAt.UTC().Format(time.RFC3339)
+		answer.NextActions = alreadyAskedWords(req, answer.AlreadyAsked, restart)
+	}
+	return jsonResult(answer)
 }
 
 // vaultPlace is where a requested value goes, as the answer message names it:
@@ -114,17 +129,14 @@ func requestedWords(req *ops.EnvRequestResult, restart string) string {
 		waiting, vaultPlace(req), restart)
 }
 
-// alreadyAsked refuses a request whose key and vault have an open ask: the
-// person already has the prompt. It is an error, so neither Mate's engine nor
-// its card opens a second ask from it.
-func alreadyAsked(open ops.VaultAsk, req *ops.EnvRequestResult, restart string) *mcp.CallToolResult {
-	what := cmp.Or(open.Label, req.Label)
-	return convertError(platform.NewPlatformError(platform.ErrAlreadyAsked,
-		fmt.Sprintf("The ask for the %s (%s), made %s, is still open, so no second one was shown.",
-			what, req.Key, open.AskedAt.UTC().Format("2006-01-02 15:04 UTC")),
-		fmt.Sprintf("Nothing was asked again: the person answers the open ask in Mate. Tell them in one sentence that it waits for them, never how they give it. "+
-			"A message of its own tells you how it ended: saved to %s, or declined. If such a message already said declined and they now want to give it, ask again with again=true. %s",
-			vaultPlace(req), restart)))
+// alreadyAskedWords is the agent's next step on a repeat while the ask is
+// open: the person's prompt is that one, so it does not ask again.
+func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) string {
+	return fmt.Sprintf("The person's prompt for the %s (%s) is already open, asked %s: do not ask again. "+
+		"Tell them in one sentence that it waits for them, never how they give it. Never ask for the value in the chat. "+
+		"A message of its own tells you how it ended: saved to %s, or declined; if one already said declined and they now want to give it, ask again with again=true. "+
+		"%s Continue with what does not need it, or end your turn.",
+		req.Label, req.Key, askedAt, vaultPlace(req), restart)
 }
 
 // restartAfterSaveWords names what the agent restarts once a message says the
