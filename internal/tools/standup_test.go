@@ -724,6 +724,54 @@ func TestStandup_ATierOfOrganisationAddressesStandsUpEveryPair(t *testing.T) {
 	}
 }
 
+func TestStandup_HQMigrationDecisions(t *testing.T) {
+	t.Parallel()
+	const formerHQ = "https://53h3i3i53j9t767n7kibd1tj0t0.prg1-zerops.zone"
+	t.Run("A Mate added after HQ migration stands up the migrated application's existing dev/stage pair.", func(t *testing.T) {
+		t.Parallel()
+		f := newStandupFixture(t)
+		f.hq.tier = strings.ReplaceAll(standupTierTemplate, "HQ", formerHQ)
+		if result, body := f.run(t); result.IsError || body.StandUp != standupDevelopment {
+			t.Fatalf("ASSERTION: migrated application's dev halves must stand up: %s", getTextContent(t, result))
+		}
+		f.devsDeployed()
+		if result, body := f.run(t); result.IsError || body.StandUp != standupReady {
+			t.Fatalf("ASSERTION: migrated application's stages must stand up: %s", getTextContent(t, result))
+		}
+		want := []string{
+			"medusadev → svc-medusadev (medusadev)", "medusadev → svc-medusastage (medusaprod)",
+			"nextstoredev → svc-nextstoredev (nextstoredev)", "nextstoredev → svc-nextstorestage (nextstoreprod)",
+		}
+		if got := sorted(f.ssh.pushes()); !slices.Equal(got, want) {
+			t.Errorf("deploys=%v, want %v", got, want)
+		}
+		if got := sorted(f.hq.asked); !slices.Equal(got, []string{"medusadev", "nextstoredev"}) {
+			t.Errorf("current HQ repository requests=%v, want each application's repository once", got)
+		}
+		for _, dev := range []string{"medusadev", "nextstoredev"} {
+			meta, err := workflow.ReadServiceMeta(f.stateDir, dev)
+			if err != nil || meta == nil || meta.HQ == nil || meta.HQ.Repo != dev || meta.HQ.AppID != "app-1" {
+				t.Errorf("%s not wired to its own current HQ repository: meta=%+v err=%v", dev, meta, err)
+			}
+		}
+		if f.ssh.ran(formerHQ) || f.hq.changeOpens != 0 {
+			t.Error("standup contacted the former host or opened a recipe change")
+		}
+	})
+	t.Run("A recipe reference to another application's repository is never treated as this application's repository.", func(t *testing.T) {
+		t.Parallel()
+		f := newStandupFixture(t)
+		f.hq.tier = strings.ReplaceAll(strings.ReplaceAll(standupTierTemplate, "HQ", formerHQ), "/git/app-1/", "/git/another-app/")
+		result, _ := f.run(t)
+		if !result.IsError || !strings.Contains(getTextContent(t, result), "no dev/stage pair") {
+			t.Fatalf("foreign application's recipe must be refused: %s", getTextContent(t, result))
+		}
+		if len(f.hq.asked) != 0 || len(f.ssh.pushes()) != 0 || len(f.mounter.mounted) != 0 {
+			t.Errorf("foreign recipe touched a runtime: asked=%v pushes=%v mounted=%v", f.hq.asked, f.ssh.pushes(), f.mounter.mounted)
+		}
+	})
+}
+
 // TestStandup_ASecondCallContinuesAndSkipsWhatIsDone: nothing is adopted,
 // wired or deployed twice.
 func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {

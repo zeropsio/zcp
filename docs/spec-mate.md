@@ -4969,7 +4969,17 @@ The order:
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named
      like it — with each half's `zeropsSetup` (else its hostname) and the pair's priority, the
      higher of its halves'; managed services and public builds are skipped, and so, by name, is a
-     runtime with no partner or another application's repository (`workflow.ParseMateTier`);
+     runtime with no partner or another application's repository (`workflow.ParseMateTier`).
+     A legacy HTTPS reference whose exact path is `/git/<appId>/<repo>` and names this
+     Mate's own application identifies that repository regardless of the HQ host or port
+     it names; stand-up reads and wires the repository through the current HQ. Only this
+     own-application legacy path bypasses the current-host check; other paths retain
+     current-host matching, including organisation-qualified references.
+
+     Decision: A Mate added after HQ migration stands up the migrated application's existing dev/stage pair.
+     Decision: A recipe reference to another application's repository is never treated as this application's repository.
+
+     Pinned through `TestStandup_HQMigrationDecisions` and `TestParseMateTier_HQMigrationDecisions`;
    - adopts each pair exactly as the adopt route records it, plus the tier's setups
      (`workflow.AdoptPair`), mounts the dev half and wires it, through the reconcile's own wiring, to
      the repository of the recipe's name in HQ — refused first when HQ does not have that

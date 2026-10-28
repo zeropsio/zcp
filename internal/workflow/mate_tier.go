@@ -127,7 +127,9 @@ type MateTier struct {
 // HQ and appID the application HQ holds it in: a runtime is a pair's half
 // only when it builds from a repository of that application there,
 // `<address>/git/<orgID>/<appID>/<repo>` (or, in a tier written before HQ
-// named the organisation, `<address>/git/<appID>/<repo>`; hqRepoOf).
+// named the organisation, `<address>/git/<appID>/<repo>`; hqRepoOf). A legacy
+// `/git/<appID>/<repo>` path naming this application also survives an HQ
+// host migration; the repository is still read from the current HQ.
 //
 // Pairs are formed per repository by zcp's naming convention, never by a
 // setup's name — a group names its setups after the pair (`medusadev`,
@@ -192,7 +194,7 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 		case source == "":
 			skip.Reason = MateTierSkipNoRepository
 		default:
-			app, _, onHQ := hqRepoOf(source, address)
+			app, _, onHQ := hqRepoOf(source, address, appID)
 			if !onHQ {
 				skip.Reason = MateTierSkipPlatformBuild
 				break
@@ -212,7 +214,7 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 
 	for _, repo := range order {
 		members := byRepo[repo]
-		_, name, _ := hqRepoOf(repo, address)
+		_, name, _ := hqRepoOf(repo, address, appID)
 		runtimes := make([]recipeImportService, len(members))
 		for i, m := range members {
 			runtimes[i] = m.svc
@@ -395,25 +397,30 @@ func vaultAndLegacyEnvs(vault importVault, legacy ...map[string]any) map[string]
 	return envs
 }
 
-// hqRepoOf is the application and repository a repository URL names on the
-// HQ at address — https, on HQ's own host and port — and whether it names one
-// there at all. HQ serves a repository at `<address>/git/<orgID>/<appID>/<repo>`
+// hqRepoOf is the application and repository a repository URL names in HQ.
+// HQ serves a repository at `<address>/git/<orgID>/<appID>/<repo>`
 // (hq.RepoURLAt, what zcp's group recipe writes); a tier written before HQ
 // named the organisation carries `<address>/git/<appID>/<repo>`, and still
 // names the same repository: the application, never the organisation, is
-// what places it in HQ.
-func hqRepoOf(repoURL, address string) (appID, repo string, ok bool) {
+// what places it in HQ. The exact legacy `/git/<ownAppID>/<repo>` path is
+// also recognized on another HTTPS host after HQ migration. Only that own
+// application match may bypass the current host, port and base path checks.
+func hqRepoOf(repoURL, address, ownAppID string) (appID, repo string, ok bool) {
 	u, err := url.Parse(topology.CanonicalRepoURL(repoURL))
-	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
 		return "", "", false
 	}
 	hq, err := url.Parse(strings.TrimRight(address, "/"))
-	if err != nil || !strings.EqualFold(hq.Scheme, "https") || !strings.EqualFold(u.Host, hq.Host) {
+	if err != nil || !strings.EqualFold(hq.Scheme, "https") {
 		return "", "", false
 	}
 	rest, under := strings.CutPrefix(u.Path, hq.Path+"/git/")
-	if !under {
-		return "", "", false
+	onHQ := strings.EqualFold(u.Host, hq.Host) && under
+	if !onHQ {
+		rest, under = strings.CutPrefix(u.Path, "/git/")
+		if !under {
+			return "", "", false
+		}
 	}
 	segments := strings.Split(rest, "/")
 	if slices.Contains(segments, "") {
@@ -421,9 +428,13 @@ func hqRepoOf(repoURL, address string) (appID, repo string, ok bool) {
 	}
 	switch len(segments) {
 	case 3:
-		return segments[1], segments[2], true
+		if onHQ {
+			return segments[1], segments[2], true
+		}
 	case 2:
-		return segments[0], segments[1], true
+		if onHQ || (ownAppID != "" && segments[0] == ownAppID) {
+			return segments[0], segments[1], true
+		}
 	}
 	return "", "", false
 }

@@ -473,8 +473,9 @@ func TestParseMateTier_CarriesEachHalfsOwnVariables(t *testing.T) {
 
 // TestParseMateTier_PairsOnlyRepositoriesOfThisApplication: a runtime is a
 // pair's half only when it builds from a repository of the Mate's
-// application on its HQ — `<HQ>/git/<appId>/<repo>`. Another application's
-// repository is foreign; anything else, the platform builds.
+// application on its HQ — `<HQ>/git/<appId>/<repo>`, including an own-app
+// legacy path from a former host or port. Another application's repository
+// on current HQ is foreign; other unmatched sources the platform builds.
 func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -485,8 +486,8 @@ func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
 		{"this application's repository", tierHQ + "/git/app-1/web.git", ""},
 		{"another application's", tierHQ + "/git/app-2/web", MateTierSkipForeign},
 		{"HQ's host, outside its git", tierHQ + "/app-1/web", MateTierSkipPlatformBuild},
-		{"another host", "https://elsewhere.example/git/app-1/web", MateTierSkipPlatformBuild},
-		{"HQ's host on another port", "https://hq.acme.example:8443/git/app-1/web", MateTierSkipPlatformBuild},
+		{"another host", "https://elsewhere.example/git/app-1/web", ""},
+		{"HQ's host on another port", "https://hq.acme.example:8443/git/app-1/web", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -517,6 +518,82 @@ func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
 			}
 			if paired != (tt.want == "") || reason != tt.want {
 				t.Errorf("webdev paired=%v skipped as %q, want %q", paired, reason, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseMateTier_HQMigrationDecisions(t *testing.T) {
+	t.Parallel()
+	const app = "424dcb59-29a9-4a57-ad71-0c3c6ca06553"
+	const formerHQ = "https://53h3i3i53j9t767n7kibd1tj0t0.prg1-zerops.zone"
+	const source = formerHQ + "/git/" + app + "/flipdev"
+	t.Run("A Mate added after HQ migration stands up the migrated application's existing dev/stage pair.", func(t *testing.T) {
+		t.Parallel()
+		body := "services:\n" +
+			"  - hostname: flipdev\n    type: nodejs@22\n    buildFromGit: " + source + "\n" +
+			"  - hostname: flipstage\n    type: nodejs@22\n    buildFromGit: " + source + "\n"
+		tier, err := ParseMateTier(body, tierHQ, app)
+		if err != nil {
+			t.Fatalf("ASSERTION: migrated application's existing pair must parse: %v", err)
+		}
+		if len(tier.Pairs) != 1 || len(tier.Skipped) != 0 {
+			t.Fatalf("pairs=%+v skipped=%+v, want one pair and no skips", tier.Pairs, tier.Skipped)
+		}
+		pair := tier.Pairs[0]
+		if pair.RepoName != "flipdev" || pair.Repository != source || pair.Dev.Hostname != "flipdev" || len(pair.Stages) != 1 || pair.FirstStage().Hostname != "flipstage" {
+			t.Errorf("migrated pair = %+v, want flipdev/flipstage from %s", pair, source)
+		}
+	})
+	t.Run("A recipe reference to another application's repository is never treated as this application's repository.", func(t *testing.T) {
+		t.Parallel()
+		for _, host := range []string{tierHQ, formerHQ, "https://elsewhere.example"} {
+			t.Run(host, func(t *testing.T) {
+				t.Parallel()
+				body := "services:\n" +
+					"  - hostname: flipdev\n    type: nodejs@22\n    buildFromGit: " + host + "/git/another-app/flipdev\n" +
+					"  - hostname: flipstage\n    type: nodejs@22\n    buildFromGit: " + host + "/git/another-app/flipdev\n"
+				tier, err := ParseMateTier(body, tierHQ, app)
+				if !errors.Is(err, ErrMateTierNoPairs) || len(tier.Pairs) != 0 || len(tier.Skipped) != 2 {
+					t.Fatalf("foreign application: pairs=%+v skipped=%+v err=%v", tier.Pairs, tier.Skipped, err)
+				}
+				want := MateTierSkipPlatformBuild
+				if host == tierHQ {
+					want = MateTierSkipForeign
+				}
+				for _, skip := range tier.Skipped {
+					if skip.Reason != want {
+						t.Errorf("%s reason=%q, want %q", skip.Hostname, skip.Reason, want)
+					}
+				}
+			})
+		}
+	})
+}
+
+func TestParseMateTier_MigratedHostTrustsOnlyTheOwnApplicationLegacyPath(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{
+		"https://elsewhere.example/git/org-1/app-1/web",
+		"https://elsewhere.example/prefix/git/app-1/web",
+		"https://elsewhere.example/git/app-1/web/more",
+		"https://elsewhere.example/git//app-1/web",
+		"http://elsewhere.example/git/app-1/web",
+		"https:///git/app-1/web",
+	} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			body := "services:\n" +
+				"  - hostname: webdev\n    type: nodejs@22\n    buildFromGit: " + source + "\n" +
+				"  - hostname: webstage\n    type: nodejs@22\n    buildFromGit: " + source + "\n"
+			tier, err := ParseMateTier(body, tierHQ, tierApp)
+			if !errors.Is(err, ErrMateTierNoPairs) || len(tier.Pairs) != 0 || len(tier.Skipped) != 2 {
+				t.Fatalf("unsupported reference: pairs=%+v skipped=%+v err=%v", tier.Pairs, tier.Skipped, err)
+			}
+			for _, skip := range tier.Skipped {
+				if skip.Reason != MateTierSkipPlatformBuild {
+					t.Errorf("skip=%+v, want platform-build", skip)
+				}
 			}
 		})
 	}
