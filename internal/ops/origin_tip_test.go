@@ -1,72 +1,38 @@
 // Tests for: ops/origin_tip.go — the read of an origin's ref without any
 // checkout (docs/spec-workflows.md §10 P-LP-19): one shallow fetch in a
 // scratch repository of zcp's own, the fetched commit and its root
-// zerops.yaml (else zerops.yml), and the credential in git's environment
-// alone.
+// zerops.yaml (else zerops.yml), the credential in git's environment alone,
+// the branch named so a like-named tag never wins, https alone, a named and
+// isolated scratch, and bounds that end a stalling origin.
 package ops
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/ops/origintest"
 )
 
-// requireOriginGit skips a test that needs the git binary.
-func requireOriginGit(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-}
+// originRepo is the name every test's origin takes on its own server.
+const originRepo = "app.git"
 
-// originRepoGit runs git in dir for a fixture, failing the test on error.
-func originRepoGit(t *testing.T, dir string, args ...string) string {
+// originFixture serves a bare origin over HTTPS whose main holds files and
+// each named branch main's files with its own over them; it answers the
+// server, the origin's URL and each branch's head, main's under "main".
+func originFixture(t *testing.T, files map[string]string, branches map[string]map[string]string) (*origintest.Server, string, map[string]string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...) //nolint:gosec // G204: a test's own git
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// originFixture makes a bare origin whose main holds files and each named
-// branch holds main's files with its own written over them. It answers the
-// origin's file:// URL and each branch's head, main's under "main".
-func originFixture(t *testing.T, files map[string]string, branches map[string]map[string]string) (string, map[string]string) {
-	t.Helper()
-	root := t.TempDir()
-	work := filepath.Join(root, "work")
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	originRepoGit(t, work, "init", "-q", "-b", "main")
-	write := func(fs map[string]string) {
-		for name, body := range fs {
-			if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		originRepoGit(t, work, "add", "-A")
-		originRepoGit(t, work, "commit", "-q", "-m", "fixture")
-	}
-	write(files)
-	heads := map[string]string{"main": originRepoGit(t, work, "rev-parse", "HEAD")}
-	for branch, fs := range branches {
-		originRepoGit(t, work, "checkout", "-q", "-b", branch, "main")
-		write(fs)
-		heads[branch] = originRepoGit(t, work, "rev-parse", "HEAD")
-		originRepoGit(t, work, "checkout", "-q", "main")
-	}
-	origin := filepath.Join(root, "origin")
-	originRepoGit(t, root, "clone", "-q", "--bare", work, origin)
-	return "file://" + origin, heads
+	srv := origintest.New(t)
+	url, heads := srv.Repo(t, originRepo, files, branches)
+	return srv, url, heads
 }
 
 const originTipYAML = "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n"
@@ -76,7 +42,6 @@ const originTipYAML = "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22
 // zerops.yaml, else its zerops.yml, else none, which is no error.
 func TestReadOriginTip_ReadsTheTipCommitAndItsZeropsYAML(t *testing.T) {
 	t.Parallel()
-	requireOriginGit(t)
 	tests := []struct {
 		name     string
 		files    map[string]string
@@ -92,7 +57,7 @@ func TestReadOriginTip_ReadsTheTipCommitAndItsZeropsYAML(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			url, heads := originFixture(t, tt.files, nil)
+			_, url, heads := originFixture(t, tt.files, nil)
 
 			tip, err := ReadOriginTip(t.Context(), url, tt.ref, "")
 
@@ -116,9 +81,8 @@ func TestReadOriginTip_ReadsTheTipCommitAndItsZeropsYAML(t *testing.T) {
 // default is read at its own tip, with its own zerops.yaml.
 func TestReadOriginTip_ReadsTheNamedBranch(t *testing.T) {
 	t.Parallel()
-	requireOriginGit(t)
 	release := "zerops:\n  - setup: prod\n    run:\n      base: nodejs@24\n"
-	url, heads := originFixture(t, map[string]string{"zerops.yaml": originTipYAML},
+	_, url, heads := originFixture(t, map[string]string{"zerops.yaml": originTipYAML},
 		map[string]map[string]string{"release": {"zerops.yaml": release}})
 
 	tip, err := ReadOriginTip(t.Context(), url, "release", "")
@@ -134,12 +98,34 @@ func TestReadOriginTip_ReadsTheNamedBranch(t *testing.T) {
 	}
 }
 
+// TestReadOriginTip_TagNamedLikeTheBranch_TheBranchWins: git ranks a tag
+// above a branch of the same short name, so the tracked branch is fetched by
+// its full name — a tag `main` on another commit never stands in for the
+// branch `main`; a full refs/ name is fetched as given.
+func TestReadOriginTip_TagNamedLikeTheBranch_TheBranchWins(t *testing.T) {
+	t.Parallel()
+	srv, url, heads := originFixture(t, map[string]string{"zerops.yaml": originTipYAML},
+		map[string]map[string]string{"other": {"other.txt": "other\n"}})
+	srv.Tag(t, originRepo, "main", heads["other"])
+
+	tip, err := ReadOriginTip(t.Context(), url, "main", "")
+	if err != nil {
+		t.Fatalf("ReadOriginTip(main): %v", err)
+	}
+	if tip.CommitSHA != heads["main"] {
+		t.Errorf("main read %q, want the branch's tip %q, not the tag's %q", tip.CommitSHA, heads["main"], heads["other"])
+	}
+	tagged, err := ReadOriginTip(t.Context(), url, "refs/tags/main", "")
+	if err != nil || tagged.CommitSHA != heads["other"] {
+		t.Errorf("refs/tags/main read %q (%v), want the tag's %q", tagged.CommitSHA, err, heads["other"])
+	}
+}
+
 // TestReadOriginTip_RefAbsent_NamedNotEmpty: a ref the origin does not hold is
 // ErrOriginRefMissing — never an empty commit or an empty zerops.yaml.
 func TestReadOriginTip_RefAbsent_NamedNotEmpty(t *testing.T) {
 	t.Parallel()
-	requireOriginGit(t)
-	url, _ := originFixture(t, map[string]string{"zerops.yaml": originTipYAML}, nil)
+	_, url, _ := originFixture(t, map[string]string{"zerops.yaml": originTipYAML}, nil)
 
 	tip, err := ReadOriginTip(t.Context(), url, "release", "")
 
@@ -158,8 +144,8 @@ func TestReadOriginTip_RefAbsent_NamedNotEmpty(t *testing.T) {
 // read is an error carrying git's own words, never ErrOriginRefMissing.
 func TestReadOriginTip_UnreachableOrigin_SaysGitsWords(t *testing.T) {
 	t.Parallel()
-	requireOriginGit(t)
-	url := "file://" + filepath.Join(t.TempDir(), "no-such-origin")
+	srv := origintest.New(t)
+	url := srv.URL + "/no-such-origin.git"
 
 	_, err := ReadOriginTip(t.Context(), url, "HEAD", "")
 
@@ -168,6 +154,75 @@ func TestReadOriginTip_UnreachableOrigin_SaysGitsWords(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no-such-origin") {
 		t.Errorf("the error does not say git's words about the origin: %v", err)
+	}
+}
+
+// TestReadOriginTip_HTTPSOnly: the scratch speaks https alone — a file://
+// origin (or any other transport) is refused by git, never read.
+func TestReadOriginTip_HTTPSOnly(t *testing.T) {
+	t.Parallel()
+	srv, _, _ := originFixture(t, map[string]string{"zerops.yaml": originTipYAML}, nil)
+
+	_, err := ReadOriginTip(t.Context(), "file://"+srv.Dir(originRepo), "HEAD", "")
+
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Errorf("err = %v, want git refusing the file transport", err)
+	}
+}
+
+// TestReadOriginTip_ExplicitBareRepository_StillReads: the scratch is named
+// (--git-dir), so a git configured with safe.bareRepository=explicit still
+// reads, and an inherited GIT_DIR or object directory never redirects it.
+func TestReadOriginTip_ExplicitBareRepository_StillReads(t *testing.T) {
+	// non-parallel: t.Setenv changes the process environment.
+	_, url, heads := originFixture(t, map[string]string{"zerops.yaml": originTipYAML}, nil)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[safe]\n\tbareRepository = explicit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	elsewhere := t.TempDir()
+	t.Setenv("GIT_DIR", elsewhere)
+	t.Setenv("GIT_OBJECT_DIRECTORY", elsewhere)
+
+	tip, err := ReadOriginTip(t.Context(), url, "main", "")
+
+	if err != nil {
+		t.Fatalf("ReadOriginTip: %v", err)
+	}
+	if tip.CommitSHA != heads["main"] {
+		t.Errorf("CommitSHA = %q, want main's tip %q", tip.CommitSHA, heads["main"])
+	}
+}
+
+// TestReadOriginTip_StallingOrigin_EndsWithinItsBound: an origin that answers
+// and then stops feeding ends the read within its bound — git's stall bound,
+// the call's deadline — with an error, never a hang.
+func TestReadOriginTip_StallingOrigin_EndsWithinItsBound(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "001e# service=git-upload-pack\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	start := time.Now()
+	_, err := readOriginTipWithin(context.Background(), originBounds{call: 4 * time.Second, stallSeconds: 1}, srv.URL+"/app.git", "main", "")
+
+	if err == nil {
+		t.Fatal("a stalling origin answered no error")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("the read took %s, want it ended by its bound", took)
 	}
 }
 

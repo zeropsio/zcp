@@ -8,7 +8,6 @@ package tools
 import (
 	"context"
 	"maps"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -114,7 +113,7 @@ func TestHandleExport_PoolKeyedPart_PoolNamed_RefusedNamingTheStage(t *testing.T
 // on the stage.
 func TestHandleExport_PoolKeyedPart_UnreadableOrigin_NamesWhatToFix(t *testing.T) {
 	t.Parallel()
-	missing := "file://" + filepath.Join(t.TempDir(), "no-such-origin")
+	missing := poolPartMissingOrigin(t)
 	present, _ := poolPartOrigin(t, map[string]string{"zerops.yaml": poolPartYAML}, nil)
 	bare, _ := poolPartOrigin(t, map[string]string{"README.md": "hello\n"}, nil)
 	tests := []struct {

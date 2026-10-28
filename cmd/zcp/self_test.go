@@ -281,3 +281,39 @@ func TestRunSelfCmd_BadArguments_NothingRestarted(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfLaunchToken_PrintsTheStagedTokenAlone: `zcp self launch-token`
+// prints the launch token staged on this service — read from the live env
+// store, where a value staged after the container started lands — and
+// nothing else, for a command to take it secret-to-secret
+// (docs/spec-workflows.md §10 P-LP-17, P-LP-20); with none staged it prints
+// nothing and exits 1. It reaches no platform client.
+func TestSelfLaunchToken_PrintsTheStagedTokenAlone(t *testing.T) {
+	t.Parallel()
+	built := false
+	newClient := func(string, string) (serviceRestarter, error) {
+		built = true
+		return nil, errors.New("not reached")
+	}
+	staged := selfLiveEnv()
+	staged["ZCP_LAUNCH_TOKEN"] = "staged-launch-token-1"
+
+	var out bytes.Buffer
+	if code := runSelfCmd([]string{"launch-token"}, &out, lookupIn(staged), newClient); code != 0 {
+		t.Errorf("exit %d, want 0", code)
+	}
+	if out.String() != "staged-launch-token-1" {
+		t.Errorf("stdout = %q, want the staged token alone", out.String())
+	}
+
+	var none bytes.Buffer
+	if code := runSelfCmd([]string{"launch-token"}, &none, lookupIn(selfLiveEnv()), newClient); code != 1 {
+		t.Errorf("exit %d with no token staged, want 1", code)
+	}
+	if none.String() != "" {
+		t.Errorf("stdout = %q with no token staged, want nothing", none.String())
+	}
+	if built {
+		t.Error("launch-token built a platform client")
+	}
+}

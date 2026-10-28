@@ -9,8 +9,8 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/origintest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
@@ -102,25 +103,35 @@ func poolDeliverySessionAt(t *testing.T, remoteURL string) (*mcp.ClientSession, 
 }
 
 // TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH: a release of the
-// pool-keyed pair tags the pair's origin at its tracked tip, from zcp's own
-// scratch, with no ssh call to the pool, a lease or the stage.
+// pool-keyed pair names the origin's tracked tip, then tags that commit on the
+// origin over HTTPS with the pool's GIT_TOKEN, from zcp's own scratch, with no
+// ssh call to the pool, a lease or the stage.
 func TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH(t *testing.T) {
 	t.Parallel()
-	origin := poolDeliveryOrigin(t)
-	session, _, ssh := poolDeliverySessionAt(t, origin)
+	origin, url := poolDeliveryOrigin(t)
+	session, _, ssh := poolDeliverySessionAt(t, url)
 
+	prompt := callAndGetResult(t, session, "zerops_workflow", map[string]any{"action": "release", "service": "appstage"})
+	var asked struct {
+		Status string `json:"status"`
+		Commit string `json:"commit"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, prompt)), &asked); err != nil || asked.Status != "release-prompt" || asked.Commit == "" {
+		t.Fatalf("release prompt = %s (%v), want release-prompt naming its commit", getTextContent(t, prompt), err)
+	}
 	res := callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "release", "service": "appstage", "releaseVersion": "v1.0.1",
+		"action": "release", "service": "appstage", "releaseVersion": "v1.0.1", "releaseCommit": asked.Commit,
 	})
 
 	text := getTextContent(t, res)
 	if res.IsError || !strings.Contains(text, `"status":"released"`) {
 		t.Fatalf("release of the pool-keyed pair did not tag its origin: %s", text)
 	}
-	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "-q", "v1.0.1^{commit}")
-	cmd.Dir = strings.TrimPrefix(origin, "file://")
-	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) == "" {
-		t.Errorf("the origin holds no v1.0.1: %v", err)
+	if at := origin.TagAt(t, "app.git", "v1.0.1"); at != asked.Commit {
+		t.Errorf("v1.0.1 on the origin points at %q, want the prompted %q", at, asked.Commit)
+	}
+	if !origin.SawToken("app.git") {
+		t.Error("the origin was never sent the pool's GIT_TOKEN")
 	}
 	if strings.Contains(text, poolDeliveryGitToken) {
 		t.Errorf("the answer carries the pool's GIT_TOKEN: %s", text)
@@ -195,36 +206,17 @@ func TestPoolPair_Integration_BuildIntegrationReadsNoPool(t *testing.T) {
 // poolDeliveryGitToken is the pool's GIT_TOKEN as the env API answers it.
 const poolDeliveryGitToken = "integration-pool-token-canary-77e2"
 
-// poolDeliveryOrigin makes the pair's origin: a bare repository whose main
-// holds a zerops.yaml with the stage's setup. It answers its file:// URL.
-func poolDeliveryOrigin(t *testing.T) string {
+// poolDeliveryOrigin serves the pair's origin over HTTPS (origintest) — a
+// bare repository whose main holds a zerops.yaml with the stage's setup —
+// requiring the pool's GIT_TOKEN as zcp's helper sends it. It answers the
+// server and the origin's URL.
+func poolDeliveryOrigin(t *testing.T) (*origintest.Server, string) {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-	root := t.TempDir()
-	work := filepath.Join(root, "work")
-	run := func(dir string, args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...) //nolint:gosec // G204: a test's own git
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	run(work, "init", "-q", "-b", "main")
+	srv := origintest.New(t)
 	yaml := "zerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n      deployFiles: ./\n    run:\n      base: nodejs@22\n      start: node server.js\n"
-	if err := os.WriteFile(filepath.Join(work, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run(work, "add", "-A")
-	run(work, "commit", "-q", "-m", "app")
-	run(root, "clone", "-q", "--bare", work, filepath.Join(root, "origin"))
-	return "file://" + filepath.Join(root, "origin")
+	url, _ := srv.Repo(t, "app.git", map[string]string{"zerops.yaml": yaml}, nil)
+	srv.RequireToken("app.git", poolDeliveryGitToken)
+	return srv, url
 }
 
 // TestPoolPair_Integration_LaunchReadsTheOriginNeverThePool: launch-production
@@ -233,7 +225,8 @@ func poolDeliveryOrigin(t *testing.T) string {
 // stays out of the answer.
 func TestPoolPair_Integration_LaunchReadsTheOriginNeverThePool(t *testing.T) {
 	t.Parallel()
-	session, _, ssh := poolDeliverySessionAt(t, poolDeliveryOrigin(t))
+	_, url := poolDeliveryOrigin(t)
+	session, _, ssh := poolDeliverySessionAt(t, url)
 
 	res := callAndGetResult(t, session, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "launch-production",

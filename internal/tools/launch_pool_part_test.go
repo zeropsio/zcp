@@ -11,13 +11,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops/bundle"
+	"github.com/zeropsio/zcp/internal/ops/origintest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -57,50 +56,31 @@ func requirePoolPartGit(t *testing.T) {
 	}
 }
 
-func poolPartRepoGit(t *testing.T, dir string, args ...string) string {
+// poolPartOriginRepo is the name every test's origin takes on its server.
+const poolPartOriginRepo = "app.git"
+
+// poolPartOriginOn serves the part's origin over HTTPS (origintest; the
+// package's TestMain trusts its certificate) — a bare repository whose main
+// holds files, each named branch main's files with its own over them — and
+// answers the server, its URL and each branch's head, main's under "main".
+func poolPartOriginOn(t *testing.T, files map[string]string, branches map[string]map[string]string) (*origintest.Server, string, map[string]string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...) //nolint:gosec // G204: a test's own git
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	srv := origintest.New(t)
+	url, heads := srv.Repo(t, poolPartOriginRepo, files, branches)
+	return srv, url, heads
 }
 
-// poolPartOrigin makes the part's origin — a bare repository whose main
-// holds files, each named branch main's files with its own over them — and
-// answers its file:// URL and each branch's head, main's under "main".
+// poolPartOrigin is poolPartOriginOn without its server.
 func poolPartOrigin(t *testing.T, files map[string]string, branches map[string]map[string]string) (string, map[string]string) {
 	t.Helper()
-	requirePoolPartGit(t)
-	root := t.TempDir()
-	work := filepath.Join(root, "work")
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	poolPartRepoGit(t, work, "init", "-q", "-b", "main")
-	write := func(fs map[string]string) {
-		for name, body := range fs {
-			if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		poolPartRepoGit(t, work, "add", "-A")
-		poolPartRepoGit(t, work, "commit", "-q", "-m", "fixture")
-	}
-	write(files)
-	heads := map[string]string{"main": poolPartRepoGit(t, work, "rev-parse", "HEAD")}
-	for branch, fs := range branches {
-		poolPartRepoGit(t, work, "checkout", "-q", "-b", branch, "main")
-		write(fs)
-		heads[branch] = poolPartRepoGit(t, work, "rev-parse", "HEAD")
-		poolPartRepoGit(t, work, "checkout", "-q", "main")
-	}
-	origin := filepath.Join(root, "origin")
-	poolPartRepoGit(t, root, "clone", "-q", "--bare", work, origin)
-	return "file://" + origin, heads
+	_, url, heads := poolPartOriginOn(t, files, branches)
+	return url, heads
+}
+
+// poolPartMissingOrigin is an HTTPS origin that holds no repository.
+func poolPartMissingOrigin(t *testing.T) string {
+	t.Helper()
+	return origintest.New(t).URL + "/no-such-origin.git"
 }
 
 // poolPartPair writes the appdev/appstage pair — git-push configured to
@@ -130,17 +110,24 @@ func poolPartPair(t *testing.T, remoteURL, trackedRef string) string {
 	return stateDir
 }
 
+// poolPartZcpService is zcp's own service, the container's (`hostname` zcp).
+func poolPartZcpService() platform.ServiceStack {
+	return platform.ServiceStack{ID: "svc-zcp", Name: "zcp", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1", ServiceStackTypeCategoryName: "USER"}}
+}
+
 // poolPartClient is the project after the move: the pool, holding the
-// dev's GIT_TOKEN, and the stage; one project env to classify.
+// dev's GIT_TOKEN, the stage and zcp's own service; one project env to
+// classify.
 func poolPartClient() *platform.Mock {
 	return newLaunchMockClient().
 		WithProject(&platform.Project{ID: "proj-1", Name: "app", Status: statusActive}).
-		WithServices(poolPairServices()).
+		WithServices(append(poolPairServices(), poolPartZcpService())).
 		WithServiceEnv(testPoolID, []platform.ServiceEnvVar{{Key: "GIT_TOKEN", Content: poolPartGitToken, Sensitive: true}}).
 		WithProjectEnv([]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}})
 }
 
-func poolPartRuntime() runtime.Info { return runtime.Info{InContainer: true} }
+// poolPartRuntime is zcp's container, naming its own service.
+func poolPartRuntime() runtime.Info { return runtime.Info{InContainer: true, ServiceName: "zcp"} }
 
 // TestResolveLaunchRuntimes_PoolKeyedPart_StageIsTheRuntime: either hostname
 // of a pool-keyed pair resolves to the pair, keyed by the pool, and the
@@ -198,7 +185,7 @@ func TestLaunchSourceControlGate_StagelessPoolPair_RefusedBeforeRead(t *testing.
 		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "test", BootstrappedAt: "2026-10-01T00:00:00Z",
 		GitPushState: topology.GitPushConfigured,
 		// An origin no read would find: a read would answer origin-unreadable.
-		RemoteURL: "file://" + filepath.Join(t.TempDir(), "no-such-origin"),
+		RemoteURL: poolPartMissingOrigin(t),
 	}); err != nil {
 		t.Fatalf("seed meta: %v", err)
 	}
@@ -231,7 +218,7 @@ func TestLaunchSourceControlGate_StagelessPoolPair_RefusedBeforeRead(t *testing.
 // head, which name a checkout the pair does not have.
 func TestLaunchSourceControlGate_PoolKeyedPart_UnreadableOrigin_NamesWhatToFix(t *testing.T) {
 	t.Parallel()
-	missing := "file://" + filepath.Join(t.TempDir(), "no-such-origin")
+	missing := poolPartMissingOrigin(t)
 	present, _ := poolPartOrigin(t, map[string]string{"zerops.yaml": poolPartYAML}, nil)
 	tests := []struct {
 		name       string
