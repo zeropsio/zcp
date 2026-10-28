@@ -56,6 +56,79 @@ func fakeReadinessUnit(t *testing.T, state func() string) func() {
 const oldReadinessUnit = "MainPID=10\nActiveState=active\nSubState=running\nExecMainStatus=0\nInvocationID=old\nExecMainStartTimestampMonotonic=100\nExecMainExitTimestampMonotonic=0\n"
 const liveReadinessUnit = "MainPID=20\nActiveState=active\nSubState=running\nExecMainStatus=0\nInvocationID=new\nExecMainStartTimestampMonotonic=200\nExecMainExitTimestampMonotonic=0\n"
 
+func TestRestartReadiness_UnitSequences_AttributesCandidateExit(t *testing.T) {
+	oldFailed := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(oldReadinessUnit, "ActiveState=active", "ActiveState=failed"), "MainPID=10", "MainPID=0"), "ExecMainStatus=0", "ExecMainStatus=1")
+	candidateExited := strings.ReplaceAll(liveReadinessUnit, "MainPID=20", "MainPID=0")
+	candidateFailed := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(candidateExited, "ActiveState=active", "ActiveState=failed"), "SubState=running", "SubState=failed"), "ExecMainStatus=0", "ExecMainStatus=1")
+	type sequenceCase struct {
+		name        string
+		states      []string
+		wantExit    bool
+		wantTimeout bool
+		wantElapsed time.Duration
+	}
+	for _, decision := range []struct {
+		title string
+		cases []sequenceCase
+	}{
+		{
+			title: "Decision: Stopping the old Mate during an update never counts as the new Mate's failure.",
+			cases: []sequenceCase{
+				{name: "old stop failed then new start", states: []string{oldFailed, liveReadinessUnit, liveReadinessUnit}, wantElapsed: 100 * time.Millisecond},
+				{name: "restart with no new start within the wait", states: []string{oldFailed}, wantTimeout: true, wantElapsed: time.Second},
+				{name: "older start is not a candidate", states: []string{strings.ReplaceAll(oldFailed, "Monotonic=100", "Monotonic=50")}, wantTimeout: true, wantElapsed: time.Second},
+			},
+		},
+		{
+			title: "Decision: An update stops waiting the moment the Mate's process exits.",
+			cases: []sequenceCase{
+				{name: "new start then clean candidate exit", states: []string{liveReadinessUnit, candidateExited}, wantExit: true},
+				{name: "new start then failed candidate exit", states: []string{liveReadinessUnit, candidateFailed}, wantExit: true},
+				{name: "old stop failed then new start then candidate exit", states: []string{oldFailed, liveReadinessUnit, candidateFailed}, wantExit: true, wantElapsed: 100 * time.Millisecond},
+				{name: "candidate failed with only newer start", states: []string{strings.ReplaceAll(candidateFailed, "InvocationID=new", "InvocationID=old")}, wantExit: true},
+				{name: "candidate failed with only changed invocation", states: []string{strings.ReplaceAll(candidateFailed, "Monotonic=200", "Monotonic=100")}, wantExit: true},
+			},
+		},
+	} {
+		t.Run(decision.title, func(t *testing.T) {
+			for _, tc := range decision.cases {
+				t.Run(tc.name, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						state := oldReadinessUnit
+						updateUnit := fakeReadinessUnit(t, func() string { return state })
+						wait := mate.ObserveRestart(context.Background())
+						index := 0
+						state = tc.states[index]
+						updateUnit()
+						original := http.DefaultTransport
+						http.DefaultTransport = exitReadinessTransport{version: func() string { return "0.15.202" }, ready: func() bool {
+							index = min(index+1, len(tc.states)-1)
+							state = tc.states[index]
+							updateUnit()
+							return index == len(tc.states)-1 && !tc.wantTimeout && !tc.wantExit
+						}}
+						t.Cleanup(func() { http.DefaultTransport = original })
+						start := time.Now()
+						err := wait.WaitReady("0.15.202", "old", start.Add(time.Second))
+						if gotExit := err != nil && strings.Contains(err.Error(), "mate unit process exited"); gotExit != tc.wantExit {
+							t.Fatalf("ASSERTION: candidate exit=%v, want %v; readiness error=%v", gotExit, tc.wantExit, err)
+						}
+						if gotTimeout := err != nil && strings.Contains(err.Error(), "context deadline exceeded"); gotTimeout != tc.wantTimeout {
+							t.Fatalf("ASSERTION: readiness deadline=%v, want %v; error=%v", gotTimeout, tc.wantTimeout, err)
+						}
+						if err != nil && !tc.wantExit && !tc.wantTimeout {
+							t.Fatalf("ASSERTION: viable candidate readiness failed: %v", err)
+						}
+						if elapsed := time.Since(start); elapsed != tc.wantElapsed {
+							t.Fatalf("ASSERTION: readiness waited %s, want %s", elapsed, tc.wantElapsed)
+						}
+					})
+				})
+			}
+		})
+	}
+}
+
 func TestWaitReady_UpdateDecisions(t *testing.T) {
 	t.Run("Decision: A Mate whose process exits during an update is rolled back without waiting for the deadline.", func(t *testing.T) {
 		for _, tc := range []struct{ name, state string }{
@@ -110,7 +183,11 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 					if restarts != 2 || installed != "0.15.200" {
 						t.Fatalf("ASSERTION: exited candidate must roll back: restarts=%d current=%s", restarts, installed)
 					}
-					if rollbackAt > 100*time.Millisecond {
+					if tc.name == "unit failed without new invocation" {
+						if rollbackAt != 60*time.Second {
+							t.Fatalf("ASSERTION: old invocation's failure must wait for the deadline; rollback took %s, want 60s", rollbackAt)
+						}
+					} else if rollbackAt > 100*time.Millisecond {
 						t.Fatalf("ASSERTION: exited candidate rollback took %s; want at most 100ms, without waiting for the 60s deadline", rollbackAt)
 					}
 					recorded, err := mate.ReadUpdateState()

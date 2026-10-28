@@ -526,10 +526,14 @@ ordinary status can observe late readiness. It never restarts or installs a bund
 
 Decision: A Mate whose process exits during an update is rolled back without waiting for the deadline.
 Decision: A Mate whose process is still running is waited for until it is ready or the deadline passes.
+Decision: Stopping the old Mate during an update never counts as the new Mate's failure.
+Decision: An update stops waiting the moment the Mate's process exits.
 
 Candidate, rollback and recovery share the readiness wait. Before each restart it records the
-unit's invocation and process-start identity. A new process with MainPID zero, a transition
-into failed, or a new unit invocation that failed or entered auto-restart ends the wait
+unit's invocation and process-start identity. Only a changed nonempty invocation ID or a
+process-start timestamp strictly newer than the snapshot identifies a candidate attempt.
+A new process with MainPID zero, a candidate attempt in failed state, or a new unit
+invocation that entered auto-restart ends the wait
 immediately, including a clean process exit. Stale exit status and the old process stopping
 during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
 HTTP proof and deadline remain authoritative. No startup-progress receipt is assumed.

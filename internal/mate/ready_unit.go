@@ -69,9 +69,11 @@ func exitedReadinessUnit(ctx context.Context, before *readinessUnitState) error 
 		// Unknown state cannot prove that a process exited.
 		return nil
 	}
-	newStart := current.start != 0 && current.start != before.start
+	newStart := current.start > before.start
 	newInvocation := current.invocation != "" && current.invocation != before.invocation
-	newlyFailed := current.active == failedUnitState && (before.active != failedUnitState || newInvocation || newStart)
+	// Stopping the old invocation can fail before the candidate starts.
+	// A failed transition alone cannot attribute that exit to the candidate.
+	newlyFailed := current.active == failedUnitState && (newInvocation || newStart)
 	if newlyFailed || (newStart && current.mainPID == 0) || (newInvocation && current.sub == "auto-restart") {
 		return fmt.Errorf("mate unit process exited: MainPID=%d ActiveState=%s SubState=%s ExecMainStatus=%d", current.mainPID, current.active, current.sub, current.status)
 	}
