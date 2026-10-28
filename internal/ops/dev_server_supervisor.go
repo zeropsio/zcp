@@ -353,6 +353,25 @@ func (ds *DevServers) OlderThanDeclaration() string {
 		ds.Hostname, ds.Supervisor.Version, ds.Supervisor.Formats, devsup.DeclarationPath, ds.DeclaredVersion, ds.Hostname)
 }
 
+// CannotRunWhatZcpWrites names why the supervisor on the host cannot run the
+// declaration zcp writes — the format zcp writes, or the one the repository's
+// declaration carries, missing from the formats it reports — "" when it can,
+// or when no supervisor answered (docs/spec-mate.md §2.8a.2): the one reason
+// zcp moves the release a dev setup pins.
+func (ds *DevServers) CannotRunWhatZcpWrites() string {
+	if ds == nil || ds.Supervisor.Version == "" {
+		return ""
+	}
+	format := devsupFormat
+	if !slices.Contains(ds.Supervisor.Formats, format) {
+		return fmt.Sprintf("the supervisor on %s (zcp-devsup %s) cannot run declaration format %d, the one zcp writes", ds.Hostname, ds.Supervisor.Version, format)
+	}
+	if format = ds.DeclaredVersion; format != 0 && !slices.Contains(ds.Supervisor.Formats, format) {
+		return fmt.Sprintf("the supervisor on %s (zcp-devsup %s) cannot run declaration format %d, the one %s carries", ds.Hostname, ds.Supervisor.Version, format, devsup.DeclarationPath)
+	}
+	return ""
+}
+
 // Servers are the declared entries this dev service's supervisor runs: in
 // variant B the code volume's declaration also holds the other dev services',
 // and a lease's repository every part's.

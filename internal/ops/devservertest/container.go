@@ -103,11 +103,32 @@ type Container struct {
 	// DirtyCrew names the crew copies (.crew/<name>) with uncommitted or
 	// untracked changes.
 	DirtyCrew []string
+	// Git is the repository the dev service deploys from, as zcp reads it
+	// before it edits files there unasked and commits its own edit; nil: no
+	// git repository.
+	Git *Repo
 	// MemMaxB, MemCurrentB, MemInactiveB and MemActiveB (memory.stat's
 	// inactive_file and active_file) answer the cgroup memory probe in bytes;
 	// MemMaxB 0 means the cgroup files are unreadable.
 	MemMaxB, MemCurrentB, MemInactiveB, MemActiveB int64
 	pid                                            int
+}
+
+// Repo is the dev service's git repository.
+type Repo struct {
+	// Branch is the checked-out branch, "" when HEAD is detached.
+	Branch string
+	// Uncommitted are the paths with uncommitted changes, as `git status`
+	// names them.
+	Uncommitted []string
+	// Commits are the commit commands zcp ran, in order.
+	Commits []string
+	// CommitFails, when set, is the error git ends a commit with.
+	CommitFails string
+	// HookFails, when set, is the output of the repository's pre-commit
+	// check, which refuses every commit; a commit with --no-verify skips it,
+	// as git does.
+	HookFails string
 }
 
 // SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
@@ -137,6 +158,10 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 		return nil, &platform.SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded)}
 	}
 	switch {
+	case strings.Contains(command, "@@zcp-own-edit base"):
+		return []byte(c.ownEditBase()), nil
+	case strings.Contains(command, "@@zcp-own-edit committed"):
+		return c.commitOwnEdit(command)
 	case strings.Contains(command, "@@zcp-devsup check"):
 		return []byte(c.ensure()), nil
 	case strings.Contains(command, "@@zcp-devsup declaration") && !strings.Contains(command, "@@zcp-devsup version"):
@@ -256,6 +281,36 @@ func (c *Container) Stop() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Running, c.Servers = false, nil
+}
+
+// ownEditBase answers zcp's read of the repository before it edits files
+// there unasked: the branch, then a `git status --porcelain` line per
+// uncommitted path.
+func (c *Container) ownEditBase() string {
+	if c.Git == nil {
+		return "@@zcp-own-edit base none\n"
+	}
+	var b strings.Builder
+	b.WriteString("@@zcp-own-edit base branch " + c.Git.Branch + "\n")
+	for _, p := range c.Git.Uncommitted {
+		b.WriteString(" M " + p + "\n")
+	}
+	return b.String()
+}
+
+// commitOwnEdit records zcp's commit of its own edit.
+func (c *Container) commitOwnEdit(command string) ([]byte, error) {
+	if c.Git == nil {
+		return []byte("fatal: not a git repository"), errors.New("exit status 128")
+	}
+	if c.Git.HookFails != "" && !strings.Contains(command, "--no-verify") {
+		return []byte(c.Git.HookFails), &platform.SSHExecError{Output: c.Git.HookFails, Err: errors.New("exit status 1")}
+	}
+	if c.Git.CommitFails != "" {
+		return []byte(c.Git.CommitFails), &platform.SSHExecError{Output: c.Git.CommitFails, Err: errors.New("exit status 1")}
+	}
+	c.Git.Commits = append(c.Git.Commits, command)
+	return fmt.Appendf(nil, "@@zcp-own-edit committed %07d\n", len(c.Git.Commits)), nil
 }
 
 // Redeploy replaces the container as a deploy does.
