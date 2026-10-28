@@ -10,10 +10,23 @@ import (
 
 const defaultLogLimit = 100
 
+// The logs zerops_logs reads (its facility).
+const (
+	// LogFacilityApplication is the running app's log, the default.
+	LogFacilityApplication = "application"
+	// LogFacilityWebserver is the web server's log (php and static runtimes).
+	LogFacilityWebserver = "webserver"
+	// LogFacilityBuild is the log of the service's newest build, a running
+	// one included (fetchServiceBuildLog).
+	LogFacilityBuild = "build"
+)
+
 // LogsResult contains the result of a log fetch operation.
 type LogsResult struct {
 	Entries []LogEntryOutput `json:"entries"`
 	HasMore bool             `json:"hasMore"`
+	// Build names the build a facility=build read came from.
+	Build *BuildLogSource `json:"build,omitempty"`
 	// WindowStart is the timestamp of the oldest line a search read, set only
 	// when the read filled the backend's newest-lines window inside since:
 	// older lines, if any, were not searched, so HasMore is true.
@@ -38,13 +51,16 @@ type LogEntryOutput struct {
 	Container string `json:"container,omitempty"`
 }
 
-// FetchLogs retrieves logs for a service.
+// FetchLogs retrieves a service's logs: facility application (the default,
+// "" too) or webserver reads that log stream; build reads the service's
+// newest build's log (fetchServiceBuildLog), where since does not apply.
 func FetchLogs(
 	ctx context.Context,
 	client platform.Client,
 	fetcher platform.LogFetcher,
 	projectID string,
 	hostname string,
+	facility string,
 	severity string,
 	since string,
 	limit int,
@@ -52,6 +68,16 @@ func FetchLogs(
 ) (*LogsResult, error) {
 	if limit <= 0 {
 		limit = defaultLogLimit
+	}
+	switch facility {
+	case "":
+		facility = LogFacilityApplication
+	case LogFacilityApplication, LogFacilityWebserver, LogFacilityBuild:
+	default:
+		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("facility %q is not a log zerops_logs reads", facility),
+			fmt.Sprintf("Use facility=%q (the running app's log, the default), %q (the web server's) or %q (the service's newest build, while it runs too).",
+				LogFacilityApplication, LogFacilityWebserver, LogFacilityBuild))
 	}
 
 	sinceTime, err := parseSince(since)
@@ -65,6 +91,9 @@ func FetchLogs(
 	if err != nil {
 		return nil, err
 	}
+	if facility == LogFacilityBuild {
+		return fetchServiceBuildLog(ctx, client, fetcher, projectID, svc, severity, limit, search)
+	}
 
 	logAccess, err := client.GetProjectLog(ctx, projectID)
 	if err != nil {
@@ -72,14 +101,12 @@ func FetchLogs(
 	}
 
 	// Fetch limit+1 to detect if more entries exist beyond the requested limit.
-	// Facility defaults to "application" — the agent-facing surface is the
-	// app log stream, not daemon noise (sshfs, systemd). If a future use
-	// case needs daemon or webserver logs, add a Facility field to the
-	// tool input schema rather than widening the default.
+	// The facility is the app log stream unless the caller asked for the web
+	// server's — never daemon noise (sshfs, systemd).
 	params := platform.LogFetchParams{
 		ServiceID: svc.ID,
 		Severity:  severity,
-		Facility:  "application",
+		Facility:  facility,
 		Since:     sinceTime,
 		Limit:     limit + 1,
 	}

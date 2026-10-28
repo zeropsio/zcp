@@ -57,7 +57,7 @@ func TestFetchLogs_Build_ReadsTheNewestBuildWhileItRuns(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FetchLogs: %v", err)
 			}
-			var got []string
+			got := make([]string, 0, len(result.Entries))
 			for _, e := range result.Entries {
 				got = append(got, e.Message)
 			}

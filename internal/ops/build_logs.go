@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -36,7 +37,7 @@ func FetchBuildLogs(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	entries, _ := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	entries, _, _ := fetchBuildLog(ctx, client, fetcher, projectID, event, "", limit)
 	if entries == nil {
 		return nil
 	}
@@ -56,7 +57,7 @@ func FetchBuildLogTail(
 	limit int,
 	n int,
 ) (logs, tail []string) {
-	entries, tag := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	entries, tag, _ := fetchBuildLog(ctx, client, fetcher, projectID, event, "", limit)
 	if entries == nil {
 		return nil, nil
 	}
@@ -70,37 +71,42 @@ func FetchBuildLogTail(
 }
 
 // fetchBuildLog is FetchBuildLogs' entries in time order, with the build's tag:
-// an entry without it is one of the build container's alerts.
+// an entry without it is one of the build container's alerts. severity, when
+// set, is the least severe line kept of the build's own output ("" keeps
+// all). A read that failed returns its error; the deploy paths read best
+// effort and drop it, zerops_logs facility=build reports it.
 func fetchBuildLog(
 	ctx context.Context,
 	client platform.Client,
 	fetcher platform.LogFetcher,
 	projectID string,
 	event *platform.AppVersionEvent,
+	severity string,
 	limit int,
-) ([]platform.LogEntry, string) {
+) ([]platform.LogEntry, string, error) {
 	if event == nil || event.Build == nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	tag := buildTagForEvent(event)
 	if tag == "" {
-		return nil, ""
+		return nil, "", nil
 	}
 	logAccess, err := client.GetProjectLog(ctx, projectID)
 	if err != nil {
-		return nil, ""
+		return nil, "", fmt.Errorf("project log access: %w", err)
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
+		Severity: severity,
 		Facility: "application",
 		Tags:     []string{tag},
 		Limit:    limit,
 	})
 	if err != nil {
-		return nil, ""
+		return nil, "", fmt.Errorf("build log %s: %w", tag, err)
 	}
 	entries = append(entries, fetchBuildContainerAlerts(ctx, fetcher, logAccess, event, tag, limit)...)
 	sortByTime(entries)
-	return entries, tag
+	return entries, tag, nil
 }
 
 // fetchBuildContainerAlerts fetches the error lines the platform logs on the
