@@ -718,57 +718,77 @@ func TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak(t *testing.T) {
 	}
 }
 
-// TestEnvSet_StoredEcho_SensitiveMasked: the set echo verifies WHAT landed,
-// never a sensitive value — a set is written sensitive when the caller says
-// so (`sensitive`, a FlexBool) or, unsaid, when the key reads as a secret, on
-// either scope; a sensitive stored value comes back masked and annotated, a
-// plain one in clear; a ZCP-owned key keeps its own mask.
-func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
+// TestEnvSet_StoredEcho_NamesKeysNeverValues: the set echo names each key it
+// wrote, the vault it went to and whether it is masked — never a value, plain
+// or sensitive, given or generated. A secret written plain (an explicit
+// sensitive=false beside a plain key in one call) reads back unmasked, so an
+// echo of plain values put it into the conversation. A set is written
+// sensitive when the caller says so (`sensitive`, a FlexBool) or, unsaid, when
+// the key reads as a secret, on either scope; a plain value is read back by
+// name when it is needed.
+func TestEnvSet_StoredEcho_NamesKeysNeverValues(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name          string
-		args          map[string]any
-		wantValue     string
-		wantSensitive bool
+		name      string
+		args      map[string]any
+		wantScope string
+		// wantSensitive is the isSensitive each stored key must say.
+		wantSensitive map[string]bool
 	}{
 		{
-			name:          "service secret-shaped key is sensitive",
-			args:          map[string]any{"serviceHostname": "api", "variables": []any{"API_KEY=" + "person-secret"}},
-			wantValue:     "<redacted: sensitive>",
-			wantSensitive: true,
+			name: "secret written plain beside a plain key",
+			args: map[string]any{"serviceHostname": "api", "sensitive": false, "variables": []any{
+				"SESSION_SECRET=" + "person-value-1", "PUBLIC_URL=https://" + "person-value-2.example"}},
+			wantScope:     "service",
+			wantSensitive: map[string]bool{"SESSION_SECRET": false, "PUBLIC_URL": false},
 		},
 		{
-			name:      "service plain key is plain",
-			args:      map[string]any{"serviceHostname": "api", "variables": []any{"APP_NAME=shop"}},
-			wantValue: "shop",
+			name:          "service secret-shaped key is sensitive",
+			args:          map[string]any{"serviceHostname": "api", "variables": []any{"API_KEY=" + "person-value-1"}},
+			wantScope:     "service",
+			wantSensitive: map[string]bool{"API_KEY": true},
+		},
+		{
+			name:          "service plain key is plain",
+			args:          map[string]any{"serviceHostname": "api", "variables": []any{"APP_NAME=" + "person-value-1"}},
+			wantScope:     "service",
+			wantSensitive: map[string]bool{"APP_NAME": false},
 		},
 		{
 			name:          "service explicit sensitive",
-			args:          map[string]any{"serviceHostname": "api", "sensitive": "true", "variables": []any{"APP_NAME=" + "person-secret"}},
-			wantValue:     "<redacted: sensitive>",
-			wantSensitive: true,
+			args:          map[string]any{"serviceHostname": "api", "sensitive": "true", "variables": []any{"APP_NAME=" + "person-value-1"}},
+			wantScope:     "service",
+			wantSensitive: map[string]bool{"APP_NAME": true},
 		},
 		{
-			name:      "project plain key is plain",
-			args:      map[string]any{"project": true, "variables": []any{"APP_NAME=shop"}},
-			wantValue: "shop",
+			name:          "service generated value",
+			args:          map[string]any{"serviceHostname": "api", "sensitive": false, "variables": []any{"APP_KEY=<@generateRandomString(<32>)>"}},
+			wantScope:     "service",
+			wantSensitive: map[string]bool{"APP_KEY": false},
+		},
+		{
+			name:          "project plain key is plain",
+			args:          map[string]any{"project": true, "variables": []any{"APP_NAME=" + "person-value-1"}},
+			wantScope:     "shared",
+			wantSensitive: map[string]bool{"APP_NAME": false},
 		},
 		{
 			name:          "project secret-shaped key is sensitive",
-			args:          map[string]any{"project": true, "variables": []any{"STRIPE_SECRET=" + "person-secret"}},
-			wantValue:     "<redacted: sensitive>",
-			wantSensitive: true,
+			args:          map[string]any{"project": true, "variables": []any{"STRIPE_SECRET=" + "person-value-1"}},
+			wantScope:     "shared",
+			wantSensitive: map[string]bool{"STRIPE_SECRET": true},
 		},
 		{
-			name:      "project explicit plain",
-			args:      map[string]any{"project": true, "sensitive": false, "variables": []any{"PUBLIC_KEY=pk"}},
-			wantValue: "pk",
+			name:          "project explicit plain",
+			args:          map[string]any{"project": true, "sensitive": false, "variables": []any{"PUBLIC_KEY=" + "person-value-1"}},
+			wantScope:     "shared",
+			wantSensitive: map[string]bool{"PUBLIC_KEY": false},
 		},
 		{
-			name:          "ZCP-owned key keeps its mask",
-			args:          map[string]any{"project": true, "variables": []any{"GIT_TOKEN=" + "ghp_x"}},
-			wantValue:     "<redacted: ZCP-managed credential>",
-			wantSensitive: true,
+			name:          "ZCP-owned key",
+			args:          map[string]any{"project": true, "variables": []any{"GIT_TOKEN=" + "person-value-1"}},
+			wantScope:     "shared",
+			wantSensitive: map[string]bool{"GIT_TOKEN": true},
 		},
 	}
 	for _, tt := range tests {
@@ -784,22 +804,38 @@ func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
 			}
 			var parsed struct {
 				Stored []map[string]any `json:"stored"`
+				Scope  string           `json:"scope"`
 			}
 			text := getTextContent(t, result)
 			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 				t.Fatalf("parse result: %v", err)
 			}
-			if strings.Contains(text, "person-secret") {
-				t.Errorf("the set echo repeats a sensitive value: %s", text)
+			if strings.Contains(text, "person-value") {
+				t.Errorf("the set echo repeats a value it wrote: %s", text)
 			}
-			if len(parsed.Stored) != 1 {
-				t.Fatalf("stored = %v, want one entry", parsed.Stored)
+			if parsed.Scope != tt.wantScope {
+				t.Errorf("scope = %q, want %q", parsed.Scope, tt.wantScope)
 			}
-			if got := parsed.Stored[0]["value"]; got != tt.wantValue {
-				t.Errorf("stored value = %v, want %v", got, tt.wantValue)
+			if len(parsed.Stored) != len(tt.wantSensitive) {
+				t.Fatalf("stored = %v, want %d entries", parsed.Stored, len(tt.wantSensitive))
 			}
-			if got := parsed.Stored[0]["isSensitive"] == true; got != tt.wantSensitive {
-				t.Errorf("isSensitive = %v, want %v", got, tt.wantSensitive)
+			for _, entry := range parsed.Stored {
+				key, _ := entry["key"].(string)
+				want, known := tt.wantSensitive[key]
+				if !known {
+					t.Errorf("stored names %q, want one of %v", key, tt.wantSensitive)
+					continue
+				}
+				if value, has := entry["value"]; has {
+					t.Errorf("stored %s carries a value (%v): the echo names keys only", key, value)
+				}
+				sensitive, has := entry["isSensitive"].(bool)
+				if !has {
+					t.Errorf("stored %s does not say whether it is masked: %v", key, entry)
+				}
+				if sensitive != want {
+					t.Errorf("stored %s isSensitive = %v, want %v", key, sensitive, want)
+				}
 			}
 		})
 	}
