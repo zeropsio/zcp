@@ -41,3 +41,9 @@ func ResetResolveDesiredRelease() { resolveDesiredRelease = defaultResolveDesire
 
 // CarriesParts exposes carriesParts to the external test package.
 var CarriesParts = carriesParts
+
+// ObserveRestartWith is ObserveRestart with the unit-properties query served
+// in process, so a long readiness wait does not start a process per tick.
+func ObserveRestartWith(ctx context.Context, show func(ctx context.Context, name string, args ...string) ([]byte, error)) RestartReadiness {
+	return observeRestart(ctx, show)
+}

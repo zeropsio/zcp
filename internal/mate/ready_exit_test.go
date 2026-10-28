@@ -33,24 +33,36 @@ func (p exitReadinessTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
-func fakeReadinessUnit(t *testing.T, state func() string) func() {
+// readinessUnitArgv is exactly the production systemctl argv.
+const readinessUnitArgv = "show zerops@mate.service --property=MainPID,ActiveState,SubState,ExecMainStatus,InvocationID,ExecMainStartTimestampMonotonic"
+
+// fakeReadinessUnit serves the unit state last written by update twice: as a
+// systemctl script on PATH for mate.ObserveRestart, and in process for
+// observe, whose waits run a query per tick without starting a process.
+func fakeReadinessUnit(t *testing.T, state func() string) (update func(), observe func() mate.RestartReadiness) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")
-	// The fake receives exactly the production systemctl argv.
-	script := "#!/bin/sh\n[ \"$1 $2 $3\" = 'show zerops@mate.service --property=MainPID,ActiveState,SubState,ExecMainStatus,InvocationID,ExecMainStartTimestampMonotonic' ] || exit 3\ncat '" + path + "'\n"
+	// Both fakes receive exactly the production systemctl argv.
+	script := "#!/bin/sh\n[ \"$1 $2 $3\" = '" + readinessUnitArgv + "' ] || exit 3\ncat '" + path + "'\n"
 	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	update := func() {
+	show := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "systemctl" || strings.Join(args, " ") != readinessUnitArgv {
+			return nil, fmt.Errorf("unexpected unit query %s %q", name, args)
+		}
+		return os.ReadFile(path)
+	}
+	update = func() {
 		t.Helper()
 		if err := os.WriteFile(path, []byte(state()), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	update()
-	return update
+	return update, func() mate.RestartReadiness { return mate.ObserveRestartWith(context.Background(), show) }
 }
 
 const oldReadinessUnit = "MainPID=10\nActiveState=active\nSubState=running\nExecMainStatus=0\nInvocationID=old\nExecMainStartTimestampMonotonic=100\nExecMainExitTimestampMonotonic=0\n"
@@ -95,8 +107,8 @@ func TestRestartReadiness_UnitSequences_AttributesCandidateExit(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					synctest.Test(t, func(t *testing.T) {
 						state := oldReadinessUnit
-						updateUnit := fakeReadinessUnit(t, func() string { return state })
-						wait := mate.ObserveRestart(context.Background())
+						updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
+						wait := observe()
 						index := 0
 						state = tc.states[index]
 						updateUnit()
@@ -145,7 +157,7 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 					seedInstalledVersion(t, "0.15.200")
 					writeFakePackage(t, mate.VersionDir("0.15.202"), "0.15.202")
 					state := oldReadinessUnit
-					updateUnit := fakeReadinessUnit(t, func() string { return state })
+					updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
 					start := time.Now()
 					installed := "0.15.200"
 					restarts := 0
@@ -162,7 +174,7 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 					t.Cleanup(func() { http.DefaultTransport = original })
 					err := mate.SwitchUpdate("0.15.202", "old", mate.SwitchHooks{
 						Restart: func() error {
-							wait = mate.ObserveRestart(context.Background())
+							wait = observe()
 							restarts++
 							installed, _ = mate.InstalledVersion()
 							if restarts == 1 {
@@ -203,8 +215,8 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 			t.Run(readyAt.String(), func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					state := oldReadinessUnit
-					updateUnit := fakeReadinessUnit(t, func() string { return state })
-					wait := mate.ObserveRestart(context.Background())
+					updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
+					wait := observe()
 					state = liveReadinessUnit
 					updateUnit()
 					start := time.Now()
@@ -238,8 +250,8 @@ func TestWaitReady_StaleUnitState_DoesNotAbort(t *testing.T) {
 				if strings.Contains(stale, "ActiveState=failed") {
 					state = stale
 				}
-				updateUnit := fakeReadinessUnit(t, func() string { return state })
-				wait := mate.ObserveRestart(context.Background())
+				updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
+				wait := observe()
 				state = stale
 				updateUnit()
 				start := time.Now()
@@ -269,8 +281,8 @@ func TestRestartReadiness_ExistingProofs_Required(t *testing.T) {
 		t.Run(invalid, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				state := oldReadinessUnit
-				updateUnit := fakeReadinessUnit(t, func() string { return state })
-				wait := mate.ObserveRestart(context.Background())
+				updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
+				wait := observe()
 				state = liveReadinessUnit
 				updateUnit()
 				transport := &updateProofTransport{invalid: invalid}
@@ -296,8 +308,8 @@ func TestRestartReadiness_UnknownUnit_WaitsForProof(t *testing.T) {
 				if unknownBefore {
 					state = "unreadable unit properties"
 				}
-				updateUnit := fakeReadinessUnit(t, func() string { return state })
-				wait := mate.ObserveRestart(context.Background())
+				updateUnit, observe := fakeReadinessUnit(t, func() string { return state })
+				wait := observe()
 				state = "unreadable unit properties"
 				updateUnit()
 				start := time.Now()
@@ -327,7 +339,8 @@ func TestRestartReadiness_RecoveryProcessExits_FailsImmediately(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := oldReadinessUnit
-		updateUnit := fakeReadinessUnit(t, func() string { return state })
+		// The production ObserveRestart runs the fake systemctl on PATH.
+		updateUnit, _ := fakeReadinessUnit(t, func() string { return state })
 		var wait mate.RestartReadiness
 		var observed error
 		committed := false
