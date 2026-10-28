@@ -72,6 +72,10 @@ type Server struct {
 	// recipeFollower is told of every tool call (followRecipe): a Mate's
 	// tools.RecipeFollower, nil outside a Mate.
 	recipeFollower callWatcher
+	// stateDir is the .zcp/state directory under the working directory, ""
+	// when there is none: where followRepos reads the pair records the
+	// workspace CLAUDE.md's repository imports follow.
+	stateDir string
 }
 
 // callWatcher is told of a tool call as it starts — its tool and raw
@@ -172,6 +176,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		logger:      logger,
 		telemetry:   tel,
 		stop:        stop,
+		stateDir:    stateDir,
 	}
 
 	// A Mate's group recipe follows its project after every tool call that
@@ -185,7 +190,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), receive)
+	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), s.followRepos(), receive)
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
@@ -230,12 +235,14 @@ func stateDirFromCwd() string {
 }
 
 // refreshAgentContext idempotently refreshes AGENTS.md (canonical body) and
-// CLAUDE.md (thin @AGENTS.md wrapper) from the embedded templates if the
-// on-disk managed sections drifted from this build's version. Long-lived
-// installs (container OR local) otherwise hold the snapshot from the last
-// manual `zcp init`, which can be days old and carry wording the current
-// description-drift lint would refuse (G9). First-install (no files present)
-// is left for `zcp init` — this is incremental refresh only.
+// CLAUDE.md (the @AGENTS.md wrapper with the workspace's repository imports)
+// from the embedded templates and the pair records if the on-disk managed
+// sections drifted. Long-lived installs (container OR local) otherwise hold
+// the snapshot from the last manual `zcp init`, which can be days old and
+// carry wording the current description-drift lint would refuse (G9).
+// First-install (no files present) is left for `zcp init` — this is
+// incremental refresh only. Pair records it cannot read leave CLAUDE.md as
+// it is (workspaceRepos).
 func refreshAgentContext(stateDir string, rtInfo runtime.Info, logger *slog.Logger) {
 	if stateDir == "" {
 		return
@@ -246,7 +253,15 @@ func refreshAgentContext(stateDir string, rtInfo runtime.Info, logger *slog.Logg
 	// Guided is a local per-project preference (.zcp marker) — read it so
 	// the refresh keeps the guided block a `zcp init --guided` wrote,
 	// instead of regenerating without it.
-	agentsChanged, claudeChanged, err := content.RefreshAgentContext(agentsPath, claudePath, rtInfo, content.GuidedEnabled(projectRoot))
+	guided := content.GuidedEnabled(projectRoot)
+	repos, ok := workspaceRepos(stateDir, rtInfo, logger)
+	var agentsChanged, claudeChanged bool
+	var err error
+	if ok {
+		agentsChanged, claudeChanged, err = content.RefreshAgentContext(agentsPath, claudePath, rtInfo, guided, repos)
+	} else {
+		agentsChanged, err = content.RefreshAgentsMD(agentsPath, rtInfo, guided)
+	}
 	if err != nil {
 		logger.Warn("agent context refresh failed", "agents", agentsPath, "claude", claudePath, "err", err)
 		return
@@ -255,7 +270,59 @@ func refreshAgentContext(stateDir string, rtInfo runtime.Info, logger *slog.Logg
 		logger.Info("AGENTS.md refreshed from embedded template", "path", agentsPath)
 	}
 	if claudeChanged {
-		logger.Info("CLAUDE.md wrapper refreshed from embedded template", "path", claudePath)
+		logger.Info("CLAUDE.md wrapper refreshed", "path", claudePath)
+	}
+}
+
+// workspaceRepos is the repositories the workspace CLAUDE.md imports: the
+// pair records' (workflow.WorkspaceRepos), read only where the wrapper
+// renders them (content.WorkspaceImports). ok is false when the records
+// cannot be read — logged, and the caller leaves CLAUDE.md as last written
+// rather than dropping every repository's import over one broken record.
+func workspaceRepos(stateDir string, rtInfo runtime.Info, logger *slog.Logger) (repos []string, ok bool) {
+	if !content.WorkspaceImports(rtInfo) {
+		return nil, true
+	}
+	repos, err := workflow.WorkspaceRepos(stateDir)
+	if err != nil {
+		logger.Warn("CLAUDE.md repository imports left as they are", "err", err)
+		return nil, false
+	}
+	return repos, true
+}
+
+// followRepos returns middleware that keeps the workspace CLAUDE.md's
+// repository imports on the pair records once each tool call answered —
+// whatever it answered, since a call that failed may still have moved them.
+// A pair is bootstrapped, adopted, stood up, moved onto its pool or deleted
+// inside a tool call, and Claude Code reads CLAUDE.md when a session starts,
+// so the next session reads the list current without waiting for its own
+// zcp's start (docs/spec-workflows.md §5.1). The refresh is a read of the
+// records and of CLAUDE.md, written only when the block differs; it runs
+// only where the imports render, and the handler's answer goes back as it
+// was.
+func (s *Server) followRepos() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != methodCallTool || s.stateDir == "" || !content.WorkspaceImports(s.rtInfo) {
+				return next(ctx, method, req)
+			}
+			result, err := next(ctx, method, req)
+			repos, ok := workspaceRepos(s.stateDir, s.rtInfo, s.logger)
+			if !ok {
+				return result, err
+			}
+			projectRoot := filepath.Dir(filepath.Dir(s.stateDir))
+			claudePath := filepath.Join(projectRoot, "CLAUDE.md")
+			changed, refreshErr := content.RefreshClaudeWrapper(filepath.Join(projectRoot, "AGENTS.md"), claudePath, s.rtInfo, repos)
+			switch {
+			case refreshErr != nil:
+				s.logger.Warn("CLAUDE.md repository imports refresh failed", "path", claudePath, "err", refreshErr)
+			case changed:
+				s.logger.Info("CLAUDE.md repository imports follow the pairs", "path", claudePath, "repos", repos)
+			}
+			return result, err
+		}
 	}
 }
 
