@@ -189,12 +189,12 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
 		containerCountFixed(serviceType), topology.IsPoolType(serviceType))
 	apiParams.ServiceMode = svc.Mode
-	// A raise of a dev pool's maximum past the preview ports it opens is
-	// refused before it is sent (PS-17).
-	if topology.IsPoolType(serviceType) && params.MaxContainers != nil {
-		if err := poolRaisePreviewPortsError(cfg.shrinkDeps.StateDir, current, *params.MaxContainers); err != nil {
-			return nil, err
-		}
+	// A dev pool this scale leaves past the preview ports it opens is scaled
+	// all the same — the pool is the person's call — and the result says
+	// which containers have no preview (PS-17).
+	var previewNotice string
+	if topology.IsPoolType(serviceType) && poolLeasedByZcp(cfg.shrinkDeps.StateDir, current) {
+		previewNotice = poolPreviewPortsNotice(current, poolMaxAfter(current, params))
 	}
 	// Check-before-mutate (spec-workflows §8 O3): what a lowering of a pool's
 	// maximum deletes is read before the change is sent.
@@ -241,6 +241,9 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 				result.Notice += " " + n
 			}
 		}
+	}
+	if previewNotice != "" {
+		result.Notice = strings.TrimSpace(previewNotice + " " + result.Notice)
 	}
 
 	return result, nil

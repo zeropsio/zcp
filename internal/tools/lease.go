@@ -96,7 +96,10 @@ type leaseToolResult struct {
 	// with why; their leases are listed from zcp's records, unverified.
 	UnreadPools []ops.LeasePoolUnread `json:"unreadPools,omitempty"`
 	// Warm is each pool's warm containers on a status (DP-27).
-	Warm        []ops.LeasePoolWarm     `json:"warm,omitempty"`
+	Warm []ops.LeasePoolWarm `json:"warm,omitempty"`
+	// PoolNotices are what a status says of a pool as a whole: one zcp
+	// leases from whose maxContainers runs past its preview ports (PS-17).
+	PoolNotices []ops.LeasePoolNotice   `json:"poolNotices,omitempty"`
 	NextActions string                  `json:"nextActions,omitempty"`
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
@@ -237,7 +240,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(rt), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, PoolNotices: ops.LeasePoolPreviewNotices(ctx, deps, input.Pool), NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(rt), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			// The change on each released branch, as lease status names it
