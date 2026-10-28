@@ -1151,3 +1151,34 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 		})
 	}
 }
+
+// A repository HQ mirrors to GitHub through the organisation's app takes
+// every change to GitHub as the pull request HQ opens, and HQ pushes `main`
+// there itself, so a Mate never syncs GitHub by hand (Filip on flip.studio
+// cherry-picked each merged change onto GitHub's master in a clone of its
+// own and pushed it, as its memory said to — which fights HQ's follow).
+func TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"HQ mirrors such a repository to GitHub itself",
+		"never sync GitHub by hand",
+		"nor copy a merged change onto it",
+		"a merged change reaches GitHub as its pull request",
+		"the one change that brings them back in step",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git-host paragraph missing %q", want)
+		}
+	}
+	plain, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	if strings.Contains(plain, "never sync GitHub by hand") {
+		t.Error("a plain container's AGENTS.md speaks of HQ's GitHub mirror")
+	}
+}
