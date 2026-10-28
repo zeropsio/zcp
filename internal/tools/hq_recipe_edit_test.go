@@ -68,7 +68,7 @@ func (f *fakeHQ) matePush(base, branch, path string, edit func(string) string) (
 	f.git(f.t.Context(), work, "-c", "user.name="+ops.DeployGitIdentity.Name, "-c", "user.email="+ops.DeployGitIdentity.Email,
 		"commit", "-qm", "recipe: lean production")
 	commit = f.git(f.t.Context(), work, "rev-parse", "HEAD")
-	cmd := exec.CommandContext(f.t.Context(), "git", "-C", work, "-c", "http.sslCAInfo="+f.caFile, //nolint:gosec // G204: a test's own git
+	cmd := exec.CommandContext(f.t.Context(), "git", "-C", work, "-c", "http.sslCAInfo="+f.caFile,
 		"-c", "http.extraHeader=Authorization: Project "+labKey,
 		"push", f.srv.URL+"/git/"+labOrg+"/"+labApp+"/"+hq.RecipeRepo+".git", "HEAD:refs/heads/"+branch)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
