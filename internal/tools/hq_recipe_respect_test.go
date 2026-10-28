@@ -157,3 +157,54 @@ func (l *hqLab) mustPropose(client platform.Client) int {
 	}
 	return outcome.Change
 }
+
+// TestGroupRecipe_PushesOnlyWhenItsCompositionChanged: a pass pushes when
+// what zcp composes differs from what zcp itself last proposed on the change,
+// never because the branch differs from the composition. flip.studio's
+// change took zcp's composition three times over a night; an agent that puts
+// its edit back each time it finds it gone would fight zcp for ever. Over
+// passes the Mate's edit is never pushed over, the project unchanged or not,
+// while zcp's own proposal still follows the project once it changes.
+func TestGroupRecipe_PushesOnlyWhenItsCompositionChanged(t *testing.T) {
+	t.Parallel()
+	cache := recipeReconcileClient(platform.ServiceStack{ID: "svc-cache", Name: "cache", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey:single@7", ServiceStackTypeCategoryName: "USER"}})
+	tests := []struct {
+		name string
+		// edits: the Mate puts its edit back before a pass whenever the
+		// branch no longer holds it.
+		edits      bool
+		changed    bool // the project gains a service after the first pass
+		wantPushes int
+	}{
+		{name: "the Mate's edit, put back whenever it is gone", edits: true},
+		{name: "the Mate's edit, the project changed since", edits: true, changed: true},
+		{name: "zcp's own proposal, the project unchanged"},
+		{name: "zcp's own proposal, the project changed once", changed: true, wantPushes: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newRecipeLab(t)
+			number := lab.mustPropose(lab.mock)
+			pushes := 0
+			for pass := 1; pass <= 3; pass++ {
+				if tt.edits && !strings.Contains(lab.hq.recipeFiles(recipeBranch(number))[recipeStageTier], "# Without the owner's cloud agent.") {
+					lab.hq.editRecipeChange(number, recipeStageTier, theMatesWords, "recipe: stage without the owner's cloud agent")
+				}
+				var client platform.Client = lab.mock
+				if tt.changed && pass > 1 {
+					client = cache
+				}
+				before := lab.hq.recipeHead(recipeBranch(number))
+				lab.proposeRecipe(client)
+				if lab.hq.recipeHead(recipeBranch(number)) != before {
+					pushes++
+				}
+			}
+			if pushes != tt.wantPushes {
+				t.Errorf("zcp pushed %d times over three passes, want %d", pushes, tt.wantPushes)
+			}
+		})
+	}
+}
