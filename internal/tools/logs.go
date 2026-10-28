@@ -11,6 +11,7 @@ import (
 // LogsInput is the input type for zerops_logs.
 type LogsInput struct {
 	ServiceHostname string `json:"serviceHostname"    jsonschema:"Hostname of the service to fetch logs from."`
+	Facility        string `json:"facility,omitempty" jsonschema:"application (default), webserver, or build: the newest build's log, also while it runs."`
 	Severity        string `json:"severity,omitempty" jsonschema:"Filter by log severity: WARNING or ERROR. Omit for all severities."`
 	Since           string `json:"since,omitempty"    jsonschema:"Fetch logs since this time. RFC3339 format (e.g. 2024-01-15T10:00:00Z) or relative duration (e.g. 30s, 5m, 1h, 7d). Omitted = last 1 hour ONLY — widen this to see older entries."`
 	Limit           int    `json:"limit,omitempty"    jsonschema:"Maximum number of log entries to return. Default: 100."`
@@ -21,7 +22,7 @@ type LogsInput struct {
 func RegisterLogs(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_logs",
-		Description: "Fetch runtime logs from a service. Filter by severity, time range, and search text.",
+		Description: "Fetch a service's logs: its running app's (default), its web server's, or its newest build's (facility=\"build\") — a build's log while the build still runs too. Filter by severity, time range, and search text.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Fetch service logs",
 			ReadOnlyHint:   true,
@@ -29,7 +30,7 @@ func RegisterLogs(srv *mcp.Server, client platform.Client, fetcher platform.LogF
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input LogsInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.FetchLogs(ctx, client, fetcher, projectID,
-			input.ServiceHostname, input.Severity, input.Since, input.Limit, input.Search)
+			input.ServiceHostname, input.Facility, input.Severity, input.Since, input.Limit, input.Search)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

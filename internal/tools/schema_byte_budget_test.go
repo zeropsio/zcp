@@ -199,7 +199,9 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_discover":           879,
 		"zerops_preprocess":         811,
 		"zerops_workspace_manifest": 716,
-		"zerops_logs":               712,
+		// facility is a new field: an agent watching a build had no way to
+		// read its log through zcp and logged zcli in with zcp's key.
+		"zerops_logs": 845,
 		// A target's sha (deploy that commit, zerops_deploy's sha) is a new
 		// field: one batch puts main on several stages (DP-8).
 		"zerops_deploy_batch": 681,
