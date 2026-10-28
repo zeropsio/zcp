@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // LaunchSourceState is the read-side source-project state the launch
@@ -140,6 +141,55 @@ func readSourceState(
 		return nil, err
 	}
 	return state, nil
+}
+
+// readPoolPartSourceState is readSourceState for a part whose pair meta is
+// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-19): the
+// runtime is the pair's stage — the one choice names, else its first — and
+// the source its origin (readPoolPartOrigin). Nothing is read in a
+// container: the pool's hostname reaches a random one of its containers.
+func readPoolPartSourceState(
+	ctx context.Context,
+	client platform.Client,
+	rt runtime.Info,
+	projectID string,
+	meta *workflow.ServiceMeta,
+	choice string,
+) (*LaunchSourceState, error) {
+	stage, ok := meta.StageFor(choice)
+	if !ok {
+		stage = meta.FirstStage()
+	}
+	if stage.Hostname == "" {
+		return nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("The pair keyed by the dev pool %q has no stage — launch promotes a pool-keyed part's stage, and a pool is no app runtime", meta.Hostname),
+			"A pool-keyed part launches by its stage; this pair has none to promote.",
+		)
+	}
+	discover, err := ops.Discover(ctx, client, projectID, "", false, false, false)
+	if err != nil {
+		return nil, fmt.Errorf("discover source project: %w", err)
+	}
+	stageSvc := findRuntimeServiceByHostname(discover, stage.Hostname)
+	if stageSvc == nil {
+		return nil, platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("Stage %q of the pair keyed by the dev pool %q is not a runtime in the source project", stage.Hostname, meta.Hostname),
+			"Verify the stage via zerops_discover.",
+		)
+	}
+	origin, err := readPoolPartOrigin(ctx, poolPartOriginDeps{client: client, rt: rt, projectID: projectID}, meta)
+	if err != nil {
+		return nil, platform.NewPlatformError(platform.ErrInvalidParameter, err.Error(), "")
+	}
+	return &LaunchSourceState{
+		ServiceType:     stageSvc.Type,
+		RepoURL:         origin.RepoURL,
+		GitCommitSHA:    origin.CommitSHA,
+		ZeropsYAMLBody:  origin.ZeropsYAMLBody,
+		ManagedServices: collectManagedServices(discover, stage.Hostname),
+	}, nil
 }
 
 // readGitCommitSHA SSH-reads the source repo's HEAD commit SHA. Captured

@@ -299,7 +299,7 @@ func executeExistingProjectMutation(
 	// existing-project window has the same recovery needs — prod-ops,
 	// reset and confirm-production read the staged secret instead of
 	// re-asking for the value. Abort on failure: nothing mutated yet.
-	stageHost := firstResolvedRuntime(resolved).PushHostname
+	stageHost := launchRuntimeHost(firstResolvedRuntime(resolved))
 	if stageErr := stageLaunchToken(ctx, sourceClient, sourceProjectID, stageHost, input.ExistingProdToken); stageErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -319,12 +319,12 @@ func executeExistingProjectMutation(
 	// on the state file from the moment the mutation starts.
 	//
 	// M6 parity: TargetServiceHostname records the SAME hostname the token
-	// was staged on (stageHost = firstResolvedRuntime.PushHostname) — NOT the
+	// was staged on (stageHost = launchRuntimeHost(firstResolvedRuntime)) — NOT the
 	// raw input.TargetService — so launchKeyFromStage reads the staged secret
-	// from the right service (new-project uses primaryRuntime.PushHostname the
-	// same way). They coincide once handleLaunchProduction normalizes a
-	// stage-half input to its dev half, but recording the resolved value is
-	// robust by construction. SourceRepoURL likewise uses the gate-validated
+	// from the right service (new-project uses launchRuntimeHost the same
+	// way: for a part keyed by its dev pool that is its stage, never the
+	// pool). Recording the resolved value is robust by construction.
+	// SourceRepoURL likewise uses the gate-validated
 	// remote for forensic parity.
 	existingRepoURL := source.RepoURL
 	if len(gateResult.Checks) > 0 && gateResult.Checks[0] != nil {

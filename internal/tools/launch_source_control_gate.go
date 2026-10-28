@@ -73,6 +73,13 @@ const (
 	// for a network failure. Hard-block (unverifiable ≠ verified), but
 	// the recovery is retry/diagnose-the-read, never git surgery.
 	gateCheckSourceReadFailed sourceControlGateCheck = "source-read-failed"
+	// gateCheckOriginUnreadable fires for a part whose pair is keyed by its
+	// dev pool when its origin could not be read (docs/spec-workflows.md
+	// §10 P-LP-19): such a pair has no checkout, so checks 3a-5 are one read
+	// of the origin, and its failure names the origin, the ref, git's words
+	// and what to fix — never remote-mismatch or head-not-pushed, which
+	// name a checkout. Hard-block.
+	gateCheckOriginUnreadable sourceControlGateCheck = "origin-unreadable"
 )
 
 // LaunchSourceControlCheck carries the gate's read of one promotable's
@@ -117,6 +124,12 @@ type LaunchSourceControlCheck struct {
 	// the agent sees the transport cause instead of a phantom state
 	// diagnosis.
 	ReadFailure string
+	// Origin is what the gate read of a part whose pair is keyed by its
+	// dev pool (docs/spec-workflows.md §10 P-LP-19): the origin's commit
+	// and zerops.yaml at the tracked ref. The composer builds the bundle
+	// from this read, so the commit a launch carries is the one the gate
+	// read. nil for every other pair.
+	Origin *poolPartSource
 }
 
 // validateLaunchSourceControl runs the launch source-control gate
@@ -183,10 +196,10 @@ func validateLaunchSourceControl(
 	}
 	// A pair keyed by its dev pool has no push-source checkout: every check
 	// below reads one over ssh, and the pool's hostname reaches a random one
-	// of its containers (docs/spec-workflows.md §10, §13 PM-10). Refused by
-	// name before any read.
+	// of its containers (docs/spec-workflows.md §10 P-LP-17, §13 PM-10). Its
+	// source is its origin instead (P-LP-19), read without any container.
 	if meta.DevIsPool() {
-		return nil, []topology.Blocker{poolDevPairLaunchBlocker(meta.Hostname, meta.StageHostnames())}, nil
+		return validatePoolPartSourceControl(ctx, client, sshDeployer, rt, projectID, hostname, meta, skipBuildIntegration)
 	}
 	// LP-5: a mode that can NEVER act as a push source fails with the
 	// honest mode-unsupported blocker (the old git-push-unconfigured
@@ -278,15 +291,34 @@ func validateLaunchSourceControl(
 		}
 	}
 
-	// Check 6 — build-integration EARNED-or-recommended (warn-only;
-	// emission gated on SkipBuildIntegration ack). The declared enum
-	// (none/webhook/actions) records the user's CHOICE; the warn clears
-	// only on an EARNED signal: a recorded VerifiedAt stamp, or a live
-	// earn probe passing this call (actions: workflow file present —
-	// trustworthy only AFTER push-proof checks 4-5 proved clean tree +
-	// pushed HEAD, hence the FailedChecks==0 guard; webhook: platform
-	// integration-status read). A bare declaration no longer suppresses
-	// the warn (the unearned-state bug class).
+	// Check 6 — build-integration EARNED-or-recommended.
+	runBuildIntegrationCheck(ctx, client, sshDeployer, rt, projectID, hostname, skipBuildIntegration, check)
+
+	blockers := buildSourceControlBlockers(check)
+	return check, blockers, nil
+}
+
+// runBuildIntegrationCheck is gate check 6 — build-integration
+// EARNED-or-recommended (warn-only; emission gated on SkipBuildIntegration
+// ack). The declared enum (none/webhook/actions) records the user's CHOICE;
+// the warn clears only on an EARNED signal: a recorded VerifiedAt stamp, or
+// a live earn probe passing this call (actions: workflow file present —
+// trustworthy only AFTER push-proof checks 4-5 proved clean tree + pushed
+// HEAD, hence the FailedChecks==0 guard; webhook: platform
+// integration-status read). A bare declaration no longer suppresses the
+// warn (the unearned-state bug class). For a pair keyed by its dev pool the
+// earn probe reads nothing and says why.
+func runBuildIntegrationCheck(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	projectID string,
+	hostname string,
+	skipBuildIntegration []string,
+	check *LaunchSourceControlCheck,
+) {
+	meta, pushHost := check.Meta, check.PushHostname
 	skipAcked := skipBuildIntegrationListed(skipBuildIntegration, pushHost) ||
 		skipBuildIntegrationListed(skipBuildIntegration, hostname)
 	switch {
@@ -319,9 +351,44 @@ func validateLaunchSourceControl(
 			check.FailedChecks = append(check.FailedChecks, gateCheckBuildIntegrationRecommended)
 		}
 	}
+}
 
-	blockers := buildSourceControlBlockers(check)
-	return check, blockers, nil
+// validatePoolPartSourceControl is the gate for a part whose pair meta is
+// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-19). A
+// pair with no stage has no runtime to promote and is refused before any
+// read. Checks 1-2 — a configured origin recorded — and checks 3a-5 —
+// reads of a checkout the pair does not have — are one read of its origin
+// (readPoolPartOrigin), kept on the check for the composer; check 6 is the
+// shared build-integration check, whose earn probe reads nothing on the
+// pool. Nothing reaches the pool, a lease or the stage over ssh.
+func validatePoolPartSourceControl(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	projectID string,
+	hostname string,
+	meta *workflow.ServiceMeta,
+	skipBuildIntegration []string,
+) (*LaunchSourceControlCheck, []topology.Blocker, error) {
+	if !meta.HasStage() {
+		return nil, []topology.Blocker{poolPartNoStageBlocker(meta.Hostname)}, nil
+	}
+	check := &LaunchSourceControlCheck{
+		ChoiceHostname: hostname,
+		PushHostname:   meta.Hostname,
+		Meta:           meta,
+		MetaRemoteURL:  strings.TrimSpace(meta.RemoteURL),
+	}
+	origin, err := readPoolPartOrigin(ctx, poolPartOriginDeps{client: client, rt: rt, projectID: projectID}, meta)
+	if err != nil {
+		check.ReadFailure = err.Error()
+		check.FailedChecks = append(check.FailedChecks, gateCheckOriginUnreadable)
+	} else {
+		check.Origin = origin
+	}
+	runBuildIntegrationCheck(ctx, client, sshDeployer, rt, projectID, hostname, skipBuildIntegration, check)
+	return check, buildSourceControlBlockers(check), nil
 }
 
 // readLaunchLiveRemote env-aware reads `git remote get-url origin` on
@@ -586,7 +653,7 @@ func buildSourceControlBlockers(check *LaunchSourceControlCheck) []topology.Bloc
 // then build-integration. Agent resolves in this order.
 func gateCheckOrder(ck sourceControlGateCheck) int {
 	switch ck {
-	case gateCheckSourceReadFailed:
+	case gateCheckSourceReadFailed, gateCheckOriginUnreadable:
 		return 0
 	case gateCheckGitPushUnconfigured:
 		return 1
@@ -712,6 +779,16 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			Message: fmt.Sprintf(
 				"Could not VERIFY source control on %q — the live read did not yield a usable result (%s). This is an UNVERIFIED read, NOT a confirmed remote mismatch: do not assume the recorded remote %q drifted. If the source is unreachable, fix that (SSH/VPN reachability in container mode, repository accessibility in local mode); if no `origin` remote is wired on the source, re-run git-push-setup for service=%q. Then re-call launch — the gate re-reads on every call.",
 				check.PushHostname, check.ReadFailure, topology.RedactRepoURLCredentials(check.MetaRemoteURL), check.PushHostname,
+			),
+		}
+	case gateCheckOriginUnreadable:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("origin-unreadable-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"Launch reads %q from its origin — its pair is keyed by the dev pool %q, which holds no checkout of its own — and the origin could not be read: %s Nothing was changed.",
+				check.ChoiceHostname, check.PushHostname, check.ReadFailure,
 			),
 		}
 	case gateCheckHeadNotPushed:

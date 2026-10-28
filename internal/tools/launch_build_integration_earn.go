@@ -57,8 +57,8 @@ var buildIntegrationEarnProbe = readBuildIntegrationEarn
 // never an error.
 func readBuildIntegrationEarn(ctx context.Context, deps earnProbeDeps, pushHost string, meta *workflow.ServiceMeta) (bool, string) {
 	// A pair keyed by its dev pool has no checkout to stat the workflow file
-	// in, and launch refuses it before any read (docs/spec-workflows.md §10,
-	// §13 PM-10): nothing is read here either.
+	// in, and launch reads its origin rather than the pool
+	// (docs/spec-workflows.md §10 P-LP-17, §13 PM-10): nothing is read here.
 	if meta.DevIsPool() {
 		return false, "not verifiable: the pair is keyed by its dev pool " + meta.Hostname + ", which holds no checkout of its own"
 	}

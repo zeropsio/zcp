@@ -235,10 +235,7 @@ func handleLaunchProduction(
 	// the publish-side gate after the key is spent.
 	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
 	// A part whose pair is keyed by its dev pool has no push source to read:
-	// refused by name before any read of the source (§10, §13 PM-10).
-	if blockers := poolDevPairLaunchBlockers(stateDir, readSideRuntimes); len(blockers) > 0 {
-		return launchSourceControlRequiredResponse(input, sourceContext, blockers), nil, nil
-	}
+	// the gate reads its origin instead (§10 P-LP-17, P-LP-19).
 	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
 		ctx, client, sshDeployer, rt, stateDir, projectID,
 		readSideRuntimes, input.SkipBuildIntegration,
@@ -1004,8 +1001,11 @@ func executeLaunchMutation(
 	// re-supplied. On the delegated path (mintedName != "") the
 	// delegation was ALREADY consumed by the mint above — the message
 	// carries the D-7 consumed-delegation narrative instead (see
-	// launchTokenStageFailedMessage).
-	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, primaryRuntime.PushHostname, launchToken); stageErr != nil {
+	// launchTokenStageFailedMessage). The token is staged on the runtime the
+	// launch promotes — for a part keyed by its dev pool its stage, never the
+	// pool, whose every container reads the pool's env (§10 P-LP-17).
+	stagedOn := launchRuntimeHost(primaryRuntime)
+	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, launchToken); stageErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",
@@ -1016,11 +1016,11 @@ func executeLaunchMutation(
 		})
 		if mintedName != "" {
 			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"staging the delegated token was not confirmed", mintedName, primaryRuntime.PushHostname)
+				"staging the delegated token was not confirmed", mintedName, stagedOn)
 		}
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
-			launchTokenStageFailedMessage(stageErr, primaryRuntime.PushHostname, mintedName)), nil, nil
+			launchTokenStageFailedMessage(stageErr, stagedOn, mintedName)), nil, nil
 	}
 
 	// Persist initial state pre-mutation — if CreateAndImport panics or
@@ -1038,7 +1038,7 @@ func executeLaunchMutation(
 		SourceProjectID:       sourceProjectID,
 		SourceRepoURL:         primaryRepoURL,
 		TargetProjectName:     input.ProductionProjectName,
-		TargetServiceHostname: primaryRuntime.PushHostname,
+		TargetServiceHostname: stagedOn,
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
@@ -1379,7 +1379,15 @@ func readAndValidateSourceState(
 		)
 	}
 
-	source, err := readSourceState(ctx, client, sshDeployer, rt, sourceProjectID, input.TargetService, "")
+	// A part whose pair is keyed by its dev pool is read from its origin and
+	// its stage, never the pool (§10 P-LP-17, P-LP-19).
+	var source *LaunchSourceState
+	var err error
+	if meta, _ := workflow.FindServiceMeta(stateDir, input.TargetService); meta.DevIsPool() {
+		source, err = readPoolPartSourceState(ctx, client, rt, sourceProjectID, meta, input.TargetService)
+	} else {
+		source, err = readSourceState(ctx, client, sshDeployer, rt, sourceProjectID, input.TargetService, "")
+	}
 	if err != nil {
 		auditFail("read source state: " + err.Error())
 		// transientReadFailure=true: a transport/read failure (SSH outage,

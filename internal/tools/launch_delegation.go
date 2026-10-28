@@ -246,7 +246,7 @@ func resolveDelegatedLaunchToken(
 	// before failing later (create/poll/pipeline). Resolving the staged
 	// value first means a retry costs ZERO delegation list/mint calls
 	// — the delegation was already spent by the earlier attempt.
-	stageProbe := &launchState{TargetServiceHostname: primaryRuntime.PushHostname}
+	stageProbe := &launchState{TargetServiceHostname: launchRuntimeHost(primaryRuntime)}
 	staged, stageErr := launchKeyFromStage(ctx, client, sourceProjectID, stageProbe)
 	if stageErr != nil {
 		auditReject("delegated retry: read staged token: " + stageErr.Error())

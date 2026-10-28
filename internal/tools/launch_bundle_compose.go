@@ -29,6 +29,12 @@ import (
 // LaunchSourceControlCheck.MetaRemoteURL — never live SSH (P-LP-10
 // invariant; gate validates meta vs live alignment once at the
 // boundary, composer trusts the validated value).
+//
+// A runtime whose pair is keyed by its dev pool (docs/spec-workflows.md
+// §10 P-LP-17, P-LP-19) has no checkout to read: its zerops.yaml and commit
+// are the origin read its gate check carries, and its type, user env and
+// scale are its stage's (launchRuntimeHost) — nothing is read in a
+// container.
 func composeLaunchBundleInputs(
 	ctx context.Context,
 	client platform.Client,
@@ -50,14 +56,6 @@ func composeLaunchBundleInputs(
 	if len(runtimes) != len(gateChecks) {
 		return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtimes (%d) and gateChecks (%d) must align 1:1", len(runtimes), len(gateChecks))
 	}
-	// A runtime whose pair is keyed by its dev pool has no checkout to read
-	// (docs/spec-workflows.md §10, §13 PM-10): the flow refuses it first.
-	for _, r := range runtimes {
-		if r.DevIsPool {
-			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q is the dev pool its pair is keyed by — no checkout to read; launch refuses it before compose", r.PushHostname)
-		}
-	}
-
 	// Discover once — shared across all runtimes for managed-dep
 	// aggregation and per-runtime type lookup.
 	discover, err := ops.Discover(ctx, client, sourceProjectID, "", false, false, false)
@@ -77,11 +75,12 @@ func composeLaunchBundleInputs(
 		if check == nil || check.MetaRemoteURL == "" {
 			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q has empty gate-validated RepoURL — gate must run before compose", r.PushHostname)
 		}
-		runtimeSvc := findRuntimeServiceByHostname(discover, r.PushHostname)
+		runtimeHost := launchRuntimeHost(r)
+		runtimeSvc := findRuntimeServiceByHostname(discover, runtimeHost)
 		if runtimeSvc == nil {
-			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q not found in source-project discover output", r.PushHostname)
+			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q not found in source-project discover output", runtimeHost)
 		}
-		yamlBody, sha, readErr := readLaunchRuntimeSource(ctx, sshDeployer, rt, r.PushHostname)
+		yamlBody, sha, readErr := composeRuntimeSource(ctx, sshDeployer, rt, r, check)
 		if readErr != nil {
 			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("read source state for %q: %w", r.PushHostname, readErr)
 		}
@@ -104,7 +103,10 @@ func composeLaunchBundleInputs(
 		// hostname the user knows (prod or push) — normalized here.
 		consent, hasConsent := runtimeScaling[r.ProdHostname]
 		if !hasConsent {
-			consent = runtimeScaling[r.PushHostname]
+			consent, hasConsent = runtimeScaling[r.PushHostname]
+		}
+		if !hasConsent {
+			consent = runtimeScaling[runtimeHost]
 		}
 		bundleRuntimes = append(bundleRuntimes, bundle.LaunchRuntimeInput{
 			ProdHostname:    r.ProdHostname,
@@ -119,7 +121,7 @@ func composeLaunchBundleInputs(
 			MinContainers:   consent.MinContainers,
 			MaxContainers:   consent.MaxContainers,
 		})
-		excludeHosts = append(excludeHosts, r.PushHostname)
+		excludeHosts = append(excludeHosts, r.PushHostname, runtimeHost)
 	}
 
 	managed := collectManagedServicesExcluding(discover, excludeHosts)
@@ -240,6 +242,20 @@ func poolAndSandboxEntries(discover *ops.DiscoverResult) []ops.ManagedServiceEnt
 		}
 	}
 	return out
+}
+
+// composeRuntimeSource is the zerops.yaml and commit a runtime is built
+// from: for a pair keyed by its dev pool the origin read its gate check
+// carries (P-LP-19) — the commit launch carries is the one the gate read —
+// else the push source's checkout (readLaunchRuntimeSource).
+func composeRuntimeSource(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, r resolvedLaunchRuntime, check *LaunchSourceControlCheck) (string, string, error) {
+	if !r.DevIsPool {
+		return readLaunchRuntimeSource(ctx, sshDeployer, rt, r.PushHostname)
+	}
+	if check.Origin == nil {
+		return "", "", fmt.Errorf("the pair is keyed by the dev pool %q and its gate check carries no read of its origin — the gate must read the origin before compose", r.PushHostname)
+	}
+	return check.Origin.ZeropsYAMLBody, check.Origin.CommitSHA, nil
 }
 
 // readLaunchRuntimeSource is the env-aware per-runtime source read:

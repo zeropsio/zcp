@@ -35,9 +35,17 @@ type resolvedLaunchRuntime struct {
 	SetupProvenance string
 	// DevIsPool marks a runtime whose pair is keyed by its dev pool
 	// (ServiceMeta.DevIsPool): PushHostname then names the pool, which has
-	// no checkout to read — the flow refuses it before any read
-	// (docs/spec-workflows.md §10, §13 PM-10).
+	// no checkout to read — the source is the pair's origin instead
+	// (docs/spec-workflows.md §10 P-LP-17, P-LP-19; §13 PM-10).
 	DevIsPool bool
+	// RuntimeHostname is the live runtime the production runtime is
+	// promoted from — its type, user env and scale — and the service the
+	// launch token is staged on: PushHostname, or for a pair keyed by its
+	// dev pool the stage the call named, else the pair's first. Never the
+	// pool, whose every container — someone's lease among them — reads the
+	// pool's service env. "" for a pool-keyed pair with no stage, which the
+	// gate refuses before any read.
+	RuntimeHostname string
 }
 
 // promotableHostnameSuffixes is the canonical list of mode suffixes
@@ -127,9 +135,17 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 				pushHost = meta.Hostname
 			}
 		}
+		runtimeHost := pushHost
+		if meta.DevIsPool() {
+			stage, ok := meta.StageFor(p.Hostname)
+			if !ok {
+				stage = meta.FirstStage()
+			}
+			runtimeHost = stage.Hostname
+		}
 		prodHost := strings.TrimSpace(p.ProdHostname)
 		if prodHost == "" {
-			prodHost = derivePromotedProdHostname(pushHost)
+			prodHost = derivePromotedProdHostname(runtimeHost)
 		}
 		if prodHost == "" {
 			prodHost = pushHost
@@ -142,6 +158,7 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 			SetupName:       setupName,
 			SetupProvenance: setupProvenance,
 			DevIsPool:       meta.DevIsPool(),
+			RuntimeHostname: runtimeHost,
 		})
 	}
 	return out
@@ -197,6 +214,17 @@ func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, me
 		}
 	}
 	return setupNameProd, setupProvenanceDefault
+}
+
+// launchRuntimeHost is the live runtime r promotes and the service its
+// launch token is staged on and read back from (P-LP-14): RuntimeHostname —
+// the push source for every pair but one keyed by its dev pool, whose stage
+// it is (docs/spec-workflows.md §10 P-LP-17) — else PushHostname.
+func launchRuntimeHost(r resolvedLaunchRuntime) string {
+	if r.RuntimeHostname != "" {
+		return r.RuntimeHostname
+	}
+	return r.PushHostname
 }
 
 // firstResolvedRuntime returns the first entry, used for legacy call

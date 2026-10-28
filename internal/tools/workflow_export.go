@@ -118,7 +118,7 @@ func handleExport(
 	// PS-3: a pool or Box is not the app — refuse before any SSH read (a read
 	// by a pool's hostname reaches a random one of its containers).
 	if err := refuseNonRuntimeKind(svc.Hostname, svc.Type, "export"); err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
+		return convertError(exportPoolKeyingRefusal(stateDir, svc, err), WithRecoveryStatus()), nil, nil
 	}
 	if svc.IsInfrastructure {
 		return convertError(platform.NewPlatformError(
@@ -152,47 +152,32 @@ func handleExport(
 		sourceMode = meta.Mode
 	}
 
-	if sshDeployer == nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"SSH access unavailable — export Phase A reads /var/www/zerops.yaml + git remote from the chosen container",
-			"Run zcp from a Zerops container (recommended) or configure local SSH credentials before invoking export."), WithRecoveryStatus()), nil, nil
+	// A part whose pair is keyed by its dev pool has no checkout: it is read
+	// from its origin, never a container (§9 E10); every other runtime from
+	// its own checkout over ssh.
+	var src exportSource
+	var early *mcp.CallToolResult
+	if meta.DevIsPool() {
+		src, early = exportPoolPartSource(ctx, client, rt, projectID, meta, input.TargetService)
+	} else {
+		src, early = exportCheckoutSource(ctx, sshDeployer, stateDir, meta, input.TargetService, envOpts, corpus)
 	}
+	if early != nil {
+		return early, nil, nil
+	}
+	zeropsYAMLBody, repoURL, remoteWarnings := src.ZeropsYAMLBody, src.RepoURL, src.Warnings
 
-	zeropsYAMLBody, err := readZeropsYAMLBody(ctx, sshDeployer, input.TargetService)
-	if err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
+	setupName := ""
+	if src.Origin != nil {
+		// The stage's recorded setup, when the origin's zerops.yaml has it.
+		if stage, ok := meta.StageFor(input.TargetService); ok && hasSetupNamed(zeropsYAMLBody, stage.SetupName) {
+			setupName = stage.SetupName
+		}
 	}
-	if strings.TrimSpace(zeropsYAMLBody) == "" {
-		return scaffoldChainResponse(ctx, input.TargetService, envOpts, corpus), nil, nil
-	}
-
-	repoURL, err := readGitRemoteURL(ctx, sshDeployer, input.TargetService)
-	if err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
-	}
-	if strings.TrimSpace(repoURL) == "" {
-		return gitPushSetupChainResponse(ctx, input.TargetService, nil, "no git remote configured in /var/www", envOpts, corpus), nil, nil
-	}
-
-	// Phase 6 — refresh ServiceMeta.RemoteURL cache from the live remote.
-	// The live value always wins for the bundle (handler passed it as
-	// repoURL above); the cache is just a hint for unrelated tooling
-	// that doesn't SSH-read on every invocation. When live differs from
-	// cache, surface a warning so the agent knows the cache was stale.
-	remoteWarnings, refreshErr := refreshRemoteURLCache(stateDir, meta, repoURL)
-	if refreshErr != nil {
-		// Cache write failures are non-fatal — the bundle is still
-		// publish-ready against the live remote, agents just lose the
-		// cache freshness benefit. Surface the failure as a warning.
-		remoteWarnings = append(remoteWarnings, fmt.Sprintf(
-			"refresh ServiceMeta.RemoteURL cache for %q: %v (non-fatal — bundle uses live remote regardless)",
-			input.TargetService, refreshErr))
-	}
-
-	setupName, err := pickSetupName(zeropsYAMLBody, input.TargetService, sourceMode)
-	if err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
+	if setupName == "" {
+		if setupName, err = pickSetupName(zeropsYAMLBody, input.TargetService, sourceMode); err != nil {
+			return convertError(err, WithRecoveryStatus()), nil, nil
+		}
 	}
 
 	projectEnvs, err := readProjectEnvs(ctx, client, projectID)
@@ -248,6 +233,9 @@ func handleExport(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	bundle.Warnings = append(bundle.Warnings, remoteWarnings...)
+	if src.Origin != nil {
+		bundle.ZeropsYAMLSource = exportZeropsYAMLSourceOrigin
+	}
 
 	if needsClassifyPrompt(input.EnvClassifications, projectEnvs) {
 		return classifyPromptResponse(ctx, bundle, projectEnvs, classifications, envOpts, corpus), nil, nil
@@ -265,6 +253,12 @@ func handleExport(
 		return validationFailedResponse(ctx, bundle, envOpts, corpus), nil, nil
 	}
 
+	// A pool-keyed part publishes through a lease of its pool, never the
+	// stage's ssh writes and git-push publish-ready names (§9 E10).
+	if src.Origin != nil {
+		return poolPartComposeReadyResponse(ctx, bundle, src.Origin, meta, envOpts, corpus), nil, nil
+	}
+
 	if meta.GitPushState != topology.GitPushConfigured {
 		// Compose-ready (R5/R7): the validated bundle IS the deliverable —
 		// hand it back now rather than blocking behind git-push setup. The
@@ -276,6 +270,170 @@ func handleExport(
 	}
 
 	return publishGuidanceResponse(ctx, bundle, envOpts, corpus), nil, nil
+}
+
+// exportZeropsYAMLSourceOrigin is the bundle's zeropsYamlSource for a
+// zerops.yaml read from a pool-keyed part's origin (§9 E10).
+const exportZeropsYAMLSourceOrigin = "origin"
+
+// exportSource is what export packages a runtime from: the zerops.yaml, the
+// repository its buildFromGit names and the read's warnings; Origin is the
+// origin read of a part whose pair is keyed by its dev pool (§9 E10), nil
+// for a runtime read from its own checkout.
+type exportSource struct {
+	ZeropsYAMLBody string
+	RepoURL        string
+	Warnings       []string
+	Origin         *poolPartSource
+}
+
+// exportCheckoutSource reads the runtime target from its own checkout over
+// ssh: its zerops.yaml and live origin, refreshing the meta's RemoteURL
+// cache from the live origin (E5). The response is set when export answers
+// before a bundle: no ssh, a scaffold or a git-push setup to do first.
+func exportCheckoutSource(
+	ctx context.Context,
+	sshDeployer ops.SSHDeployer,
+	stateDir string,
+	meta *workflow.ServiceMeta,
+	target string,
+	envOpts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) (exportSource, *mcp.CallToolResult) {
+	if sshDeployer == nil {
+		return exportSource{}, convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"SSH access unavailable — export Phase A reads /var/www/zerops.yaml + git remote from the chosen container",
+			"Run zcp from a Zerops container (recommended) or configure local SSH credentials before invoking export."), WithRecoveryStatus())
+	}
+
+	zeropsYAMLBody, err := readZeropsYAMLBody(ctx, sshDeployer, target)
+	if err != nil {
+		return exportSource{}, convertError(err, WithRecoveryStatus())
+	}
+	if strings.TrimSpace(zeropsYAMLBody) == "" {
+		return exportSource{}, scaffoldChainResponse(ctx, target, envOpts, corpus)
+	}
+
+	repoURL, err := readGitRemoteURL(ctx, sshDeployer, target)
+	if err != nil {
+		return exportSource{}, convertError(err, WithRecoveryStatus())
+	}
+	if strings.TrimSpace(repoURL) == "" {
+		return exportSource{}, gitPushSetupChainResponse(ctx, target, nil, "no git remote configured in /var/www", envOpts, corpus)
+	}
+
+	// Phase 6 — refresh ServiceMeta.RemoteURL cache from the live remote.
+	// The live value always wins for the bundle (handler passed it as
+	// repoURL above); the cache is just a hint for unrelated tooling
+	// that doesn't SSH-read on every invocation. When live differs from
+	// cache, surface a warning so the agent knows the cache was stale.
+	remoteWarnings, refreshErr := refreshRemoteURLCache(stateDir, meta, repoURL)
+	if refreshErr != nil {
+		// Cache write failures are non-fatal — the bundle is still
+		// publish-ready against the live remote, agents just lose the
+		// cache freshness benefit. Surface the failure as a warning.
+		remoteWarnings = append(remoteWarnings, fmt.Sprintf(
+			"refresh ServiceMeta.RemoteURL cache for %q: %v (non-fatal — bundle uses live remote regardless)",
+			target, refreshErr))
+	}
+	return exportSource{ZeropsYAMLBody: zeropsYAMLBody, RepoURL: repoURL, Warnings: remoteWarnings}, nil
+}
+
+// exportPoolPartSource reads target, the stage of a pair keyed by its dev
+// pool, from the pair's origin (§9 E10, §10 P-LP-19) — never the pool, a
+// lease or the stage. An origin it cannot read, or whose ref holds no
+// zerops.yaml, is refused naming what to fix; E5's cache refresh does not
+// apply: the recorded origin is what the pool's leases clone.
+func exportPoolPartSource(
+	ctx context.Context,
+	client platform.Client,
+	rt runtime.Info,
+	projectID string,
+	meta *workflow.ServiceMeta,
+	target string,
+) (exportSource, *mcp.CallToolResult) {
+	origin, err := readPoolPartOrigin(ctx, poolPartOriginDeps{client: client, rt: rt, projectID: projectID}, meta)
+	if err != nil {
+		return exportSource{}, convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Export reads %q from its origin and the origin could not be read: %v", target, err),
+			"Fix what the message names, then re-call export."), WithRecoveryStatus())
+	}
+	if strings.TrimSpace(origin.ZeropsYAMLBody) == "" {
+		return exportSource{}, convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Export reads %q from its origin, and %s at %s (commit %s) holds no zerops.yaml — the pair is keyed by the dev pool %q, which holds no checkout of its own to scaffold one in",
+				target, topology.RedactRepoURLCredentials(origin.RepoURL), origin.Ref, origin.CommitSHA, meta.Hostname),
+			fmt.Sprintf("Commit a zerops.yaml with the stage's setup in a lease of the pool (zerops_lease action=\"acquire\" pool=%q), push it so it reaches %s, then re-call export.", meta.Hostname, origin.Ref)), WithRecoveryStatus())
+	}
+	return exportSource{ZeropsYAMLBody: origin.ZeropsYAMLBody, RepoURL: origin.RepoURL, Origin: origin}, nil
+}
+
+// exportPoolKeyingRefusal is the PS-3 refusal of a pool named as the export
+// target; when the pool keys a pair it names the stage to export instead
+// (§9 E10). Every other refusal is answered as it is.
+func exportPoolKeyingRefusal(stateDir string, svc ops.ServiceInfo, refusal error) error {
+	meta, _ := workflow.FindServiceMeta(stateDir, svc.Hostname)
+	if !meta.DevIsPool() || meta.Hostname != svc.Hostname || !meta.HasStage() {
+		return refusal
+	}
+	stage := meta.FirstStage().Hostname
+	return platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("Service %q is a Swarm pool (%s) — the dev pool the pair of stage %q is keyed by, not the app's runtime, so export cannot use it as the source (reading its files by hostname would reach a random container)", svc.Hostname, svc.Type, stage),
+		fmt.Sprintf("Export the part by its stage: re-call export with targetService=%q — it is read from the pair's origin, never the pool.", stage))
+}
+
+// poolPartComposeReadyResponse is export's terminal for the stage of a pair
+// keyed by its dev pool (§9 E10): the bundle is the deliverable, composed
+// from the origin read source names, and it reaches the repository through a
+// lease of the pool — the pair has no checkout for publish-ready's ssh writes
+// and git-push. The zerops.yaml is already the origin's; only the import
+// file is new.
+func poolPartComposeReadyResponse(
+	ctx context.Context,
+	bundle *ops.ExportBundle,
+	source *poolPartSource,
+	meta *workflow.ServiceMeta,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	const importFile = "zerops-project-import.yaml"
+	guidance, err := renderExportStatusGuidance(ctx, bundle.TargetHostname, topology.ExportStatusComposeReady, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
+	pool := meta.Hostname
+	origin := topology.RedactRepoURLCredentials(source.RepoURL)
+	return jsonResult(map[string]any{
+		"status":        "compose-ready",
+		"phase":         "export-active",
+		"targetService": bundle.TargetHostname,
+		"bundle": map[string]any{
+			"importYaml":       bundle.ImportYAML,
+			"zeropsYaml":       bundle.ZeropsYAML,
+			"zeropsYamlSource": bundle.ZeropsYAMLSource,
+			"setupName":        bundle.SetupName,
+			"repoUrl":          bundle.RepoURL,
+			"warnings":         bundle.Warnings,
+			"importFile":       importFile,
+			"zeropsFile":       "zerops.yaml",
+		},
+		"source": map[string]any{
+			"origin":  origin,
+			"ref":     source.Ref,
+			"commit":  source.CommitSHA,
+			"devPool": pool,
+		},
+		"guidance": guidance,
+		"nextSteps": []string{
+			fmt.Sprintf("zerops_lease action=\"acquire\" pool=%q branch=\"<branch>\"", pool),
+			fmt.Sprintf("ssh <lease alias> 'cat > /var/www/%s' <<'EOF'\n%s\nEOF", importFile, bundle.ImportYAML),
+			fmt.Sprintf("ssh <lease alias> 'cd /var/www && git add %s && git commit -m \"export bundle\"'", importFile),
+			fmt.Sprintf("Push the branch from the lease; it reaches %s like any change of the part.", source.Ref),
+		},
+	})
 }
 
 // renderExportStatusGuidance builds the per-status export envelope and

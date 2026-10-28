@@ -9,6 +9,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -391,8 +393,11 @@ func TestLaunchProduction_PoolKeyedPart_LaunchesFromOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read the launch's baseline: %v", err)
 			}
-			if state.SourceSnapshot.GitCommitSHA != heads["main"] {
-				t.Errorf("baseline commit = %q, want the origin's main %q", state.SourceSnapshot.GitCommitSHA, heads["main"])
+			// The snapshot folds each promoted runtime's commit as
+			// "<prod hostname>:<commit>" (bundle.computeSourceSnapshotMulti).
+			sum := sha256.Sum256([]byte("app:" + heads["main"]))
+			if want := hex.EncodeToString(sum[:]); state.SourceSnapshot.GitCommitSHA != want {
+				t.Errorf("baseline commit digest = %q, want the digest of app at the origin's main %q", state.SourceSnapshot.GitCommitSHA, heads["main"])
 			}
 			if len(ssh.hosts) != 0 {
 				t.Errorf("launch reached %v over ssh", ssh.hosts)
