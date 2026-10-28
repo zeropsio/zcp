@@ -13,6 +13,12 @@ import (
 
 const updateLoopback = "http://127.0.0.1:3773/api/mate/update/"
 
+// UpdateStartupBudget bounds candidate, rollback and recovery readiness after a
+// restart request, whether init or the update worker performs the switch.
+// It covers the observed ~44 s Eli 0.16.12 recovery start with 16 s margin;
+// it cannot guarantee readiness and does not replace attributed exit observation.
+const UpdateStartupBudget = 60 * time.Second
+
 // UpdateReadiness is the loopback updater API payload.
 type UpdateReadiness struct {
 	Protocol int    `json:"protocol"`

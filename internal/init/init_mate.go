@@ -24,8 +24,8 @@ var mateEnsureInstalled = mate.EnsureInstalled
 // need no loopback Mate.
 var mateWaitReady = mate.WaitReady
 
-// mateReadyWait bounds how long a boot waits for the release it started to serve.
-const mateReadyWait = 30 * time.Second
+// mateBootReadyWait bounds cold observation without rolling back an unproved boot.
+const mateBootReadyWait = 30 * time.Second
 
 // defaultMateLockWait bounds init's wait on the install lock the unit's own
 // start may hold (mate.LockInstall): longer than an install's own bounds, so
@@ -273,7 +273,7 @@ func switchRunningMate(candidate mate.Manifest, release func()) error {
 		Restart: func() error {
 			release()
 			readiness = mate.ObserveRestart(context.Background())
-			deadline = time.Now().Add(mateReadyWait)
+			deadline = time.Now().Add(mate.UpdateStartupBudget)
 			if err := commandRunner("sudo", "systemctl", "restart", "--no-block", "zerops@"+mate.UnitName+".service"); err != nil {
 				return fmt.Errorf("request Mate restart: %w", err)
 			}
@@ -296,7 +296,7 @@ func commitBootLastGood() {
 	if good, err := mate.LastGoodVersion(); err == nil && good == installed {
 		return
 	}
-	if err := mateWaitReady(installed, "", time.Now().Add(mateReadyWait)); err != nil {
+	if err := mateWaitReady(installed, "", time.Now().Add(mateBootReadyWait)); err != nil {
 		fmt.Fprintf(os.Stderr, "    ! mate %s not ready yet, last-good stays where it was: %v\n", installed, err)
 		return
 	}

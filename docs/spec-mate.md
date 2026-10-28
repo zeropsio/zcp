@@ -528,6 +528,8 @@ Decision: A Mate whose process exits during an update is rolled back without wai
 Decision: A Mate whose process is still running is waited for until it is ready or the deadline passes.
 Decision: Stopping the old Mate during an update never counts as the new Mate's failure.
 Decision: An update stops waiting the moment the Mate's process exits.
+Decision: A running Mate updated by init receives the same candidate readiness window as an update worker.
+Decision: A cold boot that has not proved ready never advances last-good and is not rolled back merely because its observation window ended.
 
 Candidate, rollback and recovery share the readiness wait. Before each restart it records the
 unit's invocation and process-start identity. Only a changed nonempty invocation ID or a
@@ -545,11 +547,12 @@ requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` pat
 admission fenced. Within 60 seconds of the restart request, readiness must prove protocol 1,
 the exact version, a different nonempty boot id, engine/database readiness, and C-4. POST
 `/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
-Switch and recovery share this startup budget: Eli's recorded recovery took about 44 seconds
+Live init, the update worker and recovery share this startup budget at the readiness owner:
+Eli's recorded recovery took about 44 seconds
 to ready, while seven KRLS tx - Lior starts took 3.071–5.977 seconds. The 16-second margin
 above that observed slow start does not guarantee readiness.
-`zcp init` at boot is the other route: after it settles an installed release it waits for the same
-readiness proof (without holding the install lock) and only then moves `last-good`; a Mate not ready
+`zcp init` at cold boot is the other route: after it settles an installed release it observes the same
+readiness proof for 30 seconds (without holding the install lock) and only then moves `last-good`; a Mate not ready
 in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
 `mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`.
 
