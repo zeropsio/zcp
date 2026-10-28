@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -68,6 +70,9 @@ func (e *poolPartOriginError) Error() string {
 func readPoolPartOrigin(ctx context.Context, deps poolPartOriginDeps, meta *workflow.ServiceMeta) (*poolPartSource, error) {
 	ref := launchPushProofRef(meta)
 	remote := strings.TrimSpace(meta.RemoteURL)
+	if remote != "" && hqPairWired(meta) && ops.IsHQRemote(remote, hqAddress(deps.rt)) {
+		return readPoolPartHQOrigin(ctx, deps.rt, meta, remote)
+	}
 	if remote == "" || meta.GitPushState != topology.GitPushConfigured {
 		return nil, &poolPartOriginError{
 			pool: meta.Hostname, origin: remote, ref: ref,
@@ -87,6 +92,60 @@ func readPoolPartOrigin(ctx context.Context, deps poolPartOriginDeps, meta *work
 		return nil, e
 	}
 	return &poolPartSource{RepoURL: remote, Ref: tip.Ref, CommitSHA: tip.CommitSHA, ZeropsYAMLBody: tip.ZeropsYAML}, nil
+}
+
+// readPoolPartHQOrigin reads the pair's repository in this container's HQ on
+// main — what a Mate's stage tracks (§8 DP-8) — through the Mate credential,
+// which hq.Scratch hands git in its environment, scoped to HQ's address. One
+// fetch of main's tip answers the commit and the zerops.yaml it holds.
+func readPoolPartHQOrigin(ctx context.Context, rt runtime.Info, meta *workflow.ServiceMeta, remote string) (*poolPartSource, error) {
+	e := &poolPartOriginError{pool: meta.Hostname, origin: remote, ref: hqBase}
+	hqc, err := hq.Open(noHTTPDoer{}, hqIdentity(rt))
+	if err != nil {
+		e.said = fmt.Sprintf("this container presents no HQ identity to read its repository in HQ (%v)", err)
+		e.fix = "Call again once this container is linked to HQ."
+		return nil, e
+	}
+	scratch, err := hqc.OpenScratch(ctx, meta.HQ.AppID, meta.HQ.Repo)
+	if err != nil {
+		e.said = fmt.Sprintf("its repository in HQ could not be opened (%v)", err)
+		e.fix = "Call again once this container can address its repositories in HQ."
+		return nil, e
+	}
+	defer scratch.Close()
+	head, found, err := scratch.FetchTip(ctx, hqBase)
+	if err != nil {
+		e.said = fmt.Sprintf("HQ did not give its %s (%v)", hqBase, err)
+		e.fix = "Call again once HQ answers."
+		return nil, e
+	}
+	if !found {
+		e.said = fmt.Sprintf("its repository in HQ holds no %s yet", hqBase)
+		e.fix = fmt.Sprintf("The part's work reaches %s in HQ through a change the person merges; call again once one has.", hqBase)
+		return nil, e
+	}
+	body := ""
+	for _, name := range []string{"zerops.yaml", "zerops.yml"} {
+		file, ok, err := scratch.File(ctx, head, name)
+		if err != nil {
+			e.said = fmt.Sprintf("HQ's %s at %s could not be read (%v)", name, head, err)
+			e.fix = "Call again once HQ answers."
+			return nil, e
+		}
+		if ok {
+			body = strings.TrimRight(file, "\n")
+			break
+		}
+	}
+	return &poolPartSource{RepoURL: remote, Ref: hqBase, CommitSHA: head, ZeropsYAMLBody: body}, nil
+}
+
+// noHTTPDoer is the HTTP client of an HQ client that makes no API call: a
+// scratch talks git to HQ, never HTTP through it, so any call is refused.
+type noHTTPDoer struct{}
+
+func (noHTTPDoer) Do(*http.Request) (*http.Response, error) {
+	return nil, errors.New("the origin read of a pool-keyed part makes no HQ API call")
 }
 
 // poolPartRefWords names ref for a person: the default branch for HEAD.
