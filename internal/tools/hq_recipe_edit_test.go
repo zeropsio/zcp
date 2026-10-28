@@ -6,7 +6,7 @@ package tools
 
 import (
 	"encoding/json"
-	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,13 +78,27 @@ func leanProduction(body string) string {
 func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlone(t *testing.T) {
 	t.Parallel()
 	const title = "Lean production at s.flip.studio"
-	for _, perBranch := range []bool{true, false} {
-		t.Run(fmt.Sprintf("HQ keeps an open change per branch: %v", perBranch), func(t *testing.T) {
+	tests := []struct {
+		name string
+		// perBranch: HQ keeps an open change per branch; unnamed: HQ from
+		// before changes were bound to the branch they name binds its own.
+		perBranch, unnamed bool
+		wantBranch         string
+	}{
+		{name: "HQ keeping an open change per branch", perBranch: true, wantBranch: "recipe/lean-production"},
+		{name: "HQ keeping one open change per repository", wantBranch: "recipe/lean-production"},
+		{name: "HQ binding a change to a branch of its own", unnamed: true, wantBranch: recipeBranch(2)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			lab := newScalingLab(t)
-			if perBranch {
+			if tt.perBranch {
 				lab.hq.keepOpenPerBranch()
 			}
+			lab.hq.mu.Lock()
+			lab.hq.unnamedBranches = tt.unnamed
+			lab.hq.mu.Unlock()
 			client := scalingRecipeClient(1, 0.25)
 			if !strings.Contains(lab.hq.recipeFiles("main")[recipeProdTier], "cpuMode: DEDICATED") {
 				t.Fatalf("the merged Small Production carries no dedicated CPU:\n%s", lab.hq.recipeFiles("main")[recipeProdTier])
@@ -99,7 +113,7 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 			if change == nil || change.Title != title || change.State != hq.ChangeOpen {
 				t.Fatalf("change #2 = %+v, want open and titled %q", change, title)
 			}
-			wantBranch := map[bool]string{true: "recipe/lean-production", false: recipeBranch(2)}[perBranch]
+			wantBranch := tt.wantBranch
 			if answer.Branch != wantBranch || !strings.Contains(answer.Message, wantBranch) {
 				t.Errorf("branch = %q, message %q, want the change's branch %q named", answer.Branch, answer.Message, wantBranch)
 			}
@@ -136,6 +150,26 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 			}
 			if got := lab.hq.recipeFiles("main")[recipeProdTier]; got != landed {
 				t.Errorf("main's Small Production changed after the correction landed:\n%s", got)
+			}
+			// The project changes shape: zcp proposes its own tiers anew, and
+			// never the one the Mate corrected.
+			grown := recipeReconcileClient(
+				platform.ServiceStack{ID: "svc-search", Name: "search", Status: "ACTIVE",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "meilisearch:single@1.44", ServiceStackTypeCategoryName: "USER"},
+					CustomAutoscaling:    &platform.CustomAutoscaling{CPUMode: "SHARED", MinCPU: 1, MaxCPU: 8, MinRAM: 1, MaxRAM: 48, MinFreeRAMGB: 0.25}},
+				platform.ServiceStack{ID: "svc-cache", Name: "cache", Status: "ACTIVE",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey:single@7", ServiceStackTypeCategoryName: "USER"}})
+			outcome := lab.proposeRecipe(grown)
+			if !slices.Contains(outcome.Replaced, "3 — Stage") {
+				t.Fatalf("the grown project proposed none of zcp's own tiers anew: %+v", outcome)
+			}
+			if slices.Contains(outcome.Replaced, "4 — Small Production") {
+				t.Errorf("zcp proposed the Small Production the Mate corrected anew: %+v", outcome)
+			}
+			if outcome.Change != 0 && outcome.Branch != "" {
+				if got := lab.hq.recipeFiles(outcome.Branch)[recipeProdTier]; got != landed {
+					t.Errorf("change #%d writes over the Small Production the Mate corrected:\n%s", outcome.Change, got)
+				}
 			}
 		})
 	}
@@ -203,6 +237,36 @@ func TestGroupRecipeEdit_Refusals(t *testing.T) {
 			}
 			if asked := lab.hq.callCount("POST /api/mate/changes") - opens; asked != 0 {
 				t.Errorf("HQ was asked to open a change %d times", asked)
+			}
+		})
+	}
+}
+
+// TestGroupRecipe_NothingToPropose_NamesTheTierEdit: every recipe call that
+// finds nothing to propose over the tiers on main says how the agent changes
+// what no proposal of zcp's can — the call that opens a change of its own.
+// flip.studio's agent, told "nothing to propose" by scaling=, found no way
+// to a correction (2026-10-25).
+func TestGroupRecipe_NothingToPropose_NamesTheTierEdit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input WorkflowInput
+	}{
+		{name: "the recipe outright", input: WorkflowInput{Action: "group-recipe"}},
+		{name: "a scale", input: WorkflowInput{Action: "group-recipe", Scaling: "search"}},
+		{name: "a managed service main carries", input: WorkflowInput{Action: "group-recipe", Service: "db"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newScalingLab(t)
+
+			result, _, _ := handleGroupRecipeAction(t.Context(), scalingRecipeClient(1, 0.25), lab.hq.srv.Client(), lab.rt, lab.stateDir, tt.input)
+			text := getTextContent(t, result)
+
+			if result.IsError || !strings.Contains(text, `action=\"group-recipe\" branch=`) {
+				t.Errorf("answer = %s, want it to name the tier edit call", text)
 			}
 		})
 	}
