@@ -7,6 +7,7 @@ package tools
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -55,9 +56,7 @@ func flipMock() *platform.Mock {
 func flipRequest(extra map[string]any) map[string]any {
 	args := map[string]any{"action": "request", "project": true, "key": "FLIP_GOOGLE_CLIENT_ID",
 		"label": "Google sign-in client ID", "why": "for Google sign-in on the preview", "sensitive": true}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

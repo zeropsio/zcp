@@ -55,7 +55,7 @@ func requestVaultValue(ctx context.Context, client platform.Client, projectID, s
 		return convertError(err)
 	}
 	if options.vaultAsks != "" {
-		if open, _ := ops.ReadVaultAsk(options.vaultAsks, req); open != nil {
+		if open, found, _ := ops.ReadVaultAsk(options.vaultAsks, req); found {
 			if !open.AnsweredBy(req) && !input.Again.Bool() {
 				plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
 				return alreadyAsked(open, req, restartAfterSaveWords(req.Key, plan, input, selfHostname))
@@ -68,7 +68,8 @@ func requestVaultValue(ctx context.Context, client platform.Client, projectID, s
 	}
 	plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
 	if options.vaultAsks != "" {
-		if held, _ := ops.ClaimVaultAsk(options.vaultAsks, req, ops.NewVaultAsk(req, time.Now())); held != nil {
+		held, claimed, err := ops.ClaimVaultAsk(options.vaultAsks, req, ops.NewVaultAsk(req, time.Now()))
+		if err == nil && !claimed {
 			return alreadyAsked(held, req, restartAfterSaveWords(req.Key, plan, input, selfHostname))
 		}
 	}
@@ -116,7 +117,7 @@ func requestedWords(req *ops.EnvRequestResult, restart string) string {
 // alreadyAsked refuses a request whose key and vault have an open ask: the
 // person already has the prompt. It is an error, so neither Mate's engine nor
 // its card opens a second ask from it.
-func alreadyAsked(open *ops.VaultAsk, req *ops.EnvRequestResult, restart string) *mcp.CallToolResult {
+func alreadyAsked(open ops.VaultAsk, req *ops.EnvRequestResult, restart string) *mcp.CallToolResult {
 	what := cmp.Or(open.Label, req.Label)
 	return convertError(platform.NewPlatformError(platform.ErrAlreadyAsked,
 		fmt.Sprintf("The ask for the %s (%s), made %s, is still open, so no second one was shown.",
