@@ -587,7 +587,7 @@ func launchClosure(sr *serviceReader, readers []tierReader, inputs LaunchBundleI
 	}
 	refusal := &LaunchClosureError{Gaps: make([]LaunchClosureGap, 0, len(gaps))}
 	for _, gap := range gaps {
-		why := "which production does not run under that name"
+		var why string
 		switch host := gap.read.host; {
 		case excluded[host]:
 			why = "which the launch excluded by user decision (managedDeps)"
@@ -617,11 +617,16 @@ type LaunchClosureGap struct {
 	Read string
 	// Service is the hostname read.
 	Service string
-	// Why says why the bundle does not carry it.
+	// Why says why the bundle leaves it out when that is more than
+	// production not running it: the person excluded it, or it is a pool.
 	Why string
 }
 
+// String says the gap with why production lacks the service.
 func (g LaunchClosureGap) String() string {
+	if g.Why == "" {
+		return g.Read + ", which production does not run under that name"
+	}
 	return g.Read + ", " + g.Why
 }
 

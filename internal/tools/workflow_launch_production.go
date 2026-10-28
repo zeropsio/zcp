@@ -2169,7 +2169,11 @@ func launchClosureGapResponse(input WorkflowInput, sourceCtx *launchSourceContex
 		if _, seen := reads[gap.Service]; !seen {
 			services = append(services, gap.Service)
 		}
-		reads[gap.Service] = append(reads[gap.Service], gap.String())
+		read := gap.Read
+		if gap.Why != "" {
+			read += ", " + gap.Why
+		}
+		reads[gap.Service] = append(reads[gap.Service], read)
 	}
 	blockers := make([]topology.Blocker, 0, len(services))
 	for _, svc := range services {
