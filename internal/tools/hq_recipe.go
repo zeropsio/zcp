@@ -117,7 +117,8 @@ type recipeOutcome struct {
 // running when this one's call ends, a push that moved the branch past this
 // one's, leaves a working project and a line saying so, and the next pass
 // tries again. A Mate that never gets its proposal through loses nothing but
-// the proposal. zcp's start in a Mate is one more pass (GroupRecipeAtStart).
+// the proposal. zcp's start in a Mate is one more pass (GroupRecipeAtStart),
+// and so is a tool call that changes what the recipe reads (RecipeFollower).
 //
 // Idempotent on CONTENT: the recipe is composed from live state on every
 // pass, and a branch that already holds the tree it would push is left as
@@ -761,9 +762,9 @@ func recipeEntries(files []recipe.File) []string {
 
 // handleGroupRecipe is the agent's way to ask for the recipe outright
 // (`zerops_workflow action="group-recipe"`). The reconcile already runs on
-// every bootstrap and adopt pass, so this exists for the other direction: a
-// person says "propose the recipe now", or wants the change's address after
-// a service change, without waiting for the next pass.
+// every bootstrap and adopt pass and after every service change, so this
+// exists for the other direction: a person says "propose the recipe now", or
+// wants the change's address, without waiting for the next pass.
 //
 // Same code path as the reconcile — there is no second composer and no second
 // idempotence rule. What differs is the reporting: a pass that changed nothing
