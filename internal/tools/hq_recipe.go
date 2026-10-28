@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -71,10 +72,13 @@ type recipeOutcome struct {
 	Blocked string
 	// Required is the step the Mate's setup is not done without: a tier main
 	// lacks that the recipe cannot propose, what is missing and the call that
-	// fixes it (recipeRequiredStep). Empty when nothing is.
+	// fixes it (recipeRequiredStep), and a recipe the composer refuses because
+	// a tier reads a service it does not carry (recipeClosureStep). Empty when
+	// nothing is.
 	Required []string
-	// decided is a pass that composed against main — whether or not the
-	// recipe composed — so Required is its verdict, and recorded.
+	// decided is a pass whose verdict Required is, and recorded: one that
+	// composed against main — whether or not the recipe composed — or found
+	// no pair left to compose from, which requires nothing.
 	decided bool
 }
 
@@ -189,8 +193,13 @@ func groupRecipeOutcome(
 	stateDir string,
 ) recipeOutcome {
 	// A pass that stops before asking HQ anything takes no turn and writes
-	// nothing: every zcp start in a Mate is one.
+	// nothing — every zcp start in a Mate is one — but one with no pair left
+	// to compose from records that nothing is required: no pass can check a
+	// step an earlier one recorded again.
 	if _, _, blocked, ready := recipePassReady(client, httpClient, rt, stateDir); !ready {
+		if blocked.decided {
+			writeRecipeRequired(stateDir, nil)
+		}
 		return blocked
 	}
 	release, err := holdRecipePass(ctx, stateDir)
@@ -396,12 +405,14 @@ func recipePassReady(client platform.Client, httpClient ops.HTTPDoer, rt runtime
 	if !linked {
 		return hq.Client{}, nil, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
 	}
+	// No pair to compose from — none bootstrapped, or none wired — decides
+	// that nothing is required; records that cannot be read decide nothing.
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {
-		return hq.Client{}, nil, recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}, false
+		return hq.Client{}, nil, recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export", decided: err == nil}, false
 	}
 	if !slices.ContainsFunc(metas, func(m *workflow.ServiceMeta) bool { return m.IsComplete() && hqPairWired(m) }) {
-		return hq.Client{}, nil, recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them"}, false
+		return hq.Client{}, nil, recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them", decided: true}, false
 	}
 	return hqc, metas, recipeOutcome{}, true
 }
@@ -481,6 +492,13 @@ func composeGroupRecipe(
 	outcome.Required = recipeRequired(inputs, layout, paths)
 	if err != nil {
 		comp.close()
+		// A tier that reads a service it does not carry refuses the whole
+		// recipe, so nothing is proposed while it stands: required too, in
+		// the composer's words, until a pass composes.
+		var unclosed *bundle.TierClosureError
+		if errors.As(err, &unclosed) {
+			outcome.Required = append(outcome.Required, recipeClosureStep(unclosed))
+		}
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return groupRecipeComposition{}, outcome, false
 	}
