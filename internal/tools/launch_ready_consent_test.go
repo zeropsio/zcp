@@ -337,5 +337,48 @@ func TestLaunchSourceControlRequired_GuidanceIsActiveSubset(t *testing.T) {
 	}
 }
 
+// The consent preview lists what the production import creates, as what it
+// is: a Box the bundle carries (a launched runtime reads it) as a Box, and
+// neither a Swarm pool nor a Box the bundle leaves out — both named in the
+// warnings instead — as a managed service it would create. Spec:
+// spec-workflows.md §10.3 P-LP-19.
+func TestLaunchBundlePreview_BoxesAndPools_NeverManagedServices(t *testing.T) {
+	t.Parallel()
+	inputs := ops.LaunchBundleInputs{
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "prod",
+			RepoURL:        "https://github.com/me/app",
+			ZeropsYAMLBody: "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n      envVariables:\n        DATABASE_URL: ${db_connectionString}\n        BOX_API_URL: http://box:8080\n",
+		}},
+		ManagedServices: []ops.ManagedServiceEntry{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+			{Hostname: "box", Type: "ubuntu/zbox@1"},
+			{Hostname: "lab", Type: "ubuntu/zbox@1"},
+			{Hostname: "fleet", Type: "swarm@1"},
+		},
+	}
+	b, err := ops.BuildLaunchBundle(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle: %v", err)
+	}
+	roles := map[string]string{}
+	for _, svc := range launchBundlePreviewFrom(b, inputs).Services {
+		roles[svc.Hostname] = svc.Role
+	}
+	want := map[string]string{"app": "runtime", "db": "managed", "box": "box"}
+	for host, role := range want {
+		if roles[host] != role {
+			t.Errorf("preview role of %s = %q, want %q (preview roles %v)", host, roles[host], role, roles)
+		}
+	}
+	for _, host := range []string{"lab", "fleet"} {
+		if role, listed := roles[host]; listed {
+			t.Errorf("preview lists %s (role %q), which the bundle does not carry", host, role)
+		}
+	}
+}
+
 // keep the workflow import used when goldens change shape later
 var _ = workflow.PhaseLaunchProductionActive
