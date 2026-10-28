@@ -4562,7 +4562,22 @@ of a pool, whose hostname reaches a random container.
   no HQ call); every recipe pass tries again — each zcp start, bootstrap close, adopt pass,
   develop start and service change — and the step is gone on the pass that proposes the tiers or finds main carrying
   them (Mate Web, 2026-10-27: the bootstrap closed before the code was in, the pass said "does not
-  compose" inside a long result, and its group repository stayed empty).
+  compose" inside a long result, and its group repository stayed empty). A recipe the composer
+  refuses because a tier reads a service it does not carry (`spec-workflows.md` §8 PS-3a) is a
+  required step too, whatever main carries: nothing is proposed while the refusal stands, so the
+  group's recipe goes stale. Its step is the composer's refusal word for word — per tier the
+  runtime, the setup, the variable and the service, and the way out: carry the service in that
+  tier, or stop the setup reading it — then the call that tries again
+  (`zerops_workflow action="group-recipe"`, or the next develop start). Every step is the verdict
+  of the last pass that decided one, never a mark of its own: a pass that composes against main
+  writes the record afresh — a recipe that composes, or that the composer refuses for anything
+  else, drops the closure step — and a pass that finds no pair left to compose from (none
+  bootstrapped, none wired) clears it, since no pass could check a step again; a pass stopped
+  before it composes (HQ not answering, a pair still waiting for its repository) leaves the record
+  as the last deciding pass wrote it (`TestGroupRecipe_TierClosure_RefusalIsARequiredStep`,
+  `TestGroupRecipe_TierClosure_StepGoneOnceItComposes`,
+  `TestGroupRecipe_NonClosureComposeError_NoClosureStep`,
+  `TestGroupRecipe_TierClosure_NothingLeftToCompose_StepGone`).
 - **Named limits.** A tier proposed anew names each part after itself, so a part an older rule named
   after its repository (Zerops Apps' `apps`) is renamed in it; on a stage or production made from the
   old tier that merge would change the environment, so it waits for a person, who weighs it. Core

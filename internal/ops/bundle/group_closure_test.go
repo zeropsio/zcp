@@ -3,6 +3,7 @@
 package bundle
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -165,5 +166,37 @@ func TestBuildGroupRecipe_TierClosure_MateOwnRuntimesReadsNeverRefuse(t *testing
 	}
 	if len(layout.Tiers) != len(groupTierDirs) {
 		t.Errorf("tiers = %d, want %d", len(layout.Tiers), len(groupTierDirs))
+	}
+}
+
+// The pass makes a closure refusal a required step of the Mate's setup and no
+// other refusal, so the refusal tells itself apart by its type, never by its
+// words — which stay the composer's, the reads it names among them: one per
+// tier, each naming the tier, the runtime, the setup, the variable and the
+// service. A refusal for anything else is not one.
+func TestBuildGroupRecipe_TierClosure_RefusalIsATierClosureError(t *testing.T) {
+	t.Parallel()
+	plain := map[string]string{"NATS_PORT": "${broker_port}"}
+	_, _, err := BuildGroupRecipe(closureInputs(setupVars{name: "runnerdev", vars: plain},
+		setupVars{name: "runnerprod", vars: map[string]string{"MAIL_URL": "smtp://mailpit:1025"}}))
+	var unclosed *TierClosureError
+	if !errors.As(err, &unclosed) {
+		t.Fatalf("err = %v, want a *TierClosureError", err)
+	}
+	want := []string{
+		`tier "Stage": runtime "runner" builds setup "runnerprod", whose run.envVariables.MAIL_URL names "mailpit"`,
+		`tier "Small Production": runtime "runner" builds setup "runnerprod", whose run.envVariables.MAIL_URL names "mailpit"`,
+	}
+	if strings.Join(unclosed.Reads, "\n") != strings.Join(want, "\n") {
+		t.Errorf("reads = %q, want %q", unclosed.Reads, want)
+	}
+	if !strings.Contains(err.Error(), strings.Join(want, "; ")) || !strings.Contains(err.Error(), "or stop the setup reading it") {
+		t.Errorf("the refusal does not say the reads and the way out as the composer words them:\n%s", err)
+	}
+
+	other := closureInputs(setupVars{name: "runnerdev", vars: plain}, setupVars{name: "runnerprod", vars: plain})
+	other.Runtimes[0].ServiceType = ""
+	if _, _, err := BuildGroupRecipe(other); err == nil || errors.As(err, &unclosed) {
+		t.Errorf("err = %v, want a refusal that is no *TierClosureError", err)
 	}
 }

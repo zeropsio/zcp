@@ -167,6 +167,23 @@ func writtenValues(envs []ProjectEnvVar, promote func(string) string) []string {
 	return values
 }
 
+// TierClosureError is BuildGroupRecipe's refusal of a recipe a tier of which
+// carries a runtime whose setup reads a service the Mate's project runs and
+// the tier does not carry (groupTierClosure). Recipe is the recipe's name;
+// Reads are those reads, each as groupTierClosure says it — the tier, the
+// runtime, the setup, the variable and the service. The recipe pass tells it
+// from the composer's other refusals by its type and makes it a required
+// step in its own words (Error), never in a second phrasing.
+type TierClosureError struct {
+	Recipe string
+	Reads  []string
+}
+
+func (e *TierClosureError) Error() string {
+	return fmt.Sprintf("group recipe %q: a tier carries a runtime whose setup reads a service this Mate's project runs and the tier does not carry, so an environment made from it would start an app that cannot reach it — nothing is proposed until every tier carries what its runtimes read: %s. Carry the service in that tier (the warnings say why it is left out) or stop the setup reading it",
+		e.Recipe, strings.Join(e.Reads, "; "))
+}
+
 // groupTierClosure is each read by a reader of a tier — by the setup the tier
 // builds for it — of a service the project runs (project) that the tier does
 // not carry (carried), said as `tier "<title>": runtime "<host>" builds setup
