@@ -400,6 +400,10 @@ type ProjectEnvVar struct {
 	Type      ProjectEnvType `json:"type,omitempty"`
 	Sensitive bool           `json:"sensitive,omitempty"`
 	Editable  bool           `json:"editable,omitempty"`
+	// LastUpdate is when the row last changed (the DTO's lastUpdate): a
+	// value replaced in place keeps its id, so only this says it was
+	// written since. Never serialized.
+	LastUpdate time.Time `json:"-"`
 }
 
 // MaskedEnvValue is what the platform returns for a sensitive env value the
@@ -422,6 +426,9 @@ type ServiceEnvVar struct {
 	// token (MaskedEnvValue). ops.FetchServiceEnv sets it and blanks Content,
 	// so no consumer uses the placeholder as the secret.
 	Masked bool `json:"-"`
+	// LastUpdate is when the row last changed (the DTO's lastUpdate), as on
+	// ProjectEnvVar. Never serialized.
+	LastUpdate time.Time `json:"-"`
 }
 
 // EnvAccessor is the minimal read-side interface shared by
@@ -439,6 +446,9 @@ type EnvAccessor interface {
 	// IsSystem reports a var the platform itself injects (type SYSTEM),
 	// never one a person or the yaml set.
 	IsSystem() bool
+	// GetLastUpdate is when the row last changed; zero when the read
+	// carried no time.
+	GetLastUpdate() time.Time
 }
 
 // GetID, GetKey, GetContent, IsSensitive, IsSystem — ProjectEnvVar implements EnvAccessor.
@@ -448,12 +458,18 @@ func (p ProjectEnvVar) GetContent() string { return p.Content }
 func (p ProjectEnvVar) IsSensitive() bool  { return p.Sensitive }
 func (p ProjectEnvVar) IsSystem() bool     { return p.Type == ProjectEnvSystem }
 
+// GetLastUpdate — ProjectEnvVar implements EnvAccessor.
+func (p ProjectEnvVar) GetLastUpdate() time.Time { return p.LastUpdate }
+
 // GetID, GetKey, GetContent, IsSensitive, IsSystem — ServiceEnvVar implements EnvAccessor.
 func (s ServiceEnvVar) GetID() string      { return s.ID }
 func (s ServiceEnvVar) GetKey() string     { return s.Key }
 func (s ServiceEnvVar) GetContent() string { return s.Content }
 func (s ServiceEnvVar) IsSensitive() bool  { return s.Sensitive }
 func (s ServiceEnvVar) IsSystem() bool     { return s.Type == ServiceEnvSystem }
+
+// GetLastUpdate — ServiceEnvVar implements EnvAccessor.
+func (s ServiceEnvVar) GetLastUpdate() time.Time { return s.LastUpdate }
 
 // ImportResult represents the result of an import operation.
 type ImportResult struct {

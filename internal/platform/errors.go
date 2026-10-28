@@ -152,6 +152,10 @@ const (
 	// ErrOrgWriteRefused: org mode's reader (docs/spec-mate.md §2.11) stopped
 	// a request that was not a read — org mode never writes.
 	ErrOrgWriteRefused = "ORG_WRITE_REFUSED"
+	// ErrAlreadyAsked: zerops_env action=request for a key and vault whose
+	// earlier ask is still open — the person already has the prompt, so no
+	// second one is shown (docs/spec-mate.md §5.8).
+	ErrAlreadyAsked = "ALREADY_ASKED"
 )
 
 // Error subcodes narrow a specific top-level code into a stable, more

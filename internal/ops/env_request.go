@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -40,6 +41,14 @@ type EnvRequestResult struct {
 	// AlreadySet is true when the key is already in that vault: nothing is
 	// asked, the agent references it by name.
 	AlreadySet bool `json:"alreadySet,omitempty"`
+	// Replace is true when the person is asked to replace the value the
+	// vault holds: Why then ends with what is wrong with it.
+	Replace bool `json:"replace,omitempty"`
+	// HeldID and HeldChanged are the vault's row under the key when asked
+	// — its id and when it last changed, never its value — so a later
+	// request tells a save since from an ask still open. Not on the wire.
+	HeldID      string    `json:"-"`
+	HeldChanged time.Time `json:"-"`
 }
 
 // envKeyPattern is a key the platform takes (alphanumerics and `_`) that a
@@ -169,6 +178,10 @@ type EnvRequestInput struct {
 	Label     string
 	Why       string
 	Sensitive *bool
+	// Replace asks even though the vault holds the key: the person replaces
+	// its value. ReplaceWhy is the line they read on what is wrong with it.
+	Replace    bool
+	ReplaceWhy string
 }
 
 // EnvRequest checks a request for a vault value and writes nothing: it

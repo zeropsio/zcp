@@ -41,6 +41,12 @@ type EnvInput struct {
 	// Reason is why's name before it: a session that still holds the old
 	// schema asks on its first try.
 	Reason string `json:"reason,omitempty"`
+	// Replace asks for a key the vault already holds, with ReplaceWhy the
+	// line the person reads on what is wrong with the saved value. Again
+	// asks once more after the person declined an earlier ask.
+	Replace    FlexBool `json:"replace,omitempty"`
+	ReplaceWhy string   `json:"replaceWhy,omitempty"`
+	Again      FlexBool `json:"again,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
