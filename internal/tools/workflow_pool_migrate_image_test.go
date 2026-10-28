@@ -426,18 +426,18 @@ func TestPoolMigrateImageStep_EnvAction_LandsOnTheDeploy(t *testing.T) {
 }
 
 // poolImageSiblingPair is the pair of a monorepo's other part, moved onto its
-// pool before this one: keyed by pool beside its one stage, recording remote
-// as its origin.
-func poolImageSiblingPair(pool, stage, remote string) *workflow.ServiceMeta {
+// pool before this one: keyed by apipool beside its stage apistage, recording
+// remote as its origin.
+func poolImageSiblingPair(remote string) *workflow.ServiceMeta {
 	return &workflow.ServiceMeta{
-		Hostname:         pool,
+		Hostname:         "apipool",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.StageRef{{Hostname: stage, SetupName: stage}},
+		Stages:           []topology.StageRef{{Hostname: "apistage", SetupName: "apistage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        remote,
 		BootstrappedAt:   "2026-10-01T00:00:00Z",
-		PrimarySetupName: pool,
-		DevPool:          &workflow.DevPoolRef{ServiceID: "svc-" + pool, MigratedFrom: &workflow.MigratedDev{Hostname: strings.TrimSuffix(pool, "pool") + "dev"}},
+		PrimarySetupName: "apipool",
+		DevPool:          &workflow.DevPoolRef{ServiceID: "svc-apipool", MigratedFrom: &workflow.MigratedDev{Hostname: "apidev"}},
 	}
 }
 
@@ -463,23 +463,23 @@ func TestPoolMigrateImageStep_SiblingPartsPools_NotFindings(t *testing.T) {
 	}{
 		{
 			name:       "a pool pair recording the dev's origin, but for case and suffix",
-			sibling:    poolImageSiblingPair("apipool", "apistage", "https://github.com/Example/app/"),
+			sibling:    poolImageSiblingPair("https://github.com/Example/app/"),
 			service:    "apipool",
 			wantDeploy: true,
 		},
 		{
 			name:    "a pool pair recording another origin",
-			sibling: poolImageSiblingPair("apipool", "apistage", "https://github.com/example/other.git"),
+			sibling: poolImageSiblingPair("https://github.com/example/other.git"),
 			service: "apipool",
 		},
 		{
 			name:    "a pool pair recording no origin",
-			sibling: poolImageSiblingPair("apipool", "apistage", ""),
+			sibling: poolImageSiblingPair(""),
 			service: "apipool",
 		},
 		{
 			name:    "the stage of a pool pair recording the dev's origin",
-			sibling: poolImageSiblingPair("apipool", "apistage", "https://github.com/example/app.git"),
+			sibling: poolImageSiblingPair("https://github.com/example/app.git"),
 			service: "apistage",
 		},
 	}

@@ -330,9 +330,42 @@ func poolMigrateOwnerRefusals(stateDir, dev string, parts []poolMigratePart, byN
 	return refusals, nil
 }
 
-// poolMigrateSameRepository says whether two pairs build from one repository.
-func poolMigrateSameRepository(_, _ *workflow.ServiceMeta) bool {
-	return false
+// poolMigrateSiblingPools are the pools keying another pair that builds from
+// meta's repository (poolMigrateSameRepository), sorted: a monorepo's parts
+// moved onto pools of their own before this one. A pool-keyed pair's Hostname
+// is its pool (§8 E8 (d), DevIsPool) — its stages are no pool and run no
+// declared server — and a pool container's supervisor runs the declaration's
+// entries naming its pool (PM-12), so the image step takes a server naming
+// one as that part's, never as a finding (PM-11). Reads only zcp's own
+// records; whether the pool still runs is that part's own concern.
+func poolMigrateSiblingPools(stateDir string, meta *workflow.ServiceMeta) ([]string, error) {
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("read the pair records: %w", err)
+	}
+	var pools []string
+	for _, m := range metas {
+		if !m.DevIsPool() || m.Hostname == meta.Hostname || !poolMigrateSameRepository(meta, m) {
+			continue
+		}
+		pools = append(pools, m.Hostname)
+	}
+	slices.Sort(pools)
+	return pools, nil
+}
+
+// poolMigrateSameRepository says whether two pairs build from one repository,
+// by what their records prove. Both wired to HQ: the same application's
+// repository of the same name (HQ.AppID, HQ.Repo) — a monorepo's pairs share
+// one, and a pool-keyed pair keeps the record it was re-keyed with, since the
+// HQ pass never rewires it — whatever their origins read, which an HQ host
+// migration moves. Otherwise both recording one origin (RemoteURL,
+// topology.SameRepoURL). Records proving neither are no proof.
+func poolMigrateSameRepository(a, b *workflow.ServiceMeta) bool {
+	if a.HQ != nil && a.HQ.Repo != "" && b.HQ != nil && b.HQ.Repo != "" {
+		return a.HQ.AppID == b.HQ.AppID && a.HQ.Repo == b.HQ.Repo
+	}
+	return topology.SameRepoURL(a.RemoteURL, b.RemoteURL)
 }
 
 // poolMigratePartPool is the pool of the part whose stage is stage: the
