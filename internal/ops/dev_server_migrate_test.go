@@ -72,6 +72,7 @@ func devSetupRun(t *testing.T, data []byte, setup string) (prepare []string, sta
 func TestAdoptSupervisorYAML(t *testing.T) {
 	t.Parallel()
 	line := DevsupPrepareCommand(testDevsupURL)
+	const olderLine = "sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/v9.299.0/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'"
 	tests := []struct {
 		name, yaml, setup, hostname string
 		// root is the repository root the supervisor runs on, "" for /var/www.
@@ -127,7 +128,9 @@ func TestAdoptSupervisorYAML(t *testing.T) {
 			wantSetup: "dev-api", wantPrepare: []string{line}, wantChanged: true,
 		},
 		{
-			name: "an older zcp-devsup line is replaced, not doubled",
+			// The release a dev setup already installs stays whichever it is:
+			// a newer one out since is no reason to change the person's file.
+			name: "a zcp-devsup line the dev setup carries stays as written, whichever release it names",
 			yaml: `zerops:
   - setup: dev
     run:
@@ -136,7 +139,19 @@ func TestAdoptSupervisorYAML(t *testing.T) {
       start: zcp-devsup run
 `,
 			hostname:  "appdev",
-			wantSetup: "dev", wantPrepare: []string{line}, wantChanged: true,
+			wantSetup: "dev", wantPrepare: []string{olderLine}, wantChanged: false,
+		},
+		{
+			name: "a zcp-devsup line without the supervisor's start keeps its release and gains the start",
+			yaml: `zerops:
+  - setup: dev
+    run:
+      prepareCommands:
+        - sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/v9.299.0/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'
+      start: zsc noop --silent
+`,
+			hostname:  "appdev",
+			wantSetup: "dev", wantPrepare: []string{olderLine}, wantChanged: true,
 		},
 		{
 			name:      "already on the supervisor",

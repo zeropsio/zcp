@@ -882,7 +882,7 @@ func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
 	}
 	dev := body.service(t, "medusadev")
 	if dev.Deploy == nil || !strings.Contains(dev.Deploy.Message, `Before this first deploy zcp put medusadev under the dev-server supervisor: setup "medusadev" in zerops.yaml`) ||
-		!strings.Contains(dev.Deploy.Message, "commit it with your next change") {
+		!strings.Contains(dev.Deploy.Message, "zerops.yaml is not committed") {
 		t.Errorf("medusadev's deploy in the report = %+v; want it to say the edited zerops.yaml is to be committed", dev.Deploy)
 	}
 	next := body.service(t, "nextstoredev")
