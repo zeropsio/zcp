@@ -163,6 +163,147 @@ func TestClaude_ContainerInit_AnthropicAPIKeyTransitionsClearAndSet(t *testing.T
 	}
 }
 
+// Behavioral contract: in a Mate container (ZCP_MATE_ENABLED) code-server's
+// workspace is /var/www, where every dev service is sshfs-mounted as
+// /var/www/<host>. Its built-in Git must neither scan those mounts nor run
+// there — a second git client on a dev repository's .git, executing that
+// repository's hooks and core.fsmonitor in the zcp container. `git.enabled:
+// false` is the one user setting that stops it on every path: the Git
+// extension then never builds its repository model. Without the flag the
+// user settings are the template, byte for byte; a container whose flag is
+// turned off converges back to the template at its next `zcp init`.
+
+const gitEnabledSetting = "git.enabled"
+
+func TestConfigureVSCode_MateEnabled_GitOffOnMounts(t *testing.T) {
+	// Not parallel — t.Setenv mutates process-global state.
+	home := t.TempDir()
+	env := newClaudeEnv(t, home)
+	env.RT.MateEnabled = true
+	t.Setenv("ZCP_VSCODE", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	if err := adapters.NewClaude().ContainerInit(env); err != nil {
+		t.Fatalf("ContainerInit: %v", err)
+	}
+
+	got := loadVSCodeSettings(t, home)
+	if v, ok := got[gitEnabledSetting]; !ok || v != false {
+		t.Errorf("settings[%q] = %v (present=%v), want false — code-server's Git must not run on the /var/www/<host> mounts in a Mate container", gitEnabledSetting, v, ok)
+	}
+	// Every template setting stays, with its template value.
+	for key, want := range templateVSCodeSettings(t) {
+		if v, ok := got[key]; !ok || !jsonEqual(t, v, want) {
+			t.Errorf("settings[%q] = %v (present=%v), want template value %v", key, v, ok, want)
+		}
+	}
+	if len(got) != len(templateVSCodeSettings(t))+1 {
+		t.Errorf("settings carry %d keys, want the template's %d plus %q only: %v", len(got), len(templateVSCodeSettings(t)), gitEnabledSetting, got)
+	}
+}
+
+func TestConfigureVSCode_MateDisabled_SettingsUnchanged(t *testing.T) {
+	// Not parallel — t.Setenv mutates process-global state.
+	home := t.TempDir()
+	env := newClaudeEnv(t, home) // RT.MateEnabled is false
+	t.Setenv("ZCP_VSCODE", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	if err := adapters.NewClaude().ContainerInit(env); err != nil {
+		t.Fatalf("ContainerInit: %v", err)
+	}
+
+	assertVSCodeSettingsAreTemplate(t, home)
+}
+
+func TestConfigureVSCode_MateTurnedOff_GitSettingRemoved(t *testing.T) {
+	// Not parallel — t.Setenv mutates process-global state.
+	home := t.TempDir()
+	env := newClaudeEnv(t, home)
+	t.Setenv("ZCP_VSCODE", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	// Boot 1: flag on — the Git setting lands.
+	env.RT.MateEnabled = true
+	if err := adapters.NewClaude().ContainerInit(env); err != nil {
+		t.Fatalf("ContainerInit (flag on): %v", err)
+	}
+	if v, ok := loadVSCodeSettings(t, home)[gitEnabledSetting]; !ok || v != false {
+		t.Fatalf("precondition: settings[%q] = %v (present=%v) after a flag-on boot, want false", gitEnabledSetting, v, ok)
+	}
+
+	// Boot 2: flag off — `zcp init` converges back to the template.
+	env.RT.MateEnabled = false
+	if err := adapters.NewClaude().ContainerInit(env); err != nil {
+		t.Fatalf("ContainerInit (flag off): %v", err)
+	}
+
+	assertVSCodeSettingsAreTemplate(t, home)
+}
+
+func vscodeSettingsPath(home string) string {
+	return filepath.Join(home, ".local", "share", "code-server", "User", "settings.json")
+}
+
+func loadVSCodeSettings(t *testing.T, home string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(vscodeSettingsPath(home))
+	if err != nil {
+		t.Fatalf("read code-server settings: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatalf("parse code-server settings: %v\nraw: %s", err, raw)
+	}
+	return data
+}
+
+func templateVSCodeSettings(t *testing.T) map[string]any {
+	t.Helper()
+	tmpl, err := content.GetTemplate("vscode-settings.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(tmpl), &data); err != nil {
+		t.Fatalf("parse vscode-settings.json template: %v", err)
+	}
+	return data
+}
+
+// assertVSCodeSettingsAreTemplate pins the flag-off output: the shipped
+// template, byte for byte, with no git.* key.
+func assertVSCodeSettingsAreTemplate(t *testing.T, home string) {
+	t.Helper()
+	tmpl, err := content.GetTemplate("vscode-settings.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	raw, err := os.ReadFile(vscodeSettingsPath(home))
+	if err != nil {
+		t.Fatalf("read code-server settings: %v", err)
+	}
+	if string(raw) != tmpl {
+		t.Errorf("code-server settings differ from the template without ZCP_MATE_ENABLED:\n  got:  %s\n  want: %s", raw, tmpl)
+	}
+	if _, ok := loadVSCodeSettings(t, home)[gitEnabledSetting]; ok {
+		t.Errorf("settings carry %q without ZCP_MATE_ENABLED", gitEnabledSetting)
+	}
+}
+
+func jsonEqual(t *testing.T, a, b any) bool {
+	t.Helper()
+	ja, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jb, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(ja) == string(jb)
+}
+
 // TestBootstrapExtVersion_ParityWithManifest locks that the Go
 // BootstrapExtVersion const and the shipped extension manifest's
 // "version" field never drift. code-server's extensions.json index —
