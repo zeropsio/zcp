@@ -96,7 +96,8 @@ func TestOpenChange_AnswerAndStateLost_SaysUnknownNeverNothing(t *testing.T) {
 	if !isError || strings.Contains(text, "Nothing was opened") {
 		t.Fatalf("want an error that does not say nothing was opened, got isError=%v: %s", isError, text)
 	}
-	for _, want := range []string{"unknown", `action="open-change"`, "never a second"} {
+	// An error answers as JSON, its quotes escaped.
+	for _, want := range []string{"unknown", `action=\"open-change\"`, "never a second"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the answer does not say %q: %s", want, text)
 		}
