@@ -406,7 +406,7 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
-If the dev setup still runs `zsc noop`, that start adds the supervisor's two
+If the dev setup still runs `zsc noop`, that start adds two supervisor
 lines, redeploys once (uncommitted work stays), commits both files or
 says how.
 Every deploy starts each `autostart` server (see `devServer`), a restart
