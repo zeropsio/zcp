@@ -2269,9 +2269,7 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
 		return nil
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, state.TargetServiceHostname)
-	// A pair keyed by its dev pool has no push source to read the staged
-	// token from over ssh (docs/spec-workflows.md §13 PM-10).
-	if err != nil || meta == nil || meta.DevIsPool() || meta.BuildIntegration != topology.BuildIntegrationActions {
+	if err != nil || meta == nil || meta.BuildIntegration != topology.BuildIntegrationActions {
 		return nil
 	}
 	idByName := make(map[string]string, len(state.ImportedServices))
@@ -2327,6 +2325,12 @@ jobs:
 	// Single guarded builder (F9): conveys the STAGED launch token secret-to-secret
 	// AND guards both GH_TOKEN auth + the staged value for emptiness, so a launch
 	// token that didn't propagate no longer silently writes an empty repo secret.
+	// A pair keyed by its dev pool has no push source to read GIT_TOKEN from
+	// over ssh: its launch token is staged on the stage, and GH_TOKEN is the
+	// PAT the person gives (docs/spec-workflows.md §10 P-LP-20).
+	if meta.DevIsPool() {
+		return poolPartProdCDActionsBlock(meta, state, workflowYAML, ownerRepo)
+	}
 	secretCmd := ghSecretSetFromStagedSecret(meta.Hostname, launchProdSecretName, ops.LaunchTokenEnvKey, ownerRepo)
 	return map[string]any{
 		"track": "actions-tag",
@@ -2348,6 +2352,43 @@ jobs:
 		"ghPatRecommendation": "Pushing this workflow file + running secret.command needs the GIT_TOKEN configured at git-push-setup to be " + ghPATScopeRecommendation(ownerRepo, true) + " If git-push-setup ran with a Contents-only token, the .github/workflows/ push 403s on the missing Workflows scope — re-run git-push-setup with a re-scoped PAT first.",
 		"hardening":           "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + launchProdSecretName + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
 		"verification":        "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
+	}
+}
+
+// poolPartProdCDActionsBlock is prodCDActionsBlock for a launched part whose
+// pair is keyed by its dev pool (docs/spec-workflows.md §10 P-LP-20): the
+// same workflow file; the secret command conveys the launch token staged on
+// the stage over ssh from the stage, with GH_TOKEN the PAT the person gives —
+// as the pair's build-integration conveys it — never read from the pool or a
+// lease; the workflow file is committed and pushed from a lease of the pool
+// (commitVia), and the release tags the origin's tip that holds it.
+func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, workflowYAML, ownerRepo string) map[string]any {
+	stage := state.TargetServiceHostname
+	if stage == "" || stage == meta.Hostname {
+		stage = meta.FirstStage().Hostname
+	}
+	const workflowPath = ".github/workflows/zerops-prod.yml"
+	branch := trackedRefOrDefault(meta)
+	return map[string]any{
+		"track": "actions-tag",
+		"why":   "Your source pair declared integration=actions, so production delivery is a TAG-triggered workflow in the SAME repo: zerops_workflow action=\"release\" tags the origin and the workflow deploys production. This track delivers the FIRST production build too — the launched runtimes are empty (startWithoutCode) until the first release. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
+		"workflowFile": map[string]any{
+			"path":    workflowPath,
+			"content": workflowYAML,
+		},
+		"commitVia": fmt.Sprintf("%s — the part's dev half is the dev pool %q, which holds no checkout of its own: write %s in the lease's checkout (ssh to its alias), commit, and push %s from the lease, before the release.", poolPairLeaseAcquire(meta, branch), meta.Hostname, workflowPath, branch),
+		"secret": map[string]any{
+			"name":    launchProdSecretName,
+			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the stage " + stage + ". The command below conveys it into the " + launchProdSecretName + " repo secret, read over ssh from the stage, so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
+			"command": ghSecretSetFromStagedSecretWithPAT(stage, launchProdSecretName, ops.LaunchTokenEnvKey, ownerRepo),
+		},
+		"steps": []string{
+			"1. Collect the PAT from the user, put it in secret.command in place of the placeholder, and run it — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + stage + " and sets it as the " + launchProdSecretName + " GitHub repo secret. If it prints \"… empty on " + stage + "\", the staged token didn't propagate — re-run the launch start before retrying; do NOT proceed with an empty secret.",
+			"2. Commit workflowFile.content at " + workflowPath + " as commitVia says.",
+			"3. From then on: zerops_workflow action=\"release\" service=\"" + stage + "\" tags the origin's tip — the workflow deploys production.",
+		},
+		"ghPatRecommendation": "Pushing this workflow file needs the pool's GIT_TOKEN to be " + ghPATScopeRecommendation(ownerRepo, true) + " A Contents-only token 403s the .github/workflows/ push on the missing Workflows scope.",
+		"hardening":           "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + launchProdSecretName + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
 	}
 }
 

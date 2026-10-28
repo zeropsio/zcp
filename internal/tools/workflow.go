@@ -681,7 +681,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, httpClient, sshDeployer, projectID, input, stateDir, rt)
 	case "release":
-		return handleRelease(ctx, sshDeployer, httpClient, input, stateDir, rt)
+		return handleRelease(ctx, client, projectID, sshDeployer, httpClient, input, stateDir, rt)
 	case "prod-ops":
 		return handleLaunchProdOps(ctx, projectID, client, logFetcher, input, stateDir, apiHost)
 	case "confirm-production":

@@ -268,7 +268,7 @@ func TestHandleRelease_AWiredPairHandsOff(t *testing.T) {
 	t.Cleanup(func() { launchPushProofReader = prev })
 
 	ssh := &containerSSHStub{}
-	result, _, _ := handleRelease(context.Background(), ssh, nil,
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
 		WorkflowInput{Service: "appdev", ReleaseVersion: "v1.0.0"}, lab.stateDir, runtime.Info{InContainer: true})
 	if askedRef != "" || len(ssh.commands) != 0 {
 		t.Errorf("HQ release ran legacy preflight: ref=%q SSH=%v", askedRef, ssh.commands)

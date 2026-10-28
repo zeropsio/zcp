@@ -927,6 +927,20 @@ func ghSecretSetFromStagedSecret(pushHost, name, valueEnvKey, ownerRepo string) 
 	)
 }
 
+// ghSecretSetFromStagedSecretWithPAT is ghSecretSetFromStagedSecret for a
+// launched part whose pair is keyed by its dev pool (docs/spec-workflows.md
+// §10 P-LP-20): the staged value is read over ssh from stageHost — a runtime
+// of its own, never the pool, whose hostname reaches a random container —
+// and GH_TOKEN is the PAT the user provides, as the pair's build-integration
+// conveys it. The staged value is guarded for emptiness as there.
+func ghSecretSetFromStagedSecretWithPAT(stageHost, name, valueEnvKey, ownerRepo string) string {
+	const sshFlags = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+	return fmt.Sprintf(
+		"_v=$(ssh %s %s 'printf %%s \"$%s\"'); if [ -n \"$_v\" ]; then GH_TOKEN='<PAT the user provides — collect via %s; NEVER generate one>' gh secret set %s -b \"$_v\" -R %s; else echo \"%s empty on %s — re-stage the launch token first\"; fi",
+		sshFlags, stageHost, valueEnvKey, credentialAskMechanism, name, ownerRepo, valueEnvKey, stageHost,
+	)
+}
+
 // ghTokenConveyanceNote explains the per-invocation GH_TOKEN model that
 // replaced the `gh auth login` + hosts.yml step. pushHost "" in a container
 // is a pair keyed by its dev pool (meta), which has no container to read
