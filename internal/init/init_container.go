@@ -11,7 +11,8 @@ import (
 // (export_test.go's Set/Reset* — see preserved API there). The init
 // dispatcher reads these and threads them through adapters.Env so the
 // adapter implementations stay stateless. commandOutput is commandRunner's
-// twin for the steps that read what a command prints.
+// twin for the steps that read what a command prints — the mate step's
+// systemd queries and every adapter's `<agent> --version` probe.
 var (
 	commandRunner = adapters.DefaultCommandRunner
 	commandOutput = adapters.DefaultCommandOutput

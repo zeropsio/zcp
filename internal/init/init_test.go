@@ -23,8 +23,23 @@ func stubContainerCommands(t *testing.T) {
 	t.Helper()
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 	zcpinit.SetVSCodeWorkDir(t.TempDir())
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+}
+
+// stubCommandOutput answers every command a container init would read the
+// output of — the adapters' `<agent> --version` probes included — without
+// running it. A developer machine carries agent CLIs on PATH (codex, gemini,
+// cursor-agent, opencode) that a CI runner does not; each real probe costs
+// about a second and changes nothing these tests assert, since an adapter
+// whose probe fails only warns and carries on.
+func stubCommandOutput(t *testing.T) {
+	t.Helper()
+	zcpinit.SetCommandOutput(func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("command output not stubbed: %s %s", name, strings.Join(args, " "))
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandOutput() })
 }
 
 func TestRun_GeneratesCLAUDEMD(t *testing.T) {

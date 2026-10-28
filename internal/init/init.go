@@ -141,7 +141,7 @@ func Run(baseDir string, rt runtime.Info, opts ...Option) error {
 			RT:            rt,
 			VSCodeWorkDir: vsCodeWorkDir,
 			CommandRunner: commandRunner,
-			CommandOutput: adapters.DefaultCommandOutput,
+			CommandOutput: commandOutput,
 			LookPath:      adapters.DefaultLookPath,
 		}
 		runContainerAdapters(env)

@@ -18,6 +18,7 @@ func setupContainerTest(t *testing.T) {
 	vsDir := t.TempDir()
 	zcpinit.SetVSCodeWorkDir(vsDir)
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+	stubCommandOutput(t)
 }
 
 // TestContainerSteps_NoGitSetup locks GLC-4 — the ZCP service container
@@ -118,6 +119,7 @@ func TestContainerSteps_ClaudeConfigs_ProjectEntry(t *testing.T) {
 
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -178,6 +180,7 @@ func TestContainerSteps_ClaudeConfigs_APIKeyApproved(t *testing.T) {
 
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -267,6 +270,7 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 		return nil
 	})
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
@@ -325,6 +329,7 @@ func TestContainerSteps_VSCode_InstallsManagedData(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -384,6 +389,7 @@ func TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -432,6 +438,7 @@ func TestContainerSteps_VSCode_Bootstrap_Idempotent(t *testing.T) {
 
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	rt := runtime.Info{InContainer: true}
 
@@ -498,6 +505,7 @@ func TestContainerSteps_VSCode_Bootstrap_PreservesExistingEntries(t *testing.T) 
 
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	stubCommandOutput(t)
 
 	indexPath := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "extensions.json")
 	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {

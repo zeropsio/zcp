@@ -8,6 +8,17 @@ command -v jq &>/dev/null || { echo "BLOCKED: jq is required for security checks
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+
+# The tree a gate checks: the git checkout the command runs in (a worktree's own
+# tree, not the main checkout's), else the project dir, else this repo.
+gate_root() {
+    local root=""
+    [ -n "$CWD" ] && root=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
+    [ -z "$root" ] && root="$CLAUDE_PROJECT_DIR"
+    [ -z "$root" ] && root=$(cd "$(dirname "$0")/../.." && pwd)
+    echo "$root"
+}
 
 # ============================================================
 # SECURITY GATE — block destructive operations
@@ -65,12 +76,12 @@ fi
 # ============================================================
 
 if echo "$COMMAND" | grep -qE '^git\s+push'; then
-    MODULE_ROOT="$CLAUDE_PROJECT_DIR"
-    [ -z "$MODULE_ROOT" ] && MODULE_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+    MODULE_ROOT=$(gate_root)
     cd "$MODULE_ROOT" || exit 0
     [ -f "go.mod" ] || exit 0
 
-    TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=60s 2>&1)
+    # Per-package bound inside the hook's own 120 s (.claude/settings.json).
+    TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=100s 2>&1)
     if echo "$TEST_OUTPUT" | grep -qE 'FAIL'; then
         echo "BLOCKED: Tests failing. Fix before pushing." >&2
         echo "$TEST_OUTPUT" | grep -E 'FAIL|---' | tail -5 >&2
@@ -86,8 +97,7 @@ fi
 
 echo "$COMMAND" | grep -qE '^git\s+commit' || exit 0
 
-MODULE_ROOT="$CLAUDE_PROJECT_DIR"
-[ -z "$MODULE_ROOT" ] && MODULE_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+MODULE_ROOT=$(gate_root)
 cd "$MODULE_ROOT" || exit 0
 
 STAGED=$(git diff --cached --name-only 2>/dev/null)
