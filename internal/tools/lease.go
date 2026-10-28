@@ -284,6 +284,9 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 			}
 			view, err := ops.LeaseSync(ctx, deps, input.Lease)
 			if err != nil {
+				// A push refused as non-fast-forward names HQ's own push as
+				// its cause when it is one: the Mate's state read once.
+				err = corePushSyncRefusal(err, stateDir, hqAddress(rt), input.Lease, leaseHQState(ctx, hqHTTP, rt))
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view), Envelope: envelope(ctx)}), nil, nil

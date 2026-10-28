@@ -289,11 +289,15 @@ func leaseGroupChanges(stateDir, address string, views []ops.LeaseView, read fun
 
 // groupChangeWords is what lease status says of the change on group g's
 // branch: the ledger's, with its standing as state (nil: unread) names it or
-// as told; one merged there, by the ledger or by state; or none yet. leases
-// are every HQ lease zcp holds.
+// as told — HQ's own merge commit at its head said as the pass says it, with
+// the fast-forward in each of the group's leases; one merged there, by the
+// ledger or by state; or none yet. leases are every HQ lease zcp holds.
 func groupChangeWords(changes []workflow.HQChange, leases []hqLeaseBranch, state *hq.MateState, g hqLeaseBranch) string {
-	words, merged := groupChange(changes, state, g)
+	words, merged, open := groupChange(changes, state, g)
 	if merged == 0 {
+		if open != nil && open.Told != nil && open.Told.CoreHead != "" {
+			words += " — " + corePushWords(open.Number, open.Told.CoreLanded, g.branch, groupAliases(leases, g), false)
+		}
 		return words
 	}
 	which := "this lease"
@@ -306,24 +310,28 @@ func groupChangeWords(changes []workflow.HQChange, leases []hqLeaseBranch, state
 // groupChange is the change on group g's branch: words for the ledger's open
 // one, with its standing as state (nil: unread) names it or as told, or "no
 // change yet"; merged is the number of one merged there, by the ledger or by
-// state (0: none), which words then do not name.
-func groupChange(changes []workflow.HQChange, state *hq.MateState, g hqLeaseBranch) (words string, merged int) {
+// state (0: none), which words then do not name. open is the ledger's open
+// change words name, its Told the standing they name it with; nil for none.
+func groupChange(changes []workflow.HQChange, state *hq.MateState, g hqLeaseBranch) (words string, merged int, open *workflow.HQChange) {
 	words, merged = "no change yet", mergedOn(state, g.appID, g.repo, g.branch)
 	for _, c := range changesIn(changes, g.appID, g.repo) {
 		if c.Branch != g.branch {
 			continue
 		}
-		line, _ := changeLineNow(c, state)
+		line, told := changeLineNow(c, state)
 		if line.Merged {
-			merged = c.Number
+			merged, open = c.Number, nil
 			continue
 		}
 		merged, words = 0, fmt.Sprintf("#%d", c.Number)
 		if len(line.Labels) > 0 {
 			words += " (" + strings.Join(line.Labels, " · ") + ")"
 		}
+		named := c
+		named.Told = told
+		open = &named
 	}
-	return words, merged
+	return words, merged, open
 }
 
 // groupAliases are the aliases of group g's leases among leases.
@@ -370,7 +378,7 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 	changes, leases := hqChanges(stateDir), hqLeaseBranches(stateDir, address)
 	named := make([]string, 0, len(groups))
 	for _, g := range groups {
-		words, merged := groupChange(changes, state, g)
+		words, merged, _ := groupChange(changes, state, g)
 		if merged > 0 {
 			words = fmt.Sprintf("change #%d merged", merged)
 			if held := groupAliases(leases, g); len(held) > 0 {

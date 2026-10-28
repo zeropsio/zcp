@@ -425,7 +425,9 @@ func TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause(t *testing.T) {
 	stateWith := func(push bool) func() *hq.MateState {
 		badge := corePushed(corePushMerge, push, false)
 		badge.Branch = "mate-test-badge"
-		return func() *hq.MateState { return &hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{badge}} }
+		return func() *hq.MateState {
+			return &hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{badge}}
+		}
 	}
 
 	reads := 0

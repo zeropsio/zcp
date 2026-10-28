@@ -77,13 +77,20 @@ type HQChange struct {
 // HQChangeTold is a change's standing in HQ as last read from the Mate's own
 // state, and so as last told: open, whether it is described at its head
 // (Ready, nil from an HQ older than it), how it merges into `main` and whether
-// `main` moved past it, and when HQ last changed it.
+// `main` moved past it, when HQ last changed it, and whether its head is a
+// merge commit of HQ's own that brought `main` in.
 type HQChangeTold struct {
 	State        string `json:"state,omitempty"`
 	Ready        *bool  `json:"ready,omitempty"`
 	Mergeability string `json:"mergeability,omitempty"`
 	Behind       bool   `json:"behind,omitempty"`
 	UpdatedAt    string `json:"updatedAt,omitempty"`
+	// CoreHead is HQ's merge commit on the change's branch while it is the
+	// change's head — HQ brought `main` in after change CoreLanded merged
+	// (hq.CorePush), so the agent's branch is behind its own remote until
+	// fetched and fast-forwarded; "" for none, or a push past it since.
+	CoreHead   string `json:"coreHead,omitempty"`
+	CoreLanded int    `json:"coreLanded,omitempty"`
 }
 
 // hqChangeDir is the ledger directory of one repository, refusing a name that

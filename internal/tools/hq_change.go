@@ -326,13 +326,51 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 	if s.Head == nil {
 		now.Ready = nil
 	}
+	if s.CorePushAtHead() {
+		now.CoreHead, now.CoreLanded = s.CorePush.Head, s.CorePush.Landed
+	}
 	return now
 }
 
+// corePushWords says HQ brought `main` into change number on branch after
+// change landed merged, by a merge commit of its own on the branch
+// (hq.CorePush): the agent's branch is where it was, so its next push is
+// refused as non-fast-forward until it fetches and fast-forwards — over ssh
+// in each lease on the branch (leases), since a lease's git runs there; with
+// none, where the branch is checked out, in the agent's own shell on the
+// mounted checkout or its /tmp worktree, never over ssh, since only that
+// shell has HQ's credential. zcp reads none of those checkouts — each is
+// another container — so it cannot tell one already fast-forwarded, and a
+// fast-forward there is a no-op. ready: the change is described at HQ's
+// merge commit, which costs no new description.
+func corePushWords(number, landed int, branch string, leases []string, ready bool) string {
+	ff := "git fetch origin && git merge --ff-only origin/" + branch
+	where := fmt.Sprintf("where it is checked out (the mounted checkout, or its /tmp/%s worktree), in your own shell, never over ssh: `%s`", branch, ff)
+	if len(leases) > 0 {
+		calls := make([]string, 0, len(leases))
+		for _, alias := range leases {
+			calls = append(calls, fmt.Sprintf("`ssh %s \"cd /var/www && %s\"`", alias, ff))
+		}
+		which := "in its lease"
+		if len(leases) > 1 {
+			which = "in each of its leases"
+		}
+		where = which + ", over ssh: " + strings.Join(calls, ", ")
+	}
+	words := fmt.Sprintf("HQ brought main into #%d after #%d merged: fetch and fast-forward `%s` before your next push, which is refused as non-fast-forward from where it was — %s",
+		number, landed, branch, where)
+	if ready {
+		words += "; it stays ready, with nothing to describe again"
+	}
+	return words
+}
+
 // hqChangeStanding is what the agent is told of c's standing as the Mate's
-// state names it now (s) — a draft with a push to describe, behind main, no
-// longer merging cleanly — said only when it differs from what the agent was
-// last told (c.Told); "" for nothing worth words, and for an HQ that judges
+// state names it now (s) — HQ's own merge commit at its head, to fetch and
+// fast-forward before the next push; a draft with a push to describe, behind
+// main, no longer merging cleanly — each said only when it differs from what
+// the agent was last told (c.Told), the fast-forward first, since every other
+// step ends in a push; "" for nothing worth words, and for an HQ that judges
 // nothing. leases are the leases on c's branch. It answers the standing to
 // keep as told. Never a rebase, never a force: a branch takes main by a
 // merge, checked on its own preview before it is pushed.
@@ -342,11 +380,27 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (st
 	if c.Told != nil {
 		told = *c.Told
 	}
+	branch := cmp.Or(c.Branch, cmp.Or(s.Branch, "its branch"))
+	standing := standingWords(c.Number, branch, now, told, leases)
+	if now.CoreHead == "" || now.CoreHead == told.CoreHead {
+		return standing, now
+	}
+	core := corePushWords(c.Number, now.CoreLanded, branch, leases, standing == "" && now.Ready != nil && *now.Ready)
+	if standing == "" {
+		return core, now
+	}
+	return core + "; once it is fast-forwarded: " + standing, now
+}
+
+// standingWords is what the agent is told of change number on branch whose
+// standing is now — a draft with a push to describe, behind main, no longer
+// merging cleanly — when it differs from what it was told; "" otherwise.
+// leases are the leases on the branch.
+func standingWords(number int, branch string, now, told workflow.HQChangeTold, leases []string) string {
 	label := standingLabel(now)
 	if label == "" || label == standingLabel(told) {
-		return "", now
+		return ""
 	}
-	branch := cmp.Or(c.Branch, cmp.Or(s.Branch, "its branch"))
 	describe := fmt.Sprintf("describe it again (zerops_workflow action=\"describe-change\" branch=%q)", branch)
 	where, sync := "where its branch is checked out", ""
 	if len(leases) > 0 {
@@ -356,17 +410,17 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (st
 	switch label {
 	case "conflict":
 		return fmt.Sprintf("change #%d on %q no longer merges cleanly with main: %s, merge origin/main in (`git fetch origin && git merge origin/main`), resolve the conflicts, check it works, commit and push it (`git push origin %s`)%s — never rebase, never force-push — and %s",
-			c.Number, branch, where, branch, sync, describe), now
+			number, branch, where, branch, sync, describe)
 	case "behind":
 		clean := "and still merges cleanly"
 		if now.Mergeability != hq.MergeClean {
 			clean = "(whether it still merges cleanly is not judged yet)"
 		}
 		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, `git fetch origin && git merge origin/main`, check it works there, push it (`git push origin %s`)%s, and %s; or leave it, and the person merges it on top of what it was not checked with",
-			c.Number, branch, clean, where, branch, sync, describe), now
+			number, branch, clean, where, branch, sync, describe)
 	}
 	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q) — the person is asked to review it only then",
-		c.Number, branch, branch), now
+		number, branch, branch)
 }
 
 // changeBranchWords names c's branch, or that HQ named none.
