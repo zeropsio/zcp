@@ -272,3 +272,165 @@ func TestBuildGroupRecipe_TierClosure_ReadOfAMateWiredStage_Fails(t *testing.T) 
 		t.Errorf("error names the AI Agent tier, which carries the stage:\n%s", msg)
 	}
 }
+
+// partsMateInputs is a monorepo Mate as Noola's runs: one repository, the
+// api part's dev service and stage and the web part's dev pool and stage,
+// beside the database, the Mate's mail catcher and the Mate's own zcp and
+// core.
+func partsMateInputs() GroupRecipeInputs {
+	body := zeropsYAMLWithVars(setupVars{name: "apidev"}, setupVars{name: "apiprod"}, setupVars{name: "webdev"}, setupVars{name: "webprod"})
+	repo := "https://hq.example/git/org/app/app.git"
+	return GroupRecipeInputs{
+		Name:              "app",
+		MateProjectName:   "app-mate",
+		MateSubdomainHost: "1df2.prg1.zerops.app",
+		Runtimes: []GroupRuntime{
+			{DevHostname: "apidev", Stages: []GroupStage{{Hostname: "apistage", SetupName: "apiprod", ServiceType: "go@1.22"}},
+				ServiceType: "go@1.22", RepoURL: repo, SetupName: "apidev", ZeropsYAMLBody: body},
+			{DevHostname: "webpool", DevPool: true, Stages: []GroupStage{{Hostname: "webstage", SetupName: "webprod", ServiceType: "go@1.22"}},
+				ServiceType: "swarm@1", RepoURL: repo, SetupName: "webdev", ZeropsYAMLBody: body},
+		},
+		ManagedServices:  []ManagedServiceEntry{{Hostname: "db", Type: "postgresql:single@18"}},
+		Utilities:        []GroupUtility{{Hostname: "mailpit", ServiceType: "alpine@3.21", BuildFromGit: "https://github.com/zerops-recipe-apps/mailpit-app"}},
+		ProjectHostnames: []string{"apidev", "apistage", "webpool", "webstage", "db", "mailpit", "zcp", "core"},
+	}
+}
+
+// TestBuildGroupRecipe_MateWiring_OnlyAnAddressNoGroupEnvironmentRuns: a
+// runtime — a utility or a stage — is wired to the Mate only when its own
+// variables name the address of a service no group environment runs: a
+// pair's dev service or dev pool, the Mate's own infrastructure (zcp, core —
+// a service the recipe carries on no tier), or a utility already wired to
+// the Mate. One part naming another part's stage, or a utility naming a
+// stage, is the app's own wiring, and so is a stage naming the Mate's mail
+// catcher: both stay in Stage and Small Production, and the pass says
+// nothing of them.
+func TestBuildGroupRecipe_MateWiring_OnlyAnAddressNoGroupEnvironmentRuns(t *testing.T) {
+	t.Parallel()
+	stageEnv := func(stage int, key, value string) func(*GroupRecipeInputs) {
+		return func(in *GroupRecipeInputs) {
+			in.Runtimes[stage].Stages[0].ServiceEnvs = append(in.Runtimes[stage].Stages[0].ServiceEnvs, ProjectEnvVar{Key: key, Value: value})
+		}
+	}
+	runner := func(value string) func(*GroupRecipeInputs) {
+		return func(in *GroupRecipeInputs) {
+			in.Utilities = append(in.Utilities, GroupUtility{Hostname: "agentrunner", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/agent-runner",
+				ServiceEnvs: []ProjectEnvVar{{Key: "FLIP_SERVER", Value: value}}})
+			in.ProjectHostnames = append(in.ProjectHostnames, "agentrunner")
+		}
+	}
+	const api, web = 0, 1
+	tests := []struct {
+		name  string
+		edits []func(*GroupRecipeInputs)
+		// kept and dropped are runtimes of the group tiers by the names they
+		// run under there.
+		kept, dropped []string
+		said, unsaid  []string
+	}{
+		{
+			name:   "a part's stage naming another part's stage",
+			edits:  []func(*GroupRecipeInputs){stageEnv(web, "API_URL", "https://apistage-1df2-3000.prg1.zerops.app")},
+			kept:   []string{"api", "web"},
+			unsaid: []string{`"webstage" stays on the AI Agent tier only`},
+		},
+		{
+			name:   "a part's stage naming the Mate's mail catcher",
+			edits:  []func(*GroupRecipeInputs){stageEnv(web, "MAIL_UI", "https://mailpit-1df2-8025.prg1.zerops.app")},
+			kept:   []string{"api", "web"},
+			unsaid: []string{`"webstage" stays on the AI Agent tier only`},
+		},
+		{
+			name:   "a utility naming a part's stage",
+			edits:  []func(*GroupRecipeInputs){runner("https://apistage-1df2-3000.prg1.zerops.app")},
+			kept:   []string{"api", "web", "agentrunner"},
+			unsaid: []string{`"agentrunner" stays on the AI Agent tier only`},
+		},
+		{
+			name:    "a part's stage naming a dev service",
+			edits:   []func(*GroupRecipeInputs){stageEnv(web, "API_URL", "https://apidev-1df2-3000.prg1.zerops.app")},
+			kept:    []string{"api"},
+			dropped: []string{"web"},
+			said:    []string{`"webstage" stays on the AI Agent tier only`},
+		},
+		{
+			name:    "a part's stage naming a dev pool",
+			edits:   []func(*GroupRecipeInputs){stageEnv(api, "PREVIEW_URL", "https://webpool-1df2-5173.prg1.zerops.app")},
+			kept:    []string{"web"},
+			dropped: []string{"api"},
+			said:    []string{`"apistage" stays on the AI Agent tier only`},
+		},
+		{
+			name:    "a part's stage naming the Mate's zcp",
+			edits:   []func(*GroupRecipeInputs){stageEnv(web, "ZCP_URL", "https://zcp-1df2-8080.prg1.zerops.app")},
+			kept:    []string{"api"},
+			dropped: []string{"web"},
+			said:    []string{`"webstage" stays on the AI Agent tier only`},
+		},
+		{
+			name:    "a utility naming the Mate's core",
+			edits:   []func(*GroupRecipeInputs){runner("https://core-1df2-8080.prg1.zerops.app")},
+			kept:    []string{"api", "web"},
+			dropped: []string{"agentrunner"},
+			said:    []string{`"agentrunner" stays on the AI Agent tier only`},
+		},
+		{
+			name: "a part's stage naming a utility wired to the Mate",
+			edits: []func(*GroupRecipeInputs){
+				runner("https://apidev-1df2-3000.prg1.zerops.app"),
+				stageEnv(web, "AGENT_URL", "https://agentrunner-1df2-8080.prg1.zerops.app"),
+			},
+			kept:    []string{"api"},
+			dropped: []string{"web", "agentrunner"},
+			said:    []string{`"agentrunner" stays on the AI Agent tier only`, `"webstage" stays on the AI Agent tier only`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			inputs := partsMateInputs()
+			for _, edit := range tt.edits {
+				edit(&inputs)
+			}
+			layout, warnings, err := BuildGroupRecipe(inputs)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if len(layout.Tiers) != len(groupTierDirs) {
+				t.Fatalf("tiers = %d, want %d", len(layout.Tiers), len(groupTierDirs))
+			}
+			for _, tier := range layout.Tiers {
+				types := tierServiceTypes(t, tier.ImportYAML)
+				if tier.Title == "AI Agent" {
+					for _, host := range []string{"apidev", "apistage", "webpool", "webstage"} {
+						if _, carried := types[host]; !carried {
+							t.Errorf("tier %q does not carry %s", tier.Title, host)
+						}
+					}
+					continue
+				}
+				for _, host := range tt.kept {
+					if _, carried := types[host]; !carried {
+						t.Errorf("tier %q does not carry %s", tier.Title, host)
+					}
+				}
+				for _, host := range tt.dropped {
+					if _, carried := types[host]; carried {
+						t.Errorf("tier %q carries %s, which serves the Mate alone", tier.Title, host)
+					}
+				}
+			}
+			said := strings.Join(warnings, "\n")
+			for _, want := range tt.said {
+				if !strings.Contains(said, want) {
+					t.Errorf("warnings do not say %q:\n%s", want, said)
+				}
+			}
+			for _, not := range tt.unsaid {
+				if strings.Contains(said, not) {
+					t.Errorf("warnings say %q:\n%s", not, said)
+				}
+			}
+		})
+	}
+}
