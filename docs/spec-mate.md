@@ -958,16 +958,45 @@ writes the dev setup's two lines (MODEL §9/1c, P4 H1), pinned to the **newest p
 release whose supervisor `formats` include the declaration's `version`** — never to the release of
 the zcp that writes them (a dev build has no asset). A release never drops a format, so this is the
 newest release zcp's update check sees (`internal/update`, `releases/latest`); when no published
-release reads the declaration's `version` yet, zcp writes no pin and says so. A pin is refreshed
-only inside a deploy the agent asked for: before a self-deploy of a dev service deployed before,
-zcp points the zcp-devsup line its dev setup already carries at the newest pin, changing nothing
-else, and the deploy reply names both releases — that deploy installs it, nothing redeploys on its
-own, and a dev setup without the line stays as written
-(`TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy`). A
-deploy that fails after the re-pin names it too
+release reads the declaration's `version` yet, zcp writes no pin and says so.
+
+**A pin is needed, and a pin stays.** Zerops reuses the runtime image `run.prepareCommands` built
+while their text, `run.base` and `build.addToRunPrepare` stay the same (zerops-docs, pipeline
+"Custom runtime image caching"), so a line naming whichever release is newest
+(`releases/latest/download/…`) would install the release of the service's first build and keep it
+until something else edits the line — a version no one can read off the file, different per
+service. So zcp names a release, and a named release stays: a dev setup that already installs
+zcp-devsup keeps the release it names, whichever it is, on the dev service's first deploy and on
+every later one — a newer release out since is no reason to change a person's file in the middle
+of their change (`TestAdoptSupervisorYAML`,
+`TestDeploy_ADevSetupThatAlreadyRunsTheSupervisor_KeepsTheReleaseItPins`). Only a supervisor that
+cannot run the declaration format zcp writes, or the one the repository's declaration carries
+(missing from its `ctl version` formats), moves the pin: before a self-deploy of a dev service
+deployed before, zcp points the zcp-devsup line its dev setup carries at the newest release,
+changing nothing else, and the deploy reply names both releases and why — that deploy installs it,
+nothing redeploys on its own, and a dev setup without the line stays as written
+(`TestDeploy_ADevSetupWhoseSupervisorCannotRunWhatZcpWrites_IsRePinnedAndSaysWhy`). A deploy that
+fails after the re-pin names it too
 (`TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged`) and says the
 next successful deploy installs it
 (`TestDeploy_ABuildThatFailsAfterTheSupervisorRePinSaysTheNextSuccessfulDeployInstallsIt`).
+
+**zcp's own edit lands as a commit of its own.** What zcp edits in the repository unasked — the dev
+setup's lines on a first deploy or a re-pin, and with a first start's move onto the supervisor (or
+a kept server's carry) also `.zcp/dev-servers.json` — the reply names once, file by file, with why,
+and zcp commits it before the push or redeploy, so that deploy ships it from git: a commit of its
+own on the checked-out branch holding only those files, whatever else is staged, signed `Zerops
+Agent <agent@zerops.io>`, with `--no-verify` — the repository's commit checks check the person's
+work, and a deploy never waits on the app's typecheck for zcp's lines. Where each branch is one
+change the person merges (HQ, §10.10), the commit rides with the branch's change apart from the
+person's own commits, and once merged `main` carries it, so no branch cut from `main` needs the
+edit again. zcp commits nothing, and says what to commit with the command, when the checkout is on
+`main` or `master` — only a merged change moves it, and a commit there could not be pushed — when
+one of the files held uncommitted lines before zcp's edit, on a detached HEAD, or when git refuses
+(`TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn`,
+`TestDevServer_TheMoveOntoTheSupervisor_CommitsBothFilesOnTheWorkBranch`,
+`TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp`). Left uncommitted, such a file blocks
+a checkout of every branch that changes it and ships with every deploy from outside git.
 
 **Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
 
