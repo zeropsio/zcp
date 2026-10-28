@@ -140,14 +140,23 @@ func reconcileGroupRecipe(
 // GroupRecipeAtStart is the recipe pass zcp's start in a Mate runs
 // (server.New), off the startup path: a recipe no earlier pass got through
 // goes out without waiting for the next bootstrap or adopt. A start comes
-// with every agent session and nobody asked for it, so a proposal a person
-// closed unmerged is not opened again here; bootstrap, adopt and the
-// agent's ask still propose it.
+// with every agent session and nobody asked for it (groupRecipeUnasked).
 func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
-	if hqc, linked := openHQ(httpClient, rt); linked {
-		if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
-			return ""
-		}
+	return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir)
+}
+
+// groupRecipeUnasked is a recipe pass nobody asked for — zcp's start in a
+// Mate, a tool call that changed what the recipe reads (RecipeFollower) — so
+// a proposal a person closed unmerged is not opened again here; bootstrap,
+// adopt and the agent's ask still propose it. A pass with nothing to compose
+// asks HQ nothing.
+func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+	hqc, _, _, ready := recipePassReady(client, httpClient, rt, stateDir)
+	if !ready {
+		return ""
+	}
+	if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
+		return ""
 	}
 	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
 }
