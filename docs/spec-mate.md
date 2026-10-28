@@ -5208,6 +5208,10 @@ The order:
    link to HQ brings the Mate nobody is known to have asked, and nothing is settled on that; HQ's
    record naming nobody settles it as none at once. No client sends it. While it waits,
    `/setup.json` says why where the server knows: `not_linked`, with the link's reason (§3.12, C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first.
+   Since the person never typed it, the same block has the agent say first, in plain words, what it
+   is about to set up and roughly how long that takes (each app built for development and for the
+   preview, minutes per build), then give one short line per step, the fallback's included
+   (`TestBuildAgentsMD_Container_StandUpRoutesToTheTool`).
    The tool:
    - waits, bounded, for HQ to answer the Mate's key (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
