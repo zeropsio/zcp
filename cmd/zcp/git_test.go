@@ -58,6 +58,25 @@ func writeGitTestMeta(t *testing.T, stateDir string, m *workflow.ServiceMeta) {
 	}
 }
 
+// remoteScript is the script a remote command hands /bin/sh, after checking
+// that a POSIX shell — the login shell sshd runs it in — splits command into
+// exactly /bin/sh, -c and that one script (the shell's own split, set --).
+func remoteScript(t *testing.T, command string) string {
+	t.Helper()
+	if !strings.HasPrefix(command, "/bin/sh -c '") || !strings.HasSuffix(command, "'") {
+		t.Fatalf("remote command = %q, want /bin/sh -c '<script>'", command)
+	}
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"").Output() //nolint:gosec // splits a command this test built, checked above to be one quoted word
+	if err != nil {
+		t.Fatalf("split %q in sh: %v", command, err)
+	}
+	words := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if len(words) != 3 || words[0] != "/bin/sh" || words[1] != "-c" {
+		t.Fatalf("remote command %q splits into %q, want exactly /bin/sh -c <script>", command, words)
+	}
+	return words[2]
+}
+
 // assertGitRefused checks a refusal: exit 2, one stderr line naming why
 // (every want in it), nothing on stdout, and no ssh call.
 func assertGitRefused(t *testing.T, args []string, code int, stdout, stderr *bytes.Buffer, ssh *fakeGitSSH, want ...string) {
@@ -208,7 +227,7 @@ func TestRunGitCmd_PassesStdinStdoutExitCode(t *testing.T) {
 			if len(ssh.calls) != 1 || ssh.calls[0].host != "appdev" {
 				t.Fatalf("ssh calls = %+v, want one to appdev", ssh.calls)
 			}
-			if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git 'commit' '-F' '-'`; !strings.HasSuffix(ssh.calls[0].command, want) {
+			if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git 'commit' '-F' '-'`; !strings.HasSuffix(remoteScript(t, ssh.calls[0].command), want) {
 				t.Errorf("remote command = %q, want it to end with %q", ssh.calls[0].command, want)
 			}
 		})
@@ -317,7 +336,7 @@ func TestRunGitCmd_FromAnotherWorkingDir_FindsTheRecordAndCodeVolumeDir(t *testi
 		if len(ssh.calls) != 1 || ssh.calls[0].host != host {
 			t.Fatalf("ssh calls = %+v, want one to %s", ssh.calls, host)
 		}
-		if want := `cd '/var/www/ws' && GIT_TERMINAL_PROMPT=0 exec git 'status'`; !strings.HasSuffix(ssh.calls[0].command, want) {
+		if want := `cd '/var/www/ws' && GIT_TERMINAL_PROMPT=0 exec git 'status'`; !strings.HasSuffix(remoteScript(t, ssh.calls[0].command), want) {
 			t.Errorf("remote command for %s = %q, want it to end with %q", host, ssh.calls[0].command, want)
 		}
 	}
@@ -344,7 +363,7 @@ func TestRunGitCmd_LeaseAlias_PlainPassthroughInVarWww(t *testing.T) {
 		if len(ssh.calls) != 1 || ssh.calls[0].host != host {
 			t.Fatalf("ssh calls = %+v, want one to %s", ssh.calls, host)
 		}
-		if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(ssh.calls[0].command, want) {
+		if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(remoteScript(t, ssh.calls[0].command), want) {
 			t.Errorf("remote command for %s = %q, want it to end with %q", host, ssh.calls[0].command, want)
 		}
 	}

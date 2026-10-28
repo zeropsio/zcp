@@ -32,6 +32,49 @@ func runBuiltCommand(t *testing.T, command string, env ...string) string {
 	return string(out)
 }
 
+// binShScript is the script a remote command hands /bin/sh: it checks that a
+// POSIX shell — the login shell sshd runs it in — reads command as exactly
+// three words, /bin/sh, -c and one script, and returns the script. The words
+// come from the shell's own split (set --), not from re-parsing here.
+func binShScript(t *testing.T, command string) string {
+	t.Helper()
+	if !strings.HasPrefix(command, "/bin/sh -c '") || !strings.HasSuffix(command, "'") {
+		t.Fatalf("remote command = %q, want /bin/sh -c '<script>'", command)
+	}
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"").Output() //nolint:gosec // splits a command this test built, checked above to be one quoted word
+	if err != nil {
+		t.Fatalf("split %q in sh: %v", command, err)
+	}
+	words := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if len(words) != 3 || words[0] != "/bin/sh" || words[1] != "-c" {
+		t.Fatalf("remote command %q splits into %q, want exactly /bin/sh -c <script>", command, words)
+	}
+	return words[2]
+}
+
+// TestBuildBrokeredGitCommand_RunsUnderBinShWhateverTheLoginShell: sshd runs
+// the remote command in the service user's login shell — bash on one image,
+// busybox ash on alpine — so the command is pinned to one POSIX sh: the login
+// shell only splits `/bin/sh -c '<script>'`, the whole script ShellQuoted as
+// one argument, and every line of the script runs under /bin/sh.
+func TestBuildBrokeredGitCommand_RunsUnderBinShWhateverTheLoginShell(t *testing.T) {
+	t.Parallel()
+	command := BuildBrokeredGitCommand("/var/www", BrokeredGitArgs{Subcommand: "commit", Rest: []string{"-m", "it's"}})
+	if !strings.HasPrefix(command, "/bin/sh -c ") {
+		t.Fatalf("remote command = %q, want it to start with /bin/sh -c", command)
+	}
+	script := binShScript(t, command)
+	if command != "/bin/sh -c "+ShellQuote(script) {
+		t.Errorf("remote command = %q, want /bin/sh -c and the whole script as one ShellQuoted argument", command)
+	}
+	if !strings.HasPrefix(script, "unset ") {
+		t.Errorf("script = %q, want it to unset the scrubbed variables first", script)
+	}
+	if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git 'commit' '-m' 'it'\''s'`; !strings.HasSuffix(script, want) {
+		t.Errorf("script = %q\nwant it to end with %q", script, want)
+	}
+}
+
 // TestBuildBrokeredGitCommand_QuotesEveryArgument_RunsInCheckout: the remote
 // command changes into the checkout's directory and hands git every argument
 // exactly as given — spaces, quotes, `$`, `;`, newlines and backslashes
@@ -45,8 +88,8 @@ func TestBuildBrokeredGitCommand_QuotesEveryArgument_RunsInCheckout(t *testing.T
 			Rest:       []string{"-m", "it's $HOME; rm -rf /"},
 		})
 		want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git 'commit' '-m' 'it'\''s $HOME; rm -rf /'`
-		if !strings.HasSuffix(got, want) {
-			t.Errorf("command = %q\nwant it to end with %q", got, want)
+		if script := binShScript(t, got); !strings.HasSuffix(script, want) {
+			t.Errorf("script = %q\nwant it to end with %q", script, want)
 		}
 		withOptions := BuildBrokeredGitCommand("/var/www/ws", BrokeredGitArgs{
 			Config:     []string{"user.name=A B"},
@@ -55,8 +98,8 @@ func TestBuildBrokeredGitCommand_QuotesEveryArgument_RunsInCheckout(t *testing.T
 			Rest:       []string{"-1"},
 		})
 		wantOptions := `cd '/var/www/ws' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' '-c' 'user.name=A B' 'log' '-1'`
-		if !strings.HasSuffix(withOptions, wantOptions) {
-			t.Errorf("command = %q\nwant it to end with %q", withOptions, wantOptions)
+		if script := binShScript(t, withOptions); !strings.HasSuffix(script, wantOptions) {
+			t.Errorf("script = %q\nwant it to end with %q", script, wantOptions)
 		}
 	})
 
@@ -123,8 +166,8 @@ func TestBuildBrokeredGitCommand_ScrubsTraceAndAskpassEnv(t *testing.T) {
 	}
 	env = append(env, "GIT_TERMINAL_PROMPT=1")
 	command := BuildBrokeredGitCommand(t.TempDir(), BrokeredGitArgs{Subcommand: "status"})
-	if !strings.HasPrefix(command, "unset ") {
-		t.Errorf("command = %q, want it to start by unsetting the scrubbed variables", command)
+	if script := binShScript(t, command); !strings.HasPrefix(script, "unset ") {
+		t.Errorf("script = %q, want it to start by unsetting the scrubbed variables", script)
 	}
 	out := runBuiltCommand(t, command, env...)
 	_, gitEnv, ran := strings.Cut(out, "--env--")
