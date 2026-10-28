@@ -83,12 +83,13 @@ func flipStudioInputs() GroupRecipeInputs {
 // TestBuildGroupRecipe_MateWiredStage_OnlyInTheAIAgentTier is flip.studio's
 // group recipe (2026-10-28) as the project really is: the owner's cloud
 // agent is no utility but a stage of the flipdev pair, built from flip's own
-// repository by its own setup, which mounts agenthome. A stage whose own
-// variables name an address of another service of the Mate's own project is
-// wired to that Mate, as a utility is: it and the volume only it uses stay
-// on the AI Agent tier, and Stage and Small Production carry the app — its
-// part, the database and the object storage it reads — and say what they
-// left out.
+// repository by its own setup, which mounts agenthome, and its FLIP_SERVER
+// names flipdev, the pair's dev service. A stage whose own variables name
+// the address of a service of the Mate's own project no group environment
+// runs is wired to that Mate, as a utility is: it and the volume only it
+// uses stay on the AI Agent tier, and Stage and Small Production carry the
+// app — its part, the database and the object storage it reads — and say
+// what they left out.
 func TestBuildGroupRecipe_MateWiredStage_OnlyInTheAIAgentTier(t *testing.T) {
 	t.Parallel()
 	layout, warnings, err := BuildGroupRecipe(flipStudioInputs())
@@ -128,14 +129,14 @@ func TestBuildGroupRecipe_MateWiredStage_OnlyInTheAIAgentTier(t *testing.T) {
 }
 
 // TestBuildGroupRecipe_StageWiring_DecidesItsTiers: a stage is the Mate's
-// by the same rule as a utility — its own variables name an address of
-// another service of the Mate's own project, written out — and a volume
-// stays in the group tiers while anything they carry mounts or names it:
-// the setup a carried part builds, with every setup it extends, or a
-// carried part's variable. What only the dev half or the Mate-wired stage
-// runs is no such thing. A stage naming its own address, another project's
-// or one through the subdomain variables, and a Mate whose subdomain host is
-// unknown, reach every tier with their volume.
+// by the same rule as a utility — its own variables name the address of a
+// service of the Mate's own project no group environment runs, written
+// out — and a volume stays in the group tiers while anything they carry
+// mounts or names it: the setup a carried part builds, with every setup it
+// extends, or a carried part's variable. What only the dev half or the
+// Mate-wired stage runs is no such thing. A stage naming its own address,
+// another project's or one through the subdomain variables, and a Mate whose
+// subdomain host is unknown, reach every tier with their volume.
 func TestBuildGroupRecipe_StageWiring_DecidesItsTiers(t *testing.T) {
 	t.Parallel()
 	agent := func(in *GroupRecipeInputs) *GroupStage { return &in.Runtimes[0].Stages[1] }
