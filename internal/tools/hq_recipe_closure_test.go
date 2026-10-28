@@ -99,8 +99,8 @@ func closureRefusalFrom(t *testing.T, lines ...string) string {
 	t.Helper()
 	const head = "the group recipe does not compose yet ("
 	for _, line := range lines {
-		if i := strings.Index(line, head); i >= 0 {
-			return strings.TrimSuffix(line[i+len(head):], ").")
+		if _, refusal, found := strings.Cut(line, head); found {
+			return strings.TrimSuffix(refusal, ").")
 		}
 	}
 	t.Fatalf("no line carries the composer's refusal: %q", lines)
@@ -195,7 +195,7 @@ func TestGroupRecipe_TierClosure_StepGoneOnceItComposes(t *testing.T) {
 	if text := recipeStatusText(t, lab); strings.Contains(text, "REQUIRED") {
 		t.Errorf("status still says REQUIRED once the recipe composes:\n%s", text)
 	}
-	if opened := lab.hq.findOf(labMate, labApp, hq.RecipeRepo); opened == nil {
+	if lab.hq.openCount(hq.RecipeRepo) == 0 {
 		t.Errorf("no recipe proposed once it composes (lines %v)", report.lines)
 	}
 }
