@@ -128,10 +128,13 @@ const brokeredGitScrubbedEnv = "" +
 	"GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT " +
 	"http_proxy HTTP_PROXY https_proxy HTTPS_PROXY ALL_PROXY all_proxy NO_PROXY no_proxy"
 
-// BuildBrokeredGitCommand is the remote command of a `zcp git` call: unset
-// the scrubbed variables, change into dir — the checkout — and exec git with
-// terminal prompts off, each argument through ShellQuote, so every byte the
-// caller gave reaches git as data.
+// BuildBrokeredGitCommand is the remote command of a `zcp git` call: a
+// script that unsets the scrubbed variables, changes into dir — the checkout
+// — and execs git with terminal prompts off, each argument through
+// ShellQuote, so every byte the caller gave reaches git as data. sshd hands
+// the command to the service user's login shell (bash on one image, busybox
+// ash on alpine), so the script runs under /bin/sh, ShellQuoted whole as its
+// one -c argument: the login shell only splits those three words.
 func BuildBrokeredGitCommand(dir string, args BrokeredGitArgs) string {
 	argv := make([]string, 0, 2+2*len(args.Config)+1+len(args.Rest))
 	if args.Dir != "" {
@@ -152,7 +155,7 @@ func BuildBrokeredGitCommand(dir string, args BrokeredGitArgs) string {
 		b.WriteByte(' ')
 		b.WriteString(ShellQuote(a))
 	}
-	return b.String()
+	return "/bin/sh -c " + ShellQuote(b.String())
 }
 
 // sshTransportExit is the exit code ssh itself ends with when it fails —
