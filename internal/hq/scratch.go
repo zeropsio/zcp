@@ -248,6 +248,20 @@ func (s *Scratch) IsAncestor(ctx context.Context, ancestor, rev string) (bool, e
 	return false, err
 }
 
+// MergeBase is the best common ancestor of a and b: "" when either is unborn
+// or their histories share no commit.
+func (s *Scratch) MergeBase(ctx context.Context, a, b string) (string, error) {
+	if a == unborn || b == unborn {
+		return unborn, nil
+	}
+	base, err := s.git(ctx, nil, "merge-base", a, b)
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return unborn, nil
+	}
+	return base, err
+}
+
 // Commit makes the commit spec describes and answers it.
 func (s *Scratch) Commit(ctx context.Context, spec CommitSpec) (string, error) {
 	args := make([]string, 0, 8+2*len(spec.Parents))

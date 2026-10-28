@@ -233,6 +233,14 @@ func groupRecipeOutcome(
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return outcome
 	}
+	if written.edited {
+		// The change is the Mate's agent's or a person's now: zcp proposes
+		// nothing on it, and says so on every pass while it stays open.
+		outcome.Change, outcome.Branch = written.number, written.branch
+		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
+		outcome.Line = recipeEditedLine(outcome.Change, outcome.ChangeURL)
+		return outcome
+	}
 	outcome.Proposed = recipeEntries(append(append([]recipe.File(nil), missing...), replaced...))
 	outcome.Replaced = recipeEntries(replaced)
 	outcome.OnMain = len(missing) == 0 && len(replaced) == 0
@@ -304,6 +312,9 @@ type groupRecipeComposition struct {
 	// since (recipeOwnedTiers).
 	mateID string
 	owned  map[string]bool
+	// stateDir is zcp's state directory, where it keeps what it last pushed
+	// on each recipe change (recipePushedDir).
+	stateDir string
 	// retiredDevs are the dev services a pool took over (a pool-keyed
 	// pair's migratedFrom): a tier the group keeps may still name one as its
 	// dev half, which no targeted proposal removes.
@@ -432,7 +443,7 @@ func composeGroupRecipe(
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return groupRecipeComposition{}, outcome, false
 	}
-	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths, mateID: rt.ProjectID, retiredDevs: map[string]bool{}}
+	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths, mateID: rt.ProjectID, stateDir: stateDir, retiredDevs: map[string]bool{}}
 	for _, m := range wired {
 		if m.DevIsPool() && m.DevPool.MigratedFrom != nil {
 			comp.retiredDevs[m.DevPool.MigratedFrom.Hostname] = true
@@ -522,6 +533,9 @@ type recipeWrite struct {
 	created bool
 	pushed  bool
 	other   *otherRecipeChange
+	// edited is a change whose branch holds a commit zcp did not write — the
+	// Mate's agent's or a person's — and nothing was pushed onto it.
+	edited bool
 }
 
 // otherRecipeChange is the Mate's open change in the recipe repository that
@@ -538,11 +552,14 @@ type recipeFiles func(ctx context.Context, scratch *hq.Scratch, main string, pat
 // writeRecipeChange brings the Mate's change titled title in the recipe
 // repository to main's tree with what files writes over it, opening the
 // change when that differs from main and none is open, and pushing its
-// branch forward when what it holds differs. The branch only moves forward:
-// a commit on its head, with main as a second parent once main has moved;
-// written as main has it, the change adds nothing. A Mate's open change
-// there under another title is another proposal of its own, and it is left
-// as it is (recipeWrite.other). An error reads as the line's cause.
+// branch forward when that differs from what zcp last pushed there. The
+// branch only moves forward: a commit on its head, with main as a second
+// parent once main has moved; written as main has it, the change adds
+// nothing. A branch holding anything but what zcp last pushed is someone
+// else's, and nothing is pushed onto it (recipeWrite.edited,
+// recipeChangeIsZcps). A Mate's open change there under another title is
+// another proposal of its own, and it is left as it is (recipeWrite.other).
+// An error reads as the line's cause.
 func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *hq.MateChange, title, message string, files recipeFiles) (recipeWrite, error) {
 	hqc, scratch, main := comp.hqc, comp.scratch, comp.main
 	written, err := files(ctx, scratch, main, comp.paths)
@@ -578,11 +595,28 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 		}
 	}
+	// The branch is zcp's only while it holds what zcp last pushed there
+	// (hq_recipe_respect.go): anyone else's commit makes the change theirs.
+	if head != "" {
+		own, err := recipeChangeIsZcps(ctx, comp, write.number, head)
+		if err != nil {
+			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
+		}
+		if !own {
+			write.edited = true
+			return write, nil
+		}
+	}
 	parents, push, err := recipeParents(ctx, scratch, head, main, tree)
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
 	if !push {
+		// The branch holds tree already: kept as what zcp proposed, for a
+		// change no record named yet.
+		if pushed, ok := readRecipePushed(comp.stateDir, comp.appID, write.number); !ok || pushed != tree {
+			writeRecipePushed(comp.stateDir, comp.appID, write.number, tree)
+		}
 		return write, nil
 	}
 	commit, err := scratch.Commit(ctx, hq.CommitSpec{Tree: tree, Parents: parents, Message: message,
@@ -593,6 +627,7 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 	if err := scratch.Push(ctx, commit, write.branch); err != nil {
 		return recipeWrite{}, fmt.Errorf("could not push the recipe to change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
+	writeRecipePushed(comp.stateDir, comp.appID, write.number, tree)
 	write.pushed = true
 	return write, nil
 }

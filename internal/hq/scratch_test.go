@@ -172,3 +172,58 @@ func TestScratch_History(t *testing.T) {
 		t.Errorf("History of a path no commit touched = %+v, %v; want none", none, err)
 	}
 }
+
+// TestScratch_MergeBase: the common ancestor of two revs, which tells what a
+// change's branch holds beyond the main it last took in; none for an unborn
+// rev or two histories that share no commit.
+func TestScratch_MergeBase(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	ctx := t.Context()
+	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key", OrgID: "org-1"}}
+	scratch, err := c.OpenScratch(ctx, "app-1", RecipeRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(scratch.Close)
+	empty, err := scratch.git(ctx, strings.NewReader(""), "mktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(subject string, parents ...string) string {
+		t.Helper()
+		tree, err := scratch.TreeWith(ctx, empty, map[string]string{"README.md": subject + "\n"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rev, err := scratch.Commit(ctx, CommitSpec{Tree: tree, Parents: parents, Message: subject, Name: "t", Email: "t@example.invalid"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev
+	}
+	main := commit("main")
+	change := commit("change", main)
+	moved := commit("moved", main)
+	unrelated := commit("unrelated")
+	tests := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{"a change on main", change, main, main},
+		{"a change behind a moved main", change, moved, main},
+		{"unrelated histories", change, unrelated, ""},
+		{"an unborn main", change, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := scratch.MergeBase(t.Context(), tt.a, tt.b); err != nil || got != tt.want {
+				t.Errorf("MergeBase = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}

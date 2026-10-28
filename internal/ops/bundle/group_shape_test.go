@@ -363,6 +363,126 @@ func TestBuildGroupRecipe_DevOnlyUtilities_OnlyInTheAIAgentTier(t *testing.T) {
 	}
 }
 
+// TestBuildGroupRecipe_MateOwnServices_OnlyInTheAIAgentTier: what serves the
+// Mate itself stays on the AI Agent tier, as its dev tooling does — a runtime
+// of no pair whose variables name a public address of another service of the
+// Mate's own project, written out, and a volume nothing a group environment
+// runs mounts or names beside such a runtime; Stage and Small Production
+// leave them out and say so (flip.studio's agentrunner, its server the
+// Mate's dev address and its token a secret zcp can only generate, and its
+// agenthome, 2026-10-28). A runtime naming only its own address, another
+// project's or one through the subdomain variables, a volume a part names or
+// whose part's zerops.yaml was not read, and a database nothing names reach
+// every tier.
+func TestBuildGroupRecipe_MateOwnServices_OnlyInTheAIAgentTier(t *testing.T) {
+	t.Parallel()
+	runner := func(envs ...ProjectEnvVar) GroupUtility {
+		return GroupUtility{Hostname: "agentrunner", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/agent-runner",
+			ServiceEnvs: append([]ProjectEnvVar{{Key: "CLAUDE_CODE_OAUTH_TOKEN", Value: "sk-ant-oat01-fake", Sensitive: true}}, envs...)}
+	}
+	wired := ProjectEnvVar{Key: "FLIP_SERVER", Value: "https://apidev-3901-5195.prg1.zerops.app"}
+	home := ManagedServiceEntry{Hostname: "agenthome", Type: "local-storage"}
+	tests := []struct {
+		name string
+		edit func(*GroupRecipeInputs)
+		// mateOwn is what only the AI Agent tier carries; everywhere what
+		// every tier does.
+		mateOwn, everywhere []string
+		warn                []string
+	}{
+		{
+			name: "a runtime wired to the Mate's dev, and the volume only it can be using",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(wired)}
+				in.ManagedServices = append(in.ManagedServices, home)
+			},
+			mateOwn: []string{"agentrunner", "agenthome"}, everywhere: []string{"db", "api"},
+			warn: []string{`"agentrunner" stays on the AI Agent tier only`, "FLIP_SERVER", `"agenthome" stays on the AI Agent tier only`},
+		},
+		{
+			name: "a runtime naming only its own address",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(ProjectEnvVar{Key: "PUBLIC_URL", Value: "https://agentrunner-3901-8080.prg1.zerops.app"})}
+				in.ManagedServices = append(in.ManagedServices, home)
+			},
+			everywhere: []string{"agentrunner", "agenthome", "db"},
+		},
+		{
+			name: "an address of another project",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(ProjectEnvVar{Key: "FLIP_SERVER", Value: "https://apidev-9f3c-3000.prg1.zerops.app"})}
+			},
+			everywhere: []string{"agentrunner"},
+		},
+		{
+			name: "an address through the subdomain variables",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(ProjectEnvVar{Key: "FLIP_SERVER", Value: "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app"})}
+			},
+			everywhere: []string{"agentrunner"},
+		},
+		{
+			name: "a volume a part names",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(wired)}
+				in.ManagedServices = append(in.ManagedServices, home)
+				in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{{Key: "UPLOADS_DIR", Value: "/mnt/agenthome"}}
+			},
+			mateOwn: []string{"agentrunner"}, everywhere: []string{"agenthome"},
+		},
+		{
+			name: "a volume beside a part whose zerops.yaml was not read",
+			edit: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{runner(wired)}
+				in.ManagedServices = append(in.ManagedServices, home)
+				in.Runtimes[0].ZeropsYAMLBody = ""
+				in.Runtimes[0].Stages[0].SetupName = "api"
+			},
+			mateOwn: []string{"agentrunner"}, everywhere: []string{"agenthome"},
+		},
+		{
+			name: "no subdomain host known",
+			edit: func(in *GroupRecipeInputs) {
+				in.MateSubdomainHost = ""
+				in.Utilities = []GroupUtility{runner(wired)}
+				in.ManagedServices = append(in.ManagedServices, home)
+			},
+			everywhere: []string{"agentrunner", "agenthome"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			inputs := groupInputsFixture()
+			inputs.MateSubdomainHost = "3901.prg1.zerops.app"
+			tt.edit(&inputs)
+			layout, warnings, err := BuildGroupRecipe(inputs)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			for _, tier := range layout.Tiers {
+				types := tierServiceTypes(t, tier.ImportYAML)
+				for _, host := range tt.mateOwn {
+					if _, carried := types[host]; carried != (tier.Title == "AI Agent") {
+						t.Errorf("tier %q carries %s = %v, want it on the AI Agent tier alone", tier.Title, host, carried)
+					}
+				}
+				for _, host := range tt.everywhere {
+					if _, carried := types[host]; !carried && (host != "api" || tier.Title != "AI Agent") {
+						t.Errorf("tier %q does not carry %s", tier.Title, host)
+					}
+				}
+			}
+			said := strings.Join(warnings, "\n")
+			for _, want := range tt.warn {
+				if !strings.Contains(said, want) {
+					t.Errorf("warnings do not say %q:\n%s", want, said)
+				}
+			}
+		})
+	}
+}
+
 // TestTierStamp_NamesTheMateAndHoldsOnlyWhileUntouched: every tier zcp
 // composes carries its mark — the Mate project that composed it and a digest
 // of the file — so zcp can tell a tier it wrote and nobody changed since from

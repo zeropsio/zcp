@@ -71,13 +71,16 @@ func composeGroupRecipeInputs(
 		live[svc.Hostname] = svc
 	}
 
+	// The project's subdomain host tells an address of the Mate's own
+	// project in a value: what serves this Mate stays on the AI Agent tier.
 	inputs := bundle.GroupRecipeInputs{
-		Name:            group,
-		Title:           group,
-		MateProjectName: discovered.Project.Name,
-		MateProjectID:   projectID,
-		CorePackage:     project.Mode,
-		ProjectEnvs:     groupRecipeProjectEnvs(projectEnvs),
+		Name:              group,
+		Title:             group,
+		MateProjectName:   discovered.Project.Name,
+		MateProjectID:     projectID,
+		MateSubdomainHost: project.SubdomainHost,
+		CorePackage:       project.Mode,
+		ProjectEnvs:       groupRecipeProjectEnvs(projectEnvs),
 	}
 	warnings := leftOut
 	mainYAML := map[string]string{}

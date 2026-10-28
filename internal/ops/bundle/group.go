@@ -141,9 +141,14 @@ type GroupRecipeInputs struct {
 	// zcp's mark (StampTier), which tells a tier zcp composed from this Mate
 	// and nobody changed since from one a person or another Mate wrote. ""
 	// writes no mark.
-	MateProjectID   string
-	Runtimes        []GroupRuntime
-	ManagedServices []ManagedServiceEntry
+	MateProjectID string
+	// MateSubdomainHost is the Mate's own project's subdomain host as the
+	// platform names it (`1df2.prg1.zerops.app`, or its first label alone):
+	// every public address of one of its services is
+	// `<hostname>-<first label>[-<port>].<region>.zerops.app`. "" names none.
+	MateSubdomainHost string
+	Runtimes          []GroupRuntime
+	ManagedServices   []ManagedServiceEntry
 	// ProjectEnvs is the project's user-set variables, the platform's own and
 	// the control plane's already left out: every tier carries them in the
 	// project's `vault:`, config as written, secrets generated (recipeSecret).
@@ -288,7 +293,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		frameWarnings = append(frameWarnings, partWarnings...)
 	}
 	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed)
-	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts)
+	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateSubdomainLabel(inputs.MateSubdomainHost))
+	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
 
 	warnings := append([]string(nil), utilityWarnings...)
 	warnings = append(warnings, frameWarnings...)
@@ -634,8 +640,9 @@ type groupPlan struct {
 	inputs    GroupRecipeInputs
 	runtimes  []GroupRuntime
 	utilities []GroupUtility
-	// mateOnly names the utilities a group environment cannot carry: its
-	// runtime takes their hostname.
+	// mateOnly names the utilities and managed services a group environment
+	// does not carry: a utility whose hostname its runtime takes, and what
+	// serves the Mate itself (groupUtilities, markMateOwnVolumes).
 	mateOnly    map[string]bool
 	managed     []ManagedServiceEntry
 	haIncapable map[string]bool
@@ -717,6 +724,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
 	}
 	for _, m := range plan.managed {
+		if !policy.pairs && plan.mateOnly[m.Hostname] {
+			continue
+		}
 		// A type with no HA variant stays single-node where the rest are
 		// promoted: a fabricated `<type>:ha` fails the whole import.
 		keepSingle := policy.promoteHA && plan.haIncapable[m.Hostname]
@@ -837,10 +847,12 @@ func groupApps(runtimes []GroupRuntime, parts map[string][]groupPart, utilities 
 }
 
 // groupUtilities is the utilities every tier writes, sorted, and those a
-// group environment does not carry: one whose hostname its runtime takes,
-// and a Mate's own dev tooling (devOnlyUtility). A utility the reader did not
-// describe whole is left out and said.
-func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart) ([]GroupUtility, map[string]bool, []string) {
+// group environment does not carry: one whose hostname its runtime takes, a
+// Mate's own dev tooling (devOnlyUtility), and one wired to an address of the
+// Mate's own project, its subdomain label mateLabel (wiredToMate), which it
+// also names, sorted, in wired. A utility the reader did not describe whole
+// is left out and said.
+func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart, mateLabel string) (utilities []GroupUtility, mateOnly map[string]bool, wired, warnings []string) {
 	promoted := make(map[string]string, len(runtimes))
 	for _, r := range runtimes {
 		for _, part := range parts[r.DevHostname] {
@@ -849,9 +861,7 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 			}
 		}
 	}
-	var utilities []GroupUtility
-	var warnings []string
-	mateOnly := map[string]bool{}
+	mateOnly = map[string]bool{}
 	for _, u := range in {
 		if strings.TrimSpace(u.Hostname) == "" || strings.TrimSpace(u.ServiceType) == "" || strings.TrimSpace(u.BuildFromGit) == "" {
 			warnings = append(warnings, fmt.Sprintf("utility %q is left out of the recipe: its hostname, type or public build is unknown", u.Hostname))
@@ -867,11 +877,18 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 			warnings = append(warnings, fmt.Sprintf(
 				"utility %q stays on the AI Agent tier only: it is a Mate's own dev tooling (a mail catcher, a database admin UI), which a stage or a production does not run — a value there naming it points nowhere until a person sets it",
 				u.Hostname))
+		} else if key, address := wiredToMate(u, mateLabel); key != "" {
+			mateOnly[u.Hostname] = true
+			wired = append(wired, u.Hostname)
+			warnings = append(warnings, fmt.Sprintf(
+				"runtime %q stays on the AI Agent tier only: its %s names %s, an address of this Mate's own project, so it serves this Mate, which a stage or a production is not — a value there naming it points nowhere until a person sets it",
+				u.Hostname, key, address))
 		}
 		utilities = append(utilities, u)
 	}
 	sort.SliceStable(utilities, func(i, j int) bool { return utilities[i].Hostname < utilities[j].Hostname })
-	return utilities, mateOnly, warnings
+	sort.Strings(wired)
+	return utilities, mateOnly, wired, warnings
 }
 
 // groupUtilityEntry writes a utility as the project runs it: its public build

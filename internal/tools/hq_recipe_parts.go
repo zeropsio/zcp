@@ -309,6 +309,9 @@ func handleGroupRecipeService(
 	}
 	edits := serviceTierEdits(tiers)
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
+	if written.edited && len(edits) > 0 {
+		return recipeEditedRefusal("The service proposal", comp, written), nil, nil
+	}
 	if written.other != nil && len(edits) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and this Mate keeps one recipe proposal open at a time.",
@@ -357,6 +360,9 @@ func withdrawRecipeService(ctx context.Context, comp groupRecipeComposition, ope
 		})
 	if err != nil {
 		return serviceProposalFailed(err.Error())
+	}
+	if written.edited {
+		return recipeEditedRefusal("The withdrawal of "+host+"'s proposal", comp, written)
 	}
 	url := comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
 	return jsonResult(map[string]any{
