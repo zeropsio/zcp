@@ -99,21 +99,11 @@ func WaitReady(version, oldBoot string, deadline time.Time) error {
 		// The capability probe uses the same transport bound; only a factual
 		// exact-version/new-boot response can accept the candidate.
 		probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
-		var r UpdateReadiness
-		if err := UpdateRequest(probeCtx, "readiness", nil, &r); err != nil {
-			lastObservation = err
-		} else if r.Protocol == 1 && r.Ready && r.Version == version && r.BootID != "" && r.BootID != oldBoot {
-			// C-4 remains required alongside engine/database readiness.
-			err := environmentReady(probeCtx)
-			if err == nil {
-				probeCancel()
-				return nil
-			}
-			lastObservation = err
-		} else {
-			lastObservation = fmt.Errorf("protocol=%d ready=%t version=%q boot=%q", r.Protocol, r.Ready, r.Version, r.BootID)
-		}
+		lastObservation = probeReady(probeCtx, version, oldBoot)
 		probeCancel()
+		if lastObservation == nil {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("readiness for %s: %w; last observation: %w", version, ctx.Err(), lastObservation)
@@ -121,6 +111,23 @@ func WaitReady(version, oldBoot string, deadline time.Time) error {
 		}
 	}
 }
+
+// probeReady is the shared proof for an updater waiting on a restart and a
+// status observation of a restored process after its updater has exited.
+func probeReady(ctx context.Context, version, oldBoot string) error {
+	var r UpdateReadiness
+	if err := UpdateRequest(ctx, "readiness", nil, &r); err != nil {
+		return fmt.Errorf("probe readiness: %w", err)
+	}
+	if r.Protocol != 1 || !r.Ready || r.Version != version || r.BootID == "" || r.BootID == oldBoot {
+		return fmt.Errorf("protocol=%d ready=%t version=%q boot=%q", r.Protocol, r.Ready, r.Version, r.BootID)
+	}
+	if err := environmentReady(ctx); err != nil {
+		return fmt.Errorf("probe environment readiness: %w", err)
+	}
+	return nil
+}
+
 func environmentReady(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:3773/.well-known/t3/environment", nil)
 	if err != nil {

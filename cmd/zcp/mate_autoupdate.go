@@ -16,6 +16,12 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
+// mateUpdateStartupBudget covers the observed ~44 s Eli 0.16.12 recovery start
+// (2026-10-28 04:54:17–04:55:01 UTC, zerops@mate journal) with 16 s margin.
+// KRLS tx - Lior's seven Oct 26–28 starts took 3.071–5.977 s to ready.
+// Both switch and recovery use this bound; it cannot guarantee readiness.
+const mateUpdateStartupBudget = 60 * time.Second
+
 func mateUpdateProbe() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -147,7 +153,7 @@ func runMateUpdateWorker(args []string) int {
 				unlock()
 				locked = false
 			}
-			readinessDeadline = time.Now().Add(15 * time.Second)
+			readinessDeadline = time.Now().Add(mateUpdateStartupBudget)
 			ctx, cancel := context.WithDeadline(context.Background(), readinessDeadline)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "sudo", "systemctl", "restart", "--no-block", "zerops@mate.service")
@@ -188,7 +194,7 @@ func runMateUpdateRecovery() int {
 				unlock()
 				locked = false
 			}
-			deadline = time.Now().Add(15 * time.Second)
+			deadline = time.Now().Add(mateUpdateStartupBudget)
 			ctx, cancel := context.WithDeadline(context.Background(), deadline)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "sudo", "systemctl", "restart", "--no-block", "zerops@mate.service")

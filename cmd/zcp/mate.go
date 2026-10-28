@@ -113,8 +113,8 @@ type mateUpdaterStatus struct {
 func runMateStatus(args []string) int { return runMateStatusFor(args, server.Version) }
 
 // runMateStatusFor is runMateStatus for a zcp of version zcpVersion.
-// --refresh bypasses both release caches; --local reads only the caches and
-// never asks the running Mate.
+// --refresh bypasses both release caches; --local uses cached releases.
+// In-container status also observes abandoned update work via loopback.
 func runMateStatusFor(args []string, zcpVersion string) int {
 	flags, code, done := commandFlags("usage: zcp mate status [--json] [--refresh] [--local]", args, "--json", "--refresh", "--local")
 	if done {
@@ -146,9 +146,12 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 	} else {
 		desired, err = mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
 	}
-	state, stateErr := mate.ReadOptionalUpdateState()
-	if local && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
-		state, _ = mate.ObserveUpdateState()
+	var state mate.UpdateState
+	var stateErr error
+	if runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		state, stateErr = mate.ObserveUpdateState()
+	} else {
+		state, stateErr = mate.ReadOptionalUpdateState()
 	}
 	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
 	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: mate.RollbackAllowed(result.Installed, desired), Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}

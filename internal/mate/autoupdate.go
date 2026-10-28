@@ -2,12 +2,14 @@ package mate
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -361,15 +363,16 @@ func workerAlive(s UpdateState) bool {
 	return s.WorkerPID > 0 && s.WorkerStart != "" && processStart(s.WorkerPID) == s.WorkerStart
 }
 
-// ObserveUpdateState can reopen a drain only after its owner is provably gone.
-// It leaves switching to boot/independent supervisor recovery.
+// ObserveUpdateState settles abandoned work under the install lock. A switch
+// can settle only once its restored last-good proves ready on a new boot;
+// observation never changes the installed version or restarts a process.
 func ObserveUpdateState() (UpdateState, error) {
 	unlock, lockErr := LockInstall(0)
 	if lockErr != nil {
-		return ReadUpdateState()
+		return ReadOptionalUpdateState()
 	}
 	defer unlock()
-	s, err := ReadUpdateState()
+	s, err := ReadOptionalUpdateState()
 	if err != nil {
 		return s, err
 	}
@@ -379,7 +382,29 @@ func ObserveUpdateState() (UpdateState, error) {
 		s.WorkerStart = ""
 		return s, WriteUpdateState(s)
 	}
-	return s, nil
+	if s.Phase != updateSwitching || s.PreventRollback || s.WorkerPID <= 0 || s.WorkerStart == "" || workerAlive(s) || s.OldBoot == "" {
+		return s, nil
+	}
+	installed, err := InstalledVersion()
+	if err != nil || installed == "" || installed != s.Previous {
+		return s, nil
+	}
+	goodVersion, err := LastGoodVersion()
+	if err != nil || goodVersion != installed {
+		return s, nil
+	}
+	// Status observes once using the existing probe bound; a late startup is
+	// revisited by the next ordinary status, without a new retry worker.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := probeReady(ctx, goodVersion, s.OldBoot); err != nil {
+		return s, nil
+	}
+	s.Phase = updatePostponed
+	s.RunningVersion = goodVersion
+	s.WorkerPID = 0
+	s.WorkerStart = ""
+	return s, WriteUpdateState(s)
 }
 
 // RecoverStoppedUpdate is the transient unit's ExecStopPost. It performs no

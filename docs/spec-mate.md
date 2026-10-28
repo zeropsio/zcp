@@ -495,8 +495,8 @@ only the installed version: a settled record from another running version, or a 
 of a release that is no longer the target, reads as `idle`, and a failure at or below the
 installed version is dropped. Any successful install outside the worker (`zcp mate update`
 without the worker, `zcp init`) replaces the record. The existing
-manifest resolver remains the only version reader. `status --local --json` reads only its
-cache and local coordinator state, so startup need not wait on a network request.
+manifest resolver remains the only version reader. `status --local --json` reads cached
+releases and local coordinator state, so startup need not wait on a release-source request.
 
 `zcp mate update --automatic --json` acknowledges an independent systemd transient worker
 with `started: true`. The worker runs outside `zerops@mate`'s cgroup, takes the install lock,
@@ -506,19 +506,34 @@ version at or below the remembered failure. It stages and smokes the candidate w
 automatic:true}`. Mate rechecks org policy and proves its engine idle behind an admission
 barrier. A deadline or refusal postpones the update and cancels that barrier; no work is stopped.
 An already-running terminal process is work. Native provider resume bindings must survive.
-The worker's exact process identity is recorded from staging onward. A pending local status
+The worker's exact process identity is recorded from staging onward. An in-container status
 observation can mark staging/draining postponed only once that identity is provably gone,
 under the install lock. The transient unit's `ExecStopPost` also cancels an abandoned drain;
 for an interrupted compatible switch it restores, restarts, verifies and commits last-good.
 Neither path guesses from elapsed time. No worker retry loop is added.
 
+Decision: A dead update worker's switch settles when last-good becomes ready, so a newer release can update.
+Decision: A switch whose worker still lives, or whose restored process is not proven ready on a new boot, is never settled.
+Decision: failedVersion survives the settlement, so the failed candidate is not retried.
+
+Both ordinary and local in-container status observe an abandoned compatible switch under
+the same install lock. Only when installed/current, previous and last-good agree and the
+shared readiness proof verifies that exact version on a different nonempty boot does the
+record become postponed, with runningVersion set to last-good and worker identity cleared.
+Missing worker or old-boot identity, an incompatible switch, or an incomplete readiness/C-4
+proof leaves the switch untouched. Status probes once, bounded by one second; a later
+ordinary status can observe late readiness. It never restarts or installs a bundle.
+
 The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
 worker process identity, last proved running version and remembered failure), syncs them, and
 atomically moves `current`. Only then is the lock released and a nonblocking unit restart
 requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` path and keeps
-admission fenced. Within 15 seconds of the restart request, readiness must prove protocol 1,
+admission fenced. Within 60 seconds of the restart request, readiness must prove protocol 1,
 the exact version, a different nonempty boot id, engine/database readiness, and C-4. POST
 `/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
+Switch and recovery share this startup budget: Eli's recorded recovery took about 44 seconds
+to ready, while seven KRLS tx - Lior starts took 3.071–5.977 seconds. The 16-second margin
+above that observed slow start does not guarantee readiness.
 `zcp init` at boot is the other route: after it settles an installed release it waits for the same
 readiness proof (without holding the install lock) and only then moves `last-good`; a Mate not ready
 in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
