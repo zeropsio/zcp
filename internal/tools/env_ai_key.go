@@ -22,6 +22,9 @@ type envOptions struct {
 	// aiKey reaches this Mate's HQ; nil outside a Mate,
 	// where zerops_env has no ai-key action.
 	aiKey *orgAIKey
+	// vaultAsks is the state directory a request's open ask is recorded
+	// under (WithVaultAsks); "" records none.
+	vaultAsks string
 }
 
 type orgAIKey struct {

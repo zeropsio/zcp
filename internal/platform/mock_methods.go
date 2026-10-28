@@ -312,6 +312,7 @@ func (m *Mock) StopService(_ context.Context, serviceID string) (*Process, error
 }
 
 func (m *Mock) RestartService(_ context.Context, serviceID string) (*Process, error) {
+	m.trackCall("RestartService")
 	if err := m.getError("RestartService"); err != nil {
 		return nil, err
 	}

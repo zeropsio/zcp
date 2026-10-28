@@ -3237,6 +3237,29 @@ the values those entries reference.
   engine's records, a log, the agent's context or HQ. A `set` answer names the vault its `stored`
   keys went to in the request's own fields (`scope`, `serviceHostname`), so an open ask for a key
   the agent stored itself matches it by key and vault. zcp `TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed`.
+  The why is at most 280 characters, the engine's own cap (`REASON_MAX` in
+  `engine/pump/vaultAsk.ts` and `originAsk.ts`), so the person reads all zcp takes — what the value
+  is for and where they find it — and `zerops_origin`'s why takes the same.
+- **Replacing a wrong saved value, asking once, restarting after the save** (2026-10-28; Filip's
+  and Kaďák's flip.studio sessions). A key the vault holds answers `alreadySet`, and that answer
+  names the way to replace it: `replace=true` with `replaceWhy`, one line on what is wrong with the
+  saved value. Then `requested` carries `replace: true` and a why of `<why> — replacing the saved
+  value: <replaceWhy>`; the person's card already writes over a held value (`vaultAskState` →
+  `open` with `held`), and the saved value stays until they save. The engine's `request-opened`
+  opens no second card for a vault ask whose key and vault match a card still open
+  (`fix/vault-ask-once`). A Mate's zcp records each ask it opens (`<stateDir>/vault-asks/`, never
+  a value) and, while it is open, answers a request for that key and vault as any request,
+  `requested: {…}`, plus `alreadyAsked` (when the open ask was made, RFC 3339), its next step
+  telling the agent the person's prompt is already open and not to ask again. No version gate: a
+  client older than the dedupe draws a second card for a repeat (`vaultAskOf` draws one from any
+  finished answer without `alreadySet`) until it updates, accepted as mild. An ask counts as
+  answered once the vault holds the key written since it was asked (another row, or the held row's
+  `lastUpdate` later); `again=true` asks after a message said declined. The save writes the vault
+  from the person's client and the engine words the `saved` message, so zcp never sees it, and
+  nothing restarts. `requested` names the `readers` and `restartAfterSave`, the live runtimes to
+  restart with `zerops_manage action="restart"` once the message says saved. The service running
+  the session is never among them. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
+  older mate ignores `replace`, `alreadyAsked` and the other new fields.
 - **The organization's AI key, for an app** (2026-10-17). In a Mate, `zerops_env action=ai-key`
   asks HQ for the organization's key as the Mate (`POST /api/mate/ai-key`, one bounded try) and
   sets it in the Shared vault: the key sensitive under the variable HQ names (`NEBIUS_API_KEY`),

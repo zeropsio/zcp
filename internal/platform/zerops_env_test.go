@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
 )
@@ -240,5 +241,56 @@ func TestCreateServiceEnvVar_RefusalEchoingTheValue_SurfacesWithoutIt(t *testing
 	}
 	if pe.APICode != "userDataInvalidContent" || !strings.Contains(pe.Message, "is not valid") {
 		t.Errorf("APICode %q / Message %q: want the refusal's own code and words", pe.APICode, pe.Message)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Env reads carry when each row last changed
+// ---------------------------------------------------------------------------
+
+// TestEnvReads_CarryWhenEachRowLastChanged: a value the person replaces in
+// place keeps its row's id, so only the row's lastUpdate tells a request that
+// the vault was written since it asked (docs/spec-mate.md §5.8). Both reads
+// carry it; the value itself is never needed for that.
+func TestEnvReads_CarryWhenEachRowLastChanged(t *testing.T) {
+	t.Parallel()
+	const changed = "2026-10-26T20:56:09.123Z"
+	want, err := time.Parse(time.RFC3339Nano, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := `{"id":"row-1","key":"FLIP_GOOGLE_CLIENT_ID","content":"REDACTED","type":"USER","sensitive":true,` +
+		`"created":"2026-10-25T08:46:00Z","lastUpdate":"` + changed + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/rest/public/service-stack/svc-1/env":
+			_, _ = w.Write([]byte(`{"items":[` + row + `]}`))
+		case "/api/rest/public/project/search":
+			_, _ = w.Write([]byte(`{"items":[{"id":"proj-1","clientId":"org-1","name":"p","status":"ACTIVE","envList":[` + row + `]}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	z, err := NewZeropsClient("fake-token", srv.URL)
+	if err != nil {
+		t.Fatalf("NewZeropsClient: %v", err)
+	}
+	z.BindOrg("org-1")
+
+	svcEnvs, err := z.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("GetServiceEnv: %v", err)
+	}
+	projEnvs, err := z.GetProjectEnv(context.Background(), "proj-1")
+	if err != nil {
+		t.Fatalf("GetProjectEnv: %v", err)
+	}
+	if len(svcEnvs) != 1 || !svcEnvs[0].GetLastUpdate().Equal(want) {
+		t.Errorf("service env = %+v, want one row changed at %s", svcEnvs, changed)
+	}
+	if len(projEnvs) != 1 || !projEnvs[0].GetLastUpdate().Equal(want) {
+		t.Errorf("project env = %+v, want one row changed at %s", projEnvs, changed)
 	}
 }
