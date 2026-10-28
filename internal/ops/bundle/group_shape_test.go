@@ -378,7 +378,7 @@ func TestBuildGroupRecipe_MateOwnServices_OnlyInTheAIAgentTier(t *testing.T) {
 	t.Parallel()
 	runner := func(envs ...ProjectEnvVar) GroupUtility {
 		return GroupUtility{Hostname: "agentrunner", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/agent-runner",
-			ServiceEnvs: append([]ProjectEnvVar{{Key: "CLAUDE_CODE_OAUTH_TOKEN", Value: "sk-ant-oat01-Xq3vR8pLm2", Sensitive: true}}, envs...)}
+			ServiceEnvs: append([]ProjectEnvVar{{Key: "CLAUDE_CODE_OAUTH_TOKEN", Value: "sk-ant-oat01-fake", Sensitive: true}}, envs...)}
 	}
 	wired := ProjectEnvVar{Key: "FLIP_SERVER", Value: "https://apidev-3901-5195.prg1.zerops.app"}
 	home := ManagedServiceEntry{Hostname: "agenthome", Type: "local-storage"}

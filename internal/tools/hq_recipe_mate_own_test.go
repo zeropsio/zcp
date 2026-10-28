@@ -55,7 +55,7 @@ func mateOwnRecipeClient() *platform.Mock {
 		WithServices(services).
 		WithServiceEnv("svc-agentrunner", []platform.ServiceEnvVar{
 			{Key: "FLIP_SERVER", Content: "https://appdev-3901-5195.prg1.zerops.app", Type: platform.ServiceEnvUser},
-			{Key: "CLAUDE_CODE_OAUTH_TOKEN", Content: "sk-ant-oat01-Xq3vR8pLm2", Type: platform.ServiceEnvUser, Sensitive: true},
+			{Key: "CLAUDE_CODE_OAUTH_TOKEN", Content: "sk-ant-oat01-fake", Type: platform.ServiceEnvUser, Sensitive: true},
 		})
 }
 
