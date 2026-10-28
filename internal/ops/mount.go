@@ -130,8 +130,14 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 
 	case platform.MountStateNotMounted:
 		// Clean up orphan unit if present, before creating a new mount.
-		if hasUnit, _ := mounter.HasUnit(ctx, hostname); hasUnit {
-			_ = mounter.CleanupUnit(ctx, hostname)
+		hasUnit, err := mounter.HasUnit(ctx, hostname)
+		if err != nil {
+			return nil, fmt.Errorf("check mount unit for %s: %w", hostname, err)
+		}
+		if hasUnit {
+			if err := mounter.CleanupUnit(ctx, hostname); err != nil {
+				return nil, fmt.Errorf("clean mount unit for %s: %w", hostname, err)
+			}
 			_ = os.Remove(mountPath)
 		}
 	}
@@ -187,7 +193,10 @@ func UnmountService(
 
 	if state == platform.MountStateNotMounted {
 		// Check for orphan systemd unit (unit exists but no FUSE mount).
-		hasUnit, _ := mounter.HasUnit(ctx, hostname)
+		hasUnit, err := mounter.HasUnit(ctx, hostname)
+		if err != nil {
+			return nil, fmt.Errorf("check mount unit for %s: %w", hostname, err)
+		}
 		if hasUnit {
 			if err := mounter.CleanupUnit(ctx, hostname); err != nil {
 				return nil, platform.NewPlatformError(
@@ -298,13 +307,20 @@ func MountStatus(
 			return nil, err
 		}
 		if isLeaseAlias(hostname) {
-			return &MountStatusResult{Mounts: []MountInfo{leaseMountInfo(ctx, mounter, hostname)}}, nil
+			info, err := leaseMountInfo(ctx, mounter, hostname)
+			if err != nil {
+				return nil, err
+			}
+			return &MountStatusResult{Mounts: []MountInfo{info}}, nil
 		}
 		svc, err := FindService(services, hostname)
 		if err != nil {
 			return nil, err
 		}
-		info := checkMountInfo(ctx, mounter, svc.Name, false, true)
+		info, err := checkMountInfo(ctx, mounter, svc.Name, false, true)
+		if err != nil {
+			return nil, err
+		}
 		return &MountStatusResult{Mounts: []MountInfo{info}}, nil
 	}
 
@@ -312,23 +328,37 @@ func MountStatus(
 	mounts := make([]MountInfo, 0, len(services))
 	for _, svc := range services {
 		serviceNames[svc.Name] = true
-		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false, true))
+		info, err := checkMountInfo(ctx, mounter, svc.Name, false, true)
+		if err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, info)
 	}
 
 	// Detect orphan mount directories from deleted services.
 	// Only report dirs that are actual SSHFS mounts (active or stale).
 	// Plain directories (e.g. .claude, .zcp) are silently skipped.
-	dirs, _ := mounter.ListMountDirs(ctx, mountBase)
+	dirs, err := mounter.ListMountDirs(ctx, mountBase)
+	if err != nil {
+		return nil, fmt.Errorf("list mount directories: %w", err)
+	}
 	for _, dir := range dirs {
 		if isLeaseAlias(dir) {
 			// A lease mount, not a deleted service's leftover.
-			if info := leaseMountInfo(ctx, mounter, dir); info.Mounted || info.Stale || info.Pending {
+			info, err := leaseMountInfo(ctx, mounter, dir)
+			if err != nil {
+				return nil, err
+			}
+			if info.Mounted || info.Stale || info.Pending {
 				mounts = append(mounts, info)
 			}
 			continue
 		}
 		if !serviceNames[dir] {
-			info := checkMountInfo(ctx, mounter, dir, true, true)
+			info, err := checkMountInfo(ctx, mounter, dir, true, true)
+			if err != nil {
+				return nil, err
+			}
 			if info.Mounted || info.Stale || info.Pending {
 				mounts = append(mounts, info)
 			}
@@ -347,20 +377,23 @@ func isLeaseAlias(name string) bool { return platform.ValidateLeaseAlias(name) =
 // It writes no probe file through the mount: sshfs reconnects to the
 // container's hostname, which a lease that ended outside zcp hands to the
 // pool's next holder, and a status asks no orchestrator whose it is (DP-2).
-func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) MountInfo {
-	info := checkMountInfo(ctx, mounter, alias, false, false)
+func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) (MountInfo, error) {
+	info, err := checkMountInfo(ctx, mounter, alias, false, false)
+	if err != nil {
+		return MountInfo{}, err
+	}
 	info.Lease = true
 	lease := "Lease mount; zerops_lease action=status reports the lease's state."
 	if info.Message != "" {
 		lease += " " + info.Message
 	}
 	info.Message = lease
-	return info
+	return info, nil
 }
 
 // checkMountInfo is the mount state of /var/www/<hostname>; probe writes a
 // probe file through an active mount to tell it writable.
-func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan, probe bool) MountInfo {
+func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan, probe bool) (MountInfo, error) {
 	mountPath := filepath.Join(mountBase, hostname)
 	info := MountInfo{
 		Hostname:  hostname,
@@ -369,7 +402,7 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 	}
 	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
-		return info
+		return MountInfo{}, fmt.Errorf("check mount for %s: %w", hostname, err)
 	}
 	switch state {
 	case platform.MountStateActive:
@@ -386,7 +419,11 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 		}
 	case platform.MountStateNotMounted:
 		// Check for orphan systemd unit (unit exists but FUSE never connected).
-		if hasUnit, _ := mounter.HasUnit(ctx, hostname); hasUnit {
+		hasUnit, err := mounter.HasUnit(ctx, hostname)
+		if err != nil {
+			return MountInfo{}, fmt.Errorf("check mount unit for %s: %w", hostname, err)
+		}
+		if hasUnit {
 			info.Pending = true
 			if orphan {
 				info.Message = "Orphan systemd unit exists but FUSE mount never connected. Use unmount to clean up."
@@ -395,5 +432,5 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 			}
 		}
 	}
-	return info
+	return info, nil
 }

@@ -1019,6 +1019,16 @@ Both environments follow the same flows but with different mechanisms.
 - **Mount tool**: Available.
 - **ServiceMeta hostname**: devHostname (standard), hostname (dev/simple).
 
+Mount observation uses the kernel SSHFS entry and a bounded read of its path. An unreadable
+mount table, unit lookup or path probe is an unanswered observation, never evidence of absence;
+`zerops_mount action=status` returns its existing error response with the diagnostic. A unit lookup
+that cannot answer also forbids replacing the unit. A lease's mount status writes no probe through
+the mount (DP-2). A readiness wait that ends without usable access keeps the lease `unmounted`;
+a wake wait renews ownership again before mounting or supervising. These boundaries are pinned by
+`TestMountStatus_AMountReadThatCannotAnswerIsNotReportedAsAnAbsentMount`,
+`TestCheckMount_BlockedProbe_CancelReturnsAndReaps`, `TestLeaseMount_Decisions` and
+`TestMountObservation_Integration_UnreadableStatus_IsErrorWithoutAbsentMountFacts`.
+
 ### 5.2 Local Mode
 
 ```

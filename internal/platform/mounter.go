@@ -3,10 +3,12 @@ package platform
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,6 +34,10 @@ type SystemMounter struct {
 	run     func(ctx context.Context, timeout time.Duration, name string, args ...string) error
 	ready   func(ctx context.Context, path string) error
 	mounted func(path string) (bool, error)
+
+	probeMu      sync.Mutex
+	probes       map[string]*mountProbe
+	probeCommand func(name string, args ...string) *exec.Cmd
 }
 
 // isMounted reports whether path still has an sshfs mount.
@@ -72,20 +78,24 @@ func (m *SystemMounter) exec(ctx context.Context, timeout time.Duration, name st
 // CheckMount checks the mount state of a path: active, stale, or not mounted.
 // Uses /proc/mounts (kernel-authoritative) instead of mountpoint(1), which
 // returns exit 32 for ALL directories in LXC/Incus containers.
-func (m *SystemMounter) CheckMount(_ context.Context, path string) (MountState, error) {
-	mounted, err := isSshfsMount(path)
+func (m *SystemMounter) CheckMount(ctx context.Context, path string) (MountState, error) {
+	mounted, err := m.isMounted(path)
 	if err != nil {
 		return MountStateNotMounted, fmt.Errorf("proc mounts check: %w", err)
 	}
 	if !mounted {
 		return MountStateNotMounted, nil
 	}
-	// SSHFS entry exists — probe to distinguish active vs stale.
-	_, err = os.Stat(path)
-	if err == nil {
-		return MountStateActive, nil
+	if err := m.observePath(ctx, path, false); err != nil {
+		// Only an observed disconnected/stale endpoint authorizes stale cleanup.
+		// Permission errors, interrupted probes and expired waits are unknown.
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && (strings.Contains(err.Error(), "Transport endpoint is not connected") || strings.Contains(err.Error(), "Stale file handle")) {
+			return MountStateStale, nil
+		}
+		return MountStateNotMounted, fmt.Errorf("mount usability: %w", err)
 	}
-	return MountStateStale, nil
+	return MountStateActive, nil
 }
 
 // isSshfsMount reads /proc/mounts and returns true if path has a fuse.sshfs entry.
@@ -112,7 +122,7 @@ func isSshfsMount(path string) (bool, error) {
 
 // Mount creates an SSHFS mount of a service hostname or a dev-pool lease alias via zsc systemd unit and waits for readiness.
 // Returns only after the mount is fully ready for I/O: appears in /proc/mounts,
-// os.Stat succeeds, AND a write probe confirms the SSH channel is operational.
+// a bounded path read succeeds, AND a write probe confirms the SSH channel is operational.
 // Blocks up to mountCreateTimeout.
 func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) error {
 	if err := ValidateMountName(hostname); err != nil {
@@ -146,44 +156,27 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 }
 
 // waitForReady polls until the SSHFS mount is fully ready for I/O.
-// Ready means: appears in /proc/mounts, os.Stat succeeds, AND a write probe
+// Ready means: appears in /proc/mounts, a bounded path read succeeds, AND a write probe
 // confirms the SSH channel is operational. Polls every 500ms up to mountCreateTimeout.
 func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
-	deadline := time.Now().Add(mountCreateTimeout)
+	ctx, cancel := context.WithTimeout(ctx, mountCreateTimeout)
+	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		state, err := m.CheckMount(ctx, path)
-		if err == nil && state == MountStateActive && writeProbe(path) {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("mount at %s not ready after %v", path, mountCreateTimeout)
+		if err == nil && state == MountStateActive {
+			if writable, _ := m.IsWritable(ctx, path); writable {
+				return nil
+			}
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("mount readiness observation: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
-}
-
-// writeProbe verifies a path is writable using Go stdlib (no shell).
-// Creates a unique temp file, closes it, and removes it. Returns true only if
-// all three operations succeed — a failed Close indicates a broken transport.
-func writeProbe(path string) bool {
-	f, err := os.CreateTemp(path, ".mount_probe_*")
-	if err != nil {
-		return false
-	}
-	name := f.Name()
-	if err := f.Close(); err != nil {
-		os.Remove(name)
-		return false
-	}
-	os.Remove(name)
-	return true
 }
 
 // Unmount removes the SSHFS mount and zsc unit.
@@ -234,9 +227,9 @@ func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string)
 }
 
 // IsWritable checks if the mount point is writable by creating and removing a temp file.
-func (m *SystemMounter) IsWritable(_ context.Context, path string) (bool, error) {
-	if !writeProbe(path) {
-		return false, fmt.Errorf("writable check: cannot write to %s", path)
+func (m *SystemMounter) IsWritable(ctx context.Context, path string) (bool, error) {
+	if err := m.observePath(ctx, path, true); err != nil {
+		return false, fmt.Errorf("writable check: %w", err)
 	}
 	return true, nil
 }
@@ -268,7 +261,14 @@ func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, err
 	if err := ValidateMountName(hostname); err != nil {
 		return false, err
 	}
-	return m.exec(ctx, mountCheckTimeout, "systemctl", "cat", mountUnit(hostname)) == nil, nil
+	err := m.exec(ctx, mountCheckTimeout, "systemctl", "cat", mountUnit(hostname))
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "No files found for "+mountUnit(hostname)) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read mount unit: %w", err)
 }
 
 // unitLeft reports whether a removal left the unit: its file, or — zsc unit
@@ -276,7 +276,8 @@ func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, err
 // reset-failed — its failed instance. Only a cleanup asks it, after its
 // removal and reset.
 func (m *SystemMounter) unitLeft(ctx context.Context, hostname string) bool {
-	if has, _ := m.HasUnit(ctx, hostname); has {
+	if has, err := m.HasUnit(ctx, hostname); has || err != nil {
+		// An unanswered unit read cannot prove removal succeeded.
 		return true
 	}
 	return m.exec(ctx, mountCheckTimeout, "systemctl", "is-failed", "--quiet", mountUnit(hostname)) == nil

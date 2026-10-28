@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -221,6 +222,9 @@ func failingCommands(got *[]recordedCommand, fail ...[]string) func(context.Cont
 		*got = append(*got, argv)
 		for _, f := range fail {
 			if len(argv) >= len(f) && slices.Equal(argv[:len(f)], f) {
+				if name == "systemctl" && len(args) == 2 && args[0] == "cat" {
+					return fmt.Errorf("exit status 1: No files found for %s", args[1])
+				}
 				return errors.New("exit status 1")
 			}
 		}
@@ -354,4 +358,9 @@ func TestForceUnmount_UnitRemoveFails_FailsWhileTheUnitStays(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeProbe(path string) bool {
+	writable, _ := NewSystemMounter().IsWritable(context.Background(), path)
+	return writable
 }

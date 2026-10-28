@@ -189,7 +189,11 @@ func (h LeaseHost) gap(ctx context.Context, alias string) string {
 		missing = append(missing, "its ssh alias is not installed")
 	}
 	if h.Mounter != nil {
-		if state, err := h.Mounter.CheckMount(ctx, filepath.Join(mountBase, alias)); err != nil || state != platform.MountStateActive {
+		state, err := h.Mounter.CheckMount(ctx, filepath.Join(mountBase, alias))
+		switch {
+		case err != nil:
+			missing = append(missing, fmt.Sprintf("its mount status could not be read at %s: %v", filepath.Join(mountBase, alias), err))
+		case state != platform.MountStateActive:
 			missing = append(missing, "it is not mounted at "+filepath.Join(mountBase, alias))
 		}
 	}
