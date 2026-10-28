@@ -128,7 +128,7 @@ func buildSignalLibrary() []failureSignal {
 		{
 			id:         "build:oom-killed",
 			phases:     []DeployFailurePhase{PhaseBuild},
-			logRegex:   regexp.MustCompile(`(?:OOM Alert: Process '[^']*' terminated|Killed\b|Out of memory|OOMKilled)`),
+			logRegex:   regexp.MustCompile(`(?:OOM Alert: Process '[^']*' terminated|Killed\b|Out of memory|OOMKilled|JavaScript heap out of memory)`),
 			requireLog: true,
 			build:      buildOOMKilled,
 		},
@@ -524,7 +524,8 @@ func buildOOMKilled(match string) *topology.DeployFailureClassification {
 		Category:    topology.FailureClassBuild,
 		LikelyCause: fmt.Sprintf("The build container ran out of memory (the log says %q).", match),
 		SuggestedAction: "A build container gets at most 8 GB RAM, the same for every runtime; scaling the service does not raise it. " +
-			"Lower the peak memory of the build step that was running (e.g. fewer parallel build workers), or split it into smaller steps.",
+			"Lower the peak memory of the build step that was running (e.g. fewer parallel build workers), or split it into smaller steps. " +
+			"For Node.js, also consider `--max-old-space-size`.",
 		Signals: []string{"build:oom-killed"},
 	}
 }

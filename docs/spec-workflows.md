@@ -859,6 +859,12 @@ Deploy modes (self-deploy vs cross-deploy) are orthogonal to workflow modes and 
 - Other status → fail: "check zerops_logs severity=error"
 - Subdomain access check for services with ports
 
+`JavaScript heap out of memory` in build logs is a build memory failure
+(`build:oom-killed`), with the same Node.js `--max-old-space-size` remedy hint as
+an init-phase heap OOM. Build guidance retains the fixed build-container memory
+cap; runtime service scaling does not raise that cap
+(`TestClassifyDeployFailure_JavaScriptHeapMemoryFailure`).
+
 ### 4.7 Iteration on Failure
 
 When deploy fails, the agent can iterate. The escalating guidance tiers are delivered via atoms (e.g. `develop-standard-unset-iterate` and the deploy-iteration atoms), not a Go data table:

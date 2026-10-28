@@ -28,7 +28,8 @@ import (
 const changeOldAfter = 72 * time.Hour
 
 // changeLabels is a change's standing as told, as status and develop's start
-// label it: ready or a draft, behind main or conflicting with it.
+// label it: ready means described, with HQ's mergeability named separately
+// so it cannot imply permission to merge before HQ has judged it.
 func changeLabels(t *workflow.HQChangeTold) []string {
 	if t == nil {
 		return nil
@@ -43,8 +44,17 @@ func changeLabels(t *workflow.HQChangeTold) []string {
 	}
 	switch {
 	case t.Mergeability == hq.MergeConflict:
-		labels = append(labels, "conflicts with main")
-	case t.Behind:
+		labels = append(labels, "not mergeable: conflicts with main")
+	case t.Mergeability == "empty":
+		labels = append(labels, "not mergeable: no changes against main")
+	case t.Mergeability == "already_merged":
+		labels = append(labels, "not mergeable: already merged into main")
+	case t.Mergeability == "unrelated":
+		labels = append(labels, "not mergeable: unrelated to main")
+	case t.Mergeability != hq.MergeClean && t.Ready != nil && *t.Ready:
+		labels = append(labels, "checking mergeability")
+	}
+	if t.Behind && t.Mergeability != hq.MergeConflict {
 		labels = append(labels, "behind main")
 	}
 	return labels

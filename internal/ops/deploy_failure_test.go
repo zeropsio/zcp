@@ -182,6 +182,50 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 	}
 }
 
+func TestClassifyDeployFailure_JavaScriptHeapMemoryFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name         string
+		input        FailureInput
+		wantCategory topology.FailureClass
+		wantSignal   string
+	}{
+		{
+			name: "A JavaScript heap OOM during build is a build memory failure with the Node.js heap remedy",
+			input: FailureInput{
+				Phase:     PhaseBuild,
+				BuildLogs: []string{"FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"},
+			},
+			wantCategory: topology.FailureClassBuild,
+			wantSignal:   "build:oom-killed",
+		},
+		{
+			name: "A JavaScript heap OOM during init remains a start memory failure with the Node.js heap remedy",
+			input: FailureInput{
+				Phase:       PhaseInit,
+				RuntimeLogs: []string{"FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"},
+			},
+			wantCategory: topology.FailureClassStart,
+			wantSignal:   "init:oom-killed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyDeployFailure(tc.input)
+			if got == nil {
+				t.Fatal("ASSERTION: a JavaScript heap OOM has a memory classification")
+			}
+			if got.Category != tc.wantCategory || !slices.Contains(got.Signals, tc.wantSignal) {
+				t.Errorf("ASSERTION: classification = %s %v, want %s %s", got.Category, got.Signals, tc.wantCategory, tc.wantSignal)
+			}
+			if !strings.Contains(got.SuggestedAction, "--max-old-space-size") {
+				t.Errorf("ASSERTION: remedy = %q, want the Node.js --max-old-space-size hint", got.SuggestedAction)
+			}
+		})
+	}
+}
+
 func TestClassifyDeployFailure_Prepare(t *testing.T) {
 	t.Parallel()
 

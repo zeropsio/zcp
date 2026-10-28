@@ -4752,6 +4752,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   pair: its Changes section is one line per repository — each change zcp's ledger keeps, by number
   and branch, the leases on its branch, an old one labelled (no lease holds it, untouched in HQ for
   days; a label, never an act), and each branch leases hold with no change yet. Each change's
+  `ready` label means its head is described, not permission to merge: while HQ has not judged
+  mergeability (including an older HQ omitting it), a ready change also says `checking mergeability`.
+  HQ's conflict, empty, already-merged and unrelated verdicts say `not mergeable` with the reason;
+  a clean verdict keeps the ready label (`TestStatus_ReadyChangeNamesHQMergeability`). Each change's
   standing is the Mate's state's now: status reads `GET /api/mate/self` once (bounded to 5 s, sent
   once), inside a Mate and only when the section has a change or a leased branch to name — an idle
   Mate costs HQ nothing — so a merge since the last pass reads merged while the pair backoff holds

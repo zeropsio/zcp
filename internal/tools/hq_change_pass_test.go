@@ -271,6 +271,10 @@ func TestStatus_OneBlockPerRepository(t *testing.T) {
 	if text, isError := lab.describeOn("add-signup"); isError {
 		t.Fatalf("describe: %s", text)
 	}
+	// This block's ready-only expectation is for a change HQ has judged clean.
+	lab.hq.mu.Lock()
+	lab.hq.rejudge("appdev")
+	lab.hq.mu.Unlock()
 	lab.passReport()
 
 	status := lab.status()
