@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,9 +39,7 @@ func exportPoolPart(t *testing.T, stateDir, target string, ssh *hostLogSSH) map[
 	}
 	body := map[string]any{"isError": result.IsError, "text": text}
 	if !result.IsError {
-		for k, v := range decodeJSONResult(t, text) {
-			body[k] = v
-		}
+		maps.Copy(body, decodeJSONResult(t, text))
 	}
 	return body
 }
