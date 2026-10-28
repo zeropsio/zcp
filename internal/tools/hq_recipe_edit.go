@@ -165,7 +165,7 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 		push = branch + ":" + result.Branch
 		bound = fmt.Sprintf(" (this HQ binds a change to a branch of its own, not %q)", branch)
 	}
-	result.Message = fmt.Sprintf("Change #%d (%s) is open in the recipe repository %q for the branch %q%s. In your own shell, where git asks `zcp hq git-credential`: %s, edit the tier's import.yaml, commit, and `git push origin %s` — never force-push, never main. The change is yours: zcp pushes nothing onto it, its recipe passes and scale or service proposals wait while it is open (this Mate keeps one recipe proposal open at a time), and a tier it lands is the group's, which no pass proposes zcp's composition over again. %s.",
+	result.Message = fmt.Sprintf("Change #%d (%s) is open in the recipe repository %q for the branch %q%s. In your own shell, where git asks `zcp hq git-credential`: %s, edit the tier's import.yaml, commit, and `git push origin %s` — never force-push, never main. HQ judges it on each push to its branch, so a branch pushed before this call needs one more push. The change is yours: zcp pushes nothing onto it, its recipe passes and scale or service proposals wait while it is open (this Mate keeps one recipe proposal open at a time), and a tier it lands is the group's, which no pass proposes zcp's composition over again. %s.",
 		number, result.ChangeURL, hq.RecipeRepo, result.Branch, bound, recipeEditClone(result.RepoURL, branch), push, recipeLanding)
 	return result, nil
 }
