@@ -229,7 +229,7 @@ func TestRunGitCmd_SignalCancelsTheCall(t *testing.T) {
 		t.Run(sig.String(), func(t *testing.T) {
 			t.Parallel()
 			started := filepath.Join(t.TempDir(), "started")
-			cmd := exec.CommandContext(t.Context(), zcpBinary(t), "git", "appdev", "log", "--all", "-p")
+			cmd := exec.CommandContext(t.Context(), zcpBinary(t), "git", "appdev", "log", "--all", "-p") //nolint:gosec // Runs this test binary with a fixed zcp command line.
 			cmd.Env = append(os.Environ(),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"ZCP_TEST_SSH_STARTED="+started,
@@ -371,7 +371,7 @@ func TestRun_GitVerb_SkipsTelemetryAndServe(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	cmd := exec.CommandContext(t.Context(), zcpBinary(t), "git", "appdev")
+	cmd := exec.CommandContext(t.Context(), zcpBinary(t), "git", "appdev") //nolint:gosec // Runs this test binary with a fixed zcp command line.
 	cmd.Env = append(os.Environ(), "HOME="+home, "ZCP_TELEMETRY=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

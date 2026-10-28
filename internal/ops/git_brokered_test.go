@@ -85,7 +85,8 @@ func TestBuildBrokeredGitCommand_QuotesEveryArgument_RunsInCheckout(t *testing.T
 			t.Errorf("git ran in the wrong directory, want %s:\n%s", realCheckout, out)
 		}
 		var got []string
-		for _, line := range strings.Split(strings.SplitN(out, "--env--", 2)[0], "<") {
+		argvOut, _, _ := strings.Cut(out, "--env--")
+		for line := range strings.SplitSeq(argvOut, "<") {
 			if i := strings.LastIndex(line, ">\n"); i >= 0 {
 				got = append(got, line[:i])
 			}
@@ -126,7 +127,10 @@ func TestBuildBrokeredGitCommand_ScrubsTraceAndAskpassEnv(t *testing.T) {
 		t.Errorf("command = %q, want it to start by unsetting the scrubbed variables", command)
 	}
 	out := runBuiltCommand(t, command, env...)
-	gitEnv := strings.SplitN(out, "--env--", 2)[1]
+	_, gitEnv, ran := strings.Cut(out, "--env--")
+	if !ran {
+		t.Fatalf("git never ran; the command printed %q", out)
+	}
 	for _, name := range scrubbed {
 		if strings.Contains(gitEnv, "\n"+name+"=") {
 			t.Errorf("git saw %s; want it unset before git runs", name)

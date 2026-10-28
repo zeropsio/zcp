@@ -57,6 +57,9 @@ func run(args []string) int {
 	if isHQGitCredential(args) {
 		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath)), &http.Client{})
 	}
+	if isGit(args) {
+		return runGit(args[1:])
+	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
 			return runCLI(args, dispatch)
