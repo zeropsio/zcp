@@ -5,6 +5,7 @@
 package tools
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -272,5 +273,96 @@ func TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre(t *tes
 	moved := lab.proposeRecipe(lab.mock)
 	if moved.Change == 0 || !moved.Created || len(moved.Proposed) != 1 || moved.Proposed[0] != "0 — AI Agent" {
 		t.Errorf("after the pool migration = %+v, want the AI Agent tier, still zcp's own, proposed anew", moved)
+	}
+}
+
+// recipeShapedClient is the lab's project once it gained a cache — a shape
+// change for every tier zcp wrote before it — its stage running at a minimum
+// of minContainers and holding mode as APP_MODE, with extra beside.
+func recipeShapedClient(minContainers int32, mode string, extra ...platform.ServiceStack) *platform.Mock {
+	stage := liveRuntime("svc-appstage", "appstage", "nodejs@22")
+	stage.CurrentAutoscaling.HorizontalMinCount, stage.CurrentAutoscaling.HorizontalMaxCount = minContainers, 4
+	services := append([]platform.ServiceStack{
+		liveRuntime("svc-appdev", "appdev", "nodejs@22"),
+		stage,
+		{ID: "svc-db", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql:single@18", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-cache", Name: "cache", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey:single@7", ServiceStackTypeCategoryName: "USER"}},
+	}, extra...)
+	return platform.NewMock().
+		WithProject(&platform.Project{ID: labMate, Name: "acme-mate-1", Status: "ACTIVE"}).
+		WithServicesDirect(services).
+		WithServices(services).
+		WithServiceEnv("svc-appstage", []platform.ServiceEnvVar{{Key: "APP_MODE", Content: mode, Type: platform.ServiceEnvUser}})
+}
+
+// composedTier is path as this Mate composes it now from client, marked as
+// a tier of zcp's own.
+func (l *hqLab) composedTier(client platform.Client, path string) string {
+	l.t.Helper()
+	comp, outcome, ok := composeGroupRecipe(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir)
+	if !ok {
+		l.t.Fatalf("the recipe does not compose: %+v", outcome)
+	}
+	defer comp.close()
+	for _, file := range comp.files {
+		if file.Path == path {
+			return bundle.StampTier(file.Body, labMate)
+		}
+	}
+	l.t.Fatalf("no %s composed", path)
+	return ""
+}
+
+// TestGroupRecipe_ATierProposedAnew_IsRewrittenOnlyForItsShape: a tier zcp
+// proposes anew over main's is one an environment may be made from, so its
+// change can wait for a person (recipe_changes_environments), and every push
+// has Core judge it again and moves it in the person's list. Its shape is
+// why it is proposed; while it waits, a pass pushes it again only for a new
+// shape — a service added — never for a value that moved since: a scale the
+// agent tried, a variable set again. What the change carries of those is
+// what the pass that found the shape composed.
+func TestGroupRecipe_ATierProposedAnew_IsRewrittenOnlyForItsShape(t *testing.T) {
+	t.Parallel()
+	search := liveRuntime("svc-search", "search", "nodejs@22")
+	search.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "av-search", Source: "GIT", Built: true,
+		PublicGitSource: &platform.AppVersionGitSource{GitURL: "https://github.com/acme/search", BranchName: "main"}}
+	tests := []struct {
+		name     string
+		next     *platform.Mock
+		wantPush bool
+		want     string // what the change's Stage tier holds after the pass
+	}{
+		{name: "a scale moved", next: recipeShapedClient(2, "blue")},
+		{name: "a variable's value moved", next: recipeShapedClient(1, "green")},
+		{name: "a scale and a value moved", next: recipeShapedClient(2, "green")},
+		{name: "a service added", next: recipeShapedClient(2, "green", search), wantPush: true, want: "hostname: search"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newRecipeLab(t)
+			lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, labMate))
+			first := lab.proposeRecipe(recipeShapedClient(1, "blue"))
+			if !first.Created || !slices.Contains(first.Replaced, "3 — Stage") {
+				t.Fatalf("the cache did not propose the Stage tier anew: %+v", first)
+			}
+			lab.hq.judge(first.Change, hq.MergeClean, "recipe_changes_environments")
+			held := lab.hq.recipeHead(recipeBranch(first.Change))
+			if lab.composedTier(tt.next, recipeStageTier) == lab.hq.recipeFiles(recipeBranch(first.Change))[recipeStageTier] {
+				t.Fatal("the next project composes the Stage tier as the change holds it: nothing moved")
+			}
+
+			outcome := lab.proposeRecipe(tt.next)
+
+			if pushed := lab.hq.recipeHead(recipeBranch(first.Change)) != held; pushed != tt.wantPush || outcome.Committed != tt.wantPush {
+				t.Errorf("pushed %v (%+v), want %v", pushed, outcome, tt.wantPush)
+			}
+			if outcome.Created || lab.hq.changeIn(hq.RecipeRepo, first.Change+1) != nil {
+				t.Errorf("the pass opened a second recipe change: %+v", outcome)
+			}
+			if stage := lab.hq.recipeFiles(recipeBranch(first.Change))[recipeStageTier]; tt.want != "" && !strings.Contains(stage, tt.want) {
+				t.Errorf("the change's Stage tier lacks %q:\n%s", tt.want, stage)
+			}
+		})
 	}
 }
