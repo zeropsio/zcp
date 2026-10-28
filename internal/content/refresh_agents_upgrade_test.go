@@ -35,7 +35,7 @@ func TestRefreshAgentContext_PreUpgradeCLAUDEmdWithoutAgentsMD_LeftUntouched(t *
 	}
 
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	agentsChanged, claudeChanged, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	agentsChanged, claudeChanged, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("RefreshAgentContext: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRefreshAgentContext_AgentsMDPresent_RefreshesCLAUDEWrapper(t *testing.T
 		t.Fatal(err)
 	}
 
-	agentsChanged, claudeChanged, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	agentsChanged, claudeChanged, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("RefreshAgentContext: %v", err)
 	}

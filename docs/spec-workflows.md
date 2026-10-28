@@ -1018,6 +1018,58 @@ Both environments follow the same flows but with different mechanisms.
 - **Commands**: `ssh {hostname} "cd /var/www && {command}"`.
 - **Mount tool**: Available.
 - **ServiceMeta hostname**: devHostname (standard), hostname (dev/simple).
+- **Agent context**: `/var/www/AGENTS.md` and `/var/www/CLAUDE.md`; CLAUDE.md imports each mounted repository's own CLAUDE.md (below).
+
+**Workspace instructions — each repository's CLAUDE.md at session start.** Every session opens in
+the workspace, `/var/www` (in a Mate by design, `docs/spec-mate.md` §6.3), and Claude Code loads a
+subdirectory's `CLAUDE.md` only once the agent reads a file in it, so a repository's own
+instructions arrived late or never. The managed block of `/var/www/CLAUDE.md` therefore carries,
+after zcp's own `@AGENTS.md`, one `@<dir>/CLAUDE.md` import per repository the container checks out
+(`content.BuildClaudeWrapper` over `workflow.WorkspaceRepos`), sorted, and nothing else — no prose,
+nothing of zcp's guidance restated:
+
+- **Which repositories**: each pair's dev half, `<host>` (mounted at `/var/www/<host>`), in every
+  container mode, complete or still bootstrapping; a variant-B pair's volume at `<host>/<subpath>`.
+  Never a stage (built from the dev half's repository), a variant-B pair's further dev services (the
+  same volume), a local topology, or a pool-keyed pair and its leases: a lease mount is the checkout
+  of the conversation that took the lease, reached only right after its orchestrator vouches for the
+  container (DP-2), while an import is a standing read every later session start makes without that
+  check, through an sshfs that reconnects to whoever the pool hands the container next. The agent's
+  own lease's `CLAUDE.md` loads on demand once it reads a file under `/var/www/<alias>`. A directory
+  an import line cannot name exactly (a space, a quote, `#`, `@`, `..`) gets no line.
+- **CLAUDE.md only**: a repository's `AGENTS.md` is not imported. Claude Code reads a directory's
+  `AGENTS.md` only when that directory has no `CLAUDE.md`, which a list written ahead of time cannot
+  mirror without reading every repository through its mount at boot; a repository `CLAUDE.md` that
+  imports its `AGENTS.md` brings it along, and an `AGENTS.md`-only repository loads on demand as
+  before.
+- **Where it renders**: in `CLAUDE.md`, never `AGENTS.md` (the other agents reading it do not expand
+  `@`-imports); in a container, never in an authoring context (a codebase's `CLAUDE.md` is a content
+  surface the run authors, `docs/spec-content-surfaces.md` Surface 6) or org mode
+  (`content.WorkspaceImports`). Locally the working directory is the repository itself. Guided mode
+  does not touch it.
+- **Kept current**: `zcp init` writes it; `zcp serve` rewrites it at start and once each tool call
+  answered (`followRepos`), because pairs are bootstrapped, adopted, stood up, moved onto a pool or
+  deleted inside a tool call and the next session must read the list current — written only when the
+  block differs, every byte outside the line-anchored markers kept. A pair record zcp cannot read
+  costs `zcp init` the imports, never the boot (the agent context stays a required step), and leaves
+  serve's block as last written.
+- **Claude Code behaviour it relies on** (code.claude.com/docs/en/memory; the loader of Claude Code
+  2.1.311): a relative import resolves against the importing file; an absent file (ENOENT, ENOTDIR)
+  is skipped silently, so a repository without a `CLAUDE.md`, or an unmounted one, costs nothing;
+  imports nest at most four hops below the file, so a repository's `CLAUDE.md` imported here keeps
+  three of its own; an import inside the working directory needs no approval (a session opened below
+  `/var/www` sees these as external imports, as it already sees `@AGENTS.md`).
+
+Pinned by `TestBuildClaudeWrapper_ImportsEachRepositorysCLAUDEMD`,
+`TestBuildClaudeWrapper_NoImportsOutsideAUserContainer`,
+`TestRefreshAgentContext_ClaudeImports_FollowTheRepositories`,
+`TestWorkspaceRepos_TheDevHalfOfEveryContainerPair`, `TestWorkspaceRepos_FollowsThePairs`,
+`TestWorkspaceRepos_UnreadableRecord_Errors`, `TestRun_Container_CLAUDEMDImportsEachPairsRepository`,
+`TestRun_Local_CLAUDEMDImportsNoRepository`,
+`TestRun_Container_UnreadablePairRecords_StillWritesTheAgentContext`,
+`TestFollowRepos_ToolCall_CLAUDEMDImportsFollowThePairs`,
+`TestFollowRepos_NotAUserContainer_CLAUDEMDUntouched` and
+`TestRefreshAgentContext_AtStart_ImportsEachPairsRepository`.
 
 Mount observation uses the kernel SSHFS entry and a bounded read of its path. An unreadable
 mount table, unit lookup or path probe is an unanswered observation, never evidence of absence;
@@ -1056,6 +1108,7 @@ a wake wait renews ownership again before mounting or supervising. These boundar
 - **Server start**: Real start command in zerops.yaml. healthCheck always.
 - **Mount tool**: Not available.
 - **ServiceMeta hostname**: stageHostname for standard (inverted), hostname for dev/simple.
+- **Agent context**: `CLAUDE.md` is the `@AGENTS.md` include alone — no repository imports (§5.1).
 
 ### 5.3 Guidance Adaptation
 

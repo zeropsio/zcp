@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const (
@@ -253,15 +254,33 @@ func generateAgentContext(baseDir string, rt runtime.Info) error {
 		return fmt.Errorf("write AGENTS.md: %w", err)
 	}
 
-	// Phase 3: write CLAUDE.md (thin @AGENTS.md wrapper). REFLOG is now
-	// in AGENTS.md (after migration), so CLAUDE.md needs no REFLOG
+	// Phase 3: write CLAUDE.md (the @AGENTS.md wrapper, and in a container
+	// one import per repository the workspace holds). REFLOG is now in
+	// AGENTS.md (after migration), so CLAUDE.md needs no REFLOG
 	// preservation path.
 	claudePath := filepath.Join(baseDir, "CLAUDE.md")
-	if err := writeManagedSectionPreservingReflog(claudePath, content.BuildClaudeWrapper()); err != nil {
+	if err := writeManagedSectionPreservingReflog(claudePath, content.BuildClaudeWrapper(rt, workspaceRepos(baseDir, rt))); err != nil {
 		return fmt.Errorf("write CLAUDE.md: %w", err)
 	}
 
 	return nil
+}
+
+// workspaceRepos is the repositories CLAUDE.md imports (workflow.WorkspaceRepos
+// over baseDir's pair records), read only where the wrapper renders them. The
+// agent context is the step zcp init must deliver, so a record it cannot read
+// costs the imports — each repository's CLAUDE.md then loads on demand, as
+// before — and never the step: the failure is printed and init carries on.
+func workspaceRepos(baseDir string, rt runtime.Info) []string {
+	if !content.WorkspaceImports(rt) {
+		return nil
+	}
+	repos, err := workflow.WorkspaceRepos(filepath.Join(baseDir, ".zcp", "state"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ! CLAUDE.md repository imports: %v\n    (continuing — each repository's CLAUDE.md loads only once the agent reads a file in it)\n", err)
+		return nil
+	}
+	return repos
 }
 
 // writeManagedSectionPreservingReflog writes a ZCP-managed marker block
