@@ -193,6 +193,9 @@ func handleGroupRecipeScaling(
 	}
 	changed := changedTiers(tiers)
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
+	if written.edited && len(changed) > 0 {
+		return recipeEditedRefusal("The scaling proposal", comp, written), nil, nil
+	}
 	if written.other != nil && len(changed) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("The scaling proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and this Mate keeps one recipe proposal open at a time.",
