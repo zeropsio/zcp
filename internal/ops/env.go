@@ -132,8 +132,8 @@ const SensitiveValueMask = "<redacted: sensitive>"
 // RedactEnvValue masks the value of an env var that must not reach the
 // agent, returning (maskedValue, true) when the value must not be echoed and
 // (value, false) otherwise. Single owner so every value-echo / presentation
-// site masks identically (get/discover renderers, set-echo, generate-dotenv
-// preview diff).
+// site masks identically (get/discover renderers, generate-dotenv preview
+// diff). The set answer needs none: it carries no value at all (StoredEnv).
 //
 // Four classes mask, the first match naming the mask:
 //   - ZCP-owned credential keys (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) —
@@ -222,11 +222,11 @@ const LaunchTokenEnvKey = "ZCP_LAUNCH_TOKEN"
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
 	Process *platform.Process `json:"process,omitempty"`
-	// Stored is the list of {key, value} pairs that were actually written.
-	// Values reflect post-expansion state (preprocessor already applied),
-	// letting the caller verify what the platform actually stores — e.g.
-	// catching an unintended base64: prefix or a miscounted byte length
-	// BEFORE the app runtime trips on it.
+	// Stored is the list of keys that were actually written, each with the
+	// value it was written with (post-expansion: preprocessor already
+	// applied) for zcp's own reads — the shadow check compares it — and the
+	// flag it was written with. An answer names the keys only: StoredEnv
+	// marshals no value.
 	Stored []StoredEnv `json:"stored,omitempty"`
 	// Scope and ServiceHostname name the vault the keys went to, as a
 	// request's answer names the vault it asks for (EnvRequestResult): Mate
@@ -238,15 +238,20 @@ type EnvSetResult struct {
 
 // StoredEnv describes one env var as it now lives in the platform.
 type StoredEnv struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	Key string `json:"key"`
+	// Value is what was written, for zcp's own reads only. It never reaches
+	// an answer: a value written plain — a secret under an explicit
+	// sensitive=false beside a plain key — would otherwise be echoed into the
+	// conversation, and the agent reads a plain value back by name when it
+	// needs it (zerops_discover includeEnvValues=true).
+	Value string `json:"-"`
 	// Replaced is true when the key was upserted (existing entry deleted,
 	// new entry created). False when the key is newly added.
 	Replaced bool `json:"replaced,omitempty"`
 	// Sensitive is the flag the value was written with — the caller's,
-	// else the default by name (topology.DefaultSensitive), on either scope. A
-	// presentation site masks a sensitive Value (RedactEnvValue).
-	Sensitive bool `json:"isSensitive,omitempty"`
+	// else the default by name (topology.DefaultSensitive), on either scope.
+	// Always in the answer, so it says whether the key is masked.
+	Sensitive bool `json:"isSensitive"`
 }
 
 // EnvDeleteResult contains the result of an env delete operation.

@@ -301,22 +301,13 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if setResult.Process != nil {
 				setResult.Process, setTimedOut = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			// Redact credential-class and sensitive values in the echo:
-			// `stored[]` verifies WHAT landed, never the secret itself — an
-			// unredacted set response put the raw PAT into the chat transcript
-			// (the raw zerops_env rotation bypass, prod.txt T3). Same single
-			// owner (RedactEnvValue) as the get/discover renderers.
-			storedEcho := make([]ops.StoredEnv, len(setResult.Stored))
-			copy(storedEcho, setResult.Stored)
-			for i := range storedEcho {
-				// A user set is never a managed service's own credential field,
-				// so "" serviceType is correct — the ZCP-owned and sensitive
-				// classes mask.
-				if masked, redacted := ops.RedactEnvValue(storedEcho[i].Key, storedEcho[i].Value, "", storedEcho[i].Sensitive); redacted {
-					storedEcho[i].Value = masked
-				}
-			}
-			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, Scope: setResult.Scope, ServiceHostname: setResult.ServiceHostname, TimedOut: setTimedOut}
+			// `stored[]` names each key written, whether it is masked and
+			// whether it replaced one — never a value (ops.StoredEnv marshals
+			// none). A plain value echoed back put a secret written plain into
+			// the conversation (Franta, 2026-10-28: a session secret set with
+			// sensitive=false beside a plain URL); an unredacted echo once put
+			// the raw PAT there (prod.txt T3).
+			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored, Scope: setResult.Scope, ServiceHostname: setResult.ServiceHostname, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			setKeys := make([]string, 0, len(setResult.Stored))
 			for _, st := range setResult.Stored {
