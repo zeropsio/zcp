@@ -413,9 +413,9 @@ func TestDevsupPrepareCommand_FallsBackToWgetWhenCurlIsAbsent(t *testing.T) {
 func TestAdoptSupervisorInDevSetup_ZeropsYmlRepo_ErrorNamesZeropsYmlNeverZeropsYaml(t *testing.T) {
 	t.Parallel()
 	ssh := &mockSSHDeployer{output: []byte("@@zcp-file zerops.yml\nzerops:\n  - setup: a\n    run: {}\n  - setup: b\n    run: {}\n")}
-	file, _, _, _, err := AdoptSupervisorInDevSetup(context.Background(), ssh, "appdev", "", "http://x", "", "")
-	if file != "zerops.yml" {
-		t.Fatalf("file = %q", file)
+	adopted, err := AdoptSupervisorInDevSetup(context.Background(), ssh, "appdev", "", "http://x", "", "")
+	if adopted.File != "zerops.yml" {
+		t.Fatalf("file = %q", adopted.File)
 	}
 	if err == nil {
 		t.Fatal("expected an error: several setups, none the dev one")

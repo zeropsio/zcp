@@ -212,21 +212,32 @@ func ReadRepoConfigFile(ctx context.Context, ssh SSHDeployer, hostname, dir stri
 	return file, body, nil
 }
 
+// DevSetupAdoption is what AdoptSupervisorInDevSetup did to a dev setup.
+type DevSetupAdoption struct {
+	// File is the config file's name (zerops.yaml or zerops.yml), Setup the
+	// dev setup's.
+	File, Setup string
+	// Download is what its zcp-devsup line installs: the url asked for, or
+	// the one a line the setup already carried names.
+	Download string
+	// Changed is false when both supervisor lines were there.
+	Changed bool
+}
+
 // AdoptSupervisorInDevSetup rewrites the zerops.yaml in hostname's dir — the
 // folder its deploy runs from, "" for /var/www — so its dev setup runs the
-// supervisor on the repository root given as root (AdoptSupervisorYAML), and returns
-// the file's name, the setup and the download its zcp-devsup line installs —
-// url, or the one a line the setup already carried names.
-func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (file, used, download string, changed bool, err error) {
-	download = url
-	file, used, changed, err = rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
+// supervisor on the repository root given as root (AdoptSupervisorYAML).
+func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (DevSetupAdoption, error) {
+	a := DevSetupAdoption{Download: url}
+	var err error
+	a.File, a.Setup, a.Changed, err = rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
 		out, used, changed, err := AdoptSupervisorYAML(data, setup, hostname, url, root)
 		if err == nil {
-			download = devsupDownloadIn(out, used, hostname, url)
+			a.Download = devsupDownloadIn(out, used, hostname, url)
 		}
 		return out, used, changed, err
 	})
-	return file, used, download, changed, err
+	return a, err
 }
 
 // devsupDownloadIn is the download the zcp-devsup line of setup in data
