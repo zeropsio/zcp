@@ -313,7 +313,7 @@ func groupBoxWarnings(boxes []GroupBox, carried map[string]bool) []string {
 	for _, b := range boxes {
 		if !carried[b.Hostname] {
 			warnings = append(warnings, fmt.Sprintf(
-				"Zerops Box %q (%s) is not carried in the recipe: no runtime the recipe carries reads it, so it is no part of the app — a setup that names it in a variable (a ${%s_…} reference, or http://%s:8080) brings it into every tier that carries that runtime",
+				"Zerops Box %q (%s) is not carried in the recipe: no runtime the recipe carries reads it, so it is no part of the app — a variable of a runtime that names it (a ${%s_…} reference, or http://%s:8080), in its setup or its own, brings it into every tier that carries that runtime",
 				b.Hostname, b.ServiceType, canonicalRefHost(b.Hostname), b.Hostname))
 		}
 	}

@@ -740,8 +740,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		item     yamlItem
 	}
 	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed)+len(plan.boxes))
-	// readers are the entries that build a setup of their pair's zerops.yaml:
-	// what they read, the tier carries.
+	// readers are the tier's runtimes, pools and utilities and what they read
+	// with (tierReader): the tier carries the Box they read, and must carry
+	// what the setups it builds read (groupTierClosure).
 	var readers []tierReader
 	for _, r := range runtimes {
 		type half struct {
