@@ -1,13 +1,15 @@
 // Tests for: integration — the delivery and launch readers of a pair keyed by
 // its dev pool through the full MCP server (docs/spec-workflows.md §13 PM-10,
-// §10): release, git-push and launch refuse it by name before any read,
-// build-integration and a stage deploy from a lease never name the pool as a
-// push source, and develop's scope never takes the pool.
+// §10): git-push refuses it by name before any read, launch and release read
+// it from its origin and never the pool, build-integration and a stage deploy
+// from a lease never name the pool as a push source, and develop's scope never
+// takes the pool.
 
 package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/origintest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
@@ -29,6 +32,13 @@ import (
 // apppool, with lease apppool-3 held.
 func poolDeliverySession(t *testing.T) (*mcp.ClientSession, *platform.Mock, *poolPairHostSSH) {
 	t.Helper()
+	return poolDeliverySessionAt(t, "https://github.com/acme/app.git")
+}
+
+// poolDeliverySessionAt is poolDeliverySession with the pair's origin at
+// remoteURL.
+func poolDeliverySessionAt(t *testing.T, remoteURL string) (*mcp.ClientSession, *platform.Mock, *poolPairHostSSH) {
+	t.Helper()
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
@@ -39,7 +49,8 @@ func poolDeliverySession(t *testing.T) (*mcp.ClientSession, *platform.Mock, *poo
 		FirstDeployedAt:  "2026-10-01T01:00:00Z",
 		CloseDeployMode:  topology.CloseModeAuto,
 		GitPushState:     topology.GitPushConfigured,
-		RemoteURL:        "https://github.com/acme/app.git",
+		RemoteURL:        remoteURL,
+		TrackedRef:       "main",
 		BuildIntegration: topology.BuildIntegrationActions,
 		PrimarySetupName: "dev",
 	}); err != nil {
@@ -64,6 +75,7 @@ func poolDeliverySession(t *testing.T) (*mcp.ClientSession, *platform.Mock, *poo
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "app", Status: "ACTIVE"}).
 		WithServices(services).WithServicesDirect(services).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "GIT_TOKEN", Content: poolDeliveryGitToken, Sensitive: true}}).
 		WithProjectEnv([]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}})
 	ssh := &poolPairHostSSH{}
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp", ProjectID: "proj-1"}
@@ -90,23 +102,42 @@ func poolDeliverySession(t *testing.T) (*mcp.ClientSession, *platform.Mock, *poo
 	return session, mock, ssh
 }
 
-// TestPoolPair_Integration_ReleaseRefusedWithoutSSH: a release of the
-// pool-keyed pair is refused by name, pointing at a lease of the pool,
-// before any ssh call.
-func TestPoolPair_Integration_ReleaseRefusedWithoutSSH(t *testing.T) {
+// TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH: a release of the
+// pool-keyed pair names the origin's tracked tip, then tags that commit on the
+// origin over HTTPS with the pool's GIT_TOKEN, from zcp's own scratch, with no
+// ssh call to the pool, a lease or the stage.
+func TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH(t *testing.T) {
 	t.Parallel()
-	session, _, ssh := poolDeliverySession(t)
+	origin, url := poolDeliveryOrigin(t)
+	session, _, ssh := poolDeliverySessionAt(t, url)
 
+	prompt := callAndGetResult(t, session, "zerops_workflow", map[string]any{"action": "release", "service": "appstage"})
+	var asked struct {
+		Status string `json:"status"`
+		Commit string `json:"commit"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, prompt)), &asked); err != nil || asked.Status != "release-prompt" || asked.Commit == "" {
+		t.Fatalf("release prompt = %s (%v), want release-prompt naming its commit", getTextContent(t, prompt), err)
+	}
 	res := callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "release", "service": "appstage", "releaseVersion": "v1.0.1",
+		"action": "release", "service": "appstage", "releaseVersion": "v1.0.1", "releaseCommit": asked.Commit,
 	})
 
 	text := getTextContent(t, res)
-	if !res.IsError || !strings.Contains(text, "apppool") || !strings.Contains(text, "zerops_lease") {
-		t.Fatalf("release was not refused naming the pool and its lease: %s", text)
+	if res.IsError || !strings.Contains(text, `"status":"released"`) {
+		t.Fatalf("release of the pool-keyed pair did not tag its origin: %s", text)
+	}
+	if at := origin.TagAt(t, "app.git", "v1.0.1"); at != asked.Commit {
+		t.Errorf("v1.0.1 on the origin points at %q, want the prompted %q", at, asked.Commit)
+	}
+	if !origin.SawToken("app.git") {
+		t.Error("the origin was never sent the pool's GIT_TOKEN")
+	}
+	if strings.Contains(text, poolDeliveryGitToken) {
+		t.Errorf("the answer carries the pool's GIT_TOKEN: %s", text)
 	}
 	if len(ssh.hosts) != 0 {
-		t.Errorf("the refusal came after ssh %v", ssh.hosts)
+		t.Errorf("release reached %v over ssh", ssh.hosts)
 	}
 }
 
@@ -172,24 +203,46 @@ func TestPoolPair_Integration_BuildIntegrationReadsNoPool(t *testing.T) {
 	}
 }
 
-// TestPoolPair_Integration_LaunchRefusedBeforeAnyRead: launch-production on
-// the stage of the pool-keyed pair answers the pool-dev-pair blocker before
-// any read of the source.
-func TestPoolPair_Integration_LaunchRefusedBeforeAnyRead(t *testing.T) {
+// poolDeliveryGitToken is the pool's GIT_TOKEN as the env API answers it.
+const poolDeliveryGitToken = "integration-pool-token-canary-77e2"
+
+// poolDeliveryOrigin serves the pair's origin over HTTPS (origintest) — a
+// bare repository whose main holds a zerops.yaml with the stage's setup —
+// requiring the pool's GIT_TOKEN as zcp's helper sends it. It answers the
+// server and the origin's URL.
+func poolDeliveryOrigin(t *testing.T) (*origintest.Server, string) {
+	t.Helper()
+	srv := origintest.New(t)
+	yaml := "zerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n      deployFiles: ./\n    run:\n      base: nodejs@22\n      start: node server.js\n"
+	url, _ := srv.Repo(t, "app.git", map[string]string{"zerops.yaml": yaml}, nil)
+	srv.RequireToken("app.git", poolDeliveryGitToken)
+	return srv, url
+}
+
+// TestPoolPair_Integration_LaunchReadsTheOriginNeverThePool: launch-production
+// on the stage of the pool-keyed pair reads the pair's origin, passes the
+// source-control gate and reaches nothing over ssh; the pool's GIT_TOKEN
+// stays out of the answer.
+func TestPoolPair_Integration_LaunchReadsTheOriginNeverThePool(t *testing.T) {
 	t.Parallel()
-	session, mock, ssh := poolDeliverySession(t)
+	_, url := poolDeliveryOrigin(t)
+	session, _, ssh := poolDeliverySessionAt(t, url)
 
 	res := callAndGetResult(t, session, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "launch-production",
 		"productionProjectName": "app-prod", "targetService": "appstage", "region": "eu-central",
+		"skipBuildIntegration": []string{"apppool"},
 	})
 
 	text := getTextContent(t, res)
-	if !strings.Contains(text, "pool-dev-pair-apppool") || !strings.Contains(text, "source-control-required") {
-		t.Fatalf("launch did not answer the pool-dev-pair blocker: %s", text)
+	if strings.Contains(text, "source-control-required") || !strings.Contains(text, "classify-prompt") {
+		t.Fatalf("launch did not pass the source-control gate on the origin: %s", text)
 	}
-	if len(ssh.hosts) != 0 || mock.CallCount("GetProjectEnv") != 0 {
-		t.Errorf("launch read the source before refusing: ssh %v, %d env reads", ssh.hosts, mock.CallCount("GetProjectEnv"))
+	if strings.Contains(text, poolDeliveryGitToken) {
+		t.Errorf("the answer carries the pool's GIT_TOKEN: %s", text)
+	}
+	if len(ssh.hosts) != 0 {
+		t.Errorf("launch reached %v over ssh", ssh.hosts)
 	}
 }
 

@@ -230,6 +230,10 @@ type WorkflowInput struct {
 	// verified pushed HEAD. Empty → the handler returns release-prompt
 	// with the suggested next version derived from the remote's tags.
 	ReleaseVersion string `json:"releaseVersion,omitempty" jsonschema:"Release action outside HQ only (HQ always hands off to the person in Mate): the version tag to create (vMAJOR.MINOR.PATCH). Omit to get a release-prompt with the suggested next version; confirm with the user before re-calling with the value."`
+	// ReleaseCommit is the commit a release-prompt of a pair keyed by its dev
+	// pool named (docs/spec-workflows.md §10 P-LP-21): the confirming call
+	// tags that commit only while it is still the origin's tip.
+	ReleaseCommit string `json:"releaseCommit,omitempty" jsonschema:"Release of a pair whose dev half is a dev pool: the commit its release-prompt named, sent with releaseVersion; tagged only while still the origin's tip."`
 	// PipelineTagRegex overrides the default tag-trigger regex
 	// (^v\\d+\\.\\d+\\.\\d+$, the Zerops-documented production
 	// recommendation). Surface only — the value is embedded in the
@@ -682,7 +686,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, httpClient, sshDeployer, projectID, input, stateDir, rt)
 	case "release":
-		return handleRelease(ctx, sshDeployer, httpClient, input, stateDir, rt)
+		return handleRelease(ctx, client, projectID, sshDeployer, httpClient, input, stateDir, rt)
 	case "prod-ops":
 		return handleLaunchProdOps(ctx, projectID, client, logFetcher, input, stateDir, apiHost)
 	case "confirm-production":

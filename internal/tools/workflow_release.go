@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -42,8 +43,14 @@ const releaseFirstVersion = "v1.0.0"
 // Two-call narrowing: without releaseVersion the handler returns
 // status="release-prompt" carrying the freshness evidence + suggested
 // next version; the re-call with releaseVersion executes the tag push.
+//
+// A pair keyed by its dev pool has no checkout: its release tags the
+// origin's tracked tip itself (releasePoolPart, docs/spec-workflows.md
+// §10 P-LP-21), through client and projectID for the pool's GIT_TOKEN.
 func handleRelease(
 	ctx context.Context,
+	client platform.Client,
+	projectID string,
 	sshDeployer ops.SSHDeployer,
 	httpClient ops.HTTPDoer,
 	input WorkflowInput,
@@ -72,12 +79,10 @@ func handleRelease(
 			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\""), WithRecoveryStatus()), nil, nil
 	}
 	// A pair keyed by its dev pool has no checkout to read the pushed HEAD
-	// from or tag (docs/spec-workflows.md §13 PM-10): refused before any read.
+	// from or tag (docs/spec-workflows.md §13 PM-10): its release tags the
+	// origin's tracked tip, never the pool (§10 P-LP-21).
 	if meta.DevIsPool() {
-		branch := trackedRefOrDefault(meta)
-		return convertError(poolPairRefusal("release", input.Service, meta, fmt.Sprintf(
-			"Release from a lease of the pool on %s: %s, then in the lease's checkout (ssh to its alias) check the tree is clean and HEAD is on origin, and run `git tag -a vX.Y.Z -m \"release vX.Y.Z\" && git push origin vX.Y.Z` — the tag fires the production pipeline.",
-			branch, poolPairLeaseAcquire(meta, branch))), WithRecoveryStatus()), nil, nil
+		return releasePoolPart(ctx, poolPartOriginDeps{client: client, rt: rt, projectID: projectID}, meta, input), nil, nil
 	}
 	if meta.GitPushState != topology.GitPushConfigured {
 		return convertError(platform.NewPlatformError(
@@ -168,6 +173,111 @@ func handleRelease(
 	}), nil, nil
 }
 
+// releasePoolPart is the release of a pair keyed by its dev pool
+// (docs/spec-workflows.md §10 P-LP-21), from either hostname: the pair has no
+// checkout, so the release tags the origin's tracked tip itself — the commit
+// launch reads (P-LP-20), pushed by definition, so the clean-tree and
+// pushed-head proof a checkout needs has nothing to prove. The same two
+// calls as every release: release-prompt names the tip — its full commit —
+// the origin's release tags and the next version; the re-call carries that
+// commit back (releaseCommit) with releaseVersion, and the tag is made on it
+// only while it is still the tip: a lease may push in between, and a moved
+// tip is refused naming both, nothing tagged. Everything runs in a scratch
+// repository of zcp's own with the pool's GIT_TOKEN in git's environment
+// alone; nothing reaches the pool, a lease or the stage.
+func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflow.ServiceMeta, input WorkflowInput) *mcp.CallToolResult {
+	ref := launchPushProofRef(meta)
+	remote := strings.TrimSpace(meta.RemoteURL)
+	refuse := func(said, fix string) *mcp.CallToolResult {
+		e := &poolPartOriginError{pool: meta.Hostname, origin: remote, ref: ref, said: said, fix: fix}
+		return convertError(platform.NewPlatformError(platform.ErrPreflightFailed, "release did not run: "+e.Error(), ""), WithRecoveryStatus())
+	}
+	if remote == "" || meta.GitPushState != topology.GitPushConfigured {
+		return refuse(fmt.Sprintf("the pair records no configured origin (git-push %q)", meta.GitPushState),
+			"A pool-keyed pair keeps the origin its dev service pushed to, and git-push-setup refuses the pair: there is no origin to tag until one is recorded.")
+	}
+	readFix := fmt.Sprintf("Make the origin readable from this container: reachable, and readable with the person's GIT_TOKEN on the pool %q — a credential the person gives, never one zcp writes or asks for in the conversation. Then call again.", meta.Hostname)
+	token, how := poolGitTokenFor(ctx, deps, meta)
+	names, err := ops.ReadOriginTags(ctx, remote, "v*", token)
+	if err != nil {
+		return refuse(fmt.Sprintf("%v (%s)", err, how), readFix)
+	}
+	existing, suggestion := releaseNextVersion(names)
+	pipeline := releasePipelineNote(meta)
+
+	if input.ReleaseVersion == "" {
+		tip, err := readPoolPartOrigin(ctx, deps, meta)
+		if err != nil {
+			return convertError(platform.NewPlatformError(platform.ErrPreflightFailed, "release did not run: "+err.Error(), ""), WithRecoveryStatus())
+		}
+		return jsonResult(map[string]any{
+			"status":           "release-prompt",
+			"service":          input.Service,
+			"devPool":          meta.Hostname,
+			"origin":           topology.RedactRepoURLCredentials(remote),
+			"ref":              tip.Ref,
+			"head":             shortSHA(tip.CommitSHA),
+			"commit":           tip.CommitSHA,
+			"existingTags":     existing,
+			"suggestedVersion": suggestion,
+			"pipeline":         pipeline,
+			"nextStep":         fmt.Sprintf("Confirm the version with the user (suggested %q), then re-call: zerops_workflow action=\"release\" service=%q releaseVersion=%q releaseCommit=%q. The tag is created on that commit of the origin's %s — the part's dev half is the dev pool %q, which holds no checkout — only while it is still the tip, and fires the production pipeline.", suggestion, input.Service, suggestion, tip.CommitSHA, tip.Ref, meta.Hostname),
+		})
+	}
+	commit := strings.TrimSpace(input.ReleaseCommit)
+	if commit == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"releaseCommit is required to release a pair keyed by its dev pool: the tag is made on the commit the release-prompt showed, never on whatever the origin's tip is by then",
+			fmt.Sprintf("Call zerops_workflow action=\"release\" service=%q first, confirm its version and commit with the user, then re-call with releaseVersion and releaseCommit set to its commit.", input.Service),
+		), WithRecoveryStatus())
+	}
+
+	version := strings.TrimSpace(input.ReleaseVersion)
+	if !releaseTagRe.MatchString(version) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("releaseVersion %q does not match the production pipeline's tag shape (vMAJOR.MINOR.PATCH)", version),
+			fmt.Sprintf("Pass e.g. releaseVersion=%q — the default pipeline tag regex is ^v\\d+\\.\\d+\\.\\d+$.", suggestion),
+		), WithRecoveryStatus())
+	}
+	if slices.Contains(existing, version) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("release tag %q already exists on the origin", version),
+			fmt.Sprintf("Pick the next free version (suggested %q).", suggestion),
+		), WithRecoveryStatus())
+	}
+	tip, err := ops.TagOriginTip(ctx, remote, ref, commit, version, "release "+version, token)
+	switch {
+	case errors.Is(err, ops.ErrOriginTipMoved):
+		return refuse(fmt.Sprintf("%v (%s)", err, how),
+			fmt.Sprintf("Nothing was tagged. Something was pushed to %s since the prompt; call zerops_workflow action=\"release\" service=%q again, confirm the new tip with the user, then release it.", ref, input.Service))
+	case errors.Is(err, ops.ErrOriginTagExists):
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("release tag %q already exists on the origin", version),
+			fmt.Sprintf("Pick the next free version (suggested %q).", suggestion),
+		), WithRecoveryStatus())
+	case errors.Is(err, ops.ErrOriginRefMissing):
+		return refuse(fmt.Sprintf("%v (%s)", err, how),
+			fmt.Sprintf("Push %s to the origin from a lease of the pool (zerops_lease action=\"acquire\" pool=%q), then call again.", poolPartRefWords(ref), meta.Hostname))
+	case err != nil:
+		return refuse(fmt.Sprintf("%v (%s)", err, how),
+			fmt.Sprintf("Nothing fired — the tag did not reach the origin. The person's GIT_TOKEN on the pool %q must be able to push tags to it; fix the named cause and re-call.", meta.Hostname))
+	}
+	return jsonResult(map[string]any{
+		"status":   "released",
+		"service":  input.Service,
+		"devPool":  meta.Hostname,
+		"version":  version,
+		"ref":      tip.Ref,
+		"head":     shortSHA(tip.CommitSHA),
+		"pipeline": pipeline,
+		"nextStep": "The tag is on the origin and the production pipeline owns the rest. ZCP holds no production access — confirm the deploy in the production dashboard (or the repo's Actions runs for the tag workflow), then smoke-test.",
+	})
+}
+
 // hqReleaseHandoff ends the agent's release request visibly. A Mate cannot
 // push release tags; Core makes the application's release for the person.
 // A release takes main only, so it names the open changes the ledger keeps
@@ -197,15 +307,25 @@ func releaseTagSuggestion(ctx context.Context, sshDeployer ops.SSHDeployer, rt r
 	if err != nil {
 		return nil, releaseFirstVersion
 	}
-	var tags []string
-	best := [3]int{}
-	found := false
+	var names []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		idx := strings.LastIndex(line, "refs/tags/")
 		if idx == -1 {
 			continue
 		}
-		tag := strings.TrimSuffix(strings.TrimSpace(line[idx+len("refs/tags/"):]), "^{}")
+		names = append(names, strings.TrimSuffix(strings.TrimSpace(line[idx+len("refs/tags/"):]), "^{}"))
+	}
+	return releaseNextVersion(names)
+}
+
+// releaseNextVersion keeps the release tags among names — the shape the
+// production pipeline's tag regex takes — sorted and each once, and suggests
+// the next patch bump of the highest, releaseFirstVersion with none.
+func releaseNextVersion(names []string) ([]string, string) {
+	var tags []string
+	best := [3]int{}
+	found := false
+	for _, tag := range names {
 		m := releaseTagRe.FindStringSubmatch(tag)
 		if m == nil {
 			continue

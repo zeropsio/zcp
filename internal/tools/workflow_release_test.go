@@ -57,7 +57,7 @@ func TestHandleRelease_PromptSuggestsNextVersion(t *testing.T) {
 		},
 	}
 
-	result, _, _ := handleRelease(context.Background(), ssh, nil,
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
 		WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 	if result.IsError {
 		t.Fatalf("expected release-prompt, got error: %s", extractText(result))
@@ -82,7 +82,7 @@ func TestHandleRelease_AKeyOutsideAMateKeepsTheSourceRelease(t *testing.T) {
 	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"})
 	ssh := &containerSSHStub{dispatch: func(string) ([]byte, error) { return []byte("ok"), nil }}
 
-	result, _, _ := handleRelease(context.Background(), ssh, nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 	if body := extractText(result); result.IsError || !strings.Contains(body, "release-prompt") {
 		t.Fatalf("want the source-side release prompt, got: %s", body)
 	}
@@ -118,7 +118,7 @@ func TestHandleRelease_LegacyMetaWithoutTrackedRef_ComparesHEAD(t *testing.T) {
 		},
 	}
 
-	result, _, _ := handleRelease(context.Background(), ssh, nil,
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
 		WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 	if result.IsError {
 		t.Fatalf("expected release-prompt, got error: %s", extractText(result))
@@ -136,7 +136,7 @@ func TestHandleRelease_RefusesUnpushedState(t *testing.T) {
 		stateDir := t.TempDir()
 		seedReleaseMeta(t, stateDir, nil)
 		stubPushProof(t, LaunchPushProofResult{DirtyTree: true, LocalHead: "a", RemoteHead: "a"})
-		result, _, _ := handleRelease(context.Background(), &containerSSHStub{}, nil,
+		result, _, _ := handleRelease(context.Background(), nil, "", &containerSSHStub{}, nil,
 			WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 		if !result.IsError || !strings.Contains(extractText(result), "uncommitted") {
 			t.Errorf("dirty tree must refuse the release; got: %s", extractText(result))
@@ -146,7 +146,7 @@ func TestHandleRelease_RefusesUnpushedState(t *testing.T) {
 		stateDir := t.TempDir()
 		seedReleaseMeta(t, stateDir, nil)
 		stubPushProof(t, LaunchPushProofResult{LocalHead: "aaa", RemoteHead: "bbb"})
-		result, _, _ := handleRelease(context.Background(), &containerSSHStub{}, nil,
+		result, _, _ := handleRelease(context.Background(), nil, "", &containerSSHStub{}, nil,
 			WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 		if !result.IsError || !strings.Contains(extractText(result), "not the remote HEAD") {
 			t.Errorf("unpushed HEAD must refuse the release; got: %s", extractText(result))
@@ -172,13 +172,13 @@ func TestHandleRelease_TagsAndPushes(t *testing.T) {
 	}
 
 	// Duplicate refused.
-	dup, _, _ := handleRelease(context.Background(), ssh, nil,
+	dup, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
 		WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.0"}, stateDir, runtime.Info{InContainer: true})
 	if !dup.IsError || !strings.Contains(extractText(dup), "already exists") {
 		t.Errorf("duplicate tag must refuse; got: %s", extractText(dup))
 	}
 
-	result, _, _ := handleRelease(context.Background(), ssh, nil,
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
 		WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}, stateDir, runtime.Info{InContainer: true})
 	if result.IsError {
 		t.Fatalf("release should succeed, got: %s", extractText(result))
@@ -246,7 +246,7 @@ func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 			}
 			t.Cleanup(func() { launchPushProofReader = prev })
 			ssh := &containerSSHStub{}
-			result, structured, err := handleRelease(context.Background(), ssh, nil, tt.input, stateDir, runtime.Info{InContainer: true, MateEnabled: tt.mate})
+			result, structured, err := handleRelease(context.Background(), nil, "", ssh, nil, tt.input, stateDir, runtime.Info{InContainer: true, MateEnabled: tt.mate})
 			if err != nil || structured != nil || result == nil || result.IsError {
 				t.Fatalf("expected a person handoff, got result=%+v structured=%+v err=%v", result, structured, err)
 			}
@@ -282,7 +282,7 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 			t.Setenv("HOME", t.TempDir())
 			stateDir := t.TempDir()
 			seedReleaseMeta(t, stateDir, launches.refs)
-			result, _, err := handleRelease(context.Background(), nil, nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true, MateEnabled: true})
+			result, _, err := handleRelease(context.Background(), nil, "", nil, nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true, MateEnabled: true})
 			if err != nil || result == nil || result.IsError {
 				t.Fatalf("expected person handoff, got result=%+v err=%v", result, err)
 			}

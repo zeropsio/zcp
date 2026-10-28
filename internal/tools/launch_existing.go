@@ -306,7 +306,8 @@ func executeExistingProjectMutation(
 	// existing-project window has the same recovery needs — prod-ops,
 	// reset and confirm-production read the staged secret instead of
 	// re-asking for the value. Abort on failure: nothing mutated yet.
-	stageHost := firstResolvedRuntime(resolved).PushHostname
+	runtimeHost := launchRuntimeHost(firstResolvedRuntime(resolved))
+	stageHost := launchTokenHost(firstResolvedRuntime(resolved), rt)
 	if stageErr := stageLaunchToken(ctx, sourceClient, sourceProjectID, stageHost, input.ExistingProdToken); stageErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -325,13 +326,14 @@ func executeExistingProjectMutation(
 	// so resume primitives behave identically. ExistingProjectID lives
 	// on the state file from the moment the mutation starts.
 	//
-	// M6 parity: TargetServiceHostname records the SAME hostname the token
-	// was staged on (stageHost = firstResolvedRuntime.PushHostname) — NOT the
-	// raw input.TargetService — so launchKeyFromStage reads the staged secret
-	// from the right service (new-project uses primaryRuntime.PushHostname the
-	// same way). They coincide once handleLaunchProduction normalizes a
-	// stage-half input to its dev half, but recording the resolved value is
-	// robust by construction. SourceRepoURL likewise uses the gate-validated
+	// M6 parity: the state records the SAME service the token was staged on
+	// (stageHost = launchTokenHost(firstResolvedRuntime)) — NOT the raw
+	// input.TargetService — so launchKeyFromStage reads the staged secret
+	// from the right service: the runtime the launch promotes, or, for a
+	// part keyed by its dev pool, zcp's own service (TokenStagedOn) while
+	// TargetServiceHostname names its stage (new-project does the same).
+	// Recording the resolved value is robust by construction.
+	// SourceRepoURL likewise uses the gate-validated
 	// remote for forensic parity.
 	existingRepoURL := source.RepoURL
 	if len(gateResult.Checks) > 0 && gateResult.Checks[0] != nil {
@@ -344,7 +346,8 @@ func executeExistingProjectMutation(
 		TargetProjectName:     input.ProductionProjectName,
 		TargetProjectID:       input.ExistingProjectID,
 		TargetClientID:        targetOrg,
-		TargetServiceHostname: stageHost,
+		TargetServiceHostname: runtimeHost,
+		TokenStagedOn:         tokenStagedOnField(runtimeHost, stageHost),
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,

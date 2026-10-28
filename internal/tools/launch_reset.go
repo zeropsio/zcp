@@ -217,7 +217,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 			// and preserve the state so the orphan-delete can still run on retry.
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
-				fmt.Sprintf("reset could not READ the staged %s secret on %q to reach the orphan production project %q: %v", ops.LaunchTokenEnvKey, state.TargetServiceHostname, state.TargetProjectID, stageErr),
+				fmt.Sprintf("reset could not READ the staged %s secret on %q to reach the orphan production project %q: %v", ops.LaunchTokenEnvKey, state.tokenHost(), state.TargetProjectID, stageErr),
 				"This is a read failure — the launch state is preserved so the orphan-delete still works; check the source service is reachable (SSH/VPN), then re-call. Pass launchKey=<the launch token> only if the staged secret is genuinely gone.",
 			), WithRecoveryStatus()), nil, nil
 		}
@@ -275,7 +275,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	// either; the pre-fix code only resolved/deleted staged credentials
 	// on the orphan-delete path.
 	var stagedSecretDeleted bool
-	if state.TargetServiceHostname != "" {
+	if state.tokenHost() != "" {
 		// Partial-progress honesty: when the orphan project was already
 		// deleted in THIS call, a refusal below must still report that —
 		// the retry's wouldDestroy will no longer list the project, and
@@ -284,11 +284,11 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 		if deletedProjectID != "" {
 			progress = fmt.Sprintf(" (orphan project %s WAS already deleted in this call)", deletedProjectID)
 		}
-		stageSvc, lookupErr := ops.LookupService(ctx, client, sourceProjectID, state.TargetServiceHostname)
+		stageSvc, lookupErr := ops.LookupService(ctx, client, sourceProjectID, state.tokenHost())
 		if lookupErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
-				fmt.Sprintf("reset: locate stage service %q to delete the staged %s secret: %v — state NOT cleared%s", state.TargetServiceHostname, ops.LaunchTokenEnvKey, lookupErr, progress),
+				fmt.Sprintf("reset: locate stage service %q to delete the staged %s secret: %v — state NOT cleared%s", state.tokenHost(), ops.LaunchTokenEnvKey, lookupErr, progress),
 				"Fix the lookup cause (service reachable?) and re-call reset; the staged secret must be deleted before state clears.",
 			), WithRecoveryStatus()), nil, nil
 		}
@@ -296,7 +296,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 		if delErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
-				fmt.Sprintf("reset: delete staged %s secret on %q: %v — state NOT cleared%s", ops.LaunchTokenEnvKey, state.TargetServiceHostname, delErr, progress),
+				fmt.Sprintf("reset: delete staged %s secret on %q: %v — state NOT cleared%s", ops.LaunchTokenEnvKey, state.tokenHost(), delErr, progress),
 				"Re-call once the env delete can succeed; state clears only after the staged secret is gone.",
 			), WithRecoveryStatus()), nil, nil
 		}

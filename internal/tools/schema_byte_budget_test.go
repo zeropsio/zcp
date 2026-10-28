@@ -147,7 +147,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// §2.8a.5): a hostname→boolean map and one line of what each value
 		// does; what the choice overrides and the warning that offers it live
 		// in the composer's answers and the spec.
-		"zerops_workflow":    21053,
+		// Raised +203 (21053→21256) for `releaseCommit`, the commit a pool-
+		// keyed part's release-prompt named, sent back so the tag lands on
+		// the commit the person confirmed (docs/spec-workflows.md §10
+		// P-LP-21); the tip-moved refusal names what to do.
+		"zerops_workflow":    21256,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

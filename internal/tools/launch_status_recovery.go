@@ -152,7 +152,7 @@ func launchOverlayAddendum(stateDir, sourceProjectID string) string {
 			switch {
 			case recent.TargetProjectID != "":
 				s += "Use `zerops_workflow action=\"reset\"` to clear state before retrying.\n"
-			case recent.TokenAcquisition == tokenAcquisitionDelegated && recent.TargetServiceHostname != "":
+			case recent.TokenAcquisition == tokenAcquisitionDelegated && recent.tokenHost() != "":
 				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
 					recent.TargetProjectName + "\" confirmLaunch=true` (the staged token from the prior attempt is reused).\n"
 			case recent.TokenAcquisition == tokenAcquisitionDelegated:
@@ -233,7 +233,7 @@ func renderLaunchTerminalRecovery(corpus []workflow.KnowledgeAtom, terminal *lau
 		// token reuse. A pre-staging abort (race/indeterminate/empty-
 		// token/admin-factory) has no staged token; claiming one would
 		// be the lie-class (Codex review, 2026-07-12).
-		staged := terminal.TargetServiceHostname != ""
+		staged := terminal.tokenHost() != ""
 		switch {
 		case retryable && delegated && staged:
 			env.NextCall = `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `" confirmLaunch=true`

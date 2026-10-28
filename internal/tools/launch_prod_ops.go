@@ -104,12 +104,12 @@ func handleLaunchProdOps(
 	if stageErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
-			fmt.Sprintf("prod-ops could not READ the staged %s secret on %q: %v", ops.LaunchTokenEnvKey, state.TargetServiceHostname, stageErr),
+			fmt.Sprintf("prod-ops could not READ the staged %s secret on %q: %v", ops.LaunchTokenEnvKey, state.tokenHost(), stageErr),
 			"This is a read failure, not an absent token — check the source service is reachable (SSH/VPN), then re-call. Pass launchKey=<token> only if the staged secret is genuinely gone.",
 		), WithRecoveryStatus()), nil, nil
 	}
 	if launchKey == "" {
-		msg := fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.TargetServiceHostname)
+		msg := fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.tokenHost())
 		if !state.WindowClosedAt.IsZero() {
 			msg = fmt.Sprintf("the launch window for %q was closed by action=\"confirm-production\" at %s — the staged %s secret is deleted, so prod-ops has no token to work with", input.ProductionProjectName, state.WindowClosedAt.UTC().Format("2006-01-02T15:04:05Z"), ops.LaunchTokenEnvKey)
 		}
