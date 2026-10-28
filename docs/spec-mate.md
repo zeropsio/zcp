@@ -4715,7 +4715,37 @@ tier, its build URL — a runtime's too — bare of any credential and absent wh
 a finished pair the repository pass will still wire, or a dev/stage pair zcp has not adopted, holds
 the recipe back, while a pair no pass will wire (its own remote, an unfinished bootstrap) is left
 out, said; the group environments' values name their own runtimes (`http://medusastage:9000` →
-`http://medusa:9000`). A string a YAML 1.1 reader would reinterpret (`yes`, `on`, `1:30`) is quoted.
+`http://medusa:9000`). A public address of a service of the Mate's own project written out in a
+value (`https://flipstage-3901-5195.prg1.zerops.app`, the label the first of the project's
+subdomain host) names that Mate's service from every project a tier makes, and renamed with its
+part a host that exists nowhere (flip.studio's group change #2, 2026-10-28: agentrunner's
+`FLIP_SERVER` reached Stage as `https://flip-3901-5195.prg1.zerops.app` and a person set it to
+`${flip_zeropsSubdomain}` by hand). So every tier — the AI Agent tier too, since a project made
+from it gets a label of its own — writes it as a reference to the address the service has in the
+environment the tier makes: `${<host>_zeropsSubdomain}` for another service, `<host>` the tier's
+name for it after the rename (flipstage → flip), `${zeropsSubdomain}` for the service's own, and a
+path or query after it kept. `zeropsSubdomain` is the whole `https://` address with no slash after
+it, one line for each HTTP port the service serves, and no variable names a single port
+(`TestE2E_SubdomainLifecycle`, `TestE2E_Import_Box_FinishesSetup`); another service's reference
+resolves in a service variable (docs/spec-workflows.md §8 DP-3) and stays literal in a project
+variable (knowledge playbook `monorepo` §5). So the reference stands for the address only where the
+tier's service builds a setup declaring exactly one HTTP port, the one the address names (80 when it
+names none), and the value writes it `https://` with no port after it. Anything else — several HTTP
+ports, another one or none, a service whose setup the recipe does not read (a utility, a managed
+service, a Box, a dev pool), a bare host or another scheme, any address in a project variable — is
+kept as written and the pass says so, naming the variable, the address, the tiers and why, never
+guessed. An address of a service the tier does not carry is kept as it is: an address written out
+reads nothing (docs/spec-workflows.md §8 PS-3) and a reference the rewrite writes names only what
+the tier carries, so the rewrite adds no read the closure check (PS-3a) or the Box rule would see.
+The address is as public as its subdomain, so its label — `1df2` as often as `3901` — never makes
+a value a secret the tier generates; a value the platform flags sensitive or reads back masked is
+generated as before, never rewritten or said (`bundle.tierAddresses`, `bundle.mateAddresses`;
+`TestBuildGroupRecipe_FlipServer_NamesTheEnvironmentsOwnStage`,
+`TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference`,
+`TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid`,
+`TestBuildGroupRecipe_MateAddress_RewriteAndReadsAgree`,
+`TestGroupRecipe_AnAddressOfTheMatesProject_IsTheEnvironmentsReference`). A string a YAML 1.1
+reader would reinterpret (`yes`, `on`, `1:30`) is quoted.
 A read that decides what a tier carries fails the pass rather than propose a tier with a gap `main`
 would keep (`TestGroupPriorities_*`, `TestBuildGroupRecipe_PriorityFollowsBuildReads`, `TestBuildReads_OnlyWhatTheBuildReads`, `TestRecipeSecret_Rule`, `TestBuildGroupRecipe_FailsClosed`,
 `TestBuildGroupRecipe_MedusaGolden`, `TestComposeGroupRecipeInputs_ReadsTheLiveProject`,
