@@ -31,13 +31,19 @@ type launchState struct {
 	// recorded at staging: every later launch-window step builds its admin
 	// client for that org. Empty for a new-project launch, whose project is
 	// created in the source project's org.
-	TargetClientID        string                                   `json:"targetClientId,omitempty"`
-	TargetProjectName     string                                   `json:"targetProjectName"`
-	TargetServiceHostname string                                   `json:"targetServiceHostname,omitempty"`
-	ImportedServices      []importedServiceEntry                   `json:"importedServices,omitempty"`
-	SourceSnapshot        ops.SourceSnapshot                       `json:"sourceSnapshot"`
-	Classifications       map[string]topology.SecretClassification `json:"classifications,omitempty"`
-	Status                topology.LaunchProductionStatus          `json:"status"`
+	TargetClientID        string `json:"targetClientId,omitempty"`
+	TargetProjectName     string `json:"targetProjectName"`
+	TargetServiceHostname string `json:"targetServiceHostname,omitempty"`
+	// TokenStagedOn is the service the launch token is staged on, when it is
+	// not TargetServiceHostname (the pair's runtime): zcp's own service for a
+	// part keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17).
+	// Recorded from the ready-to-launch baseline on, so a reset after a cut
+	// publish deletes the token where it lands. Read it through tokenHost.
+	TokenStagedOn    string                                   `json:"tokenStagedOn,omitempty"`
+	ImportedServices []importedServiceEntry                   `json:"importedServices,omitempty"`
+	SourceSnapshot   ops.SourceSnapshot                       `json:"sourceSnapshot"`
+	Classifications  map[string]topology.SecretClassification `json:"classifications,omitempty"`
+	Status           topology.LaunchProductionStatus          `json:"status"`
 	// CreatedAt is the moment launchID was first written.
 	CreatedAt time.Time `json:"createdAt"`
 	// LastUpdate is the latest mutation timestamp.
@@ -446,4 +452,17 @@ func appendAuditLog(stateDir string, entry launchAuditEntry) error {
 type launchRuntimeScaling struct {
 	MinContainers int `json:"minContainers,omitempty"`
 	MaxContainers int `json:"maxContainers,omitempty"`
+}
+
+// tokenHost is the service the launch window's token is staged on and read
+// back from: TokenStagedOn, else — every state written before it, and every
+// part but one keyed by its dev pool — TargetServiceHostname.
+func (s *launchState) tokenHost() string {
+	if s == nil {
+		return ""
+	}
+	if s.TokenStagedOn != "" {
+		return s.TokenStagedOn
+	}
+	return s.TargetServiceHostname
 }

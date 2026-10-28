@@ -183,17 +183,26 @@ const tokenAcquisitionDelegated = "delegated"
 // only); mintedName is the REQUESTED token name when a standing token
 // exists or MAY exist (indeterminate mint, empty-token response,
 // admin-factory failure, staging failure) and "" when the typed 403
-// proved nothing was created (race-unavailable); stagedHostname is the
-// push hostname when staging was ATTEMPTED (the env write may have
-// committed before the error — reset's staged-secret delete keys on
-// this field, a hostname-less state would silently orphan the secret)
-// and "" on every pre-staging abort.
-func abortDelegatedMint(stateDir, launchID, sourceProjectID, targetProjectName, reason, mintedName, stagedHostname string) {
+// proved nothing was created (race-unavailable); staged names the
+// runtime and the service the token was staged on when staging was
+// ATTEMPTED (the env write may have committed before the error —
+// reset's staged-secret delete keys on it, a hostname-less state would
+// silently orphan the secret) and is zero on every pre-staging abort.
+// stagedToken is where an attempted staging put a launch token: the runtime
+// the launch promotes and the service the token was written to (they differ
+// for a part keyed by its dev pool, §10 P-LP-17).
+type stagedToken struct {
+	runtime string
+	on      string
+}
+
+func abortDelegatedMint(stateDir, launchID, sourceProjectID, targetProjectName, reason, mintedName string, staged stagedToken) {
 	_ = writeLaunchState(stateDir, &launchState{
 		LaunchID:              launchID,
 		SourceProjectID:       sourceProjectID,
 		TargetProjectName:     targetProjectName,
-		TargetServiceHostname: stagedHostname,
+		TargetServiceHostname: staged.runtime,
+		TokenStagedOn:         tokenStagedOnField(staged.runtime, staged.on),
 		Status:                topology.LaunchStatusFailed,
 		TokenAcquisition:      tokenAcquisitionDelegated,
 		MintedTokenName:       mintedName,
@@ -246,7 +255,7 @@ func resolveDelegatedLaunchToken(
 	// before failing later (create/poll/pipeline). Resolving the staged
 	// value first means a retry costs ZERO delegation list/mint calls
 	// — the delegation was already spent by the earlier attempt.
-	stageProbe := &launchState{TargetServiceHostname: launchRuntimeHost(primaryRuntime)}
+	stageProbe := &launchState{TargetServiceHostname: launchRuntimeHost(primaryRuntime), TokenStagedOn: launchTokenHost(primaryRuntime, rt)}
 	staged, stageErr := launchKeyFromStage(ctx, client, sourceProjectID, stageProbe)
 	if stageErr != nil {
 		auditReject("delegated retry: read staged token: " + stageErr.Error())
@@ -307,7 +316,7 @@ func resolveDelegatedLaunchToken(
 			// landed. Nothing was created by THIS call — unblock
 			// retries and fall back to the manual path (D-6).
 			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"delegated mint: no usable delegation (race)", "", "")
+				"delegated mint: no usable delegation (race)", "", stagedToken{})
 			auditReject("delegated mint: no usable delegation (race)")
 			sourceCtx := gatherLaunchSourceContext(ctx, client, sourceProjectID, stateDir, rt)
 			return "", "", delegationUnavailableResponse(corpus, input, sourceEnvs, sourceCtx, launchBundle, bundleInputs, resolved, stateDir, false)
@@ -316,13 +325,13 @@ func resolveDelegatedLaunchToken(
 		// response — stderr only.
 		fmt.Fprintf(os.Stderr, "zcp: delegated mint indeterminate error (requested name %q): %v\n", mintedName, mintErr)
 		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-			"delegated mint: indeterminate error", mintedName, "")
+			"delegated mint: indeterminate error", mintedName, stagedToken{})
 		auditReject("delegated mint: indeterminate error")
 		return "", "", delegationMintIndeterminateResponse(corpus, mintedName)
 	}
 	if minted.Token == "" {
 		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-			"delegated mint returned an empty token", mintedName, "")
+			"delegated mint returned an empty token", mintedName, stagedToken{})
 		auditReject("delegated mint returned an empty token")
 		return "", "", launchFailedResponse(corpus, topology.BlockerCategoryAuth, "delegation-consumed",
 			delegationConsumedNarrative(mintedName, "the platform returned an empty token value"))

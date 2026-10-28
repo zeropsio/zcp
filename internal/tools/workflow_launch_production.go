@@ -522,11 +522,20 @@ func handleLaunchProduction(
 		// classification completion; user must abandon + re-start to
 		// refresh).
 		if haveCurrent && existing == nil {
+			// The baseline records the runtime the launch promotes and the
+			// service its token will be staged on, so a reset after a cut
+			// publish deletes the token where it lands (§10 P-LP-17).
+			runtimeHost, tokenHost := input.TargetService, input.TargetService
+			if len(resolvedForBaseline) > 0 {
+				first := firstResolvedRuntime(resolvedForBaseline)
+				runtimeHost, tokenHost = launchRuntimeHost(first), launchTokenHost(first, rt)
+			}
 			_ = writeLaunchState(stateDir, &launchState{
 				LaunchID:              launchID,
 				SourceProjectID:       projectID,
 				TargetProjectName:     input.ProductionProjectName,
-				TargetServiceHostname: input.TargetService,
+				TargetServiceHostname: runtimeHost,
+				TokenStagedOn:         tokenStagedOnField(runtimeHost, tokenHost),
 				SourceSnapshot:        current,
 				Classifications:       classifications,
 				Status:                topology.LaunchStatusReadyToLaunch,
@@ -980,7 +989,7 @@ func executeLaunchMutation(
 			// applies (NOT the generic launchFailedAuthResponse, which
 			// assumes a user-held token the user can just fix).
 			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"delegated admin client construction failed", mintedName, "")
+				"delegated admin client construction failed", mintedName, stagedToken{})
 			_ = appendAuditLog(stateDir, launchAuditEntry{
 				LaunchID:          launchID,
 				Action:            "publish-rejected",
@@ -1005,9 +1014,11 @@ func executeLaunchMutation(
 	// delegation was ALREADY consumed by the mint above — the message
 	// carries the D-7 consumed-delegation narrative instead (see
 	// launchTokenStageFailedMessage). The token is staged on the runtime the
-	// launch promotes — for a part keyed by its dev pool its stage, never the
-	// pool, whose every container reads the pool's env (§10 P-LP-17).
-	stagedOn := launchRuntimeHost(primaryRuntime)
+	// launch promotes — for a part keyed by its dev pool on zcp's own
+	// service, never the pool or the stage, which run code a lease deploys
+	// (§10 P-LP-17).
+	runtimeHost := launchRuntimeHost(primaryRuntime)
+	stagedOn := launchTokenHost(primaryRuntime, rt)
 	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, launchToken); stageErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -1019,7 +1030,7 @@ func executeLaunchMutation(
 		})
 		if mintedName != "" {
 			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"staging the delegated token was not confirmed", mintedName, stagedOn)
+				"staging the delegated token was not confirmed", mintedName, stagedToken{runtime: runtimeHost, on: stagedOn})
 		}
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
@@ -1041,7 +1052,8 @@ func executeLaunchMutation(
 		SourceProjectID:       sourceProjectID,
 		SourceRepoURL:         primaryRepoURL,
 		TargetProjectName:     input.ProductionProjectName,
-		TargetServiceHostname: stagedOn,
+		TargetServiceHostname: runtimeHost,
+		TokenStagedOn:         tokenStagedOnField(runtimeHost, stagedOn),
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
@@ -2326,8 +2338,8 @@ jobs:
 	// AND guards both GH_TOKEN auth + the staged value for emptiness, so a launch
 	// token that didn't propagate no longer silently writes an empty repo secret.
 	// A pair keyed by its dev pool has no push source to read GIT_TOKEN from
-	// over ssh: its launch token is staged on the stage, and GH_TOKEN is the
-	// PAT the person gives (docs/spec-workflows.md §10 P-LP-20).
+	// over ssh: its launch token is staged on zcp's own service, and GH_TOKEN
+	// is the PAT the person gives (docs/spec-workflows.md §10 P-LP-20).
 	if meta.DevIsPool() {
 		return poolPartProdCDActionsBlock(meta, state, workflowYAML, ownerRepo)
 	}
@@ -2357,11 +2369,13 @@ jobs:
 
 // poolPartProdCDActionsBlock is prodCDActionsBlock for a launched part whose
 // pair is keyed by its dev pool (docs/spec-workflows.md §10 P-LP-20): the
-// same workflow file; the secret command conveys the launch token staged on
-// the stage over ssh from the stage, with GH_TOKEN the PAT the person gives —
-// as the pair's build-integration conveys it — never read from the pool or a
-// lease; the workflow file is committed and pushed from a lease of the pool
-// (commitVia), and the release tags the origin's tip that holds it.
+// same workflow file; the secret command conveys the launch token from where
+// it is staged — zcp's own service, read by `zcp self launch-token` in this
+// container, no ssh (a launch outside a container staged it on the stage,
+// read over ssh from there) — with GH_TOKEN the PAT the person gives, never
+// read from the pool or a lease; the workflow file is committed and pushed
+// from a lease of the pool (commitVia), and the release tags the origin's tip
+// that holds it.
 func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, workflowYAML, ownerRepo string) map[string]any {
 	stage := state.TargetServiceHostname
 	if stage == "" || stage == meta.Hostname {
@@ -2369,6 +2383,16 @@ func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, 
 	}
 	const workflowPath = ".github/workflows/zerops-prod.yml"
 	branch := trackedRefOrDefault(meta)
+	stagedWhere := "on the stage " + stage + ". The command below conveys it into the " + launchProdSecretName + " repo secret, read over ssh from the stage,"
+	readFrom := "from " + stage
+	emptyOn := stage
+	secretCmd := ghSecretSetFromStagedSecretWithPAT(stage, launchProdSecretName, ops.LaunchTokenEnvKey, ownerRepo)
+	if own := state.TokenStagedOn; own != "" && own != stage {
+		stagedWhere = "on zcp's own service " + own + " — never the pool or the stage, which run code a lease deploys. The command below conveys it into the " + launchProdSecretName + " repo secret, read by `zcp self launch-token` in this container,"
+		readFrom = "on zcp's own service (`zcp self launch-token`)"
+		emptyOn = "zcp's own service"
+		secretCmd = ghSecretSetFromOwnLaunchTokenWithPAT(launchProdSecretName, ownerRepo)
+	}
 	return map[string]any{
 		"track": "actions-tag",
 		"why":   "Your source pair declared integration=actions, so production delivery is a TAG-triggered workflow in the SAME repo: zerops_workflow action=\"release\" tags the origin and the workflow deploys production. This track delivers the FIRST production build too — the launched runtimes are empty (startWithoutCode) until the first release. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
@@ -2379,11 +2403,11 @@ func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, 
 		"commitVia": fmt.Sprintf("%s — the part's dev half is the dev pool %q, which holds no checkout of its own: write %s in the lease's checkout (ssh to its alias), commit, and push %s from the lease, before the release.", poolPairLeaseAcquire(meta, branch), meta.Hostname, workflowPath, branch),
 		"secret": map[string]any{
 			"name":    launchProdSecretName,
-			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the stage " + stage + ". The command below conveys it into the " + launchProdSecretName + " repo secret, read over ssh from the stage, so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
-			"command": ghSecretSetFromStagedSecretWithPAT(stage, launchProdSecretName, ops.LaunchTokenEnvKey, ownerRepo),
+			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret " + stagedWhere + " so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
+			"command": secretCmd,
 		},
 		"steps": []string{
-			"1. Collect the PAT from the user, put it in secret.command in place of the placeholder, and run it — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + stage + " and sets it as the " + launchProdSecretName + " GitHub repo secret. If it prints \"… empty on " + stage + "\", the staged token didn't propagate — re-run the launch start before retrying; do NOT proceed with an empty secret.",
+			"1. Collect the PAT from the user, put it in secret.command in place of the placeholder, and run it — it reads the staged " + ops.LaunchTokenEnvKey + " secret " + readFrom + " and sets it as the " + launchProdSecretName + " GitHub repo secret. If it prints \"… empty on " + emptyOn + "\", the staged token didn't propagate — re-run the launch start before retrying; do NOT proceed with an empty secret.",
 			"2. Commit workflowFile.content at " + workflowPath + " as commitVia says.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + stage + "\" tags the origin's tip — the workflow deploys production.",
 		},

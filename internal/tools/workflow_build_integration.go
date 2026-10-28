@@ -941,6 +941,19 @@ func ghSecretSetFromStagedSecretWithPAT(stageHost, name, valueEnvKey, ownerRepo 
 	)
 }
 
+// ghSecretSetFromOwnLaunchTokenWithPAT is ghSecretSetFromStagedSecretWithPAT
+// for a launch token staged on zcp's own service — a part keyed by its dev
+// pool (docs/spec-workflows.md §10 P-LP-17): the value is read in this very
+// container by `zcp self launch-token`, no ssh, and goes secret-to-secret
+// into the repo secret, never through the conversation. Same empty-value
+// guard: nothing is written when no token is staged.
+func ghSecretSetFromOwnLaunchTokenWithPAT(name, ownerRepo string) string {
+	return fmt.Sprintf(
+		"_v=$(zcp self launch-token); if [ -n \"$_v\" ]; then GH_TOKEN='<PAT the user provides — collect via %s; NEVER generate one>' gh secret set %s -b \"$_v\" -R %s; else echo \"%s empty on zcp's own service — re-stage the launch token first\"; fi",
+		credentialAskMechanism, name, ownerRepo, ops.LaunchTokenEnvKey,
+	)
+}
+
 // ghTokenConveyanceNote explains the per-invocation GH_TOKEN model that
 // replaced the `gh auth login` + hosts.yml step. pushHost "" in a container
 // is a pair keyed by its dev pool (meta), which has no container to read
