@@ -259,6 +259,13 @@ func (d standupDeps) importWaitsClosedOff() bool {
 	return err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingClosedOff
 }
 
+// bootImportResult separates terminal import failures from a stopped observation.
+// Legacy status absence permits preparation without a completion receipt.
+type bootImportResult struct {
+	failed  map[string]string
+	stopped error
+}
+
 // awaitBootImport waits while the boot import of this Mate's runtimes is in
 // flight (pending or importing in the status file), so the stand-up never
 // finds a half missing that is being imported, and never tells the model to
@@ -266,17 +273,23 @@ func (d standupDeps) importWaitsClosedOff() bool {
 // the project to be closed off, which has no end of its own. The import
 // always ends its section (done or failed, its own timeout included) and
 // every launch resets one a restart cut short, so the wait ends with it;
-// bootWait bounds it all the same. Returns what the import says failed, by hostname ("" for the import
-// as a whole).
-func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) map[string]string {
+// bootWait bounds observation only: expiry or cancellation stops preparation
+// without taking over the import. Returns what the import says failed, by
+// hostname ("" for the import as a whole), or why observation stopped.
+func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) bootImportResult {
 	if d.statusPath == "" {
-		return nil
+		return bootImportResult{}
 	}
 	deadline := time.Now().Add(d.bootWait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
+		}
 		st, err := mate.ReadStatus(d.statusPath)
 		if err != nil {
-			return nil
+			// Legacy containers may have no readable boot-import section.
+			// Keep their runtime-recovery path instead of blocking preparation.
+			return bootImportResult{}
 		}
 		r := st.Runtimes
 		// A pending section that says why it is pending (it waits for the
@@ -285,7 +298,7 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		// Waiting for zcp's own deploy ends on its own, soon: in flight.
 		ownDeploy := r.Error == mate.RuntimesWaitingOwnDeploy
 		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag || ownDeploy)) || r.State == mate.RuntimesImporting
-		if !inFlight || !time.Now().Before(deadline) {
+		if !inFlight {
 			failed := map[string]string{}
 			for _, s := range r.Services {
 				if s.State == mate.ServiceFailed {
@@ -295,7 +308,10 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 			if len(failed) == 0 && r.State == mate.RuntimesFailed && r.Error != "" {
 				failed[""] = r.Error
 			}
-			return failed
+			return bootImportResult{failed: failed}
+		}
+		if !time.Now().Before(deadline) {
+			return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
 		}
 		var waiting []string
 		for _, s := range r.Services {
@@ -310,7 +326,7 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		progress.say("waiting for the container's import of " + what)
 		select {
 		case <-ctx.Done():
-			return nil
+			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", ctx.Err())}
 		case <-time.After(d.bootPoll):
 		}
 	}

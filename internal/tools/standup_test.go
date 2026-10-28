@@ -525,6 +525,20 @@ func newStandupFixture(t *testing.T) *standupFixture {
 func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse) {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	registerStandup(srv, f.deps(t))
+	result := callTool(t, srv, "zerops_standup", map[string]any{})
+	var body standupResponse
+	if !result.IsError {
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
+			t.Fatalf("parse stand-up result: %v\n%s", err, getTextContent(t, result))
+		}
+	}
+	return result, body
+}
+
+// deps supplies the same stand-up consumer used by the MCP handler.
+func (f *standupFixture) deps(t *testing.T) standupDeps {
+	t.Helper()
 	var client platform.Client = f.mock
 	if f.importing != nil {
 		client = f.importing
@@ -537,7 +551,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		isolation = "service"
 	}
 	f.mock.WithProjectEnv([]platform.ProjectEnvVar{{ID: "e-iso", Key: "envIsolation", Content: isolation, Type: platform.ProjectEnvSystem}})
-	registerStandup(srv, standupDeps{
+	return standupDeps{
 		batch: batchDeployer{
 			client:      client,
 			httpClient:  standupHTTP{hq: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
@@ -560,15 +574,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		bootWait:    2 * time.Second,
 		bootPoll:    5 * time.Millisecond,
 		trackPoll:   5 * time.Millisecond,
-	})
-	result := callTool(t, srv, "zerops_standup", map[string]any{})
-	var body standupResponse
-	if !result.IsError {
-		if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
-			t.Fatalf("parse stand-up result: %v\n%s", err, getTextContent(t, result))
-		}
 	}
-	return result, body
 }
 
 func (r standupResponse) service(t *testing.T, hostname string) standupService {

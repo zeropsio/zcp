@@ -209,7 +209,11 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 		return refusal, ""
 	}
 
-	pairs, live := d.preparePairs(ctx, hqc, src, progress)
+	pairs, live, err := d.preparePairs(ctx, hqc, src, progress)
+	if err != nil {
+		return standupRefusal(platform.ErrPrerequisiteMissing, err.Error(),
+			"Nothing was touched. Call zerops_standup again to observe the container's import before preparing the runtimes."), ""
+	}
 	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
 	d.observeDevServers(ctx, pairs)
 
@@ -397,19 +401,23 @@ func (p *standupPair) fail(what, next string) {
 // preparePairs takes every pair of the tier to the point it can deploy: its
 // services settled and present, adopted, its dev half mounted, its
 // repository's `main` checked out. A pair that cannot get there
-// is stopped with what failed; the others go on.
-func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
+// is stopped with what failed; the others go on. An unresolved boot import
+// stops the whole pass before preparation can mutate anything.
+func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack, error) {
 	pairs := make([]*standupPair, 0, len(src.tier.Pairs))
 	for _, p := range src.tier.Pairs {
 		pairs = append(pairs, newStandupPair(p, src.appID))
 	}
-	bootFailed := d.awaitBootImport(ctx, progress)
+	boot := d.awaitBootImport(ctx, progress)
+	if boot.stopped != nil {
+		return nil, nil, fmt.Errorf("prepare runtimes: %w", boot.stopped)
+	}
 	live, err := d.awaitRuntimes(ctx, src.tier, progress)
 	if err != nil {
 		for _, sp := range pairs {
 			sp.fail(fmt.Sprintf("could not list this project's services: %v", err), "Retry zerops_standup; if it persists, check the API with zerops_discover.")
 		}
-		return pairs, live
+		return pairs, live, nil
 	}
 	if d.settle(ctx, src.tier, live, progress) {
 		if fresh, err := d.liveServices(ctx); err == nil {
@@ -421,7 +429,7 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
 		sp.dev = live[sp.pair.Dev.Hostname]
-		if !d.presentAndRunning(sp, src, live, bootFailed, open) {
+		if !d.presentAndRunning(sp, src, live, boot.failed, open) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -459,7 +467,7 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		}
 		progress.st().step(host, mate.StepBuild, mate.StepFailed, "", sp.failed)
 	}
-	return pairs, live
+	return pairs, live, nil
 }
 
 // awaitRuntimes reads the project's services until every pair's halves are

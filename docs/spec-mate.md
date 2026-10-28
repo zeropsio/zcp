@@ -5031,6 +5031,17 @@ The order:
    - waits, bounded, for HQ to answer the Mate's key (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;
+     if the boot-import wait expires while that import remains pending or importing, or
+     the wait is cancelled, the pass stops before preparation and asks only for another
+     `zerops_standup` observation. Missing legacy status and a pending import that cannot
+     read its project retain the runtime-recovery path; terminal imports retain their
+     failure reasons and missing-runtime fallback.
+
+     Decision: A stand-up whose boot-import wait expires while its import is still running does not adopt, deploy or ask for another import.
+     Decision: Cancelling a boot-import wait does not begin preparation mutations.
+
+     Pinned through `TestStandup_BootImportDecisions` and the compatibility controls in
+     `TestStandup_WaitsForTheContainersImport`;
    - reads the tier from `main` of the recipe repository of the application HQ holds the Mate in
      (`GET /api/mate/self` for the application, `GET /api/mate/recipe/mate` for the tier);
    - pairs the runtimes that build from the application's repositories in HQ
