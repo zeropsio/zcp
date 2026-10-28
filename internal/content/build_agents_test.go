@@ -693,9 +693,13 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 // A Mate's git-host paragraph says one branch per piece of work and one change
 // per branch: new work on a new branch from an up-to-date main, a change
 // that stays on its own branch, a change built on another's unmerged work
-// cut from that branch and saying so, and a branch kept current by merging
-// origin/main — never a rebase, never a force. It no longer sends new work
-// onto an open change's branch, nor names a change on the pair.
+// cut from that branch only when it needs that code and saying so — HQ
+// squashes the base onto main, so the change on it is merged with main and
+// described again — and a branch kept current by merging origin/main, never
+// a rebase, never a force. No change opens only to record another's merge or
+// a plan's status, and a file every change appends to gives each change an
+// entry of its own. It no longer sends new work onto an open change's
+// branch, nor names a change on the pair.
 func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 	t.Parallel()
 	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
@@ -706,8 +710,13 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 		"one change per branch",
 		"a new branch from an up-to-date `main`",
 		"builds on #",
+		"only when it needs that change's code",
+		"squashes each change into one commit on `main`",
+		"describe it again",
 		"git merge origin/main",
 		"never rebase",
+		"Never open a change only to record",
+		"an entry of its own",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)
