@@ -444,8 +444,11 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 
 // A Swarm pool (USER category) and a Zerops Box (STANDARD) are neither a
 // runtime nor a utility of a recipe, even when an import built them from a
-// public repository: the recipe leaves them out and says so. Spec:
-// spec-workflows.md §8 PS-2/PS-3.
+// public repository. The recipe leaves a pool out and says so; a Box is
+// handed to the composer as a Box, which a tier carries only where a runtime
+// it carries reads it (bundle.GroupBox) — whether one is carried is the
+// composer's to say, never the reader's. Spec: spec-workflows.md §8
+// PS-2/PS-3.
 func TestHQRecipeInputs_PoolAndBoxNotUtilities(t *testing.T) {
 	stateDir := t.TempDir()
 	writeHQWiredPairMeta(t, stateDir)
@@ -472,9 +475,14 @@ func TestHQRecipeInputs_PoolAndBoxNotUtilities(t *testing.T) {
 			t.Errorf("managed services carry %q — a pool and a Box are no managed dependency", m.Hostname)
 		}
 	}
-	for _, host := range []string{"devpool", "sandbox"} {
-		if !warningsHave(warnings, `"`+host+`"`) || !warningsHave(warnings, "not carried") {
-			t.Errorf("warnings %v do not say %q is not carried", warnings, host)
-		}
+	if !warningsHave(warnings, `"devpool"`) || !warningsHave(warnings, "not carried") {
+		t.Errorf("warnings %v do not say the pool is not carried", warnings)
+	}
+	wantBoxes := []bundle.GroupBox{{Hostname: "sandbox", ServiceType: "ubuntu/zbox@1", SubdomainEnabled: true}}
+	if !slices.Equal(inputs.Boxes, wantBoxes) {
+		t.Errorf("boxes = %+v, want %+v — the Box as it runs, for the composer", inputs.Boxes, wantBoxes)
+	}
+	if warningsHave(warnings, `"sandbox"`) {
+		t.Errorf("warnings %v speak for the Box: whether a tier carries it is the composer's to say", warnings)
 	}
 }

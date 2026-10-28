@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"sort"
@@ -160,6 +161,13 @@ type GroupRecipeInputs struct {
 	// Utilities are the runtimes the project builds from a public repository
 	// and no pair — a mailpit, an adminer.
 	Utilities []GroupUtility
+	// Boxes are the Zerops Boxes the project runs (GroupBox).
+	Boxes []GroupBox
+	// ProjectHostnames are the hostnames of every service the Mate's project
+	// runs — carried by the recipe or not: what a tier's runtimes may read.
+	// A setup a tier builds that reads one the tier does not carry refuses
+	// the recipe (groupTierClosure); none names nothing to refuse.
+	ProjectHostnames []string
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
 	HAIncapable []string
@@ -187,6 +195,18 @@ type GroupUtility struct {
 	Scaling          *Scaling
 	// ServiceEnvs is its user-set service variables (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
+}
+
+// GroupBox is a Zerops Box the project runs (topology.IsSandboxType):
+// infrastructure an app uses, never a part of it. A tier carries it where a
+// runtime the tier carries reads it, and no tier carries one nothing reads —
+// an agent's own Box is no part of the app.
+type GroupBox struct {
+	Hostname    string
+	ServiceType string
+	// SubdomainEnabled mirrors the Box's public access, which its sandboxes'
+	// port URLs need.
+	SubdomainEnabled bool
 }
 
 // groupTierPolicy is one tier's decision set. A tier is a decision, never an
@@ -292,11 +312,23 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		parts[r.DevHostname], partWarnings = groupPartsOf(r, setups)
 		frameWarnings = append(frameWarnings, partWarnings...)
 	}
-	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed)
+	boxes, boxWarnings := groupBoxes(inputs.Boxes)
+	// Every service the project runs is what a tier's runtimes may read: a
+	// Box a tier carries where they read it, anything else it must carry
+	// already (groupTierClosure).
+	projectServices := map[string]bool{}
+	for _, host := range append(boxHostnames(boxes), inputs.ProjectHostnames...) {
+		if host = strings.TrimSpace(host); host != "" {
+			projectServices[host] = true
+		}
+	}
+	reader := newServiceReader(slices.Sorted(maps.Keys(projectServices)))
+	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities))
 	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateSubdomainLabel(inputs.MateSubdomainHost))
 	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
 
 	warnings := append([]string(nil), utilityWarnings...)
+	warnings = append(warnings, boxWarnings...)
 	warnings = append(warnings, frameWarnings...)
 	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, parts)...)
@@ -311,6 +343,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
 		managed: managed, haIncapable: haIncapable, parts: parts, priorities: priorities,
 		promoter: newPairPromoter(pairRenames(runtimes, parts)),
+		boxes:    boxes, reader: reader, projectServices: projectServices,
 	}
 
 	layout := recipe.Layout{
@@ -319,6 +352,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		Intro: inputs.Intro,
 	}
 	withheld := map[string][]string{}
+	carriedBoxes := map[string]bool{}
+	var unclosed []string
 	for _, policy := range groupTiers {
 		if blockers := groupTierBlockers(runtimes, policy, unresolved); len(blockers) > 0 {
 			for _, host := range blockers {
@@ -326,14 +361,19 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 			}
 			continue
 		}
-		body, tierWarnings, err := composeGroupTierYAML(plan, policy)
+		tier, err := composeGroupTierYAML(plan, policy)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
+		body := tier.body
 		if mate := strings.TrimSpace(inputs.MateProjectID); mate != "" {
 			body = StampTier(body, mate)
 		}
-		warnings = append(warnings, tierWarnings...)
+		warnings = append(warnings, tier.warnings...)
+		for _, host := range tier.boxes {
+			carriedBoxes[host] = true
+		}
+		unclosed = append(unclosed, tier.unclosed...)
 		layout.Tiers = append(layout.Tiers, recipe.Tier{
 			Index:      policy.index,
 			Title:      policy.title,
@@ -341,6 +381,12 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 			ImportYAML: body,
 			Summary:    policy.summary,
 		})
+	}
+
+	if len(unclosed) > 0 {
+		return recipe.Layout{}, nil, fmt.Errorf(
+			"group recipe %q: a tier carries a runtime whose setup reads a service this Mate's project runs and the tier does not carry, so an environment made from it would start an app that cannot reach it — nothing is proposed until every tier carries what its runtimes read: %s. Carry the service in that tier (the warnings say why it is left out) or stop the setup reading it",
+			inputs.Name, strings.Join(unclosed, "; "))
 	}
 
 	var reasons []string
@@ -354,6 +400,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	if len(layout.Tiers) == 0 {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: no tier composes: %s", inputs.Name, strings.Join(reasons, "; "))
 	}
+	warnings = append(warnings, groupBoxWarnings(boxes, carriedBoxes)...)
 	return layout, append(warnings, reasons...), nil
 }
 
@@ -507,9 +554,10 @@ func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
 // `apistage` → `api`), or the dev half's stem for a pair with no stage —
 // every part alike, never the repository's name for one of them. A part
 // nothing types (groupPartFacts) gets no name. A new name that is no
-// hostname, or that another service of the group environments already has,
-// is not changed on a guess: the part is left out of them and said.
-func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry) []string {
+// hostname, or that another service of the group environments already has —
+// a managed service, or a Box a part reads (reserved) — is not changed on a
+// guess: the part is left out of them and said.
+func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry, reserved []string) []string {
 	type partKey struct{ repo, setup string }
 	heldBy := map[partKey]string{}
 	for _, h := range held {
@@ -522,6 +570,9 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 	taken := map[string]bool{}
 	for _, m := range managed {
 		taken[m.Hostname] = true
+	}
+	for _, host := range reserved {
+		taken[host] = true
 	}
 	var fresh []*groupPart
 	freshOwner := map[*groupPart]string{}
@@ -651,10 +702,26 @@ type groupPlan struct {
 	priorities map[string]int
 	// promoter names a group environment's own runtimes in a value.
 	promoter *pairPromoter
+	// boxes are the Boxes the project runs, sorted.
+	boxes []GroupBox
+	// projectServices are the hostnames of every service the project runs,
+	// and reader reads them in a setup's variables.
+	projectServices map[string]bool
+	reader          *serviceReader
+}
+
+// groupTier is one composed tier: its import.yaml, its warnings, the Boxes
+// it carries, and each read of a service the project runs that it does not
+// carry (groupTierClosure).
+type groupTier struct {
+	body     string
+	warnings []string
+	boxes    []string
+	unclosed []string
 }
 
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
-func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []string, error) {
+func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, error) {
 	inputs, runtimes, priorities := plan.inputs, plan.runtimes, plan.priorities
 	warnings := make([]string, 0, len(runtimes))
 	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
@@ -672,7 +739,11 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		priority int
 		item     yamlItem
 	}
-	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed))
+	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed)+len(plan.boxes))
+	// readers are the tier's runtimes, pools and utilities and what they read
+	// with (tierReader): the tier carries the Box they read, and must carry
+	// what the setups it builds read (groupTierClosure).
+	var readers []tierReader
 	for _, r := range runtimes {
 		type half struct {
 			hostname, setup string
@@ -684,6 +755,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 			if r.DevPool {
 				entry, comment := groupPoolEntry(r, priorities[r.DevHostname], source)
 				ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+				// Its leases deploy the setup its image is.
+				readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, pool: true, vault: writtenValues(r.ServiceEnvs, nil)})
 			} else {
 				halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs, devHalfFacts(r)})
 			}
@@ -703,6 +776,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 			}
 		}
 		for _, half := range halves {
+			readers = append(readers, tierReader{hostname: half.hostname, setup: half.setup, body: r.ZeropsYAMLBody, vault: writtenValues(half.envs, promote)})
 			entry, entryWarnings := groupRuntimeEntry(r, half.facts, half.hostname, half.setup, policy)
 			if vault := groupVaultFields(half.envs, source, promote); len(vault) > 0 {
 				entry["vault"] = vault
@@ -722,6 +796,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		}
 		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
 		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+		// Its own variables are all the recipe reads of it.
+		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, promote)})
 	}
 	for _, m := range plan.managed {
 		if !policy.pairs && plan.mateOnly[m.Hostname] {
@@ -741,11 +817,23 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		}
 		ranked = append(ranked, rankedItem{managedPriority, yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
 	}
+	// A Box only where a runtime of this tier reads it.
+	var carriedBoxes []string
+	read := tierReads(plan.reader, readers)
+	for _, b := range plan.boxes {
+		if len(read[b.Hostname]) == 0 {
+			continue
+		}
+		entry, comment := groupBoxEntry(b, read[b.Hostname])
+		ranked = append(ranked, rankedItem{managedPriority, yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+		carriedBoxes = append(carriedBoxes, b.Hostname)
+	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
 	services := make([]yamlItem, 0, len(ranked))
 	for _, r := range ranked {
 		services = append(services, r.item)
 	}
+	unclosed := groupTierClosure(plan.reader, readers, tierHostnames(services), plan.projectServices, policy.title)
 
 	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
 	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
@@ -761,9 +849,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		services: services,
 	}.render()
 	if err != nil {
-		return "", nil, err
+		return groupTier{}, err
 	}
-	return body, warnings, nil
+	return groupTier{body: body, warnings: warnings, boxes: carriedBoxes, unclosed: unclosed}, nil
 }
 
 // groupTierHeader is what a tier says about itself above its project: what
