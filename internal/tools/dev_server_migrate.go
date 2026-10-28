@@ -104,11 +104,11 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 			"Fix zerops.yaml on "+host+" (or deploy it once with zerops_deploy setup=<dev setup>), then start the dev server again.")
 	}
 	file, setup := adopted.File, adopted.Setup
+	onProgress := buildProgressCallback(ctx, req)
 	// Landed before the redeploy, so the redeploy ships it from git.
 	m := &devServerMigration{hostname: host, setup: setup, yamlFile: file, name: name,
-		landed: landOwnEdit(ctx, d.SSH, base, supervisorEdit(host, root, setup, adopted.Download, []string{file, devsup.DeclarationPath},
+		landed: landOwnEdit(ctx, d.SSH, onProgress, base, supervisorEdit(host, root, setup, adopted.Download, []string{file, devsup.DeclarationPath},
 			fmt.Sprintf("It declares %s's dev server %q in %s, so the supervisor starts it.", host, name, devsup.DeclarationPath)))}
-	onProgress := buildProgressCallback(ctx, req)
 	began := time.Now()
 	// The server numbers the call's notifications and holds the answer after
 	// the last one (keepAlive), so a step failing at once is safe after say.
@@ -204,7 +204,7 @@ func (m devSetupMove) settle(stateDir, target string, listening []bool, result *
 // /var/www) deploys under the supervisor when it is not there yet: carrying
 // the server an older zcp's keeper kept on the target, else on the dev
 // service's first deploy.
-func superviseDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
+func superviseDevSetup(ctx context.Context, say ops.ProgressCallback, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
 	if source != "" && source != target {
 		return devSetupMove{}, nil
 	}
@@ -213,9 +213,9 @@ func superviseDevSetup(ctx context.Context, client platform.Client, projectID st
 		return devSetupMove{}, err
 	}
 	if ok {
-		return carryKeptServer(ctx, ssh, stateDir, src, target, setup, workingDir, kept)
+		return carryKeptServer(ctx, say, ssh, stateDir, src, target, setup, workingDir, kept)
 	}
-	return superviseNewDevSetup(ctx, client, projectID, ssh, stateDir, src, source, target, setup, workingDir)
+	return superviseNewDevSetup(ctx, say, client, projectID, ssh, stateDir, src, source, target, setup, workingDir)
 }
 
 // carryKeptServer makes a deploy of target bring back the dev server the
@@ -223,7 +223,7 @@ func superviseDevSetup(ctx context.Context, client platform.Client, projectID st
 // supervisor, the dev setup gains its two lines and the kept server is
 // declared from the record, so the supervisor this deploy starts runs it. On
 // the supervisor already, the record has nothing left to bring back.
-func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, src DevsupSource, target, setup, workingDir string, kept keeperRecord) (devSetupMove, error) {
+func carryKeptServer(ctx context.Context, say ops.ProgressCallback, ssh ops.SSHDeployer, stateDir string, src DevsupSource, target, setup, workingDir string, kept keeperRecord) (devSetupMove, error) {
 	if ssh == nil {
 		return devSetupMove{}, nil
 	}
@@ -264,7 +264,7 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 	if repoDir(root) == repoDir(workingDir) {
 		files = append(files, devsup.DeclarationPath)
 	}
-	landed := landOwnEdit(ctx, ssh, base, supervisorEdit(target, workingDir, adopted.Setup, adopted.Download, files,
+	landed := landOwnEdit(ctx, ssh, say, base, supervisorEdit(target, workingDir, adopted.Setup, adopted.Download, files,
 		fmt.Sprintf("It declares %q, the dev server an older zcp kept on %s, in %s, so the supervisor starts it.", name, target, devsup.DeclarationPath)))
 	return devSetupMove{
 		sentence: fmt.Sprintf("Before this deploy zcp put %s under the dev-server supervisor and declared %q, the dev server zcp kept there: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) and %s declares it, so the supervisor starts it after this deploy. %s",
@@ -287,7 +287,7 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 // variant-B dev service's supervisor runs on its code volume; what it edits it
 // lands as a commit of its own before the push (landOwnEdit). It returns the
 // sentences saying what changed, none when nothing did.
-func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
+func superviseNewDevSetup(ctx context.Context, say ops.ProgressCallback, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
 	if source != "" && source != target {
 		return devSetupMove{}, nil
 	}
@@ -304,7 +304,7 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 		return devSetupMove{}, nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
 	}
 	if meta.IsDeployed() {
-		return repinDevSetup(ctx, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
+		return repinDevSetup(ctx, say, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
 	}
 	base := readOwnEditBase(ctx, ssh, target, workingDir)
 	adopted, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
@@ -314,7 +314,7 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	if !adopted.Changed {
 		return devSetupMove{}, nil
 	}
-	landed := landOwnEdit(ctx, ssh, base, supervisorEdit(target, workingDir, adopted.Setup, adopted.Download, []string{adopted.File}, ""))
+	landed := landOwnEdit(ctx, ssh, say, base, supervisorEdit(target, workingDir, adopted.Setup, adopted.Download, []string{adopted.File}, ""))
 	return devSetupMove{sentence: fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start), which runs your dev servers — zerops_dev_server action=start hostname=%q starts one. %s",
 		target, adopted.Setup, adopted.File, target, landed)}, nil
 }
@@ -326,7 +326,7 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 // middle of their change, and the deploy the agent asked for installs it, so
 // nothing redeploys on its own. root is the repository root the supervisor
 // runs on.
-func repinDevSetup(ctx context.Context, ssh ops.SSHDeployer, target, setup, url, workingDir, root string) (devSetupMove, error) {
+func repinDevSetup(ctx context.Context, say ops.ProgressCallback, ssh ops.SSHDeployer, target, setup, url, workingDir, root string) (devSetupMove, error) {
 	// A read that fails names no supervisor zcp knows to be too old, and
 	// nothing moves.
 	ds, _ := ops.ReadDevServers(ctx, ssh, target, root)
@@ -343,7 +343,7 @@ func repinDevSetup(ctx context.Context, ssh ops.SSHDeployer, target, setup, url,
 		return devSetupMove{}, nil
 	}
 	release := devsupRelease(url)
-	landed := landOwnEdit(ctx, ssh, base, ownEdit{host: target, dir: workingDir, files: []string{file},
+	landed := landOwnEdit(ctx, ssh, say, base, ownEdit{host: target, dir: workingDir, files: []string{file},
 		subject: fmt.Sprintf("zcp: install zcp-devsup %s in setup %s", release, used),
 		body:    fmt.Sprintf("zcp moved the release setup %s installs from %s to %s, because %s. This commit holds only the line zcp rewrote.", used, devsupRelease(from), release, why)})
 	repinned := fmt.Sprintf("Before this deploy zcp re-pinned zcp-devsup in setup %q of %s from %s to %s, because %s", used, file, devsupRelease(from), release, why)

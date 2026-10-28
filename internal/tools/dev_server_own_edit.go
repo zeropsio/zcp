@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -72,10 +73,44 @@ func repoDir(dir string) string {
 // commits there.
 var defaultBranches = []string{"main", "master"}
 
+// ownEditKeepAlive is how often a client that asked for progress hears that
+// the repository's commit checks still run.
+const ownEditKeepAlive = 30 * time.Second
+
+// keepSaying says what message makes of the time since it began, every
+// interval, until the returned stop is called; nothing when say is nil.
+func keepSaying(say ops.ProgressCallback, interval time.Duration, message func(time.Duration) string) (stop func()) {
+	if say == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	began := time.Now()
+	go func() {
+		defer close(finished)
+		tick := time.NewTicker(interval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				say(message(time.Since(began)), 0, 0)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
 // landOwnEdit commits e as a commit of zcp's own on the work branch base
 // names, when that commit would hold nothing but zcp's edit, and says where
-// the edit went: committed, or what to commit and why zcp did not.
-func landOwnEdit(ctx context.Context, ssh ops.SSHDeployer, base ownEditBase, e ownEdit) string {
+// the edit went: committed, or what to commit and why zcp did not. The
+// commit runs the repository's commit checks — a person's hooks are their
+// policy, never bypassed — and say (nil: none) hears that they run.
+func landOwnEdit(ctx context.Context, ssh ops.SSHDeployer, say ops.ProgressCallback, base ownEditBase, e ownEdit) string {
 	files := strings.Join(e.files, " and ")
 	it, they, is, blocks, ships, lands, own := "it", "it", "is", "blocks", "ships", "lands", "a commit of its own"
 	if len(e.files) > 1 {
@@ -111,9 +146,18 @@ func landOwnEdit(ctx context.Context, ssh ops.SSHDeployer, base ownEditBase, e o
 		return fmt.Sprintf("%s %s not committed: %s also %s uncommitted lines of yours — commit zcp's lines apart from yours, as a commit of their own: git commit -m '%s'.",
 			files, is, holder, holds, e.subject)
 	}
+	// The repository's commit checks run and may take minutes: a client that
+	// asked for progress hears what runs, and keeps hearing it.
+	if say != nil {
+		say(fmt.Sprintf("committing %s on branch %s as a commit of zcp's own: the repository's commit checks run first", files, base.Branch), 0, 0)
+	}
+	stop := keepSaying(say, ownEditKeepAlive, func(elapsed time.Duration) string {
+		return fmt.Sprintf("the repository's commit checks still run (%s)", elapsed.Round(time.Second))
+	})
 	sha, err := ops.CommitOwnEdit(ctx, ssh, e.host, e.dir, e.files, e.subject, e.body)
+	stop()
 	if err != nil {
-		return notCommitted("the commit failed: "+err.Error(), onWorkBranch)
+		return notCommitted("the commit failed: "+err.Error(), "once the failure is fixed")
 	}
 	return fmt.Sprintf("zcp committed %s on branch %s as a commit of its own (%s %q), so %s %s with that branch's change and main carries %s once the change is merged.",
 		files, base.Branch, sha, e.subject, they, lands, it)

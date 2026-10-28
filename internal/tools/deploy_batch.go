@@ -255,7 +255,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		if _, fromLease := leaseOf(d.stateDir, t.SourceService); fromLease {
 			continue
 		}
-		move, err := superviseDevSetup(ctx, d.client, d.projectID, d.sshDeployer, d.stateDir, d.devsup, t.SourceService, t.TargetService, t.Setup, t.WorkingDir)
+		move, err := superviseDevSetup(ctx, onProgress, d.client, d.projectID, d.sshDeployer, d.stateDir, d.devsup, t.SourceService, t.TargetService, t.Setup, t.WorkingDir)
 		moves[t.TargetService] = move
 		if err != nil {
 			warnings[t.TargetService] = err.Error()

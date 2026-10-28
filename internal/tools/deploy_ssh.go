@@ -488,10 +488,11 @@ func runDeploySSHZCLIPush(
 	// A lease is a pool container, not a dev service: the supervisor in it is
 	// not migrated by this deploy (docs/spec-workflows.md §8 DP).
 	_, fromLease := leaseOf(stateDir, input.SourceService)
+	onProgress := buildProgressCallback(ctx, req)
 	var move devSetupMove
 	var superviseErr error
 	if !fromLease {
-		move, superviseErr = superviseDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+		move, superviseErr = superviseDevSetup(ctx, onProgress, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 	}
 
 	// Default: zcli push to Zerops.
@@ -525,7 +526,6 @@ func runDeploySSHZCLIPush(
 	// A deploy to a pool, whatever its source, reaches only the containers
 	// the pool creates later (docs/spec-workflows.md §8 DP-7).
 	toPool := result.ReachesNewContainersOnly
-	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
 	pollTriggeredDeploy(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
 	if told := move.told(result); told != "" {

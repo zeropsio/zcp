@@ -137,3 +137,36 @@ func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
 		t.Errorf("base of a folder without git = %+v, %v; want no repository", base, err)
 	}
 }
+
+// TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing: the container
+// bounds zcp's commit, the repository's commit checks included; checks that
+// run past the budget end there, nothing is committed, and the answer says
+// they ran past it.
+func TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("timeout"); err != nil {
+		t.Skip("no timeout command here; the containers zcp commits in carry coreutils' or busybox's")
+	}
+	root := t.TempDir()
+	origintest.Git(t, root, "init", "-q", "-b", "feat-x")
+	if err := os.WriteFile(filepath.Join(root, "zerops.yaml"), []byte("zerops:\n  - setup: dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	origintest.Git(t, root, "add", "-A")
+	origintest.Git(t, root, "commit", "-q", "-m", "app")
+	first := origintest.Git(t, root, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, ".git/hooks/pre-commit"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil { //nolint:gosec // G306: a hook must be executable
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "zerops.yaml"), []byte("zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := commitOwnEdit(context.Background(), ownEditShell{root: root}, "appdev", "", []string{"zerops.yaml"}, "zcp: subject", "body", time.Second)
+	if err == nil || !strings.Contains(err.Error(), "the repository's commit checks ran past 1s") {
+		t.Fatalf("commitOwnEdit past its budget = %v, want the checks named as running past it", err)
+	}
+	if head := origintest.Git(t, root, "rev-parse", "HEAD"); head != first {
+		t.Errorf("checks past the budget let a commit through: HEAD %s, was %s", head, first)
+	}
+}
