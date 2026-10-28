@@ -85,12 +85,14 @@ func DevsupPrepareCommand(url string) string {
 }
 
 // AdoptSupervisorYAML puts the dev setup's run under the supervisor: the
-// install line in run.prepareCommands (replacing an older zcp-devsup line) and
-// run.start DevsupStartFor(root) — root is the repository root the supervisor
-// runs on, "" for /var/www — spliced into data so nothing else the user wrote
-// changes. setup names the dev setup; empty picks the only setup, else the one
-// named after hostname, else the one named "dev". It returns the setup it
-// changed; changed is false when both lines are there.
+// install line of url in run.prepareCommands — a zcp-devsup line the setup
+// already carries stays as written, whichever release it names, since a newer
+// one out since is no reason to change the person's file — and run.start
+// DevsupStartFor(root) — root is the repository root the supervisor runs on,
+// "" for /var/www — spliced into data so nothing else the user wrote changes.
+// setup names the dev setup; empty picks the only setup, else the one named
+// after hostname, else the one named "dev". It returns the setup it changed;
+// changed is false when both lines are there.
 func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []byte, used string, changed bool, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -105,6 +107,9 @@ func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []
 		return nil, "", false, fmt.Errorf("zerops.yaml setup %q: run is not a mapping", setup)
 	}
 	want := supervisorLines{prepare: DevsupPrepareCommand(url), start: DevsupStartFor(root)}
+	if line := devsupInstallLine(run); line != "" {
+		want.prepare = line
+	}
 	src := newYAMLSource(data, &doc)
 	splices, err := supervisorSplices(src, entry, run, setup, want)
 	if err != nil || len(splices) == 0 {
@@ -115,6 +120,21 @@ func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []
 		return nil, "", false, fmt.Errorf("zerops.yaml setup %q: %w; add to its run by hand: prepareCommands item %q and start: %s", setup, err, want.prepare, want.start)
 	}
 	return out, setup, true, nil
+}
+
+// devsupInstallLine is the zcp-devsup install line in run's prepareCommands,
+// "" when it carries none.
+func devsupInstallLine(run *yaml.Node) string {
+	prepare := mappingValue(run, "prepareCommands")
+	if prepare == nil || prepare.Kind != yaml.SequenceNode {
+		return ""
+	}
+	for _, item := range prepare.Content {
+		if item.Kind == yaml.ScalarNode && strings.Contains(item.Value, "/"+DevsupAsset) {
+			return item.Value
+		}
+	}
+	return ""
 }
 
 // devSetupName is the setup a dev service deploys when none is named after it.
@@ -195,11 +215,35 @@ func ReadRepoConfigFile(ctx context.Context, ssh SSHDeployer, hostname, dir stri
 // AdoptSupervisorInDevSetup rewrites the zerops.yaml in hostname's dir — the
 // folder its deploy runs from, "" for /var/www — so its dev setup runs the
 // supervisor on the repository root given as root (AdoptSupervisorYAML), and returns
-// the file's name and the setup.
-func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (file, used string, changed bool, err error) {
-	return rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
-		return AdoptSupervisorYAML(data, setup, hostname, url, root)
+// the file's name, the setup and the download its zcp-devsup line installs —
+// url, or the one a line the setup already carried names.
+func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (file, used, download string, changed bool, err error) {
+	download = url
+	file, used, changed, err = rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
+		out, used, changed, err := AdoptSupervisorYAML(data, setup, hostname, url, root)
+		if err == nil {
+			download = devsupDownloadIn(out, used, hostname, url)
+		}
+		return out, used, changed, err
 	})
+	return file, used, download, changed, err
+}
+
+// devsupDownloadIn is the download the zcp-devsup line of setup in data
+// installs, fallback when it is unreadable.
+func devsupDownloadIn(data []byte, setup, hostname, fallback string) string {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil {
+		return fallback
+	}
+	entry, _, err := devSetupEntry(&doc, setup, hostname)
+	if err != nil {
+		return fallback
+	}
+	if line := devsupInstallLine(mappingValue(entry, "run")); line != "" {
+		return pinnedDownload(line)
+	}
+	return fallback
 }
 
 // RepinSupervisorYAML points the zcp-devsup install line the dev setup already

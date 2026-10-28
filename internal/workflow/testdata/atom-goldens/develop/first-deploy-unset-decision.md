@@ -349,7 +349,8 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
 If the dev setup still runs `zsc noop`, that start adds the supervisor's two
-lines and redeploys once (uncommitted work stays) — commit both files.
+lines, redeploys once (uncommitted work stays), commits both files or
+says how.
 Every deploy starts each `autostart` server (see `devServer`), a restart
 each not `stop`ped; a start crash is retried once, a later one stays down.
 A passing verify means "live now", not "durably shipped" — for an
