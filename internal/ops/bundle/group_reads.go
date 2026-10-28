@@ -177,6 +177,23 @@ func boxHostnames(boxes []GroupBox) []string {
 	return hosts
 }
 
+// boxesAnyPartReads is the Boxes some tier may carry: those a setup any tier
+// builds for a runtime reads — the dev half's, and each part's stage and
+// group-environment setup — sorted. A group environment's part never takes
+// such a Box's hostname.
+func boxesAnyPartReads(sr *serviceReader, runtimes []GroupRuntime, parts map[string][]groupPart) []string {
+	readers := make([]tierReader, 0, 3*len(runtimes))
+	for _, r := range runtimes {
+		readers = append(readers, tierReader{r.DevHostname, r.SetupName, r.ZeropsYAMLBody})
+		for _, part := range parts[r.DevHostname] {
+			readers = append(readers,
+				tierReader{r.DevHostname, part.setup, r.ZeropsYAMLBody},
+				tierReader{r.DevHostname, part.environmentSetup, r.ZeropsYAMLBody})
+		}
+	}
+	return slices.Sorted(maps.Keys(tierReads(sr, readers)))
+}
+
 // groupBoxEntry writes a Box as a Box import takes it: its hostname and
 // type, created with the managed services — before every runtime that reads
 // it — and its public access as it runs, which its sandboxes' port URLs

@@ -308,7 +308,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 	boxes, boxWarnings := groupBoxes(inputs.Boxes)
 	boxReader := newServiceReader(boxHostnames(boxes))
-	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed)
+	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(boxReader, runtimes, parts))
 	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateSubdomainLabel(inputs.MateSubdomainHost))
 	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
 
@@ -531,9 +531,10 @@ func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
 // `apistage` → `api`), or the dev half's stem for a pair with no stage —
 // every part alike, never the repository's name for one of them. A part
 // nothing types (groupPartFacts) gets no name. A new name that is no
-// hostname, or that another service of the group environments already has,
-// is not changed on a guess: the part is left out of them and said.
-func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry) []string {
+// hostname, or that another service of the group environments already has —
+// a managed service, or a Box a part reads (reserved) — is not changed on a
+// guess: the part is left out of them and said.
+func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry, reserved []string) []string {
 	type partKey struct{ repo, setup string }
 	heldBy := map[partKey]string{}
 	for _, h := range held {
@@ -546,6 +547,9 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 	taken := map[string]bool{}
 	for _, m := range managed {
 		taken[m.Hostname] = true
+	}
+	for _, host := range reserved {
+		taken[host] = true
 	}
 	var fresh []*groupPart
 	freshOwner := map[*groupPart]string{}
