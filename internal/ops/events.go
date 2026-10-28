@@ -123,8 +123,8 @@ func isInternalAction(actionName string) bool {
 // appVersionHintMap maps app version statuses to interpretation hints.
 var appVersionHintMap = map[string]string{
 	statusActive:                  "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
-	statusBuilding:                "IN_PROGRESS: Build is running. Continue polling.",
-	statusBuildFailed:             "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so `zerops_logs` is empty for this service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
+	statusBuilding:                "IN_PROGRESS: Build is running. Continue polling; its log as it runs: zerops_logs facility=\"build\" for this event's service.",
+	statusBuildFailed:             "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so the service's app log is empty; the build's own log is zerops_logs facility=\"build\" for this event's service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 	platform.BuildStatusDeploying: "IN_PROGRESS: Deploy is running. Continue polling.",
 	"PREPARING_RUNTIME_FAILED":    "FAILED: run.prepareCommands exited non-zero. The prepare output is at the end of this event's buildLogTail; read this event's `failureClass` + `failureCause` for the diagnosis.",
 	"DEPLOY_FAILED":               "FAILED: the new container failed after the build (a run.initCommand, the start command or the container itself). Read this service's runtime log (zerops_logs for this event's service, since=10m) — NOT buildLogTail (that's build output).",

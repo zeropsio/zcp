@@ -149,6 +149,59 @@ func TestLogsTool_DefaultsToApplicationFacility(t *testing.T) {
 	}
 }
 
+// TestLogsTool_FacilityBuild_ReadsTheRunningBuild: the call an agent made to
+// watch a running build — {"facility": "build"} — was refused by the input
+// schema ("unexpected additional properties"); zerops_logs now takes it and
+// answers with the newest build's log, and its description says it can.
+func TestLogsTool_FacilityBuild_ReadsTheRunningBuild(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "flipdev", ProjectID: "proj-1"}}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"}).
+		WithServiceAppVersions("svc-1", []platform.AppVersionEvent{
+			{ID: "av-9", ServiceStackID: "svc-1", Source: "CLI", Status: platform.BuildStatusBuilding, Sequence: 9},
+		})
+	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Timestamp: recentTS(-60), Severity: "info", Facility: "local0", Tag: "zbuilder@av-9", Message: "vite build"},
+		{Timestamp: recentTS(-30), Severity: "info", Facility: "local0", Tag: "app", Message: "app line"},
+	})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterLogs(srv, mock, fetcher, "proj-1")
+
+	result := callTool(t, srv, "zerops_logs", map[string]any{"serviceHostname": "flipdev", "limit": 15, "facility": "build"})
+	if result.IsError {
+		t.Fatalf("facility=build refused: %s", getTextContent(t, result))
+	}
+	var lr ops.LogsResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &lr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(lr.Entries) != 1 || lr.Entries[0].Message != "vite build" || lr.Build == nil || lr.Build.AppVersionID != "av-9" {
+		t.Errorf("result = %+v, want the running build's line and its appVersion", lr)
+	}
+
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(t.Context(), st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.1"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	listed, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name == "zerops_logs" && !strings.Contains(tool.Description, "build") {
+			t.Errorf("zerops_logs description %q does not say it reads a build's log", tool.Description)
+		}
+	}
+}
+
 func TestLogsTool_EmptyHostname(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

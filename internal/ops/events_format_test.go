@@ -106,7 +106,7 @@ func TestEvents_StatusHints(t *testing.T) {
 				ID: "av3", ServiceStackID: "svc-1", Status: statusBuilding,
 				Created: "2024-01-01T00:03:00Z",
 			},
-			wantHint: "IN_PROGRESS: Build is running. Continue polling.",
+			wantHint: "IN_PROGRESS: Build is running. Continue polling; its log as it runs: zerops_logs facility=\"build\" for this event's service.",
 		},
 		{
 			name: "appVersion BUILD_FAILED",
@@ -114,7 +114,7 @@ func TestEvents_StatusHints(t *testing.T) {
 				ID: "av4", ServiceStackID: "svc-1", Status: statusBuildFailed,
 				Created: "2024-01-01T00:04:00Z",
 			},
-			wantHint: "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so `zerops_logs` is empty for this service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
+			wantHint: "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so the service's app log is empty; the build's own log is zerops_logs facility=\"build\" for this event's service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 		},
 		{
 			name: "appVersion DEPLOYING",
