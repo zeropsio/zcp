@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -117,5 +118,47 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 	lab.hq.diverge("appdev", "2026-10-29T08:00:00.000Z")
 	if later := lab.passReport(); !strings.Contains(later, "since 2026-10-29T08:00:00.000Z") {
 		t.Errorf("a later divergence is not said:\n%s", later)
+	}
+}
+
+// TestTellMirror_SaysEachOnce: without git or an HQ, what the pass tells of
+// one repository's remote — the mirror once per GitHub repository, each
+// divergence once by its date, nothing for a remote reached with a person's
+// token, which forgets what was told so a mirror connected again is said
+// again.
+func TestTellMirror_SaysEachOnce(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	hqc, err := hq.Open(http.DefaultClient, hq.Identity{Origin: "https://hq.example", Key: "k", ProjectID: labMate, OrgID: labOrg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &hq.RepoRemote{URL: "https://github.com/acme/app.git", Via: hq.RemoteViaApp}
+	diverged := &hq.RepoRemote{URL: app.URL, Via: hq.RemoteViaApp, DivergedSince: "2026-10-28T10:00:00.000Z"}
+	token := &hq.RepoRemote{URL: app.URL, Via: hq.RemoteViaToken}
+	steps := []struct {
+		name   string
+		remote *hq.RepoRemote
+		want   []string
+	}{
+		{name: "the app connects it", remote: app, want: []string{"HQ mirrors it to GitHub now (acme/app)"}},
+		{name: "the same mirror", remote: app},
+		{name: "they diverge", remote: diverged, want: []string{"have diverged (since 2026-10-28T10:00:00.000Z)"}},
+		{name: "still diverged", remote: diverged},
+		{name: "in step again", remote: app},
+		{name: "a token's remote", remote: token},
+		{name: "no remote", remote: nil},
+		{name: "the app connects it again", remote: app, want: []string{"HQ mirrors it to GitHub now (acme/app)"}},
+	}
+	for _, step := range steps {
+		lines := tellMirror(stateDir, hqc, labApp, "appdev", step.remote)
+		if len(lines) != len(step.want) {
+			t.Fatalf("%s: said %q, want %d lines", step.name, lines, len(step.want))
+		}
+		for i, want := range step.want {
+			if !strings.Contains(lines[i], want) {
+				t.Errorf("%s: said %q, want it to say %q", step.name, lines[i], want)
+			}
+		}
 	}
 }
