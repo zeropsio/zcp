@@ -17,12 +17,15 @@ import (
 // routes only to a port the pool declares with httpSupport: true
 // (docs/spec-workflows.md §8 DP-19, §13 PM-11). The ports are the run.ports
 // of the pool's deployed setup and previewPortBase lives in the repository's
-// declaration; zcp writes neither. So a pool whose maxContainers outgrows its
-// preview ports has containers with no preview — Kara's run, 2026-10-25:
-// hqpool declared 3001-3003, was raised from 3 to 4, and container 4's
-// preview on 3004 answered 502 with nothing saying why. The scale is the
-// person's call and still runs; its result, and a lease status of the pool,
-// say so (spec-workflows §8 PS-17).
+// declaration; zcp writes neither. So a raise of the pool's maxContainers is
+// where its limit outgrows its preview ports — Kara's run, 2026-10-25: hqpool
+// declared 3001-3003, a helper raised it from 3 to 4, and container 4's
+// preview on 3004 answered 502 — and Scale checks it there, before it
+// mutates (spec-workflows §8 PS-17). A pool can be past its ports already —
+// raised before that check, or outside zcp — and a scale that does not raise
+// it, or a lease status of it, says so instead (PS-17a). Both read the one
+// shortfall (readPoolPreviewShortfall), so the refusal and the notice never
+// disagree.
 
 // poolRaiseNote is what a full pool's offer to raise its maximum adds: a
 // raise is the person's call, and each container it adds needs its preview
@@ -35,6 +38,14 @@ const poolRaiseNote = "; a raise is an infrastructure change, so ask the person 
 // previews answer on: the longest such run. ok is false when the pool
 // declares no HTTP port, or two runs of that length — zcp cannot tell which
 // is the preview block.
+//
+// It cannot tell an HTTP port right next to the block that is no preview
+// port from a preview port: a dev server's own 3000 declared beside previews
+// 3001-3003 reads as one block 3000-3003 of four, so a raise to 4 passes
+// unrefused and unnoticed, and the ports named past the block are one lower
+// than the ones the leases answer on. previewPortBase, which would tell them
+// apart, lives in the repository's .zcp/dev-servers.json, which neither a
+// scale nor a lease status reads.
 func poolPreviewBlock(ports []platform.Port) (first, last int, ok bool) {
 	declared := map[int]bool{}
 	for _, p := range ports {
@@ -87,47 +98,103 @@ func poolMaxAfter(current *platform.ServiceStack, params ScaleParams) int {
 	return 0
 }
 
-// poolPreviewPortsNotice says that pool (as the direct read has it), at
-// maxContainers maxContainers, allows more containers than it opens preview
-// ports for: how many containers against how many ports, which containers
-// have no preview port, and the two fixes — declare the ports and deploy the
-// pool, or keep maxContainers at the port count. "" when the ports cover
+// poolRaises reports whether params raise the pool's maxContainers above the
+// one it runs with (current, the direct read); a maximum it runs with that is
+// not known counts as raised. The same maximum again and a lowering are no
+// raise.
+func poolRaises(current *platform.ServiceStack, params ScaleParams) bool {
+	if params.MaxContainers == nil {
+		return false
+	}
+	eff := effectiveAutoscaling(current)
+	return eff == nil || eff.HorizontalMaxCount <= 0 || *params.MaxContainers > int(eff.HorizontalMaxCount)
+}
+
+// poolPreviewShortfall is how the preview ports of a dev pool fall short of a
+// maxContainers: the block it opens and each container past it with the
+// preview port it would answer on, which the pool does not open.
+type poolPreviewShortfall struct {
+	pool          string
+	maxContainers int
+	first, last   int      // the preview block (poolPreviewBlock)
+	containers    []string // the containers past it, by stable number
+	ports         []string // their preview ports: the block's first port − 1 + the number
+}
+
+// readPoolPreviewShortfall is the one read of a pool's preview ports against
+// maxContainers that both the raise refusal and the notice take, from the
+// pool as the direct read has it. ok is false when the block covers
 // maxContainers, and when zcp cannot read the ports as one block (no HTTP
 // port, or two longest runs of one length): zcp names a count only when it
 // knows it. The caller decides the pool is a dev pool (poolLeasedByZcp).
-func poolPreviewPortsNotice(pool *platform.ServiceStack, maxContainers int) string {
+func readPoolPreviewShortfall(pool *platform.ServiceStack, maxContainers int) (poolPreviewShortfall, bool) {
 	first, last, ok := poolPreviewBlock(pool.Ports)
 	opens := last - first + 1
 	if !ok || maxContainers <= opens {
-		return ""
+		return poolPreviewShortfall{}, false
 	}
-	base := first - 1
-	containers := make([]string, 0, maxContainers-opens)
-	ports := make([]string, 0, maxContainers-opens)
+	s := poolPreviewShortfall{pool: pool.Name, maxContainers: maxContainers, first: first, last: last,
+		containers: make([]string, 0, maxContainers-opens), ports: make([]string, 0, maxContainers-opens)}
 	for n := opens + 1; n <= maxContainers; n++ {
-		containers = append(containers, strconv.Itoa(n))
-		ports = append(ports, strconv.Itoa(base+n))
+		s.containers = append(s.containers, strconv.Itoa(n))
+		s.ports = append(s.ports, strconv.Itoa(first-1+n))
 	}
-	block := strconv.Itoa(first)
-	if last > first {
-		block += "-" + strconv.Itoa(last)
+	return s, true
+}
+
+// opens is how many preview ports the block holds: one per container.
+func (s poolPreviewShortfall) opens() int { return s.last - s.first + 1 }
+
+// block is the preview block as a port or a range of ports.
+func (s poolPreviewShortfall) block() string {
+	if s.last > s.first {
+		return strconv.Itoa(s.first) + "-" + strconv.Itoa(s.last)
 	}
-	has := fmt.Sprintf("only %d preview ports (%s), one for each of its first %d containers", opens, block, opens)
+	return strconv.Itoa(s.first)
+}
+
+// raiseError refuses the raise to s.maxContainers before it is sent (PS-17):
+// it names the containers past the block, their ports and that their previews
+// would answer 502, that a raise is the person's call, and the run.ports
+// change and pool deploy that come first.
+func (s poolPreviewShortfall) raiseError() error {
+	who, portNoun, whose := "container "+s.containers[0], "port "+s.ports[0], "its preview"
+	if len(s.ports) > 1 {
+		who, portNoun, whose = "containers "+joinAnd(s.containers), "ports "+joinAnd(s.ports), "their previews"
+	}
+	msg := fmt.Sprintf("Pool '%s' opens preview ports %s, one for each of its first %d containers: a lease answers its preview on previewPortBase + its container's stable number (1 … maxContainers), and a per-port subdomain routes only to a port the pool declares with httpSupport: true. "+
+		"At maxContainers %d, %s would answer on %s, which the pool does not open, so %s would answer 502",
+		s.pool, s.block(), s.opens(), s.maxContainers, who, portNoun, whose)
+	suggestion := fmt.Sprintf("Raising a pool's maxContainers is an infrastructure change — the pool may then run more containers, each at the pool's minimum RAM and CPU or more — so ask the person before you raise it. "+
+		"To raise it: declare %s in run.ports of the pool's setup in zerops.yaml, each `- port: <n>` with `httpSupport: true`; commit it; deploy the pool from that commit "+
+		"(zerops_deploy sourceService=\"<a lease or dev service holding the commit>\" targetService=%q sha=\"<commit>\"); then raise it again (zerops_scale serviceHostname=%q maxContainers=%d). "+
+		"Without a raise, releasing a lease you no longer need frees a container (zerops_lease action=status lists them; ask the person before releasing one this conversation did not take).",
+		portNoun, s.pool, s.pool, s.maxContainers)
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion)
+}
+
+// notice says that the pool, at s.maxContainers, allows more containers than
+// it opens preview ports for (PS-17a): how many containers against how many
+// ports, which containers have no preview port, and the two fixes — declare
+// the ports and deploy the pool, or keep maxContainers at the port count.
+func (s poolPreviewShortfall) notice() string {
+	opens := s.opens()
+	has := fmt.Sprintf("only %d preview ports (%s), one for each of its first %d containers", opens, s.block(), opens)
 	if opens == 1 {
-		has = fmt.Sprintf("only 1 preview port (%s), for its first container", block)
+		has = fmt.Sprintf("only 1 preview port (%s), for its first container", s.block())
 	}
 	missing := fmt.Sprintf("Container %s has no preview port: the pool does not open %s, so a lease landing there has no preview (its preview address answers 502)",
-		containers[0], ports[0])
-	declare := fmt.Sprintf("declare port %s in run.ports of the pool's setup in zerops.yaml as `- port: %s` with `httpSupport: true`", ports[0], ports[0])
-	if len(ports) > 1 {
+		s.containers[0], s.ports[0])
+	declare := fmt.Sprintf("declare port %s in run.ports of the pool's setup in zerops.yaml as `- port: %s` with `httpSupport: true`", s.ports[0], s.ports[0])
+	if len(s.ports) > 1 {
 		missing = fmt.Sprintf("Containers %s have no preview port: the pool does not open %s, so a lease landing in one of them has no preview (its preview address answers 502)",
-			joinAnd(containers), joinOr(ports))
-		declare = fmt.Sprintf("declare ports %s in run.ports of the pool's setup in zerops.yaml, each as `- port: <n>` with `httpSupport: true`", joinAnd(ports))
+			joinAnd(s.containers), joinOr(s.ports))
+		declare = fmt.Sprintf("declare ports %s in run.ports of the pool's setup in zerops.yaml, each as `- port: <n>` with `httpSupport: true`", joinAnd(s.ports))
 	}
 	return fmt.Sprintf("Pool '%s': maxContainers %d, but %s. %s. "+
 		"To fix it, %s, commit it and deploy the pool from that commit (zerops_deploy sourceService=\"<a lease or dev service holding the commit>\" targetService=%q sha=\"<commit>\"); "+
 		"or keep maxContainers at %d or below (zerops_scale serviceHostname=%q maxContainers=%d).",
-		pool.Name, maxContainers, has, missing, declare, pool.Name, opens, pool.Name, opens)
+		s.pool, s.maxContainers, has, missing, declare, s.pool, opens, s.pool, opens)
 }
 
 // joinOr joins names as "a", "a or b", "a, b or c".
@@ -147,7 +214,7 @@ type LeasePoolNotice struct {
 // LeasePoolPreviewNotices says, of each pool zcp holds a lease record of —
 // only pool, when one is named — whose maxContainers runs past the preview
 // ports it opens, which containers have no preview and the fixes
-// (poolPreviewPortsNotice, PS-17). Each pool is read by the id its records
+// (poolPreviewShortfall.notice, PS-17a). Each pool is read by the id its records
 // keep — a direct read, never the search that trails a scale — and one that
 // cannot be read, is gone or being deleted (a record of a pool since
 // re-created keeps the old id), or reads as no single block of ports says
@@ -176,8 +243,8 @@ func LeasePoolPreviewNotices(ctx context.Context, d LeaseDeps, pool string) []Le
 				platform.ServiceDeleted(svc.Status) || platform.ServiceDeleting(svc.Status) {
 				continue
 			}
-			if note := poolPreviewPortsNotice(svc, poolMaxAfter(svc, ScaleParams{})); note != "" {
-				out = append(out, LeasePoolNotice{Pool: name, Note: note})
+			if short, ok := readPoolPreviewShortfall(svc, poolMaxAfter(svc, ScaleParams{})); ok {
+				out = append(out, LeasePoolNotice{Pool: name, Note: short.notice()})
 			}
 			break
 		}

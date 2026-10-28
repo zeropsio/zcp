@@ -98,7 +98,7 @@ type leaseToolResult struct {
 	// Warm is each pool's warm containers on a status (DP-27).
 	Warm []ops.LeasePoolWarm `json:"warm,omitempty"`
 	// PoolNotices are what a status says of a pool as a whole: one zcp
-	// leases from whose maxContainers runs past its preview ports (PS-17).
+	// leases from whose maxContainers runs past its preview ports (PS-17a).
 	PoolNotices []ops.LeasePoolNotice   `json:"poolNotices,omitempty"`
 	NextActions string                  `json:"nextActions,omitempty"`
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
