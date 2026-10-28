@@ -19,7 +19,9 @@ through MCP init.
 
 - **`AGENTS.md`** — the canonical doctrine body.
 - **`CLAUDE.md`** — a thin `@AGENTS.md` include wrapper (Claude Code
-  reads only `CLAUDE.md`, so it points at the canonical body).
+  reads only `CLAUDE.md`, so it points at the canonical body). In a
+  container it also imports each mounted repository's own `CLAUDE.md`
+  (`docs/spec-workflows.md` §5.1).
 
 ```
 cd /path/to/working/dir

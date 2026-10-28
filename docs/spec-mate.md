@@ -3574,6 +3574,9 @@ session opened in the lease mount would lose every lease record ("No lease recor
 `.zcp/state` into the leased checkout, and rewrite the ssh aliases from an empty set. The agent reaches
 the lease the way it reaches a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
 The media root stays with the session too, since the paths an agent writes are relative to it.
+Because every session opens in the workspace, the workspace `CLAUDE.md` zcp writes imports each pair's
+repository `CLAUDE.md` (`@<host>/CLAUDE.md`), so a repository's own instructions load at session start;
+a lease's do not — they load once the agent reads a file in its lease (`docs/spec-workflows.md` §5.1).
 
 zcp holds one set of leases for every conversation in the container, and a pool hands a released
 container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
