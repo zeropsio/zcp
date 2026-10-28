@@ -73,7 +73,7 @@ func TestGroupRecipe_TheMateOnlyChoice_RefusesADevHalf(t *testing.T) {
 		want   string
 	}{
 		{name: "a dev half", choice: map[string]bool{"appdev": true}, want: "dev half"},
-		{name: "a hostname the project does not run", choice: map[string]bool{"ghost": true}, want: `"ghost"`},
+		{name: "a hostname the project does not run", choice: map[string]bool{"ghost": true}, want: `no service \"ghost\" runs`},
 		{name: "a managed service", choice: map[string]bool{"db": true}, want: "managed service"},
 	}
 	for _, tt := range tests {

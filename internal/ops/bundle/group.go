@@ -320,14 +320,16 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		parts[r.DevHostname], partWarnings = groupPartsOf(r, setups)
 		frameWarnings = append(frameWarnings, partWarnings...)
 	}
-	// A runtime whose own variables name the address of a service no group
-	// environment runs — a dev half, the Mate's own infrastructure, a utility
-	// already so wired — is the Mate's: a wired stage gets no name in the
-	// group environments, a wired utility stays on the AI Agent tier.
+	// What serves only the Mate is the person's to say (MateOnly); where they
+	// said nothing, a runtime whose own variables name the address of a
+	// service no group environment runs — a dev half, the Mate's own
+	// infrastructure, a utility already so wired — is the Mate's. A stage
+	// that is gets no name in the group environments, a utility stays on the
+	// AI Agent tier.
 	mateLabel := mateSubdomainLabel(inputs.MateSubdomainHost)
 	mateHosts := mateOwnHosts(inputs)
-	utilityWires := wiredUtilities(inputs.Utilities, mateHosts, mateLabel)
-	wiredStages, stageWarnings := markMateWiredStages(runtimes, parts, mateHosts, mateLabel)
+	utilityWires := wiredUtilities(inputs.Utilities, mateHosts, mateLabel, inputs.MateOnly)
+	wiredStages, ruled, stageWarnings := markMateWiredStages(runtimes, parts, mateHosts, mateLabel, inputs.MateOnly)
 	boxes, boxWarnings := groupBoxes(inputs.Boxes)
 	// Every service the project runs is what a tier's runtimes may read: a
 	// Box a tier carries where they read it, anything else it must carry
@@ -340,11 +342,21 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 	reader := newServiceReader(slices.Sorted(maps.Keys(projectServices)))
 	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities))
-	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, utilityWires)
+	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, utilityWires, inputs.MateOnly)
+	for _, host := range wired {
+		if !utilityWires[host].chosen {
+			ruled = append(ruled, host)
+		}
+	}
 	wired = append(wired, wiredStages...)
 	sort.Strings(wired)
 	utilityWarnings = append(utilityWarnings, stageWarnings...)
 	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, parts, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
+	// Where the address rule alone decided, the pass says so once: the
+	// choice is the person's.
+	if line := mateRuleLine(ruled); line != "" {
+		utilityWarnings = append(utilityWarnings, line)
+	}
 
 	warnings := append([]string(nil), utilityWarnings...)
 	warnings = append(warnings, boxWarnings...)
@@ -956,11 +968,13 @@ func groupApps(runtimes []GroupRuntime, parts map[string][]groupPart, utilities 
 }
 
 // groupUtilities is the utilities every tier writes, sorted, and those a
-// group environment does not carry: one whose hostname its runtime takes, a
-// Mate's own dev tooling (devOnlyUtility), and one wired to the Mate (wires,
-// wiredUtilities), which it also names, sorted, in wired. A utility the
-// reader did not describe whole is left out and said.
-func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart, wires map[string]mateWire) (utilities []GroupUtility, mateOnly map[string]bool, wired, warnings []string) {
+// group environment does not carry: one whose hostname its runtime takes,
+// one the person chose as serving only this Mate, a Mate's own dev tooling
+// (devOnlyUtility) and one wired to the Mate (wires, wiredUtilities) — the
+// chosen and the wired it also names, sorted, in wired. One the person chose
+// to carry (choices false) is carried whatever zcp's rules read. A utility
+// the reader did not describe whole is left out and said.
+func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart, wires map[string]mateWire, choices map[string]bool) (utilities []GroupUtility, mateOnly map[string]bool, wired, warnings []string) {
 	promoted := make(map[string]string, len(runtimes))
 	for _, r := range runtimes {
 		for _, part := range parts[r.DevHostname] {
@@ -975,20 +989,29 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 			warnings = append(warnings, fmt.Sprintf("utility %q is left out of the recipe: its hostname, type or public build is unknown", u.Hostname))
 			continue
 		}
-		if pair, taken := promoted[u.Hostname]; taken {
+		wire, isWired := wires[u.Hostname]
+		carry, said := choices[u.Hostname]
+		carry = said && !carry
+		switch pair, taken := promoted[u.Hostname]; {
+		case taken:
 			mateOnly[u.Hostname] = true
 			warnings = append(warnings, fmt.Sprintf(
 				"utility %q stays on the AI Agent tier only: the group environments name the runtime of %q %q too",
 				u.Hostname, pair, u.Hostname))
-		} else if devOnlyUtility(u) {
+		case carry:
+		case isWired && wire.chosen:
+			mateOnly[u.Hostname] = true
+			wired = append(wired, u.Hostname)
+			warnings = append(warnings, wire.warning(u.Hostname))
+		case devOnlyUtility(u):
 			mateOnly[u.Hostname] = true
 			warnings = append(warnings, fmt.Sprintf(
 				"utility %q stays on the AI Agent tier only: it is a Mate's own dev tooling (a mail catcher, a database admin UI), which a stage or a production does not run — a value there naming it points nowhere until a person sets it",
 				u.Hostname))
-		} else if wire, ok := wires[u.Hostname]; ok {
+		case isWired:
 			mateOnly[u.Hostname] = true
 			wired = append(wired, u.Hostname)
-			warnings = append(warnings, mateWiredWarning(u.Hostname, wire.key, wire.address))
+			warnings = append(warnings, wire.warning(u.Hostname))
 		}
 		utilities = append(utilities, u)
 	}

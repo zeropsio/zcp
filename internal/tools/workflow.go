@@ -694,19 +694,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "set-default-setup":
 		return handleSetDefaultSetup(ctx, client, projectID, input, stateDir)
 	case "group-recipe":
-		// scaling=<host>: propose that host's scale into the tiers on main
-		// (hq_recipe_scaling.go).
-		if input.Scaling != "" {
-			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
-		}
-		// service=<host>: propose adding or removing that host's part in
-		// the tiers on main (hq_recipe_parts.go).
-		if input.Service != "" {
-			return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service)
-		}
-		// A2: ask for the group's recipe export outright. The same reconcile
-		// that runs on every bootstrap/adopt pass, reported to whoever asked.
-		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
+		return handleGroupRecipeAction(ctx, client, httpClient, rt, stateDir, input)
 	case "open-change":
 		// The agent's own branch, opened as its change (hq_change_open.go).
 		return handleOpenChange(ctx, httpClient, rt, stateDir, input)
