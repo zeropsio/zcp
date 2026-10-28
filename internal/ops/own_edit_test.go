@@ -155,7 +155,7 @@ func TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing(t *testing.T) {
 	origintest.Git(t, root, "add", "-A")
 	origintest.Git(t, root, "commit", "-q", "-m", "app")
 	first := origintest.Git(t, root, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(root, ".git/hooks/pre-commit"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil { //nolint:gosec // G306: a hook must be executable
+	if err := os.WriteFile(filepath.Join(root, ".git/hooks/pre-commit"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "zerops.yaml"), []byte("zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n"), 0o644); err != nil {
