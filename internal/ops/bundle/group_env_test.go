@@ -113,6 +113,12 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "MASTERKEY run together", env: ProjectEnvVar{Key: "MASTERKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
 		{name: "ACCESSKEY run together", env: ProjectEnvVar{Key: "S3_ACCESSKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
 		{name: "AUTHTOKEN run together", env: ProjectEnvVar{Key: "TWILIO_AUTHTOKEN", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		// A basic-auth pair guarding a service's own UI is that service's own
+		// access credential — mailpit's sign-in — which any random password
+		// serves; a pair under another name may be a third party's.
+		{name: "a UI's own sign-in", env: ProjectEnvVar{Key: "MP_UI_AUTH", Value: "admin:mailpass"}, wantSecret: true},
+		{name: "a UI's own sign-in that is no pair", env: ProjectEnvVar{Key: "MP_UI_AUTH", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
+		{name: "a pair for another service", env: ProjectEnvVar{Key: "SEARCH_AUTH", Value: "elastic:hunter22"}, wantSecret: true, wantSetAgain: true},
 		{name: "a webhook's address is its credential", env: ProjectEnvVar{Key: "SLACK_WEBHOOK_URL", Value: "https://hooks." + "slack.com/services/TABCDEFGH/BABCDEFGH/kqzvbxwmtrplhdfgnjcsyaeu"}, wantSecret: true, wantSetAgain: true},
 
 		// A code is no passcode, a boolean hides nothing, and a word about a

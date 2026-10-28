@@ -96,3 +96,39 @@ func TestBuildGroupRecipe_NothingHandSet_HeaderSaysNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildGroupRecipe_AUIsOwnSignIn_StaysGenerated: mailpit's MP_UI_AUTH is
+// the sign-in of mailpit's own web UI, which shows every mail the app sends —
+// sign-up links, password resets — on a public subdomain. It is the
+// service's own access credential, not a third party's: any random password
+// serves it, and left out, the UI would answer anyone. So a basic-auth pair
+// guarding a service's own UI is generated as an app's own secret is, its
+// user kept, and never named as one to set first.
+func TestBuildGroupRecipe_AUIsOwnSignIn_StaysGenerated(t *testing.T) {
+	t.Parallel()
+	in := groupInputsFixture()
+	in.Utilities = []GroupUtility{{
+		Hostname: "mailpit", ServiceType: "alpine@3.21", BuildFromGit: "https://github.com/zerops-recipe-apps/mailpit-app", SubdomainEnabled: true,
+		ServiceEnvs: []ProjectEnvVar{{Key: "MP_UI_AUTH", Value: "admin:" + strings.Repeat("p", 24)}},
+	}}
+	layout, _, err := BuildGroupRecipe(in)
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	carried := 0
+	for _, tier := range layout.Tiers {
+		if serviceNodeOrNil(t, tier.ImportYAML, "mailpit") == nil {
+			continue
+		}
+		carried++
+		if got, _ := tierVaultValue(t, tier.ImportYAML, "mailpit", "MP_UI_AUTH"); got != "admin:<@generateRandomString(<24>)>" {
+			t.Errorf("%s: mailpit's MP_UI_AUTH = %q, want its user kept and its password generated", tier.Title, got)
+		}
+		if header := tierHeaderText(tier.ImportYAML); strings.Contains(header, "MP_UI_AUTH") {
+			t.Errorf("%s: header = %q, names mailpit's own sign-in as one to set first", tier.Title, header)
+		}
+	}
+	if carried == 0 {
+		t.Fatal("no tier carries mailpit")
+	}
+}
