@@ -601,8 +601,10 @@ func TestPoolMigrateRetire_DiagnoseThenConfirm(t *testing.T) {
 	if restore := retireStrings(block["restore"]); len(restore) == 0 || !strings.Contains(strings.Join(restore, "\n"), rec.Bundle.Path) {
 		t.Errorf("restore = %q, want the steps naming the bundle", restore)
 	}
-	if gaps := strings.Join(retireStrings(block["gaps"]), " "); !strings.Contains(gaps, "recipe") || !strings.Contains(gaps, "launch") {
-		t.Errorf("gaps = %q, want the recipe and launch follow-ups named", gaps)
+	// Launch and export read a migrated part from its origin
+	// (docs/spec-workflows.md §10 P-LP-17, §9 E10): no gap names them.
+	if gaps := strings.Join(retireStrings(block["gaps"]), " "); !strings.Contains(gaps, "recipe") || strings.Contains(gaps, "aunch") || strings.Contains(gaps, "xport") {
+		t.Errorf("gaps = %q, want the recipe follow-up named and no launch or export gap", gaps)
 	} else if !strings.Contains(gaps, "until the change zcp proposes on its next recipe pass lands") || strings.Contains(gaps, "until a person merges") {
 		t.Errorf("gaps = %q, want the recipe follow-up to wait for the change to land, not for a person", gaps)
 	}
