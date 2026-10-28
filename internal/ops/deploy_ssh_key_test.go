@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,9 @@ import (
 // pushKey is a key no other test uses, so a process list never matches
 // another test's push.
 const pushKey = "zcp-key-only-on-stdin"
+
+// exportBuiltin matches the shell's export builtin as a command.
+var exportBuiltin = regexp.MustCompile(`(^|[\s;&|({])export\s`)
 
 // TestDeploySSH_EveryPush_KeyOnStdinNeverOnACommandLine: no command a deploy
 // hands to the SSH executor carries the key, and the push's own call writes
@@ -197,7 +201,9 @@ func TestPushCommands_KeyInAPrivateName_OnlyZcliSeesIt(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			command := tt.command(r)
-			if strings.Contains(command, pushKey) || strings.Contains(command, "export") {
+			// The export builtin, not a word that merely starts with it (the
+			// upload measurement asks git for the export-ignore attribute).
+			if strings.Contains(command, pushKey) || exportBuiltin.MatchString(command) {
 				t.Errorf("push command carries the key or exports a name:\n%s", command)
 			}
 			if out, code := r.run(ctx, command); code != 0 {

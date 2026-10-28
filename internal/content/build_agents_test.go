@@ -187,6 +187,40 @@ func TestBuildAgentsMD_Container_HasEnvMechanics(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_ZeropsKeyStaysInThisContainer pins the
+// container rule for zcp's own Zerops key (single owner: agents_container.md),
+// in a Mate and outside one: it never leaves this container — never piped or
+// copied into a service over ssh — and zcli is never logged in with it, which
+// writes it to disk; deploys go through zerops_deploy, and what a tool cannot
+// do is said to the person instead of worked around with zcli. Root cause it
+// closes: an upload zerops_deploy could not finish walked an agent into piping
+// $ZCP_API_KEY into the dev service and running `zcli login` there, which left
+// the key on that container's disk.
+func TestBuildAgentsMD_Container_ZeropsKeyStaysInThisContainer(t *testing.T) {
+	t.Parallel()
+	for _, rt := range []runtime.Info{
+		{InContainer: true, ServiceName: "zcp"},
+		{InContainer: true, ServiceName: "zcp", MateEnabled: true},
+	} {
+		out, _ := BuildAgentsMD(rt, false)
+		for _, want := range []string{
+			"`$ZCP_API_KEY`",
+			"never pipe, copy or pass it to another service",
+			"never `zcli login` with it",
+			"`zerops_deploy`",
+			"say so to the person",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("MateEnabled=%v container AGENTS.md missing key rule fragment %q", rt.MateEnabled, want)
+			}
+		}
+	}
+	local, _ := BuildAgentsMD(runtime.Info{InContainer: false}, false)
+	if strings.Contains(local, "never `zcli login` with it") {
+		t.Error("local AGENTS.md carries the container's key rule")
+	}
+}
+
 // TestBuildAgentsMD_Local_HasEnvReframe pins the local-delivery env reframe
 // (single owner: agents_local.md): the Mac shell does NOT carry the project's
 // injected env, so a local .env comes from generate-dotenv (server-side

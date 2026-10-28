@@ -1550,6 +1550,8 @@ type pushRig struct {
 	env     []string
 	// stdin is the session's input: the key line a push reads.
 	stdin string
+	// shell runs the commands; "" is bash.
+	shell string
 }
 
 func newPushRig(t *testing.T, zcli string) *pushRig {
@@ -1574,7 +1576,11 @@ func newPushRig(t *testing.T, zcli string) *pushRig {
 // run runs script in bash until it exits or ctx ends, as an ssh session does.
 func (r *pushRig) run(ctx context.Context, script string) (string, int) {
 	r.t.Helper()
-	cmd := exec.CommandContext(ctx, "bash", "-c", script)
+	shell := r.shell
+	if shell == "" {
+		shell = "bash"
+	}
+	cmd := exec.CommandContext(ctx, shell, "-c", script)
 	cmd.Env = r.env
 	cmd.Stdin = strings.NewReader(r.stdin)
 	out, err := cmd.CombinedOutput()

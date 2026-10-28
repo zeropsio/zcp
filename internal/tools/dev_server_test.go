@@ -269,6 +269,11 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 		t.Errorf("supervisor status = %q, want running", c.Status("appdev"))
 	}
 	for _, cmd := range c.Sent() {
+		// The migration's redeploy is a push, whose upload measurement runs
+		// under setsid of its own (docs/spec-workflows.md §8 DM-9).
+		if strings.Contains(cmd, "zcli push") {
+			continue
+		}
 		if strings.Contains(cmd, "setsid") || strings.Contains(cmd, "nohup") || strings.Contains(cmd, "pkill") {
 			t.Errorf("the old SSH start ran: %q", cmd)
 		}
