@@ -155,10 +155,11 @@ func TestBuildGroupRecipe_FlipServer_NamesTheEnvironmentsOwnStage(t *testing.T) 
 // https:// with no port after it. Anything else — several ports, another
 // port, no port declared, a service whose ports the recipe does not read, a
 // bare host — is kept as written and said, never guessed; so is an address
-// in a project variable, where another service's ${host_zeropsSubdomain}
-// stays literal. An address of a service the tier does not carry is kept as
-// it is and said nothing of, a URL off Zerops is no address, and neither is
-// renamed.
+// in a project variable: every service reads it, and a reference resolves
+// only in a service started after the one it names was deployed, which no
+// priority gives every service at once. An address of a service the tier
+// does not carry is kept as it is and said nothing of, a URL off Zerops is
+// no address, and neither is renamed.
 func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testing.T) {
 	t.Parallel()
 	const stageAddress = "https://flipstage-3901-5195.prg1.zerops.app"
@@ -243,13 +244,13 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 			said: []string{"FLIP_SERVER", "flipstage-3901-5195.prg1.zerops.app"},
 		},
 		{
-			name: "a project variable, where the reference stays literal",
+			name: "a project variable, which every service reads: no priority orders the reference",
 			edit: func(in *GroupRecipeInputs) {
 				in.ProjectEnvs = []ProjectEnvVar{{Key: "APP_URL", Value: stageAddress}}
 			},
 			key:       "APP_URL",
 			agentWant: stageAddress, groupWant: stageAddress,
-			said: []string{"APP_URL", "flipstage-3901-5195.prg1.zerops.app", "project variable"},
+			said: []string{"APP_URL", "flipstage-3901-5195.prg1.zerops.app", "project variable", "every service"},
 		},
 		{
 			name: "a service the group environments do not carry: the Mate's mail catcher",

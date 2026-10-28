@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -58,6 +60,25 @@ func subdomainRecipeClient() *platform.Mock {
 		})
 }
 
+// tierRuntimePriorities reads a tier's services as hostname → priority.
+func tierRuntimePriorities(t *testing.T, body string) map[string]int {
+	t.Helper()
+	var doc struct {
+		Services []struct {
+			Hostname string `yaml:"hostname"`
+			Priority int    `yaml:"priority"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("tier does not parse: %v\n%s", err, body)
+	}
+	out := map[string]int{}
+	for _, svc := range doc.Services {
+		out[svc.Hostname] = svc.Priority
+	}
+	return out
+}
+
 // TestGroupRecipe_AnAddressOfTheMatesProject_IsTheEnvironmentsReference is
 // flip.studio's group change #2 through the pass: a value holding the Mate's
 // stage's address written out came out in Stage and Small Production renamed
@@ -65,7 +86,8 @@ func subdomainRecipeClient() *platform.Mock {
 // environment: another service by ${<host>_zeropsSubdomain} — the group
 // environments' app, the AI Agent tier's appstage — and the service's own
 // address by ${zeropsSubdomain}, the path after it kept. No tier names the
-// Mate's own project.
+// Mate's own project. The reference resolves only in a container started
+// after the service it names was deployed, so that service comes first.
 func TestGroupRecipe_AnAddressOfTheMatesProject_IsTheEnvironmentsReference(t *testing.T) {
 	t.Parallel()
 	lab := newRecipeLab(t)
@@ -79,14 +101,17 @@ func TestGroupRecipe_AnAddressOfTheMatesProject_IsTheEnvironmentsReference(t *te
 	}
 	branch := lab.hq.recipeFiles(recipeBranch(outcome.Change))
 	tests := []struct {
-		path, server string
+		path, server, app string
 	}{
-		{recipeAgentTier, "APP_SERVER: ${appstage_zeropsSubdomain}/api"},
-		{recipeStageTier, "APP_SERVER: ${app_zeropsSubdomain}/api"},
-		{recipeProdTier, "APP_SERVER: ${app_zeropsSubdomain}/api"},
+		{recipeAgentTier, "APP_SERVER: ${appstage_zeropsSubdomain}/api", "appstage"},
+		{recipeStageTier, "APP_SERVER: ${app_zeropsSubdomain}/api", "app"},
+		{recipeProdTier, "APP_SERVER: ${app_zeropsSubdomain}/api", "app"},
 	}
 	for _, tt := range tests {
 		body := branch[tt.path]
+		if p := tierRuntimePriorities(t, body); p[tt.app] <= p["agentrunner"] {
+			t.Errorf("%s: %s at priority %d, not above agentrunner at %d, which reads its address", tt.path, tt.app, p[tt.app], p["agentrunner"])
+		}
 		for _, want := range []string{tt.server, "PUBLIC_URL: ${zeropsSubdomain}"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s does not write %q:\n%s", tt.path, want, body)
