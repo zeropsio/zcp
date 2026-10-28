@@ -224,7 +224,11 @@ func configureVSCode(env Env) error {
 	}
 
 	settingsPath := filepath.Join(env.Home, ".local", "share", "code-server", "User", "settings.json")
-	if err := writeTemplateFile("vscode-settings.json", settingsPath); err != nil {
+	settings, err := renderVSCodeSettings(env.RT.MateEnabled)
+	if err != nil {
+		return err
+	}
+	if err := writeFileEnsuringDir(settingsPath, settings); err != nil {
 		return err
 	}
 	if err := writeTemplateFile("vscode-terminals.json", filepath.Join(vsDir, ".vscode", "terminals.json")); err != nil {
@@ -261,6 +265,61 @@ func configureVSCode(env Env) error {
 	}
 
 	return nil
+}
+
+// mateGitSetting turns off code-server's built-in Git in a Mate container.
+// There the workspace is /var/www and every dev service is sshfs-mounted as
+// /var/www/<host>, so the Git extension's scan opens each mount as a
+// repository and runs `git status` and friends on it: a second git client on
+// the dev repository's .git, one that also runs that repository's hooks and
+// core.fsmonitor command inside the zcp container. A Mate's git runs in the
+// dev service itself (docs/spec-mate.md §6).
+//
+// `git.enabled: false` is the one user setting that stops it on every path:
+// the extension then never builds its repository model (never even locates
+// the git binary), and its openRepository refuses. `git.autoRepositoryDetection:
+// false` stops only the scans — a mount opened as a workspace folder, or
+// through the extension API, still gets `git status`. In a Mate container the
+// mounts are the only repositories code-server's workspace holds, so nothing
+// else is lost. Verified against VS Code's bundled Git extension: release/1.129
+// (code-server 4.129.0, see trusted_domains.go) and 1.144.
+const mateGitSetting = `"git.enabled": false`
+
+// renderVSCodeSettings returns code-server's user settings: the
+// vscode-settings.json template verbatim, plus mateGitSetting when
+// ZCP_MATE_ENABLED is on. The file is rewritten whole at every `zcp init`, so
+// a container whose flag is turned off converges back to the template — the
+// OFF direction of the mate gate (docs/spec-mate.md §2.0). Changing the user
+// settings needs no BootstrapExtVersion bump: they are not part of an
+// extension.
+func renderVSCodeSettings(mateEnabled bool) (string, error) {
+	tmpl, err := content.GetTemplate("vscode-settings.json")
+	if err != nil {
+		return "", err
+	}
+	if !mateEnabled {
+		return tmpl, nil
+	}
+	return appendJSONMember(tmpl, mateGitSetting)
+}
+
+// appendJSONMember inserts member as the last member of the JSON object obj,
+// keeping obj's own text (order, indentation, trailing newline) untouched.
+func appendJSONMember(obj, member string) (string, error) {
+	end := strings.LastIndex(obj, "}")
+	if end < 0 {
+		return "", fmt.Errorf("vscode settings template: no closing brace")
+	}
+	body := strings.TrimRight(obj[:end], " \t\r\n")
+	sep := ","
+	if strings.HasSuffix(body, "{") {
+		sep = ""
+	}
+	out := body + sep + "\n  " + member + "\n" + obj[end:]
+	if !json.Valid([]byte(out)) {
+		return "", fmt.Errorf("vscode settings template: not a JSON object after adding %s", member)
+	}
+	return out, nil
 }
 
 // bootstrapExtDirName returns the version-qualified directory name for
@@ -515,8 +574,14 @@ func writeTemplateFile(templateName, path string) error {
 	if err != nil {
 		return err
 	}
+	return writeFileEnsuringDir(path, tmpl)
+}
+
+// writeFileEnsuringDir writes body to path verbatim, creating parent dirs as
+// needed.
+func writeFileEnsuringDir(path, body string) error {
 	if err := EnsureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(tmpl), 0o644) //nolint:gosec // G306: config files need to be readable
+	return os.WriteFile(path, []byte(body), 0o644) //nolint:gosec // G306: config files need to be readable
 }
