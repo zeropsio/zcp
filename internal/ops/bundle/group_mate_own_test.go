@@ -126,3 +126,149 @@ func TestBuildGroupRecipe_MateWiredStage_OnlyInTheAIAgentTier(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildGroupRecipe_StageWiring_DecidesItsTiers: a stage is the Mate's
+// by the same rule as a utility — its own variables name an address of
+// another service of the Mate's own project, written out — and a volume
+// stays in the group tiers while anything they carry mounts or names it:
+// the setup a carried part builds, with every setup it extends, or a
+// carried part's variable. What only the dev half or the Mate-wired stage
+// runs is no such thing. A stage naming its own address, another project's
+// or one through the subdomain variables, and a Mate whose subdomain host is
+// unknown, reach every tier with their volume.
+func TestBuildGroupRecipe_StageWiring_DecidesItsTiers(t *testing.T) {
+	t.Parallel()
+	agent := func(in *GroupRecipeInputs) *GroupStage { return &in.Runtimes[0].Stages[1] }
+	// mountIn has the setup whose run starts with start mount the volume.
+	mountIn := func(start string) func(*GroupRecipeInputs) {
+		return func(in *GroupRecipeInputs) {
+			line := "      start: " + start + "\n"
+			if !strings.Contains(flipZeropsYAML, line) {
+				t.Fatalf("no setup starts with %q", start)
+			}
+			in.Runtimes[0].ZeropsYAMLBody = strings.Replace(flipZeropsYAML, line, line+"      volume:\n        hostname: agenthome\n", 1)
+		}
+	}
+	tests := []struct {
+		name string
+		edit func(*GroupRecipeInputs)
+		// mateOwn is what only the AI Agent tier carries; everywhere what
+		// every group tier does.
+		mateOwn, everywhere []string
+	}{
+		{
+			name:    "the agent stage wired to the Mate's dev, the volume only it mounts",
+			edit:    func(*GroupRecipeInputs) {},
+			mateOwn: []string{"agentrunner", "agenthome"}, everywhere: []string{"flip", "db", "storage"},
+		},
+		{
+			name:    "only the dev setup mounts the volume beside it",
+			edit:    mountIn("npm run dev"),
+			mateOwn: []string{"agentrunner", "agenthome"}, everywhere: []string{"flip"},
+		},
+		{
+			name:    "the app's setup mounts the volume too",
+			edit:    mountIn("npm start"),
+			mateOwn: []string{"agentrunner"}, everywhere: []string{"flip", "agenthome"},
+		},
+		{
+			name: "the app's setup extends one mounting the volume",
+			edit: func(in *GroupRecipeInputs) {
+				in.Runtimes[0].ZeropsYAMLBody = strings.Replace(flipZeropsYAML, "  - setup: prod\n",
+					"  - setup: base\n    run:\n      volume:\n        hostname: agenthome\n  - setup: prod\n    extends: base\n", 1)
+			},
+			mateOwn: []string{"agentrunner"}, everywhere: []string{"flip", "agenthome"},
+		},
+		{
+			name: "the app's stage names the volume",
+			edit: func(in *GroupRecipeInputs) {
+				in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{{Key: "HOME_DIR", Value: "/mnt/agenthome"}}
+			},
+			mateOwn: []string{"agentrunner"}, everywhere: []string{"flip", "agenthome"},
+		},
+		{
+			name: "the agent stage names only its own address",
+			edit: func(in *GroupRecipeInputs) {
+				agent(in).ServiceEnvs[0].Value = "https://agentrunner-1df2-8080.prg1.zerops.app"
+			},
+			everywhere: []string{"flip", "agentrunner", "agenthome"},
+		},
+		{
+			name: "the agent stage names another project's address",
+			edit: func(in *GroupRecipeInputs) {
+				agent(in).ServiceEnvs[0].Value = "https://flipdev-9f3c-3000.prg1.zerops.app"
+			},
+			everywhere: []string{"flip", "agentrunner", "agenthome"},
+		},
+		{
+			name: "the agent stage names an address through the subdomain variables",
+			edit: func(in *GroupRecipeInputs) {
+				agent(in).ServiceEnvs[0].Value = "https://flipdev-${zeropsSubdomainHost}-3000.prg1.zerops.app"
+			},
+			everywhere: []string{"flip", "agentrunner", "agenthome"},
+		},
+		{
+			name:       "no subdomain host known",
+			edit:       func(in *GroupRecipeInputs) { in.MateSubdomainHost = "" },
+			everywhere: []string{"flip", "agentrunner", "agenthome"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			inputs := flipStudioInputs()
+			tt.edit(&inputs)
+			layout, _, err := BuildGroupRecipe(inputs)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if len(layout.Tiers) != len(groupTierDirs) {
+				t.Fatalf("tiers = %d, want %d", len(layout.Tiers), len(groupTierDirs))
+			}
+			for _, tier := range layout.Tiers {
+				types := tierServiceTypes(t, tier.ImportYAML)
+				agentTier := tier.Title == "AI Agent"
+				for _, host := range tt.mateOwn {
+					if _, carried := types[host]; carried != agentTier {
+						t.Errorf("tier %q carries %s = %v, want it on the AI Agent tier alone", tier.Title, host, carried)
+					}
+				}
+				for _, host := range tt.everywhere {
+					if host == "flip" && agentTier {
+						host = "flipstage"
+					}
+					if _, carried := types[host]; !carried {
+						t.Errorf("tier %q does not carry %s", tier.Title, host)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestBuildGroupRecipe_TierClosure_ReadOfAMateWiredStage_Fails: a stage
+// wired to the Mate is left out of Stage and Small Production, so a runtime
+// those tiers carry whose setup reads it would start an app that cannot
+// reach it. The recipe is refused, naming the stage, the runtime, its setup
+// and the variable, for the group tiers alone: the AI Agent tier carries the
+// stage.
+func TestBuildGroupRecipe_TierClosure_ReadOfAMateWiredStage_Fails(t *testing.T) {
+	t.Parallel()
+	inputs := flipStudioInputs()
+	inputs.Runtimes[0].ZeropsYAMLBody = strings.Replace(flipZeropsYAML,
+		"        S3_ENDPOINT: ${storage_apiUrl}\n  - setup: agentrunner\n",
+		"        S3_ENDPOINT: ${storage_apiUrl}\n        AGENT_URL: http://agentrunner:8080\n  - setup: agentrunner\n", 1)
+	layout, warnings, err := BuildGroupRecipe(inputs)
+	if err == nil {
+		t.Fatalf("composed %d tiers, want the recipe refused (warnings %v)", len(layout.Tiers), warnings)
+	}
+	msg := err.Error()
+	for _, want := range []string{"does not carry", `tier "Stage"`, `tier "Small Production"`, `runtime "flip"`, `setup "prod"`, "run.envVariables.AGENT_URL", `names "agentrunner"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error does not say %s:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, `tier "AI Agent"`) {
+		t.Errorf("error names the AI Agent tier, which carries the stage:\n%s", msg)
+	}
+}

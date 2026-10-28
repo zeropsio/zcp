@@ -3,20 +3,26 @@ package bundle
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // What serves a Mate itself stays on the AI Agent tier its project is made
 // from (docs/spec-mate.md §2.8a.5): beside its dev tooling (devOnlyUtility),
-// a runtime of no pair wired to an address of the Mate's own project, and a
-// volume only such a runtime can be using. A stage and a production are
-// projects of their own, so a runtime wired to the Mate's project serves
-// nobody there — flip.studio's Stage and Small Production once came up with
-// the owner's cloud agent, its server the Mate's dev address and its token a
-// string zcp generated, beside the volume it kept its home on (2026-10-28).
-// Both are read from what the project shows, never from a list of names.
+// a runtime wired to an address of the Mate's own project — a utility, or a
+// stage of a pair — and a volume only such a runtime can be using. A stage
+// and a production are projects of their own, so a runtime wired to the
+// Mate's project serves nobody there — flip.studio's Stage and Small
+// Production once came up with the owner's cloud agent, its server the
+// Mate's dev address and its token a string zcp generated, beside the volume
+// it kept its home on (2026-10-28); the agent was a stage of the flipdev
+// pair, built from flip's own repository by a setup of its own that mounts
+// that volume. Both are read from what the project shows, never from a list
+// of names.
 
 // mateSubdomainLabel is the label every public address of a service of the
 // Mate's own project carries after the service's hostname: the first label
@@ -50,31 +56,75 @@ func mateAddressIn(value, label, self string) string {
 	return ""
 }
 
-// wiredToMate names the variable of u that names a public address of another
-// service of the Mate's own project, and that address; "" when none does.
-func wiredToMate(u GroupUtility, label string) (key, address string) {
-	for _, env := range u.ServiceEnvs {
-		if address := mateAddressIn(env.Value, label, u.Hostname); address != "" {
+// wiredToMate names the variable among envs, the own variables of the
+// runtime self — a utility, or a stage of a pair — that names a public
+// address of another service of the Mate's own project, and that address;
+// "" when none does.
+func wiredToMate(self string, envs []ProjectEnvVar, label string) (key, address string) {
+	for _, env := range envs {
+		if address := mateAddressIn(env.Value, label, self); address != "" {
 			return env.Key, address
 		}
 	}
 	return "", ""
 }
 
+// mateWiredWarning says that the runtime host stays on the AI Agent tier:
+// its variable key names address, an address of the Mate's own project.
+func mateWiredWarning(host, key, address string) string {
+	return fmt.Sprintf(
+		"runtime %q stays on the AI Agent tier only: its %s names %s, an address of this Mate's own project, so it serves this Mate, which a stage or a production is not — a value there naming it points nowhere until a person sets it",
+		host, key, address)
+}
+
+// markMateWiredStages marks each part whose stage is wired to the Mate
+// (wiredToMate, label the Mate's subdomain label): no group environment
+// runs it, so nameGroupParts gives it no name and only the AI Agent tier
+// carries its stage. It returns those stages, sorted, and says each. A
+// pair's dev half is never read so: a dev service naming another's dev
+// address is the Mate's own dev loop, and a pair with no stage runs its part
+// on it.
+func markMateWiredStages(runtimes []GroupRuntime, parts map[string][]groupPart, label string) (wired, warnings []string) {
+	for _, r := range runtimes {
+		list := parts[r.DevHostname]
+		for i := range list {
+			part := &list[i]
+			if part.stage == "" {
+				continue
+			}
+			key, address := wiredToMate(part.stage, part.envs, label)
+			if key == "" {
+				continue
+			}
+			part.mateWired = true
+			wired = append(wired, part.stage)
+			warnings = append(warnings, mateWiredWarning(part.stage, key, address))
+		}
+	}
+	sort.Strings(wired)
+	return wired, warnings
+}
+
 // markMateOwnVolumes adds to mateOnly the volumes — a local or a shared
 // storage, used only by a runtime that mounts it — that nothing a group
 // environment runs mounts or names, while a runtime wired to the Mate
-// (wired, sorted) runs beside them: that runtime's. Nothing is marked while
-// a part's zerops.yaml was not read, since what it mounts is unknown. A
-// database, a cache or an object storage is never marked: a runtime reaches
-// one through variables the platform may hand it without a reference, so
-// nothing naming it is no proof nothing uses it. It answers the warnings.
-func markMateOwnVolumes(managed []ManagedServiceEntry, runtimes []GroupRuntime, utilities []GroupUtility, projectEnvs []ProjectEnvVar, wired []string, mateOnly map[string]bool) []string {
+// (wired, sorted) runs beside them: that runtime's. What a group environment
+// runs is what the group tiers carry: the setup each part builds there
+// (setupText) and the part's variables — never a pair's dev half, nor a
+// stage wired to the Mate, which only the AI Agent tier carries, while a
+// part left out for want of a name or a type still counts, which keeps a
+// volume rather than drop it on a guess — the project's variables, and the
+// utilities those tiers carry. Nothing is marked while a part's
+// zerops.yaml was not read, since what it mounts is unknown, and a pair
+// whose parts are not resolved counts whole: its zerops.yaml and every
+// variable of it. A database, a cache or an object storage is never marked:
+// a runtime reaches one through variables the platform may hand it without
+// a reference, so nothing naming it is no proof nothing uses it. It answers
+// the warnings.
+func markMateOwnVolumes(managed []ManagedServiceEntry, runtimes []GroupRuntime, parts map[string][]groupPart, utilities []GroupUtility, projectEnvs []ProjectEnvVar, wired []string, mateOnly map[string]bool) []string {
 	if len(wired) == 0 || slices.ContainsFunc(runtimes, func(r GroupRuntime) bool { return strings.TrimSpace(r.ZeropsYAMLBody) == "" }) {
 		return nil
 	}
-	// What a group environment runs, as text: every part's zerops.yaml and
-	// variables, the project's, and the utilities it carries.
 	var carried []string
 	values := func(envs []ProjectEnvVar) {
 		for _, env := range envs {
@@ -82,10 +132,21 @@ func markMateOwnVolumes(managed []ManagedServiceEntry, runtimes []GroupRuntime, 
 		}
 	}
 	for _, r := range runtimes {
-		carried = append(carried, r.ZeropsYAMLBody)
-		values(r.ServiceEnvs)
-		for _, stage := range r.Stages {
-			values(stage.ServiceEnvs)
+		list, resolved := parts[r.DevHostname]
+		if !resolved {
+			carried = append(carried, r.ZeropsYAMLBody)
+			values(r.ServiceEnvs)
+			for _, stage := range r.Stages {
+				values(stage.ServiceEnvs)
+			}
+			continue
+		}
+		for _, part := range list {
+			if part.mateWired {
+				continue
+			}
+			carried = append(carried, setupText(r.ZeropsYAMLBody, part.environmentSetup))
+			values(part.envs)
 		}
 	}
 	values(projectEnvs)
@@ -108,6 +169,33 @@ func markMateOwnVolumes(managed []ManagedServiceEntry, runtimes []GroupRuntime, 
 			m.Hostname, wired[0]))
 	}
 	return warnings
+}
+
+// setupText is setup of a zerops.yaml body as text, with every setup it
+// extends: what an environment building it runs, mounts among it. The whole
+// body when it does not parse or does not declare one of them, since what
+// the setup runs is unknown then.
+func setupText(body, setup string) string {
+	entries := zeropsYAMLSetupEntries(body)
+	var b strings.Builder
+	for queue, seen := []string{setup}, map[string]bool{}; len(queue) > 0; queue = queue[1:] {
+		name := queue[0]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		entry, declared := entries[name]
+		if !declared {
+			return body
+		}
+		text, err := yaml.Marshal(entry)
+		if err != nil {
+			return body
+		}
+		b.Write(text)
+		queue = append(queue, yamlExtendsNames(entry["extends"])...)
+	}
+	return b.String()
 }
 
 // namesHostname reports whether text names hostname as a word of its own —

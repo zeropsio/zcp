@@ -312,6 +312,10 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		parts[r.DevHostname], partWarnings = groupPartsOf(r, setups)
 		frameWarnings = append(frameWarnings, partWarnings...)
 	}
+	// A stage wired to the Mate's own project is the Mate's, as a utility so
+	// wired is: no group environment runs it, so it gets no name there.
+	mateLabel := mateSubdomainLabel(inputs.MateSubdomainHost)
+	wiredStages, stageWarnings := markMateWiredStages(runtimes, parts, mateLabel)
 	boxes, boxWarnings := groupBoxes(inputs.Boxes)
 	// Every service the project runs is what a tier's runtimes may read: a
 	// Box a tier carries where they read it, anything else it must carry
@@ -324,8 +328,11 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 	reader := newServiceReader(slices.Sorted(maps.Keys(projectServices)))
 	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed, boxesAnyPartReads(reader, boxes, runtimes, parts, inputs.Utilities))
-	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateSubdomainLabel(inputs.MateSubdomainHost))
-	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
+	utilities, mateOnly, wired, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts, mateLabel)
+	wired = append(wired, wiredStages...)
+	sort.Strings(wired)
+	utilityWarnings = append(utilityWarnings, stageWarnings...)
+	utilityWarnings = append(utilityWarnings, markMateOwnVolumes(managed, runtimes, parts, utilities, inputs.ProjectEnvs, wired, mateOnly)...)
 
 	warnings := append([]string(nil), utilityWarnings...)
 	warnings = append(warnings, boxWarnings...)
@@ -410,11 +417,14 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 // setup Mate's preview variant extends), the variables its runtime carries,
 // what its runtime is (facts: its type, scale and access, from its own
 // stage), and the hostname a group environment runs it under — "" while it
-// has none it can use (nameGroupParts), or no type (facts.serviceType "").
+// has none it can use (nameGroupParts), no type (facts.serviceType ""), or
+// its stage is wired to the Mate (mateWired: markMateWiredStages), which
+// only the AI Agent tier carries.
 type groupPart struct {
 	stage, setup, environmentSetup, hostname string
 	envs                                     []ProjectEnvVar
 	facts                                    entryFacts
+	mateWired                                bool
 }
 
 // entryFacts is what one runtime entry of a tier is: its platform type, its
@@ -553,7 +563,8 @@ func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
 // keeps: the part's own name, its stage's stem (GroupPromotedHostname:
 // `apistage` → `api`), or the dev half's stem for a pair with no stage —
 // every part alike, never the repository's name for one of them. A part
-// nothing types (groupPartFacts) gets no name. A new name that is no
+// nothing types (groupPartFacts) gets no name, nor does one whose stage is
+// wired to the Mate (mateWired), even one a tier holds. A new name that is no
 // hostname, or that another service of the group environments already has —
 // a managed service, or a Box a part reads (reserved) — is not changed on a
 // guess: the part is left out of them and said.
@@ -581,7 +592,7 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 		list := parts[r.DevHostname]
 		for i := range list {
 			part := &list[i]
-			if part.facts.serviceType == "" {
+			if part.facts.serviceType == "" || part.mateWired {
 				continue
 			}
 			if host, ok := heldBy[partKey{repo, part.environmentSetup}]; ok && !private {
@@ -768,9 +779,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		} else {
 			// A group environment runs what the pair's stages run, a runtime
 			// per part: the dev half's setup is the dev loop's, never a
-			// stage's.
+			// stage's, and a stage wired to the Mate serves the Mate alone.
 			for _, part := range plan.parts[r.DevHostname] {
-				if part.hostname != "" {
+				if part.hostname != "" && !part.mateWired {
 					halves = append(halves, half{part.hostname, part.environmentSetup, part.envs, part.facts})
 				}
 			}
@@ -965,12 +976,10 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 			warnings = append(warnings, fmt.Sprintf(
 				"utility %q stays on the AI Agent tier only: it is a Mate's own dev tooling (a mail catcher, a database admin UI), which a stage or a production does not run — a value there naming it points nowhere until a person sets it",
 				u.Hostname))
-		} else if key, address := wiredToMate(u, mateLabel); key != "" {
+		} else if key, address := wiredToMate(u.Hostname, u.ServiceEnvs, mateLabel); key != "" {
 			mateOnly[u.Hostname] = true
 			wired = append(wired, u.Hostname)
-			warnings = append(warnings, fmt.Sprintf(
-				"runtime %q stays on the AI Agent tier only: its %s names %s, an address of this Mate's own project, so it serves this Mate, which a stage or a production is not — a value there naming it points nowhere until a person sets it",
-				u.Hostname, key, address))
+			warnings = append(warnings, mateWiredWarning(u.Hostname, key, address))
 		}
 		utilities = append(utilities, u)
 	}
