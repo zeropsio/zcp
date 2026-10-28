@@ -245,3 +245,48 @@ func TestBuildGroupRecipe_Box_WrittenAsABoxImport(t *testing.T) {
 		})
 	}
 }
+
+// A group environment names a part after its stage's stem, and a part can
+// be named like the Box a runtime reads: Zerops Apps' `box` part runs as
+// `boxdev`/`boxstage` in its Mate, and a Box named `box` beside it would
+// make a stage with two services of one hostname, which the import refuses
+// whole. The Box keeps its name — it is what the runtimes' setups read — and
+// the part is left out of the group environments and said, as a part named
+// like a managed service is.
+func TestBuildGroupRecipe_Box_PartNamedLikeTheBox_LeftOutAndSaid(t *testing.T) {
+	t.Parallel()
+	inputs := boxRunnerInputs(zeropsYAMLWithVars(
+		setupVars{name: "runnerdev", vars: boxReads},
+		setupVars{name: "runnerprod", vars: boxReads}), false)
+	inputs.Runtimes = append(inputs.Runtimes, GroupRuntime{
+		DevHostname:    "boxdev",
+		Stages:         []GroupStage{{Hostname: "boxstage", SetupName: "boxprod", ServiceType: "alpine/static"}},
+		ServiceType:    "alpine/static",
+		RepoURL:        "https://hq.example/git/org/app/apps.git",
+		SetupName:      "boxdev",
+		ZeropsYAMLBody: zeropsYAMLWithVars(setupVars{name: "boxdev"}, setupVars{name: "boxprod"}),
+	})
+	layout, warnings, err := BuildGroupRecipe(inputs)
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	files := groupFiles(t, layout)
+	for _, dir := range groupTierDirs {
+		raw, _ := tierDoc(t, files, dir)["services"].([]any)
+		seen := map[string]int{}
+		for _, item := range raw {
+			entry, _ := item.(map[string]any)
+			host, _ := entry["hostname"].(string)
+			seen[host]++
+		}
+		if seen["box"] != 1 {
+			t.Errorf("%s names %q %d times, want once — the Box", dir, "box", seen["box"])
+		}
+		if box := serviceEntries(t, tierDoc(t, files, dir))["box"]; box["type"] != "ubuntu/zbox@1" {
+			t.Errorf("%s: box = %v, want the Box", dir, box)
+		}
+	}
+	if !warningsContain(warnings, `part "boxprod" of "boxdev" is left out of the group environments: another of their services is already named "box"`) {
+		t.Errorf("warnings %v do not say the part named like the Box is left out", warnings)
+	}
+}
