@@ -25,6 +25,7 @@ type requestWire struct {
 		Replace bool   `json:"replace"`
 	} `json:"requested"`
 	AlreadySet       map[string]any `json:"alreadySet"`
+	AlreadyAsked     string         `json:"alreadyAsked"`
 	Readers          []string       `json:"readers"`
 	RestartAfterSave []string       `json:"restartAfterSave"`
 	NextActions      string         `json:"nextActions"`
@@ -123,53 +124,48 @@ func TestEnvTool_Request_Replace_NeedsReplaceWhy(t *testing.T) {
 	}
 }
 
-// TestEnvTool_Request_OpenAsk_ShowsNoSecondPrompt: a request for a key and
-// vault whose ask is still open asks nothing — the person already has the
-// prompt (Filip 10-26 20:55: a second request showed a second prompt, and
-// Lukáš saved each value twice). The refusal is an error, so neither Mate's
-// engine nor its card opens an ask; it says when the open one was asked and
-// the way to ask again after a decline. Another key, or the same key in
-// another vault, is its own ask.
-func TestEnvTool_Request_OpenAsk_ShowsNoSecondPrompt(t *testing.T) {
+// TestEnvTool_Request_OpenAsk_AnswersAlreadyAsked: a request for a key and
+// vault whose ask is still open answers as any request does, plus
+// alreadyAsked — when the open ask was made — and a line that the person's
+// prompt is already open, so the agent does not ask again (Filip 10-26 20:55:
+// a second request showed a second prompt, and Lukáš saved each value
+// twice). Mate's engine opens no second card for a key and vault whose card
+// is open. Another key, or the same key in another vault, is its own ask.
+func TestEnvTool_Request_OpenAsk_AnswersAlreadyAsked(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterEnv(srv, mock, "proj-1", "", WithVaultAsks(t.TempDir()))
 
-	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil {
-		t.Fatalf("the first request asked nothing: %+v", got)
+	before := time.Now().UTC().Truncate(time.Second)
+	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil || got.AlreadyAsked != "" {
+		t.Fatalf("the first request: want requested and no alreadyAsked, got %+v", got)
 	}
+	after := time.Now().UTC()
 	for _, again := range []map[string]any{nil, {"replace": true, "replaceWhy": "it is not in Google's format"}} {
-		result := callTool(t, srv, "zerops_env", flipRequest(again))
-		text := getTextContent(t, result)
-		if !result.IsError {
-			t.Fatalf("a request for an open ask (%v) asked again: %s", again, text)
+		got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(again)))
+		if got.Requested == nil || got.Requested.Key != "FLIP_GOOGLE_CLIENT_ID" {
+			t.Fatalf("a repeat (%v) is not answered requested: %+v", again, got)
 		}
-		var wire ErrorWire
-		if err := json.Unmarshal([]byte(text), &wire); err != nil {
-			t.Fatalf("parse: %v\n%s", err, text)
+		asked, err := time.Parse(time.RFC3339, got.AlreadyAsked)
+		if err != nil || asked.Before(before) || asked.After(after) {
+			t.Errorf("alreadyAsked = %q, want when the first request asked (%s..%s)", got.AlreadyAsked, before.Format(time.RFC3339), after.Format(time.RFC3339))
 		}
-		if wire.Code != platform.ErrAlreadyAsked {
-			t.Errorf("code = %s, want %s", wire.Code, platform.ErrAlreadyAsked)
-		}
-		for _, want := range []string{"FLIP_GOOGLE_CLIENT_ID", "still open", "UTC", "again=true", "declined"} {
-			if !strings.Contains(text, want) {
-				t.Errorf("the refusal lacks %q: %s", want, text)
+		for _, want := range []string{"already open", "do not ask again", "again=true", "declined"} {
+			if !strings.Contains(got.NextActions, want) {
+				t.Errorf("nextActions lacks %q: %s", want, got.NextActions)
 			}
-		}
-		if strings.Contains(text, `"requested"`) {
-			t.Errorf("the refusal carries a requested ask Mate would open: %s", text)
 		}
 	}
 
-	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(map[string]any{"key": "FLIP_GOOGLE_CLIENT_SECRET", "label": "Google sign-in client secret"}))); got.Requested == nil {
-		t.Errorf("another key was not asked: %+v", got)
+	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(map[string]any{"key": "FLIP_GOOGLE_CLIENT_SECRET", "label": "Google sign-in client secret"}))); got.Requested == nil || got.AlreadyAsked != "" {
+		t.Errorf("another key: want a fresh ask, got %+v", got)
 	}
 	service := flipRequest(map[string]any{"serviceHostname": "api"})
 	delete(service, "project")
-	if got := parseRequest(t, callTool(t, srv, "zerops_env", service)); got.Requested == nil {
-		t.Errorf("the same key in another vault was not asked: %+v", got)
+	if got := parseRequest(t, callTool(t, srv, "zerops_env", service)); got.Requested == nil || got.AlreadyAsked != "" {
+		t.Errorf("the same key in another vault: want a fresh ask, got %+v", got)
 	}
 }
 
@@ -217,14 +213,14 @@ func TestEnvTool_Request_AnsweredAsk_AsksNoMore(t *testing.T) {
 			if got := parseRequest(t, callTool(t, srv, "zerops_env", tt.ask)); got.Requested == nil {
 				t.Fatalf("the ask asked nothing: %+v", got)
 			}
-			if result := callTool(t, srv, "zerops_env", flipRequest(nil)); !result.IsError {
-				t.Fatalf("before the save, a second request asked: %s", getTextContent(t, result))
+			if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.AlreadyAsked == "" {
+				t.Fatalf("before the save, a second request does not say the ask is open: %+v", got)
 			}
 			mock.WithProjectEnv([]platform.ProjectEnvVar{tt.saved})
 			if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.AlreadySet == nil {
 				t.Errorf("after the save, want alreadySet, got %+v", got)
 			}
-			if got := parseRequest(t, callTool(t, srv, "zerops_env", tt.ask)); got.Requested == nil && tt.ask["replace"] == true {
+			if got := parseRequest(t, callTool(t, srv, "zerops_env", tt.ask)); tt.ask["replace"] == true && (got.Requested == nil || got.AlreadyAsked != "") {
 				t.Errorf("after the save, a replace asks anew; got %+v", got)
 			}
 		})
@@ -241,11 +237,11 @@ func TestEnvTool_Request_Again_AsksAfterADecline(t *testing.T) {
 	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil {
 		t.Fatalf("the first request asked nothing: %+v", got)
 	}
-	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(map[string]any{"again": true}))); got.Requested == nil {
-		t.Errorf("again=true asked nothing: %+v", got)
+	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(map[string]any{"again": true}))); got.Requested == nil || got.AlreadyAsked != "" {
+		t.Errorf("again=true: want a fresh ask, got %+v", got)
 	}
-	if result := callTool(t, srv, "zerops_env", flipRequest(nil)); !result.IsError {
-		t.Errorf("the ask again=true opened is not open: %s", getTextContent(t, result))
+	if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.AlreadyAsked == "" {
+		t.Errorf("the ask again=true opened is not open: %+v", got)
 	}
 }
 
@@ -258,8 +254,8 @@ func TestEnvTool_Request_WithoutVaultAsks_AsksEachTime(t *testing.T) {
 	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
 
 	for i := range 2 {
-		if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil {
-			t.Errorf("request %d asked nothing: %+v", i+1, got)
+		if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil || got.AlreadyAsked != "" {
+			t.Errorf("request %d: want a fresh ask, got %+v", i+1, got)
 		}
 	}
 }

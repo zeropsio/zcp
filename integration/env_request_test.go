@@ -1,8 +1,8 @@
 // Tests for: integration — zerops_env action="request" through the full MCP
 // server: a Mate's zcp records each ask it opens, so a second request for a
-// key whose ask is open shows the person no second prompt; a container
-// without ZCP_MATE_ENABLED answers every request as before
-// (docs/spec-mate.md §5.8, §2.0).
+// key whose ask is open answers alreadyAsked and the agent does not ask
+// again; a container without ZCP_MATE_ENABLED answers every request as
+// before (docs/spec-mate.md §5.8, §2.0).
 
 package integration_test
 
@@ -26,14 +26,14 @@ import (
 
 // Non-parallel: t.Chdir rebases the state dir server.New derives, and
 // hqtest.Link sets the process environment.
-func TestEnvRequest_OverMCP_AMateAsksAKeyOnce(t *testing.T) {
+func TestEnvRequest_OverMCP_AMateAnswersARepeatAlreadyAsked(t *testing.T) {
 	tests := []struct {
-		name       string
-		mate       bool
-		wantSecond bool // the second request asks again
+		name             string
+		mate             bool
+		wantAlreadyAsked bool // the second request says the ask is open
 	}{
-		{name: "a Mate's zcp shows no second prompt", mate: true},
-		{name: "outside a Mate every request answers as before", mate: false, wantSecond: true},
+		{name: "a Mate's zcp answers the repeat alreadyAsked", mate: true, wantAlreadyAsked: true},
+		{name: "outside a Mate every request answers as before", mate: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,12 +76,11 @@ func TestEnvRequest_OverMCP_AMateAsksAKeyOnce(t *testing.T) {
 			}
 			second := callAndGetResult(t, session, "zerops_env", ask)
 			text := getTextContent(t, second)
-			asked := !second.IsError && strings.Contains(text, `"requested"`)
-			if asked != tt.wantSecond {
-				t.Errorf("second request asked = %v, want %v: %s", asked, tt.wantSecond, text)
+			if second.IsError || !strings.Contains(text, `"requested"`) {
+				t.Fatalf("the second request is not answered requested: %s", text)
 			}
-			if !tt.wantSecond && !strings.Contains(text, platform.ErrAlreadyAsked) {
-				t.Errorf("the second request is not refused as already asked: %s", text)
+			if got := strings.Contains(text, `"alreadyAsked"`); got != tt.wantAlreadyAsked {
+				t.Errorf("second request alreadyAsked = %v, want %v: %s", got, tt.wantAlreadyAsked, text)
 			}
 
 			_, statErr := os.Stat(filepath.Join(dir, ".zcp", "state", "vault-asks"))
