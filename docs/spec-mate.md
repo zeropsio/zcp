@@ -1546,8 +1546,8 @@ How zcp does it:
   named once, after itself: its stage's stem (`apistage` → `api`, `webstage` → `web`), the dev
   half's for a pair with no stage — every part alike, never the repository's name for one of them
   (Zerops Apps' web came out `apps` and Noola's api `noola`, 2026-10-27). A new name that a managed
-  service or another part already has is never changed on a guess: the part is left out of the
-  group tiers and the composer warns.
+  service, a Box a runtime reads (docs/spec-workflows.md §8 PS-3) or another part already has is
+  never changed on a guess: the part is left out of the group tiers and the composer warns.
 - What each runtime is (D36). Every runtime entry of every tier is typed, scaled and reached from
   the service it stands for: a dev service from itself; a part from its stage as the live project
   runs it (`GroupStage.ServiceType`, its scale and access), else — its stage not running — from
@@ -1566,7 +1566,9 @@ How zcp does it:
   leave it out and say so (the medusa group's production once came up with its mailpit, D30).
   So does what serves the Mate itself, read from what the project shows rather than a name: a
   runtime of no pair wired to an address of the Mate's own project, and a volume only such a
-  runtime can be using (§10.10, *What serves the Mate*).
+  runtime can be using (§10.10, *What serves the Mate*). A Zerops Box goes on each tier where an
+  entry the tier carries reads it, so one only such a runtime reads stays on the AI Agent tier with
+  it (docs/spec-workflows.md §8 PS-3).
 - Proposal. `zerops_workflow action="group-recipe" service=<host>` (the host a stage, or a runtime a
   tier names) adds that part's composed entry to each tier file on `main` that carries a service of
   its repository and lacks the part — after the repository's last service — or removes the part's
