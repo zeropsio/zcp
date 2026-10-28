@@ -151,7 +151,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// keyed part's release-prompt named, sent back so the tag lands on
 		// the commit the person confirmed (docs/spec-workflows.md §10
 		// P-LP-21); the tip-moved refusal names what to do.
-		"zerops_workflow":    21256,
+		// Raised +43 (21256→21299) for action="group-recipe" branch=, the
+		// agent's own change in the recipe repository for a tier edit no
+		// proposal of zcp's makes (docs/spec-mate.md §10.10): `branch` names
+		// it among its users; no new field — where to push and what zcp leaves
+		// alone live in the handler's answer.
+		"zerops_workflow":    21299,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

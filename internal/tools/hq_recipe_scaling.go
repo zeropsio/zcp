@@ -213,7 +213,7 @@ func handleGroupRecipeScaling(
 		if written.pushed {
 			message += fmt.Sprintf(" Change #%d, which proposed it before, now adds nothing.", written.number)
 		}
-		result["message"] = message + refusedTiers(tiers)
+		result["message"] = message + refusedTiers(tiers) + recipeEditSteer
 		return jsonResult(result), nil, nil
 	}
 	result["branch"] = written.branch
