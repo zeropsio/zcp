@@ -35,11 +35,15 @@ type followedPasses struct {
 	said   []string
 }
 
-func newFollowedPasses(t *testing.T, ctx context.Context, stateDir string, quiet time.Duration) (*RecipeFollower, *followedPasses) {
+func newFollowedPasses(t *testing.T, stateDir string, quiet time.Duration) (*RecipeFollower, *followedPasses) {
 	t.Helper()
 	p := &followedPasses{t: t}
-	f := newRecipeFollower(ctx, stateDir, p.pass, p.wg.Go, p.say, quiet, time.Minute)
-	return f, p
+	return p.follower(t.Context(), stateDir, quiet), p
+}
+
+// follower is a follower under ctx whose passes p counts.
+func (p *followedPasses) follower(ctx context.Context, stateDir string, quiet time.Duration) *RecipeFollower {
+	return newRecipeFollower(ctx, stateDir, p.pass, p.wg.Go, p.say, quiet, time.Minute)
 }
 
 func (p *followedPasses) pass(ctx context.Context) string {
@@ -120,17 +124,6 @@ func pairStateDir(t *testing.T) string {
 	return stateDir
 }
 
-// recordSetup is a call's write of setup as host's recorded setup — what a
-// deploy writes back before it builds, and set-default-setup.
-func recordSetup(t *testing.T, stateDir, host, setup string) func() {
-	return func() {
-		t.Helper()
-		if err := recordResolvedDeploySetupMeta(stateDir, host, setup, true); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 // TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads: a call that
 // changed what the group recipe reads asks for one pass, once it answered
 // without an error — an import or a delete (the services a tier creates), a
@@ -144,12 +137,14 @@ func recordSetup(t *testing.T, stateDir, host, setup string) func() {
 func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		tool   string
-		args   map[string]any
-		during func(t *testing.T, stateDir string) func()
-		failed bool
-		want   int
+		name string
+		tool string
+		args map[string]any
+		// recorded is the half and the setup the call records while it runs,
+		// as a deploy writes back the setup it resolved before it builds.
+		recorded [2]string
+		failed   bool
+		want     int
 	}{
 		{name: "an import", tool: "zerops_import", args: map[string]any{"content": "services: []"}, want: 1},
 		{name: "an import that failed", tool: "zerops_import", args: map[string]any{"content": "services: []"}, failed: true},
@@ -163,13 +158,13 @@ func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 		{name: "a pool migration's retire", tool: "zerops_workflow", args: map[string]any{"workflow": "pool-migrate", "action": "retire", "service": "appdev"}, want: 1},
 		{name: "a status", tool: "zerops_workflow", args: map[string]any{"action": "status"}},
 		{name: "set-default-setup recording another stage setup", tool: "zerops_workflow", args: map[string]any{"action": "set-default-setup", "targetService": "appstage"},
-			during: func(t *testing.T, stateDir string) func() { return recordSetup(t, stateDir, "appstage", "stage") }, want: 1},
+			recorded: [2]string{"appstage", "stage"}, want: 1},
 		{name: "a deploy to the stage", tool: "zerops_deploy", args: map[string]any{"sourceService": "appdev", "targetService": "appstage"}, want: 1},
 		{name: "a deploy to the stage that failed", tool: "zerops_deploy", args: map[string]any{"sourceService": "appdev", "targetService": "appstage"}, failed: true},
 		{name: "a deploy to the dev keeping its setup", tool: "zerops_deploy", args: map[string]any{"targetService": "appdev"},
-			during: func(t *testing.T, stateDir string) func() { return recordSetup(t, stateDir, "appdev", "dev") }},
+			recorded: [2]string{"appdev", "dev"}},
 		{name: "a deploy to the dev that recorded another setup and failed", tool: "zerops_deploy", args: map[string]any{"targetService": "appdev", "setup": "api"},
-			during: func(t *testing.T, stateDir string) func() { return recordSetup(t, stateDir, "appdev", "api") }, failed: true, want: 1},
+			recorded: [2]string{"appdev", "api"}, failed: true, want: 1},
 		{name: "a batch with the stage among its targets", tool: "zerops_deploy_batch",
 			args: map[string]any{"targets": []map[string]string{{"targetService": "appdev"}, {"sourceService": "appdev", "targetService": "appstage"}}}, want: 1},
 		{name: "a batch to the dev alone", tool: "zerops_deploy_batch", args: map[string]any{"targets": []map[string]string{{"targetService": "appdev"}}}},
@@ -184,10 +179,14 @@ func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			stateDir := pairStateDir(t)
-			f, passes := newFollowedPasses(t, t.Context(), stateDir, time.Millisecond)
+			f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
 			var during func()
-			if tt.during != nil {
-				during = tt.during(t, stateDir)
+			if host, setup := tt.recorded[0], tt.recorded[1]; host != "" {
+				during = func() {
+					if err := recordResolvedDeploySetupMeta(stateDir, host, setup, true); err != nil {
+						t.Error(err)
+					}
+				}
 			}
 
 			call(t, f, tt.tool, tt.args, during, tt.failed)
@@ -206,7 +205,7 @@ func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 func TestRecipeFollower_ABurst_IsOnePass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, t.Context(), stateDir, 50*time.Millisecond)
+	f, passes := newFollowedPasses(t, stateDir, 50*time.Millisecond)
 
 	for _, tool := range []string{"zerops_import", "zerops_import", "zerops_delete", "zerops_import"} {
 		call(t, f, tool, nil, nil, false)
@@ -227,7 +226,7 @@ func TestRecipeFollower_ABurst_IsOnePass(t *testing.T) {
 func TestRecipeFollower_ACallDuringAPass_IsOneMorePass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, t.Context(), stateDir, time.Millisecond)
+	f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
 	passes.hold = make(chan struct{})
 
 	call(t, f, "zerops_import", nil, nil, false)
@@ -261,7 +260,8 @@ func TestRecipeFollower_ServerStopped_RunsNoPass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
 	ctx, stop := context.WithCancel(t.Context())
-	f, passes := newFollowedPasses(t, ctx, stateDir, time.Hour)
+	passes := &followedPasses{t: t}
+	f := passes.follower(ctx, stateDir, time.Hour)
 
 	call(t, f, "zerops_import", nil, nil, false)
 	stop()
@@ -279,7 +279,7 @@ func TestRecipeFollower_ServerStopped_RunsNoPass(t *testing.T) {
 func TestRecipeFollower_AnOutcome_SaidOnce(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, t.Context(), stateDir, time.Millisecond)
+	f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
 	passes.lines = []string{"the recipe waits for appdev", "the recipe waits for appdev", "", "the recipe waits for appdev", "change #1 carries the update"}
 
 	for range passes.lines {

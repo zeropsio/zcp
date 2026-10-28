@@ -63,7 +63,7 @@ const recipeFollowPassBound = 10 * time.Minute
 // changed what the recipe reads. Nil outside a Mate, where Watch watches
 // nothing.
 type RecipeFollower struct {
-	ctx      context.Context
+	ctx      context.Context //nolint:containedctx // the server's own (Stop ends it): a pass runs after the call that asked for it ended, so no call's context can carry it
 	stateDir string
 	pass     func(context.Context) string
 	spawn    func(func())
@@ -220,6 +220,16 @@ type recipeCallTarget struct {
 	TargetService string `json:"targetService"`
 }
 
+// The tools whose calls recipeCallOf reads, by name.
+const (
+	toolImport      = "zerops_import"
+	toolDelete      = "zerops_delete"
+	toolEnv         = "zerops_env"
+	toolWorkflow    = "zerops_workflow"
+	toolDeploy      = "zerops_deploy"
+	toolDeployBatch = "zerops_deploy_batch"
+)
+
 // recipeCallOf is what the call of tool with args can change of what the
 // recipe reads, by the tool and, for a tool of several actions, the action.
 // Arguments that do not parse read as none.
@@ -229,15 +239,17 @@ func recipeCallOf(tool string, args json.RawMessage, stateDir string) recipeCall
 		_ = json.Unmarshal(args, &peek)
 	}
 	switch tool {
-	case "zerops_import", "zerops_delete":
+	case toolImport, toolDelete:
 		return recipeCall{changes: true}
-	case "zerops_env":
-		return recipeCall{changes: slices.Contains([]string{"set", "delete", "ai-key"}, peek.Action)}
-	case "zerops_workflow":
+	case toolEnv:
+		// The actions that write a variable: set, delete, and the
+		// organization's AI key put in the vault.
+		return recipeCall{changes: peek.Action == "set" || peek.Action == "delete" || peek.Action == "ai-key"}
+	case toolWorkflow:
 		return recipeCall{changes: peek.Action == actionRetire, records: true}
-	case "zerops_deploy":
+	case toolDeploy:
 		return recipeCall{changes: recipeStageHost(stateDir, peek.TargetService), records: true}
-	case "zerops_deploy_batch":
+	case toolDeployBatch:
 		stage := slices.ContainsFunc(peek.Targets, func(t recipeCallTarget) bool {
 			return recipeStageHost(stateDir, t.TargetService)
 		})
