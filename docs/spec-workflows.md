@@ -876,6 +876,23 @@ an init-phase heap OOM. Build guidance retains the fixed build-container memory
 cap; runtime service scaling does not raise that cap
 (`TestClassifyDeployFailure_JavaScriptHeapMemoryFailure`).
 
+**Reading a build's log through zcp.** `zerops_logs` takes `facility`: `application`
+(the default, the running app's log), `webserver` (the web server's, syslog facility 17)
+or `build`; any other value is refused naming the three. `facility=build` reads the
+service's newest app version that came from a build (not a start-without-code one),
+picked from the direct app-version list so no search lag hides a build just started
+(§3.5), while it runs too, by the build's `zbuilder@<appVersionId>` tag — the same read
+a failed deploy's `buildLogs` and an event's `buildLogTail` use (`ops.fetchBuildLog`:
+the runtime prepare phase logged under the tag, and the build container's alerts once
+the activity search has indexed the build's facts). `since` does not apply; `search`,
+`severity` and `limit` do. The result's `build` names the app version, its status and
+whether it still runs; a service never built answers empty, saying so. The
+`BUILDING` and `BUILD_FAILED` event hints point at it, so no agent needs
+`zcli service log` — or a zcli login with zcp's key — to watch a build
+(`TestFetchLogs_Build_ReadsTheNewestBuildWhileItRuns`,
+`TestFetchLogs_UnknownFacility_NamesTheOnesItReads`,
+`TestLogsTool_FacilityBuild_ReadsTheRunningBuild`, `TestEvents_StatusHints`).
+
 ### 4.7 Iteration on Failure
 
 When deploy fails, the agent can iterate. The escalating guidance tiers are delivered via atoms (e.g. `develop-standard-unset-iterate` and the deploy-iteration atoms), not a Go data table:
