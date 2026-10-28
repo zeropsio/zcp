@@ -49,9 +49,16 @@ func fakeReadinessUnit(t *testing.T, state func() string) (update func(), observ
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	show := func(_ context.Context, name string, args ...string) ([]byte, error) {
+	show := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name != "systemctl" || strings.Join(args, " ") != readinessUnitArgv {
 			return nil, fmt.Errorf("unexpected unit query %s %q", name, args)
+		}
+		// As while a process starts, everything else due in the bubble runs
+		// first: a deadline that fell due with the tick has cancelled ctx.
+		synctest.Wait()
+		// exec.CommandContext starts nothing on a cancelled context.
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		return os.ReadFile(path)
 	}
