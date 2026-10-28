@@ -421,6 +421,91 @@ func TestBuildGroupRecipe_Deterministic(t *testing.T) {
 	}
 }
 
+// orderedGroupInputs is a project with more than one of everything the
+// composer reads as a list: runtimes and their stages, every kind of
+// variable, managed services, utilities, Boxes and the project's hostnames.
+func orderedGroupInputs() GroupRecipeInputs {
+	in := groupInputsFixture()
+	in.Runtimes[0].ZeropsYAMLBody = groupZeropsYAML + "      envVariables:\n        DB: ${db_hostname}\n        CACHE: ${cache_hostname}\n        BOX: http://box:8080\n"
+	in.Runtimes[0].ServiceEnvs = []ProjectEnvVar{{Key: "ZED", Value: "z"}, {Key: "ALPHA", Value: "a"}, {Key: "MAIL_SECRET", Value: "s"}}
+	in.Runtimes[0].Stages = []GroupStage{{Hostname: "apistage", ServiceType: "nodejs@22", ServiceEnvs: []ProjectEnvVar{{Key: "S_B", Value: "b"}, {Key: "S_A", Value: "a"}}}}
+	in.Runtimes = append(in.Runtimes, GroupRuntime{
+		DevHostname: "workerdev", Stages: []GroupStage{{Hostname: "workerstage", ServiceType: "nodejs@22"}}, ServiceType: "nodejs@22",
+		RepoURL: "https://git.example.com/acme/workerdev.git", SetupName: "api", ZeropsYAMLBody: groupZeropsYAML,
+		ServiceEnvs: []ProjectEnvVar{{Key: "W2", Value: "2"}, {Key: "W1", Value: "1"}},
+	})
+	in.ManagedServices = append(in.ManagedServices, ManagedServiceEntry{Hostname: "cache", Type: "valkey:single@7"}, ManagedServiceEntry{Hostname: "audit", Type: "postgresql:single@18"})
+	in.ProjectEnvs = []ProjectEnvVar{{Key: "ZETA", Value: "z"}, {Key: "APP_ENV", Value: "dev"}, {Key: "BETA", Value: "b"}}
+	in.Utilities = []GroupUtility{
+		{Hostname: "zutil", ServiceType: "nodejs@22", BuildFromGit: "https://github.com/acme/zutil", ServiceEnvs: []ProjectEnvVar{{Key: "B", Value: "b"}, {Key: "A", Value: "a"}}},
+		{Hostname: "autil", ServiceType: "nodejs@22", BuildFromGit: "https://github.com/acme/autil"},
+	}
+	in.Boxes = []GroupBox{{Hostname: "box", ServiceType: "box@1"}, {Hostname: "abox", ServiceType: "box@1"}}
+	in.ProjectHostnames = []string{"workerstage", "apidev", "db", "box", "cache", "audit", "apistage", "workerdev", "zutil", "autil", "abox"}
+	return in
+}
+
+// TestBuildGroupRecipe_AnyInputOrder_SameBytes: the platform answers a
+// project's services and variables in no promised order, and the recipe pass
+// runs after every call that changes what it reads, so a tier that moved with
+// that order would be pushed again — and judged again by Core — for nothing.
+// Every list the composer reads, reversed, composes the same bytes.
+func TestBuildGroupRecipe_AnyInputOrder_SameBytes(t *testing.T) {
+	t.Parallel()
+	reverseEnvs := func(envs []ProjectEnvVar) []ProjectEnvVar {
+		out := slices.Clone(envs)
+		slices.Reverse(out)
+		return out
+	}
+	tests := []struct {
+		name    string
+		reorder func(in *GroupRecipeInputs)
+	}{
+		{name: "runtimes", reorder: func(in *GroupRecipeInputs) { slices.Reverse(in.Runtimes) }},
+		{name: "a runtime's variables", reorder: func(in *GroupRecipeInputs) {
+			for i := range in.Runtimes {
+				in.Runtimes[i].ServiceEnvs = reverseEnvs(in.Runtimes[i].ServiceEnvs)
+			}
+		}},
+		{name: "a stage's variables", reorder: func(in *GroupRecipeInputs) {
+			in.Runtimes[0].Stages[0].ServiceEnvs = reverseEnvs(in.Runtimes[0].Stages[0].ServiceEnvs)
+		}},
+		{name: "the project's variables", reorder: func(in *GroupRecipeInputs) { in.ProjectEnvs = reverseEnvs(in.ProjectEnvs) }},
+		{name: "managed services", reorder: func(in *GroupRecipeInputs) { slices.Reverse(in.ManagedServices) }},
+		{name: "utilities and their variables", reorder: func(in *GroupRecipeInputs) {
+			slices.Reverse(in.Utilities)
+			for i := range in.Utilities {
+				in.Utilities[i].ServiceEnvs = reverseEnvs(in.Utilities[i].ServiceEnvs)
+			}
+		}},
+		{name: "Boxes", reorder: func(in *GroupRecipeInputs) { slices.Reverse(in.Boxes) }},
+		{name: "the project's hostnames", reorder: func(in *GroupRecipeInputs) { slices.Reverse(in.ProjectHostnames) }},
+	}
+	first, _, err := BuildGroupRecipe(orderedGroupInputs())
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := orderedGroupInputs()
+			tt.reorder(&in)
+			second, _, err := BuildGroupRecipe(in)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if len(second.Tiers) != len(first.Tiers) {
+				t.Fatalf("%d tiers, want %d", len(second.Tiers), len(first.Tiers))
+			}
+			for i := range first.Tiers {
+				if first.Tiers[i].ImportYAML != second.Tiers[i].ImportYAML {
+					t.Errorf("tier %q moved with the order of %s:\n%s\n--- was:\n%s", first.Tiers[i].Title, tt.name, second.Tiers[i].ImportYAML, first.Tiers[i].ImportYAML)
+				}
+			}
+		})
+	}
+}
+
 // A runtime whose zerops.yaml does not declare the setup it names is reported,
 // never fatal: this composes unattended in a reconcile, with nobody to ask.
 func TestBuildGroupRecipe_UnknownSetupWarnsNotFails(t *testing.T) {

@@ -16,11 +16,12 @@ import (
 // change onto Mate Web's empty recipe repository, and the second, composed
 // against that empty main, pushed a second root commit onto a change of its
 // own that HQ judged unrelated to main and could never land. Passes start
-// together within one zcp — its start (GroupRecipeAtStart) beside the
-// agent's ask — and across several, since a Mate runs a zcp per
-// conversation and each start is a pass. So the hold is an exclusive file
-// lock in the HQ state directory, which every zcp of the Mate shares and two
-// passes in one zcp each open on their own, held for the pass alone.
+// together within one zcp — its start (GroupRecipeAtStart), the pass a
+// service change asked for (RecipeFollower), the agent's ask — and across
+// several, since a Mate runs a zcp per conversation and each start is a
+// pass. So the hold is an exclusive file lock in the HQ state directory,
+// which every zcp of the Mate shares and two passes in one zcp each open on
+// their own, held for the pass alone.
 
 // recipePassLockFile is the lock, beside recipeRequiredFile: a name with a
 // dash, which no hostname has.

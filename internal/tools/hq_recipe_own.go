@@ -94,3 +94,37 @@ func recipeReplacements(ctx context.Context, comp groupRecipeComposition) ([]rec
 	}
 	return replaced, nil
 }
+
+// recipeHeldReplacements is replaced with each tier the Mate's open recipe
+// change (open) already proposes anew in the same shape as it holds it
+// there. A tier proposed anew is one an environment may be made from, so its
+// change may wait for a person (recipe_changes_environments), and every push
+// has Core judge it again and moves it in the person's list: its shape is why
+// it is proposed, and a scale the agent tried or a variable set again since
+// is no reason to push it again. What the change carries of those is what
+// the pass that found the shape composed. A tier whose shape changed again is
+// composed anew.
+func recipeHeldReplacements(ctx context.Context, comp groupRecipeComposition, open *hq.MateChange, replaced []recipe.File) ([]recipe.File, error) {
+	if len(replaced) == 0 || open == nil || open.Title == nil || *open.Title != hq.RecipeProposalTitle {
+		return replaced, nil
+	}
+	head, found, err := comp.scratch.Fetch(ctx, comp.hqc.BranchOf(open.Number, open.Branch))
+	if err != nil {
+		return nil, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", open.Number, hq.RecipeRepo, err)
+	}
+	if !found {
+		return replaced, nil
+	}
+	held := make([]recipe.File, 0, len(replaced))
+	for _, file := range replaced {
+		body, onChange, err := comp.scratch.File(ctx, head, file.Path)
+		if err != nil {
+			return nil, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", open.Number, hq.RecipeRepo, err)
+		}
+		if onChange && slices.Equal(bundle.TierShape(body), bundle.TierShape(file.Body)) {
+			file.Body = body
+		}
+		held = append(held, file)
+	}
+	return held, nil
+}

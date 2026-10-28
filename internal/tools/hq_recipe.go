@@ -117,7 +117,8 @@ type recipeOutcome struct {
 // running when this one's call ends, a push that moved the branch past this
 // one's, leaves a working project and a line saying so, and the next pass
 // tries again. A Mate that never gets its proposal through loses nothing but
-// the proposal. zcp's start in a Mate is one more pass (GroupRecipeAtStart).
+// the proposal. zcp's start in a Mate is one more pass (GroupRecipeAtStart),
+// and so is a tool call that changes what the recipe reads (RecipeFollower).
 //
 // Idempotent on CONTENT: the recipe is composed from live state on every
 // pass, and a branch that already holds the tree it would push is left as
@@ -140,10 +141,16 @@ func reconcileGroupRecipe(
 // GroupRecipeAtStart is the recipe pass zcp's start in a Mate runs
 // (server.New), off the startup path: a recipe no earlier pass got through
 // goes out without waiting for the next bootstrap or adopt. A start comes
-// with every agent session and nobody asked for it, so a proposal a person
-// closed unmerged is not opened again here; bootstrap, adopt and the
-// agent's ask still propose it.
+// with every agent session and nobody asked for it (groupRecipeUnasked).
 func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+	return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir)
+}
+
+// groupRecipeUnasked is a recipe pass nobody asked for — zcp's start in a
+// Mate, a tool call that changed what the recipe reads (RecipeFollower) — so
+// a proposal a person closed unmerged is not opened again here; bootstrap,
+// adopt and the agent's ask still propose it.
+func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
 	if hqc, linked := openHQ(httpClient, rt); linked {
 		if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
 			return ""
@@ -220,6 +227,11 @@ func groupRecipeOutcome(
 			if len(missing) == 0 && !recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
 				var err error
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
+					return nil, err
+				}
+				// One the change already proposes in that shape is pushed
+				// again only for a new one.
+				if replaced, err = recipeHeldReplacements(ctx, comp, open, replaced); err != nil {
 					return nil, err
 				}
 			}
@@ -750,9 +762,9 @@ func recipeEntries(files []recipe.File) []string {
 
 // handleGroupRecipe is the agent's way to ask for the recipe outright
 // (`zerops_workflow action="group-recipe"`). The reconcile already runs on
-// every bootstrap and adopt pass, so this exists for the other direction: a
-// person says "propose the recipe now", or wants the change's address after
-// a service change, without waiting for the next pass.
+// every bootstrap and adopt pass and after every service change, so this
+// exists for the other direction: a person says "propose the recipe now", or
+// wants the change's address, without waiting for the next pass.
 //
 // Same code path as the reconcile — there is no second composer and no second
 // idempotence rule. What differs is the reporting: a pass that changed nothing
