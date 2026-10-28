@@ -231,8 +231,23 @@ type LaunchBundleInputs struct {
 	// HA-capable type unless its Hostname is in KeepNonHA. Single-only/storage
 	// services retain their exact source type.
 	// Composer deduplicates by hostname so multiple runtimes sharing
-	// infra get one entry each.
+	// infra get one entry each. The source's Swarm pools and Zerops Boxes
+	// ride here too, told by type: a pool is never carried, a Box only where
+	// a launched runtime reads it (P-LP-19).
 	ManagedServices []ManagedServiceEntry
+	// ProjectHostnames — the hostname of every service the source project
+	// runs, launched or not (discover's whole list). A launched runtime whose
+	// setup reads one the bundle does not carry refuses the launch
+	// (P-LP-19); a name none of them has — a project variable, a runtime's
+	// production hostname — is no service. The ManagedServices hostnames
+	// count whether listed here or not.
+	ProjectHostnames []string
+	// TargetHostnames — the services the existing production project
+	// already runs (VariantLaunchExisting: the target's listing, and every
+	// hostname a skip merge (P-LP-12) leaves as production runs it). A
+	// launched runtime that reads one reads a service production has, so
+	// the closure check counts it carried.
+	TargetHostnames []string
 	// KeepNonHA — opt-out: HA-capable managed service hostnames the user
 	// explicitly wants to stay NON_HA in prod. Storage/single-only services are
 	// not choices here.

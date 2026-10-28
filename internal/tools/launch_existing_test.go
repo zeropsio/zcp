@@ -110,6 +110,65 @@ func TestLaunchExistingProject_SurfacesBundleWarnings(t *testing.T) {
 	}
 }
 
+// The closure check (spec-workflows.md §10.3 P-LP-19) counts carried what an
+// existing production project already runs: a launched runtime whose setup
+// mails through the source project's mail catcher — a runtime the launch
+// does not carry — launches into a project that runs a `mailpit`, and is
+// refused, before any env or import, into one that does not.
+func TestLaunchExistingProject_ReadOfAServiceTheTargetRuns_Launches(t *testing.T) {
+	// non-parallel: setExistingProdTokenClientFactory mutates package state.
+	mailpit := platform.ServiceStack{
+		ID: "svc-mailpit", Name: "mailpit", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "alpine@3.21", ServiceStackTypeCategoryName: "USER"},
+	}
+	app := platform.ServiceStack{
+		ID: "svc-app", Name: "app", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeID: "nodejs", ServiceStackTypeVersionName: "nodejs@22"},
+	}
+	tests := []struct {
+		name       string
+		target     []platform.ServiceStack
+		wantLaunch bool
+	}{
+		{name: "the target runs it", target: []platform.ServiceStack{mailpit}, wantLaunch: true},
+		{name: "the target does not run it"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+			sourceClient := pLP3MockClient().WithServices([]platform.ServiceStack{app, mailpit})
+			ssh := pLP3SSHFrozen()
+			ssh.responses["/var/www/zerops.yaml"] = []byte("zerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n      start: node dist/server.js\n      envVariables:\n        MAIL_URL: smtp://mailpit:1025\n")
+			targetMock := existingTargetMock(expectedExistingProjectID, tt.target)
+			defer setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
+				return targetMock, nil
+			})()
+
+			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
+				existingCompleteInput(), stateDir, pLP3ContainerRuntime(), ssh, "")
+			if err != nil {
+				t.Fatalf("handleLaunchProduction: %v", err)
+			}
+			text := extractText(result)
+			if tt.wantLaunch {
+				if targetMock.CapturedImportYAML == "" {
+					t.Fatalf("ImportServices was not called; the read of a service production runs must not refuse the launch:\n%s", text)
+				}
+				return
+			}
+			if targetMock.CapturedImportYAML != "" {
+				t.Errorf("ImportServices ran though production runs no mailpit")
+			}
+			for _, want := range []string{"bundle-compose-failed", "run.envVariables.MAIL_URL", `\"mailpit\"`} {
+				if !strings.Contains(text, want) {
+					t.Errorf("refusal does not say %s:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
+
 // TestLaunchExistingProject_TokenScopeMismatch_Refuses pins the
 // validateExistingProdTokenScope gate (§6.6 step 2): a token that
 // authenticates and resolves to exactly one project, but that

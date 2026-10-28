@@ -416,6 +416,9 @@ func handleLaunchProduction(
 	var haveCurrent bool
 	var readyBundle *ops.LaunchBundle
 	var readyBundleInputs ops.LaunchBundleInputs
+	// readyComposeErr is the composer's refusal of the bundle publish would
+	// build (P-LP-19): ready-to-launch answers it before any key is asked.
+	var readyComposeErr error
 	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
 	if len(resolvedForBaseline) > 0 {
 		_, transientRead, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false)
@@ -461,12 +464,14 @@ func handleLaunchProduction(
 				bundleInputs.Location = input.Region
 				bundleInputs.LaunchID = launchID
 				if composeErr == nil {
-					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
+					b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications)
+					if bundleErr == nil {
 						current = b.SourceSnapshot
 						haveCurrent = true
 						readyBundle = b
 						readyBundleInputs = bundleInputs
 					}
+					readyComposeErr = bundleErr
 				}
 			}
 		}
@@ -515,6 +520,25 @@ func handleLaunchProduction(
 	}
 
 	if !publishing {
+		// Nothing here asks for a key before a refusal that is certain
+		// (spec-workflows.md §10.3 P-LP-19), and no baseline is written for
+		// a bundle the composer refuses. The production project is not
+		// chosen yet — an existing one comes only with existingProjectId +
+		// existingProdToken, which publish straight away — so a read of a
+		// service the bundle does not carry refuses a new project for
+		// certain but not an existing project that runs it: warnings, the
+		// existing-project path, and no new-project key or delegation.
+		var closure *bundle.LaunchClosureError
+		if errors.As(readyComposeErr, &closure) {
+			return launchClosureGapResponse(input, sourceContext, closure), nil, nil
+		}
+		// Any other refusal — a Box outside its region, a setup the
+		// zerops.yaml lacks — refuses every launch: it blocks HERE, with
+		// the same blocker publish fails with.
+		if readyComposeErr != nil {
+			return launchSourceControlRequiredResponse(input, sourceContext,
+				[]topology.Blocker{bundleComposeBlocker(readyComposeErr)}), nil, nil
+		}
 		// Persist the ready-to-launch baseline on first transition when
 		// the source state was readable. Idempotent: subsequent calls
 		// without publish credentials reuse the existing baseline rather
@@ -904,9 +928,8 @@ func executeLaunchMutation(
 			Result:            "failure",
 			ErrorMessage:      "bundle compose: " + err.Error(),
 		})
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"bundle-compose-failed",
-			"Launch bundle composition failed: "+err.Error()), nil, nil
+		blocker := bundleComposeBlocker(err)
+		return launchFailedResponse(corpus, blocker.Category, blocker.ID, blocker.Message), nil, nil
 	}
 	launchBundle.Warnings = append(launchBundle.Warnings, composeWarnings...)
 	if len(launchBundle.Errors) > 0 {
@@ -1913,7 +1936,7 @@ type launchBundlePreview struct {
 type launchPreviewService struct {
 	Hostname string `json:"hostname"`
 	Type     string `json:"type"`
-	Role     string `json:"role"` // runtime | managed
+	Role     string `json:"role"` // runtime | managed | box
 	Mode     string `json:"mode,omitempty"`
 	Setup    string `json:"setup,omitempty"`
 	// SetupProvenance (runtime role only) names which cascade source
@@ -1985,7 +2008,21 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	var unreferenced []string
 	hasUnreferencedLocalStorage := false
 	hasUnreferencedConnectionService := false
+	carriedBoxes := make(map[string]bool, len(b.Boxes))
+	for _, h := range b.Boxes {
+		carriedBoxes[h] = true
+	}
 	for _, m := range inputs.ManagedServices {
+		// A pool or a Box is no managed service the import creates: a Box the
+		// bundle carries is listed as a Box (P-LP-19), once; a pool, or a Box
+		// it leaves out, only in the warnings.
+		if topology.IsPoolOrSandboxType(m.Type) {
+			if carriedBoxes[m.Hostname] {
+				preview.Services = append(preview.Services, launchPreviewService{Hostname: m.Hostname, Type: m.Type, Role: "box"})
+				delete(carriedBoxes, m.Hostname)
+			}
+			continue
+		}
 		// Single owner with the import-yaml composer: the preview shows the
 		// SAME resolved variant type the bundle emits (postgresql:ha@16), never
 		// the old hand-paired raw-type + sibling mode (postgresql@16 + mode:HA,
@@ -2101,6 +2138,62 @@ func launchSourceControlBlockerResponse(corpus []workflow.KnowledgeAtom, msg str
 			Category: topology.BlockerCategorySourceControl,
 			Message:  msg,
 		}},
+	})
+}
+
+// bundleComposeBlocker is a launch bundle the composer refuses, as the
+// block-severity blocker that carries the composer's own message
+// (spec-workflows.md §10.3 P-LP-19): ready-to-launch returns it before any
+// key is asked, and publish fails with the same one.
+func bundleComposeBlocker(err error) topology.Blocker {
+	return topology.Blocker{
+		ID:       "bundle-compose-failed",
+		Severity: topology.BlockerSeverityBlock,
+		Category: topology.BlockerCategoryOther,
+		Message:  "Launch bundle composition failed: " + err.Error(),
+	}
+}
+
+// launchClosureGapResponse is ready-to-launch for a bundle whose launched
+// runtime reads a service it does not carry, while the production project
+// is not chosen yet (spec-workflows.md §10.3 P-LP-19). A new project is
+// certain to be refused, so it offers no key, no delegation and no preview
+// of one; an existing project that runs each service under that name is
+// not, so each service is a warning — the reads that name it, and that
+// production must run it — and the guidance points at the existing-project
+// path, whose publish counts the target's services and decides.
+func launchClosureGapResponse(input WorkflowInput, sourceCtx *launchSourceContext, closure *bundle.LaunchClosureError) *mcp.CallToolResult {
+	var services []string
+	reads := map[string][]string{}
+	for _, gap := range closure.Gaps {
+		if _, seen := reads[gap.Service]; !seen {
+			services = append(services, gap.Service)
+		}
+		read := gap.Read
+		if gap.Why != "" {
+			read += ", " + gap.Why
+		}
+		reads[gap.Service] = append(reads[gap.Service], read)
+	}
+	blockers := make([]topology.Blocker, 0, len(services))
+	for _, svc := range services {
+		blockers = append(blockers, topology.Blocker{
+			ID:       "production-must-run-" + svc,
+			Severity: topology.BlockerSeverityWarn,
+			Category: topology.BlockerCategoryOther,
+			Message: fmt.Sprintf(
+				"%s: production must run %q under that name. A new production project will not, so a new-project launch is refused; an existing production project that already runs %q can take this launch.",
+				strings.Join(reads[svc], "; "), svc, svc),
+		})
+	}
+	return jsonResult(launchProductionResponse{
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusReadyToLaunch,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      "A launched runtime reads a service this launch does not carry — each warning names the runtime, the variable and the service production must run under that name. A new production project would be refused for certain, so do NOT ask the person for a launch token and do NOT confirm a delegated launch. The launch can go ahead into an existing production project that already runs every named service: re-call with existingProjectId and existingProdToken — that path reads the project's services first and refuses before anything is imported if one is missing. Otherwise carry the service (include the managed dependency, launch the runtime that serves it) or stop the setup reading it, then re-call.",
+		Blockers:      blockers,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
 	})
 }
 
