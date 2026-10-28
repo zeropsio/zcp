@@ -18,7 +18,7 @@ import (
 
 // TestMain also trusts, once and before any test, the certificate of the
 // HTTPS origins the pool-keyed part's tests serve (origintest): zcp's origin
-// scratch speaks https alone (docs/spec-workflows.md §10 P-LP-19).
+// scratch speaks https alone (docs/spec-workflows.md §10 P-LP-20).
 func TestMain(m *testing.M) {
 	os.RemoveAll(".zcp")
 	dir, err := os.MkdirTemp("", "zcp-integration-test-")

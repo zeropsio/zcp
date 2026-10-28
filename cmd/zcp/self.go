@@ -37,7 +37,7 @@ const selfUsage = "usage: zcp self restart [--json] | zcp self launch-token"
 // secret-to-secret — `_v=$(zcp self launch-token)` — so it never enters a
 // conversation. A part keyed by its dev pool stages its launch token on
 // zcp's own service, and the production Actions block's secret command
-// reads it here (P-LP-20).
+// reads it here (P-LP-21).
 const selfLaunchTokenUsage = "usage: zcp self launch-token"
 
 // selfRestartTimeout bounds the one API call the restart is.

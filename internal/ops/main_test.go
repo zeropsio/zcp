@@ -11,7 +11,7 @@ import (
 // TestMain trusts, once for the whole package and before any test, the
 // certificate of the HTTPS origins the origin-scratch tests serve
 // (origintest): zcp's origin scratch speaks https alone
-// (docs/spec-workflows.md §10 P-LP-19). Never changed after, so it is no
+// (docs/spec-workflows.md §10 P-LP-20). Never changed after, so it is no
 // state the tests share.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "zcp-ops-test-")

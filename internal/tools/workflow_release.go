@@ -46,7 +46,7 @@ const releaseFirstVersion = "v1.0.0"
 //
 // A pair keyed by its dev pool has no checkout: its release tags the
 // origin's tracked tip itself (releasePoolPart, docs/spec-workflows.md
-// §10 P-LP-20), through client and projectID for the pool's GIT_TOKEN.
+// §10 P-LP-21), through client and projectID for the pool's GIT_TOKEN.
 func handleRelease(
 	ctx context.Context,
 	client platform.Client,
@@ -80,7 +80,7 @@ func handleRelease(
 	}
 	// A pair keyed by its dev pool has no checkout to read the pushed HEAD
 	// from or tag (docs/spec-workflows.md §13 PM-10): its release tags the
-	// origin's tracked tip, never the pool (§10 P-LP-20).
+	// origin's tracked tip, never the pool (§10 P-LP-21).
 	if meta.DevIsPool() {
 		return releasePoolPart(ctx, poolPartOriginDeps{client: client, rt: rt, projectID: projectID}, meta, input), nil, nil
 	}
@@ -174,9 +174,9 @@ func handleRelease(
 }
 
 // releasePoolPart is the release of a pair keyed by its dev pool
-// (docs/spec-workflows.md §10 P-LP-20), from either hostname: the pair has no
+// (docs/spec-workflows.md §10 P-LP-21), from either hostname: the pair has no
 // checkout, so the release tags the origin's tracked tip itself — the commit
-// launch reads (P-LP-19), pushed by definition, so the clean-tree and
+// launch reads (P-LP-20), pushed by definition, so the clean-tree and
 // pushed-head proof a checkout needs has nothing to prove. The same two
 // calls as every release: release-prompt names the tip — its full commit —
 // the origin's release tags and the next version; the re-call carries that

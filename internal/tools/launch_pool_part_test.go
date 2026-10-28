@@ -2,7 +2,7 @@
 // tools/launch_bundle_compose.go, tools/workflow_launch_production.go,
 // tools/pool_part_origin.go — a part whose pair is keyed by its dev pool
 // launches from its origin and its stage (docs/spec-workflows.md §10
-// P-LP-17, P-LP-19): the source is the recorded origin at the tracked ref,
+// P-LP-17, P-LP-20): the source is the recorded origin at the tracked ref,
 // read in a scratch repository of zcp's own, and nothing reaches the pool,
 // a lease or the stage over ssh.
 package tools

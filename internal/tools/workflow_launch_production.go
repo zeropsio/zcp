@@ -136,7 +136,7 @@ func handleLaunchProduction(
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
 	// A pool-keyed part's origin is fetched once per call, whichever reader
-	// asks first (§10 P-LP-19).
+	// asks first (§10 P-LP-20).
 	ctx = withOriginReads(ctx)
 	if client == nil {
 		return convertError(platform.NewPlatformError(
@@ -238,7 +238,7 @@ func handleLaunchProduction(
 	// the publish-side gate after the key is spent.
 	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
 	// A part whose pair is keyed by its dev pool has no push source to read:
-	// the gate reads its origin instead (§10 P-LP-17, P-LP-19).
+	// the gate reads its origin instead (§10 P-LP-17, P-LP-20).
 	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
 		ctx, client, sshDeployer, rt, stateDir, projectID,
 		readSideRuntimes, input.SkipBuildIntegration,
@@ -1418,7 +1418,7 @@ func readAndValidateSourceState(
 	}
 
 	// A part whose pair is keyed by its dev pool is read from its origin and
-	// its stage, never the pool (§10 P-LP-17, P-LP-19).
+	// its stage, never the pool (§10 P-LP-17, P-LP-20).
 	var source *LaunchSourceState
 	var err error
 	if meta, _ := workflow.FindServiceMeta(stateDir, input.TargetService); meta.DevIsPool() {
@@ -2432,7 +2432,7 @@ jobs:
 	// token that didn't propagate no longer silently writes an empty repo secret.
 	// A pair keyed by its dev pool has no push source to read GIT_TOKEN from
 	// over ssh: its launch token is staged on zcp's own service, and GH_TOKEN
-	// is the PAT the person gives (docs/spec-workflows.md §10 P-LP-20).
+	// is the PAT the person gives (docs/spec-workflows.md §10 P-LP-21).
 	if meta.DevIsPool() {
 		return poolPartProdCDActionsBlock(meta, state, workflowYAML, ownerRepo)
 	}
@@ -2461,7 +2461,7 @@ jobs:
 }
 
 // poolPartProdCDActionsBlock is prodCDActionsBlock for a launched part whose
-// pair is keyed by its dev pool (docs/spec-workflows.md §10 P-LP-20): the
+// pair is keyed by its dev pool (docs/spec-workflows.md §10 P-LP-21): the
 // same workflow file; the secret command conveys the launch token from where
 // it is staged — zcp's own service, read by `zcp self launch-token` in this
 // container, no ssh (a launch outside a container staged it on the stage,

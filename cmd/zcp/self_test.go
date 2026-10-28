@@ -286,7 +286,7 @@ func TestRunSelfCmd_BadArguments_NothingRestarted(t *testing.T) {
 // prints the launch token staged on this service — read from the live env
 // store, where a value staged after the container started lands — and
 // nothing else, for a command to take it secret-to-secret
-// (docs/spec-workflows.md §10 P-LP-17, P-LP-20); with none staged it prints
+// (docs/spec-workflows.md §10 P-LP-17, P-LP-21); with none staged it prints
 // nothing and exits 1. It reaches no platform client.
 func TestSelfLaunchToken_PrintsTheStagedTokenAlone(t *testing.T) {
 	t.Parallel()

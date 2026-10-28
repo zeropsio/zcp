@@ -1,6 +1,6 @@
 // Tests for: tools/pool_part_origin.go — the origin of a pool-keyed part
 // whose repository is in this container's HQ is read there, on main,
-// through the Mate credential (docs/spec-workflows.md §10 P-LP-19).
+// through the Mate credential (docs/spec-workflows.md §10 P-LP-20).
 package tools
 
 import (

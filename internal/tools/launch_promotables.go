@@ -37,7 +37,7 @@ type resolvedLaunchRuntime struct {
 	// DevIsPool marks a runtime whose pair is keyed by its dev pool
 	// (ServiceMeta.DevIsPool): PushHostname then names the pool, which has
 	// no checkout to read — the source is the pair's origin instead
-	// (docs/spec-workflows.md §10 P-LP-17, P-LP-19; §13 PM-10).
+	// (docs/spec-workflows.md §10 P-LP-17, P-LP-20; §13 PM-10).
 	DevIsPool bool
 	// RuntimeHostname is the live runtime the production runtime is
 	// promoted from — its type, user env and scale — and the service the

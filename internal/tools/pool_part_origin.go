@@ -19,7 +19,7 @@ import (
 // A part whose pair is keyed by its dev pool (docs/spec-workflows.md §13
 // PM-10) has no push-source checkout: the pool's hostname reaches a random
 // one of its containers, possibly someone's lease (§8 PS-3). Launch and
-// export read such a part from its origin instead (§10 P-LP-19, §9 E10): the
+// export read such a part from its origin instead (§10 P-LP-20, §9 E10): the
 // pair's recorded origin at the ref production builds, fetched into a
 // scratch repository of zcp's own — deterministic, and never a container.
 
@@ -64,7 +64,7 @@ func (e *poolPartOriginError) Error() string {
 }
 
 // originReads is one tool call's reads of pool-keyed parts' origins
-// (docs/spec-workflows.md §10 P-LP-19): each origin's tip is fetched once per
+// (docs/spec-workflows.md §10 P-LP-20): each origin's tip is fetched once per
 // call and every reader of the call — the read-side gate, the source read,
 // the baseline, the publish-side gate, export — shares it, and its failure.
 // It rides the call's context (withOriginReads), never a package variable.

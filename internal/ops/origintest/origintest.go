@@ -1,6 +1,6 @@
 // Package origintest serves bare git repositories over smart HTTPS for the
-// tests of zcp's origin reads and tags (docs/spec-workflows.md §10 P-LP-19,
-// P-LP-20): git's own http-backend behind an httptest TLS server. zcp's
+// tests of zcp's origin reads and tags (docs/spec-workflows.md §10 P-LP-20,
+// P-LP-21): git's own http-backend behind an httptest TLS server. zcp's
 // origin scratch speaks https alone, so a test's origin is one of these, and
 // the test process trusts httptest's fixed certificate (TrustCA, once, in the
 // package's TestMain). Only tests import it.

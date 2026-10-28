@@ -929,7 +929,7 @@ func ghSecretSetFromStagedSecret(pushHost, name, valueEnvKey, ownerRepo string) 
 
 // ghSecretSetFromStagedSecretWithPAT is ghSecretSetFromStagedSecret for a
 // launched part whose pair is keyed by its dev pool (docs/spec-workflows.md
-// §10 P-LP-20): the staged value is read over ssh from stageHost — a runtime
+// §10 P-LP-21): the staged value is read over ssh from stageHost — a runtime
 // of its own, never the pool, whose hostname reaches a random container —
 // and GH_TOKEN is the PAT the user provides, as the pair's build-integration
 // conveys it. The staged value is guarded for emptiness as there.

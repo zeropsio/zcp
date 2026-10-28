@@ -1,5 +1,5 @@
 // Tests for: ops/origin_tip.go — the read of an origin's ref without any
-// checkout (docs/spec-workflows.md §10 P-LP-19): one shallow fetch in a
+// checkout (docs/spec-workflows.md §10 P-LP-20): one shallow fetch in a
 // scratch repository of zcp's own, the fetched commit and its root
 // zerops.yaml (else zerops.yml), the credential in git's environment alone,
 // the branch named so a like-named tag never wins, https alone, a named and

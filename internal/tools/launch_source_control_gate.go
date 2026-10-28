@@ -75,7 +75,7 @@ const (
 	gateCheckSourceReadFailed sourceControlGateCheck = "source-read-failed"
 	// gateCheckOriginUnreadable fires for a part whose pair is keyed by its
 	// dev pool when its origin could not be read (docs/spec-workflows.md
-	// §10 P-LP-19): such a pair has no checkout, so checks 3a-5 are one read
+	// §10 P-LP-20): such a pair has no checkout, so checks 3a-5 are one read
 	// of the origin, and its failure names the origin, the ref, git's words
 	// and what to fix — never remote-mismatch or head-not-pushed, which
 	// name a checkout. Hard-block.
@@ -125,7 +125,7 @@ type LaunchSourceControlCheck struct {
 	// diagnosis.
 	ReadFailure string
 	// Origin is what the gate read of a part whose pair is keyed by its
-	// dev pool (docs/spec-workflows.md §10 P-LP-19): the origin's commit
+	// dev pool (docs/spec-workflows.md §10 P-LP-20): the origin's commit
 	// and zerops.yaml at the tracked ref. The composer builds the bundle
 	// from this read, so the commit a launch carries is the one the gate
 	// read. nil for every other pair.
@@ -197,7 +197,7 @@ func validateLaunchSourceControl(
 	// A pair keyed by its dev pool has no push-source checkout: every check
 	// below reads one over ssh, and the pool's hostname reaches a random one
 	// of its containers (docs/spec-workflows.md §10 P-LP-17, §13 PM-10). Its
-	// source is its origin instead (P-LP-19), read without any container.
+	// source is its origin instead (P-LP-20), read without any container.
 	if meta.DevIsPool() {
 		return validatePoolPartSourceControl(ctx, client, sshDeployer, rt, projectID, hostname, meta, skipBuildIntegration)
 	}
@@ -354,7 +354,7 @@ func runBuildIntegrationCheck(
 }
 
 // validatePoolPartSourceControl is the gate for a part whose pair meta is
-// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-19). A
+// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-20). A
 // pair with no stage has no runtime to promote and is refused before any
 // read. Checks 1-2 — a configured origin recorded — and checks 3a-5 —
 // reads of a checkout the pair does not have — are one read of its origin

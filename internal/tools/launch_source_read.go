@@ -144,7 +144,7 @@ func readSourceState(
 }
 
 // readPoolPartSourceState is readSourceState for a part whose pair meta is
-// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-19): the
+// keyed by its dev pool (docs/spec-workflows.md §10 P-LP-17, P-LP-20): the
 // runtime is the pair's stage — the one choice names, else its first — and
 // the source its origin (readPoolPartOrigin). Nothing is read in a
 // container: the pool's hostname reaches a random one of its containers.

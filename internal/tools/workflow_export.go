@@ -61,7 +61,7 @@ func handleExport(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
-	// A pool-keyed part's origin is fetched once per call (§9 E10, §10 P-LP-19).
+	// A pool-keyed part's origin is fetched once per call (§9 E10, §10 P-LP-20).
 	ctx = withOriginReads(ctx)
 	if client == nil {
 		return convertError(platform.NewPlatformError(
@@ -343,7 +343,7 @@ func exportCheckoutSource(
 }
 
 // exportPoolPartSource reads target, the stage of a pair keyed by its dev
-// pool, from the pair's origin (§9 E10, §10 P-LP-19) — never the pool, a
+// pool, from the pair's origin (§9 E10, §10 P-LP-20) — never the pool, a
 // lease or the stage. An origin it cannot read, or whose ref holds no
 // zerops.yaml, is refused naming what to fix; E5's cache refresh does not
 // apply: the recorded origin is what the pool's leases clone.

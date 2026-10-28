@@ -1,7 +1,7 @@
 // Tests for: ops/origin_tip.go — the release of a pool-keyed part tags the
 // commit its prompt showed on the origin, only while it is still the tip
-// (docs/spec-workflows.md §10 P-LP-20), pushing with the token in git's
-// environment; and no failing origin read ever surfaces the token (P-LP-19).
+// (docs/spec-workflows.md §10 P-LP-21), pushing with the token in git's
+// environment; and no failing origin read ever surfaces the token (P-LP-20).
 package ops
 
 import (

@@ -31,7 +31,7 @@ import (
 // boundary, composer trusts the validated value).
 //
 // A runtime whose pair is keyed by its dev pool (docs/spec-workflows.md
-// §10 P-LP-17, P-LP-19) has no checkout to read: its zerops.yaml and commit
+// §10 P-LP-17, P-LP-20) has no checkout to read: its zerops.yaml and commit
 // are the origin read its gate check carries, and its type, user env and
 // scale are its stage's (launchRuntimeHost) — nothing is read in a
 // container.
@@ -256,7 +256,7 @@ func poolAndSandboxEntries(discover *ops.DiscoverResult) []ops.ManagedServiceEnt
 
 // composeRuntimeSource is the zerops.yaml and commit a runtime is built
 // from: for a pair keyed by its dev pool the origin read its gate check
-// carries (P-LP-19) — the commit launch carries is the one the gate read —
+// carries (P-LP-20) — the commit launch carries is the one the gate read —
 // else the push source's checkout (readLaunchRuntimeSource).
 func composeRuntimeSource(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, r resolvedLaunchRuntime, check *LaunchSourceControlCheck) (string, string, error) {
 	if !r.DevIsPool {

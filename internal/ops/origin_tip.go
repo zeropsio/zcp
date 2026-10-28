@@ -17,8 +17,8 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// An origin read without any checkout (docs/spec-workflows.md §10 P-LP-19,
-// P-LP-20): what a part whose dev half is a dev pool is launched, exported
+// An origin read without any checkout (docs/spec-workflows.md §10 P-LP-20,
+// P-LP-21): what a part whose dev half is a dev pool is launched, exported
 // and released from. A pool has no checkout of its own — its hostname
 // reaches a random one of its containers — so zcp works on the part's origin
 // itself: a scratch repository in its own process, never a container.
@@ -138,7 +138,7 @@ func ReadOriginTags(ctx context.Context, remoteURL, pattern, token string) ([]st
 // — with an annotated tag named tag, by zcp's deploy identity
 // (DeployGitIdentity) with message, and pushes it to the origin, answering
 // the tip it tagged: the release of a pool-keyed part (docs/spec-workflows.md
-// §10 P-LP-20), whose pushed state is the origin's tip itself. The ref is
+// §10 P-LP-21), whose pushed state is the origin's tip itself. The ref is
 // fetched again first: a tip that is no longer commit is ErrOriginTipMoved,
 // naming both, and nothing is tagged. A tag the origin already holds is
 // ErrOriginTagExists, never moved. Credential and failures as ReadOriginTip.

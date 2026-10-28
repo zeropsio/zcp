@@ -1,12 +1,12 @@
 // Tests for: tools/workflow_release.go, tools/workflow_launch_production.go,
 // tools/launch_reset.go, tools/pool_part_origin.go — a launched pool-keyed
 // part is delivered as every other part is (docs/spec-workflows.md §10
-// P-LP-20): its release tags the commit its prompt showed on the origin,
+// P-LP-21): its release tags the commit its prompt showed on the origin,
 // only while it is still the tip, and the launched response carries the
 // production Actions block. The launch token is staged on zcp's own service
 // and recorded where it lands (P-LP-17); the origin is fetched once per tool
 // call over HTTPS, and no failing fetch surfaces the pool's GIT_TOKEN
-// (P-LP-19). Every origin is served over HTTPS (origintest), with the pool's
+// (P-LP-20). Every origin is served over HTTPS (origintest), with the pool's
 // token required where the test says so.
 package tools
 
