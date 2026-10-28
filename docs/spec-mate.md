@@ -313,6 +313,18 @@ now-off flag has to remove — so a container that never had mate prints not one
    `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
    (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
+5. **Running Mate.** Under the shared install lock, ask systemd whether the registered
+   unit is active. Stage and smoke a newer release while keeping `current` unchanged, then
+   use the updater's protocol-1 drain with `automatic:false`. Only a proved idle admission
+   barrier permits `mate.SwitchUpdate`: persist the switch, release the lock, request a
+   nonblocking restart, prove the exact version on a new healthy boot, and commit admission.
+   A refusal, absent protocol, or drain deadline postpones the change without restarting
+   the running Mate. Environment-only restarts use the same barrier and readiness proof.
+   An inactive unit starts the installed version immediately; first registration starts
+   through `zsc unit create`. An unchanged running version still receives the boot readiness
+   proof before advancing `last-good` (§2.1d).
+   `TestRun_Mate_InitDrain`, `TestRun_Mate_ActiveUnchanged_CommitsBootLastGood`.
+
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
 command, and mate must never take a container start down with it. When the bundle cannot be had **no

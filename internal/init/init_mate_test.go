@@ -58,6 +58,9 @@ func newMateRig(t *testing.T) *mateRig {
 	rig.needReload = "no"
 	zcpinit.SetCommandOutput(func(name string, args ...string) ([]byte, error) {
 		rig.queries = append(rig.queries, append([]string{name}, args...))
+		if len(args) > 0 && args[0] == "is-active" {
+			return []byte("inactive\n"), nil
+		}
 		return []byte(rig.needReload + "\n"), nil
 	})
 	zcpinit.SetMateUnitFilePath(rig.unitPath)

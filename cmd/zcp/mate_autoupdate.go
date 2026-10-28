@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -124,23 +123,9 @@ func runMateUpdateWorker(args []string) int {
 	if err := mate.WriteUpdateState(state); err != nil {
 		return failMateUpdate(false, err.Error())
 	}
-	body, err := json.Marshal(struct {
-		Version    string `json:"version"`
-		DeadlineMS int    `json:"deadlineMs"`
-		Automatic  bool   `json:"automatic"`
-	}{desired.Version, 600000, automatic})
+	drain, err := mate.DrainUpdate(desired.Version, automatic)
 	if err != nil {
-		return postpone(err)
-	}
-	var drain mate.UpdateReadiness
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Minute+time.Second)
-	err = mate.UpdateRequest(ctx, "drain", body, &drain)
-	cancel()
-	if err != nil || drain.Protocol != 1 || !drain.Drained || drain.BootID == "" {
 		_ = mateUpdatePost("cancel")
-		if err == nil {
-			err = fmt.Errorf("mate did not prove idle before drain deadline")
-		}
 		return postpone(err)
 	}
 	current, currentErr := mate.InstalledVersion()

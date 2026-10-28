@@ -1,6 +1,7 @@
 package init
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -127,24 +128,44 @@ func enableMate(rt runtime.Info) error {
 		return errors.New("no projectId in the container environment — mate has no Zerops project to bind to")
 	}
 
-	// The install and the restart decision run under the install lock the
-	// unit's own start takes (`zcp service start mate`): a unit that started
-	// first has installed the release and this finds nothing to do; one that
-	// starts while this installs waits, then starts the new release once — so
-	// a restart here only ever stops a server on the old release, or a start
-	// still waiting on the lock. A lock held past the wait never fails the
-	// container start: the step degrades without changing the installer's files.
+	// Serialize staging and switching with both the updater and unit startup.
 	release, lockErr := mate.LockInstall(mateLockWait)
 	if lockErr != nil {
 		return fmt.Errorf("mate install postponed: %w", lockErr)
 	}
 	defer release()
+	// An unfinished updater switch owns startup and readiness. Use the same
+	// recovery authority as the installer before changing its environment.
+	if skip, err := mate.PrepareUpdateBoot(); err != nil {
+		return fmt.Errorf("prepare Mate boot: %w", err)
+	} else if skip {
+		return nil
+	}
+
+	unitExisted := mateUnitFileExists()
+	running, err := runningMate(unitExisted)
+	if err != nil {
+		return fmt.Errorf("determine Mate activity: %w", err)
+	}
+	var envChanged bool
+	opts := mate.EnsureOptions{Refresh: true}
+	if running {
+		// The candidate must launch with the reconciled environment.
+		envChanged, err = writeMateEnv(rt)
+		if err != nil {
+			return fmt.Errorf("write running Mate environment: %w", err)
+		}
+		reloadMateUnitIfChanged()
+		opts.Activate = func(candidate mate.Manifest) error {
+			return switchRunningMate(candidate, release)
+		}
+	}
 
 	// A boot reads the release manifest afresh: the cache is an hour old at
 	// most, and a restart inside that hour kept the previous Mate build for
 	// the rest of it (the owner's runs, 2026-09-17). An unreachable manifest
 	// falls back to the cache, then to what is installed.
-	result, err := mateEnsureInstalled(mate.EnsureOptions{Refresh: true})
+	result, err := mateEnsureInstalled(opts)
 	if err != nil {
 		return fmt.Errorf("ensure mate bundle: %w", err)
 	}
@@ -155,27 +176,33 @@ func enableMate(rt runtime.Info) error {
 		return fmt.Errorf("bundle still absent after %s: %w", result.Action, err)
 	}
 
-	unitExisted := mateUnitFileExists()
-
-	envChanged, err := writeMateEnv(rt)
-	if err != nil {
-		return err
+	if !running {
+		envChanged, err = writeMateEnv(rt)
+		if err != nil {
+			return err
+		}
 	}
 	if err := ensureMateUnit(); err != nil {
 		return err
 	}
-	reloadMateUnitIfChanged()
+	if !running {
+		reloadMateUnitIfChanged()
+	}
 
-	// A unit that was ALREADY running is serving whatever was on disk when it
-	// started — and it starts at boot on its own, from `WantedBy=multi-user
-	// .target`, without waiting for this command. A bundle this step just
-	// changed, or an env contract it just rewrote, reaches the running server
-	// only if something restarts it here — otherwise a new bundle
-	// lands on disk and serves from the NEXT restart, which is not what
-	// "a restart is also an upgrade" promises.
-	//
-	// Only when the unit pre-existed: `zsc unit create` starts a new one
-	// itself, and restarting it again would just cost a second boot.
+	if running {
+		if !bundleChanged(result) && envChanged {
+			if err := switchRunningMate(mate.Manifest{Version: result.To}, release); err != nil {
+				return fmt.Errorf("switch Mate environment: %w", err)
+			}
+		} else if !bundleChanged(result) {
+			release()
+			commitBootLastGood()
+		}
+		return nil
+	}
+
+	// A registered inactive unit still starts immediately with the installed
+	// bundle and environment. A newly created unit was started by zsc already.
 	if unitExisted && (bundleChanged(result) || envChanged) {
 		fmt.Fprintf(os.Stderr, "    → restarting zerops@%s to pick up the change\n", mate.UnitName)
 		if err := commandRunner("sudo", "systemctl", "restart", "zerops@"+mate.UnitName+".service"); err != nil {
@@ -189,6 +216,71 @@ func enableMate(rt runtime.Info) error {
 	release()
 	commitBootLastGood()
 	return nil
+}
+
+// runningMate distinguishes an inactive registered unit from a live process.
+// Unknown systemd answers postpone init rather than guessing it is safe to switch.
+func runningMate(unitExists bool) (bool, error) {
+	if !unitExists {
+		return false, nil
+	}
+	out, err := commandOutput("systemctl", "is-active", "zerops@"+mate.UnitName+".service")
+	switch strings.TrimSpace(string(out)) {
+	case "active", "activating", "reloading", "deactivating":
+		return true, nil
+	case "inactive", "failed":
+		return false, nil
+	default:
+		if err != nil {
+			return false, fmt.Errorf("read Mate unit activity: %w", err)
+		}
+		return false, fmt.Errorf("unknown Mate unit activity %q", strings.TrimSpace(string(out)))
+	}
+}
+
+// switchRunningMate uses the updater's idle proof, durable admission fence and
+// verified switch; no init restart of a live unit bypasses that owner.
+func switchRunningMate(candidate mate.Manifest, release func()) error {
+	installed, err := mate.InstalledVersion()
+	if err != nil {
+		return fmt.Errorf("read running install: %w", err)
+	}
+	state, err := mate.ReadOptionalUpdateState()
+	if err != nil {
+		return fmt.Errorf("read init update state: %w", err)
+	}
+	state = mate.WorkerUpdateState(state)
+	state.Phase, state.Candidate, state.RunningVersion = "draining", candidate.Version, installed
+	if err := mate.WriteUpdateState(state); err != nil {
+		return fmt.Errorf("record init drain: %w", err)
+	}
+	post := func(path string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return mate.UpdateRequest(ctx, path, []byte("{}"), nil)
+	}
+	drain, err := mate.DrainUpdate(candidate.Version, false)
+	if err != nil {
+		cancelErr := post("cancel")
+		state.Phase, state.WorkerPID, state.WorkerStart = "postponed", 0, ""
+		stateErr := mate.WriteUpdateState(state)
+		return fmt.Errorf("init Mate switch postponed: %w", errors.Join(err, cancelErr, stateErr))
+	}
+	var deadline time.Time
+	return mate.SwitchUpdate(candidate.Version, drain.BootID, mate.SwitchHooks{
+		PreventRollback: !mate.RollbackAllowed(installed, candidate),
+		Restart: func() error {
+			release()
+			deadline = time.Now().Add(mateReadyWait)
+			if err := commandRunner("sudo", "systemctl", "restart", "--no-block", "zerops@"+mate.UnitName+".service"); err != nil {
+				return fmt.Errorf("request Mate restart: %w", err)
+			}
+			return nil
+		},
+		Ready:  func(version, boot string) error { return mateWaitReady(version, boot, deadline) },
+		Commit: func() error { return post("commit") },
+		Cancel: func() error { return post("cancel") },
+	})
 }
 
 // commitBootLastGood moves last-good to the installed release once that release is

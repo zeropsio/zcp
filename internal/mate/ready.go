@@ -52,6 +52,29 @@ func UpdateRequest(ctx context.Context, path string, body []byte, out *UpdateRea
 	return nil
 }
 
+// DrainUpdate asks the running Mate to prove idle behind its admission barrier.
+// The caller cancels on failure and switches only after this proof succeeds.
+func DrainUpdate(version string, automatic bool) (UpdateReadiness, error) {
+	body, err := json.Marshal(struct {
+		Version    string `json:"version"`
+		DeadlineMS int    `json:"deadlineMs"`
+		Automatic  bool   `json:"automatic"`
+	}{version, 600000, automatic})
+	if err != nil {
+		return UpdateReadiness{}, fmt.Errorf("encode drain request: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute+time.Second)
+	defer cancel()
+	var drain UpdateReadiness
+	if err := UpdateRequest(ctx, "drain", body, &drain); err != nil {
+		return drain, fmt.Errorf("drain Mate update: %w", err)
+	}
+	if drain.Protocol != 1 || !drain.Drained || drain.BootID == "" {
+		return drain, fmt.Errorf("mate did not prove idle before drain deadline")
+	}
+	return drain, nil
+}
+
 // UpdateHTTPError is a non-200 answer from the loopback updater API.
 type UpdateHTTPError struct {
 	Path   string

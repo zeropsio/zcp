@@ -568,3 +568,55 @@ func TestEnsureInstalled_BelowTheFloorWithAnUnreachableManifestKeepsTheInstalled
 		t.Fatalf("result=%+v err=%v, want the installed build kept", got, err)
 	}
 }
+
+func TestEnsureInstalled_CustomActivation_StagesBeforeSwitch(t *testing.T) {
+	// non-parallel: newEnsureRig replaces installer seams and HOME.
+	for _, tc := range []struct {
+		name      string
+		postponed bool
+	}{
+		{"the staged candidate switches through its supplied lifecycle", false},
+		{"a postponed lifecycle keeps the running install unchanged", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			postponed := tc.postponed
+			rig := newEnsureRig(t)
+			seedInstalledVersion(t, "0.0.9")
+			blocked := errors.New("Mate is still busy")
+			called := false
+			_, err := mate.EnsureInstalled(mate.EnsureOptions{Activate: func(candidate mate.Manifest) error {
+				called = true
+				if version, err := mate.InstalledVersion(); err != nil || version != "0.0.9" {
+					t.Errorf("current moved before idle proof: %q, %v", version, err)
+				}
+				if rig.smokeCalls != 1 || candidate.Version != desiredVersion {
+					t.Errorf("switch must receive the smoked candidate: smoke=%d candidate=%+v", rig.smokeCalls, candidate)
+				}
+				if postponed {
+					return blocked
+				}
+				linkCurrent(t, candidate.Version)
+				return mate.WriteUpdateState(mate.UpdateState{Phase: "updated", RunningVersion: candidate.Version, OldBoot: "verified-switch"})
+			}})
+			if !called {
+				t.Fatal("installer bypassed the supplied activation lifecycle")
+			}
+			if postponed {
+				if !errors.Is(err, blocked) {
+					t.Fatalf("error=%v, want busy postponement", err)
+				}
+				if version, err := mate.InstalledVersion(); err != nil || version != "0.0.9" {
+					t.Errorf("postponed switch changed current: %q, %v", version, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				state, err := mate.ReadUpdateState()
+				if err != nil || state.OldBoot != "verified-switch" {
+					t.Errorf("installer replaced the switch owner's record: %+v, %v", state, err)
+				}
+			}
+		})
+	}
+}

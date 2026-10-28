@@ -513,6 +513,11 @@ type Result struct {
 
 // EnsureOptions steers installation and attended update choices.
 type EnsureOptions struct {
+	// Activate, when set, switches a staged release through the caller's
+	// supervisor lifecycle. The default atomically moves current. Init uses
+	// the existing drain/switch protocol when a Mate is already running.
+	Activate func(Manifest) error
+
 	// KeepInstalled makes ordinary supervisor restarts preserve the current
 	// release after crash recovery. A first installation, or an installed
 	// build below MinimumMateVersion, still resolves the release.
@@ -562,9 +567,9 @@ func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
 //  6. Activate it atomically (repoint CurrentLink()).
 //  7. Prune old version directories, always keeping the one just activated.
 //
-// Any failure in steps 4-6 returns before CurrentLink() is touched, and
-// cleans up the half-built version directory — CurrentLink() is left exactly
-// where it was, still naming the version that was working. The caller (the
+// Staging failures leave CurrentLink() unchanged and clean up the half-built
+// directory. A custom Activate owns switching, readiness and recovery; the
+// default activation leaves current unchanged on failure. The caller (the
 // mate init step, and `zcp mate update`) turns a returned error into a degraded
 // step or a non-zero exit, never a torn install.
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
@@ -612,15 +617,18 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 
-	if err := stageAndActivate(desired); err != nil {
+	if err := stageAndActivate(desired, opts.Activate); err != nil {
 		return Result{}, err
 	}
-	// The bundle is live either way; a record left stale is reported, not fatal.
+	// A custom switch owns its durable state and pruning; it may have released
+	// the install lock during readiness. Do not overwrite its verified record.
 	warning := ""
-	if err := settleInstalled(desired.Version); err != nil {
-		warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
+	if opts.Activate == nil {
+		if err := settleInstalled(desired.Version); err != nil {
+			warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
+		}
+		pruneOldVersions(desired.Version)
 	}
-	pruneOldVersions(desired.Version)
 
 	action := ActionUpdated
 	from := installed
@@ -631,12 +639,17 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	return Result{Action: action, From: from, To: desired.Version, Warning: warning}, nil
 }
 
-// stageAndActivate installs desired into its own VersionDir(), smoke-tests
-// it, then activates it. A failure at any point removes the half-built
-// version directory and returns before CurrentLink() is touched.
-func stageAndActivate(desired Manifest) error {
+// stageAndActivate installs and smoke-tests desired before asking the supplied
+// lifecycle to switch, or atomically activating it when no lifecycle is supplied.
+func stageAndActivate(desired Manifest, switchRelease func(Manifest) error) error {
 	if err := StageRelease(desired); err != nil {
 		return err
+	}
+	if switchRelease != nil {
+		if err := switchRelease(desired); err != nil {
+			return fmt.Errorf("activate staged Mate: %w", err)
+		}
+		return nil
 	}
 	return activate(VersionDir(desired.Version))
 }
