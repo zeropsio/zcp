@@ -38,6 +38,10 @@ import (
 // Mate's dev tooling, stays a warning. Only a hostname the project runs is a
 // service, so a project variable (`${zeropsSubdomainHost}`) or a group
 // environment's own runtime under its own name never is.
+//
+// A production launch is one more such tier, of the runtimes it launches
+// (BuildLaunch): it reads them with the same reader, carries the Box they
+// read, and refuses a read of a service it does not carry (closureGaps).
 
 // serviceReader finds the services among a set of hostnames a setup's
 // variables read, its patterns built once per recipe.
@@ -167,28 +171,53 @@ func writtenValues(envs []ProjectEnvVar, promote func(string) string) []string {
 	return values
 }
 
-// groupTierClosure is each read by a reader of a tier — by the setup the tier
-// builds for it — of a service the project runs (project) that the tier does
-// not carry (carried), said as `tier "<title>": runtime "<host>" builds setup
-// "<setup>", whose <variable> names "<service>"`, in the tier's order, each
-// once. A hostname no service of the project has is no service: a project
-// variable, or a group environment's own runtime under its own name.
-func groupTierClosure(sr *serviceReader, readers []tierReader, carried, project map[string]bool, title string) []string {
-	var out []string
+// closureGap is a read by a reader, through the setup it builds, of a service
+// the project runs that what carries the reader does not carry.
+type closureGap struct {
+	reader tierReader
+	read   serviceRead
+}
+
+// String says the gap as `runtime "<host>" builds setup "<setup>", whose
+// <variable> names "<service>"` — a dev pool "deploys" the setup instead.
+func (g closureGap) String() string {
+	builds := fmt.Sprintf("runtime %q builds", g.reader.hostname)
+	if g.reader.pool {
+		builds = fmt.Sprintf("dev pool %q deploys", g.reader.hostname)
+	}
+	return fmt.Sprintf("%s setup %q, whose %s names %q", builds, g.reader.setup, g.read.variable, g.read.host)
+}
+
+// closureGaps is each read by a reader — by the setup it builds — of a
+// service the project runs (project) that is not carried (carried), in the
+// readers' order, each once. A hostname no service of the project has is no
+// service: a project variable, or a runtime's own name where it runs. A
+// reader's own variables never make a gap.
+func closureGaps(sr *serviceReader, readers []tierReader, carried, project map[string]bool) []closureGap {
+	var out []closureGap
+	seen := map[string]bool{}
 	for _, reader := range readers {
-		builds := fmt.Sprintf("runtime %q builds", reader.hostname)
-		if reader.pool {
-			builds = fmt.Sprintf("dev pool %q deploys", reader.hostname)
-		}
 		for _, read := range sr.reads(reader.body, reader.setup) {
 			if !project[read.host] || carried[read.host] {
 				continue
 			}
-			line := fmt.Sprintf("tier %q: %s setup %q, whose %s names %q", title, builds, reader.setup, read.variable, read.host)
-			if !slices.Contains(out, line) {
-				out = append(out, line)
+			gap := closureGap{reader: reader, read: read}
+			if line := gap.String(); !seen[line] {
+				seen[line] = true
+				out = append(out, gap)
 			}
 		}
+	}
+	return out
+}
+
+// groupTierClosure is each gap of a tier (closureGaps) said as `tier
+// "<title>": <gap>`, in the tier's order.
+func groupTierClosure(sr *serviceReader, readers []tierReader, carried, project map[string]bool, title string) []string {
+	gaps := closureGaps(sr, readers, carried, project)
+	out := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		out = append(out, fmt.Sprintf("tier %q: %s", title, gap))
 	}
 	return out
 }
@@ -293,6 +322,17 @@ func boxesAnyPartReads(sr *serviceReader, boxes []GroupBox, runtimes []GroupRunt
 // need. No mode, no HA variant and no scale: it is one VM. The comment names
 // the runtimes that read it and what a new Box needs.
 func groupBoxEntry(b GroupBox, readers []string) (map[string]any, string) {
+	entry := boxImportEntry(b)
+	comment := fmt.Sprintf("A Zerops Box, read by %s. A Box can be created only in a project in region prg1, and it comes up with no base: finish its setup with `zbox setup` (zcp's zerops_import does it itself).",
+		quoteAnd(readers))
+	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
+}
+
+// boxImportEntry is a Box as an import takes it, for a tier and a launch
+// alike: its hostname and type, the managed services' priority, and its
+// public access when b has it on. No build, no mode, no HA variant and no
+// scale: it is one VM.
+func boxImportEntry(b GroupBox) map[string]any {
 	entry := map[string]any{
 		"hostname": b.Hostname,
 		"type":     b.ServiceType,
@@ -301,9 +341,7 @@ func groupBoxEntry(b GroupBox, readers []string) (map[string]any, string) {
 	if b.SubdomainEnabled {
 		entry["enableSubdomainAccess"] = true
 	}
-	comment := fmt.Sprintf("A Zerops Box, read by %s. A Box can be created only in a project in region prg1, and it comes up with no base: finish its setup with `zbox setup` (zcp's zerops_import does it itself).",
-		quoteAnd(readers))
-	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
+	return entry
 }
 
 // groupBoxWarnings says which Box no tier carries: nothing the recipe
