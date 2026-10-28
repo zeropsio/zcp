@@ -273,7 +273,10 @@ func normalizeTargetServiceForLaunch(stateDir, targetService string) string {
 	if err != nil || meta == nil {
 		return targetService
 	}
-	if isStageOf(meta, targetService) {
+	// A pair keyed by its dev pool keeps the stage it was named by: the pool
+	// is no app runtime, and the stage named is the one launched (§10
+	// P-LP-17) — normalizing to the pool would promote its first stage.
+	if isStageOf(meta, targetService) && !meta.DevIsPool() {
 		return meta.Hostname
 	}
 	return targetService

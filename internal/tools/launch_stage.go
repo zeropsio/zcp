@@ -58,16 +58,17 @@ func stageLaunchToken(ctx context.Context, client platform.Client, projectID, pu
 // client factory and drop it — never logged, persisted, or echoed
 // (P-LP-1 extension, pinned by the staged-token sentinel tests).
 func launchKeyFromStage(ctx context.Context, client platform.Client, projectID string, state *launchState) (string, error) {
-	if client == nil || state == nil || state.TargetServiceHostname == "" {
+	host := state.tokenHost()
+	if client == nil || host == "" {
 		return "", nil
 	}
-	svc, err := ops.LookupService(ctx, client, projectID, state.TargetServiceHostname)
+	svc, err := ops.LookupService(ctx, client, projectID, host)
 	if err != nil {
-		return "", fmt.Errorf("locate stage service %q: %w", state.TargetServiceHostname, err)
+		return "", fmt.Errorf("locate stage service %q: %w", host, err)
 	}
 	envs, err := ops.FetchServiceEnv(ctx, client, svc.ID)
 	if err != nil {
-		return "", fmt.Errorf("read staged secret on %q: %w", state.TargetServiceHostname, err)
+		return "", fmt.Errorf("read staged secret on %q: %w", host, err)
 	}
 	for _, e := range envs {
 		if e.Key == ops.LaunchTokenEnvKey {

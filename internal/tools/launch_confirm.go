@@ -128,7 +128,7 @@ func handleLaunchConfirmProduction(
 			"workflow": workflowLaunchProduction,
 			"action":   "confirm-production",
 			"status":   "confirm-required",
-			"closes":   "Closing the launch window DELETES the staged " + ops.LaunchTokenEnvKey + " secret on " + state.TargetServiceHostname + " — after that, CI/CD fixes through ZCP and reset-with-orphan-delete need a re-supplied token. The GitHub repo secret (actions family) is untouched and keeps delivering releases.",
+			"closes":   "Closing the launch window DELETES the staged " + ops.LaunchTokenEnvKey + " secret on " + state.tokenHost() + " — after that, CI/CD fixes through ZCP and reset-with-orphan-delete need a re-supplied token. The GitHub repo secret (actions family) is untouched and keeps delivering releases.",
 			"preconditions": []string{
 				"first release is LIVE on the production runtimes (prod-ops status / the pipeline run)",
 				"HTTP exposure established + smoke check passed",
@@ -150,11 +150,11 @@ func handleLaunchConfirmProduction(
 
 	// Physical close — delete FIRST, stamp after: a failed delete leaves
 	// the window honestly open (no stamp claiming otherwise).
-	svc, lookupErr := ops.LookupService(ctx, client, projectID, state.TargetServiceHostname)
+	svc, lookupErr := ops.LookupService(ctx, client, projectID, state.tokenHost())
 	if lookupErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
-			fmt.Sprintf("confirm-production: locate stage service %q: %v — window NOT closed", state.TargetServiceHostname, lookupErr),
+			fmt.Sprintf("confirm-production: locate stage service %q: %v — window NOT closed", state.tokenHost(), lookupErr),
 			"Fix the lookup cause and re-call; the staged secret must be deleted before the close is recorded.",
 		), WithRecoveryStatus()), nil, nil
 	}
@@ -162,7 +162,7 @@ func handleLaunchConfirmProduction(
 	if delErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
-			fmt.Sprintf("confirm-production: delete staged %s on %q: %v — window NOT closed", ops.LaunchTokenEnvKey, state.TargetServiceHostname, delErr),
+			fmt.Sprintf("confirm-production: delete staged %s on %q: %v — window NOT closed", ops.LaunchTokenEnvKey, state.tokenHost(), delErr),
 			"Re-call once the env delete can succeed; the close is recorded only after the staged secret is gone.",
 		), WithRecoveryStatus()), nil, nil
 	}

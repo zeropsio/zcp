@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
@@ -28,7 +30,15 @@ import (
 // the reason — plus `"refused":true` when the restart certainly did not
 // happen (definiteRefusal), so the Mate need not wait out its grace.
 
-const selfUsage = "usage: zcp self restart [--json]"
+const selfUsage = "usage: zcp self restart [--json] | zcp self launch-token"
+
+// `zcp self launch-token` prints the launch token staged on this service
+// (docs/spec-workflows.md §10 P-LP-17) for a command to take it
+// secret-to-secret — `_v=$(zcp self launch-token)` — so it never enters a
+// conversation. A part keyed by its dev pool stages its launch token on
+// zcp's own service, and the production Actions block's secret command
+// reads it here (P-LP-21).
+const selfLaunchTokenUsage = "usage: zcp self launch-token"
 
 // selfRestartTimeout bounds the one API call the restart is.
 const selfRestartTimeout = 30 * time.Second
@@ -54,6 +64,9 @@ type selfRestartAnswer struct {
 // and newClient builds the platform client from the project key and API
 // host, as `zcp lease release` does (resolveLiveLeaseDeps).
 func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, newClient func(token, apiHost string) (serviceRestarter, error)) int {
+	if len(args) > 0 && args[0] == "launch-token" {
+		return runSelfLaunchToken(args[1:], stdout, lookup)
+	}
 	asJSON := slices.Contains(args, "--json")
 	fail := func(msg string, refused bool) int {
 		printSelfRestart(stdout, selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " "), Refused: refused}, "", asJSON)
@@ -96,6 +109,25 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 		answer.ProcessID = proc.ID
 	}
 	printSelfRestart(stdout, answer, rt.ServiceID, asJSON)
+	return 0
+}
+
+// runSelfLaunchToken implements `zcp self launch-token`: the staged token
+// alone on stdout, no newline, exit 0. It reads the live env store (lookup),
+// where a value staged after the container started lands — the process's
+// own environment predates it. With none staged it writes nothing to stdout
+// and exits 1, the reason on stderr. It builds no platform client and writes
+// the token nowhere else.
+func runSelfLaunchToken(args []string, stdout io.Writer, lookup func(string) string) int {
+	if _, code, done := commandFlags(selfLaunchTokenUsage, args); done {
+		return code
+	}
+	token := lookup(ops.LaunchTokenEnvKey)
+	if token == "" {
+		_, _ = fmt.Fprintf(os.Stderr, "self launch-token: no %s is staged on this service\n", ops.LaunchTokenEnvKey)
+		return 1
+	}
+	_, _ = io.WriteString(stdout, token)
 	return 0
 }
 
