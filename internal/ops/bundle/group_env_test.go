@@ -530,7 +530,7 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 // wrapped lines joined by single spaces, without the preprocessor's line.
 func tierHeaderText(body string) string {
 	var words []string
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if !strings.HasPrefix(line, "#") {
 			break
 		}

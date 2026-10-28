@@ -71,7 +71,7 @@ const poolSSHIsolationKey = "sshIsolation"
 // them (groupVaultFields, through write), its sshIsolation as written: an
 // admission rule naming the zcp service, never a secret, which a generated
 // value would turn into one that admits nobody.
-func groupPoolVault(envs []ProjectEnvVar, source string, write valueWriter) []yamlField {
+func groupPoolVault(envs []ProjectEnvVar, write valueWriter) []yamlField {
 	rest := make([]ProjectEnvVar, 0, len(envs))
 	var admission *yamlField
 	for _, env := range envs {
@@ -81,7 +81,7 @@ func groupPoolVault(envs []ProjectEnvVar, source string, write valueWriter) []ya
 		}
 		rest = append(rest, env)
 	}
-	fields := groupVaultFields(rest, source, write)
+	fields := groupVaultFields(rest, write)
 	if admission != nil {
 		fields = append(fields, *admission)
 		sort.SliceStable(fields, func(i, j int) bool { return fields[i].key < fields[j].key })

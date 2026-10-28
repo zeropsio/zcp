@@ -316,7 +316,8 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 }
 
 // TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid: a value the
-// platform flags sensitive is generated in every tier; its address is
+// platform flags sensitive was set by hand and is left out of every tier
+// (TestBuildGroupRecipe_HandSetValue_LeftOutAndNamed); its address is
 // neither rewritten nor printed, in a tier or in a warning.
 func TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid(t *testing.T) {
 	t.Parallel()
@@ -328,9 +329,8 @@ func TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid(t *testing.T
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	for _, tier := range layout.Tiers {
-		got, _ := tierVaultValue(t, tier.ImportYAML, "agentrunner", "FLIP_SERVER")
-		if !strings.HasPrefix(got, "<@generateRandomString(") {
-			t.Errorf("tier %q: FLIP_SERVER = %q, want a generated value", tier.Title, got)
+		if got, ok := tierVaultValue(t, tier.ImportYAML, "agentrunner", "FLIP_SERVER"); ok {
+			t.Errorf("tier %q: FLIP_SERVER = %q, want it left out", tier.Title, got)
 		}
 		if strings.Contains(tier.ImportYAML, "flipstage-3901") || strings.Contains(tier.ImportYAML, "_zeropsSubdomain}") {
 			t.Errorf("tier %q prints or rewrites a sensitive value:\n%s", tier.Title, tier.ImportYAML)

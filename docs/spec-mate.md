@@ -4584,7 +4584,7 @@ of a pool, whose hostname reaches a random container.
   lacks follows every value, since no environment was made from it. Nothing changes a tier on its
   own: the composer sorts every list it reads, so the order the platform answers in never moves a
   tier; a scale is the configured autoscaling bounds, which move only when someone scales; a secret
-  is written as a generator, never its value; zcp's own credentials and a pool's or a Box's tokens
+  is written as a generator or left out, never its value; zcp's own credentials and a pool's or a Box's tokens
   are never carried. Named limits: the dev checkout's zerops.yaml is read as the pass finds it,
   uncommitted edits included; a pass a server stop dropped waits for the next start
   (`hq_recipe_follow.go`, `hq_recipe_own.go`, `server.followRecipe`;
@@ -4690,10 +4690,27 @@ version, a phrase of words, an email or a mailbox, a URL or path with no credent
 a query of plain settings, a glob, a cron line, an image, a list of these, flags built from flag
 words that name no credential), or when its name is public by design (`NEXT_PUBLIC_*`,
 `*_PUBLISHABLE_KEY`) with no SECRET, PASSWORD or PRIVATE beside it, the value is no private or
-vendor key, and the platform neither flags nor masks it. Everything else is written as
-`<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), empty when empty, a
-`user:password` keeping only a plain-word user, with a line asking for it again unless the app makes
-it for itself (`…SECRET`, `…PASSWORD`, `…SALT`, `APP_KEY`). The flag alone is not the rule: older
+vendor key, and the platform neither flags nor masks it. Everything else stays out of the file. A
+secret the app makes and reads itself — a name ending in SECRET (not a client's or a webhook's, and
+in no vendor's format), SALT, PEPPER or KEY_BASE, or `APP_KEY`/`APP_KEYS` — is written as
+`<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), a `user:password`
+keeping only a plain-word user: any random value serves it, and each environment makes its own.
+Every other secret a person set by hand — a vendor's key, an OAuth client's ID or secret, a
+password (a person signs in with it or another service checks it: `SMTP_PASS` is the mail
+provider's, and no name tells the one from the other), an opaque value — no random value serves,
+and a made-up one fails where it is used: flip.studio's tiers wrote `FLIP_GOOGLE_CLIENT_ID` and
+`FLIP_GOOGLE_CLIENT_SECRET` as 32 random characters, the project Kaďák's Mate was made from
+answered Google's sign-in with `invalid_client`, and its agent spent its time finding the values
+were in no format of Google's (2026-10-28). So the tier leaves it out of the vault it was in —
+the environment holds no such variable until a person sets it, and `zerops_env action="request"`
+asks for it rather than reading it as already set — and the header names it right after what the
+tier is: `Set before this environment can work: FLIP_GOOGLE_CLIENT_ID and FLIP_GOOGLE_CLIENT_SECRET
+in the project; OPENAI_API_KEY in runtime "flip". A person set each by hand in the Mate "…"; a tier
+carries no such value and makes none up, so each is left out here.` A tier that leaves nothing out
+says nothing of it. An empty secret stays empty, written sensitive: there was nothing to hide or to
+make up. A variable left out names no service, so it adds no read and removes none that the closure
+check (PS-3a) sees (`bundle.unsetParagraph`, `TestBuildGroupRecipe_HandSetValue_LeftOutAndNamed`,
+`TestBuildGroupRecipe_NothingHandSet_HeaderSaysNothing`). The flag alone is not the rule: older
 secrets read back not sensitive, and a project variable's flag never persisted. A recipe's order
 is designed when it is written, from what each runtime's build reads: priority is dependency order,
 since the platform creates each priority group only after the one before it is created and deployed,
