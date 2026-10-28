@@ -194,6 +194,19 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 			groupWant: "${flip_zeropsSubdomain}/api/v1?region=eu",
 		},
 		{
+			// A label is the platform's name for the project, as public as
+			// the address, and as often has a letter in it as not: it never
+			// makes the value a secret the tier generates.
+			name: "the usual label, a letter among its digits",
+			edit: func(in *GroupRecipeInputs) {
+				in.MateSubdomainHost = "1df2.prg1.zerops.app"
+				in.Runtimes[0].Stages[1].ServiceEnvs[0].Value = "https://flipstage-1df2-5195.prg1.zerops.app"
+			},
+			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
+			agentWant: "${flipstage_zeropsSubdomain}", groupWant: "${flip_zeropsSubdomain}",
+			unsaid: []string{"FLIP_SERVER"},
+		},
+		{
 			name: "the service's own address, with its trailing slash",
 			edit: func(in *GroupRecipeInputs) {
 				in.Runtimes[0].Stages[0].ServiceEnvs[0].Value = stageAddress + "/"
