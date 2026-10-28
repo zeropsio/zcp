@@ -435,3 +435,188 @@ func TestBuildGroupRecipe_MateWiring_OnlyAnAddressNoGroupEnvironmentRuns(t *test
 		})
 	}
 }
+
+// flipAsItRuns is flip.studio's project as it runs (#2's AI Agent tier,
+// 2026-10-28): agentrunner's FLIP_SERVER names flipstage — the pair's own
+// stage — so zcp's address rule does not read it as the Mate's.
+func flipAsItRuns() GroupRecipeInputs {
+	inputs := flipStudioInputs()
+	inputs.MateSubdomainHost = "3901.prg1.zerops.app"
+	agent := &inputs.Runtimes[0].Stages[1]
+	agent.ServiceType = "ubuntu/nodejs@24"
+	agent.ServiceEnvs = []ProjectEnvVar{
+		{Key: "CLAUDE_CODE_OAUTH_TOKEN", Value: "sk-ant-oat01-Xq3vR8pLm2", Sensitive: true},
+		{Key: "FLIP_AGENT_LINK_CODE", Value: "Jd8s7Hq2Lp0", Sensitive: true},
+		{Key: "FLIP_SERVER", Value: "https://flipstage-3901-5195.prg1.zerops.app"},
+	}
+	return inputs
+}
+
+// mateOnlyOverride is the line that tells the person the choice is theirs.
+const mateOnlyOverride = "zcp's address rule alone decided"
+
+// TestBuildGroupRecipe_PersonsMateOnlyChoice_WinsOverZcpsRules: what serves
+// only this Mate is the person's to say. A utility or a stage they marked
+// stays on the AI Agent tier with the volume only it uses, whatever zcp's
+// rules read; one they cleared is carried in every tier, whatever the rules
+// read; one they said nothing of is left to the rules — and where the
+// address rule alone decided, the pass says so once, naming the rule and
+// the call that overrides it.
+func TestBuildGroupRecipe_PersonsMateOnlyChoice_WinsOverZcpsRules(t *testing.T) {
+	t.Parallel()
+	tooling := GroupUtility{Hostname: "tooling", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/tooling"}
+	runner := GroupUtility{Hostname: "runner", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/agent-runner",
+		ServiceEnvs: []ProjectEnvVar{{Key: "FLIP_SERVER", Value: "https://flipdev-3901-3000.prg1.zerops.app"}}}
+	mailpit := GroupUtility{Hostname: "mailpit", ServiceType: "alpine@3.21", BuildFromGit: "https://github.com/zerops-recipe-apps/mailpit-app"}
+	tests := []struct {
+		name   string
+		inputs func() GroupRecipeInputs
+		// mateOwn is what only the AI Agent tier carries; everywhere what
+		// every group tier carries, by the names it runs under there.
+		mateOwn, everywhere []string
+		said, unsaid        []string
+		// overrides is how often the pass says the address rule decided.
+		overrides int
+	}{
+		{
+			name: "flip as it runs, marked as serving only this Mate",
+			inputs: func() GroupRecipeInputs {
+				in := flipAsItRuns()
+				in.MateOnly = map[string]bool{"agentrunner": true}
+				return in
+			},
+			mateOwn: []string{"agentrunner", "agenthome"}, everywhere: []string{"flip", "db", "storage"},
+			said: []string{`"agentrunner" stays on the AI Agent tier only`, "the person", `"agenthome" stays on the AI Agent tier only`},
+		},
+		{
+			name:       "flip as it runs, unmarked",
+			inputs:     flipAsItRuns,
+			everywhere: []string{"flip", "agentrunner", "agenthome", "db", "storage"},
+			unsaid:     []string{`"agentrunner" stays on the AI Agent tier only`},
+		},
+		{
+			name: "a utility the rule would carry, marked",
+			inputs: func() GroupRecipeInputs {
+				in := flipAsItRuns()
+				in.Utilities = []GroupUtility{tooling}
+				in.MateOnly = map[string]bool{"tooling": true}
+				return in
+			},
+			mateOwn: []string{"tooling"}, everywhere: []string{"flip", "agentrunner"},
+			said: []string{`"tooling" stays on the AI Agent tier only`, "the person"},
+		},
+		{
+			name: "a utility the rule would keep, cleared",
+			inputs: func() GroupRecipeInputs {
+				in := flipAsItRuns()
+				in.Utilities = []GroupUtility{runner}
+				in.MateOnly = map[string]bool{"runner": false}
+				return in
+			},
+			everywhere: []string{"flip", "runner", "agentrunner", "agenthome"},
+			unsaid:     []string{`"runner" stays on the AI Agent tier only`, mateOnlyOverride},
+		},
+		{
+			name: "the Mate's mail catcher, cleared",
+			inputs: func() GroupRecipeInputs {
+				in := flipAsItRuns()
+				in.Utilities = []GroupUtility{mailpit}
+				in.MateOnly = map[string]bool{"mailpit": false}
+				return in
+			},
+			everywhere: []string{"flip", "mailpit"},
+			unsaid:     []string{`"mailpit" stays on the AI Agent tier only`},
+		},
+		{
+			name: "a stage the rule would keep, cleared",
+			inputs: func() GroupRecipeInputs {
+				in := flipStudioInputs()
+				in.MateOnly = map[string]bool{"agentrunner": false}
+				return in
+			},
+			everywhere: []string{"flip", "agentrunner", "agenthome"},
+			unsaid:     []string{`"agentrunner" stays on the AI Agent tier only`, mateOnlyOverride},
+		},
+		{
+			name: "the address rule alone decides, and says so once",
+			inputs: func() GroupRecipeInputs {
+				in := flipStudioInputs()
+				in.Utilities = []GroupUtility{{Hostname: "runner", ServiceType: "ubuntu@24.04", BuildFromGit: "https://github.com/acme/agent-runner",
+					ServiceEnvs: []ProjectEnvVar{{Key: "FLIP_SERVER", Value: "https://flipdev-1df2-3000.prg1.zerops.app"}}}}
+				return in
+			},
+			mateOwn: []string{"agentrunner", "agenthome", "runner"}, everywhere: []string{"flip"},
+			said:      []string{mateOnlyOverride, `mateOnly={"agentrunner": false}`, `"runner"`},
+			overrides: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			layout, warnings, err := BuildGroupRecipe(tt.inputs())
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if len(layout.Tiers) != len(groupTierDirs) {
+				t.Fatalf("tiers = %d, want %d", len(layout.Tiers), len(groupTierDirs))
+			}
+			for _, tier := range layout.Tiers {
+				types := tierServiceTypes(t, tier.ImportYAML)
+				agentTier := tier.Title == "AI Agent"
+				for _, host := range tt.mateOwn {
+					if _, carried := types[host]; carried != agentTier {
+						t.Errorf("tier %q carries %s = %v, want it on the AI Agent tier alone", tier.Title, host, carried)
+					}
+				}
+				for _, host := range tt.everywhere {
+					if host == "flip" && agentTier {
+						host = "flipstage"
+					}
+					if _, carried := types[host]; !carried {
+						t.Errorf("tier %q does not carry %s", tier.Title, host)
+					}
+				}
+			}
+			said := strings.Join(warnings, "\n")
+			for _, want := range tt.said {
+				if !strings.Contains(said, want) {
+					t.Errorf("warnings do not say %q:\n%s", want, said)
+				}
+			}
+			for _, not := range tt.unsaid {
+				if strings.Contains(said, not) {
+					t.Errorf("warnings say %q:\n%s", not, said)
+				}
+			}
+			if got := strings.Count(said, mateOnlyOverride); got != tt.overrides {
+				t.Errorf("the pass says %q %d times, want %d:\n%s", mateOnlyOverride, got, tt.overrides, said)
+			}
+		})
+	}
+}
+
+// TestBuildGroupRecipe_TierClosure_ReadOfAMarkedService_Fails: a service the
+// person marked as serving only this Mate is left out of Stage and Small
+// Production, so a runtime those tiers carry whose setup reads it refuses
+// the recipe, naming it — for the group tiers alone.
+func TestBuildGroupRecipe_TierClosure_ReadOfAMarkedService_Fails(t *testing.T) {
+	t.Parallel()
+	inputs := flipAsItRuns()
+	inputs.MateOnly = map[string]bool{"agentrunner": true}
+	inputs.Runtimes[0].ZeropsYAMLBody = strings.Replace(flipZeropsYAML,
+		"        S3_ENDPOINT: ${storage_apiUrl}\n  - setup: agentrunner\n",
+		"        S3_ENDPOINT: ${storage_apiUrl}\n        AGENT_URL: http://agentrunner:8080\n  - setup: agentrunner\n", 1)
+	layout, warnings, err := BuildGroupRecipe(inputs)
+	if err == nil {
+		t.Fatalf("composed %d tiers, want the recipe refused (warnings %v)", len(layout.Tiers), warnings)
+	}
+	msg := err.Error()
+	for _, want := range []string{`tier "Stage"`, `tier "Small Production"`, `runtime "flip"`, "run.envVariables.AGENT_URL", `names "agentrunner"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error does not say %s:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, `tier "AI Agent"`) {
+		t.Errorf("error names the AI Agent tier, which carries the stage:\n%s", msg)
+	}
+}

@@ -148,8 +148,15 @@ type GroupRecipeInputs struct {
 	// every public address of one of its services is
 	// `<hostname>-<first label>[-<port>].<region>.zerops.app`. "" names none.
 	MateSubdomainHost string
-	Runtimes          []GroupRuntime
-	ManagedServices   []ManagedServiceEntry
+	// MateOnly is the person's choice of what serves only this Mate, by
+	// hostname — a utility, or a stage of a pair by the Mate's hostname:
+	// true keeps it on the AI Agent tier, with a volume only it uses; false
+	// carries it in every tier. Either wins over zcp's own rules (the
+	// address rule, the dev tooling); a hostname it does not name is left to
+	// them.
+	MateOnly        map[string]bool
+	Runtimes        []GroupRuntime
+	ManagedServices []ManagedServiceEntry
 	// ProjectEnvs is the project's user-set variables, the platform's own and
 	// the control plane's already left out: every tier carries them in the
 	// project's `vault:`, config as written, secrets generated (recipeSecret).
