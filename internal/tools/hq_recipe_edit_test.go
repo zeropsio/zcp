@@ -153,6 +153,12 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 			if !strings.Contains(answer.Message, repoURL) {
 				t.Errorf("message %q does not say where the recipe repository is (%s)", answer.Message, repoURL)
 			}
+			// HQ judges a recipe change on a push to its branch
+			// (mate-hq apps/hq/src/refMoves/recipes.ts): a branch pushed
+			// before the change opened waits for one more push.
+			if !strings.Contains(answer.Message, "judges it on each push") {
+				t.Errorf("message %q does not say HQ judges the change on a push to it", answer.Message)
+			}
 
 			head, out, err := lab.hq.matePush("main", wantBranch, recipeProdTier, leanProduction)
 			if err != nil {
