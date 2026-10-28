@@ -657,6 +657,17 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"never over ssh",
 		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
+		// Current change status must come from a fresh owning read, including
+		// setup/recipe changes; an unavailable read stays explicitly unknown.
+		"Before telling the person a change's status",
+		"including a setup or recipe change",
+		"read it fresh with `zerops_workflow action=\"status\"`",
+		"immediately before reporting it",
+		"Match the repository and change number",
+		"never report an earlier turn's answer as current",
+		"If the fresh read fails or says \"as last read\"",
+		"say the current status is unknown and when it was last seen",
+		"never repeat the old state as current",
 		// A repository kept on GitHub: GitHub is origin, and its change is
 		// opened after the push — HQ's pull request, merged in Mate.
 		"`origin.mode=github`",
