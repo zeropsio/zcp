@@ -274,6 +274,14 @@ func TestBuildLaunch_Closure_ReadOfAServiceTheBundleLacks_Refused(t *testing.T) 
 			},
 			want: []string{"run.envVariables.NATS_PORT", `"broker"`, "excluded"},
 		},
+		{
+			name: "a Box the launch excludes",
+			prod: setupVars{name: "runnerprod", vars: map[string]string{"NATS_PORT": "${broker_port}", "BOX_API_URL": "http://box:8080"}},
+			mutate: func(in *LaunchBundleInputs) {
+				in.ExcludeManaged = []string{"box"}
+			},
+			want: []string{"run.envVariables.BOX_API_URL", `"box"`, "excluded"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
