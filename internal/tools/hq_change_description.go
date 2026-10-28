@@ -55,12 +55,15 @@ const changePictureMaxBytes = 20 << 20
 
 // changeDescriptionResult is describe-change's answer.
 type changeDescriptionResult struct {
-	Service        string `json:"service"`
-	PullRequest    int    `json:"pullRequest,omitempty"`
-	PullRequestURL string `json:"pullRequestUrl,omitempty"`
-	Described      bool   `json:"described"`
-	Kept           bool   `json:"kept,omitempty"`
-	Message        string `json:"message"`
+	Service string `json:"service"`
+	// Parts are the parts whose dev pools lease the change's branch when
+	// they are several, and so name no one service (changeService).
+	Parts          []string `json:"parts,omitempty"`
+	PullRequest    int      `json:"pullRequest,omitempty"`
+	PullRequestURL string   `json:"pullRequestUrl,omitempty"`
+	Described      bool     `json:"described"`
+	Kept           bool     `json:"kept,omitempty"`
+	Message        string   `json:"message"`
 }
 
 // errCannotAttach is a picture HQ will never keep for a change — larger than
@@ -113,10 +116,7 @@ func handleDescribeChange(
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
-	service := strings.TrimSpace(input.Service)
-	if service == "" && target.Pair != nil {
-		service = target.Pair.Hostname
-	}
+	service, parts := changeService(stateDir, hqc.Address(), target, input.Service, target.Branch)
 	kept := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
 	// The change the ledger names, when it names one, is checked before HQ
 	// is asked anything: a picture this Mate keeps for no change is refused
@@ -135,7 +135,7 @@ func handleDescribeChange(
 		fresh = &state
 		if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
 			return jsonResult(changeDescriptionResult{
-				Service: service,
+				Service: service, Parts: parts,
 				Message: learned + " The description was not written: the change it was for is no longer open, " +
 					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open." +
 					stillOpenWords(target, state),
@@ -147,15 +147,20 @@ func handleDescribeChange(
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
+	if pick.Branch != "" && pick.Branch != target.Branch {
+		// The change picked names the branch the call did not: its part is
+		// the one leasing that branch.
+		service, parts = changeService(stateDir, hqc.Address(), target, input.Service, pick.Branch)
+	}
 	number := pick.Number
 	if number == 0 && stateErr != nil {
-		return jsonResult(changeDescriptionResult{Service: service, Message: describeStateUnknown(hqc.Address(), describedWhere(target), stateErr)}), nil, nil
+		return jsonResult(changeDescriptionResult{Service: service, Parts: parts, Message: describeStateUnknown(hqc.Address(), describedWhere(target), stateErr)}), nil, nil
 	}
 	if number == 0 {
 		// Words describe the work a change carries: nothing is kept for a
 		// change that is not open.
 		return jsonResult(changeDescriptionResult{
-			Service: service,
+			Service: service, Parts: parts,
 			Message: fmt.Sprintf("No change of this Mate is open %s in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — the person is asked to review it only then.",
 				describedWhere(target)),
 		}), nil, nil
@@ -166,7 +171,7 @@ func handleDescribeChange(
 	}
 	defer release()
 	if gone := describedChangeGone(stateDir, target, number, kept); gone != "" {
-		return jsonResult(changeDescriptionResult{Service: service, Message: gone}), nil, nil
+		return jsonResult(changeDescriptionResult{Service: service, Parts: parts, Message: gone}), nil, nil
 	}
 	// Checked before HQ was asked for another change than this one: its
 	// pictures are checked for this one now.
@@ -204,12 +209,13 @@ func handleDescribeChange(
 		}
 		if away != describeServed {
 			return jsonResult(changeDescriptionResult{
-				Service: service, PullRequest: number, PullRequestURL: url, Kept: true,
+				Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true,
 				Message: describeNotLanded(hqc.Address(), number, tries, away, err),
 			}), nil, nil
 		}
 		return jsonResult(changeDescriptionResult{
 			Service:        service,
+			Parts:          parts,
 			PullRequest:    number,
 			PullRequestURL: url,
 			Kept:           true,
@@ -219,6 +225,7 @@ func handleDescribeChange(
 	}
 	return jsonResult(changeDescriptionResult{
 		Service:        service,
+		Parts:          parts,
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
