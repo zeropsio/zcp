@@ -354,6 +354,7 @@ func reconcileHQPairs(
 		if state, err := self(); err == nil {
 			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state, hqc.BranchOf, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
+			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
 			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows)...)
 		}
 	}

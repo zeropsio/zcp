@@ -86,8 +86,14 @@ type fakeHQ struct {
 	// and answers it without naming its branch.
 	unnamedBranches bool
 	// origins are the origins connected to the application's repositories,
-	// by name; a repository without one is kept by HQ alone.
+	// by name; a repository without one is kept by HQ alone. The repository
+	// list (GET /api/apps/:appId/repos) reads one kept on GitHub as a remote
+	// the organisation's GitHub app connects (via "app"), and a followed one
+	// as a remote reached with a person's token (via "token"), as HQ does.
 	origins map[string]hq.RepoOrigin
+	// diverged is since when GitHub's default branch and HQ's `main` have
+	// diverged, by repository, for a repository the app mirrors.
+	diverged map[string]string
 	// handed are the changes a person handed the lab's Mate from a Mate that
 	// is gone, by repo#number.
 	handed map[string]bool
@@ -133,7 +139,7 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 	t.Helper()
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
-		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
+		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{}, diverged: map[string]string{},
 		handed: map[string]bool{}, described: map[string]string{}, verdicts: map[string]string{}, corePushes: map[string]hq.CorePush{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
@@ -286,6 +292,12 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		writeHQJSON(w, http.StatusOK, f.self(r.Context()))
 	case f.appID == "":
 		refuse(http.StatusForbidden, "forbidden", "not_in_app")
+	case r.Method == http.MethodGet && len(parts) == 4 && parts[1] == "apps" && parts[3] == "repos":
+		if parts[2] != f.appID {
+			refuse(http.StatusNotFound, "app_not_found", "app_not_found")
+			return
+		}
+		writeHQJSON(w, http.StatusOK, map[string]any{"repos": f.appRepos()})
 	case r.Method == http.MethodPost && r.URL.Path == "/api/mate/repos":
 		var in struct {
 			Name string `json:"name"`
@@ -469,6 +481,44 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		state["repos"] = repos
 	}
 	return state
+}
+
+// appRepos is the application's repositories as GET /api/apps/:appId/repos
+// lists them, by name, each with its remote: connected through the
+// organisation's GitHub app for one kept on GitHub (with since when it
+// diverged, when it has), through a person's token for a followed one, null
+// for one HQ alone keeps. f.mu is held.
+func (f *fakeHQ) appRepos() []map[string]any {
+	repos := []map[string]any{}
+	for key := range f.repos {
+		app, name, _ := strings.Cut(key, "/")
+		if app != f.appID {
+			continue
+		}
+		repo := map[string]any{"name": name, "url": f.srv.URL + "/git/" + labOrg + "/" + app + "/" + name + ".git", "remote": nil}
+		if origin, ok := f.origins[name]; ok {
+			remote := map[string]any{"url": origin.URL, "repositoryId": "1", "keptAt": "2026-10-28T09:00:00.000Z", "keptBy": "u-1",
+				"expiresAt": nil, "invalidSince": nil, "via": "token"}
+			if origin.Mode == hq.OriginOnGitHub {
+				remote["via"] = "app"
+				if since := f.diverged[name]; since != "" {
+					remote["divergedSince"] = since
+				}
+			}
+			repo["remote"] = remote
+		}
+		repos = append(repos, repo)
+	}
+	slices.SortFunc(repos, func(a, b map[string]any) int { return strings.Compare(a["name"].(string), b["name"].(string)) })
+	return repos
+}
+
+// diverge has GitHub's default branch and HQ's `main` of repo diverged since
+// since, as HQ's follow records it — in step again for "".
+func (f *fakeHQ) diverge(repo, since string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.diverged[repo] = since
 }
 
 // keepOn connects origin to appdev, as a person connecting it in HQ does.
