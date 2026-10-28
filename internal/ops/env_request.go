@@ -158,21 +158,25 @@ func validateRequestLine(field, text string, limit int, hint string) error {
 	return nil
 }
 
+// EnvRequestInput is what a request names: the vault (Project for Shared, else
+// Hostname's own), the key, what it is in people's words (Label), the line of
+// what it is for (Why) and the flag it is asked with (Sensitive; nil picks it
+// by name).
+type EnvRequestInput struct {
+	Hostname  string
+	Project   bool
+	Key       string
+	Label     string
+	Why       string
+	Sensitive *bool
+}
+
 // EnvRequest checks a request for a vault value and writes nothing: it
 // validates the key, resolves the scope (project wins over a hostname, as in
 // set/delete) and reports whether the key is already in that vault, by
 // presence only — the value is never read into the result.
-func EnvRequest(
-	ctx context.Context,
-	client platform.Client,
-	projectID string,
-	hostname string,
-	isProject bool,
-	key string,
-	label string,
-	why string,
-	sensitive *bool,
-) (*EnvRequestResult, error) {
+func EnvRequest(ctx context.Context, client platform.Client, projectID string, in EnvRequestInput) (*EnvRequestResult, error) {
+	key, label, why := in.Key, in.Label, in.Why
 	if err := validateRequestKey(key); err != nil {
 		return nil, err
 	}
@@ -182,14 +186,14 @@ func EnvRequest(
 	if err := ValidateRequestWords(label, why); err != nil {
 		return nil, err
 	}
-	if hostname == "" && !isProject {
+	if in.Hostname == "" && !in.Project {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
 			"Provide serviceHostname or set project=true",
 			"project=true asks for a Shared value; serviceHostname for one service's own.")
 	}
 
-	result := &EnvRequestResult{Key: key, Label: strings.TrimSpace(label), Why: strings.TrimSpace(why), Sensitive: resolveSensitive(key, "", sensitive)}
-	if isProject {
+	result := &EnvRequestResult{Key: key, Label: strings.TrimSpace(label), Why: strings.TrimSpace(why), Sensitive: resolveSensitive(key, "", in.Sensitive)}
+	if in.Project {
 		result.Scope = EnvRequestScopeShared
 		envs, err := client.GetProjectEnv(ctx, projectID)
 		if err != nil {
@@ -199,7 +203,7 @@ func EnvRequest(
 		return result, nil
 	}
 
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveService(ctx, client, projectID, in.Hostname)
 	if err != nil {
 		return nil, err
 	}

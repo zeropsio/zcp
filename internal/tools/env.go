@@ -331,7 +331,14 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
-			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Label, cmp.Or(input.Why, input.Reason), input.Sensitive.Ptr())
+			req, err := ops.EnvRequest(ctx, client, projectID, ops.EnvRequestInput{
+				Hostname:  input.ServiceHostname,
+				Project:   input.Project.Bool(),
+				Key:       input.Key,
+				Label:     input.Label,
+				Why:       cmp.Or(input.Why, input.Reason),
+				Sensitive: input.Sensitive.Ptr(),
+			})
 			if err != nil {
 				return convertError(err), nil, nil
 			}

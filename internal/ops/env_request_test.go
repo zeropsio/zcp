@@ -66,7 +66,7 @@ func TestEnvRequest_Answers(t *testing.T) {
 				WithProjectEnv([]platform.ProjectEnvVar{{ID: "p1", Key: "OPENAI_API_KEY", Content: "sk-live", Sensitive: true}}).
 				WithServiceEnv("svc-1", []platform.ServiceEnvVar{{ID: "s1", Key: "MAIL_FROM", Content: "a@b.c", Type: platform.ServiceEnvUser}})
 
-			got, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, label, purpose, tt.sensitive)
+			got, err := EnvRequest(context.Background(), mock, "proj-1", EnvRequestInput{Hostname: tt.hostname, Project: tt.project, Key: tt.key, Label: label, Why: purpose, Sensitive: tt.sensitive})
 			if err != nil {
 				t.Fatalf("EnvRequest: %v", err)
 			}
@@ -124,7 +124,7 @@ func TestEnvRequest_Refuses(t *testing.T) {
 			if named == "" {
 				named = label
 			}
-			_, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, named, reason, nil)
+			_, err := EnvRequest(context.Background(), mock, "proj-1", EnvRequestInput{Hostname: tt.hostname, Project: tt.project, Key: tt.key, Label: named, Why: reason})
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) {
 				t.Fatalf("want a platform error %s, got %v", tt.wantCode, err)
@@ -158,7 +158,7 @@ func TestEnvRequest_VaultHiddenNames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
 			t.Parallel()
-			_, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, label, purpose, nil)
+			_, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", EnvRequestInput{Project: true, Key: tt.key, Label: label, Why: purpose})
 			if !tt.refused {
 				if err != nil {
 					t.Fatalf("want %s asked, got %v", tt.key, err)
@@ -194,7 +194,7 @@ func TestEnvRequest_LabelFromKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
 			t.Parallel()
-			got, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, " ", purpose, nil)
+			got, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", EnvRequestInput{Project: true, Key: tt.key, Label: " ", Why: purpose})
 			if err != nil {
 				t.Fatalf("EnvRequest: %v", err)
 			}
