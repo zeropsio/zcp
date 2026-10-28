@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -208,6 +209,37 @@ func TestApplyMergeResolutionsToBundle_DropsSkipsAndOverridesReplaces(t *testing
 	}
 	if len(got.ManagedServices) != 1 || got.ManagedServices[0].Hostname != "redis" {
 		t.Errorf("managed: got %+v want [redis]", got.ManagedServices)
+	}
+}
+
+// A skip leaves the existing production service as it is, so a launched
+// runtime that reads it reads a service production runs: the merge hands the
+// skipped hostnames to the composer, whose closure check (spec-workflows.md
+// §10.3 P-LP-19) counts them carried instead of refusing the launch.
+func TestApplyMergeResolutionsToBundle_SkipRecordsTargetHostnames(t *testing.T) {
+	t.Parallel()
+	inputs := ops.LaunchBundleInputs{
+		Runtimes: []ops.LaunchRuntimeInput{
+			{ProdHostname: "app", ServiceType: "nodejs@22"},
+			{ProdHostname: "web", ServiceType: "nodejs@22"},
+		},
+		ManagedServices: []ops.ManagedServiceEntry{
+			{Hostname: "db", Type: "postgresql@16"},
+			{Hostname: "box", Type: "ubuntu/zbox@1"},
+		},
+	}
+	resolved := []existingProjectConflict{
+		{Hostname: "app", Kind: conflictKindRuntime, Strategy: mergeStrategySkip},
+		{Hostname: "web", Kind: conflictKindRuntime, Strategy: mergeStrategyReplace},
+		{Hostname: "db", Kind: conflictKindManaged, Strategy: mergeStrategySkip},
+		{Hostname: "box", Kind: conflictKindManaged, Strategy: mergeStrategySkip},
+	}
+	got, _ := applyMergeResolutionsToBundle(inputs, resolved)
+	want := []string{"app", "box", "db"}
+	have := append([]string(nil), got.TargetHostnames...)
+	slices.Sort(have)
+	if !slices.Equal(have, want) {
+		t.Errorf("TargetHostnames = %v, want %v — every skipped hostname, never a replaced one", have, want)
 	}
 }
 

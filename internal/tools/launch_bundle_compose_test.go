@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,6 +140,109 @@ func TestBuildLaunchBundle_PoolInProject_NamedNotCarried(t *testing.T) {
 	for _, host := range []string{"app", "db"} {
 		if !strings.Contains(b.ImportYAML, "hostname: "+host) {
 			t.Errorf("%s must still be in the production import:\n%s", host, b.ImportYAML)
+		}
+	}
+}
+
+// launchBoxZeropsYAML is the runtime's zerops.yaml when its setup reads the
+// project's Box: the workspace API by its address, the key by reference.
+const launchBoxZeropsYAML = `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+      deployFiles: ["./"]
+    run:
+      base: php-apache@8.4
+      envVariables:
+        DB_HOST: ${db_hostname}
+        BOX_API_URL: http://lab:8080
+        BOX_API_KEY: ${lab_ZBOX_WORKSPACE_API_KEY}
+`
+
+// composeLaunchFixture composes launch inputs for the appdev runtime of a
+// source project running svcs, its zerops.yaml body as given.
+func composeLaunchFixture(t *testing.T, body string, svcs ...platform.ServiceStack) bundle.LaunchBundleInputs {
+	t.Helper()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj1", Name: "demo", Status: "ACTIVE"}).
+		WithServices(svcs)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": body,
+		"git rev-parse HEAD":       "deadbeef",
+	}}
+	runtimes := []resolvedLaunchRuntime{{
+		ChoiceHostname:  "appdev",
+		PushHostname:    "appdev",
+		ProdHostname:    "app",
+		SetupName:       "appdev",
+		SetupProvenance: "dev-setup-promoted",
+	}}
+	gateChecks := []*LaunchSourceControlCheck{{
+		ChoiceHostname: "appdev",
+		PushHostname:   "appdev",
+		MetaRemoteURL:  "https://github.com/example/demo.git",
+	}}
+	inputs, _, err := composeLaunchBundleInputs(
+		context.Background(), mock, ssh, runtime.Info{InContainer: true},
+		"proj1", "myapp-prod", runtimes, gateChecks,
+		nil, nil, nil, nil, bundle.VariantLaunchNew,
+	)
+	if err != nil {
+		t.Fatalf("composeLaunchBundleInputs: %v", err)
+	}
+	return inputs
+}
+
+// The closure check (spec-workflows.md §10.3 P-LP-19) refuses a launched
+// runtime that reads a service the source project runs and the bundle does
+// not carry, so the composer is handed every hostname the source project's
+// discover lists — runtimes launched or not, managed services, pools, Boxes
+// and zcp itself — to tell a service from a project variable.
+func TestComposeLaunchBundleInputs_ProjectHostnames_EveryServiceTheProjectRuns(t *testing.T) {
+	t.Parallel()
+	inputs := composeLaunchFixture(t, exportTestZeropsYAML,
+		runtimeService("appdev", "php-apache@8.4", false),
+		runtimeService("appstage", "php-apache@8.4", false),
+		managedService(),
+		runtimeService("mailpit", "alpine@3.21", false),
+		runtimeService("fleet", "swarm@1", false),
+		runtimeService("lab", "ubuntu/zbox@1", false),
+		runtimeService("zcp", "zcp@1", false),
+	)
+	want := []string{"appdev", "appstage", "db", "fleet", "lab", "mailpit", "zcp"}
+	got := append([]string(nil), inputs.ProjectHostnames...)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("ProjectHostnames = %v, want %v", got, want)
+	}
+}
+
+// Noola's shape through the handler: a Box the launched runtime's setup
+// reads rides into the production import beside the managed dependency, and
+// the launch no longer tells the agent to add it by hand. Spec:
+// spec-workflows.md §10.3 P-LP-19.
+func TestBuildLaunchBundle_BoxTheLaunchedRuntimeReads_Carried(t *testing.T) {
+	t.Parallel()
+	inputs := composeLaunchFixture(t, launchBoxZeropsYAML,
+		runtimeService("appdev", "php-apache@8.4", false),
+		managedService(),
+		runtimeService("lab", "ubuntu/zbox@1", true),
+	)
+	b, err := ops.BuildLaunchBundle(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle: %v", err)
+	}
+	for _, host := range []string{"app", "db", "lab"} {
+		if !strings.Contains(b.ImportYAML, "hostname: "+host) {
+			t.Errorf("%s must be in the production import:\n%s", host, b.ImportYAML)
+		}
+	}
+	if strings.Contains(b.ImportYAML, "enableSubdomainAccess") {
+		t.Errorf("the production import must carry no public access (P-PROD-2):\n%s", b.ImportYAML)
+	}
+	for _, w := range b.Warnings {
+		if strings.Contains(w, `"lab"`) && strings.Contains(w, "add it to the production import yourself") {
+			t.Errorf("a carried Box is still said to be added by hand: %q", w)
 		}
 	}
 }

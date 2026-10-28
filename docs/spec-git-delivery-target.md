@@ -128,7 +128,7 @@ write discipline unchanged.
 **Rotation (new):** git-push-setup with same remote + non-empty gitToken = rotation intent: probe
 the new token → re-write the secret → done (~seconds; no restart, no container churn). The O3
 short-circuit keeps firing only for token-less re-confirms. Raw `zerops_env set` of credential keys
-redacts values in the response `stored[]`.
+echoes no value: the response `stored[]` names keys only (spec-zerops-env-lifecycle §7).
 
 **gh:** every emitted gh command carries `GH_TOKEN=$(ssh … 'printf %s "$GIT_TOKEN"')` per
 invocation (with the `test -n` empty-guard against the device-code hang). No login step, no

@@ -142,11 +142,20 @@ func composeLaunchBundleInputs(
 		}
 	}
 
-	// PS-3: a pool or Box the project holds is neither the app nor a managed
-	// dependency the bundle can promote. Hand them to the composer in
-	// ManagedServices anyway — it never emits them and names each as "not
-	// carried" in the bundle warnings, so they are not dropped silently.
+	// PS-3 / P-LP-19: a pool or Box the project holds is neither the app nor a
+	// managed dependency the bundle promotes. Hand them to the composer in
+	// ManagedServices anyway — it carries a Box a launched runtime reads,
+	// never a pool, and names each one it leaves out as "not carried" in the
+	// bundle warnings, so none is dropped silently.
 	managed = append(managed, poolAndSandboxEntries(discover)...)
+
+	// Every service the source project runs is what a launched runtime may
+	// read: the composer refuses a launch whose runtime reads one the bundle
+	// does not carry (P-LP-19).
+	projectHostnames := make([]string, 0, len(discover.Services))
+	for _, svc := range discover.Services {
+		projectHostnames = append(projectHostnames, svc.Hostname)
+	}
 
 	return bundle.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
@@ -154,6 +163,7 @@ func composeLaunchBundleInputs(
 		Runtimes:          bundleRuntimes,
 		ProjectEnvs:       projectEnvs,
 		ManagedServices:   managed,
+		ProjectHostnames:  projectHostnames,
 		KeepNonHA:         keepNonHA,
 		HAIncapable:       haIncapable,
 		ExcludeManaged:    excludeManaged,

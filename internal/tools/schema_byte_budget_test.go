@@ -142,11 +142,16 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// (docs/spec-mate.md §10.10): a FlexBool published as
 		// oneOf[boolean,string] and one line of when; the refusal it answers
 		// carries the corrected plan.
-		// Raised +203 (20709→20912) for `releaseCommit`, the commit a pool-
+		// Raised +344 (20709→21053) for `mateOnly`, the person's answer to
+		// what serves only their Mate in the group recipe (docs/spec-mate.md
+		// §2.8a.5): a hostname→boolean map and one line of what each value
+		// does; what the choice overrides and the warning that offers it live
+		// in the composer's answers and the spec.
+		// Raised +203 (21053→21256) for `releaseCommit`, the commit a pool-
 		// keyed part's release-prompt named, sent back so the tag lands on
 		// the commit the person confirmed (docs/spec-workflows.md §10
-		// P-LP-20); the tip-moved refusal names what to do.
-		"zerops_workflow":    20912,
+		// P-LP-21); the tip-moved refusal names what to do.
+		"zerops_workflow":    21256,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

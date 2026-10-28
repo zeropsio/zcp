@@ -213,10 +213,13 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 	}
 }
 
-// A pair wired to this Mate's HQ syncs in the Mate's own shell on the
+// A pair wired to this Mate's HQ runs git in the Mate's own shell on the
 // mounted checkout, never over ssh: a checkout whose code the person keeps on
-// GitHub has git ask `zcp hq git-credential`, which only that shell has.
-func TestDevelopGitPushStartFromRemoteAtom_WiredPairSyncsInTheMatesOwnShell(t *testing.T) {
+// GitHub has git ask `zcp hq git-credential`, which only that shell has. Its
+// dev service keeps one change open at a time; the checkout is what the dev
+// server runs, so another open change's branch is updated in a worktree
+// outside the mount, made from that shell, pushed and removed.
+func TestDevelopGitPushStartFromRemoteAtom_WiredPairWorksInTheMatesOwnShell(t *testing.T) {
 	t.Parallel()
 	atoms, err := ReadAllAtoms()
 	if err != nil {
@@ -235,9 +238,17 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairSyncsInTheMatesOwnShell(t *t
 	if strings.Contains(wired, "ssh ") {
 		t.Errorf("a wired pair's sync runs over ssh: %s", wired)
 	}
-	for _, want := range []string{"your own shell", "git merge --ff-only origin/main"} {
+	for _, want := range []string{
+		"your own shell",
+		"git merge --ff-only origin/main",
+		"one change open at a time",
+		"what its dev server runs",
+		"git worktree add /tmp/<branch> <branch>",
+		"git worktree remove /tmp/<branch>",
+		"Nothing runs or deploys from it",
+	} {
 		if !strings.Contains(wired, want) {
-			t.Errorf("a wired pair's sync lacks %q: %s", want, wired)
+			t.Errorf("a wired pair's guidance lacks %q: %s", want, wired)
 		}
 	}
 }

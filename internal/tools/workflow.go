@@ -72,6 +72,7 @@ type WorkflowInput struct {
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
 	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
 	Scaling     string                     `json:"scaling,omitempty"     jsonschema:"For action=group-recipe: propose this service hostname's scale into the group recipe's tiers."`
+	MateOnly    map[string]bool            `json:"mateOnly,omitempty"    jsonschema:"For action=group-recipe: the person's answer to what serves only this Mate — {\"<host>\": true} keeps a utility or stage (and a volume only it uses) on the AI Agent tier, false carries it in Stage and Small Production. Never without the person."`
 	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Describing asks for their review; a push that moves the change makes it a draft until described again."`
 	Title       string                     `json:"title,omitempty"       jsonschema:"For action=open-change and describe-change: what this repository's change does, one line of a few words (max 120) — its own title, not the whole task."`
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed."`
@@ -697,19 +698,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "set-default-setup":
 		return handleSetDefaultSetup(ctx, client, projectID, input, stateDir)
 	case "group-recipe":
-		// scaling=<host>: propose that host's scale into the tiers on main
-		// (hq_recipe_scaling.go).
-		if input.Scaling != "" {
-			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
-		}
-		// service=<host>: propose adding or removing that host's part in
-		// the tiers on main (hq_recipe_parts.go).
-		if input.Service != "" {
-			return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service)
-		}
-		// A2: ask for the group's recipe export outright. The same reconcile
-		// that runs on every bootstrap/adopt pass, reported to whoever asked.
-		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
+		return handleGroupRecipeAction(ctx, client, httpClient, rt, stateDir, input)
 	case "open-change":
 		// The agent's own branch, opened as its change (hq_change_open.go).
 		return handleOpenChange(ctx, httpClient, rt, stateDir, input)

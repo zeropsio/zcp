@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -170,15 +171,20 @@ func missingDestructiveAckForReplaces(resolved []existingProjectConflict, ack *D
 // replace sets Override=true on the matching runtime so the composer emits
 // `override: true` and the platform overwrites the existing service on
 // import (without it the import is rejected on the colliding hostname).
-// Returns the (possibly mutated) inputs and whether anything changed, so
-// the caller knows to recompose.
+// A skipped hostname is a service production keeps running, so it lands in
+// TargetHostnames: a launched runtime that reads it reads a service
+// production has, and the composer's closure check (spec-workflows.md §10.3
+// P-LP-19) does not refuse it. Returns the (possibly mutated) inputs and
+// whether anything changed, so the caller knows to recompose.
 func applyMergeResolutionsToBundle(inputs ops.LaunchBundleInputs, resolved []existingProjectConflict) (ops.LaunchBundleInputs, bool) {
 	skipSet := make(map[string]bool, len(resolved))
 	replaceSet := make(map[string]bool, len(resolved))
+	var skipped []string
 	for _, c := range resolved {
 		switch c.Strategy {
 		case mergeStrategySkip:
 			skipSet[c.Hostname] = true
+			skipped = append(skipped, c.Hostname)
 		case mergeStrategyReplace:
 			replaceSet[c.Hostname] = true
 		}
@@ -205,6 +211,13 @@ func applyMergeResolutionsToBundle(inputs ops.LaunchBundleInputs, resolved []exi
 	}
 	inputs.Runtimes = keptRuntimes
 	inputs.ManagedServices = keptManaged
+	targets := slices.Clone(inputs.TargetHostnames)
+	for _, host := range skipped {
+		if !slices.Contains(targets, host) {
+			targets = append(targets, host)
+		}
+	}
+	inputs.TargetHostnames = targets
 	return inputs, true
 }
 

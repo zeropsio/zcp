@@ -98,14 +98,14 @@ func WaitReady(version, oldBoot string, deadline time.Time) error {
 	return waitReady(version, oldBoot, deadline, nil)
 }
 
-func waitReady(version, oldBoot string, deadline time.Time, before *readinessUnitState) error {
+func waitReady(version, oldBoot string, deadline time.Time, restart *RestartReadiness) error {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var lastObservation error
 	for {
-		if err := exitedReadinessUnit(ctx, before); err != nil {
+		if err := exitedReadinessUnit(ctx, restart); err != nil {
 			return fmt.Errorf("readiness for %s: %w", version, err)
 		}
 		// One startup connection must not consume the whole readiness budget.
@@ -114,7 +114,7 @@ func waitReady(version, oldBoot string, deadline time.Time, before *readinessUni
 		probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
 		lastObservation = probeReady(probeCtx, version, oldBoot)
 		probeCancel()
-		if err := exitedReadinessUnit(ctx, before); err != nil {
+		if err := exitedReadinessUnit(ctx, restart); err != nil {
 			return fmt.Errorf("readiness for %s: %w", version, err)
 		}
 		if lastObservation == nil && ctx.Err() == nil {

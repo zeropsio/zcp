@@ -17,12 +17,15 @@ import (
 
 // changeOpenResult is open-change's answer.
 type changeOpenResult struct {
-	Service        string `json:"service"`
-	Branch         string `json:"branch,omitempty"`
-	PullRequest    int    `json:"pullRequest"`
-	PullRequestURL string `json:"pullRequestUrl"`
-	Created        bool   `json:"created"`
-	Message        string `json:"message"`
+	Service string `json:"service"`
+	// Parts are the parts whose dev pools lease the change's branch when
+	// they are several, and so name no one service (changeService).
+	Parts          []string `json:"parts,omitempty"`
+	Branch         string   `json:"branch,omitempty"`
+	PullRequest    int      `json:"pullRequest"`
+	PullRequestURL string   `json:"pullRequestUrl"`
+	Created        bool     `json:"created"`
+	Message        string   `json:"message"`
 	// Landed says what became of the ledger's other changes in the
 	// repository that the Mate's state names settled since the last pass.
 	Landed string `json:"landed,omitempty"`
@@ -76,10 +79,8 @@ func handleOpenChange(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	branch := target.Branch
-	result := changeOpenResult{Service: strings.TrimSpace(input.Service)}
-	if result.Service == "" && target.Pair != nil {
-		result.Service = target.Pair.Hostname
-	}
+	var result changeOpenResult
+	result.Service, result.Parts = changeService(stateDir, hqc.Address(), target, input.Service, branch)
 
 	// The Mate's own state says how the repository's code is kept, whether
 	// HQ keeps an open change per branch, and names the changes handed to

@@ -2,6 +2,7 @@ package content
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -195,16 +196,79 @@ func buildChiefMD(rt runtime.Info) (string, error) {
 
 // BuildClaudeWrapper returns the body content of CLAUDE.md's
 // ZCP-managed section: an @AGENTS.md include that pulls the canonical
-// body into Claude's context (Claude Code's native @-include syntax).
+// body into Claude's context (Claude Code's native @-include syntax),
+// then — where WorkspaceImports holds — one @<dir>/CLAUDE.md include per
+// repository the workspace holds (docs/spec-workflows.md §5.1).
 //
-// The wrapper is intentionally minimal today — the corpus + boot shim
-// content is agent-neutral after the genericization in commit d0f8a449,
-// so there's nothing Claude-specific to add here. The deltas section is
-// reserved for future Claude-only guidance (e.g. an explicit
-// `run_in_background=true` example block) that would mislead non-Claude
-// agents if it lived in AGENTS.md.
+// repos are workspace-relative repository directories (the caller reads
+// them from the pair records: workflow.WorkspaceRepos). In a container
+// every session opens in the workspace, /var/www, where zcp mounts each
+// pair's dev half at /var/www/<host>; Claude Code loads a subdirectory's
+// CLAUDE.md only once the agent reads a file there, so without the
+// include a repository's own instructions arrive late or never. An
+// include resolves against this file, an absent file is skipped, and the
+// imported file keeps its own @-includes, so a repository's CLAUDE.md
+// that imports its AGENTS.md brings that too. The lines are includes
+// only — no prose, nothing of zcp's guidance restated — and live here,
+// not in AGENTS.md, because the other agents reading AGENTS.md do not
+// expand them.
 //
 // Caller wraps the returned body in <!-- ZCP:BEGIN/END --> markers.
-func BuildClaudeWrapper() string {
-	return "@AGENTS.md\n"
+func BuildClaudeWrapper(rt runtime.Info, repos []string) string {
+	var b strings.Builder
+	b.WriteString("@AGENTS.md\n")
+	if !WorkspaceImports(rt) {
+		return b.String()
+	}
+	dirs := slices.Clone(repos)
+	slices.Sort(dirs)
+	for _, dir := range slices.Compact(dirs) {
+		if !importableRepoDir(dir) {
+			continue
+		}
+		b.WriteString("@" + dir + "/CLAUDE.md\n")
+	}
+	return b.String()
+}
+
+// WorkspaceImports reports whether CLAUDE.md's managed section imports the
+// workspace's repositories: in a container, where zcp mounts them under
+// the session's working directory, outside an authoring context (there a
+// codebase's CLAUDE.md is a content surface the run authors for porters,
+// not the authoring agent's instructions — docs/spec-content-surfaces.md
+// Surface 6) and outside org mode (the Chief's project work is each
+// project's Mate's — docs/spec-mate.md §2.11). Locally the working
+// directory is the repository itself.
+func WorkspaceImports(rt runtime.Info) bool {
+	return rt.InContainer && !rt.Authoring && !rt.Chief
+}
+
+// importableRepoDir reports whether dir is a plain workspace-relative
+// directory an include line names exactly: segments of letters, digits,
+// '.', '_' and '-' only, none of them "." or "..". Anything else — empty,
+// absolute, escaping the workspace, or carrying a character that would end
+// or change the include (a space, a quote, '#', '@', a backslash) — gets no
+// line, and that repository's CLAUDE.md loads on demand as before.
+func importableRepoDir(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	for seg := range strings.SplitSeq(dir, "/") {
+		if seg == "" || seg == "." || seg == ".." || strings.ContainsFunc(seg, notImportPathRune) {
+			return false
+		}
+	}
+	return true
+}
+
+// notImportPathRune reports whether r is outside the letters, digits, '.',
+// '_' and '-' an include line's directory may carry.
+func notImportPathRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	case r == '.', r == '_', r == '-':
+		return false
+	}
+	return true
 }

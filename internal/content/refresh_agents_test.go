@@ -20,7 +20,7 @@ func TestRefreshAgentContext_NoFiles_NoOp(t *testing.T) {
 	agents := filepath.Join(dir, "AGENTS.md")
 	claude := filepath.Join(dir, "CLAUDE.md")
 
-	a, c, err := RefreshAgentContext(agents, claude, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	a, c, err := RefreshAgentContext(agents, claude, runtime.Info{InContainer: true, ServiceName: "zcp"}, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRefreshAgentContext_StaleAgentsMD_RefreshesAndPreservesReflog(t *testin
 	}
 
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRefreshAgentContext_ClaudeWrapper_PreservesContentOutsideMarkers(t *tes
 		t.Fatal(err)
 	}
 
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,11 +143,11 @@ func TestRefreshAgentContext_Idempotent(t *testing.T) {
 	if err := os.WriteFile(agentsPath, []byte(wrapManagedBlock(body)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(claudePath, []byte(wrapManagedBlock(BuildClaudeWrapper())), 0o644); err != nil {
+	if err := os.WriteFile(claudePath, []byte(wrapManagedBlock(BuildClaudeWrapper(rt, nil))), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRefreshAgentContext_ReversedMarkers_NoCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false, nil)
 	if err != nil {
 		t.Fatalf("reversed-marker file must not return an error (got: %v)", err)
 	}
@@ -192,7 +192,7 @@ func TestRefreshAgentContext_BeginOnly_NoCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false, nil)
 	if err != nil {
 		t.Fatalf("begin-only file must not return an error (got: %v)", err)
 	}
@@ -242,7 +242,7 @@ func TestRefreshAgentContext_GuidedParam(t *testing.T) {
 	rt := runtime.Info{InContainer: false}
 
 	// guided=false → refresh leaves out the guided block.
-	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, false); err != nil {
+	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil); err != nil {
 		t.Fatalf("refresh (guided off): %v", err)
 	}
 	if body, _ := os.ReadFile(agentsPath); strings.Contains(string(body), "## Guided mode (user-only)") {
@@ -250,7 +250,7 @@ func TestRefreshAgentContext_GuidedParam(t *testing.T) {
 	}
 
 	// guided=true → refresh adds the guided block.
-	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, true); err != nil {
+	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, true, nil); err != nil {
 		t.Fatalf("refresh (guided on): %v", err)
 	}
 	if body, _ := os.ReadFile(agentsPath); !strings.Contains(string(body), "## Guided mode (user-only)") {
@@ -282,7 +282,7 @@ func TestRefreshAgentContext_OnboardingPreserved(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, _, err := RefreshAgentContext(agentsPath, claudePath, tt.rt, false); err != nil {
+			if _, _, err := RefreshAgentContext(agentsPath, claudePath, tt.rt, false, nil); err != nil {
 				t.Fatalf("RefreshAgentContext: %v", err)
 			}
 			body, err := os.ReadFile(agentsPath)
@@ -327,7 +327,7 @@ func TestRefreshAgentContext_MidLineMarkerMention_ProseIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestRefreshAgentContext_OnlyMidLineMentions_NoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -19,8 +19,9 @@ const (
 )
 
 // RefreshAgentContext refreshes the ZCP-managed section in both
-// AGENTS.md (canonical body) and CLAUDE.md (thin @AGENTS.md wrapper)
-// to the current embedded template content. Idempotent on per-file
+// AGENTS.md (canonical body) and CLAUDE.md (the @AGENTS.md wrapper with
+// the repositories' imports, RefreshClaudeWrapper) to the current
+// embedded template content. Idempotent on per-file
 // basis: when the on-disk managed section already matches what would
 // be freshly composed for rt, the file is left untouched.
 //
@@ -49,34 +50,52 @@ const (
 // workflow doctrine until the operator runs `zcp init`. `zcp init`
 // is the only place that owns the migration (writes AGENTS.md AND
 // rewrites CLAUDE.md atomically), so serve never partially-migrates.
-func RefreshAgentContext(agentsPath, claudePath string, rt runtime.Info, guided bool) (agentsChanged, claudeChanged bool, err error) {
-	agentsBody, buildErr := BuildAgentsMD(rt, guided)
-	if buildErr != nil {
-		return false, false, buildErr
-	}
-	agentsBlock := wrapManagedBlock(agentsBody)
-
-	agentsChanged, err = refreshManagedFile(agentsPath, agentsBlock)
+func RefreshAgentContext(agentsPath, claudePath string, rt runtime.Info, guided bool, repos []string) (agentsChanged, claudeChanged bool, err error) {
+	agentsChanged, err = RefreshAgentsMD(agentsPath, rt, guided)
 	if err != nil {
-		return agentsChanged, false, fmt.Errorf("refresh AGENTS.md: %w", err)
+		return agentsChanged, false, err
 	}
+	claudeChanged, err = RefreshClaudeWrapper(agentsPath, claudePath, rt, repos)
+	return agentsChanged, claudeChanged, err
+}
 
-	// If AGENTS.md doesn't exist, do NOT refresh CLAUDE.md — a
-	// pre-upgrade Claude user has the doctrine in CLAUDE.md's managed
-	// section, and rewriting it to a wrapper would orphan an
-	// @AGENTS.md include with no target file. Wait for `zcp init` to
-	// migrate atomically.
+// RefreshAgentsMD refreshes AGENTS.md's ZCP-managed section alone, to the
+// body BuildAgentsMD composes for rt and guided. Same per-file semantics as
+// RefreshAgentContext.
+func RefreshAgentsMD(agentsPath string, rt runtime.Info, guided bool) (bool, error) {
+	agentsBody, err := BuildAgentsMD(rt, guided)
+	if err != nil {
+		return false, err
+	}
+	changed, err := refreshManagedFile(agentsPath, wrapManagedBlock(agentsBody))
+	if err != nil {
+		return changed, fmt.Errorf("refresh AGENTS.md: %w", err)
+	}
+	return changed, nil
+}
+
+// RefreshClaudeWrapper refreshes CLAUDE.md's ZCP-managed section alone:
+// the @AGENTS.md include and, where WorkspaceImports holds, one include per
+// repository in repos (BuildClaudeWrapper). zcp serve runs it at start
+// (through RefreshAgentContext) and after every tool call — where pairs are
+// bootstrapped, adopted, stood up, moved onto a pool or deleted — so the
+// next session reads the list current (docs/spec-workflows.md §5.1). Same
+// per-file semantics as RefreshAgentContext; content outside the markers is
+// preserved verbatim.
+//
+// If AGENTS.md doesn't exist, CLAUDE.md is NOT refreshed — a pre-upgrade
+// Claude user has the doctrine in CLAUDE.md's managed section, and
+// rewriting it to a wrapper would orphan an @AGENTS.md include with no
+// target file. `zcp init` migrates atomically.
+func RefreshClaudeWrapper(agentsPath, claudePath string, rt runtime.Info, repos []string) (bool, error) {
 	if _, statErr := os.Stat(agentsPath); os.IsNotExist(statErr) {
-		return agentsChanged, false, nil
+		return false, nil
 	}
-
-	claudeBlock := wrapManagedBlock(BuildClaudeWrapper())
-	claudeChanged, err = refreshManagedFile(claudePath, claudeBlock)
+	changed, err := refreshManagedFile(claudePath, wrapManagedBlock(BuildClaudeWrapper(rt, repos)))
 	if err != nil {
-		return agentsChanged, claudeChanged, fmt.Errorf("refresh CLAUDE.md: %w", err)
+		return changed, fmt.Errorf("refresh CLAUDE.md: %w", err)
 	}
-
-	return agentsChanged, claudeChanged, nil
+	return changed, nil
 }
 
 // RefreshClaudeMD is a deprecated alias for RefreshAgentContext that
