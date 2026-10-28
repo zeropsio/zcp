@@ -141,8 +141,13 @@ type GroupRecipeInputs struct {
 	// zcp's mark (StampTier), which tells a tier zcp composed from this Mate
 	// and nobody changed since from one a person or another Mate wrote. ""
 	// writes no mark.
-	MateProjectID   string
-	Runtimes        []GroupRuntime
+	MateProjectID string
+	// MateSubdomainHost is the Mate's own project's subdomain host as the
+	// platform names it (`1df2.prg1.zerops.app`, or its first label alone):
+	// every public address of one of its services is
+	// `<hostname>-<first label>[-<port>].<region>.zerops.app`. "" names none.
+	MateSubdomainHost string
+	Runtimes          []GroupRuntime
 	ManagedServices []ManagedServiceEntry
 	// ProjectEnvs is the project's user-set variables, the platform's own and
 	// the control plane's already left out: every tier carries them in the
