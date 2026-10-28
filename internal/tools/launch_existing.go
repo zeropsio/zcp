@@ -202,6 +202,21 @@ func executeExistingProjectMutation(
 			"compose-inputs-failed",
 			"Launch bundle input composition failed: "+composeErr.Error())
 	}
+
+	// 4a. The target's current services, read once: the conflict preflight
+	// below matches them against the bundle, and the composer counts what
+	// production already runs as carried, so a launched runtime reading one
+	// is not refused (P-LP-19). Routed through ops.ListProjectServices to
+	// satisfy the architecture invariant (CLAUDE.md "tools/eval reach
+	// platform via ops" — single cache/retry/instrumentation site).
+	existingServices, err := ops.ListProjectServices(ctx, target, input.ExistingProjectID)
+	if err != nil {
+		return convertError(fmt.Errorf("existing-project preflight: list services: %w", err), WithRecoveryStatus())
+	}
+	for _, svc := range existingServices {
+		bundleInputs.TargetHostnames = append(bundleInputs.TargetHostnames, svc.Name)
+	}
+
 	launchBundle, err := ops.BuildLaunchBundle(bundleInputs, classifications)
 	if launchBundle != nil {
 		launchBundle.Warnings = append(launchBundle.Warnings, composeWarnings...)
@@ -236,15 +251,8 @@ func executeExistingProjectMutation(
 			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors))
 	}
 
-	// 4. Hostname conflict preflight against target's current services.
-	// Routed through ops.ListProjectServices to satisfy the
-	// architecture invariant (CLAUDE.md "tools/eval reach platform
-	// via ops" — single cache/retry/instrumentation site).
-	existingServices, err := ops.ListProjectServices(ctx, target, input.ExistingProjectID)
-	if err != nil {
-		return convertError(fmt.Errorf("existing-project preflight: list services: %w", err), WithRecoveryStatus())
-	}
-
+	// 4. Hostname conflict preflight against the target's current services
+	// (read at 4a).
 	// P4 — existing-project conflict resolution. Detect hostname
 	// collisions, apply agent-supplied MergeStrategy. Unresolved
 	// conflicts surface the conflict-prompt; replace-flagged conflicts

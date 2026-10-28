@@ -3,6 +3,7 @@ package bundle
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -67,7 +68,10 @@ const legacyDefaultSetupName = "prod"
 //     production pipeline, which owns the setup reference).
 //  5. Append managed deps (deduplicated by hostname so shared infra
 //     across multiple promoted runtimes lands once) with HA promotion
-//     per ServiceTypeRules; opt-out via KeepNonHA.
+//     per ServiceTypeRules; opt-out via KeepNonHA. Then every Zerops Box a
+//     launched runtime reads (P-LP-19) — never a pool — after refusing a
+//     launch whose runtime reads a source service the bundle does not
+//     carry, and a launch-new Box outside the regions a Box exists in.
 //  6. Compose project block — name + tags + vault (omitted
 //     for VariantLaunchExisting).
 //  7. Marshal yaml + add preprocessor header.
@@ -91,7 +95,7 @@ func BuildLaunch(
 	if err := refuseNonRuntimeLaunchRuntimes(inputs.Runtimes); err != nil {
 		return nil, err
 	}
-	managedServices, notCarried := splitNotCarriedServices(inputs.ManagedServices)
+	managedServices, poolsAndBoxes := splitNotCarriedServices(inputs.ManagedServices)
 	inputs.ManagedServices = managedServices
 	var setupAdoptions []string
 	for i := range inputs.Runtimes {
@@ -133,6 +137,14 @@ func BuildLaunch(
 	if !variant.IsLaunch() {
 		variant = VariantLaunchNew
 	}
+	excludeSet := make(map[string]bool, len(inputs.ExcludeManaged))
+	for _, h := range inputs.ExcludeManaged {
+		excludeSet[h] = true
+	}
+	boxEntries, boxWarnings, err := launchReads(inputs, classifications, variant, poolsAndBoxes, excludeSet)
+	if err != nil {
+		return nil, err
+	}
 
 	bundle := &LaunchBundle{
 		TargetProjectName: inputs.TargetProjectName,
@@ -141,7 +153,7 @@ func BuildLaunch(
 	}
 
 	bundle.Warnings = append(bundle.Warnings, setupAdoptions...)
-	bundle.Warnings = append(bundle.Warnings, notCarriedWarnings(notCarried)...)
+	bundle.Warnings = append(bundle.Warnings, boxWarnings...)
 
 	projectVault, envWarnings := composeProjectVault(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
@@ -174,12 +186,8 @@ func BuildLaunch(
 	for _, h := range inputs.HAIncapable {
 		haIncapableSet[h] = true
 	}
-	excludeSet := make(map[string]bool, len(inputs.ExcludeManaged))
-	for _, h := range inputs.ExcludeManaged {
-		excludeSet[h] = true
-	}
 
-	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
+	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices)+len(boxEntries))
 	allServiceVaults := map[string]vaultValue{}
 	for _, r := range inputs.Runtimes {
 		entry, svcWarnings := runtimeEntryFromInput(r, classifications)
@@ -212,6 +220,7 @@ func BuildLaunch(
 		entry := managedEntryWithRules(m, true /*launch*/, keepSingle)
 		services = append(services, entry)
 	}
+	services = append(services, boxEntries...)
 
 	doc := map[string]any{
 		"services": services,
@@ -221,23 +230,19 @@ func BuildLaunch(
 		if corePackage == "" {
 			corePackage = productionDefaultCorePackage
 		}
-		location := strings.TrimSpace(inputs.Location)
-		if location == "" {
-			location = productionDefaultLocation
-		}
-		project := map[string]any{
+		projectBlock := map[string]any{
 			"name":        inputs.TargetProjectName,
 			"tags":        composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
 			"corePackage": corePackage,
-			"location":    location,
+			"location":    launchLocation(inputs.Location),
 		}
 		if inputs.LaunchID != "" {
-			project["description"] = LaunchMarker(inputs.LaunchID)
+			projectBlock["description"] = LaunchMarker(inputs.LaunchID)
 		}
 		if len(projectVault) > 0 {
-			project["vault"] = projectVault
+			projectBlock["vault"] = projectVault
 		}
-		doc["project"] = project
+		doc["project"] = projectBlock
 	}
 
 	out, err := yaml.Marshal(doc)
@@ -420,18 +425,217 @@ func collectZeropsYAMLRunVolumeHosts(runtimes []LaunchRuntimeInput) map[string]b
 }
 
 // splitNotCarriedServices separates the Swarm pools and Zerops Boxes from the
-// managed dependencies the composer promotes. A pool or Box is a service the
-// production import must declare itself (its orchestrator and containers are
-// not a deploy target), so the composer never emits one — it only names it.
-func splitNotCarriedServices(in []ManagedServiceEntry) (carried, notCarried []ManagedServiceEntry) {
+// managed dependencies the composer promotes. Neither is promoted as one: a
+// pool is never carried — its orchestrator and containers are no deploy
+// target, so the production import must declare one itself — and a Box is
+// carried only where a launched runtime reads it (launchBoxes).
+func splitNotCarriedServices(in []ManagedServiceEntry) (managed, poolsAndBoxes []ManagedServiceEntry) {
 	for _, m := range in {
 		if topology.IsPoolOrSandboxType(m.Type) {
-			notCarried = append(notCarried, m)
+			poolsAndBoxes = append(poolsAndBoxes, m)
 			continue
 		}
-		carried = append(carried, m)
+		managed = append(managed, m)
 	}
-	return carried, notCarried
+	return managed, poolsAndBoxes
+}
+
+// launchProjectServices is every service the source project runs, by
+// hostname: ProjectHostnames, and every managed dependency, pool and Box
+// handed in — whether listed there or not.
+func launchProjectServices(inputs LaunchBundleInputs, poolsAndBoxes []ManagedServiceEntry) map[string]bool {
+	project := map[string]bool{}
+	for _, host := range inputs.ProjectHostnames {
+		if host = strings.TrimSpace(host); host != "" {
+			project[host] = true
+		}
+	}
+	for _, m := range append(slices.Clone(inputs.ManagedServices), poolsAndBoxes...) {
+		if host := strings.TrimSpace(m.Hostname); host != "" {
+			project[host] = true
+		}
+	}
+	return project
+}
+
+// launchReads is P-LP-19 over the launched runtimes, read as a group recipe
+// tier's are (group_reads.go): the services[] entries of the Boxes they
+// read, and the warnings naming the pools and Boxes the bundle leaves out
+// (PS-3) and the Boxes it carries — or the refusal of a launch whose runtime
+// reads a service the source project runs that the bundle does not carry,
+// or of a launch-new Box outside the regions a Box exists in, before
+// anything is created. inputs.ManagedServices holds the managed
+// dependencies alone; poolsAndBoxes the rest.
+func launchReads(
+	inputs LaunchBundleInputs,
+	classifications map[string]topology.SecretClassification,
+	variant Variant,
+	poolsAndBoxes []ManagedServiceEntry,
+	excluded map[string]bool,
+) ([]any, []string, error) {
+	project := launchProjectServices(inputs, poolsAndBoxes)
+	reader := newServiceReader(slices.Sorted(maps.Keys(project)))
+	readers := launchReaders(inputs.Runtimes, classifications)
+	boxes, notCarried := launchBoxes(reader, readers, poolsAndBoxes, excluded)
+	if err := launchClosure(reader, readers, inputs, boxes, poolsAndBoxes, project, excluded); err != nil {
+		return nil, nil, err
+	}
+	if variant == VariantLaunchNew {
+		if err := launchBoxRegion(boxes, inputs.Location); err != nil {
+			return nil, nil, err
+		}
+	}
+	// A carried Box as a Box import takes it, under the launch's rules: no
+	// build (pipeline-first) and no public access (P-PROD-2) — the source's
+	// subdomain is never handed in, so none is written.
+	entries := make([]any, 0, len(boxes))
+	for _, b := range boxes {
+		entries = append(entries, boxImportEntry(GroupBox{Hostname: b.service.Hostname, ServiceType: b.service.Type}))
+	}
+	return entries, append(notCarriedWarnings(notCarried), carriedBoxWarnings(boxes)...), nil
+}
+
+// launchReaders is each launched runtime as a tier's reader (tierReader):
+// the setup the launch builds for it, in its zerops.yaml, and the values its
+// own variables are written with into its production vault — a placeholder
+// or a generated secret names nothing.
+func launchReaders(runtimes []LaunchRuntimeInput, classifications map[string]topology.SecretClassification) []tierReader {
+	readers := make([]tierReader, 0, len(runtimes))
+	for _, r := range runtimes {
+		vault, _ := composeServiceVault(r.ServiceEnvs, classifications)
+		values := make([]string, 0, len(vault))
+		for _, key := range slices.Sorted(maps.Keys(vault)) {
+			values = append(values, vault[key].value)
+		}
+		readers = append(readers, tierReader{hostname: r.ProdHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, vault: values})
+	}
+	return readers
+}
+
+// launchBox is a Zerops Box the bundle carries and the launched runtimes that
+// read it, in launch order.
+type launchBox struct {
+	service ManagedServiceEntry
+	readers []string
+}
+
+// launchBoxes is the Boxes among poolsAndBoxes a launched runtime reads,
+// each once — through the setup the launch builds for it or a value of its
+// own vault (tierReads) — and what the bundle leaves out, in input order:
+// every pool, a Box nothing launched reads, and a Box the person excluded.
+func launchBoxes(sr *serviceReader, readers []tierReader, poolsAndBoxes []ManagedServiceEntry, excluded map[string]bool) (boxes []launchBox, notCarried []ManagedServiceEntry) {
+	read := tierReads(sr, readers)
+	carried := map[string]bool{}
+	for _, s := range poolsAndBoxes {
+		if !topology.IsSandboxType(s.Type) || excluded[s.Hostname] || len(read[s.Hostname]) == 0 {
+			notCarried = append(notCarried, s)
+			continue
+		}
+		if !carried[s.Hostname] {
+			carried[s.Hostname] = true
+			boxes = append(boxes, launchBox{service: s, readers: read[s.Hostname]})
+		}
+	}
+	return boxes, notCarried
+}
+
+// launchClosure refuses a launch whose runtime reads, through the setup the
+// launch builds for it, a service the source project runs (project) that the
+// bundle does not carry (closureGaps, PS-3a's check): production would start
+// an app that cannot reach it. Carried are the launched runtimes under their
+// production hostnames, the managed dependencies the person did not exclude,
+// the Boxes the bundle carries, and what an existing production project
+// already runs that the bundle leaves as it is (TargetHostnames).
+func launchClosure(sr *serviceReader, readers []tierReader, inputs LaunchBundleInputs, boxes []launchBox, poolsAndBoxes []ManagedServiceEntry, project, excluded map[string]bool) error {
+	carried := map[string]bool{}
+	for _, r := range inputs.Runtimes {
+		carried[r.ProdHostname] = true
+	}
+	for _, m := range inputs.ManagedServices {
+		if !excluded[m.Hostname] {
+			carried[m.Hostname] = true
+		}
+	}
+	for _, b := range boxes {
+		carried[b.service.Hostname] = true
+	}
+	for _, host := range inputs.TargetHostnames {
+		carried[host] = true
+	}
+	pools := map[string]bool{}
+	for _, s := range poolsAndBoxes {
+		if topology.IsPoolType(s.Type) {
+			pools[s.Hostname] = true
+		}
+	}
+	gaps := closureGaps(sr, readers, carried, project)
+	if len(gaps) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		why := "which production does not run under that name"
+		switch host := gap.read.host; {
+		case excluded[host]:
+			why = "which the launch excluded by user decision (managedDeps)"
+		case pools[host]:
+			why = "a Swarm pool, which a launch never carries"
+		}
+		lines = append(lines, fmt.Sprintf("%s, %s", gap, why))
+	}
+	return fmt.Errorf(
+		"launch bundle: a launched runtime reads a service the source project runs and the production bundle does not carry, so production would start an app that cannot reach it — nothing is launched until the bundle carries what its runtimes read: %s. Launch the runtime that serves it, include the managed dependency, or stop the setup reading it",
+		strings.Join(lines, "; "))
+}
+
+// launchLocation is the production project's location: the one asked for,
+// else productionDefaultLocation.
+func launchLocation(location string) string {
+	if location = strings.TrimSpace(location); location == "" {
+		return productionDefaultLocation
+	}
+	return location
+}
+
+// launchBoxRegion refuses a launch-new bundle that carries a Box into a
+// production project whose location no Box can be created in (PS-16): the
+// launch's import is not zcp's zerops_import, which refuses it there, and
+// the platform fails the Box's create with a capacity error and removes it.
+func launchBoxRegion(boxes []launchBox, location string) error {
+	location = launchLocation(location)
+	if len(boxes) == 0 || topology.BoxLocationAllowed(location) {
+		return nil
+	}
+	named := make([]string, 0, len(boxes))
+	for _, b := range boxes {
+		named = append(named, fmt.Sprintf("Zerops Box %q (%s it)", b.service.Hostname, readersOf(b)))
+	}
+	return fmt.Errorf(
+		"launch bundle: the production bundle carries %s, and a Zerops Box can be created only in a project in region %s, but the production project's location is %q — launch into the default location %q, or stop the runtime reading the Box",
+		strings.Join(named, ", "), strings.Join(topology.BoxRegions(), " or "), location, productionDefaultLocation)
+}
+
+// carriedBoxWarnings says of each Box the bundle carries which launched
+// runtime reads it, and what the person still does in production: the
+// launch import creates a Box with no base and no domain and does not set
+// it up, and leaves its public access off (P-PROD-2).
+func carriedBoxWarnings(boxes []launchBox) []string {
+	out := make([]string, 0, len(boxes))
+	for _, b := range boxes {
+		out = append(out, fmt.Sprintf(
+			"Zerops Box %q (%s) is carried into the production bundle: %s it. It comes up with no base and no domain, and its public access off — finish its setup in the production project with `zbox setup` before the app starts a sandbox there",
+			b.service.Hostname, b.service.Type, readersOf(b)))
+	}
+	return out
+}
+
+// readersOf names the launched runtimes that read a Box, with the verb:
+// `runtime "a" reads`, `runtimes "a" and "b" read`.
+func readersOf(b launchBox) string {
+	if len(b.readers) > 1 {
+		return "runtimes " + quoteAnd(b.readers) + " read"
+	}
+	return "runtime " + quoteAnd(b.readers) + " reads"
 }
 
 // notCarriedKind is the human name of a service type the launch bundle does
