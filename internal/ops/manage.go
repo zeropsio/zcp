@@ -190,10 +190,16 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		containerCountFixed(serviceType), topology.IsPoolType(serviceType))
 	apiParams.ServiceMode = svc.Mode
 	// A raise of a dev pool's maximum past the preview ports it opens is
-	// refused before it is sent (PS-17).
-	if topology.IsPoolType(serviceType) && params.MaxContainers != nil {
-		if err := poolRaisePreviewPortsError(cfg.shrinkDeps.StateDir, current, *params.MaxContainers); err != nil {
-			return nil, err
+	// refused before it is sent (PS-17). Any other scale that leaves the pool
+	// past them — already there before the check, or outside zcp — is sent,
+	// and the result says which containers have no preview (PS-17a).
+	var previewNotice string
+	if topology.IsPoolType(serviceType) && poolLeasedByZcp(cfg.shrinkDeps.StateDir, current) {
+		if short, ok := readPoolPreviewShortfall(current, poolMaxAfter(current, params)); ok {
+			if poolRaises(current, params) {
+				return nil, short.raiseError()
+			}
+			previewNotice = short.notice()
 		}
 	}
 	// Check-before-mutate (spec-workflows §8 O3): what a lowering of a pool's
@@ -241,6 +247,9 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 				result.Notice += " " + n
 			}
 		}
+	}
+	if previewNotice != "" {
+		result.Notice = strings.TrimSpace(previewNotice + " " + result.Notice)
 	}
 
 	return result, nil

@@ -23,6 +23,16 @@ import (
 // fixes it. Every recipe pass — a zcp start, a bootstrap close, an adopt, a
 // develop start, the agent's group-recipe — tries again, and the step is
 // gone on the pass that proposes the tiers or finds main carrying them.
+//
+// So is a recipe the composer refuses because a tier reads a service it does
+// not carry (bundle.TierClosureError, spec-workflows.md §8 PS-3a): nothing is
+// proposed then, not even a tier main lacks, so the group's recipe goes stale
+// while the refusal stands. Its step is the refusal in the composer's words
+// (recipeClosureStep), recorded with the rest, and gone on the next pass that
+// composes or that the composer refuses for anything else. Each step is the
+// verdict of the last pass that decided one, never a mark of its own: a pass
+// that finds no pair left to compose from decides that nothing is required,
+// so a step no pass can check again never stays.
 
 // recipeRequiredFile records the steps the last recipe pass found required,
 // beside the per-pair records under the HQ state directory: a name with a
@@ -61,9 +71,22 @@ func recipeRequiredStep(blockers []bundle.GroupRecipeBlocker, pooled map[string]
 		}
 		ways = append(ways, way)
 	}
-	return fmt.Sprintf("the group recipe — the tiers a second Mate and the group's stage and production are built from — cannot be proposed: main of the recipe repository lacks %s, and %s. Then call zerops_workflow action=\"group-recipe\", or let the next develop start try again.",
-		strings.Join(tiers, ", "), strings.Join(ways, "; "))
+	return fmt.Sprintf("the group recipe — the tiers a second Mate and the group's stage and production are built from — cannot be proposed: main of the recipe repository lacks %s, and %s. %s",
+		strings.Join(tiers, ", "), strings.Join(ways, "; "), recipeRequiredAgain)
 }
+
+// recipeClosureStep is the required step for a recipe the composer refused
+// because a tier reads a service it does not carry: the refusal as the
+// composer words it — per tier the runtime, the setup, the variable and the
+// service, and the way out, carrying the service in that tier or the setup
+// reading it no more — and the call that tries again.
+func recipeClosureStep(refusal *bundle.TierClosureError) string {
+	return refusal.Error() + ". " + recipeRequiredAgain
+}
+
+// recipeRequiredAgain ends each required step of the group recipe: the call
+// that tries again once the step is done.
+const recipeRequiredAgain = `Then call zerops_workflow action="group-recipe", or let the next develop start try again.`
 
 // readRecipeRequired is what the last recipe pass recorded as required;
 // none when it recorded nothing or the record cannot be read.
