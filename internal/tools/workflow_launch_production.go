@@ -1927,7 +1927,7 @@ type launchBundlePreview struct {
 type launchPreviewService struct {
 	Hostname string `json:"hostname"`
 	Type     string `json:"type"`
-	Role     string `json:"role"` // runtime | managed
+	Role     string `json:"role"` // runtime | managed | box
 	Mode     string `json:"mode,omitempty"`
 	Setup    string `json:"setup,omitempty"`
 	// SetupProvenance (runtime role only) names which cascade source
@@ -1999,7 +1999,21 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	var unreferenced []string
 	hasUnreferencedLocalStorage := false
 	hasUnreferencedConnectionService := false
+	carriedBoxes := make(map[string]bool, len(b.Boxes))
+	for _, h := range b.Boxes {
+		carriedBoxes[h] = true
+	}
 	for _, m := range inputs.ManagedServices {
+		// A pool or a Box is no managed service the import creates: a Box the
+		// bundle carries is listed as a Box (P-LP-19), once; a pool, or a Box
+		// it leaves out, only in the warnings.
+		if topology.IsPoolOrSandboxType(m.Type) {
+			if carriedBoxes[m.Hostname] {
+				preview.Services = append(preview.Services, launchPreviewService{Hostname: m.Hostname, Type: m.Type, Role: "box"})
+				delete(carriedBoxes, m.Hostname)
+			}
+			continue
+		}
 		// Single owner with the import-yaml composer: the preview shows the
 		// SAME resolved variant type the bundle emits (postgresql:ha@16), never
 		// the old hand-paired raw-type + sibling mode (postgresql@16 + mode:HA,

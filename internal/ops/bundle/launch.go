@@ -141,7 +141,7 @@ func BuildLaunch(
 	for _, h := range inputs.ExcludeManaged {
 		excludeSet[h] = true
 	}
-	boxEntries, boxWarnings, err := launchReads(inputs, classifications, variant, poolsAndBoxes, excludeSet)
+	carry, err := launchReads(inputs, classifications, variant, poolsAndBoxes, excludeSet)
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +150,11 @@ func BuildLaunch(
 		TargetProjectName: inputs.TargetProjectName,
 		SourceProjectID:   inputs.SourceProjectID,
 		Classifications:   classifications,
+		Boxes:             carry.boxes,
 	}
 
 	bundle.Warnings = append(bundle.Warnings, setupAdoptions...)
-	bundle.Warnings = append(bundle.Warnings, boxWarnings...)
+	bundle.Warnings = append(bundle.Warnings, carry.warnings...)
 
 	projectVault, envWarnings := composeProjectVault(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
@@ -187,7 +188,7 @@ func BuildLaunch(
 		haIncapableSet[h] = true
 	}
 
-	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices)+len(boxEntries))
+	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices)+len(carry.entries))
 	allServiceVaults := map[string]vaultValue{}
 	for _, r := range inputs.Runtimes {
 		entry, svcWarnings := runtimeEntryFromInput(r, classifications)
@@ -220,7 +221,7 @@ func BuildLaunch(
 		entry := managedEntryWithRules(m, true /*launch*/, keepSingle)
 		services = append(services, entry)
 	}
-	services = append(services, boxEntries...)
+	services = append(services, carry.entries...)
 
 	doc := map[string]any{
 		"services": services,
@@ -458,41 +459,53 @@ func launchProjectServices(inputs LaunchBundleInputs, poolsAndBoxes []ManagedSer
 	return project
 }
 
+// launchCarry is what launchReads hands BuildLaunch: the services[] entries
+// of the Boxes the bundle carries, their hostnames, and the warnings naming
+// the pools and Boxes it leaves out (PS-3) and the Boxes it carries.
+type launchCarry struct {
+	entries  []any
+	boxes    []string
+	warnings []string
+}
+
 // launchReads is P-LP-19 over the launched runtimes, read as a group recipe
-// tier's are (group_reads.go): the services[] entries of the Boxes they
-// read, and the warnings naming the pools and Boxes the bundle leaves out
-// (PS-3) and the Boxes it carries — or the refusal of a launch whose runtime
-// reads a service the source project runs that the bundle does not carry,
-// or of a launch-new Box outside the regions a Box exists in, before
-// anything is created. inputs.ManagedServices holds the managed
-// dependencies alone; poolsAndBoxes the rest.
+// tier's are (group_reads.go): the Boxes they read, carried — or the refusal
+// of a launch whose runtime reads a service the source project runs that
+// the bundle does not carry, or of a launch-new Box outside the regions a
+// Box exists in, before anything is created. inputs.ManagedServices holds
+// the managed dependencies alone; poolsAndBoxes the rest.
 func launchReads(
 	inputs LaunchBundleInputs,
 	classifications map[string]topology.SecretClassification,
 	variant Variant,
 	poolsAndBoxes []ManagedServiceEntry,
 	excluded map[string]bool,
-) ([]any, []string, error) {
+) (launchCarry, error) {
 	project := launchProjectServices(inputs, poolsAndBoxes)
 	reader := newServiceReader(slices.Sorted(maps.Keys(project)))
 	readers := launchReaders(inputs.Runtimes, classifications)
 	boxes, notCarried := launchBoxes(reader, readers, poolsAndBoxes, excluded)
 	if err := launchClosure(reader, readers, inputs, boxes, poolsAndBoxes, project, excluded); err != nil {
-		return nil, nil, err
+		return launchCarry{}, err
 	}
 	if variant == VariantLaunchNew {
 		if err := launchBoxRegion(boxes, inputs.Location); err != nil {
-			return nil, nil, err
+			return launchCarry{}, err
 		}
 	}
 	// A carried Box as a Box import takes it, under the launch's rules: no
 	// build (pipeline-first) and no public access (P-PROD-2) — the source's
 	// subdomain is never handed in, so none is written.
-	entries := make([]any, 0, len(boxes))
-	for _, b := range boxes {
-		entries = append(entries, boxImportEntry(GroupBox{Hostname: b.service.Hostname, ServiceType: b.service.Type}))
+	carry := launchCarry{
+		entries:  make([]any, 0, len(boxes)),
+		boxes:    make([]string, 0, len(boxes)),
+		warnings: append(notCarriedWarnings(notCarried), carriedBoxWarnings(boxes)...),
 	}
-	return entries, append(notCarriedWarnings(notCarried), carriedBoxWarnings(boxes)...), nil
+	for _, b := range boxes {
+		carry.entries = append(carry.entries, boxImportEntry(GroupBox{Hostname: b.service.Hostname, ServiceType: b.service.Type}))
+		carry.boxes = append(carry.boxes, b.service.Hostname)
+	}
+	return carry, nil
 }
 
 // launchReaders is each launched runtime as a tier's reader (tierReader):

@@ -50,8 +50,12 @@ type LaunchBundle struct {
 	// derives from the same scan; the ready-to-launch preview surfaces
 	// Referenced so exclusion can be recommended pre-mutation.
 	ManagedDeps []ManagedDepReference
-	Warnings    []string
-	Errors      []schema.ValidationError
+	// Boxes are the hostnames of the Zerops Boxes the bundle carries — each
+	// one a launched runtime reads (P-LP-19) — in import order. A pool, or
+	// a Box it leaves out, is named in Warnings instead.
+	Boxes    []string
+	Warnings []string
+	Errors   []schema.ValidationError
 }
 
 // SourceSnapshot is a deterministic digest of source state at the
