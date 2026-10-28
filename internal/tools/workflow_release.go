@@ -178,11 +178,13 @@ func handleRelease(
 // checkout, so the release tags the origin's tracked tip itself — the commit
 // launch reads (P-LP-19), pushed by definition, so the clean-tree and
 // pushed-head proof a checkout needs has nothing to prove. The same two
-// calls as every release: release-prompt names the tip, the origin's
-// release tags and the next version; the re-call with releaseVersion tags
-// the tip it fetches then. Everything runs in a scratch repository of zcp's
-// own with the pool's GIT_TOKEN in git's environment alone; nothing reaches
-// the pool, a lease or the stage.
+// calls as every release: release-prompt names the tip — its full commit —
+// the origin's release tags and the next version; the re-call carries that
+// commit back (releaseCommit) with releaseVersion, and the tag is made on it
+// only while it is still the tip: a lease may push in between, and a moved
+// tip is refused naming both, nothing tagged. Everything runs in a scratch
+// repository of zcp's own with the pool's GIT_TOKEN in git's environment
+// alone; nothing reaches the pool, a lease or the stage.
 func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflow.ServiceMeta, input WorkflowInput) *mcp.CallToolResult {
 	ref := launchPushProofRef(meta)
 	remote := strings.TrimSpace(meta.RemoteURL)
@@ -215,11 +217,20 @@ func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflo
 			"origin":           topology.RedactRepoURLCredentials(remote),
 			"ref":              tip.Ref,
 			"head":             shortSHA(tip.CommitSHA),
+			"commit":           tip.CommitSHA,
 			"existingTags":     existing,
 			"suggestedVersion": suggestion,
 			"pipeline":         pipeline,
-			"nextStep":         fmt.Sprintf("Confirm the version with the user (suggested %q), then re-call: zerops_workflow action=\"release\" service=%q releaseVersion=%q. The tag is created on the origin's %s tip — the part's dev half is the dev pool %q, which holds no checkout — and fires the production pipeline.", suggestion, input.Service, suggestion, tip.Ref, meta.Hostname),
+			"nextStep":         fmt.Sprintf("Confirm the version with the user (suggested %q), then re-call: zerops_workflow action=\"release\" service=%q releaseVersion=%q releaseCommit=%q. The tag is created on that commit of the origin's %s — the part's dev half is the dev pool %q, which holds no checkout — only while it is still the tip, and fires the production pipeline.", suggestion, input.Service, suggestion, tip.CommitSHA, tip.Ref, meta.Hostname),
 		})
+	}
+	commit := strings.TrimSpace(input.ReleaseCommit)
+	if commit == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"releaseCommit is required to release a pair keyed by its dev pool: the tag is made on the commit the release-prompt showed, never on whatever the origin's tip is by then",
+			fmt.Sprintf("Call zerops_workflow action=\"release\" service=%q first, confirm its version and commit with the user, then re-call with releaseVersion and releaseCommit set to its commit.", input.Service),
+		), WithRecoveryStatus())
 	}
 
 	version := strings.TrimSpace(input.ReleaseVersion)
@@ -237,8 +248,11 @@ func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflo
 			fmt.Sprintf("Pick the next free version (suggested %q).", suggestion),
 		), WithRecoveryStatus())
 	}
-	tip, err := ops.TagOriginTip(ctx, remote, ref, version, "release "+version, token)
+	tip, err := ops.TagOriginTip(ctx, remote, ref, commit, version, "release "+version, token)
 	switch {
+	case errors.Is(err, ops.ErrOriginTipMoved):
+		return refuse(fmt.Sprintf("%v (%s)", err, how),
+			fmt.Sprintf("Nothing was tagged. Something was pushed to %s since the prompt; call zerops_workflow action=\"release\" service=%q again, confirm the new tip with the user, then release it.", ref, input.Service))
 	case errors.Is(err, ops.ErrOriginTagExists):
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
