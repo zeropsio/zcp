@@ -166,14 +166,22 @@ func composeGroupRecipeInputs(
 		case paired[svc.Hostname] != nil && topology.IsPoolType(svc.Type):
 			// A dev pool keying a wired pair: carried as that pair's dev half.
 			continue
-		case topology.IsPoolOrSandboxType(svc.Type):
-			// A Swarm pool reports the runtime category and a Zerops Box the
-			// database one, so only the type tells them apart: neither is a
-			// runtime, a utility or a managed dependency of the recipe. Left
-			// out and said, as launch does. Spec: spec-workflows.md §8 PS-3.
+		case topology.IsPoolType(svc.Type):
+			// A Swarm pool reports the runtime category, so only the type
+			// tells it apart: it is no runtime, utility or managed dependency
+			// of the recipe. Left out and said, as launch does. Spec:
+			// spec-workflows.md §8 PS-3.
 			warnings = append(warnings, fmt.Sprintf(
-				"%s %q (%s) is not carried in the recipe: it is no application runtime or managed dependency, so the recipe never declares it",
-				notCarriedPoolKind(svc.Type), svc.Hostname, svc.Type))
+				"Swarm pool %q (%s) is not carried in the recipe: it is no application runtime or managed dependency, so the recipe never declares it",
+				svc.Hostname, svc.Type))
+		case topology.IsSandboxType(svc.Type):
+			// A Zerops Box reports the database category, so only the type
+			// tells it apart — never the hostname: `box` is an ordinary
+			// runtime in some Mates. It is infrastructure an app uses, so the
+			// composer carries it in every tier where a runtime the tier
+			// carries reads it, and says so of one nothing reads
+			// (bundle.GroupBox). Spec: spec-workflows.md §8 PS-3.
+			inputs.Boxes = append(inputs.Boxes, bundle.GroupBox{Hostname: svc.Hostname, ServiceType: svc.Type, SubdomainEnabled: svc.SubdomainEnabled})
 		case svc.IsInfrastructure && topology.IsManagedService(svc.Type):
 			entry, entryWarnings, err := groupRecipeManaged(ctx, client, svc)
 			if err != nil {
@@ -242,15 +250,6 @@ func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo
 		svc:      svc,
 		mounted:  true,
 	}, found
-}
-
-// notCarriedPoolKind is the human name of a pool or Box the recipe does not
-// carry, worded as the launch bundle words it.
-func notCarriedPoolKind(serviceType string) string {
-	if topology.IsPoolType(serviceType) {
-		return "Swarm pool"
-	}
-	return "Zerops Box"
 }
 
 // groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe

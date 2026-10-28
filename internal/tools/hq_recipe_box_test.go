@@ -155,8 +155,8 @@ func TestGroupRecipe_NoolaRunner_EveryTierCarriesTheBox(t *testing.T) {
 	if len(want) > 0 {
 		t.Errorf("tiers not composed: %v", want)
 	}
-	if all := append(readWarnings, warnings...); warningsHave(all, `"box"`) {
-		t.Errorf("warnings %v speak of the Box as left out", all)
+	if warningsHave(readWarnings, `"box"`) || warningsHave(warnings, `"box"`) {
+		t.Errorf("warnings %v / %v speak of the Box as left out", readWarnings, warnings)
 	}
 }
 
@@ -172,10 +172,11 @@ func TestComposeGroupRecipeInputs_BoxKeyedOnType_NotHostname(t *testing.T) {
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
-	var boxes, utilities []string
+	boxes := make([]string, 0, len(inputs.Boxes))
 	for _, b := range inputs.Boxes {
 		boxes = append(boxes, b.Hostname)
 	}
+	utilities := make([]string, 0, len(inputs.Utilities))
 	for _, u := range inputs.Utilities {
 		utilities = append(utilities, u.Hostname)
 	}

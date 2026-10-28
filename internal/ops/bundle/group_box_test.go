@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // setupVars is one zerops.yaml setup the Box tests write: its name, the
@@ -45,8 +47,8 @@ func zeropsYAMLWithVars(setups ...setupVars) string {
 func boxRunnerInputs(body string, pool bool) GroupRecipeInputs {
 	runtime := GroupRuntime{
 		DevHostname:    "runnerdev",
-		Stages:         []GroupStage{{Hostname: "runnerstage", SetupName: "runnerprod", ServiceType: "go@1.22"}},
-		ServiceType:    "go@1.22",
+		Stages:         []GroupStage{{Hostname: "runnerstage", SetupName: "runnerprod", ServiceType: "alpine/go@1"}},
+		ServiceType:    "alpine/go@1",
 		RepoURL:        "https://hq.example/git/org/app/noola.git",
 		SetupName:      "runnerdev",
 		ZeropsYAMLBody: body,
@@ -194,7 +196,8 @@ func TestBuildGroupRecipe_Box_CarriedWhereARuntimeReadsIt(t *testing.T) {
 // managed services' priority — it is created first, before every runtime
 // that reads it — and its public access as it runs. No mode, no HA variant
 // and no scale on any tier: a Box is one VM, and Small Production's promotion
-// of the managed services never reaches it.
+// of the managed services never reaches it. Every tier passes the embedded
+// import schema, which lists the Box type.
 func TestBuildGroupRecipe_Box_WrittenAsABoxImport(t *testing.T) {
 	t.Parallel()
 	body := zeropsYAMLWithVars(
@@ -219,6 +222,9 @@ func TestBuildGroupRecipe_Box_WrittenAsABoxImport(t *testing.T) {
 			}
 			files := groupFiles(t, layout)
 			for _, dir := range groupTierDirs {
+				if errs := schema.ValidateImportYAML(files[dir+"/import.yaml"]); len(errs) > 0 {
+					t.Errorf("%s fails the import schema: %v", dir, errs)
+				}
 				box, ok := serviceEntries(t, tierDoc(t, files, dir))["box"]
 				if !ok {
 					t.Fatalf("%s carries no Box", dir)
