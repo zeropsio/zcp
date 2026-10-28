@@ -44,12 +44,17 @@ import (
 // flag, the name and the shape can each only add secrets, and a value none of
 // them marks is still written only in a config shape.
 //
-// A secret becomes `<@generateRandomString(<N>)>`, N the live value's length
-// and at least 16, so every environment the tier creates gets its own value
-// of the shape its reader expects; an empty secret stays empty. A generated
-// value gets a line above it saying it was set by hand in the Mate and has to
-// be set again — all but a secret an app makes for itself (recipeAppSecret),
-// which a fresh environment simply generates anew.
+// A secret an app makes and reads itself (recipeAppSecret) becomes
+// `<@generateRandomString(<N>)>`, N the live value's length and at least 16,
+// so every environment the tier creates gets its own value of the shape its
+// reader expects: any random value serves it. Every other secret a person set
+// by hand — a vendor's key, an OAuth client's ID, a password, an opaque value
+// — no random value serves: Kaďák's project, made from flip.studio's AI Agent
+// tier, got FLIP_GOOGLE_CLIENT_ID as 32 random characters and Google answered
+// invalid_client. So it is left out of the vault it was in, the environment
+// holding no such variable until a person sets it, and the tier's header
+// names it as what to set before the environment can work (unsetValue). An
+// empty secret stays empty: there was nothing to hide or to make up.
 
 // minGeneratedSecret is the shortest secret the recipe generates.
 const minGeneratedSecret = 16
@@ -178,19 +183,41 @@ func recipeNameWords(key string) []string {
 }
 
 // recipeAppSecretEndings end the name of a secret an app makes for itself.
-var recipeAppSecretEndings = []string{"SECRET", "SALT", "PEPPER", "PASSWORD", "PASS", "PASSPHRASE", "KEY_BASE"}
+var recipeAppSecretEndings = []string{"SECRET", "SALT", "PEPPER", "KEY_BASE"}
 
-// recipeAppSecret reports a secret an app makes for itself — a name ending in
-// SECRET, SALT, PEPPER, PASSWORD, PASS, PASSPHRASE or KEY_BASE, and APP_KEY
-// and APP_KEYS — which a fresh environment simply generates anew. A webhook's
-// or a client's secret, or a value in a vendor's format, is the vendor's
-// whatever its name ends in.
+// recipeAppSecret reports a secret an app makes and reads itself — a name
+// ending in SECRET, SALT, PEPPER or KEY_BASE, and APP_KEY and APP_KEYS: a
+// signing or encryption secret any random value serves, which a fresh
+// environment simply generates anew. A webhook's or a client's secret, or a
+// value in a vendor's format, is the vendor's whatever its name ends in. A
+// password, a passcode or a passphrase is someone's — a person signs in with
+// it, or another service checks it (SMTP_PASS is the mail provider's) — so no
+// random value serves it, and the name alone cannot tell the one from the
+// other: it is set by hand — but for a service's own UI sign-in
+// (recipeOwnUISignIn).
 func recipeAppSecret(key, value string) bool {
 	upper := strings.ToUpper(key)
 	if recipeThirdPartySecretName.MatchString(upper) || matchesAny(recipeExternalShapes, value) {
 		return false
 	}
-	return upper == "APP_KEY" || upper == "APP_KEYS" || hasAnySuffix(upper, recipeAppSecretEndings)
+	return upper == "APP_KEY" || upper == "APP_KEYS" || hasAnySuffix(upper, recipeAppSecretEndings) || recipeOwnUISignIn(key, value)
+}
+
+// recipeOwnUISignIn reports a service's own access credential for its own
+// UI: a name whose last word is AUTH with UI a word before it (mailpit's
+// MP_UI_AUTH), holding one basic-auth pair of a plain-word user
+// (basicAuthPair). The service checks it, so any random password serves it,
+// and left out the UI answers anyone — mailpit's shows every mail the app
+// sends, sign-up links and password resets among them, on a public
+// subdomain. A pair under any other name may be a third party's, and is set
+// by hand.
+func recipeOwnUISignIn(key, value string) bool {
+	words := recipeNameWords(key)
+	if len(words) < 2 || words[len(words)-1] != "AUTH" || !slices.Contains(words[:len(words)-1], "UI") {
+		return false
+	}
+	_, _, pair := basicAuthPair(value)
+	return pair
 }
 
 // recipeThirdPartySecretName is a secret a vendor issues under a name that
@@ -222,7 +249,8 @@ var recipeExternalShapes = []*regexp.Regexp{
 }
 
 // recipeSecret decides one live variable: whether its value stays out of the
-// group repo, and whether the generated value asks a person to set it again.
+// group repo, and whether a person set it by hand and sets it again — no
+// random value serving it, the tier leaves it out (groupVaultFields).
 func recipeSecret(env ProjectEnvVar) (secret, setAgain bool) {
 	value := strings.TrimSpace(env.Value)
 	if isStrictWiring(value) {
@@ -359,12 +387,12 @@ func matchesAny(patterns []*regexp.Regexp, value string) bool {
 // sorted by key: config as written — through w, which judges what is secret
 // and writes an address of the Mate's own project as the environment's own
 // and a group environment's own runtimes by their names (tierAddresses; nil
-// judges by recipeSecret and keeps every value as it is) — secrets
-// generated, each but an app's own with a line saying it has to be set
-// again. Each value is sensitive per newVaultValue, a generated secret
-// counting as one. The project's vault and each service's own carry the
-// same shape.
-func groupVaultFields(envs []ProjectEnvVar, source string, w valueWriter) []yamlField {
+// judges by recipeSecret and keeps every value as it is) — an app's own
+// secret generated, and a secret a person set by hand left out, told to w
+// (valueWriter.leaveOut) for the tier's header to name. Each value is
+// sensitive per newVaultValue, a generated secret counting as one. The
+// project's vault and each service's own carry the same shape.
+func groupVaultFields(envs []ProjectEnvVar, w valueWriter) []yamlField {
 	sorted := append([]ProjectEnvVar(nil), envs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 	fields := make([]yamlField, 0, len(sorted))
@@ -373,19 +401,61 @@ func groupVaultFields(envs []ProjectEnvVar, source string, w valueWriter) []yaml
 		if w != nil {
 			secret, setAgain = w.secret(env)
 		}
-		if !secret {
+		switch {
+		case !secret:
 			value := env.Value
 			if w != nil {
 				value = w.write(env.Key, value)
 			}
 			fields = append(fields, yamlField{key: env.Key, value: newVaultValue(env.Key, value, false)})
-			continue
+		case setAgain:
+			if w != nil {
+				w.leaveOut(env.Key)
+			}
+		default:
+			fields = append(fields, yamlField{key: env.Key, value: newVaultValue(env.Key, generatedSecret(env.Value), true)})
 		}
-		field := yamlField{key: env.Key, value: newVaultValue(env.Key, generatedSecret(env.Value), true)}
-		if setAgain {
-			field.comment = fmt.Sprintf("Set by hand in %s; set it again here.", source)
-		}
-		fields = append(fields, field)
 	}
 	return fields
+}
+
+// unsetValue is a value a tier leaves out for a person to set before the
+// environment can work: the variable's owner — `runtime "flip"`, "" for the
+// project — and its key.
+type unsetValue struct{ owner, key string }
+
+// unsetParagraph is what a tier's header says of the values it leaves out
+// (unsetValue), "" for none: each key, the project's first and then each
+// service's in the order the tier writes them, and why no file carries it.
+func unsetParagraph(unset []unsetValue, mate string) string {
+	if len(unset) == 0 {
+		return ""
+	}
+	var owners []string
+	keys := map[string][]string{}
+	for _, u := range unset {
+		if _, seen := keys[u.owner]; !seen {
+			owners = append(owners, u.owner)
+		}
+		keys[u.owner] = append(keys[u.owner], u.key)
+	}
+	sort.SliceStable(owners, func(i, j int) bool { return owners[i] == "" && owners[j] != "" })
+	places := make([]string, 0, len(owners))
+	for _, owner := range owners {
+		where := "the project"
+		if owner != "" {
+			where = owner
+		}
+		places = append(places, joinAnd(keys[owner])+" in "+where)
+	}
+	return fmt.Sprintf("Set before this environment can work: %s. A person set each by hand in the Mate %q; a tier carries no such value and makes none up, so each is left out here.",
+		strings.Join(places, "; "), mate)
+}
+
+// joinAnd joins words as a sentence lists them: `A`, `A and B`, `A, B and C`.
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }

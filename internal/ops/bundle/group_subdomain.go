@@ -203,10 +203,12 @@ func tierSecret(env ProjectEnvVar, mate mateAddressReader) (secret, setAgain boo
 }
 
 // valueWriter writes the variables a tier carries: which of them are secrets
-// the tier generates, and what each other value is written as.
+// the tier generates or leaves out, what each other value is written as, and
+// it hears of each value left out for a person to set (unsetValue).
 type valueWriter interface {
 	secret(env ProjectEnvVar) (secret, setAgain bool)
 	write(key, value string) string
+	leaveOut(key string)
 }
 
 // vaultWriter is the valueWriter of one owner's variables in a tier
@@ -222,6 +224,14 @@ func (w vaultWriter) secret(env ProjectEnvVar) (secret, setAgain bool) {
 
 func (w vaultWriter) write(key, value string) string {
 	return w.tier.write(w.owner, w.own, key, value)
+}
+
+// leaveOut records a value the tier leaves out — once, on the write that
+// renders the tier, never on the dry run that orders it.
+func (w vaultWriter) leaveOut(key string) {
+	if !w.tier.collecting {
+		w.tier.unset = append(w.tier.unset, unsetValue{owner: w.owner, key: key})
+	}
 }
 
 // ownSubdomainReference is the reference to a service's own public address.
@@ -266,6 +276,9 @@ type tierAddresses struct {
 	unordered map[[2]string]string
 	// kept is what the tier kept as written for a person to set.
 	kept []keptAddress
+	// unset is what the tier left out for a person to set, a value set by
+	// hand no random value serves (groupVaultFields): its header names it.
+	unset []unsetValue
 }
 
 // projectRead is a project variable's ${<host>_zeropsSubdomain} reference,

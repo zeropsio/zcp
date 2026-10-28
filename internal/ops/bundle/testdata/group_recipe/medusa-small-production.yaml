@@ -2,6 +2,11 @@
 # The Small Production tier. Production: every runtime replicated, every managed
 # service highly available, dedicated CPU.
 #
+# Set before this environment can work: SENDGRID_API_KEY and SUPERADMIN_PASSWORD
+# in the project; MEDUSA_ADMIN_TOKEN in runtime "medusa"; OPENAI_API_KEY in
+# runtime "nextstore". A person set each by hand in the Mate "medusa-juno"; a
+# tier carries no such value and makes none up, so each is left out here.
+#
 # zcp wrote this file from the Mate "medusa-juno". It is the group's now: a
 # person may edit it. zcp adds only a whole tier the group repo lacks; into a
 # tier it already carries, zcp proposes only a service's scale (group-recipe
@@ -23,15 +28,12 @@ project:
     JWT_SECRET: {value: <@generateRandomString(<48>)>, sensitive: true}
     MEDUSA_INTERNAL_URL: http://medusa:9000
     RELOAD_SECRET: {value: <@generateRandomString(<20>)>, sensitive: true}
-    # Set by hand in medusa-juno; set it again here.
-    SENDGRID_API_KEY: {value: <@generateRandomString(<64>)>, sensitive: true}
     STOREFRONT_INTERNAL_URL: http://nextstore:8000
     STORE_PUBLISHABLE_KEY: ${medusa_CHANNEL_PUBLISHABLE_KEY}
     STRIPE_API_KEY: {value: "", sensitive: true}
     STRIPE_PUBLISHABLE_KEY: ""
     STRIPE_WEBHOOK_SECRET: {value: "", sensitive: true}
     SUPERADMIN_EMAIL: admin@example.com
-    SUPERADMIN_PASSWORD: {value: <@generateRandomString(<16>)>, sensitive: true}
 
 services:
   - hostname: db
@@ -81,8 +83,6 @@ services:
       maxDisk: 20
     vault:
       ADMIN_CORS: https://medusa-${zeropsSubdomainHost}-9000.prg1.zerops.app
-      # Set by hand in medusa-juno; set it again here.
-      MEDUSA_ADMIN_TOKEN: {value: <@generateRandomString(<28>)>, sensitive: true}
       MEDUSA_WORKER_MODE: server
 
   - hostname: nextstore
@@ -101,6 +101,3 @@ services:
       maxRam: 4
       minDisk: 1
       maxDisk: 10
-    vault:
-      # Set by hand in medusa-juno; set it again here.
-      OPENAI_API_KEY: {value: <@generateRandomString(<32>)>, sensitive: true}

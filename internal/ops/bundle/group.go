@@ -858,7 +858,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 				ranked = append(ranked, tierEntry{
 					priority: priorities[r.DevHostname], comment: comment, entry: entry,
 					owner: fmt.Sprintf("dev pool %q", r.DevHostname), own: r.DevHostname, app: r.DevHostname,
-					vault: func(write valueWriter) []yamlField { return groupPoolVault(r.ServiceEnvs, source, write) },
+					vault: func(write valueWriter) []yamlField { return groupPoolVault(r.ServiceEnvs, write) },
 				})
 				// Its leases deploy the setup its image is.
 				readers = append(readers, tierReader{hostname: r.DevHostname, setup: r.SetupName, body: r.ZeropsYAMLBody, pool: true, vault: writtenValues(r.ServiceEnvs, nil, plan.mate)})
@@ -893,7 +893,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 			ranked = append(ranked, tierEntry{
 				priority: priorities[r.DevHostname], comment: comment, entry: entry,
 				owner: fmt.Sprintf("runtime %q", half.hostname), own: half.hostname, app: r.DevHostname,
-				vault: func(write valueWriter) []yamlField { return groupVaultFields(half.envs, source, write) },
+				vault: func(write valueWriter) []yamlField { return groupVaultFields(half.envs, write) },
 			})
 		}
 	}
@@ -905,7 +905,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		ranked = append(ranked, tierEntry{
 			priority: priorities[u.Hostname], comment: comment, entry: entry,
 			owner: fmt.Sprintf("runtime %q", u.Hostname), own: u.Hostname, app: u.Hostname,
-			vault: func(write valueWriter) []yamlField { return groupVaultFields(u.ServiceEnvs, source, write) },
+			vault: func(write valueWriter) []yamlField { return groupVaultFields(u.ServiceEnvs, write) },
 		})
 		// Its own variables are all the recipe reads of it.
 		readers = append(readers, tierReader{hostname: u.Hostname, vault: writtenValues(u.ServiceEnvs, promote, plan.mate)})
@@ -941,7 +941,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 	}
 	// What the tier carries is now known: the closure check reads it from the
 	// services as written, and so do the rewrite and the order.
-	notes := rankTierEntries(plan, ranked, addresses, source, policy.title)
+	notes := rankTierEntries(plan, ranked, addresses, policy.title)
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
 	services := make([]yamlItem, 0, len(ranked))
 	for _, r := range ranked {
@@ -958,12 +958,12 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
 		project = append(project, yamlField{key: "corePackage", value: core})
 	}
-	if vault := groupVaultFields(inputs.ProjectEnvs, source, addresses.writer("", "")); len(vault) > 0 {
+	if vault := groupVaultFields(inputs.ProjectEnvs, addresses.writer("", "")); len(vault) > 0 {
 		project = append(project, yamlField{key: "vault", value: vault})
 	}
 
 	body, err := tierDocument{
-		header:   groupTierHeader(inputs, policy),
+		header:   groupTierHeader(inputs, policy, addresses.unset),
 		project:  project,
 		services: services,
 	}.render()
@@ -995,7 +995,7 @@ type tierEntry struct {
 // entry's vault and the project's, and lifts each runtime above the
 // runtimes reading its address (orderTierReads). It says each read the tier
 // keeps that no priority orders.
-func rankTierEntries(plan groupPlan, entries []tierEntry, addresses *tierAddresses, source, title string) []orderNote {
+func rankTierEntries(plan groupPlan, entries []tierEntry, addresses *tierAddresses, title string) []orderNote {
 	carried := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if host, ok := e.entry["hostname"].(string); ok {
@@ -1013,7 +1013,7 @@ func rankTierEntries(plan groupPlan, entries []tierEntry, addresses *tierAddress
 			ranks = append(ranks, tierRank{host: e.own, app: e.app, base: e.priority})
 		}
 	}
-	groupVaultFields(plan.inputs.ProjectEnvs, source, addresses.writer("", ""))
+	groupVaultFields(plan.inputs.ProjectEnvs, addresses.writer("", ""))
 	addresses.collecting = false
 	priorityOf, notes := orderTierReads(plan.ranking, ranks, addresses, title)
 	for i := range entries {
@@ -1033,8 +1033,11 @@ func rankTierEntries(plan groupPlan, entries []tierEntry, addresses *tierAddress
 // an app of several parts, a part's service added or removed (spec-mate
 // §2.8a.5), as the Mate's change, so a person's edit is never written over.
 // It says nothing of who lands that change: that is HQ's rule (D37), which a
-// file on main outlives.
-func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
+// file on main outlives. Right after what the tier is, it names each value
+// it left out for a person to set before the environment can work
+// (unsetParagraph): the first thing a person or a client creating an
+// environment from it reads.
+func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy, unset []unsetValue) []string {
 	proposes := "only a service's scale (group-recipe scaling=<hostname>) or a managed service added to the Mate's project (group-recipe service=<hostname>)"
 	if groupHasSeveralParts(inputs.Runtimes) {
 		proposes = "only a service's scale (group-recipe scaling=<hostname>), a managed service added to the Mate's project or a part's service added or removed (group-recipe service=<hostname>)"
@@ -1044,12 +1047,15 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 	if marked {
 		anew = " — and this whole file anew while it stays exactly as zcp wrote it (the mark below)"
 	}
-	header := []string{
-		"The " + policy.title + " tier. " + policy.summary,
+	header := []string{"The " + policy.title + " tier. " + policy.summary}
+	if line := unsetParagraph(unset, firstNonBlank(inputs.MateProjectName, inputs.Name)); line != "" {
+		header = append(header, line)
+	}
+	header = append(header,
 		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as the Mate's change%s.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes, anew),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it or whose variables name its public address, which resolves only in a service started after it is deployed.",
-	}
+	)
 	if marked {
 		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
 	}

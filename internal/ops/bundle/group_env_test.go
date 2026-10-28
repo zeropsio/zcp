@@ -27,8 +27,9 @@ var (
 // decides every variable itself, and it fails closed: a value is written as
 // it is only when nothing says secret — the platform's flag, a masked read, a
 // credential's name, a secret's shape — and it has a narrow config shape.
-// Anything else is generated, and every generated value but a secret an app
-// makes for itself says it was set by hand and has to be set again.
+// Anything else is kept out, and every such value but a secret an app makes
+// and reads itself was set by hand: no random value stands in for it, and a
+// person sets it again.
 func TestRecipeSecret_Rule(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -68,7 +69,7 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		// Unless the name says secret beside it, or the value is a key.
 		{name: "a public bucket's secret key", env: ProjectEnvVar{Key: "S3_PUBLIC_BUCKET_SECRET_KEY", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
 		{name: "a public CDN's private signing key", env: ProjectEnvVar{Key: "CDN_PUBLIC_SIGNING_PRIVATE_KEY", Value: "-----BEGIN " + "PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"}, wantSecret: true, wantSetAgain: true},
-		{name: "a public name with a password in it", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ADMIN_PASSWORD", Value: "letmein"}, wantSecret: true},
+		{name: "a public name with a password in it", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ADMIN_PASSWORD", Value: "letmein"}, wantSecret: true, wantSetAgain: true},
 		{name: "a vendor's secret key under a public name", env: ProjectEnvVar{Key: "NEXT_PUBLIC_STRIPE_KEY", Value: fakeStripeSecret}, wantSecret: true, wantSetAgain: true},
 		{name: "a private key under a public name", env: ProjectEnvVar{Key: "NEXT_PUBLIC_CERT", Value: "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"}, wantSecret: true, wantSetAgain: true},
 		{name: "PUBLICATION is no PUBLIC", env: ProjectEnvVar{Key: "PUBLICATION_TOKEN", Value: "abc"}, wantSecret: true, wantSetAgain: true},
@@ -76,26 +77,30 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		// The platform's word outranks every other signal but wiring.
 		{name: "the platform's sensitive flag", env: ProjectEnvVar{Key: "CUSTOM_SETTING", Value: "opaque", Sensitive: true}, wantSecret: true, wantSetAgain: true},
 		{name: "a value the platform masked", env: ProjectEnvVar{Key: "ANYTHING", Value: "REDACTED"}, wantSecret: true, wantSetAgain: true},
-		{name: "a flagged reference with a default carries the default", env: ProjectEnvVar{Key: "DB_PASSWORD", Value: "${DB_PASSWORD:-Sup3rS3cret}", Sensitive: true}, wantSecret: true},
+		{name: "a flagged reference with a default carries the default", env: ProjectEnvVar{Key: "DB_PASSWORD", Value: "${DB_PASSWORD:-Sup3rS3cret}", Sensitive: true}, wantSecret: true, wantSetAgain: true},
 		{name: "a flagged public name is flagged", env: ProjectEnvVar{Key: "NEXT_PUBLIC_FLAG", Value: "beta", Sensitive: true}, wantSecret: true, wantSetAgain: true},
 		{name: "a masked public name has no value to write", env: ProjectEnvVar{Key: "NEXT_PUBLIC_FLAG", Value: "REDACTED"}, wantSecret: true, wantSetAgain: true},
 
 		// Secrets by their name, whatever the value looks like: every word a
-		// credential goes by, a qualifier after it too.
+		// credential goes by, a qualifier after it too. A secret the app
+		// makes and reads itself — a signing secret, a salt, a key base — any
+		// random value serves; a password is someone's — a person signs in
+		// with it, or another service checks it — so none does, and a person
+		// sets it again: SMTP_PASS is the mail provider's.
 		{name: "_SECRET", env: ProjectEnvVar{Key: "JWT_SECRET", Value: "k3yk3yk3y"}, wantSecret: true},
-		{name: "_PASSWORD", env: ProjectEnvVar{Key: "SUPERADMIN_PASSWORD", Value: "correct-horse"}, wantSecret: true},
-		{name: "_PASS", env: ProjectEnvVar{Key: "SMTP_PASS", Value: "mailpass"}, wantSecret: true},
+		{name: "_PASSWORD", env: ProjectEnvVar{Key: "SUPERADMIN_PASSWORD", Value: "correct-horse"}, wantSecret: true, wantSetAgain: true},
+		{name: "_PASS", env: ProjectEnvVar{Key: "SMTP_PASS", Value: "mailpass"}, wantSecret: true, wantSetAgain: true},
 		{name: "APP_KEY", env: ProjectEnvVar{Key: "APP_KEY", Value: "0123456789abcdef0123456789abcdef"}, wantSecret: true},
 		{name: "SECRET_ opening the name", env: ProjectEnvVar{Key: "SECRET_KEY_BASE", Value: "deadbeef"}, wantSecret: true},
 		{name: "_SALT", env: ProjectEnvVar{Key: "HASH_SALT", Value: "pepper"}, wantSecret: true},
 		{name: "_CREDENTIALS", env: ProjectEnvVar{Key: "GOOGLE_CREDENTIALS", Value: "{\"type\":\"service_account\"}"}, wantSecret: true, wantSetAgain: true},
 		{name: "lower case is the same name", env: ProjectEnvVar{Key: "cookie_secret", Value: "c00k1e"}, wantSecret: true},
 		{name: "a plural", env: ProjectEnvVar{Key: "APP_KEYS", Value: "alpha,beta"}, wantSecret: true},
-		{name: "a passphrase in words", env: ProjectEnvVar{Key: "GPG_PASSPHRASE", Value: "correct horse battery staple"}, wantSecret: true},
+		{name: "a passphrase in words", env: ProjectEnvVar{Key: "GPG_PASSPHRASE", Value: "correct horse battery staple"}, wantSecret: true, wantSetAgain: true},
 		{name: "PW", env: ProjectEnvVar{Key: "ADMIN_PW", Value: "letmein"}, wantSecret: true, wantSetAgain: true},
 		{name: "a qualifier after the credential word", env: ProjectEnvVar{Key: "DB_PASSWORD_PROD", Value: "hunter"}, wantSecret: true, wantSetAgain: true},
 		{name: "camel case", env: ProjectEnvVar{Key: "jwtSecret", Value: "mysecret"}, wantSecret: true},
-		{name: "a credential word run into the one before it", env: ProjectEnvVar{Key: "DBPASSWORD", Value: "hunter"}, wantSecret: true},
+		{name: "a credential word run into the one before it", env: ProjectEnvVar{Key: "DBPASSWORD", Value: "hunter"}, wantSecret: true, wantSetAgain: true},
 
 		// What no shape tells from a hostname or a word — a one-case run of
 		// letters, a passphrase, a PIN — its name tells.
@@ -108,6 +113,12 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "MASTERKEY run together", env: ProjectEnvVar{Key: "MASTERKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
 		{name: "ACCESSKEY run together", env: ProjectEnvVar{Key: "S3_ACCESSKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
 		{name: "AUTHTOKEN run together", env: ProjectEnvVar{Key: "TWILIO_AUTHTOKEN", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		// A basic-auth pair guarding a service's own UI is that service's own
+		// access credential — mailpit's sign-in — which any random password
+		// serves; a pair under another name may be a third party's.
+		{name: "a UI's own sign-in", env: ProjectEnvVar{Key: "MP_UI_AUTH", Value: "admin:mailpass"}, wantSecret: true},
+		{name: "a UI's own sign-in that is no pair", env: ProjectEnvVar{Key: "MP_UI_AUTH", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
+		{name: "a pair for another service", env: ProjectEnvVar{Key: "SEARCH_AUTH", Value: "elastic:hunter22"}, wantSecret: true, wantSetAgain: true},
 		{name: "a webhook's address is its credential", env: ProjectEnvVar{Key: "SLACK_WEBHOOK_URL", Value: "https://hooks." + "slack.com/services/TABCDEFGH/BABCDEFGH/kqzvbxwmtrplhdfgnjcsyaeu"}, wantSecret: true, wantSetAgain: true},
 
 		// A code is no passcode, a boolean hides nothing, and a word about a
@@ -130,7 +141,7 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a query with a reference", env: ProjectEnvVar{Key: "APP_LINK", Value: "https://app.example.com/?tenant=${TENANT_NAME}"}},
 		{name: "a fragment is no config", env: ProjectEnvVar{Key: "APP_LINK", Value: "https://app.example.com/#access_token=abc"}, wantSecret: true, wantSetAgain: true},
 
-		// A credential somebody else issued: generated, and asked for again.
+		// A credential somebody else issued: kept out, and asked for again.
 		{name: "_API_KEY", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: fakeStripeKey}, wantSecret: true, wantSetAgain: true},
 		{name: "_TOKEN", env: ProjectEnvVar{Key: "GITHUB_TOKEN", Value: "tok"}, wantSecret: true, wantSetAgain: true},
 		{name: "_WEBHOOK_SECRET, though it ends in SECRET", env: ProjectEnvVar{Key: "STRIPE_WEBHOOK_SECRET", Value: fakeStripeHook}, wantSecret: true, wantSetAgain: true},
@@ -155,7 +166,7 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "flags naming a salt and creds", env: ProjectEnvVar{Key: "CATALINA_OPTS", Value: "-Dsalt=pepperpot -Dcreds=opensesame"}, wantSecret: true, wantSetAgain: true},
 		{name: "a line break is no flag list", env: ProjectEnvVar{Key: "EXTRA_ARGS", Value: "-v\nhunter2"}, wantSecret: true, wantSetAgain: true},
 
-		// Anything outside a config shape is generated: an opaque value under
+		// Anything outside a config shape is kept out: an opaque value under
 		// an ordinary name fails closed, and a person sets it again.
 		{name: "a random value under an ordinary name", env: ProjectEnvVar{Key: "SIGNING_SEED", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
 		{name: "a hex digest reads as generated", env: ProjectEnvVar{Key: "RELEASE_SHA", Value: "3f2a9c1e5b7d4f608a1c3e5f7b9d2a4c6e8f0a1b"}, wantSecret: true, wantSetAgain: true},
@@ -178,8 +189,8 @@ func TestRecipeSecret_Rule(t *testing.T) {
 	}
 }
 
-// Every value that leaked before the rule failed closed is generated now,
-// its live text in no file of the proposal — and the config a person wrote
+// Every value that leaked before the rule failed closed is generated or left
+// out now, its live text in no file of the proposal — and the config a person wrote
 // is still written as it is, on every tier, as a project variable and as a
 // runtime's own.
 func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
@@ -287,21 +298,27 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 				t.Fatalf("BuildGroupRecipe: %v", err)
 			}
 			for _, tier := range layout.Tiers {
-				project := mappingValue(tierMapping(t, tier.ImportYAML), "project")
-				written := map[string]string{
-					"project": scalarMap(mappingValue(project, "vault"))[tt.key],
+				type value struct {
+					text    string
+					written bool
 				}
+				project := mappingValue(tierMapping(t, tier.ImportYAML), "project")
+				text, ok := scalarMap(mappingValue(project, "vault"))[tt.key]
+				written := map[string]value{"project": {text, ok}}
 				for _, host := range []string{"apidev", "apistage", "api"} {
 					if service := serviceNodeOrNil(t, tier.ImportYAML, host); service != nil {
-						written[host] = scalarMap(mappingValue(service, "vault"))[tt.key]
+						text, ok := scalarMap(mappingValue(service, "vault"))[tt.key]
+						written[host] = value{text, ok}
 					}
 				}
+				// A secret is generated where it is the app's own and left
+				// out where a person set it by hand: never written as it is.
 				for where, got := range written {
 					switch {
-					case tt.verbatim && got != tt.value:
-						t.Errorf("%s: %s's %s = %q, want it written as it is", tier.Title, where, tt.key, got)
-					case !tt.verbatim && !strings.Contains(got, "<@generateRandomString("):
-						t.Errorf("%s: %s's %s = %q, want it generated", tier.Title, where, tt.key, got)
+					case tt.verbatim && got.text != tt.value:
+						t.Errorf("%s: %s's %s = %q, want it written as it is", tier.Title, where, tt.key, got.text)
+					case !tt.verbatim && got.written && !strings.Contains(got.text, "<@generateRandomString("):
+						t.Errorf("%s: %s's %s = %q, want it generated or left out", tier.Title, where, tt.key, got.text)
 					}
 				}
 			}
@@ -452,10 +469,12 @@ func TestGeneratedSecret_KeepsTheLength(t *testing.T) {
 }
 
 // The project's variables go into every tier's project vault: config as
-// written, secrets as generators written sensitive — but for an admin's
-// sign-in password, which the person reads in the vault — each with a line
-// saying it was set by hand and has to be set again, but for a secret the app
-// makes for itself, which a fresh environment simply generates anew.
+// written, and a secret the app makes for itself as a generator written
+// sensitive, which a fresh environment simply generates anew. A value a
+// person set by hand — a vendor's key, an opaque ID, an admin's password —
+// no file carries and no random value replaces: it is left out of the vault
+// and named in the tier's header as what to set before the environment can
+// work.
 func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -488,39 +507,54 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 				"STORE_PUBLISHABLE_KEY": "${api_CHANNEL_PUBLISHABLE_KEY}",
 				"SUPERADMIN_EMAIL":      "admin@example.com",
 				"JWT_SECRET":            "<@generateRandomString(<48>)>",
-				"STRIPE_API_KEY":        "<@generateRandomString(<30>)>",
-				"STRIPE_PRICE_PRO":      "<@generateRandomString(<30>)>",
 				"STRIPE_WEBHOOK_SECRET": "",
-				"SUPERADMIN_PASSWORD":   "<@generateRandomString(<20>)>",
 			}
 			if got := scalarMap(secrets); !maps.Equal(got, wantVault) {
 				t.Errorf("vault = %v, want %v", got, wantVault)
 			}
-			wantSensitive := []string{"JWT_SECRET", "STRIPE_API_KEY", "STRIPE_PRICE_PRO", "STRIPE_WEBHOOK_SECRET", "SUPERADMIN_PASSWORD"}
+			wantSensitive := []string{"JWT_SECRET", "STRIPE_WEBHOOK_SECRET"}
 			if got := sensitiveKeys(secrets); !slices.Equal(got, wantSensitive) {
 				t.Errorf("sensitive = %v, want %v", got, wantSensitive)
 			}
 			if !strings.HasPrefix(tier.ImportYAML, preprocessorHeader) {
 				t.Errorf("a generator without the preprocessor's first line")
 			}
-			for _, key := range []string{"STRIPE_API_KEY", "STRIPE_PRICE_PRO"} {
-				comment := keyComment(secrets, key)
-				if lower := strings.ToLower(comment); !strings.Contains(lower, "set by hand") || !strings.Contains(comment, in.MateProjectName) || !strings.Contains(lower, "set it again") {
-					t.Errorf("%s says %q, want that it was set by hand in %s and must be set again", key, comment, in.MateProjectName)
+			for key := range wantVault {
+				if c := keyComment(secrets, key); c != "" {
+					t.Errorf("%s is written as it is, generated or empty, yet says %q", key, c)
 				}
 			}
-			for _, key := range []string{"JWT_SECRET", "STRIPE_WEBHOOK_SECRET"} {
-				if c := keyComment(secrets, key); c != "" {
-					t.Errorf("%s is simply regenerated, or empty, yet says %q", key, c)
-				}
+			want := `Set before this environment can work: STRIPE_API_KEY, STRIPE_PRICE_PRO and SUPERADMIN_PASSWORD in the project. A person set each by hand in the Mate "acme-mate-1"; a tier carries no such value and makes none up, so each is left out here.`
+			if header := tierHeaderText(tier.ImportYAML); !strings.Contains(header, want) {
+				t.Errorf("header = %q, want it to say %q", header, want)
 			}
 		})
 	}
 }
 
-// A runtime's own variables go into its own vault: config as written,
-// secrets generated and written sensitive. Each half of the AI Agent tier
-// carries its own half's; a group environment runs what the stage half runs.
+// tierHeaderText is the comment a tier's import.yaml opens with, its
+// wrapped lines joined by single spaces, without the preprocessor's line.
+func tierHeaderText(body string) string {
+	var words []string
+	for line := range strings.SplitSeq(body, "\n") {
+		if !strings.HasPrefix(line, "#") {
+			break
+		}
+		if line == strings.TrimSpace(preprocessorHeader) {
+			continue
+		}
+		if text := strings.TrimSpace(strings.TrimPrefix(line, "#")); text != "" {
+			words = append(words, text)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// A runtime's own variables go into its own vault: config as written, an
+// app's own secret generated and written sensitive, a value set by hand left
+// out (TestBuildGroupRecipe_HandSetValue_LeftOutAndNamed). Each half of the
+// AI Agent tier carries its own half's; a group environment runs what the
+// stage half runs.
 func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -537,7 +571,8 @@ func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	files := groupFiles(t, layout)
-	stage := map[string]string{"NODE_ENV": "production", "SENDGRID_API_KEY": "<@generateRandomString(<69>)>"}
+	// The SendGrid key was set by hand: no tier writes it.
+	stage := map[string]string{"NODE_ENV": "production"}
 	tests := []struct {
 		dir, host string
 		want      map[string]string
