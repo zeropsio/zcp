@@ -4741,6 +4741,12 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
   is enforced by that record; a pair the stand-up adopted is wired to the recipe's name, and wired
   again to it.
+  Decision: A Mate's first checkout of an HQ repository fetches commits and trees with full
+  ancestry and downloads file contents only as they are needed. The wiring's initial fetch uses
+  `--filter=blob:none`; checkout and later historical reads use Git's promisor remote through the
+  existing HQ credential helper. Recipe clones are still unshallowed before replacing their
+  origin. Pool warm clones, lease checkouts and missing-`.git` reconstruction keep their existing
+  fetch policy until separately qualified (`TestBuildBaseBranchCommand_FirstFetch_DefersBlobsWithFullAncestry`).
 - **One repository per monorepo** (owner decision, 2026-10-24; a split seen live 2026-10-27:
   one monorepo wired as three and as seven HQ repositories, one per dev service, which HQ cannot
   remove). A monorepo's every part gets its own dev pool and its own stage, nothing sharing a

@@ -114,7 +114,13 @@ func baseBranchCommand(workingDir string, joinRoot bool) string {
 	// there is no base to descend from, so the pair's HEAD becomes `main` and
 	// the first push creates it in HQ. Any other failure of the fetch ends the
 	// command with git's own status, as it always did.
-	fetchBase := `{ if fetched=$(` + hqGit(fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(baseBranch))) + ` 2>&1); then nomain=; ` +
+	fetchArgs := fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(baseBranch))
+	if !joinRoot {
+		// Keep ancestry for merge-base and main sync; Git's promisor remote
+		// gets current and historical blobs through the existing helper on demand.
+		fetchArgs += " --filter=blob:none"
+	}
+	fetchBase := `{ if fetched=$(` + hqGit(fetchArgs) + ` 2>&1); then nomain=; ` +
 		`else rc=$?; case "$fetched" in *"couldn't find remote ref"*) nomain=1;; *) printf '%s\n' "$fetched"; exit "$rc";; esac; fi; }`
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
