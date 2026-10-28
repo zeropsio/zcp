@@ -7,8 +7,9 @@
 // delivery and launch readers of a pair keyed by its dev pool
 // (docs/spec-workflows.md §13 PM-10, §8 E8, §10): nothing reaches the pool's
 // hostname over ssh, since it answers from a random container, and no
-// pointer names the pool as a push source or a build target. Launch reads
-// such a pair from its origin (launch_pool_part_test.go).
+// pointer names the pool as a push source or a build target. Launch,
+// release and the production Actions block read such a pair from its
+// origin (launch_pool_part_test.go, launch_pool_part_delivery_test.go).
 package tools
 
 import (
@@ -76,37 +77,6 @@ func decodeJSONResult(t *testing.T, text string) map[string]any {
 		t.Fatalf("result is not JSON: %v\n%s", err, text)
 	}
 	return out
-}
-
-// TestRelease_PoolDevHalf_RefusedBeforeRead: a release tags the push
-// source's pushed HEAD over ssh; a pool has no checkout to tag from, so the
-// release of a pair keyed by its dev pool is refused by name — pointing at a
-// lease of the pool — before any read, from either hostname.
-func TestRelease_PoolDevHalf_RefusedBeforeRead(t *testing.T) {
-	t.Parallel()
-	for _, service := range []string{testPool, "appstage"} {
-		t.Run(service, func(t *testing.T) {
-			t.Parallel()
-			stateDir := poolDeliveryPair(t)
-			ssh := &hostLogSSH{}
-
-			result, _, _ := handleRelease(context.Background(), ssh, nil,
-				WorkflowInput{Service: service, ReleaseVersion: "v1.0.1"}, stateDir, runtime.Info{InContainer: true})
-
-			text := extractText(result)
-			if !result.IsError {
-				t.Fatalf("release of the pool-keyed pair was not refused: %s", text)
-			}
-			for _, want := range []string{testPool, "zerops_lease"} {
-				if !strings.Contains(text, want) {
-					t.Errorf("the refusal does not name %q: %s", want, text)
-				}
-			}
-			if len(ssh.hosts) != 0 {
-				t.Errorf("the refusal came after ssh to %v", ssh.hosts)
-			}
-		})
-	}
 }
 
 // TestAnticipatedBuilds_PoolDevHalf_BuildsEveryStage: the CI a pair keyed by
@@ -471,23 +441,6 @@ func TestBuildIntegrationEarn_PoolDevHalf_ReadsNothing(t *testing.T) {
 				t.Errorf("earn read the pair: ssh %v, %d integration reads", ssh.hosts, mock.CallCount("GetServiceStackIntegrationStatus"))
 			}
 		})
-	}
-}
-
-// TestProdCDActionsBlock_PoolDevHalf_None: the production Actions block
-// renders a command that reads the staged token over ssh from the push
-// source; a pool-keyed pair has none to read from, so there is no block.
-func TestProdCDActionsBlock_PoolDevHalf_None(t *testing.T) {
-	t.Parallel()
-	stateDir := poolDeliveryPair(t)
-	state := &launchState{
-		TargetServiceHostname: testPool,
-		ImportedServices:      []importedServiceEntry{{ID: "svc-prod-app", Name: "app"}},
-		RuntimeProds:          []launchRuntimeProd{{ProdHostname: "app", SetupName: "prod"}},
-	}
-
-	if block := prodCDActionsBlock(stateDir, state); block != nil {
-		t.Errorf("a production Actions block for the pool-keyed pair: %v", block)
 	}
 }
 

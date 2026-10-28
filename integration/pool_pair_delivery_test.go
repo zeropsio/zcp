@@ -1,6 +1,6 @@
 // Tests for: integration — the delivery and launch readers of a pair keyed by
 // its dev pool through the full MCP server (docs/spec-workflows.md §13 PM-10,
-// §10): release and git-push refuse it by name before any read, launch reads
+// §10): git-push refuses it by name before any read, launch and release read
 // it from its origin and never the pool, build-integration and a stage deploy
 // from a lease never name the pool as a push source, and develop's scope never
 // takes the pool.
@@ -101,23 +101,32 @@ func poolDeliverySessionAt(t *testing.T, remoteURL string) (*mcp.ClientSession, 
 	return session, mock, ssh
 }
 
-// TestPoolPair_Integration_ReleaseRefusedWithoutSSH: a release of the
-// pool-keyed pair is refused by name, pointing at a lease of the pool,
-// before any ssh call.
-func TestPoolPair_Integration_ReleaseRefusedWithoutSSH(t *testing.T) {
+// TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH: a release of the
+// pool-keyed pair tags the pair's origin at its tracked tip, from zcp's own
+// scratch, with no ssh call to the pool, a lease or the stage.
+func TestPoolPair_Integration_ReleaseTagsTheOriginWithoutSSH(t *testing.T) {
 	t.Parallel()
-	session, _, ssh := poolDeliverySession(t)
+	origin := poolDeliveryOrigin(t)
+	session, _, ssh := poolDeliverySessionAt(t, origin)
 
 	res := callAndGetResult(t, session, "zerops_workflow", map[string]any{
 		"action": "release", "service": "appstage", "releaseVersion": "v1.0.1",
 	})
 
 	text := getTextContent(t, res)
-	if !res.IsError || !strings.Contains(text, "apppool") || !strings.Contains(text, "zerops_lease") {
-		t.Fatalf("release was not refused naming the pool and its lease: %s", text)
+	if res.IsError || !strings.Contains(text, `"status":"released"`) {
+		t.Fatalf("release of the pool-keyed pair did not tag its origin: %s", text)
+	}
+	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "-q", "v1.0.1^{commit}") //nolint:gosec // G204: a test's own git
+	cmd.Dir = strings.TrimPrefix(origin, "file://")
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Errorf("the origin holds no v1.0.1: %v", err)
+	}
+	if strings.Contains(text, poolDeliveryGitToken) {
+		t.Errorf("the answer carries the pool's GIT_TOKEN: %s", text)
 	}
 	if len(ssh.hosts) != 0 {
-		t.Errorf("the refusal came after ssh %v", ssh.hosts)
+		t.Errorf("release reached %v over ssh", ssh.hosts)
 	}
 }
 
