@@ -139,3 +139,31 @@ func TestBuildGroupRecipe_TierClosure_EveryReadCarried_Composes(t *testing.T) {
 		})
 	}
 }
+
+// The check reads what a tier carries, so a runtime a tier does not carry
+// reads nothing there: a runtime that serves the Mate itself runs on the AI
+// Agent tier alone, and whatever its variables name never refuses Stage or
+// Small Production — nor does a runtime of no pair anywhere, since the
+// recipe reads no zerops.yaml of one.
+func TestBuildGroupRecipe_TierClosure_MateOwnRuntimesReadsNeverRefuse(t *testing.T) {
+	t.Parallel()
+	plain := map[string]string{"NATS_PORT": "${broker_port}"}
+	inputs := closureInputs(setupVars{name: "runnerdev", vars: plain}, setupVars{name: "runnerprod", vars: plain})
+	inputs.MateSubdomainHost = "1df2.prg1.zerops.app"
+	inputs.Utilities = append(inputs.Utilities, GroupUtility{
+		Hostname: "agent", ServiceType: "alpine@3.21", BuildFromGit: "https://github.com/acme/agent-runner",
+		ServiceEnvs: []ProjectEnvVar{
+			{Key: "SERVER", Value: "https://runnerdev-1df2-8080.prg1.zerops.app"},
+			{Key: "MAIL_URL", Value: "smtp://mailpit:1025"},
+			{Key: "ORPHAN_URL", Value: "http://orphan:3000"},
+		},
+	})
+	inputs.ProjectHostnames = append(inputs.ProjectHostnames, "agent")
+	layout, _, err := BuildGroupRecipe(inputs)
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	if len(layout.Tiers) != len(groupTierDirs) {
+		t.Errorf("tiers = %d, want %d", len(layout.Tiers), len(groupTierDirs))
+	}
+}

@@ -296,3 +296,85 @@ func TestBuildGroupRecipe_Box_PartNamedLikeTheBox_LeftOutAndSaid(t *testing.T) {
 		t.Errorf("warnings %v do not say the part named like the Box is left out", warnings)
 	}
 }
+
+// A runtime reads a Box through its own variables too, which a tier carries
+// in the runtime's vault — and a runtime of no pair has nothing else: the
+// recipe never reads a utility's zerops.yaml. So a Box goes where the vault
+// that reads it goes, written as the tier writes it: a stage's own variable
+// takes it into every tier that runs the stage's part, a utility a stage and
+// a production run takes it there too, and a runtime that serves the Mate
+// itself — wired to an address of the Mate's own project, or its dev tooling
+// — takes it onto the AI Agent tier alone, the only tier that runs it. A
+// value the tier generates, never writes, reads nothing. Spec:
+// spec-workflows.md §8 PS-3.
+func TestBuildGroupRecipe_Box_ReadByARuntimesOwnVariable(t *testing.T) {
+	t.Parallel()
+	plain := zeropsYAMLWithVars(
+		setupVars{name: "runnerdev", vars: map[string]string{"NATS_PORT": "${broker_port}"}},
+		setupVars{name: "runnerprod", vars: map[string]string{"NATS_PORT": "${broker_port}"}})
+	keyRef := ProjectEnvVar{Key: "BOX_API_KEY", Value: "${box_ZBOX_WORKSPACE_API_KEY}", Sensitive: true}
+	utility := func(host, repo string, envs ...ProjectEnvVar) GroupUtility {
+		return GroupUtility{Hostname: host, ServiceType: "alpine@3.21", BuildFromGit: "https://github.com/acme/" + repo, ServiceEnvs: envs}
+	}
+	tests := []struct {
+		name      string
+		mutate    func(*GroupRecipeInputs)
+		wantTiers []string
+	}{
+		{
+			name:      "a stage's own variable reads it by reference",
+			mutate:    func(in *GroupRecipeInputs) { in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{keyRef} },
+			wantTiers: groupTierDirs,
+		},
+		{
+			name: "a utility a stage and a production run reads it by address",
+			mutate: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{utility("worker", "worker", ProjectEnvVar{Key: "BOX_API_URL", Value: "http://box:8080"})}
+			},
+			wantTiers: groupTierDirs,
+		},
+		{
+			name: "a runtime wired to the Mate's own project reads it",
+			mutate: func(in *GroupRecipeInputs) {
+				in.MateSubdomainHost = "1df2.prg1.zerops.app"
+				in.Utilities = []GroupUtility{utility("agent", "agent-runner",
+					ProjectEnvVar{Key: "SERVER", Value: "https://runnerdev-1df2-8080.prg1.zerops.app"}, keyRef)}
+			},
+			wantTiers: []string{"0 — AI Agent"},
+		},
+		{
+			name: "the Mate's dev tooling reads it",
+			mutate: func(in *GroupRecipeInputs) {
+				in.Utilities = []GroupUtility{utility("mailpit", "recipe-mailpit", ProjectEnvVar{Key: "BOX_API_URL", Value: "http://box:8080"})}
+			},
+			wantTiers: []string{"0 — AI Agent"},
+		},
+		{
+			name: "a value the tier generates reads nothing",
+			mutate: func(in *GroupRecipeInputs) {
+				in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{{Key: "BOX_DSN", Value: "http://admin:placeholder-password@box:8080", Sensitive: true}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			inputs := boxRunnerInputs(plain, false)
+			tt.mutate(&inputs)
+			layout, warnings, err := BuildGroupRecipe(inputs)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			files := groupFiles(t, layout)
+			var carried []string
+			for _, dir := range groupTierDirs {
+				if _, ok := serviceEntries(t, tierDoc(t, files, dir))["box"]; ok {
+					carried = append(carried, dir)
+				}
+			}
+			if !slices.Equal(carried, tt.wantTiers) {
+				t.Errorf("tiers carrying the Box = %v, want %v (warnings %v)", carried, tt.wantTiers, warnings)
+			}
+		})
+	}
+}
