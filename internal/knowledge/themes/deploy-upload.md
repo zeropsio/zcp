@@ -12,7 +12,7 @@
 
 ## Size and how long it may take
 
-The deploy result's `upload` field says what was uploaded — its bytes, tracked files, untracked part, a self-deploy's `.git`, and the largest top-level paths — and a warning names an upload past 256 MiB. The push waits for its upload 5 min plus 1 s per MiB it carries, at most 60 min. One still uploading then is stopped before any build starts and reported as an upload that did not finish: slow, not a network failure, and the fix is a smaller upload, not a retry loop.
+The deploy result's `upload` field says what was uploaded — its bytes, tracked files, untracked part, a self-deploy's `.git`, and the largest top-level paths — and a warning names an upload past 256 MiB. The push waits for its upload 5 min plus 1 s per MiB it carries, at most 60 min; when its size could not be measured, the result says so and the upload gets 30 min. One still uploading then is stopped before any build starts and reported as an upload that did not finish: slow, not a network failure, and the fix is a smaller upload, not a retry loop.
 
 ## A self-deploy's `.git`
 
