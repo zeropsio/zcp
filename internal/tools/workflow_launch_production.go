@@ -417,7 +417,7 @@ func handleLaunchProduction(
 	var readyBundle *ops.LaunchBundle
 	var readyBundleInputs ops.LaunchBundleInputs
 	// readyComposeErr is the composer's refusal of the bundle publish would
-	// build (P-LP-19): ready-to-launch blocks on it before any key is asked.
+	// build (P-LP-19): ready-to-launch answers it before any key is asked.
 	var readyComposeErr error
 	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
 	if len(resolvedForBaseline) > 0 {
@@ -520,12 +520,21 @@ func handleLaunchProduction(
 	}
 
 	if !publishing {
-		// A bundle the composer refuses — a launched runtime reading a
-		// service it does not carry, a Box outside its region — refuses the
-		// publish too, so it blocks HERE, before the manual path asks the
-		// person to paste a production credential or a delegation is
-		// offered: the same blocker publish fails with, no baseline written
-		// (spec-workflows.md §10.3 P-LP-19).
+		// Nothing here asks for a key before a refusal that is certain
+		// (spec-workflows.md §10.3 P-LP-19), and no baseline is written for
+		// a bundle the composer refuses. The production project is not
+		// chosen yet — an existing one comes only with existingProjectId +
+		// existingProdToken, which publish straight away — so a read of a
+		// service the bundle does not carry refuses a new project for
+		// certain but not an existing project that runs it: warnings, the
+		// existing-project path, and no new-project key or delegation.
+		var closure *bundle.LaunchClosureError
+		if errors.As(readyComposeErr, &closure) {
+			return launchClosureGapResponse(input, sourceContext, closure), nil, nil
+		}
+		// Any other refusal — a Box outside its region, a setup the
+		// zerops.yaml lacks — refuses every launch: it blocks HERE, with
+		// the same blocker publish fails with.
 		if readyComposeErr != nil {
 			return launchSourceControlRequiredResponse(input, sourceContext,
 				[]topology.Blocker{bundleComposeBlocker(readyComposeErr)}), nil, nil
@@ -2143,6 +2152,45 @@ func bundleComposeBlocker(err error) topology.Blocker {
 		Category: topology.BlockerCategoryOther,
 		Message:  "Launch bundle composition failed: " + err.Error(),
 	}
+}
+
+// launchClosureGapResponse is ready-to-launch for a bundle whose launched
+// runtime reads a service it does not carry, while the production project
+// is not chosen yet (spec-workflows.md §10.3 P-LP-19). A new project is
+// certain to be refused, so it offers no key, no delegation and no preview
+// of one; an existing project that runs each service under that name is
+// not, so each service is a warning — the reads that name it, and that
+// production must run it — and the guidance points at the existing-project
+// path, whose publish counts the target's services and decides.
+func launchClosureGapResponse(input WorkflowInput, sourceCtx *launchSourceContext, closure *bundle.LaunchClosureError) *mcp.CallToolResult {
+	var services []string
+	reads := map[string][]string{}
+	for _, gap := range closure.Gaps {
+		if _, seen := reads[gap.Service]; !seen {
+			services = append(services, gap.Service)
+		}
+		reads[gap.Service] = append(reads[gap.Service], gap.String())
+	}
+	blockers := make([]topology.Blocker, 0, len(services))
+	for _, svc := range services {
+		blockers = append(blockers, topology.Blocker{
+			ID:       "production-must-run-" + svc,
+			Severity: topology.BlockerSeverityWarn,
+			Category: topology.BlockerCategoryOther,
+			Message: fmt.Sprintf(
+				"%s: production must run %q under that name. A new production project will not, so a new-project launch is refused; an existing production project that already runs %q can take this launch.",
+				strings.Join(reads[svc], "; "), svc, svc),
+		})
+	}
+	return jsonResult(launchProductionResponse{
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusReadyToLaunch,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      "A launched runtime reads a service this launch does not carry — each warning names the runtime, the variable and the service production must run under that name. A new production project would be refused for certain, so do NOT ask the person for a launch token and do NOT confirm a delegated launch. The launch can go ahead into an existing production project that already runs every named service: re-call with existingProjectId and existingProdToken — that path reads the project's services first and refuses before anything is imported if one is missing. Otherwise carry the service (include the managed dependency, launch the runtime that serves it) or stop the setup reading it, then re-call.",
+		Blockers:      blockers,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
+	})
 }
 
 // launchFailedResponse builds a generic failed-status response with a

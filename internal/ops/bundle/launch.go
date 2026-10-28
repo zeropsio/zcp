@@ -585,7 +585,7 @@ func launchClosure(sr *serviceReader, readers []tierReader, inputs LaunchBundleI
 	if len(gaps) == 0 {
 		return nil
 	}
-	lines := make([]string, 0, len(gaps))
+	refusal := &LaunchClosureError{Gaps: make([]LaunchClosureGap, 0, len(gaps))}
 	for _, gap := range gaps {
 		why := "which production does not run under that name"
 		switch host := gap.read.host; {
@@ -594,9 +594,43 @@ func launchClosure(sr *serviceReader, readers []tierReader, inputs LaunchBundleI
 		case pools[host]:
 			why = "a Swarm pool, which a launch never carries"
 		}
-		lines = append(lines, fmt.Sprintf("%s, %s", gap, why))
+		refusal.Gaps = append(refusal.Gaps, LaunchClosureGap{Read: gap.String(), Service: gap.read.host, Why: why})
 	}
-	return fmt.Errorf(
+	return refusal
+}
+
+// LaunchClosureError is BuildLaunch's refusal of a launch whose runtime
+// reads, through the setup the launch builds for it, a service the source
+// project runs that the bundle does not carry (P-LP-19). Each gap names a
+// hostname production would have to run, so an existing project that runs
+// it closes the gap (TargetHostnames) and a new project never does: a caller
+// that does not know the production project yet tells it from the
+// composer's other refusals by its type.
+type LaunchClosureError struct {
+	Gaps []LaunchClosureGap
+}
+
+// LaunchClosureGap is one read of a service the bundle does not carry.
+type LaunchClosureGap struct {
+	// Read is the read in the composer's words: `runtime "<host>" builds
+	// setup "<setup>", whose <variable> names "<service>"`.
+	Read string
+	// Service is the hostname read.
+	Service string
+	// Why says why the bundle does not carry it.
+	Why string
+}
+
+func (g LaunchClosureGap) String() string {
+	return g.Read + ", " + g.Why
+}
+
+func (e *LaunchClosureError) Error() string {
+	lines := make([]string, 0, len(e.Gaps))
+	for _, gap := range e.Gaps {
+		lines = append(lines, gap.String())
+	}
+	return fmt.Sprintf(
 		"launch bundle: a launched runtime reads a service the source project runs and the production bundle does not carry, so production would start an app that cannot reach it — nothing is launched until the bundle carries what its runtimes read: %s. Launch the runtime that serves it, include the managed dependency, or stop the setup reading it",
 		strings.Join(lines, "; "))
 }
