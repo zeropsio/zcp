@@ -162,6 +162,9 @@ type GroupRecipeInputs struct {
 	Utilities []GroupUtility
 	// Boxes are the Zerops Boxes the project runs (GroupBox).
 	Boxes []GroupBox
+	// ProjectHostnames are the hostnames of every service the Mate's project
+	// runs.
+	ProjectHostnames []string
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
 	HAIncapable []string

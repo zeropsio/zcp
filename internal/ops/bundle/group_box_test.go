@@ -13,14 +13,14 @@ import (
 )
 
 // setupVars is one zerops.yaml setup the Box tests write: its name, the
-// setup it extends ("" for none) and its run variables.
+// setup it extends ("" for none), its run variables and its build ones.
 type setupVars struct {
 	name, extends string
-	vars          map[string]string
+	vars, build   map[string]string
 }
 
 // zeropsYAMLWithVars writes a zerops.yaml declaring the setups, each with its
-// run variables.
+// variables.
 func zeropsYAMLWithVars(setups ...setupVars) string {
 	var b strings.Builder
 	b.WriteString("zerops:\n")
@@ -28,6 +28,12 @@ func zeropsYAMLWithVars(setups ...setupVars) string {
 		fmt.Fprintf(&b, "  - setup: %s\n", s.name)
 		if s.extends != "" {
 			fmt.Fprintf(&b, "    extends: %s\n", s.extends)
+		}
+		if len(s.build) > 0 {
+			b.WriteString("    build:\n      base: go@1.22\n      envVariables:\n")
+			for _, key := range slices.Sorted(maps.Keys(s.build)) {
+				fmt.Fprintf(&b, "        %s: %q\n", key, s.build[key])
+			}
 		}
 		b.WriteString("    run:\n      base: go@1.22\n      start: ./runner\n")
 		if len(s.vars) > 0 {
