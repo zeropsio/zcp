@@ -128,6 +128,12 @@ type PoolMigrateImageInput struct {
 	// and nil for a single part. With them the declaration is checked to name
 	// each part's pool as its servers' service.
 	PartPools []string
+	// SiblingPools are the pools keying another pair that builds from the
+	// same repository — a monorepo's parts moved onto pools of their own
+	// before this one. A pool container's supervisor runs the entries
+	// naming its pool, so a server naming one of them is that part's, never
+	// a finding of this part's declaration.
+	SiblingPools []string
 	// InstallURL is the zcp-devsup download this zcp installs (DevsupURL),
 	// asked only when neither the pool setup nor the dev setup carries the
 	// install line; nil or "" names DevsupLatestURL.
@@ -399,7 +405,7 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 			miss(PoolMigrateImagePreviewPorts, msg)
 		}
 	}
-	if msg := poolMigrateServiceMessage(read, img.Setup, in.PartPools, short); msg != "" {
+	if msg := poolMigrateServiceMessage(read, img.Setup, in.PartPools, in.SiblingPools, short); msg != "" {
 		miss(PoolMigrateImageService, msg)
 	}
 	if entry != nil {
@@ -564,9 +570,11 @@ func poolMigratePreviewPortsMessage(entry *ZeropsYmlEntry, setup string, base, m
 // in none. A single part (parts nil) runs every entry naming its pool or none,
 // so only an entry naming another service fails it — the dev service's own
 // hostname, which a variant-B dev writes on every entry, among them: no lease
-// runs it. A declaration missing or not parsing is the preview-port-base
-// check's.
-func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []string, short string) string {
+// runs it. Either way an entry naming a sibling pool — one keying another pair
+// that builds from the same repository, a monorepo's part moved onto a pool
+// of its own before this one — is that pool's to run, never a finding. A
+// declaration missing or not parsing is the preview-port-base check's.
+func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts, siblings []string, short string) string {
 	if !read.hasDeclaration {
 		return ""
 	}
@@ -582,6 +590,8 @@ func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []
 			own = true
 		case s.Service == "":
 			unnamed = append(unnamed, s.Name)
+		case slices.Contains(siblings, s.Service):
+			// Another part's server: its pool's supervisor runs it.
 		case len(parts) == 0 || !slices.Contains(parts, s.Service):
 			stray = append(stray, fmt.Sprintf("%s (service %s)", s.Name, s.Service))
 		}
@@ -590,8 +600,12 @@ func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []
 		if len(stray) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("In %s at %s, %s name a service that is not the pool %s, so no lease of it runs them: give each `\"service\": \"%s\"`, or no service.",
-			devsup.DeclarationPath, short, strings.Join(stray, ", "), pool, pool)
+		if len(siblings) == 0 {
+			return fmt.Sprintf("In %s at %s, %s name a service that is not the pool %s, so no lease of it runs them: give each `\"service\": \"%s\"`, or no service.",
+				devsup.DeclarationPath, short, strings.Join(stray, ", "), pool, pool)
+		}
+		return fmt.Sprintf("In %s at %s, %s name a service that is neither the pool %s nor a pool another part of the repository moved onto (%s), so no lease runs them: give each of this part's servers `\"service\": \"%s\"`, or no service, and another part's server the pool of its part.",
+			devsup.DeclarationPath, short, strings.Join(stray, ", "), pool, strings.Join(siblings, ", "), pool)
 	}
 	var gaps []string
 	if !own {
@@ -601,7 +615,11 @@ func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []
 		gaps = append(gaps, fmt.Sprintf("%s name no service, so every part's leases run them: give each the pool of its part", strings.Join(unnamed, ", ")))
 	}
 	if len(stray) > 0 {
-		gaps = append(gaps, fmt.Sprintf("%s name a service no part's pool is (%s), so no lease runs them", strings.Join(stray, ", "), strings.Join(parts, ", ")))
+		pools := fmt.Sprintf("no part's pool is (%s)", strings.Join(parts, ", "))
+		if len(siblings) > 0 {
+			pools += fmt.Sprintf(" nor a pool another part of the repository moved onto (%s)", strings.Join(siblings, ", "))
+		}
+		gaps = append(gaps, fmt.Sprintf("%s name a service %s, so no lease runs them", strings.Join(stray, ", "), pools))
 	}
 	if len(gaps) == 0 {
 		return ""

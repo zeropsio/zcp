@@ -720,6 +720,12 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 	if resp.Census != nil && len(resp.Census.Trees) > 0 {
 		head = resp.Census.Trees[0]
 	}
+	siblings, err := poolMigrateSiblingPools(d.stateDir, call.meta)
+	if err != nil {
+		// No sibling is proven: a server naming another part's pool stays a
+		// finding, the safe direction.
+		resp.Warnings = append(resp.Warnings, fmt.Sprintf("zcp could not read its pair records (%v), so the image step takes no server naming another part's pool as that part's.", err))
+	}
 	image, err := ops.ReadPoolMigrateImage(ctx, d.ssh, ops.PoolMigrateImageInput{
 		Dev:                   call.dev.Name,
 		Root:                  poolMigrateCodeRoot(call.meta),
@@ -728,6 +734,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		DevSetup:              call.meta.PrimarySetupName,
 		FallbackMaxContainers: poolMigrateMaxContainers,
 		PartPools:             call.partPools,
+		SiblingPools:          siblings,
 		InstallURL: func() string {
 			url, err := d.devsup.URL(ctx)
 			if err != nil {

@@ -472,6 +472,119 @@ func TestPoolMigrateImage_SetupChecks_SeveralParts_DeclarationNamesEachPartsPool
 	}
 }
 
+// TestPoolMigrateImage_SetupChecks_SiblingPartsPools_RunTheirOwnServers pins
+// the service check in a monorepo whose other parts moved onto pools of their
+// own before this one: the repository's one declaration names each part's
+// pool on its servers, and a pool container's supervisor runs the entries
+// naming its pool, so a server naming a sibling part's pool is that pool's —
+// never a finding of this part's commit. The dev service's own hostname, a
+// stage, and a hostname that is no sibling's pool still fail it, and without
+// sibling pools a server naming another pool still fails a single part, as
+// before (Noola's runner, 2026-10-28: six parts on apipool, edgepool, … and
+// the runner held on its servers' `"service": "runnerpool"` for the other
+// six's servers).
+func TestPoolMigrateImage_SetupChecks_SiblingPartsPools_RunTheirOwnServers(t *testing.T) {
+	t.Parallel()
+	siblings := []string{"apipool", "edgepool"}
+	decl := func(servers string) string {
+		return `{"version": 1, "previewPortBase": 4000, "servers": [` + servers + `]}`
+	}
+	const (
+		web  = `{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}`
+		api  = `{"name": "api", "port": 8080, "command": "go run .", "service": "apipool"}`
+		edge = `{"name": "edge", "port": 8081, "command": "go run ./edge", "service": "edgepool"}`
+	)
+	tests := []struct {
+		name     string
+		parts    []string
+		siblings []string
+		decl     string
+		wantIn   []string // empty: no service check missing
+		wantOut  []string
+	}{
+		{
+			name:     "a single part's servers beside the sibling parts' servers",
+			siblings: siblings,
+			decl:     decl(web + ", " + api + ", " + edge),
+		},
+		{
+			name:     "a single part's servers naming no service beside the sibling parts' servers",
+			siblings: siblings,
+			decl:     decl(`{"name": "web", "port": 3000, "command": "npm run dev"}, ` + api),
+		},
+		{
+			// A variant-B dev writes its own hostname on every entry; no
+			// sibling's pool runs it.
+			name:     "a single part's server naming the dev service",
+			siblings: siblings,
+			decl:     decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "appdev"}, ` + api),
+			wantIn:   []string{"web (service appdev)", `"service": "apppool"`, "apipool, edgepool", "no lease"},
+			wantOut:  []string{"api (service apipool)"},
+		},
+		{
+			name:     "a single part's server naming a hostname no sibling's pool is",
+			siblings: siblings,
+			decl:     decl(web + `, {"name": "docs", "port": 3001, "command": "npm run docs", "service": "docspool"}, ` + api),
+			wantIn:   []string{"docs (service docspool)", `"service": "apppool"`},
+			wantOut:  []string{"api (service apipool)"},
+		},
+		{
+			name:     "a single part's server naming a sibling part's stage",
+			siblings: siblings,
+			decl:     decl(web + `, {"name": "api", "port": 8080, "command": "go run .", "service": "apistage"}`),
+			wantIn:   []string{"api (service apistage)"},
+		},
+		{
+			name:   "a single part without sibling pools, a server naming another pool",
+			decl:   decl(web + ", " + api),
+			wantIn: []string{"api (service apipool)", `"service": "apppool"`, "no lease"},
+		},
+		{
+			name:     "several parts' servers beside the sibling parts' servers",
+			parts:    []string{"apppool", "webpool"},
+			siblings: siblings,
+			decl:     decl(web + `, {"name": "front", "port": 3002, "command": "npm run front", "service": "webpool"}, ` + api),
+		},
+		{
+			name:     "several parts, a server naming a hostname no part's or sibling's pool is",
+			parts:    []string{"apppool", "webpool"},
+			siblings: siblings,
+			decl:     decl(web + `, {"name": "front", "port": 3002, "command": "npm run front", "service": "webpool"}, {"name": "docs", "port": 3001, "command": "npm run docs", "service": "docspool"}, ` + api),
+			wantIn:   []string{"docs", "docspool", "apppool, webpool"},
+			wantOut:  []string{"api (service apipool)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := imageInput(imagePool(3, nil))
+			in.PartPools = tt.parts
+			in.SiblingPools = tt.siblings
+			got := checkPoolMigrateImage(in, imageRead("zerops.yaml", imageReadyYAML(), tt.decl, "2026-10-24T10:00:00+02:00"))
+			msg := imageMessage(got.Missing, PoolMigrateImageService)
+			if len(tt.wantIn) == 0 {
+				if len(got.Missing) != 0 {
+					t.Fatalf("missing %v, want none", got.Missing)
+				}
+				return
+			}
+			if checks := imageChecks(got.Missing); !slices.Equal(checks, []string{PoolMigrateImageService}) {
+				t.Fatalf("missing %v, want only the service check", got.Missing)
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message %q does not name %q", msg, want)
+				}
+			}
+			for _, unwanted := range tt.wantOut {
+				if strings.Contains(msg, unwanted) {
+					t.Errorf("message %q names %q, a sibling part's server its pool runs", msg, unwanted)
+				}
+			}
+		})
+	}
+}
+
 func TestPoolMigrateImage_Done_PoolRunsAnImageNewerThanTheSetup(t *testing.T) {
 	t.Parallel()
 	placeholder := &platform.ActiveAppVersionDigest{ID: "av-0", Created: "2026-10-24T09:00:00Z", Source: platform.AppVersionSourceNone}
