@@ -1,5 +1,6 @@
 // Tests for: integration — zerops_scale raising a dev pool's maxContainers
-// past the preview ports the pool opens, through the full MCP server.
+// past the preview ports the pool opens, through the full MCP server: the
+// scale runs and its result says which containers have no preview.
 
 package integration_test
 
@@ -12,12 +13,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// TestScale_Integration_PoolRaisePastThePreviewPorts_Refused: a pool zcp
-// leases from declares preview ports 3001-3003 for its 3 containers; raising
-// it to 4 is refused, naming port 3004 and the person's call, and nothing is
-// sent (Kara's run, 2026-10-25: the raise went through and container 4's
-// preview answered 502).
-func TestScale_Integration_PoolRaisePastThePreviewPorts_Refused(t *testing.T) {
+// TestScale_Integration_PoolRaisePastThePreviewPorts_ScalesAndSaysSo: a pool
+// zcp leases from declares preview ports 3001-3003 for its 3 containers;
+// raising it to 4 goes through, and the result says that container 4 has no
+// preview port and how to give it one (Kara's run: the raise went through and
+// nothing said a lease in container 4 had no preview).
+func TestScale_Integration_PoolRaisePastThePreviewPorts_ScalesAndSaysSo(t *testing.T) {
 	// Non-parallel: t.Chdir and a swap of http.DefaultTransport (routePools).
 	t.Chdir(t.TempDir())
 	routePools(t, map[string]http.Handler{"orch.devpool.zerops": poolOrchestrator(3, 3, map[int]bool{1: true, 2: true, 3: true})})
@@ -34,24 +35,21 @@ func TestScale_Integration_PoolRaisePastThePreviewPorts_Refused(t *testing.T) {
 
 	res := callAndGetResult(t, session, "zerops_scale", map[string]any{"serviceHostname": "devpool", "maxContainers": 4})
 	text := getTextContent(t, res)
-	if !res.IsError {
-		t.Fatalf("a raise past the preview ports went through: %s", text)
+	if res.IsError {
+		t.Fatalf("a raise past the preview ports was refused; it is a notice: %s", text)
 	}
-	var refusal struct {
-		Code string `json:"code"`
+	var got struct {
+		Notice string `json:"notice"`
 	}
-	if err := json.Unmarshal([]byte(text), &refusal); err != nil {
-		t.Fatalf("refusal is not JSON: %v\n%s", err, text)
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
 	}
-	if refusal.Code != platform.ErrPrerequisiteMissing {
-		t.Errorf("code = %q, want %s", refusal.Code, platform.ErrPrerequisiteMissing)
-	}
-	for _, want := range []string{"3004", "ask the person", "run.ports"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("refusal lacks %q:\n%s", want, text)
+	for _, want := range []string{"maxContainers 4", "3 preview ports", "Container 4 has no preview port", "3004", "run.ports", "maxContainers=3"} {
+		if !strings.Contains(got.Notice, want) {
+			t.Errorf("notice lacks %q:\n%s", want, got.Notice)
 		}
 	}
 	if strings.Contains(text, leaseIntToken) || strings.Contains(text, leaseIntLease) {
-		t.Fatal("scale refusal carries a secret")
+		t.Fatal("scale result carries a secret")
 	}
 }
