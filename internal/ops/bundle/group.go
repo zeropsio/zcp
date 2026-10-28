@@ -273,7 +273,8 @@ var groupTiers = []groupTierPolicy{
 // stage setup nothing names is withheld (a warning), and a recipe with no
 // tier left is an error the reconcile reports and retries — a tier that
 // lands on the group repo stays there, so an absent one is proposed later
-// and a wrong one never heals.
+// and a wrong one never heals. So is a tier that reads a service it does not
+// carry, which refuses the whole recipe as a *TierClosureError.
 func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error) {
 	if strings.TrimSpace(inputs.Name) == "" {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe: Name required (the group's slug)")
@@ -395,9 +396,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 
 	if len(unclosed) > 0 {
-		return recipe.Layout{}, nil, fmt.Errorf(
-			"group recipe %q: a tier carries a runtime whose setup reads a service this Mate's project runs and the tier does not carry, so an environment made from it would start an app that cannot reach it — nothing is proposed until every tier carries what its runtimes read: %s. Carry the service in that tier (the warnings say why it is left out) or stop the setup reading it",
-			inputs.Name, strings.Join(unclosed, "; "))
+		return recipe.Layout{}, nil, &TierClosureError{Recipe: inputs.Name, Reads: unclosed}
 	}
 
 	var reasons []string
