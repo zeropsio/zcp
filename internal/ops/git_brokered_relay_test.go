@@ -1544,6 +1544,60 @@ func TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_Relay_HelperDescriptorsNotTheSessions_AnswersNothingAtOnce:
+// a helper whose descriptor 4 or 3 is open but no longer the session's — a
+// hook pointed it elsewhere, or git reused the number for a socket of its own
+// once a hook closed it — writes no frame there and waits on nothing there:
+// it answers nothing at once, and the lazy fetch fails without a credential.
+func TestBrokeredGit_Relay_HelperDescriptorsNotTheSessions_AnswersNothingAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct{ name, redirect string }{
+				{"descriptor 4 to a file", `4>"$elsewhere"`},
+				{"descriptor 3 from a fifo nobody writes", `3<>"$fifo"`},
+			} {
+				l := newRelayLab(t)
+				url, h := l.repo(t, false, "org/app-1/appdev")
+				checkout := l.checkout(t, url)
+				dir := t.TempDir()
+				result, elsewhere, fifo := filepath.Join(dir, "result"), filepath.Join(dir, "elsewhere"), filepath.Join(dir, "fifo")
+				if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				writePreCommitHook(t, checkout, "elsewhere="+ShellQuote(elsewhere)+"; fifo="+ShellQuote(fifo)+"; s=$(date +%s); "+
+					"git show "+h.first+":app.txt >/dev/null 2>&1 "+tc.redirect+"; echo \"$? $(( $(date +%s) - s ))\" > "+ShellQuote(result)+"; exit 0\n")
+				parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-m", "x"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				var stderr bytes.Buffer
+				code, err := RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(), strings.NewReader(""), io.Discard, &stderr)
+				stopped := ctx.Err() != nil
+				cancel()
+				if stopped {
+					t.Errorf("%s: the call did not end within 30s: the helper waited on a descriptor that is not the session's", tc.name)
+					continue
+				}
+				if err != nil || code != 0 {
+					t.Errorf("%s: exit %d, err %v\n%s", tc.name, code, err, stderr.String())
+				}
+				fields := strings.Fields(readFile(t, result))
+				if len(fields) != 2 || fields[0] == "0" {
+					t.Errorf("%s: the hook's show = %q, want a failure without a credential", tc.name, fields)
+				} else if took, _ := strconv.Atoi(fields[1]); took > 10 {
+					t.Errorf("%s: the show took %ds, want at once", tc.name, took)
+				}
+				if b, _ := os.ReadFile(elsewhere); bytes.Contains(b, []byte("ZCPCRED-")) {
+					t.Errorf("%s: the helper wrote its frame to a descriptor that is not the session's: %q", tc.name, b)
+				}
+			}
+		})
+	}
+}
+
 // TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock: a hook that
 // starts two lazy fetches at once gets both answered right, one token
 // shared — while HQ takes its time minting, one helper finds the lock held
@@ -3232,7 +3286,9 @@ func startHelper(t *testing.T, sh []string, nonce string, env []string) *helperP
 	p.cmd.Stdin = strings.NewReader(helperRequest)
 	p.cmd.Stdout = &p.stdout
 	p.cmd.Env = env
-	p.cmd.ExtraFiles = []*os.File{ansR, frW}
+	// Descriptors 3 and 4 as the script hands them git, and their copies
+	// 8 and 9 that a helper checks them against.
+	p.cmd.ExtraFiles = []*os.File{ansR, frW, nil, nil, nil, ansR, frW}
 	if err := p.cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
