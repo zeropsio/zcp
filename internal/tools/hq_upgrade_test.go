@@ -34,11 +34,19 @@ func (l *hqLab) releasedOpenChange() hq.Change {
 }
 
 // renameCommand and pushCommand are the git commands the words give to take
-// a branch an older zcp kept the work on, and to push it.
+// a branch an older zcp kept the work on, and to push it — run in the pair's
+// dev service, appdev, through zcp git.
 var (
-	renameCommand = regexp.MustCompile("`(git branch -m [^`]*)`")
-	pushCommand   = regexp.MustCompile("`(git push origin [^`]*)`")
+	renameCommand = regexp.MustCompile("`(zcp git appdev branch -m [^`]*)`")
+	pushCommand   = regexp.MustCompile("`(zcp git appdev push origin [^`]*)`")
 )
+
+// inTheLab is a command the words give through `zcp git appdev` as git runs
+// it in the lab's dev service, appdev's checkout: each `zcp git appdev `
+// stripped back to git.
+func inTheLab(command string) string {
+	return strings.ReplaceAll(command, "zcp git appdev ", "git ")
+}
 
 // TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking: a
 // plain HQ-only Mate holding an open change the released zcp recorded takes
@@ -85,12 +93,12 @@ func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *
 	if rename == nil || push == nil {
 		t.Fatalf("the words give no command that takes the branch on this checkout, or pushes it:\n%s", text)
 	}
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+rename[1]); err != nil {
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(rename[1])); err != nil {
 		t.Fatalf("taking the branch as the words say (%s): %v\n%s", rename[1], err, out)
 	}
 	lab.write(map[string]string{"login.js": "the whole fix\n"})
 	lab.commit("Carry the fix on")
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+push[1]); err != nil {
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
 		t.Fatalf("pushing as the words say (%s): %v\n%s", push[1], err, out)
 	}
 	if got, want := lab.remoteHead(branch), lab.git("rev-parse", "HEAD"); got != want {
@@ -107,7 +115,7 @@ func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *
 	if isError || answer.Created || answer.PullRequest != 1 || answer.Branch != branch {
 		t.Fatalf("open-change = %s, want change #1 on %q answered", answered, branch)
 	}
-	if !strings.Contains(answer.Message, "git fetch origin "+branch) {
+	if !strings.Contains(answer.Message, "zcp git appdev fetch origin "+branch) {
 		t.Errorf("open-change does not say how to take %q: %s", branch, answer.Message)
 	}
 }

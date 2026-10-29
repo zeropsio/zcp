@@ -220,9 +220,10 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 		settle func(*fakeHQ)
 		want   []string
 	}{
-		// The checkout is brought up to date where git can ask zcp, whether its
-		// origin is HQ or GitHub.
-		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged", "in your own shell on the mounted checkout, never over ssh"}},
+		// The checkout is brought up to date in its dev service, through zcp
+		// git, which zcp answers whether its origin is HQ or GitHub.
+		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged",
+			"bring it up to date in its dev service appdev (`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main`)"}},
 		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: []string{"change #1 was closed without merging"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

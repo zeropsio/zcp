@@ -374,7 +374,7 @@ func corePushWords(number, landed int, branch string, leases []string, ready boo
 // nothing. leases are the leases on c's branch. It answers the standing to
 // keep as told. Never a rebase, never a force: a branch takes main by a
 // merge, checked on its own preview before it is pushed.
-func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (string, workflow.HQChangeTold) {
+func hqChangeStanding(c workflow.HQChange, s hq.MateChange, _ repoRoute, leases []string) (string, workflow.HQChangeTold) {
 	now := standingOf(s)
 	told := workflow.HQChangeTold{}
 	if c.Told != nil {
@@ -501,7 +501,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 	if outcome != changeStillOpen {
 		return ""
 	}
-	words, now := hqChangeStanding(c, *s, leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
+	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
 	if c.Told == nil || *c.Told != now {
 		_ = workflow.UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *workflow.HQChange, existed bool) error {
 			if !existed {

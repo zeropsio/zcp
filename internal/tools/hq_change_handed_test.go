@@ -24,8 +24,9 @@ func (l *hqLab) status() string {
 	return getTextContent(l.t, callTool(l.t, srv, "zerops_workflow", map[string]any{"action": "status"}))
 }
 
-// takeCommand is the git command the words say takes the change's branch.
-var takeCommand = regexp.MustCompile("`(git fetch [^`]*)`")
+// takeCommand is the git command the words say takes the change's branch,
+// in the pair's dev service through zcp git.
+var takeCommand = regexp.MustCompile("`(zcp git appdev fetch [^`]*)`")
 
 // TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch: a change a person
 // hands this Mate is its repository's change from the next pass on — kept in
@@ -83,7 +84,7 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 			if take == nil {
 				t.Fatalf("the words give no command that takes the branch:\n%s", text)
 			}
-			if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+take[1]); err != nil {
+			if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(take[1])); err != nil {
 				t.Fatalf("taking the branch as the words say (%s): %v\n%s", take[1], err, out)
 			}
 			lab.write(map[string]string{"login.js": "the whole fix\n"})
