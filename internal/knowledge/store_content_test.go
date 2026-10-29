@@ -121,6 +121,75 @@ func TestCore_GenerateRules_ContainsDeployFilesAndTilde(t *testing.T) {
 	}
 }
 
+// TestThemes_DeployUpload_FactsPresent pins what the deploy-upload theme
+// teaches (docs/spec-workflows.md §8 DM-9): what a zcli push carries, that
+// .deployignore, deployFiles and --workspace-state do not shrink it, what
+// does — and its cost on a self-deploy — how long the upload is waited for,
+// and the self-deploy's .git; core's deploy semantics point at it. Root cause
+// it closes: a 1.2 GB tracked tree timed out three deploys and
+// zerops_knowledge had nothing on keeping files out of the upload. A theme of
+// its own, since core's title holds none of the words a search for it uses.
+func TestThemes_DeployUpload_FactsPresent(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/deploy-upload")
+	if err != nil {
+		t.Fatalf("Get deploy-upload: %v", err)
+	}
+	for _, fact := range []string{
+		"git snapshot", "untracked files `.gitignore` does not exclude", "the whole `.git` directory",
+		"do NOT make the upload smaller", "`--workspace-state` does not either",
+		"`export-ignore`", "`git checkout -- <path>`",
+		"`sha=`", "`.deployignore` does filter",
+		"object storage",
+		"`upload`", "256 MiB", "5 min plus 1 s per MiB", "60 min", "not a network failure",
+		"`git count-objects -vH`", "`git repack -a -d`",
+		"never logged in with it", "tell the person what blocks the deploy",
+	} {
+		if !strings.Contains(doc.Content, fact) {
+			t.Errorf("deploy-upload theme missing fact %q", fact)
+		}
+	}
+	core, err := store.Get("zerops://themes/core")
+	if err != nil {
+		t.Fatalf("Get core: %v", err)
+	}
+	if !strings.Contains(core.H2Sections()["Generate Rules"], `zerops_knowledge uri="zerops://themes/deploy-upload"`) {
+		t.Error("core's deploy semantics do not point at the deploy-upload theme")
+	}
+}
+
+// TestSearch_DeployUpload_FindsTheTheme: the searches agents ran when their
+// deploys' uploads timed out reach the deploy-upload theme.
+func TestSearch_DeployUpload_FindsTheTheme(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	for _, query := range []string{
+		"deploy upload size",
+		"zcli push upload exclude files timeout",
+		"zerops_deploy self-deploy upload size .git folder deployignore",
+	} {
+		results := store.Search(query, 5)
+		found := false
+		for _, r := range results[:min(3, len(results))] {
+			found = found || r.URI == "zerops://themes/deploy-upload"
+		}
+		if !found {
+			uris := make([]string, 0, len(results))
+			for _, r := range results {
+				uris = append(uris, r.URI)
+			}
+			t.Errorf("search %q top 3 = %v, want zerops://themes/deploy-upload", query, uris)
+		}
+	}
+}
+
 // TestCore_ZscInstall_NeedsSudo: the core reference writes the runtime-side
 // `zsc install` the way run.prepareCommands accepts it — under sudo, since
 // the runtime container runs as the zerops user (without it the deploy ends

@@ -108,7 +108,14 @@ func (d *SystemSSHDeployer) ExecSSH(ctx context.Context, hostname, command strin
 // command reads it, and neither the local ssh argv nor the remote shell's
 // command line carries it.
 func (d *SystemSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, deployExecTimeout)
+	return d.ExecSSHStdinWithin(ctx, hostname, command, stdin, deployExecTimeout)
+}
+
+// ExecSSHStdinWithin is ExecSSHStdin bounded by ceiling rather than the
+// deployer-wide 5 min: a push's call lasts as long as its upload, which its
+// remote side waits for by the upload's size (docs/spec-workflows.md §8 DM-9).
+func (d *SystemSSHDeployer) ExecSSHStdinWithin(ctx context.Context, hostname, command string, stdin []byte, ceiling time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, ceiling)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
 	if stdin != nil {

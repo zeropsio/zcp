@@ -325,3 +325,30 @@ func TestExecSSHStdio_StreamsBothWaysAndReturnsExitCode(t *testing.T) {
 		}
 	})
 }
+
+// TestExecSSHStdinWithin_TakesItsOwnCeiling: a call that names its ceiling is
+// stopped at that ceiling, not at the 5 min every other foreground call has —
+// shorter, as here, or longer, as a push's upload takes (docs/spec-workflows.md
+// §8 DM-9).
+//
+// non-parallel: t.Setenv puts a fake ssh first on PATH.
+func TestExecSSHStdinWithin_TakesItsOwnCeiling(t *testing.T) {
+	bin := t.TempDir()
+	fake := "#!/bin/sh\nfor a; do cmd=$a; done\nexec sh -c \"$cmd\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	d := NewSystemSSHDeployer()
+
+	_, err := d.ExecSSHStdinWithin(context.Background(), "builder", "sleep 5", nil, 200*time.Millisecond)
+	var sshErr *SSHExecError
+	if !errors.As(err, &sshErr) || !errors.Is(sshErr.Err, context.DeadlineExceeded) {
+		t.Errorf("call past its 200 ms ceiling = %v, want an SSHExecError carrying context.DeadlineExceeded", err)
+	}
+
+	out, err := d.ExecSSHStdinWithin(context.Background(), "builder", `IFS= read -r k && printf 'got %s\n' "$k"`, []byte("key\n"), time.Minute)
+	if err != nil || string(out) != "got key\n" {
+		t.Errorf("call within its ceiling = %q, %v; want the command's output", out, err)
+	}
+}

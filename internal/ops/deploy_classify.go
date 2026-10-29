@@ -47,7 +47,9 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	}
 
 	exitMsg := sshErr.Err.Error() // OS-level: "exit status 1", "signal: killed", etc.
-	output := sshErr.Output
+	// The push's own report lines (what its upload carried, DM-9) are read
+	// out; the rest is zcli's output, kept whole for the LLM.
+	upload, output := splitUploadReport(sshErr.Output)
 
 	pe := &platform.PlatformError{
 		Code:       platform.ErrSSHDeployFailed,
@@ -61,15 +63,33 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s refused: the Mate's crew save failed, so this deploy is held and crewmates' unsaved work is not lost:\n%s",
 			sourceService, targetService, lastLines(saveStderr, 5))
 		pe.Suggestion = "Fix what the crew save reports (its stderr is above), then deploy again."
-	case errors.Is(sshErr.Err, context.Canceled), errors.Is(sshErr.Err, context.DeadlineExceeded):
-		// The ssh client was stopped, not the remote command: a push stopped
-		// before zcli said it was deploying is ended by stopPush.
-		how := "was cancelled"
-		if errors.Is(sshErr.Err, context.DeadlineExceeded) {
-			how = "timed out"
+	case upload.unfinished:
+		// The push's remote side waited for the upload by its size and it was
+		// still running: slow, not broken — stopPush ended it before zcli
+		// asked for the build.
+		within := "within its budget"
+		if upload.budget > 0 {
+			within = "within " + upload.budget.String()
 		}
-		pe.Message = fmt.Sprintf("SSH deploy from %s to %s %s before its upload finished; the push was stopped and started no build", sourceService, targetService, how)
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s %s %s %s; the push was stopped and started no build",
+			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload), within)
+		pe.Suggestion = uploadUnfinishedSuggestion
+	case errors.Is(sshErr.Err, context.DeadlineExceeded):
+		// The ssh client was stopped at its ceiling, not the remote command: a
+		// push stopped before zcli said it was deploying is ended by stopPush.
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s timed out: it %s %s; the push was stopped and started no build",
+			sourceService, targetService, uploadUnfinishedPhrase, uploadWhat(upload))
+		pe.Suggestion = uploadUnfinishedSuggestion
+	case errors.Is(sshErr.Err, context.Canceled):
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s was cancelled before it finished uploading %s; the push was stopped and started no build",
+			sourceService, targetService, uploadWhat(upload))
 		pe.Suggestion = "Nothing is building from this deploy. Deploy again when ready."
+	case strings.Contains(output, zcliClosedPipe):
+		// zcli's upload connection closed while it still sent the package;
+		// the signal transport:zcli-upload-closed says what to try.
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: the connection carrying the upload of %s closed before it was sent; no build started:\n%s",
+			sourceService, targetService, uploadWhat(upload), lastLines(output, 5))
+		pe.Suggestion = "Check the failureClassification for what to try."
 	case strings.Contains(exitMsg, "signal: killed"):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s killed (likely OOM)", sourceService, targetService)
 		pe.Suggestion = fmt.Sprintf("Process killed. Scale up: zerops_scale serviceHostname=%s minRam=2", sourceService)
