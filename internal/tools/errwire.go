@@ -1,8 +1,12 @@
 package tools
 
 import (
+	"cmp"
+	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -61,6 +65,11 @@ type ErrorWire struct {
 	// executes rebase/merge/replace-remote itself (docs/spec-workflows.md
 	// §12 GF-11).
 	GitPushRejection *GitPushRejectionPayload `json:"gitPushRejection,omitempty"`
+
+	// credentialContract replaces credentialUserOwnedContract as the
+	// contract appendCredentialContract appends (WithMatePoolCredential).
+	// Unexported, so never on the wire.
+	credentialContract string
 }
 
 // CheckWire is the wire form of a single check failure. Generic enough
@@ -195,7 +204,50 @@ const credentialAskMechanism = "AskUserQuestion when your harness exposes it, el
 // inputs" reads like something the agent should produce. The contract names
 // the actor explicitly: a token is the USER's secret, never the agent's to
 // invent.
-const credentialUserOwnedContract = "This credential is a user-held secret — surface this failure and ask the user (" + credentialAskMechanism + ") for a corrected value; NEVER generate, guess, or mutate a token."
+const credentialUserOwnedContract = "This credential is a user-held secret — surface this failure and ask the user (" + credentialAskMechanism + ") for a corrected value; " + credentialNeverClause
+
+// credentialNeverClause is the user-owned contract's NEVER clause, which every
+// rendering of it keeps.
+const credentialNeverClause = "NEVER generate, guess, or mutate a token."
+
+// matePoolCredentialContract is the user-owned credential contract inside a
+// Mate (mate: runtime.Info.MateEnabled) for a lease's git failing on the
+// pool's GIT_TOKEN — pools: the pool, or each pool a failed lease may be of.
+// The token is the person's own, in the pool's own vault, which Mate's vault
+// does not show (zerops_env action=request refuses the name), so no card can
+// ask for it: the person sets it on the pool's service in Zerops, and it never
+// crosses the chat. "" outside a Mate or with no pool: the plain contract.
+func matePoolCredentialContract(mate bool, pools []string) string {
+	var named []string
+	for _, p := range pools {
+		if p != "" && !slices.Contains(named, p) {
+			named = append(named, p)
+		}
+	}
+	if !mate || len(named) == 0 {
+		return ""
+	}
+	where, set := fmt.Sprintf("on the pool %q, kept in its own vault", named[0]), fmt.Sprintf("on the %q service", named[0])
+	if len(named) > 1 {
+		where, set = "on the pool of each lease that failed — of "+quotedList(named)+" — kept in that pool's own vault", "on that pool's service"
+	}
+	return "This credential is a user-held secret: the person's own " + ops.GitTokenEnvKey + " " + where +
+		", which Mate's vault does not show. Never ask for it in the chat: ask the person to set " + ops.GitTokenEnvKey + " " + set +
+		" in Zerops (a token with access to the repository), then retry. " + credentialNeverClause
+}
+
+// WithMatePoolCredential has a credential-class error inside a Mate carry
+// matePoolCredentialContract for pools in place of the plain contract, which
+// asks the user in the chat. A no-op outside a Mate or with no pool, so every
+// other rendering stays byte-identical.
+func WithMatePoolCredential(mate bool, pools ...string) ErrorOption {
+	contract := matePoolCredentialContract(mate, pools)
+	return func(w *ErrorWire) {
+		if contract != "" {
+			w.credentialContract = contract
+		}
+	}
+}
 
 // credentialErrorCodes are the platform error codes whose suggestion gets the
 // user-owned-credential contract appended. Single owner so every credential
@@ -215,11 +267,12 @@ func appendCredentialContract(w *ErrorWire) {
 	if strings.Contains(w.Suggestion, "user-held secret") {
 		return
 	}
+	contract := cmp.Or(w.credentialContract, credentialUserOwnedContract)
 	if w.Suggestion == "" {
-		w.Suggestion = credentialUserOwnedContract
+		w.Suggestion = contract
 		return
 	}
-	w.Suggestion += " " + credentialUserOwnedContract
+	w.Suggestion += " " + contract
 }
 
 // platformErrorToWire builds the base ErrorWire from a typed

@@ -219,7 +219,9 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 			}
 			change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, pools, input.Repo, input.Branch, input.From)
 			if err != nil {
-				return convertError(withLeaseSSHStderr(err)), nil, nil
+				// The refusal does not say which pool's GIT_TOKEN failed: a
+				// Mate's contract names every pool the acquire requested.
+				return convertError(withLeaseSSHStderr(err), WithMatePoolCredential(rt.MateEnabled, pools...)), nil, nil
 			}
 			if rt.MateEnabled {
 				// Which zcp session took or reused each lease: `zcp lease
@@ -287,9 +289,9 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				// A push refused as non-fast-forward names HQ's own push as
 				// its cause when it is one: the Mate's state read once.
 				err = corePushSyncRefusal(err, stateDir, hqAddress(rt), input.Lease, leaseHQState(ctx, hqHTTP, rt))
-				return convertError(withLeaseSSHStderr(err)), nil, nil
+				return convertError(withLeaseSSHStderr(err), WithMatePoolCredential(rt.MateEnabled, leaseSyncSourcePools(rt.MateEnabled, stateDir, input.Lease)...)), nil, nil
 			}
-			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view), Envelope: envelope(ctx)}), nil, nil
+			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view, rt.MateEnabled), Envelope: envelope(ctx)}), nil, nil
 		case leaseActionPark, leaseActionUnpark:
 			if refusal := leaseParkInputRefusal(input); refusal != nil {
 				return convertError(refusal), nil, nil
