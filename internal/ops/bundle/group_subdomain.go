@@ -16,31 +16,45 @@ import (
 // with its part (`flip-3901-5195`) a host that exists nowhere: flip.studio's
 // Stage and Small Production came up with their cloud agent's server so
 // (group change #2, 2026-10-28). Every project a tier makes — the AI Agent
-// tier's too — gets a subdomain label of its own, and the platform gives each
-// of its services its address there as `zeropsSubdomain`: the whole
-// `https://` address with no slash after it, one line for each HTTP port the
-// service serves. So every tier writes such an address as a reference to the
-// address the service it names has in the environment the tier makes:
+// tier's too — gets a subdomain label of its own, and the platform gives it
+// to the project's services and variables as `${zeropsSubdomainHost}` from
+// the project's creation, before any service is built: an address written
+// with it resolved on the first boot, in a service variable and a project
+// variable alike, on a project with no subdomain enabled anywhere (Mate2
+// lab, 2026-10-29: `https://app-${zeropsSubdomainHost}-8080.prg1.zerops.app`
+// read `https://app-396e-8080.prg1.zerops.app`). So every tier writes such
+// an address as the address the service it names has in the environment the
+// tier makes:
 //
-//   - `${<host>_zeropsSubdomain}` for another service, <host> the tier's name
-//     for it (a group environment's part renamed: flipstage → flip);
-//   - `${zeropsSubdomain}` for the address of the service the value is of;
+//   - `https://<host>-${zeropsSubdomainHost}-<port>.` and the domain as
+//     written, <host> the tier's name for the service (a group environment's
+//     part renamed: flipstage → flip), no `-<port>` where the address names
+//     none (port 80);
 //   - what follows the address — a path, a query — kept.
 //
-// A reference stands for the address only where the tier's service builds a
-// setup declaring exactly one HTTP port, the one the address names (80 when
-// it names none), and the value writes the address `https://` with no port
-// after it. An address the reference cannot be shown to express is kept as
-// written and said, never guessed: a setup declaring several HTTP ports,
-// another one or none; a service the recipe reads no setup of (a utility, a
-// managed service, a Box, a dev pool); a bare host or another scheme; a
-// reference no priority orders before its reader (orderSubdomainReads); and
-// any address in a project variable, which every service reads, so no
-// priority creates the service it names before all of its readers. An
-// address of a service the tier does not carry is kept as it is: an address
-// written out reads nothing (spec-workflows.md §8 PS-3), what a tier's
-// runtimes read is the closure check's (PS-3a), and a reference the rewrite
-// writes names only what the tier carries, so it adds no read.
+// Never as `${zeropsSubdomain}` or `${<host>_zeropsSubdomain}`:
+// zeropsSubdomain holds one `https://` address for each HTTP port the
+// service serves, one per line, so a reference written for a setup of one
+// HTTP port became two lines once flip's setup gained a second (5196), and
+// flip's app refused to start (2026-10-29). And since the label is there from
+// the start, the address needs no service created before its reader: it adds
+// no read the order sees (orderSubdomainReads), and a project variable, which
+// every service reads, is written the same way.
+//
+// A tier writes it so only where its service builds a setup whose HTTP
+// ports — any number of them — include the one the address names, and the
+// value writes the address `https://` with no port after it. An address that
+// cannot be shown to be the service's is kept as written and said, never
+// guessed: a setup declaring another HTTP port or none; a service the recipe
+// reads no setup of (a utility, a managed service, a Box, a dev pool); a
+// bare host or another scheme. A reference a person wrote —
+// `${zeropsSubdomain}` of the value's own service, `${<host>_zeropsSubdomain}`
+// of another the tier carries — to a service whose setup declares several
+// HTTP ports is kept as written and said the same way, naming the form to
+// write for the one meant, and the order still orders it. An address of a service the tier does not carry is kept as it is:
+// an address written out reads nothing (spec-workflows.md §8 PS-3), what a
+// tier's runtimes read is the closure check's (PS-3a), and the address the
+// rewrite writes names only what the tier carries, so it adds no read.
 //
 // The address is as public as the subdomain it names, so it never makes a
 // value look secret: the secret rule reads its label — the platform's name
@@ -278,10 +292,6 @@ type tierAddresses struct {
 	collecting   bool
 	reads        []subdomainRead
 	projectReads []projectRead
-	// unordered is why no priority orders a reference the rewrite would
-	// write, by its reader and the service it names: the address is kept as
-	// written instead.
-	unordered map[[2]string]string
 	// kept is what the tier kept as written for a person to set.
 	kept []keptAddress
 	// unset is what the tier left out for a person to set, a value set by
@@ -434,9 +444,9 @@ func joinPorts(ports []int) string {
 	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
 
-// keptAddressWarnings says each address a tier kept as written for a person
-// to set, once for every tier that kept it for the same reason, in the order
-// the tiers kept them.
+// keptAddressWarnings says each address — or a person's reference — a tier
+// kept as written for a person to set, once for every tier that kept it for
+// the same reason, in the order the tiers kept them.
 func keptAddressWarnings(kept []keptAddress) []string {
 	order, tiers := saidInTiers(kept, func(k keptAddress) (keptAddress, string) {
 		tier := k.tier

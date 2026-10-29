@@ -783,7 +783,7 @@ func (plan groupPlan) addressWriter(policy groupTierPolicy, promote func(string)
 	_, domain, _ := strings.Cut(strings.TrimSpace(plan.inputs.MateSubdomainHost), ".")
 	t := &tierAddresses{
 		mate: plan.mate, domain: domain, title: policy.title, promote: promote,
-		builds: map[string]addressBuild{}, unordered: map[[2]string]string{},
+		builds: map[string]addressBuild{},
 	}
 	if promote != nil {
 		t.renames = plan.promoter.renames
