@@ -193,10 +193,14 @@ A release can reuse a retained archive only from successful CI on the exact
 checked-out source commit in this repository, triggered by a push or manual
 dispatch on `main` or `wt/keys`, with both test and lint successful in that run
 attempt. It verifies the digest before reusing acceptance and before each build.
-Missing proof, expired/unavailable artifacts, and digest mismatches cause fresh
-preparation and the full CI validation path: platform builds, race tests,
-required JS/DOM checks, tagged vet, and lint. Release binaries use that same
-validated archive. The daily/manual live Schema Drift workflow remains separate.
+Decision: Releasing a commit whose CI already passed does not rerun its tests; releasing a commit whose CI is still running waits for that run's verdict instead of starting another.
+
+Decision: A commit without a green CI verdict is never released.
+
+Missing proof, a failed/cancelled CI verdict, expired/unavailable artifacts, and
+digest mismatches block release. Normal CI prepares and validates its own archive;
+release binaries use the archive from the successful CI run. The daily/manual live
+Schema Drift workflow remains separate.
 Offline proof selection and restoration witnesses live in `.github/scripts/*.test.cjs`.
 
 ---

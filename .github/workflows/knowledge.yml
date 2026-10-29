@@ -31,7 +31,7 @@ jobs:
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Find full exact-SHA CI proof
+      - name: Require full exact-SHA CI verdict (wait if running)
         if: inputs.reuse-ci
         id: proof
         uses: actions/github-script@v7
@@ -39,22 +39,15 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         with:
           script: |
-            const { selectCorpus } = require('./.github/scripts/select-corpus.cjs');
-            try {
-              const proof = await selectCorpus(github, context.repo, process.env.SOURCE_SHA);
-              if (proof) {
-                core.setOutput('run-id', proof.runID);
-                core.setOutput('artifact', proof.artifactName);
-                core.setOutput('digest', proof.digest);
-              }
-            } catch {
-              core.warning('CI proof unavailable; preparing fresh corpus for full validation.');
-            }
+            const { requireCorpus } = require('./.github/scripts/select-corpus.cjs');
+            const proof = await requireCorpus(github, context.repo, process.env.SOURCE_SHA);
+            core.setOutput('run-id', proof.runID);
+            core.setOutput('artifact', proof.artifactName);
+            core.setOutput('digest', proof.digest);
 
       - name: Download proven corpus
         if: steps.proof.outputs.artifact != ''
         id: download
-        continue-on-error: true
         uses: actions/download-artifact@v7
         with:
           name: ${{ steps.proof.outputs.artifact }}
@@ -65,7 +58,6 @@ jobs:
       - name: Verify proven corpus
         if: steps.download.outcome == 'success'
         id: verify
-        continue-on-error: true
         env:
           CORPUS_DIGEST: ${{ steps.proof.outputs.digest }}
         working-directory: ${{ runner.temp }}/knowledge
