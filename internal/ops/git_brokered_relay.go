@@ -643,10 +643,11 @@ func newRelayStdout(dst io.Writer, nonce string) (*relayStdout, error) {
 	return &relayStdout{r: r, w: w, dst: dst, mark: []byte(relayEndMark(nonce)), ended: make(chan struct{}), done: make(chan struct{})}, nil
 }
 
-// copy runs until the pipe gives no more: EOF once every holder of w closed
-// it, or a closed r.
+// copy runs until the pipe gives no more — EOF once every holder of w closed
+// it, or a closed r — and closes r.
 func (s *relayStdout) copy() {
 	defer close(s.done)
+	defer func() { _ = s.r.Close() }()
 	end := sync.OnceFunc(func() { close(s.ended) })
 	defer end()
 	var held []byte // the tail of what was read that may begin the mark
