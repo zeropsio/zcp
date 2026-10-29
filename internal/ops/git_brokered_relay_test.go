@@ -2011,31 +2011,114 @@ func TestBrokeredGit_Relay_HelperText_SurvivesBothQuotingLayers(t *testing.T) {
 	}
 }
 
+// shellRunsFromPath reports whether the shell sh runs the command name from
+// PATH: a busybox built to prefer its own applets (Ubuntu's 1.30.1 is) runs
+// its head, mktemp or date whatever PATH says, so no stub on PATH stands in
+// for them there.
+func shellRunsFromPath(t *testing.T, sh []string, name string) bool {
+	t.Helper()
+	stub, tmp := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(stub, name), []byte("#!/bin/sh\necho zcp-stub-ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), sh[0], append(slices.Clone(sh[1:]), "-c", name+" </dev/null")...) //nolint:gosec // a fixed probe in the shell under test
+	cmd.Env = []string{"PATH=" + stub + string(os.PathListSeparator) + os.Getenv("PATH"), "TMPDIR=" + tmp, "LC_ALL=C"}
+	out, _ := cmd.Output()
+	return strings.Contains(string(out), "zcp-stub-ran")
+}
+
+// shortPayloadRunner is a session whose forwarded stdin arrives short: it
+// passes the payload's length line on, then half the bytes it announces,
+// then the end of the session's stdin.
+type shortPayloadRunner struct{ session *shellRunner }
+
+func (r shortPayloadRunner) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return r.session.ExecSSHStdio(ctx, host, command, &shortPayload{r: bufio.NewReader(stdin)}, stdout, stderr)
+}
+
+type shortPayload struct {
+	r      *bufio.Reader
+	header string
+	left   int
+	read   bool
+}
+
+func (s *shortPayload) Read(p []byte) (int, error) {
+	if !s.read {
+		line, err := s.r.ReadString('\n')
+		if err != nil {
+			return 0, err
+		}
+		n, _ := strconv.Atoi(strings.TrimSpace(line))
+		s.header, s.left, s.read = line, n/2, true
+	}
+	if s.header != "" {
+		n := copy(p, s.header)
+		s.header = s.header[n:]
+		return n, nil
+	}
+	if s.left == 0 {
+		return 0, io.EOF
+	}
+	n, err := s.r.Read(p[:min(len(p), s.left)])
+	s.left -= n
+	return n, err
+}
+
 // TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine: a forwarded
-// stdin the service cannot stage — mktemp failing — ends the call with 128
-// and one line saying so, git never run.
+// stdin the service cannot stage — mktemp failing, or the payload arriving
+// short of the length announced — ends the call with 128 and one line saying
+// so, git never run.
 func TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l := newRelayLab(t)
-			url, _ := l.repo(t, false, "org/app-1/appdev")
-			checkout := l.checkout(t, url)
-			stub := t.TempDir()
-			if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			before := l.git(t, checkout, "rev-parse", "HEAD")
-			run := l.runEnv(t, sh, l.env(stub), checkout, l.relay(), "message\n", "commit", "--allow-empty", "-F", "-")
-			if run.code != 128 {
-				t.Errorf("exit %d, want 128", run.code)
-			}
-			if got := strings.TrimSpace(run.stderr); strings.Count(got, "\n") != 0 || !strings.HasPrefix(got, "zcp git: ") || !strings.Contains(got, "stdin") {
-				t.Errorf("stderr = %q, want one zcp git line about the stdin", run.stderr)
-			}
-			if after := l.git(t, checkout, "rev-parse", "HEAD"); after != before {
-				t.Errorf("git ran: HEAD moved to %s", after)
+			for _, tc := range []struct {
+				name   string
+				runner func(l *relayLab, stub string) SSHStdioRunner
+				stub   bool
+			}{
+				{"mktemp fails", func(l *relayLab, stub string) SSHStdioRunner {
+					return &shellRunner{sh: sh, env: l.env(stub)}
+				}, true},
+				{"the payload arrives short", func(l *relayLab, _ string) SSHStdioRunner {
+					return shortPayloadRunner{session: &shellRunner{sh: sh, env: l.env()}}
+				}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					if tc.stub && !shellRunsFromPath(t, sh, "mktemp") {
+						t.Skip(shellName(sh) + " runs its own mktemp applet whatever PATH says, so no failing mktemp can stand in; the payload arriving short exercises the same failure there")
+					}
+					l := newRelayLab(t)
+					url, _ := l.repo(t, false, "org/app-1/appdev")
+					checkout := l.checkout(t, url)
+					stub := t.TempDir()
+					if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-F", "-"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					before := l.git(t, checkout, "rev-parse", "HEAD")
+					ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+					defer cancel()
+					var stderr bytes.Buffer
+					code, err := RunBrokeredGitRelayed(ctx, tc.runner(l, stub), "appdev", checkout, parsed, l.relay(), strings.NewReader(strings.Repeat("message line\n", 64)), io.Discard, &stderr)
+					if ctx.Err() != nil {
+						t.Fatalf("the call did not end; stderr:\n%s", stderr.String())
+					}
+					if err != nil || code != 128 {
+						t.Errorf("exit %d, err %v; want 128", code, err)
+					}
+					if got := strings.TrimSpace(stderr.String()); strings.Count(got, "\n") != 0 || !strings.HasPrefix(got, "zcp git: ") || !strings.Contains(got, "stdin") {
+						t.Errorf("stderr = %q, want one zcp git line about the stdin", stderr.String())
+					}
+					if after := l.git(t, checkout, "rev-parse", "HEAD"); after != before {
+						t.Errorf("git ran: HEAD moved to %s", after)
+					}
+				})
 			}
 		})
 	}
@@ -2043,12 +2126,16 @@ func TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine(t *testing.T) {
 
 // TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC: where `head`
 // takes no -c (a busybox build option), the payload is read with dd, still
-// byte for byte.
+// byte for byte. A head without -c is stood in on PATH, so a shell that runs
+// its own head applet whatever PATH says is skipped.
 func TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
+			if !shellRunsFromPath(t, sh, "head") {
+				t.Skip(shellName(sh) + " runs its own head applet, which takes -c, whatever PATH says, so no head without -c can stand in; the dd fallback runs under the other shells")
+			}
 			l := newRelayLab(t)
 			url, _ := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
@@ -3529,12 +3616,17 @@ func TestBrokeredGit_Relay_HelperSignalled_LockRemovedExit129(t *testing.T) {
 
 // TestBrokeredGit_Relay_LockBoundIsClockTimed: a helper waiting on another's
 // lock gives up 90 s by the clock after it started — `date +%s`, however few
-// times it has slept — writing no frame and leaving the lock alone.
+// times it has slept — writing no frame and leaving the lock alone. The clock
+// is stood in on PATH, so a shell that runs its own date applet whatever PATH
+// says is skipped rather than waited on for 90 real seconds.
 func TestBrokeredGit_Relay_LockBoundIsClockTimed(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
+			if !shellRunsFromPath(t, sh, "date") {
+				t.Skip(shellName(sh) + " runs its own date applet whatever PATH says, so no stub clock can stand in; the same bound is clocked under the other shells, and this shell's date +%s runs in every helper of the other relay tests")
+			}
 			nonce := relayRandHex(t)
 			lock := "/tmp/zcp-relay-" + nonce + ".lock"
 			if err := os.Mkdir(lock, 0o700); err != nil {
@@ -3553,9 +3645,6 @@ func TestBrokeredGit_Relay_LockBoundIsClockTimed(t *testing.T) {
 				t.Errorf("helper exit %d", code)
 			}
 			calls, _ := os.ReadFile(count)
-			if strings.TrimSpace(string(calls)) == "" {
-				t.Skip("this shell does not run date from PATH")
-			}
 			if got := strings.TrimSpace(string(calls)); got != "3" {
 				t.Errorf("the helper read the clock %s times, want 3: start, 89 s (still waiting), 91 s (gives up)", got)
 			}
