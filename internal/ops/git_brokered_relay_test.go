@@ -1544,6 +1544,23 @@ func TestBrokeredGit_Relay_GitHubPath_MintedCanonicalOddDeclined(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_Relay_SaidLines_CappedPerCall: code in the dev service
+// that asks for many remotes zcp does not record makes zcp say at most 32
+// distinct lines in a call — and every request is still declined.
+func TestBrokeredGit_Relay_SaidLines_CappedPerCall(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	call := newRelayCall(BrokeredGitRelay{Identity: hq.Identity{Origin: "https://hq.example"}}, "appdev", func(context.Context) string { return hq.GitHubAccessRead }, &stderr)
+	for i := range 100 {
+		if user, _ := call.answer(t.Context(), "https", fmt.Sprintf("other%d.example", i), "x"); user != "" {
+			t.Fatalf("request %d answered", i)
+		}
+	}
+	if n := strings.Count(stderr.String(), "\n"); n != relaySayCap {
+		t.Errorf("said %d lines, want the cap of %d", n, relaySayCap)
+	}
+}
+
 // TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigText:
 // a GitHub request naming no repository is declined with zcp's own reason —
 // never the helper config the mount fallback prints — and HQ is not asked.
