@@ -1501,6 +1501,84 @@ func planBrokeredGitPush(args BrokeredGitArgs) brokeredGitPushPlan {
 // localMainRef is local main, which zcp keeps on HQ's main.
 const localMainRef = "refs/heads/main"
 
+// brokeredGitPushConfigKeys is the config a push's check reads, as `git
+// config --get-regexp` matches keys — section and variable lower-cased, a
+// remote's name as written.
+const brokeredGitPushConfigKeys = `^(push\.(followtags|default)|remote\..+\.(push|mirror))$`
+
+// brokeredGitPushConfig is what the checkout's config and the call's -c
+// say about what a push sends: push.followTags, push.default, the remotes
+// with a remote.<name>.push refspec, and remote.<name>.mirror of each.
+// unreadable is a value git itself refuses, which fails the push.
+type brokeredGitPushConfig struct {
+	followTags  bool
+	pushDefault string
+	pushSpecs   map[string]bool
+	mirror      map[string]bool
+	unreadable  bool
+}
+
+// parseBrokeredGitPushConfig reads `git config -z --get-regexp` output:
+// `<key>\n<value>` NUL-terminated, a key with no value alone. A later value
+// of a key replaces an earlier one, as for git.
+func parseBrokeredGitPushConfig(out string) brokeredGitPushConfig {
+	cfg := brokeredGitPushConfig{pushSpecs: map[string]bool{}, mirror: map[string]bool{}}
+	for entry := range strings.SplitSeq(out, "\x00") {
+		if entry == "" {
+			continue
+		}
+		key, value, hasValue := strings.Cut(entry, "\n")
+		readBool := func() bool {
+			b, ok := gitConfigBool(value, hasValue)
+			cfg.unreadable = cfg.unreadable || !ok
+			return b
+		}
+		remote, isRemote := strings.CutPrefix(key, "remote.")
+		switch {
+		case key == "push.followtags":
+			cfg.followTags = readBool()
+		case key == "push.default":
+			cfg.pushDefault = value
+			cfg.unreadable = cfg.unreadable || !hasValue
+		case isRemote && strings.HasSuffix(remote, ".push"):
+			cfg.pushSpecs[strings.TrimSuffix(remote, ".push")] = true
+		case isRemote && strings.HasSuffix(remote, ".mirror"):
+			cfg.mirror[strings.TrimSuffix(remote, ".mirror")] = readBool()
+		}
+	}
+	return cfg
+}
+
+// sendsCurrentBranch reports whether push.default makes a push naming no
+// refspec send the current branch alone: unset (simple), simple, current,
+// upstream or tracking — never matching (every branch of the same name on
+// the remote), nothing, or a value git refuses.
+func (c brokeredGitPushConfig) sendsCurrentBranch() bool {
+	switch c.pushDefault {
+	case "", "simple", "current", "upstream", "tracking":
+		return true
+	}
+	return false
+}
+
+// gitConfigBool is a boolean config value as git reads it: no value, true,
+// yes, on or a non-zero integer is true; false, no, off, an empty value or
+// zero is false; ok is false for anything else, which git refuses.
+func gitConfigBool(value string, hasValue bool) (b, ok bool) {
+	lower := strings.ToLower(value)
+	switch {
+	case !hasValue, slices.Contains([]string{"true", "yes", "on"}, lower):
+		return true, true
+	case slices.Contains([]string{"false", "no", "off", ""}, lower):
+		return false, true
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return false, false
+	}
+	return n != 0, true
+}
+
 // pushCheckCommitCap is how many commits the workflows check reads at
 // most: more is unresolvable.
 const pushCheckCommitCap = 1000
@@ -1510,9 +1588,12 @@ const pushCheckCommitCap = 1000
 // cannot be resolved — never less than today's token. The check runs when
 // GitHub first asks during the push, before any token is minted, as relayed
 // read calls in the same checkout with the push's -C and -c (it only reads,
-// so it runs beside the waiting push): push.followTags set is
-// unresolvable; a push naming no refspec
-// sends the current branch to @{push}; the commits the remote lacks are
+// so it runs beside the waiting push): the config that decides what a push
+// sends is read first (brokeredGitPushConfig) — push.followTags set, the
+// pushed remote's remote.<name>.mirror set, and for a push naming no
+// refspec push.default=matching or the pushed remote's remote.<name>.push
+// are unresolvable; any other push naming no refspec sends the current
+// branch to @{push}; the commits the remote lacks are
 // `rev-list <src>… --not --remotes=<remote>`, or `--not refs/heads/main`
 // when the remote has no tracking refs at all (zcp keeps local main on HQ's
 // main), else every commit of the sources; more than 1000 is unresolvable;
@@ -1531,11 +1612,15 @@ func brokeredGitPushAccess(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		}, relay, strings.NewReader(stdin), &stdout, io.Discard)
 		return stdout.String(), code, err == nil
 	}
-	out, code, ok := check("", "config", "--bool", "--get", "push.followTags")
-	if followTags, _ := strconv.ParseBool(strings.TrimSpace(out)); !ok || code > 1 || followTags {
+	out, code, ok := check("", "config", "-z", "--get-regexp", brokeredGitPushConfigKeys)
+	if !ok || code > 1 {
 		return hq.GitHubAccessWorkflows
 	}
+	cfg := parseBrokeredGitPushConfig(out)
 	srcs, remote := plan.srcs, plan.remote
+	if cfg.unreadable || cfg.followTags || len(srcs) == 0 && !cfg.sendsCurrentBranch() {
+		return hq.GitHubAccessWorkflows
+	}
 	if len(srcs) == 0 {
 		out, code, ok := check("", "rev-parse", "--symbolic-full-name", "HEAD", "@{push}")
 		lines := strings.Fields(out)
@@ -1546,6 +1631,12 @@ func brokeredGitPushAccess(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		if remote == "" {
 			remote, _, _ = strings.Cut(strings.TrimPrefix(lines[1], "refs/remotes/"), "/")
 		}
+		if cfg.pushSpecs[remote] {
+			return hq.GitHubAccessWorkflows
+		}
+	}
+	if cfg.mirror[remote] {
+		return hq.GitHubAccessWorkflows
 	}
 	patterns := []string{localMainRef}
 	named := remote != "" && !strings.ContainsAny(remote, "/:*?[\\") && !strings.HasPrefix(remote, "-")

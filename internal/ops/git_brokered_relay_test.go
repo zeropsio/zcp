@@ -2585,6 +2585,42 @@ func TestBrokeredGitPushPlan_SourcesAndUnresolvableForms(t *testing.T) {
 	}
 }
 
+// TestBrokeredGitPushConfig_ReadAsGitReadsIt: the config a push's check
+// reads is parsed as git reads it — a boolean with no value is true, an
+// integer counts, a later value replaces an earlier one, a remote's name may
+// hold dots, pushurl is no push refspec — and a value git refuses is
+// unreadable.
+func TestBrokeredGitPushConfig_ReadAsGitReadsIt(t *testing.T) {
+	t.Parallel()
+	cfg := parseBrokeredGitPushConfig("push.followtags\ntrue\x00push.followtags\x00push.followtags\n0\x00" +
+		"push.default\nmatching\x00push.default\ncurrent\x00" +
+		"remote.my.fork.push\nrefs/heads/*:refs/heads/*\x00remote.origin.pushurl\nhttps://example.invalid/x\x00" +
+		"remote.origin.mirror\x00remote.upstream.mirror\noff\x00")
+	if cfg.followTags || cfg.unreadable || !cfg.sendsCurrentBranch() {
+		t.Errorf("config = %+v, want followTags off by its last value, push.default current, nothing unreadable", cfg)
+	}
+	if !cfg.pushSpecs["my.fork"] || cfg.pushSpecs["origin"] || len(cfg.pushSpecs) != 1 {
+		t.Errorf("push refspecs = %v, want my.fork's alone", cfg.pushSpecs)
+	}
+	if !cfg.mirror["origin"] || cfg.mirror["upstream"] {
+		t.Errorf("mirror = %v, want origin's (no value) on and upstream's off", cfg.mirror)
+	}
+	for _, out := range []string{"push.followtags\nmaybe\x00", "remote.origin.mirror\nsometimes\x00", "push.default\x00"} {
+		if cfg := parseBrokeredGitPushConfig(out); !cfg.unreadable {
+			t.Errorf("config %q read as %+v, want unreadable", out, cfg)
+		}
+	}
+	for value, current := range map[string]bool{"": true, "simple": true, "upstream": true, "tracking": true, "matching": false, "nothing": false, "Matching": false} {
+		cfg := parseBrokeredGitPushConfig("push.default\n" + value + "\x00")
+		if value == "" {
+			cfg = parseBrokeredGitPushConfig("")
+		}
+		if cfg.sendsCurrentBranch() != current {
+			t.Errorf("push.default=%q sends the current branch alone = %v, want %v", value, cfg.sendsCurrentBranch(), current)
+		}
+	}
+}
+
 const workflowFile = ".github/workflows/ci.yml"
 
 // accesses is the access every GitHub mint so far asked for.
