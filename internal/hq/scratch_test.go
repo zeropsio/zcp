@@ -121,7 +121,13 @@ func TestScratch_File(t *testing.T) {
 // tier only this Mate's recipe proposals ever wrote (Core's squash of a
 // Mate's change is authored SquashAuthorEmail) from one anyone else touched.
 func TestScratch_History(t *testing.T) {
-	t.Parallel()
+	// non-parallel: isolate fixture identities from the caller's Git hook environment.
+	for _, name := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
