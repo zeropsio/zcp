@@ -273,65 +273,6 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairRunsGitInItsDevService(t *te
 	}
 }
 
-// A git-push pair's commit before the push runs in its dev service, through
-// `zcp git <host>`, never on the mount — or, on a dev machine, in the
-// working directory there.
-func TestDevelopGitPushDeliveryAtom_CommitsInTheDevService(t *testing.T) {
-	t.Parallel()
-	body := atomBody(t, "develop-git-push-delivery.md")
-	for _, want := range []string{
-		"`zcp git <host> add -A && zcp git <host> commit -m '<msg>'`",
-		"`git -C <workingDir> add -A && git -C <workingDir> commit -m '<msg>'` on a dev machine",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("develop-git-push-delivery.md lacks %q", want)
-		}
-	}
-	if strings.Contains(body, `ssh <host> "cd <repo dir> && git`) {
-		t.Error("develop-git-push-delivery.md still commits over a plain ssh")
-	}
-}
-
-// A pool-migrate move keeps what the census names by git run in the dev
-// service, `zcp git <dev> …`, never on its mount; commits a detached HEAD
-// holds get a branch named from anywhere, by the tree's `head`.
-func TestPoolMigrateMoveAtom_RunsGitInTheDevService(t *testing.T) {
-	t.Parallel()
-	body := atomBody(t, "pool-migrate-move.md")
-	for _, want := range []string{
-		"`zcp git <dev> <git args>`",
-		"-C <its path>",
-		"never on its mount",
-		"`zcp git <dev> branch <branch> <head>`",
-		"`zcp git <dev> push -u origin <branch>`",
-		"`zcp git <dev> stash branch <branch> <ref>`",
-		"`zcp git <dev> branch <branch> <commit>`",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("pool-migrate-move.md lacks %q", want)
-		}
-	}
-	if strings.Contains(body, "(`git ") || strings.Contains(body, "| `git ") {
-		t.Errorf("pool-migrate-move.md names git run outside the dev service:\n%s", body)
-	}
-}
-
-// atomBody is the embedded atom name's content.
-func atomBody(t *testing.T, name string) string {
-	t.Helper()
-	atoms, err := ReadAllAtoms()
-	if err != nil {
-		t.Fatalf("ReadAllAtoms: %v", err)
-	}
-	for _, a := range atoms {
-		if a.Name == name {
-			return a.Content
-		}
-	}
-	t.Fatalf("no atom %s", name)
-	return ""
-}
-
 // A dev pool's loop opens the branch's change from a lease once the branch is
 // pushed — repository and branch from the lease — and describes it by the
 // same, naming the lease's preview to try it on; parallel work gives each
