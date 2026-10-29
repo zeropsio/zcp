@@ -39,7 +39,7 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 		t.Fatalf("list observe tool: result=%+v err=%v", listed, err)
 	}
 	tool := listed.Tools[0]
-	wantDescription := "Observe stage and production through HQ. environments lists project IDs and known change status; changesAsLastRead marks unrefreshed status. Merge advice requires current status; absent changes or changesAsLastRead mean unknown. status reads services and versions; logs reads up to 100 entries. Read only, without secrets. Failures say fix input, retry later, or accept HQ's refusal."
+	wantDescription := "Read stage/production status, processes, versions and complete native logs through HQ with explicit profile observe authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal."
 	if tool == nil || tool.Description != wantDescription {
 		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
 	}
@@ -53,12 +53,18 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
 		t.Fatal(err)
 	}
-	if len(schema.Properties) != 6 {
+	if len(schema.Properties) != 8 {
 		t.Fatalf("observe schema has unexpected authority/transport inputs: %s", schemaJSON)
 	}
-	for _, name := range []string{"action", "projectId", "serviceId", "processId", "versionId", "limit"} {
+	for _, name := range []string{"action", "projectId", "serviceId", "processId", "versionId", "limit", "from", "till"} {
 		if _, ok := schema.Properties[name]; !ok {
 			t.Fatalf("missing fixed input %s", name)
+		}
+	}
+	for _, name := range []string{"from", "till"} {
+		property, ok := schema.Properties[name].(map[string]any)
+		if !ok || property["type"] != "string" {
+			t.Fatalf("native log boundary %s must be a string input", name)
 		}
 	}
 	for _, tt := range []struct {
@@ -456,6 +462,16 @@ func TestObserve_InvalidFixedSelectors_NoHTTPRequest(t *testing.T) {
 		{"action": "processes"},
 		{"action": "logs", "projectId": "P", "serviceId": "S", "limit": -1},
 		{"action": "environments", "versionId": "../escape"},
+		{"action": "status", "projectId": "P", "from": "record-id"},
+		{"action": "processes", "projectId": "P", "till": "2026-10-29T12:00:00Z"},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "from": ""},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "till": ""},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "from": "line\nbreak"},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "till": "control\x7f"},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "from": "nonascii-é"},
+		{"action": "build_logs", "projectId": "P", "versionId": "V", "till": strings.Repeat("r", 257)},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "from": nil},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "till": nil},
 	} {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 		RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
@@ -465,5 +481,220 @@ func TestObserve_InvalidFixedSelectors_NoHTTPRequest(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("invalid selectors reached HTTP %d times", requests.Load())
+	}
+}
+
+func TestObserve_AuthorizedLogs_PreserveHQCoverageAndOpaqueRecordsThroughMCP(t *testing.T) {
+	// non-parallel: profile HOME and project identity are process state.
+	observeTestProfile(t)
+	for _, action := range []string{"logs", "build_logs"} {
+		for _, scenario := range []string{"HQ log coverage", "opaque source record", "escaped opaque source record"} {
+			t.Run(action+"/"+scenario, func(t *testing.T) {
+				body := `{"action":"` + action + `","appId":"app","projectId":"target","coverage":{"source":"zerops_logger","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"authorized service","truncated":false},"entries":[]}`
+				if scenario == "HQ log coverage" {
+					body = strings.Replace(body, `"truncated":false`, `"truncated":false,"logWindow":{"rawCount":0,"rawLimit":100,"rawWindowFull":false,"nextPage":false}`, 1)
+				} else {
+					record := `{"id":"native-record-1","tag":"zbuilder/version","hostname":"web","content":"` + observeTestToken + strings.Repeat("x", 5000) + `","structuredData":{"vendor":{"nested":[false,null,42]}},"arbitrarySourceField":"unchanged"}`
+					if scenario == "escaped opaque source record" {
+						record = strings.Replace(record, "zobs.", `zobs\u002e`, 1)
+					}
+					body = strings.Replace(body, `"entries":[]`, `"entries":[`+record+`]`, 1)
+				}
+				fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(body))
+				}))
+				defer fake.Close()
+				hqtest.Link(t, fake.URL, "P_MATE", "")
+				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+				RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+				result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "serviceId": "service", "versionId": "version"})
+				text := result.Content[0].(*mcp.TextContent).Text
+				if result.IsError || result.StructuredContent != nil || text != body {
+					t.Fatalf("authorized HQ log page must reach MCP unchanged: error=%v unchanged=%v", result.IsError, text == body)
+				}
+			})
+		}
+	}
+}
+
+func TestObserve_FailedAttempt_ExactVersionBuildLogsSeparateFromActiveRuntime(t *testing.T) {
+	// non-parallel: profile HOME and project identity are process state.
+	observeTestProfile(t)
+	var requests int
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+observeTestToken {
+			t.Error("wrong flow route or authority")
+		}
+		var in map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Error(err)
+			return
+		}
+		if in["projectId"] != "target" {
+			t.Error("flow left the target project")
+		}
+		action, _ := in["action"].(string)
+		var body string
+		switch action {
+		case "status":
+			body = `{"projectId":"target","services":[{"id":"service","status":"ACTIVE","activeVersion":{"id":"old-active-version"}}]}`
+		case "processes":
+			body = `{"projectId":"target","processes":[{"id":"failed-process","serviceId":"service","status":"FAILED","versionId":"failed-version"}]}`
+		case "version":
+			if in["versionId"] != "failed-version" {
+				t.Error("version detail substituted active runtime for failed attempt")
+			}
+			body = `{"projectId":"target","versions":[{"id":"failed-version","status":"BUILD_FAILED"}]}`
+		case "build_logs":
+			if in["versionId"] != "failed-version" {
+				t.Error("build log substituted active runtime for failed attempt")
+			}
+			body = `{"projectId":"target","entries":[{"id":"prepare-record","tag":"zbuilder@failed-version","hostname":"prepare-runtime","content":"failure in preparation","structuredData":{"native":true}}]}`
+		default:
+			t.Error("unexpected flow action")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(observeTestWire(t, action, body, http.StatusOK)))
+	}))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "P_MATE", "")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+	read := func(action, versionID string) map[string]json.RawMessage {
+		t.Helper()
+		result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "versionId": versionID})
+		if result.IsError || result.StructuredContent != nil {
+			t.Fatal("failed-attempt navigation did not return text facts")
+		}
+		var facts map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &facts); err != nil {
+			t.Fatal(err)
+		}
+		return facts
+	}
+	var services []struct {
+		ActiveVersion struct {
+			ID string `json:"id"`
+		} `json:"activeVersion"`
+	}
+	if err := json.Unmarshal(read("status", "")["services"], &services); err != nil || len(services) != 1 || services[0].ActiveVersion.ID != "old-active-version" {
+		t.Fatal("active runtime identity was lost")
+	}
+	var processes []struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		VersionID string `json:"versionId"`
+	}
+	if err := json.Unmarshal(read("processes", "")["processes"], &processes); err != nil || len(processes) != 1 || processes[0].VersionID != "failed-version" || processes[0].Status != "FAILED" {
+		t.Fatal("failed process must retain its exact versionId")
+	}
+	var versions []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(read("version", processes[0].VersionID)["versions"], &versions); err != nil || len(versions) != 1 || versions[0].ID != "failed-version" || versions[0].Status != "BUILD_FAILED" {
+		t.Fatal("failed version detail must stay separate from active runtime")
+	}
+	var entries []struct {
+		ID       string `json:"id"`
+		Tag      string `json:"tag"`
+		Hostname string `json:"hostname"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal(read("build_logs", versions[0].ID)["entries"], &entries); err != nil || len(entries) != 1 || entries[0].Tag != "zbuilder@failed-version" || entries[0].Content != "failure in preparation" || entries[0].Hostname != "prepare-runtime" {
+		t.Fatal("exact failed attempt did not retain its preparation log record")
+	}
+	if requests != 4 {
+		t.Fatalf("flow requests=%d, want 4", requests)
+	}
+}
+
+func TestObserve_LogBounds_NativePaginationReachesMCP(t *testing.T) {
+	// non-parallel: profile HOME and project identity are process state.
+	observeTestProfile(t)
+	for _, action := range []string{"logs", "build_logs"} {
+		t.Run(action, func(t *testing.T) {
+			var requests int
+			var expectedTill = "2026-10-29T13:00:00Z"
+			bodies := []string{
+				`{"action":"` + action + `","appId":"app","projectId":"target","coverage":{"source":"zerops_logger","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"authorized source","truncated":true,"logWindow":{"rawCount":1,"rawLimit":1,"rawWindowFull":true,"nextPage":true}},"entries":[{"id":"page-1","content":"first","sourceExtra":{"n":1}}]}`,
+				`{"action":"` + action + `","appId":"app","projectId":"target","coverage":{"source":"zerops_logger","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"authorized source","truncated":false,"logWindow":{"rawCount":1,"rawLimit":1,"rawWindowFull":true,"nextPage":false}},"entries":[{"id":"page-2","content":"last","sourceExtra":{"n":2}}]}`,
+			}
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var in map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+					t.Error(err)
+					return
+				}
+				if in["action"] != action || in["from"] != "2026-10-29T11:00:00Z" || in["till"] != expectedTill || in["limit"] != float64(1) || r.Header.Get("Authorization") != "Observe "+observeTestToken {
+					t.Error("native page bounds or authorization were not forwarded exactly")
+				}
+				if requests >= len(bodies) {
+					t.Error("unexpected page request")
+					return
+				}
+				_, _ = w.Write([]byte(bodies[requests]))
+				requests++
+			}))
+			defer fake.Close()
+			hqtest.Link(t, fake.URL, "P_MATE", "")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+			for page := range bodies {
+				result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "serviceId": "service", "versionId": "version", "limit": 1, "from": "2026-10-29T11:00:00Z", "till": expectedTill})
+				if result.IsError || result.StructuredContent != nil {
+					t.Fatal("native log page failed to reach MCP as text")
+				}
+				text := result.Content[0].(*mcp.TextContent).Text
+				if text != bodies[page] {
+					t.Fatal("native records or boolean nextPage changed in MCP output")
+				}
+				var out struct {
+					Entries []struct {
+						ID string `json:"id"`
+					} `json:"entries"`
+				}
+				if err := json.Unmarshal([]byte(text), &out); err != nil || len(out.Entries) != 1 {
+					t.Fatal("page lost its native continuation record ID")
+				}
+				expectedTill = out.Entries[0].ID
+			}
+			if requests != 2 {
+				t.Fatalf("page requests=%d, want 2", requests)
+			}
+		})
+	}
+}
+
+func TestObserve_ReflectedToken_FailedResponsesDoNotReachMCP(t *testing.T) {
+	// non-parallel: profile HOME and project identity are process state.
+	observeTestProfile(t)
+	for _, tt := range []struct {
+		name, body string
+		status     int
+	}{
+		{"reflected auth", `{"code":"` + observeTestToken + `","reason":"` + observeTestToken + `"}`, http.StatusUnauthorized},
+		{"reflected denial", `{"code":"forbidden","reason":"` + observeTestToken + `"}`, http.StatusForbidden},
+		{"reflected unavailable", `{"code":"` + observeTestToken + `"}`, http.StatusServiceUnavailable},
+		{"invalid success", `{"entries":[{"content":"` + observeTestToken + `"}]}`, http.StatusOK},
+		{"oversized source record", `{"action":"logs","appId":"app","projectId":"target","coverage":{"source":"zerops_logger","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"authorized source","truncated":false},"entries":[{"content":"` + observeTestToken + strings.Repeat("x", hq.ObserveOutputLimit) + `"}]}`, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer fake.Close()
+			hqtest.Link(t, fake.URL, "P_MATE", "")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "logs", "projectId": "target", "serviceId": "service"})
+			text := result.Content[0].(*mcp.TextContent).Text
+			if !result.IsError || result.StructuredContent != nil || strings.Contains(text, observeTestToken) || strings.Contains(text, `"content"`) {
+				t.Fatal("failed or invalid HQ response must expose no source body or reflected token")
+			}
+		})
 	}
 }

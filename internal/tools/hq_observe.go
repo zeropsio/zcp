@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -29,8 +30,9 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe stage and production through HQ. environments lists project IDs and known change status; changesAsLastRead marks unrefreshed status. Merge advice requires current status; absent changes or changesAsLastRead mean unknown. status reads services and versions; logs reads up to 100 entries. Read only, without secrets. Failures say fix input, retry later, or accept HQ's refusal.",
+		Description: "Read stage/production status, processes, versions and complete native logs through HQ with explicit profile observe authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
+		InputSchema: observeInputSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {
 			return observeFailure(message + "; fix it and call zerops_observe again.")
@@ -80,6 +82,24 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil, nil
 	})
+}
+
+// Derive from HQ's request tags, but keep optional boundaries non-nullable.
+// Pointers distinguish an omitted boundary from an explicitly empty string;
+// schema inference otherwise also admits null, which HQ's contract rejects.
+func observeInputSchema() *jsonschema.Schema {
+	const stringType = "string"
+	s, err := jsonschema.For[ObserveInput](nil)
+	if err != nil {
+		return nil
+	}
+	for _, name := range []string{"from", "till"} {
+		if property := s.Properties[name]; property != nil {
+			property.Type = stringType
+			property.Types = nil
+		}
+	}
+	return s
 }
 
 func observeFailure(text string) *mcp.CallToolResult {

@@ -17,12 +17,14 @@ import (
 // ObservationRequest is the closed read surface shared with HQ's
 // wire/observation.ts. No authority, arbitrary path or URL comes from the model.
 type ObservationRequest struct {
-	Action    string `json:"action,omitempty"    jsonschema:"environments (default), status, deployments, processes, process, versions, version, logs, build_logs"`
-	ProjectID string `json:"projectId,omitempty" jsonschema:"Target project ID from environments; required for platform reads; optional for deployments"`
-	ServiceID string `json:"serviceId,omitempty" jsonschema:"Service ID from status; required for versions and logs"`
-	ProcessID string `json:"processId,omitempty" jsonschema:"Exact process ID; required for process"`
-	VersionID string `json:"versionId,omitempty" jsonschema:"Exact version ID; required for version and build_logs"`
-	Limit     int    `json:"limit,omitempty"     jsonschema:"Maximum records: 1 to 100; default 100"`
+	Action    string  `json:"action,omitempty"    jsonschema:"environments (default), status, deployments, processes, process, versions, version, logs, build_logs"`
+	ProjectID string  `json:"projectId,omitempty" jsonschema:"Target project ID from environments; required for platform reads; optional for deployments"`
+	ServiceID string  `json:"serviceId,omitempty" jsonschema:"Service ID from status; required for versions and logs"`
+	ProcessID string  `json:"processId,omitempty" jsonschema:"Exact process ID; required for process"`
+	VersionID string  `json:"versionId,omitempty" jsonschema:"Exact version ID; required for version and build_logs"`
+	Limit     int     `json:"limit,omitempty"     jsonschema:"Maximum records: 1 to 100; default 100"`
+	From      *string `json:"from,omitempty"      jsonschema:"Logs/build_logs only: native record ID or ISO timestamp; 1 to 256 printable ASCII characters"`
+	Till      *string `json:"till,omitempty"      jsonschema:"Logs/build_logs only: native record ID or ISO timestamp; 1 to 256 printable ASCII characters"`
 }
 
 const (
@@ -67,6 +69,23 @@ func (in ObservationRequest) Normalize() (ObservationRequest, error) {
 	}
 	if in.Limit < 1 || in.Limit > 100 {
 		return in, errors.New("observation limit must be 1 to 100")
+	}
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"from", in.From},
+		{"till", in.Till},
+	} {
+		if field.value == nil {
+			continue
+		}
+		if in.Action != observeActionLogs && in.Action != observeActionBuildLogs {
+			return in, fmt.Errorf("observation %s is only supported for logs and build_logs", field.name)
+		}
+		if len(*field.value) < 1 || len(*field.value) > 256 || strings.IndexFunc(*field.value, func(r rune) bool { return r < ' ' || r > '~' }) != -1 {
+			return in, fmt.Errorf("observation %s must be 1 to 256 printable ASCII characters", field.name)
+		}
 	}
 	return in, nil
 }
@@ -157,8 +176,8 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		}
 		return nil, &RefusedError{Status: resp.StatusCode, Code: code, Reason: reason}
 	}
-	if len(raw) > ObserveOutputLimit || bytes.Contains(raw, []byte(credential)) {
-		return nil, errors.New("HQ observation: response exceeds bounds or contains authorization material")
+	if len(raw) > ObserveOutputLimit {
+		return nil, errors.New("HQ observation: response exceeds bounds")
 	}
 	if err := validateObservation(raw, in); err != nil {
 		return nil, fmt.Errorf("HQ observation: %w", err)
@@ -179,6 +198,8 @@ func validateObservation(raw []byte, in ObservationRequest) error {
 			Freshness  string `json:"freshness"`
 			Scope      string `json:"scope"`
 			Truncated  *bool  `json:"truncated"`
+			// HQ owns native pagination coverage; retain its values without inference.
+			LogWindow json.RawMessage `json:"logWindow"`
 		} `json:"coverage"`
 		Environments json.RawMessage `json:"environments"`
 		SiblingMates json.RawMessage `json:"siblingMates"`

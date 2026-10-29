@@ -4530,7 +4530,8 @@ side. §10.10 is what zcp does with it.
 in a Mate's enabled container and in standalone zcp with an explicitly configured HQ
 and source project. Every action uses `POST /api/mate/observe` with the profile's
 Observe credential (§3.3, §3.6). The fixed model inputs are `action`, `projectId`,
-`serviceId`, `processId`, `versionId` and `limit` (1–100, default 100); no token,
+`serviceId`, `processId`, `versionId`, `limit` (1–100, default 100), and optional
+`from`/`till` for log reads; no token,
 application/person ID, URL, API path or command is accepted.
 
 | Action | Target inputs | Facts |
@@ -4538,23 +4539,35 @@ application/person ID, URL, API path or command is accepted.
 | `environments` (default) | none required | Permission-filtered stage/production catalog and sibling Mate metadata |
 | `status` | projectId | Services and actually active versions |
 | `deployments` | optional projectId | Visible HQ deployment jobs; requests are separate from platform runtime |
-| `processes` / `process` | projectId; processId for detail | Platform processes, with direct ownership-checked detail |
+| `processes` / `process` | projectId; processId for detail | Platform processes, with direct ownership-checked detail and nullable native versionId |
 | `versions` / `version` | projectId; serviceId for list, versionId for detail | Exact service version facts |
-| `logs` | projectId, serviceId | Runtime output |
-| `build_logs` | projectId, versionId | Exact-version pipeline build/preparation output, never a builder's latest unrelated log |
+| `logs` | projectId, serviceId; optional from/till | Complete native service log records |
+| `build_logs` | projectId, versionId; optional from/till | Exact-version pipeline build/preparation records, never a builder's latest unrelated log |
 
-HQ owns the allowlisted DTOs in `wire/observation.ts` and `spec/protocol.md`. zcp
+HQ owns the typed facts and raw log record contract in `wire/observation.ts` and `spec/protocol.md`. zcp
 requires the matching `action`, `appId`, nullable `projectId`, and
-`coverage:{source,observedAt,freshness,scope,truncated}` envelope with the action's
+`coverage:{source,observedAt,freshness,scope,truncated,logWindow?}` envelope with the action's
 bounded array; malformed, oversized or mismatched envelopes fail. It returns JSON
-as text with nil `structuredContent`, never platform DTOs or credentials. Responses
-are at most 512 KiB, lists at most 100 rows, log messages at most 4,096 characters.
+as text with nil `structuredContent`. Authorized log records retain every native
+field and unchanged content, including sensitive source data; zcp does not scan,
+redact or slice it. zcp never adds its credential to output or errors, and failed
+or invalid responses do not expose raw bodies. Responses are at most 512 KiB and
+lists at most 100 records; resource limits fail explicitly rather than edit records.
 No redirect forwards the credential. Each observation attempts once, including a
 `503`, within 45 seconds; unavailable and denied reads remain visible failures.
 HQ validates current native `read_project` for each target and `observe_mate` for
 sibling metadata, with object ownership checked before projection. The token cannot
 write, release, retry a deployment, approve, or create a review plan. Own-project
 native tools retain their existing credentials and behavior.
+
+Log `from`/`till` boundaries are native record IDs or ISO timestamps, each a
+nonempty scalar of at most 256 printable ASCII characters, forwarded unchanged.
+Other actions reject these inputs. Every page is independently authorized by HQ.
+`coverage.logWindow` retains HQ's `rawCount`, `rawLimit`, `rawWindowFull`, and native
+boolean `nextPage`; `false` remains false. Complete records retain the IDs used for
+continuation. To inspect a failed build, follow its process `versionId` or exact
+version-list ID to `version` and `build_logs`; an older active runtime version is a
+separate fact and never substitutes for the failed attempt.
 
 After successful `environments` authorization, the result also carries `changes` and
 `changesAsLastRead`: the existing own-project known-change projection, refreshed
