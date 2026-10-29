@@ -443,7 +443,7 @@ func hqWiredMeta() *workflow.ServiceMeta {
 // own, the protocol pin, and git's stdin taken off the session.
 var relayedScriptMarks = []string{
 	"exec 3<&0 4>&2",
-	"-c 'credential.helper=' -c 'credential.helper=!f() {",
+	"'-c' 'credential.helper=' '-c' 'credential.helper=!f() {",
 	"GIT_ALLOW_PROTOCOL=",
 	"'status' < /dev/null",
 }
