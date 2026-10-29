@@ -583,18 +583,18 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet"},
 		},
 		{
 			name: "a Mate",
 			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
 			want: []string{
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
-				"reaches none of them", "other Mates", "zcp hq git-credential",
+				"reaches none of them", "other Mates", "zcp git <host>",
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 				"addresses sheet", "··· → Addresses", "DNS records", "AAAA", "Full (strict)",
 			},
-			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain"},
+			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -672,8 +672,10 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 // generic forge: it goes looking for a settings page to mint a token on. The
 // paragraph names the host, the user git signs in as, where the credential
 // comes from, and that work goes by plain git on a branch of its own — never
-// a push of `main`, never a force; a repository kept on GitHub is fetched and
-// pushed through the same helper, from the Mate's own shell.
+// a push of `main`, never a force. Every git command runs in the dev service,
+// `zcp git <host> …`, which zcp answers for HQ and for a repository on GitHub
+// alike; never on the mounted repository, whose view lags what git changed
+// in the service.
 func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	t.Parallel()
 	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
@@ -683,12 +685,15 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	for _, want := range []string{
 		"HQ",
 		"the user `mate`",
-		"zcp hq git-credential",
-		"`$GIT_TOKEN`",
+		"`zcp git <host> <git args>`",
+		"zcp answers git's credential requests there",
+		"Never run git on the mounted repository `/var/www/<host>`",
+		"re-read a file before editing it",
 		"a branch of your own",
 		"Never push `main` and never force-push",
-		"git merge --ff-only origin/main",
-		"never over ssh",
+		"`zcp git <host> checkout main && zcp git <host> fetch origin && zcp git <host> merge --ff-only origin/main`",
+		"`zcp git <host> push origin <branch>`",
+		"its git runs through `zcp git <host>` like any other",
 		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
 		// Current change status must come from a fresh owning read, including
@@ -717,7 +722,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 			t.Errorf("git-host paragraph missing %q", want)
 		}
 	}
-	for _, retired := range []string{"zcp mate git-token", "mate/<project id>", "allow-unrelated-histories", "set-url origin"} {
+	for _, retired := range []string{"zcp mate git-token", "mate/<project id>", "allow-unrelated-histories", "set-url origin", "zcp hq git-credential", "your own shell", "never over ssh", "(`git ", "&& git "} {
 		if strings.Contains(out, retired) {
 			t.Errorf("git-host paragraph still names %q", retired)
 		}
@@ -747,7 +752,7 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 		"only when it needs that change's code",
 		"squashes each change into one commit on `main`",
 		"describe it again",
-		"git merge origin/main",
+		"`zcp git <host> fetch origin && zcp git <host> merge origin/main`",
 		"never rebase",
 		"Never open a change only to record",
 		"an entry of its own",
@@ -781,7 +786,14 @@ func TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain(t *te
 		"never clone it in and merge it",
 		"a bundle, another host, a GitHub repository HQ cannot connect",
 		"as a branch of its own, exactly as it is",
+		// Fetched in the dev service: a bundle is copied there first, and
+		// a fetch names an absolute `.bundle` path.
+		"`zcp git <host> fetch <address> <its main branch>:<branch>`",
+		"`scp <bundle> <host>:/tmp/<name>.bundle`",
+		"`zcp git <host> fetch /tmp/<name>.bundle <its main branch>:<branch>`",
+		"`zcp git <host> push origin <branch>`",
 		"HQ makes that history `main`",
+		"`zcp git <host> fetch origin && zcp git <host> checkout -B main origin/main`",
 		"never merge or rebase it onto `main`'s initial commit",
 		"never merge HQ's initial commit into it",
 		"`.zcp/dev-servers.json`",
@@ -823,7 +835,7 @@ func TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain(t *te
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildAgentsMD(runtime.Info{MateEnabled: true}, false)
-	for _, unwanted := range []string{"zcli project list", "zerops_observe", "zcp hq git-credential"} {
+	for _, unwanted := range []string{"zcli project list", "zerops_observe", "zcp hq git-credential", "zcp git <host>"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("local AGENTS.md leaked %q", unwanted)
 		}

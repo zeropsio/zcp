@@ -213,13 +213,16 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 	}
 }
 
-// A pair wired to this Mate's HQ runs git in the Mate's own shell on the
-// mounted checkout, never over ssh: a checkout whose code the person keeps on
-// GitHub has git ask `zcp hq git-credential`, which only that shell has. Its
-// dev service keeps one change open at a time; the checkout is what the dev
-// server runs, so another open change's branch is updated in a worktree
-// outside the mount, made from that shell, pushed and removed.
-func TestDevelopGitPushStartFromRemoteAtom_WiredPairWorksInTheMatesOwnShell(t *testing.T) {
+// A pair wired to this Mate's HQ runs every git command in its dev service,
+// `zcp git <push-source-host> …`, never on the mounted checkout: two gits on
+// one `.git`, one of them over the mount, break it, and zcp answers the dev
+// service's git for HQ and GitHub. After a command that changes files the
+// mount can show the old ones for a while, so a file is re-read before it is
+// edited. The dev service keeps one change open at a time; its checkout is
+// what the dev server runs, so another open change's branch is updated in a
+// worktree the dev service holds below `/tmp/wt-`, pushed and removed — a
+// namespace no older session's zcp-side `/tmp/<branch>` worktree takes.
+func TestDevelopGitPushStartFromRemoteAtom_WiredPairRunsGitInItsDevService(t *testing.T) {
 	t.Parallel()
 	atoms, err := ReadAllAtoms()
 	if err != nil {
@@ -235,22 +238,98 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairWorksInTheMatesOwnShell(t *t
 	if !found {
 		t.Fatal("develop-git-push-start-from-remote.md has no guidance for a pair wired to HQ")
 	}
-	if strings.Contains(wired, "ssh ") {
-		t.Errorf("a wired pair's sync runs over ssh: %s", wired)
-	}
-	for _, want := range []string{
-		"your own shell",
-		"git merge --ff-only origin/main",
-		"one change open at a time",
-		"what its dev server runs",
-		"git worktree add /tmp/<branch> <branch>",
-		"git worktree remove /tmp/<branch>",
-		"Nothing runs or deploys from it",
-	} {
-		if !strings.Contains(wired, want) {
-			t.Errorf("a wired pair's guidance lacks %q: %s", want, wired)
+	for _, never := range []string{"your own shell", "zcp hq git-credential", "cd /var/www", "ssh ", "worktree add -f", "prune", "index.lock"} {
+		if strings.Contains(wired, never) {
+			t.Errorf("a wired pair's guidance says %q", never)
 		}
 	}
+	for _, want := range []string{
+		"`zcp git <push-source-host> …`",
+		"never on the mounted checkout",
+		"re-read a file before editing it",
+		"zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout main && zcp git <push-source-host> merge --ff-only origin/main && zcp git <push-source-host> checkout -b <your-branch>",
+		"one change open at a time",
+		"what its dev server runs",
+		"zcp git <push-source-host> worktree add --detach /tmp/wt-<branch> origin/<branch>",
+		"zcp git <push-source-host> -C /tmp/wt-<branch> merge origin/main",
+		"zcp git <push-source-host> -C /tmp/wt-<branch> push origin HEAD:<branch>",
+		"zcp git <push-source-host> worktree remove /tmp/wt-<branch>",
+		"Nothing runs or deploys from it",
+		"`zcp git <push-source-host> branch <name>`",
+		"`zcp git <push-source-host> reset --keep origin/main`",
+	} {
+		if !strings.Contains(wired, want) {
+			t.Errorf("a wired pair's guidance lacks %q", want)
+		}
+	}
+	// Every command it gives runs in the dev service.
+	for line := range strings.SplitSeq(wired, "\n") {
+		if strings.HasPrefix(line, "git ") || strings.HasPrefix(line, "cd ") || strings.Contains(line, "(`git ") {
+			t.Errorf("a wired pair's guidance runs git outside its dev service: %s", line)
+		}
+	}
+	if t.Failed() {
+		t.Logf("the wired pair's guidance:\n%s", wired)
+	}
+}
+
+// A git-push pair's commit before the push runs in its dev service, through
+// `zcp git <host>`, never on the mount — or, on a dev machine, in the
+// working directory there.
+func TestDevelopGitPushDeliveryAtom_CommitsInTheDevService(t *testing.T) {
+	t.Parallel()
+	body := atomBody(t, "develop-git-push-delivery.md")
+	for _, want := range []string{
+		"`zcp git <host> add -A && zcp git <host> commit -m '<msg>'`",
+		"`git -C <workingDir> add -A && git -C <workingDir> commit -m '<msg>'` on a dev machine",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("develop-git-push-delivery.md lacks %q", want)
+		}
+	}
+	if strings.Contains(body, `ssh <host> "cd <repo dir> && git`) {
+		t.Error("develop-git-push-delivery.md still commits over a plain ssh")
+	}
+}
+
+// A pool-migrate move keeps what the census names by git run in the dev
+// service, `zcp git <dev> …`, never on its mount; commits a detached HEAD
+// holds get a branch named from anywhere, by the tree's `head`.
+func TestPoolMigrateMoveAtom_RunsGitInTheDevService(t *testing.T) {
+	t.Parallel()
+	body := atomBody(t, "pool-migrate-move.md")
+	for _, want := range []string{
+		"`zcp git <dev> <git args>`",
+		"-C <its path>",
+		"never on its mount",
+		"`zcp git <dev> branch <branch> <head>`",
+		"`zcp git <dev> push -u origin <branch>`",
+		"`zcp git <dev> stash branch <branch> <ref>`",
+		"`zcp git <dev> branch <branch> <commit>`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pool-migrate-move.md lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "(`git ") || strings.Contains(body, "| `git ") {
+		t.Errorf("pool-migrate-move.md names git run outside the dev service:\n%s", body)
+	}
+}
+
+// atomBody is the embedded atom name's content.
+func atomBody(t *testing.T, name string) string {
+	t.Helper()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	for _, a := range atoms {
+		if a.Name == name {
+			return a.Content
+		}
+	}
+	t.Fatalf("no atom %s", name)
+	return ""
 }
 
 // A dev pool's loop opens the branch's change from a lease once the branch is
