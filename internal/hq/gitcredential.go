@@ -144,6 +144,39 @@ func (c Client) GitHubCredential(ctx context.Context, repo string) (GitAnswer, e
 	return GitAnswer{Username: out.Username, Password: out.Password}, nil
 }
 
+// GitHubAPIOrigin is GitHub's REST API, where a token's holder revokes it.
+const GitHubAPIOrigin = "https://api.github.com"
+
+// RevokeGitHubToken revokes token at the GitHub API at apiOrigin as HQ
+// revokes the tokens it mints: `DELETE /installation/token`, authenticated by
+// the token itself, so one minted for a single call does not outlive it.
+// GitHub's 204 and its 401 (the token already gone) end it; anything else is
+// an error, which never carries the token. ctx bounds it.
+func RevokeGitHubToken(ctx context.Context, httpClient Doer, apiOrigin, token string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(apiOrigin, "/")+"/installation/token", nil)
+	if err != nil {
+		return fmt.Errorf("revoke the GitHub token: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "zcp")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke the GitHub token: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, revokeAnswerLimit))
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusUnauthorized:
+		return nil
+	}
+	return fmt.Errorf("revoke the GitHub token: GitHub answered %d", resp.StatusCode)
+}
+
+// revokeAnswerLimit bounds what is read of GitHub's answer to a revoke.
+const revokeAnswerLimit = 64 << 10
+
 // gitHubRefusal is what HQ's answer for github.com/repo means to the person
 // whose git asked.
 func gitHubRefusal(err error, repo string) string {
