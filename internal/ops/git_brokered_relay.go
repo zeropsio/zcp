@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -511,7 +512,9 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // holds only 0-2. A process a hook leaves running in the background holds 3
 // and 4 the same way, so once git ended the script writes its done marker,
 // `ZCPDONE-<nonce> <exit>`, and zcp ends the call from it (relayStream,
-// RunBrokeredGitRelayed). Running git without 3 and 4 and having the helper
+// RunBrokeredGitRelayed) — after its end mark on stdout, `ZCPEND-<nonce>`,
+// which every byte git wrote to stdout precedes (relayStdout). Running git
+// without 3 and 4 and having the helper
 // reopen the script's through /proc/<pid>/fd does not work over sshd: the
 // session's pipes are root's, and the session user's reopen is refused
 // (measured on alpine 3.21 and ubuntu 24.04).
@@ -555,10 +558,11 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 	} else {
 		b.WriteString(" < /dev/null")
 	}
-	// git ended: say so, with its exit code, before the traps clean up, so
-	// zcp ends the call even while something git started still holds the
-	// session's descriptors.
-	b.WriteString(`; r=$?; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
+	// git ended: mark the end of its stdout on stdout itself, then say so,
+	// with its exit code, before the traps clean up, so zcp ends the call
+	// even while something git started still holds the session's
+	// descriptors — once every byte git wrote reached the caller.
+	b.WriteString(`; r=$?; printf '` + relayEndMark(nonce) + `' 2>/dev/null; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
 	return "/bin/sh -c " + ShellQuote(b.String())
 }
 
@@ -567,13 +571,171 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 const relayLineCap = 64 << 10
 
 // relayDrainBound is how long zcp keeps reading the session's stderr once
-// ssh ended.
+// ssh ended, and how long its stdout pipe may give nothing while nothing is
+// being written to the caller before zcp stops reading it (relayStdout.drain).
 const relayDrainBound = 2 * time.Second
 
 // relayDoneGrace is how long zcp lets the session close by itself once the
-// script said git ended, before it ends the session: something git started
-// may hold the session's descriptors.
+// script said git ended and every byte git wrote to stdout reached the
+// caller, before it ends the session: something git started may hold the
+// session's descriptors.
 const relayDoneGrace = time.Second
+
+// relayEndMark is what the script writes to stdout once git exited: every
+// byte git wrote to stdout comes before it.
+func relayEndMark(nonce string) string { return "ZCPEND-" + nonce }
+
+// relayStdout is a relayed call's stdout. ssh writes into a pipe of zcp's
+// own (w), and copy passes what arrives to the caller's stdout at the
+// caller's pace, ssh waiting behind it — so ssh never holds git's output
+// when zcp ends the session — and takes out the script's end mark. ended is
+// closed once every byte before the mark reached the caller, or the stream
+// ended without one, or the caller's stdout failed (its reader is gone, and
+// the pipe is closed so ssh learns it as it did writing there itself): no
+// byte of git's can reach the caller after that. What arrives after the
+// mark — written by a process a hook left holding the session's stdout — is
+// not git's: it is read and dropped, so it never holds the call. Code in
+// the dev service that writes the mark itself, nonce and all, ends its own
+// call's output there.
+type relayStdout struct {
+	r, w  *os.File
+	dst   io.Writer
+	mark  []byte
+	ended chan struct{}
+	done  chan struct{}
+
+	// read counts the reads that gave bytes; writing is set while copy
+	// writes to the caller (drain).
+	read    atomic.Int64
+	writing atomic.Bool
+}
+
+func newRelayStdout(dst io.Writer, nonce string) (*relayStdout, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	return &relayStdout{r: r, w: w, dst: dst, mark: []byte(relayEndMark(nonce)), ended: make(chan struct{}), done: make(chan struct{})}, nil
+}
+
+// copy runs until the pipe gives no more: EOF once every holder of w closed
+// it, or a closed r.
+func (s *relayStdout) copy() {
+	defer close(s.done)
+	end := sync.OnceFunc(func() { close(s.ended) })
+	defer end()
+	var held []byte // the tail of what was read that may begin the mark
+	passing := true
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := s.r.Read(buf)
+		if n > 0 {
+			s.read.Add(1)
+		}
+		if n > 0 && passing {
+			pending := append(slices.Clone(held), buf[:n]...)
+			var out []byte
+			if i := bytes.Index(pending, s.mark); i >= 0 {
+				out, held, passing = pending[:i], nil, false
+			} else {
+				keep := markPrefixTail(pending, s.mark)
+				out, held = pending[:len(pending)-keep], pending[len(pending)-keep:]
+			}
+			if !s.pass(out) {
+				end()
+				_ = s.r.Close()
+				return
+			}
+			if !passing {
+				end()
+			}
+		}
+		if err != nil {
+			if passing {
+				s.pass(held)
+			}
+			return
+		}
+	}
+}
+
+// pass writes p to the caller, false when the caller's stdout failed.
+func (s *relayStdout) pass(p []byte) bool {
+	if len(p) == 0 {
+		return true
+	}
+	s.writing.Store(true)
+	defer s.writing.Store(false)
+	_, err := s.dst.Write(p)
+	return err == nil
+}
+
+// markPrefixTail is the length of the longest tail of p that begins mark,
+// shorter than mark.
+func markPrefixTail(p, mark []byte) int {
+	for k := min(len(mark)-1, len(p)); k > 0; k-- {
+		if bytes.Equal(p[len(p)-k:], mark[:k]) {
+			return k
+		}
+	}
+	return 0
+}
+
+// drain waits, once ssh ended and w is closed, for copy to pass on the rest
+// of what ssh wrote: as long as the caller is being written to or the pipe
+// gives more, however slowly the caller reads. A pipe that gives nothing for
+// relayDrainBound while nothing is written to the caller — only another
+// holder of its write end could keep it open — is closed. A call its caller
+// stopped (stopped) waits at most relayDrainBound, and a write to a caller
+// that does not read then finishes on its own.
+func (s *relayStdout) drain(stopped bool) {
+	if stopped {
+		select {
+		case <-s.done:
+		case <-time.After(relayDrainBound):
+			_ = s.r.Close()
+		}
+		return
+	}
+	tick := time.NewTicker(relayDrainBound)
+	defer tick.Stop()
+	last := s.read.Load()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-tick.C:
+			if n := s.read.Load(); n != last || s.writing.Load() {
+				last = n
+				continue
+			}
+			_ = s.r.Close()
+			<-s.done
+			return
+		}
+	}
+}
+
+// endAfterGrace ends the session (stop) relayDoneGrace after git ended —
+// the script's done marker (gitEnded) — and every byte git wrote to stdout
+// reached the caller (outEnded), unless the session ended by itself first
+// (sshEnded).
+func endAfterGrace(gitEnded, outEnded, sshEnded <-chan struct{}, stop func()) {
+	for _, c := range []<-chan struct{}{gitEnded, outEnded} {
+		select {
+		case <-c:
+		case <-sshEnded:
+			return
+		}
+	}
+	grace := time.NewTimer(relayDoneGrace)
+	defer grace.Stop()
+	select {
+	case <-grace.C:
+		stop()
+	case <-sshEnded:
+	}
+}
 
 // relayFrames is relayStream for a stream read without a done marker's
 // receiver: a marker still ends the answering.
@@ -1112,6 +1274,34 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// relayPipes are a relayed call's own pipes: the session's stdin (answers,
+// after a forwarded stdin), its stderr (frames) and its stdout.
+type relayPipes struct {
+	answersR, answersW *os.File
+	framesR, framesW   *os.File
+	out                *relayStdout
+}
+
+func openRelayPipes(stdout io.Writer, nonce string) (relayPipes, error) {
+	var p relayPipes
+	var err error
+	if p.answersR, p.answersW, err = os.Pipe(); err != nil {
+		return relayPipes{}, fmt.Errorf("answers pipe: %w", err)
+	}
+	if p.framesR, p.framesW, err = os.Pipe(); err != nil {
+		_ = p.answersR.Close()
+		_ = p.answersW.Close()
+		return relayPipes{}, fmt.Errorf("frames pipe: %w", err)
+	}
+	if p.out, err = newRelayStdout(stdout, nonce); err != nil {
+		for _, f := range []*os.File{p.answersR, p.answersW, p.framesR, p.framesW} {
+			_ = f.Close()
+		}
+		return relayPipes{}, err
+	}
+	return p, nil
+}
+
 // RunBrokeredGitRelayed runs git with args in host's checkout at dir over
 // ssh like RunBrokeredGit, with zcp answering git's credential requests
 // over the session from relay: git's stdout and the rest of its stderr pass
@@ -1122,11 +1312,14 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 // past the call: each GitHub token it minted is revoked when it ends, also
 // when ctx stopped it. Every GitHub token carries only what the call needs
 // (brokeredGitAccess). The call ends when git does: on the script's done
-// marker zcp answers nothing more, closes descriptor 3, revokes at once,
-// ends a session that does not close within relayDoneGrace — something git
-// started may hold it — and returns the exit code the marker carries; with
-// no marker (ssh dropped or killed) the exit code is ssh's. The caller
-// refuses what CheckRelayedGitArgs refuses first.
+// marker zcp answers nothing more, closes descriptor 3, revokes at once, and
+// returns the exit code the marker carries; with no marker (ssh dropped or
+// killed) the exit code is ssh's. git's stdout passes through relayStdout,
+// so none of it is lost however slowly the caller reads: a session still
+// open relayDoneGrace after both the marker and the last byte git wrote to
+// stdout reached the caller is ended — something git started holds it — and
+// what such a process writes to stdout after git ended is dropped. The
+// caller refuses what CheckRelayedGitArgs refuses first.
 func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if relay.HTTPClient == nil {
 		relay.HTTPClient = &http.Client{}
@@ -1145,20 +1338,15 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	}
 	command := buildRelayedGitCommand(dir, args, nonce, forward, brokeredGitAllowProtocol(args, relay.Identity.Origin))
 
-	answersR, answersW, err := os.Pipe()
+	p, err := openRelayPipes(stdout, nonce)
 	if err != nil {
-		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
+		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
-	framesR, framesW, err := os.Pipe()
-	if err != nil {
-		_ = answersR.Close()
-		_ = answersW.Close()
-		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
-	}
+	go p.out.copy()
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var mu sync.Mutex
-	answers := lockedWriter{mu: &mu, w: answersW}
+	answers := lockedWriter{mu: &mu, w: p.answersW}
 	var wg sync.WaitGroup
 	if forward {
 		// One write, so nothing can come between the length and the bytes.
@@ -1167,45 +1355,47 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
 	// git's end, from the script's marker: no answer after it — descriptor
 	// 3 closed, so a waiting helper reads EOF and lets the lock go — the
-	// call's tokens revoked at once, and the session ended after a grace if
-	// something git started still holds it.
+	// call's tokens revoked at once, and the session ended after a grace,
+	// once every byte git wrote reached the caller, if something git started
+	// still holds it.
 	sshCtx, stopSSH := context.WithCancel(ctx)
 	defer stopSSH()
 	gitExit := -1
-	var grace *time.Timer
+	gitEnded, sshEnded := make(chan struct{}), make(chan struct{})
 	onDone := func(code int) {
 		gitExit = code
 		mu.Lock()
-		_ = answersW.Close()
+		_ = p.answersW.Close()
 		mu.Unlock()
 		call.revoke(ctx)
-		grace = time.AfterFunc(relayDoneGrace, stopSSH)
+		close(gitEnded)
 	}
+	go endAfterGrace(gitEnded, p.out.ended, sshEnded, stopSSH)
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
-		relayStream(framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
+		relayStream(p.framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
 			return call.answer(callCtx, protocol, host, path)
 		}, onDone)
 	}()
 
-	exit, runErr := ssh.ExecSSHStdio(sshCtx, host, command, answersR, stdout, framesW)
-	_ = framesW.Close()
-	_ = answersR.Close()
+	exit, runErr := ssh.ExecSSHStdio(sshCtx, host, command, p.answersR, p.out.w, p.framesW)
+	close(sshEnded)
+	_ = p.out.w.Close()
+	_ = p.framesW.Close()
+	_ = p.answersR.Close()
 	select {
 	case <-relayed:
 	case <-time.After(relayDrainBound):
 		cancel()
-		_ = framesR.Close()
+		_ = p.framesR.Close()
 		<-relayed
 	}
-	if grace != nil {
-		grace.Stop()
-	}
 	cancel()
-	_ = answersW.Close()
+	_ = p.answersW.Close()
 	wg.Wait()
-	_ = framesR.Close()
+	_ = p.framesR.Close()
+	p.out.drain(ctx.Err() != nil)
 	call.revoke(ctx)
 
 	if gitExit >= 0 {

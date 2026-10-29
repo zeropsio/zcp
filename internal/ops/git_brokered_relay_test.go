@@ -285,6 +285,51 @@ func TestBrokeredGitDone_MarkerEndsAnsweringAndCarriesTheCode(t *testing.T) {
 	}
 }
 
+// TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt: the script's end mark
+// is taken out of stdout however reads split it, ended closes once every
+// byte before it was passed on, and what follows it is dropped; another
+// nonce's mark, or a tail that only begins the mark when the stream ends, is
+// git's output, passed on unchanged.
+func TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt(t *testing.T) {
+	t.Parallel()
+	mark := relayEndMark(frameTestNonce)
+	for _, tc := range []struct {
+		name, input, want string
+		ended             bool
+	}{
+		{"mark after output", "git output\nno newline at the end" + mark + "late-from-a-holder\n", "git output\nno newline at the end", true},
+		{"another nonce's mark", "a ZCPEND-fedcba9876543210 b\n", "a ZCPEND-fedcba9876543210 b\n", false},
+		{"only the start of a mark at the end", "output ZCPEND-0123", "output ZCPEND-0123", false},
+		{"mark alone", mark, "", true},
+	} {
+		for split := 1; split < len(tc.input); split++ {
+			var dst bytes.Buffer
+			s, err := newRelayStdout(&dst, frameTestNonce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			go s.copy()
+			for _, part := range []string{tc.input[:split], tc.input[split:]} {
+				if _, err := s.w.WriteString(part); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			ended := false
+			select {
+			case <-s.ended:
+				ended = true
+			case <-time.After(20 * time.Millisecond):
+			}
+			_ = s.w.Close()
+			<-s.done
+			if dst.String() != tc.want || ended != tc.ended {
+				t.Errorf("%s, split at %d: passed %q, ended before EOF %v; want %q, %v", tc.name, split, dst.String(), ended, tc.want, tc.ended)
+			}
+		}
+	}
+}
+
 // --- unit: what a relayed call refuses and forwards -------------------------
 
 // TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded: zcp forwards its
@@ -2240,6 +2285,69 @@ func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
 			}
 			if got := stdout.bytes(); !bytes.Equal(got, []byte(want.String())) {
 				t.Errorf("the caller got %d of git's %d bytes", len(got), want.Len())
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace: a process
+// git started that keeps the session's stdout open too — a shell alias of the
+// checkout's config leaving one in the background — holds the call no longer
+// than the grace after git's output reached the caller, and what it writes
+// to stdout after git ended is not git's output: it never reaches the caller.
+func TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			l.git(t, checkout, "config", "alias.hold", "!(sleep 1; echo late-from-the-holder; sleep 20) 2>/dev/null </dev/null & echo own-output")
+			start := time.Now()
+			run := l.run(t, sh, checkout, l.relay(), "", "hold").mustSucceed(t, "hold")
+			if took := time.Since(start); took > 10*time.Second {
+				t.Errorf("the call took %s, held by the background process", took)
+			}
+			if run.stdout != "own-output\n" {
+				t.Errorf("stdout = %q, want git's own output alone", run.stdout)
+			}
+		})
+	}
+}
+
+// closedStdout is a caller's stdout whose reader is gone.
+type closedStdout struct{}
+
+func (closedStdout) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode: a caller whose
+// stdout reader went away (`zcp git … | head -1` after head exited) holds
+// nothing: the call ends with git's exit code, its tokens revoked as ever.
+func TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, h := l.repo(t, true, "acme/shop")
+			checkout := l.checkout(t, url)
+			parsed, err := ParseBrokeredGitArgs([]string{"show", h.first + ":app.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			var stderr bytes.Buffer
+			code, err := RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), strings.NewReader(""), closedStdout{}, &stderr)
+			if ctx.Err() != nil {
+				t.Fatalf("the call did not end; stderr:\n%s", stderr.String())
+			}
+			if err != nil || code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", code, err, stderr.String())
+			}
+			if want := l.mintedTokens(); len(want) != 1 || !slices.Equal(l.revokes(), want) {
+				t.Errorf("revoked %q, want the minted %q", l.revokes(), want)
 			}
 		})
 	}
