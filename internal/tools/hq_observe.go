@@ -106,7 +106,7 @@ func observeFailure(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
-// readFailure distinguishes an unavailable HQ from its definitive refusal.
+// readFailure distinguishes an unavailable HQ from a refused read or output bound.
 // Neither path retries; authorization and input failures remain visible.
 func readFailure(err error, failure func(string) *mcp.CallToolResult) *mcp.CallToolResult {
 	var unavailable *hq.UnavailableError
@@ -122,11 +122,14 @@ func readFailure(err error, failure func(string) *mcp.CallToolResult) *mcp.CallT
 	}
 	var refused *hq.RefusedError
 	if errors.As(err, &refused) {
+		if refused.Code == "observation_output_too_large" {
+			return observeFailure(fmt.Sprintf("HQ refused the observation: %d observation_output_too_large; reduce limit or narrow from/till and try zerops_observe again. A single record over the output limit cannot be returned.", refused.Status))
+		}
 		refusal := fmt.Sprintf("%d %s", refused.Status, refused.Code)
 		if refused.Reason != "" && refused.Reason != refused.Code {
 			refusal += " (" + refused.Reason + ")"
 		}
-		return observeFailure("HQ refused the observation: " + refusal + "; the same call gets the same answer.")
+		return observeFailure("HQ refused the observation: " + refusal + ".")
 	}
 	return failure(err.Error())
 }

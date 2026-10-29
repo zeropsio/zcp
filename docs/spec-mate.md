@@ -4553,6 +4553,8 @@ field and unchanged content, including sensitive source data; zcp does not scan,
 redact or slice it. zcp never adds its credential to output or errors, and failed
 or invalid responses do not expose raw bodies. Responses are at most 512 KiB and
 lists at most 100 records; resource limits fail explicitly rather than edit records.
+An HQ `413 observation_output_too_large` asks for a lower `limit` or narrower
+`from`/`till` window; a single record over the output budget cannot be returned.
 No redirect forwards the credential. Each observation attempts once, including a
 `503`, within 45 seconds; unavailable and denied reads remain visible failures.
 HQ validates current native `read_project` for each target and `observe_mate` for

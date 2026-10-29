@@ -78,11 +78,11 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 		{"status", "status", "P_STAGE", "", "/api/mate/observe", `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":{"id":"V1","activatedAt":null}}]}`, 200, "", ""},
 		{"logs", "logs", "P_STAGE", "S1", "/api/mate/observe", `{"projectId":"P_STAGE","serviceId":"S1","entries":[{"timestamp":"now","severity":"info","message":"serving"}]}`, 200, "", ""},
 		{"forbidden", "status", "P_STAGE", "", "/api/mate/observe", `{"code":"observation_refused","reason":"forbidden"}`, 403,
-			"HQ refused the observation: 403 observation_refused (forbidden); the same call gets the same answer.", ""},
+			"HQ refused the observation: 403 observation_refused (forbidden).", ""},
 		{"unavailable", "status", "P_STAGE", "", "/api/mate/observe", `{"code":"zerops_unavailable"}`, 503,
 			"HQ could not read Zerops right now (zerops_unavailable); try again later — nothing to fix on your side.", ""},
 		{"an environment HQ does not know is named as HQ's refusal", "logs", "P_GONE", "S1", "/api/mate/observe", `{"code":"environment_not_found","reason":"environment_not_found"}`, 404,
-			"HQ refused the observation: 404 environment_not_found; the same call gets the same answer.", ""},
+			"HQ refused the observation: 404 environment_not_found.", ""},
 		{"a standby HQ asks the agent to try again later with nothing to fix", "environments", "", "", "/api/mate/observe", `{"code":"not_active"}`, 503,
 			"HQ is not serving right now (not_active); try again later — nothing to fix on your side.", ""},
 		{"an HQ that drops the call asks the agent to try again later with nothing to fix", "status", "P_STAGE", "", "/api/mate/observe", "", 0,
@@ -694,6 +694,41 @@ func TestObserve_ReflectedToken_FailedResponsesDoNotReachMCP(t *testing.T) {
 			text := result.Content[0].(*mcp.TextContent).Text
 			if !result.IsError || result.StructuredContent != nil || strings.Contains(text, observeTestToken) || strings.Contains(text, `"content"`) {
 				t.Fatal("failed or invalid HQ response must expose no source body or reflected token")
+			}
+		})
+	}
+}
+
+func TestObserve_OutputTooLarge_NarrowsSourceBoundsWithoutLeakingThroughMCP(t *testing.T) {
+	// non-parallel: profile HOME and project identity are process state.
+	observeTestProfile(t)
+	for _, action := range []string{"logs", "build_logs"} {
+		t.Run(action, func(t *testing.T) {
+			var reads atomic.Int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reads.Add(1)
+				var in map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+					t.Error(err)
+				}
+				if in["action"] != action || in["limit"] != float64(2) || in["from"] != "2026-10-29T11:00:00Z" || in["till"] != "native-last-record" {
+					t.Error("resource refusal must follow the requested source bounds")
+				}
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = w.Write([]byte(`{"code":"observation_output_too_large","reason":"` + observeTestToken + `","content":"private source content"}`))
+			}))
+			defer fake.Close()
+			hqtest.Link(t, fake.URL, "P_MATE", "")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+			result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "serviceId": "service", "versionId": "failed-version", "limit": 2, "from": "2026-10-29T11:00:00Z", "till": "native-last-record"})
+			text := result.Content[0].(*mcp.TextContent).Text
+			want := "HQ refused the observation: 413 observation_output_too_large; reduce limit or narrow from/till and try zerops_observe again. A single record over the output limit cannot be returned."
+			if !result.IsError || result.StructuredContent != nil || reads.Load() != 1 || text != want {
+				t.Fatalf("resource refusal must explain bounded recovery through MCP: error=%v reads=%d text=%q", result.IsError, reads.Load(), text)
+			}
+			if strings.Contains(text, observeTestToken) || strings.Contains(text, "private source content") {
+				t.Fatal("resource refusal exposed failed response content or authorization")
 			}
 		})
 	}
