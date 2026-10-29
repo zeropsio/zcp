@@ -2194,7 +2194,10 @@ func (l *relayLab) looseObjectsUnder17(t *testing.T, checkout string, n int) {
 // detached auto-gc (and auto-maintenance) closes only descriptors 0-2, so it
 // would keep 3 and 4 — the session's stdin and stderr — and hold the call
 // open until it finished; a relayed call runs it in the foreground, whatever
-// the checkout's config says, and ends when git ends.
+// the checkout's config says, and ends when git ends. The checkout enables
+// maintenance's gc task, which newer git's default auto maintenance leaves
+// out (2.56 runs neither gc --auto nor the pre-auto-gc hook without it), so
+// the auto-gc runs on every git version.
 func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -2203,7 +2206,7 @@ func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.
 			l := newRelayLab(t)
 			url, _ := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
-			for _, kv := range [][2]string{{"gc.auto", "1"}, {"gc.autoDetach", "true"}, {"maintenance.autoDetach", "true"}} {
+			for _, kv := range [][2]string{{"gc.auto", "1"}, {"gc.autoDetach", "true"}, {"maintenance.autoDetach", "true"}, {"maintenance.gc.enabled", "true"}} {
 				l.git(t, checkout, "config", kv[0], kv[1])
 			}
 			l.looseObjectsUnder17(t, checkout, 3)
