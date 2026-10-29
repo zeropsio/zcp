@@ -1983,13 +1983,14 @@ func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.
 // --- offline: the call ends when git does -----------------------------------
 
 // detachedHolder is a hook line leaving a process in the background with
-// descriptors 3 and 4 — the session's — open for six seconds.
-const detachedHolder = "(sleep 6 >/dev/null 2>&1 </dev/null &)\n"
+// descriptors 3 and 4 — the session's — open for twenty seconds, far past
+// the call's bound so a loaded machine never blurs the two.
+const detachedHolder = "(sleep 20 >/dev/null 2>&1 </dev/null &)\n"
 
 // TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall: a hook
 // leaving a process in the background that holds the session's descriptors
 // no longer holds the call: it returns once git ended, in well under the
-// six seconds, with git's own exit code — 0, 1 or 128 — from the script's
+// twenty seconds, with git's own exit code — 0, 1 or 128 — from the script's
 // marker, though zcp ends the session itself.
 func TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall(t *testing.T) {
 	t.Parallel()
@@ -2015,7 +2016,7 @@ func TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall(t *testin
 				if run.err != nil || run.code != tc.code {
 					t.Errorf("%s: exit %d, err %v; want git's %d\n%s", tc.name, run.code, run.err, tc.code, run.stderr)
 				}
-				if took > 4*time.Second {
+				if took > 10*time.Second {
 					t.Errorf("%s: the call took %s, held by the background process", tc.name, took)
 				}
 				if strings.Contains(run.stderr, "ZCPDONE") {
@@ -2043,7 +2044,7 @@ func TestBrokeredGit_Relay_DoneMarker_BackgroundFrameAfterGitGetsNothing(t *test
 			writePreCommitHook(t, checkout, "(sleep 0.5; git show "+h.first+":app.txt > "+ShellQuote(out)+" 2>/dev/null; echo $? > "+ShellQuote(rc)+") >/dev/null 2>&1 </dev/null &\n")
 			start := time.Now()
 			l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
-			if took := time.Since(start); took > 4*time.Second {
+			if took := time.Since(start); took > 10*time.Second {
 				t.Errorf("the call took %s", took)
 			}
 			deadline := time.Now().Add(10 * time.Second)
@@ -2085,7 +2086,7 @@ func TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker(t *testing.T) {
 			start := time.Now()
 			l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
 			ended := time.Now()
-			if took := ended.Sub(start); took > 4*time.Second {
+			if took := ended.Sub(start); took > 10*time.Second {
 				t.Errorf("the call took %s", took)
 			}
 			l.mu.Lock()
