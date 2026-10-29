@@ -1,6 +1,6 @@
 // Tests for: group recipe — a value naming the public address of a service of
-// the Mate's own project is written, in every tier, as a reference to that
-// service's address in the environment the tier makes.
+// the Mate's own project is written, in every tier, as that service's address
+// in the environment the tier makes.
 package bundle
 
 import (
@@ -43,6 +43,21 @@ const flipServerZeropsYAML = `zerops:
         mountPath: /mnt/agenthome
       start: node hosted/agent-runner/run.mjs
 `
+
+// flipBothHTTPPorts are the app's run.ports as flip's prod setup declares
+// them since it gained its second HTTP port (2026-10-29): 5195 and 5196.
+const flipBothHTTPPorts = "      ports:\n        - port: 5195\n          httpSupport: true\n        - port: 5196\n          httpSupport: true\n"
+
+// flipAppPortsYAML is flip's zerops.yaml with ports — run.ports as YAML
+// lines, "" for none — in place of the app's one HTTP port.
+func flipAppPortsYAML(t *testing.T, ports string) string {
+	t.Helper()
+	const declared = "      ports:\n        - port: 5195\n          httpSupport: true\n      envVariables:\n        DATABASE_URL"
+	if !strings.Contains(flipServerZeropsYAML, declared) {
+		t.Fatal("the app's setup declares no port to replace")
+	}
+	return strings.Replace(flipServerZeropsYAML, declared, ports+"      envVariables:\n        DATABASE_URL", 1)
+}
 
 // flipChangeTwoInputs is the flip.studio Mate as its group change #2 was
 // composed from (2026-10-28): the flipdev pair with two stages — flipstage,
@@ -97,69 +112,87 @@ func tierVaultValue(t *testing.T, body, host, key string) (string, bool) {
 }
 
 // TestBuildGroupRecipe_FlipServer_NamesTheEnvironmentsOwnStage is flip.studio's
-// group change #2: agentrunner's FLIP_SERVER, the Mate's stage's public
-// address written out, came out in Stage and Small Production renamed to
-// https://flip-3901-5195.prg1.zerops.app — a host that exists nowhere, and
-// even with the right name it would point back into the Mate's project. A
-// person set it by hand to ${flip_zeropsSubdomain}. Every tier now writes it
-// as the address of the service it names in the environment the tier makes:
-// the group environments' flip, and on the AI Agent tier — whose new project
-// has a subdomain label of its own — flipstage. The dev service's own address
-// is its own ${zeropsSubdomain}, and the stage's, which a person already set
-// so, stays it. No tier names the Mate's own project.
+// group change #2 and what came after it: agentrunner's FLIP_SERVER, the
+// Mate's stage's public address written out, came out in Stage and Small
+// Production renamed to https://flip-3901-5195.prg1.zerops.app — a host that
+// exists nowhere, and even with the right name it would point back into the
+// Mate's project. A person set it by hand to ${flip_zeropsSubdomain}; then
+// flip's prod setup gained a second HTTP port, 5196, the reference resolved
+// to two lines, one address per port, and the app refused to start
+// (2026-10-29). Every tier now writes the address with the project's own
+// subdomain label, which exists from the project's creation — on the group
+// environments under flip, on the AI Agent tier, whose new project has a
+// label of its own, under flipstage — for any number of HTTP ports the setup
+// declares, as long as the address's is one of them. The dev service's own
+// address is written the same way. The stage's FLIP_PUBLIC_URL, which a
+// person set to its own ${zeropsSubdomain}, stays as written, and the pass
+// says it holds an address for each of the two ports. No tier names the
+// Mate's own project.
 func TestBuildGroupRecipe_FlipServer_NamesTheEnvironmentsOwnStage(t *testing.T) {
 	t.Parallel()
-	layout, warnings, err := BuildGroupRecipe(flipChangeTwoInputs())
+	inputs := flipChangeTwoInputs()
+	inputs.Runtimes[0].ZeropsYAMLBody = flipAppPortsYAML(t, flipBothHTTPPorts)
+	layout, warnings, err := BuildGroupRecipe(inputs)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	tests := []struct {
-		tier, agent, app, appURL, server string
+		tier, app, server string
 	}{
-		{tier: "AI Agent", agent: "agentrunner", app: "flipstage", server: "${flipstage_zeropsSubdomain}"},
-		{tier: "Stage", agent: "agentrunner", app: "flip", server: "${flip_zeropsSubdomain}"},
-		{tier: "Small Production", agent: "agentrunner", app: "flip", server: "${flip_zeropsSubdomain}"},
+		{tier: "AI Agent", app: "flipstage", server: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app"},
+		{tier: "Stage", app: "flip", server: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app"},
+		{tier: "Small Production", app: "flip", server: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app"},
 	}
 	for _, tt := range tests {
 		body := tierBody(t, layout.Tiers, tt.tier)
-		if got, _ := tierVaultValue(t, body, tt.agent, "FLIP_SERVER"); got != tt.server {
+		if got, _ := tierVaultValue(t, body, "agentrunner", "FLIP_SERVER"); got != tt.server {
 			t.Errorf("tier %q: agentrunner FLIP_SERVER = %q, want %q", tt.tier, got, tt.server)
 		}
 		if got, _ := tierVaultValue(t, body, tt.app, "FLIP_PUBLIC_URL"); got != "${zeropsSubdomain}" {
-			t.Errorf("tier %q: %s FLIP_PUBLIC_URL = %q, want ${zeropsSubdomain}", tt.tier, tt.app, got)
+			t.Errorf("tier %q: %s FLIP_PUBLIC_URL = %q, want ${zeropsSubdomain} as written", tt.tier, tt.app, got)
 		}
 		if tt.tier == "AI Agent" {
-			if got, _ := tierVaultValue(t, body, "flipdev", "FLIP_PUBLIC_URL"); got != "${zeropsSubdomain}" {
-				t.Errorf("tier %q: flipdev FLIP_PUBLIC_URL = %q, want ${zeropsSubdomain}", tt.tier, got)
+			const own = "https://flipdev-${zeropsSubdomainHost}-5195.prg1.zerops.app"
+			if got, _ := tierVaultValue(t, body, "flipdev", "FLIP_PUBLIC_URL"); got != own {
+				t.Errorf("tier %q: flipdev FLIP_PUBLIC_URL = %q, want %q", tt.tier, got, own)
 			}
 		}
-		if strings.Contains(body, "-3901-") {
+		if strings.Contains(body, "-3901") {
 			t.Errorf("tier %q names an address of the Mate's own project:\n%s", tt.tier, body)
 		}
 	}
 	for _, w := range warnings {
-		if strings.Contains(w, "FLIP_SERVER") || strings.Contains(w, "FLIP_PUBLIC_URL") {
-			t.Errorf("a reference written in every tier is warned of: %s", w)
+		if strings.Contains(w, "FLIP_SERVER") {
+			t.Errorf("an address written in every tier is warned of: %s", w)
 		}
+	}
+	said := []string{"FLIP_PUBLIC_URL", "${zeropsSubdomain}", "5195 and 5196", "one per line", "https://flip-${zeropsSubdomainHost}-<port>.prg1.zerops.app", "Stage and Small Production"}
+	if !slices.ContainsFunc(warnings, func(w string) bool {
+		return !slices.ContainsFunc(said, func(want string) bool { return !strings.Contains(w, want) })
+	}) {
+		t.Errorf("no warning says all of %q:\n%s", said, strings.Join(warnings, "\n"))
 	}
 }
 
-// TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference: what a
-// value says after the address — a path, a query — is kept, and the address
-// alone becomes the reference. zeropsSubdomain holds the whole https://
-// address with no slash after it, one line per HTTP port the service serves
-// (spec-mate §10.10), and the platform has no variable per port; so a
-// reference stands for the address only where the service the tier carries
-// under that name builds a setup declaring one HTTP port, the one the
-// address names (80 when it names none), and the value writes it as
-// https:// with no port after it. Anything else — several ports, another
-// port, no port declared, a service whose ports the recipe does not read, a
-// bare host — is kept as written and said, never guessed; so is an address
-// in a project variable: every service reads it, and a reference resolves
-// only in a service started after the one it names was deployed, which no
-// priority gives every service at once. An address of a service the tier
-// does not carry is kept as it is and said nothing of, a URL off Zerops is
-// no address, and neither is renamed.
+// TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference: the
+// address alone becomes the address the service it names has in the
+// environment the tier makes — `https://<host>-${zeropsSubdomainHost}-<port>.`
+// and the domain as written, <host> the tier's name for the service, no
+// `-<port>` where the address names none (port 80) — and what the value says
+// after it, a path or a query, is kept. The project's subdomain label exists
+// from the project's creation (Mate2 lab, 2026-10-29), so the address needs
+// no service before another and orders nothing, in a service's own variable
+// or a project variable alike. It stands for the address only where the
+// service the tier carries under that name builds a setup whose HTTP ports —
+// any number of them — include the one the address names, and the value
+// writes it as https:// with no port after it. Anything else — a port the
+// setup does not declare, no port declared, a service whose ports the recipe
+// does not read, a bare host — is kept as written and said, never guessed.
+// zeropsSubdomain holds one address per HTTP port, one per line, so a
+// reference a person wrote to a service whose setup declares several is kept
+// as written and said too. An address of a service the tier does not carry
+// is kept as it is and said nothing of, a URL off Zerops is no address, and
+// neither is renamed.
 func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testing.T) {
 	t.Parallel()
 	const stageAddress = "https://flipstage-3901-5195.prg1.zerops.app"
@@ -167,12 +200,13 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 		return func(in *GroupRecipeInputs) { in.Runtimes[0].Stages[1].ServiceEnvs[0].Value = value }
 	}
 	appPorts := func(ports string) func(*GroupRecipeInputs) {
+		return func(in *GroupRecipeInputs) { in.Runtimes[0].ZeropsYAMLBody = flipAppPortsYAML(t, ports) }
+	}
+	both := func(edits ...func(*GroupRecipeInputs)) func(*GroupRecipeInputs) {
 		return func(in *GroupRecipeInputs) {
-			const declared = "      ports:\n        - port: 5195\n          httpSupport: true\n      envVariables:\n        DATABASE_URL"
-			if !strings.Contains(flipServerZeropsYAML, declared) {
-				t.Fatal("the app's setup declares no port to replace")
+			for _, edit := range edits {
+				edit(in)
 			}
-			in.Runtimes[0].ZeropsYAMLBody = strings.Replace(flipServerZeropsYAML, declared, ports+"      envVariables:\n        DATABASE_URL", 1)
 		}
 	}
 	tests := []struct {
@@ -191,8 +225,9 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 			name:      "the path and the query after the address kept",
 			edit:      server(stageAddress + "/api/v1?region=eu"),
 			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
-			agentWant: "${flipstage_zeropsSubdomain}/api/v1?region=eu",
-			groupWant: "${flip_zeropsSubdomain}/api/v1?region=eu",
+			agentWant: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app/api/v1?region=eu",
+			groupWant: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app/api/v1?region=eu",
+			unsaid:    []string{"FLIP_SERVER"},
 		},
 		{
 			// A label is the platform's name for the project, as public as
@@ -204,8 +239,9 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 				in.Runtimes[0].Stages[1].ServiceEnvs[0].Value = "https://flipstage-1df2-5195.prg1.zerops.app"
 			},
 			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
-			agentWant: "${flipstage_zeropsSubdomain}", groupWant: "${flip_zeropsSubdomain}",
-			unsaid: []string{"FLIP_SERVER"},
+			agentWant: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			groupWant: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			unsaid:    []string{"FLIP_SERVER"},
 		},
 		{
 			name: "the service's own address, with its trailing slash",
@@ -213,14 +249,32 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 				in.Runtimes[0].Stages[0].ServiceEnvs[0].Value = stageAddress + "/"
 			},
 			agentHost: "flipstage", groupHost: "flip", key: "FLIP_PUBLIC_URL",
-			agentWant: "${zeropsSubdomain}/", groupWant: "${zeropsSubdomain}/",
+			agentWant: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app/",
+			groupWant: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app/",
+			unsaid:    []string{"FLIP_PUBLIC_URL"},
 		},
 		{
-			name:      "several HTTP ports: a reference would list an address for each",
-			edit:      appPorts("      ports:\n        - port: 3000\n          httpSupport: true\n        - port: 5195\n          httpSupport: true\n"),
+			name:      "an address naming no port: the setup's HTTP port 80",
+			edit:      both(appPorts("      ports:\n        - port: 80\n          httpSupport: true\n"), server("https://flipstage-3901.prg1.zerops.app/health")),
+			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
+			agentWant: "https://flipstage-${zeropsSubdomainHost}.prg1.zerops.app/health",
+			groupWant: "https://flip-${zeropsSubdomainHost}.prg1.zerops.app/health",
+			unsaid:    []string{"FLIP_SERVER"},
+		},
+		{
+			name:      "several HTTP ports, the address's among them",
+			edit:      appPorts(flipBothHTTPPorts),
+			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
+			agentWant: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			groupWant: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			unsaid:    []string{"FLIP_SERVER"},
+		},
+		{
+			name:      "several HTTP ports, none the address names",
+			edit:      appPorts("      ports:\n        - port: 3000\n          httpSupport: true\n        - port: 5196\n          httpSupport: true\n"),
 			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
 			agentWant: stageAddress, groupWant: stageAddress,
-			said: []string{"FLIP_SERVER", "flipstage-3901-5195.prg1.zerops.app", "3000 and 5195", "Stage and Small Production"},
+			said: []string{"FLIP_SERVER", "flipstage-3901-5195.prg1.zerops.app", "3000 and 5196", "not 5195", "Stage and Small Production"},
 		},
 		{
 			name:      "one HTTP port, not the one the address names",
@@ -237,20 +291,28 @@ func TestBuildGroupRecipe_MateAddress_WrittenAsTheEnvironmentsReference(t *testi
 			said: []string{"FLIP_SERVER", "flipstage-3901-5195.prg1.zerops.app"},
 		},
 		{
-			name:      "a bare host, which a reference does not write",
+			name:      "a bare host, which the rewrite does not write",
 			edit:      server("flipstage-3901-5195.prg1.zerops.app"),
 			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
 			agentWant: "flipstage-3901-5195.prg1.zerops.app", groupWant: "flipstage-3901-5195.prg1.zerops.app",
 			said: []string{"FLIP_SERVER", "flipstage-3901-5195.prg1.zerops.app"},
 		},
 		{
-			name: "a project variable, which every service reads: no priority orders the reference",
+			name: "a project variable, which needs no service before another",
 			edit: func(in *GroupRecipeInputs) {
 				in.ProjectEnvs = []ProjectEnvVar{{Key: "APP_URL", Value: stageAddress}}
 			},
 			key:       "APP_URL",
-			agentWant: stageAddress, groupWant: stageAddress,
-			said: []string{"APP_URL", "flipstage-3901-5195.prg1.zerops.app", "project variable", "every service"},
+			agentWant: "https://flipstage-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			groupWant: "https://flip-${zeropsSubdomainHost}-5195.prg1.zerops.app",
+			unsaid:    []string{"APP_URL"},
+		},
+		{
+			name:      "a person's reference to a service whose setup declares several HTTP ports",
+			edit:      both(appPorts(flipBothHTTPPorts), server("${flipstage_zeropsSubdomain}")),
+			agentHost: "agentrunner", groupHost: "agentrunner", key: "FLIP_SERVER",
+			agentWant: "${flipstage_zeropsSubdomain}", groupWant: "${flip_zeropsSubdomain}",
+			said: []string{"FLIP_SERVER", "${flip_zeropsSubdomain}", "5195 and 5196", "one per line", "https://flip-${zeropsSubdomainHost}-<port>.prg1.zerops.app", "Stage and Small Production"},
 		},
 		{
 			name: "a service the group environments do not carry: the Mate's mail catcher",
@@ -332,7 +394,8 @@ func TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid(t *testing.T
 		if got, ok := tierVaultValue(t, tier.ImportYAML, "agentrunner", "FLIP_SERVER"); ok {
 			t.Errorf("tier %q: FLIP_SERVER = %q, want it left out", tier.Title, got)
 		}
-		if strings.Contains(tier.ImportYAML, "flipstage-3901") || strings.Contains(tier.ImportYAML, "_zeropsSubdomain}") {
+		if strings.Contains(tier.ImportYAML, "flipstage-3901") || strings.Contains(tier.ImportYAML, "_zeropsSubdomain}") ||
+			strings.Contains(tier.ImportYAML, "flipstage-${zeropsSubdomainHost}") || strings.Contains(tier.ImportYAML, "flip-${zeropsSubdomainHost}") {
 			t.Errorf("tier %q prints or rewrites a sensitive value:\n%s", tier.Title, tier.ImportYAML)
 		}
 	}
@@ -345,12 +408,13 @@ func TestBuildGroupRecipe_MateAddress_SensitiveNeverRewrittenOrSaid(t *testing.T
 
 // TestBuildGroupRecipe_MateAddress_RewriteAndReadsAgree: a public address
 // written out reads nothing (spec-workflows.md §8 PS-3), so it never brings
-// a service into a tier, and a reference the rewrite writes names only what
+// a service into a tier, and an address the rewrite writes names only what
 // the tier already carries — it adds no read, no Box and no closure gap. A
 // runner's own variable naming the Box's address leaves the Box out of a
 // tier nothing else reads it in, and the value is kept as it is; where the
 // runner's setup reads the Box, every tier carries it and keeps the address
-// as written, since a Box serves several HTTP ports.
+// as written, since the recipe reads no setup of a Box to tell its HTTP
+// ports.
 func TestBuildGroupRecipe_MateAddress_RewriteAndReadsAgree(t *testing.T) {
 	t.Parallel()
 	const boxUI = "https://box-1df2-8081.prg1.zerops.app"
