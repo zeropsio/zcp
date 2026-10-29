@@ -199,7 +199,7 @@ func orderTierReads(ranking groupRanking, ranks []tierRank, addresses *tierAddre
 		}
 	}
 	priorities, unordered := orderSubdomainReads(ranks, reads, ranking)
-	var notes []orderNote
+	notes := make([]orderNote, 0, len(unordered)+len(addresses.projectReads))
 	for _, u := range unordered {
 		notes = append(notes, orderNote{
 			subject: fmt.Sprintf("runtime %q reads %s in %s", u.read.reader, subdomainReference(u.read.target), u.read.variable),
