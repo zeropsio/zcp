@@ -16,16 +16,18 @@ worktree — and `workBranch`, the branch a lease of the pool checks out.
 `census.clean: true` means nothing is left to move.
 
 Each item the census names, and how to keep it (you commit and push; the
-call commits nothing):
+call commits nothing). Run every git command in the dev service,
+`zcp git <dev> <git args>` — a worktree below `/tmp/` with `-C <its path>` —
+never on its mount:
 
 | census | what it is | to keep it |
 |---|---|---|
 | `trees[].staged`, `modified`, `untracked`, `conflicted` | uncommitted work in that checkout | commit it on a branch you keep, then push it |
 | `trees[].inProgress` | a merge, rebase, cherry-pick, revert or bisect left unfinished | finish it (`--continue`) or abort it (`--abort`) |
-| `trees[].detachedCommits` | commits only a detached HEAD holds | `git switch -c <branch>` in that checkout, then push it |
-| `branches[]` | a local branch's commits on no remote branch | `git push -u origin <branch>` |
-| `stashes[]` | stash entries | `git stash branch <branch> <ref>` with the entry's `ref`, then commit and push; drop the ones you do not keep |
-| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `git branch <branch> <commit>` and push the ones you want on the origin |
+| `trees[].detachedCommits` | commits only a detached HEAD holds | `zcp git <dev> branch <branch> <head>` with that tree's `head`, then push it |
+| `branches[]` | a local branch's commits on no remote branch | `zcp git <dev> push -u origin <branch>` |
+| `stashes[]` | stash entries | `zcp git <dev> stash branch <branch> <ref>` with the entry's `ref`, then commit and push; drop the ones you do not keep |
+| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `zcp git <dev> branch <branch> <commit>` and push the ones you want on the origin |
 | `trees[].envFiles` | `.env` files, which git does not carry | move each value into the pool's service env with `zerops_env`, then delete the file |
 
 `trees[].ignored` and `t3Refs` are named for the record, not moved: ignored
