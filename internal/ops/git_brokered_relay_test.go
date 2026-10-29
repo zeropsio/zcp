@@ -1,0 +1,1717 @@
+// Tests for: ops/git_brokered_relay.go — a relayed `zcp git` call answers
+// git's credential requests over the ssh session itself, from zcp-side
+// records and the call's own argv only.
+//
+// Unit tests drive the pure pieces (frames, the stdin readers, the refused
+// arguments). Offline tests run the real remote script through a runner that
+// stands in for ssh: the script runs locally under /bin/sh, and again under
+// dash and busybox's sh where installed (an alpine dev image's /bin/sh is
+// busybox ash), against git's own http-backend over net/http/cgi behind
+// Basic auth — a fake HQ (its git under /git/, the Mate API minting tokens)
+// and a GitHub stand-in serving repositories behind the tokens HQ minted.
+package ops
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cgi" //nolint:gosec // G504: the fakes serve git's own http-backend through CGI, in a test
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"testing/iotest"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/hq"
+)
+
+// --- unit: frames on the ssh stderr ----------------------------------------
+
+const frameTestNonce = "0123456789abcdef"
+
+// framePrefix is how every frame of frameTestNonce starts.
+const framePrefix = "ZCPCRED-" + frameTestNonce + " "
+
+// relayFramesOf runs relayFrames over input read through wrap (nil: whole),
+// answering with answer; it returns what reached stderr and the answers.
+func relayFramesOf(input string, wrap func(io.Reader) io.Reader, answer func(protocol, host, path string) (string, string)) (relayed, answers string) {
+	var r io.Reader = strings.NewReader(input)
+	if wrap != nil {
+		r = wrap(r)
+	}
+	var stderr, out bytes.Buffer
+	relayFrames(r, frameTestNonce, &stderr, &out, answer)
+	return stderr.String(), out.String()
+}
+
+func declineAll(string, string, string) (string, string) { return "", "" }
+
+// TestBrokeredGitFrames_OnlyAtLineStartAfterOptionalCR: a frame is a line
+// that starts with the call's prefix, after at most one carriage return;
+// the same text anywhere else on a line is git's output, relayed as it is.
+func TestBrokeredGitFrames_OnlyAtLineStartAfterOptionalCR(t *testing.T) {
+	t.Parallel()
+	input := "before\n" +
+		framePrefix + "11 https hq.example git/a.git\n" +
+		"\r" + framePrefix + "12 https hq.example -\n" +
+		"mid " + framePrefix + "13 https hq.example x\n" +
+		" " + framePrefix + "14 https hq.example x\n" +
+		"\r\r" + framePrefix + "15 https hq.example x\n" +
+		"after\n"
+	relayed, answers := relayFramesOf(input, nil, declineAll)
+	wantRelayed := "before\n" +
+		"mid " + framePrefix + "13 https hq.example x\n" +
+		" " + framePrefix + "14 https hq.example x\n" +
+		"\r\r" + framePrefix + "15 https hq.example x\n" +
+		"after\n"
+	if relayed != wantRelayed {
+		t.Errorf("relayed = %q\nwant      %q", relayed, wantRelayed)
+	}
+	if want := "11 hq.example - -\n12 hq.example - -\n"; answers != want {
+		t.Errorf("answers = %q, want %q", answers, want)
+	}
+}
+
+// TestBrokeredGitFrames_SplitReadsAndProgress_ParsedNeverRelayed: however
+// the stream is split into reads, git's progress (carriage returns, no
+// newline) and a trailing partial line reach stderr unchanged, and every
+// frame is answered and never relayed.
+func TestBrokeredGitFrames_SplitReadsAndProgress_ParsedNeverRelayed(t *testing.T) {
+	t.Parallel()
+	input := "Receiving objects:  10% (1/10)\rReceiving objects: 100% (10/10), done.\n" +
+		"\n" + framePrefix + "41 https hq.example git/a.git\n" +
+		"Resolving deltas:  50% (1/2)\r" +
+		"\n" + framePrefix + "42 https hq.example git/b.git\n" +
+		"remote: Counting objects\r\n" +
+		"a partial tail with no newline"
+	want := "Receiving objects:  10% (1/10)\rReceiving objects: 100% (10/10), done.\n" +
+		"Resolving deltas:  50% (1/2)\r\n" +
+		"remote: Counting objects\r\n" +
+		"a partial tail with no newline"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{
+		"whole":    nil,
+		"one byte": iotest.OneByteReader,
+		"halves":   iotest.HalfReader,
+	} {
+		relayed, answers := relayFramesOf(input, wrap, declineAll)
+		if relayed != want {
+			t.Errorf("%s: relayed = %q\nwant %q", name, relayed, want)
+		}
+		if strings.Contains(relayed, "ZCPCRED") {
+			t.Errorf("%s: a frame reached stderr: %q", name, relayed)
+		}
+		if wantAnswers := "41 hq.example - -\n42 hq.example - -\n"; answers != wantAnswers {
+			t.Errorf("%s: answers = %q, want %q", name, answers, wantAnswers)
+		}
+	}
+}
+
+// TestBrokeredGitFrames_WrongNonce_RelayedAsText: a line carrying another
+// call's nonce — or none — is git's output, relayed and never answered.
+func TestBrokeredGitFrames_WrongNonce_RelayedAsText(t *testing.T) {
+	t.Parallel()
+	input := "ZCPCRED-fedcba9876543210 51 https hq.example x\n" +
+		"ZCPCRED- 52 https hq.example x\n" +
+		"ZCPCRED-" + frameTestNonce + "53 https hq.example x\n"
+	relayed, answers := relayFramesOf(input, nil, declineAll)
+	if relayed != input {
+		t.Errorf("relayed = %q, want every line as it is %q", relayed, input)
+	}
+	if answers != "" {
+		t.Errorf("answers = %q, want none", answers)
+	}
+}
+
+// TestBrokeredGitFrames_OverlongLine_RelayedNotParsed: a line longer than
+// 64 KiB is relayed as it is and never parsed, even one starting with the
+// prefix; the frames around it are still answered.
+func TestBrokeredGitFrames_OverlongLine_RelayedNotParsed(t *testing.T) {
+	t.Parallel()
+	long := framePrefix + "61 https hq.example " + strings.Repeat("a", 70<<10) + "\n"
+	input := framePrefix + "60 https hq.example x\n" + long + framePrefix + "62 https hq.example y\n"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "halves": iotest.HalfReader} {
+		relayed, answers := relayFramesOf(input, wrap, declineAll)
+		if relayed != long {
+			t.Errorf("%s: relayed %d bytes, want the overlong line alone (%d bytes)", name, len(relayed), len(long))
+		}
+		if want := "60 hq.example - -\n62 hq.example - -\n"; answers != want {
+			t.Errorf("%s: answers = %q, want %q", name, answers, want)
+		}
+	}
+}
+
+// TestBrokeredGitFrames_EveryFrameWithReadableId_GetsExactlyOneAnswer: the
+// helper's read of its answer has no timeout, so every frame line with a
+// readable id gets exactly one answer line — an allowed one the credential, a
+// declined one `<id> <host> - -`, a malformed one `<id> - - -` — and the
+// path is the rest of the line, spaces included. A frame without a readable
+// id has no one to answer.
+func TestBrokeredGitFrames_EveryFrameWithReadableId_GetsExactlyOneAnswer(t *testing.T) {
+	t.Parallel()
+	answer := func(protocol, host, path string) (string, string) {
+		switch {
+		case protocol == "https" && host == "hq.example" && path == "a b/c d.git":
+			return "mate", "spaced-path-FAKE"
+		case protocol == "https" && host == "hq.example" && path == "git/space.git":
+			return "mate", "pass word"
+		case protocol == "https" && host == "hq.example":
+			return "mate", "s3cret-FAKE"
+		}
+		return "", ""
+	}
+	for _, tc := range []struct {
+		name, frame, want string
+	}{
+		{"well-formed, allowed", "21 https hq.example git/a.git", "21 hq.example mate s3cret-FAKE\n"},
+		{"well-formed, declined", "22 https other.example x", "22 other.example - -\n"},
+		{"no path", "20 https hq.example -", "20 hq.example mate s3cret-FAKE\n"},
+		{"empty protocol", "23  hq.example x", "23 - - -\n"},
+		{"empty host", "24 https  x", "24 - - -\n"},
+		{"path with spaces", "25 https hq.example a b/c d.git", "25 hq.example mate spaced-path-FAKE\n"},
+		{"host missing", "26 https", "26 - - -\n"},
+		{"id alone", "27", "27 - - -\n"},
+		{"unreadable host", "28 https hq!example x", "28 - - -\n"},
+		{"path field missing", "29 https hq.example", "29 - - -\n"},
+		{"answer holding a space", "30 https hq.example git/space.git", "30 hq.example - -\n"},
+		{"host with a port", "31 https hq.example:8443 x", "31 hq.example:8443 - -\n"},
+		{"unreadable id", "x9 https hq.example x", ""},
+		{"empty id", " https hq.example x", ""},
+		{"overlong id", "123456789012 https hq.example x", ""},
+	} {
+		relayed, answers := relayFramesOf(framePrefix+tc.frame+"\n", nil, answer)
+		if answers != tc.want {
+			t.Errorf("%s: answers = %q, want %q", tc.name, answers, tc.want)
+		}
+		if relayed != "" {
+			t.Errorf("%s: relayed %q, want a frame never relayed", tc.name, relayed)
+		}
+	}
+	// Many frames in one stream: one answer line each, in order.
+	var input strings.Builder
+	for i := range 50 {
+		fmt.Fprintf(&input, "%s%d https hq.example git/%d.git\n", framePrefix, 100+i, i)
+		fmt.Fprintf(&input, "%s%d  hq.example x\n", framePrefix, 200+i)
+	}
+	_, answers := relayFramesOf(input.String(), iotest.OneByteReader, answer)
+	lines := strings.Split(strings.TrimSuffix(answers, "\n"), "\n")
+	if len(lines) != 100 {
+		t.Fatalf("answers = %d lines, want 100 (one per frame)", len(lines))
+	}
+	for i := range 50 {
+		if want := fmt.Sprintf("%d hq.example mate s3cret-FAKE", 100+i); lines[2*i] != want {
+			t.Errorf("answer %d = %q, want %q", 2*i, lines[2*i], want)
+		}
+		if want := fmt.Sprintf("%d - - -", 200+i); lines[2*i+1] != want {
+			t.Errorf("answer %d = %q, want %q", 2*i+1, lines[2*i+1], want)
+		}
+	}
+}
+
+// TestBrokeredGitFrames_EmptyLineBeforeFrame_Dropped: the helper writes a
+// newline before its frame so the frame starts a line; that empty line,
+// directly before a frame, is dropped — every other empty line is git's.
+func TestBrokeredGitFrames_EmptyLineBeforeFrame_Dropped(t *testing.T) {
+	t.Parallel()
+	input := "a\n\n" + framePrefix + "31 https hq.example x\n" +
+		"\n\n" + framePrefix + "32 https hq.example x\n" +
+		"\n\nb\n\n"
+	want := "a\n" + "\n" + "\n\nb\n\n"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "one byte": iotest.OneByteReader} {
+		relayed, answers := relayFramesOf(input, wrap, declineAll)
+		if relayed != want {
+			t.Errorf("%s: relayed = %q, want %q", name, relayed, want)
+		}
+		if answers != "31 hq.example - -\n32 hq.example - -\n" {
+			t.Errorf("%s: answers = %q", name, answers)
+		}
+	}
+}
+
+// --- unit: what a relayed call refuses and forwards -------------------------
+
+// TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded: zcp forwards its
+// stdin only when the argv asks git to read it — explicitly (`-`, --stdin…,
+// -F -) or by the subcommand's nature — so an open stdin never holds a call
+// that does not read it.
+func TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded(t *testing.T) {
+	t.Parallel()
+	forward := [][]string{
+		{"hash-object", "-w", "-"},
+		{"apply", "-"},
+		{"update-ref", "--stdin"},
+		{"check-ignore", "--stdin"},
+		{"hash-object", "--stdin-paths"},
+		{"pack-objects", "--stdin-packs", "out"},
+		{"commit", "-F", "-"},
+		{"commit", "-F-"},
+		{"commit", "--file=-"},
+		{"commit", "--file", "-"},
+		{"tag", "-a", "v1", "-F", "-"},
+		{"cat-file", "--batch"},
+		{"cat-file", "--batch-check=%(objectname)"},
+		{"cat-file", "--batch-command"},
+		{"commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"},
+		{"commit-tree", "-p", "HEAD", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"},
+		{"apply"},
+		{"apply", "--check", "--index"},
+		{"am"},
+		{"am", "-3"},
+		{"hash-object", "--stdin"},
+		{"mktree"},
+		{"fast-import"},
+		{"interpret-trailers"},
+		{"interpret-trailers", "--trailer", "Signed-off-by: A <a@example.invalid>"},
+		{"patch-id"},
+		{"stripspace"},
+		{"update-index", "--index-info"},
+	}
+	for _, rest := range forward {
+		args, err := ParseBrokeredGitArgs(rest)
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", rest, err)
+		}
+		if !BrokeredGitReadsStdin(args) {
+			t.Errorf("BrokeredGitReadsStdin(%q) = false, want stdin forwarded", rest)
+		}
+	}
+	keep := [][]string{
+		{"commit", "-m", "x"},
+		{"status"},
+		{"commit", "-m", "-j"},
+		{"commit", "-F", "msg.txt"},
+		{"cat-file", "-p", "HEAD"},
+		{"commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "msg"},
+		{"commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-F", "msg.txt"},
+		{"apply", "fix.patch"},
+		{"apply", "--exclude", "vendor/*", "fix.patch"},
+		{"am", "0001-fix.patch"},
+		{"am", "--continue"},
+		{"am", "--abort"},
+		{"interpret-trailers", "msg.txt"},
+		{"update-index", "--refresh"},
+		{"push", "origin", "HEAD"},
+		{"checkout", "-"},
+		{"switch", "-"},
+		{"merge", "-"},
+		{"log", "-p"},
+	}
+	for _, rest := range keep {
+		args, err := ParseBrokeredGitArgs(rest)
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", rest, err)
+		}
+		if BrokeredGitReadsStdin(args) {
+			t.Errorf("BrokeredGitReadsStdin(%q) = true, want git's stdin /dev/null", rest)
+		}
+	}
+}
+
+// TestBrokeredGit_UserConfig_SecurityKeysRefused: on a relayed call a user
+// -c may not set anything that decides credentials, transports, URLs,
+// remotes, included config, upload-pack, aliases or command hooks git runs
+// for transport — any case. A guardrail, not the boundary.
+func TestBrokeredGit_UserConfig_SecurityKeysRefused(t *testing.T) {
+	t.Parallel()
+	refused := []string{
+		"credential.helper=!evil", "Credential.https://github.com.helper=x", "credential.useHttpPath=false",
+		"http.extraHeader=Authorization: x", "HTTP.sslVerify=false", "http.https://github.com.proxy=x",
+		"url.https://evil.example/.insteadOf=https://github.com/", "protocol.ext.allow=always",
+		"remote.origin.url=https://evil.example/x", "include.path=/tmp/x", "includeIf.gitdir:/var/.path=/tmp/x",
+		"uploadpack.packObjectsHook=x", "alias.st=!sh", "ALIAS.x=status",
+		"core.sshCommand=sh", "core.askPass=x", "core.gitProxy=x", "core.fsmonitor=x",
+		"fetch.parallel=8", "submodule.fetchJobs=8", "credential.helper",
+	}
+	for _, c := range refused {
+		args, err := ParseBrokeredGitArgs([]string{"-c", c, "status"})
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(-c %q): %v", c, err)
+		}
+		err = CheckRelayedGitArgs(args)
+		if err == nil {
+			t.Errorf("CheckRelayedGitArgs(-c %q) = nil, want refused", c)
+			continue
+		}
+		key, value, _ := strings.Cut(c, "=")
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("CheckRelayedGitArgs(-c %q) = %q, want it to name the key", c, err)
+		}
+		if value != "" && strings.Contains(err.Error(), value) {
+			t.Errorf("CheckRelayedGitArgs(-c %q) = %q, must not echo the value", c, err)
+		}
+	}
+	accepted := []string{
+		"user.name=A B", "user.email=a@example.invalid", "core.hooksPath=/dev/null", "core.editor=true",
+		"commit.gpgSign=false", "color.ui=never", "core.pager=cat", "advice.detachedHead=false",
+	}
+	for _, c := range accepted {
+		args, err := ParseBrokeredGitArgs([]string{"-c", c, "-C", "/tmp/wt-b", "log", "-j", "--jobs=4"})
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(-c %q): %v", c, err)
+		}
+		if err := CheckRelayedGitArgs(args); err != nil {
+			t.Errorf("CheckRelayedGitArgs(-c %q) = %v, want accepted", c, err)
+		}
+	}
+}
+
+// TestBrokeredGit_CredentialSubcommand_Refused: zcp answers a relayed call's
+// credential requests itself, so git's own credential subcommands are refused.
+func TestBrokeredGit_CredentialSubcommand_Refused(t *testing.T) {
+	t.Parallel()
+	for _, sub := range []string{"credential", "credential-store", "credential-cache", "credential-osxkeychain", "credential-cache--daemon"} {
+		args, err := ParseBrokeredGitArgs([]string{sub, "get"})
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", sub, err)
+		}
+		if err := CheckRelayedGitArgs(args); err == nil || !strings.Contains(err.Error(), sub) {
+			t.Errorf("CheckRelayedGitArgs(%s) = %v, want refused naming it", sub, err)
+		}
+	}
+	for _, sub := range []string{"status", "fetch", "push", "credentials", "log"} {
+		args, err := ParseBrokeredGitArgs([]string{sub})
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", sub, err)
+		}
+		if err := CheckRelayedGitArgs(args); err != nil {
+			t.Errorf("CheckRelayedGitArgs(%s) = %v, want accepted", sub, err)
+		}
+	}
+}
+
+// TestBrokeredGit_ArgvURLs_LiteralURLsOnly: the URLs a call's argv writes
+// literally — https, or HQ's own scheme — count; a remote name, a path, and
+// an address of any other scheme do not.
+func TestBrokeredGit_ArgvURLs_LiteralURLsOnly(t *testing.T) {
+	t.Parallel()
+	args, err := ParseBrokeredGitArgs([]string{"-c", "user.name=https://not.argv/x", "fetch",
+		"upstream", "https://github.com/acme/lib.git", "main",
+		"http://hq.local:8080/git/o/a/x.git", "ssh://github.com/acme/ssh.git", "git@github.com:acme/scp.git",
+		"/tmp/x.bundle", "HTTPS://GitHub.com/Acme/Upper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := BrokeredGitArgvURLs(args, "http://hq.local:8080")
+	want := []string{"https://github.com/acme/lib.git", "http://hq.local:8080/git/o/a/x.git", "HTTPS://GitHub.com/Acme/Upper"}
+	if !slices.Equal(got, want) {
+		t.Errorf("BrokeredGitArgvURLs = %q, want %q", got, want)
+	}
+	if got := BrokeredGitArgvURLs(args, "https://hq.example"); slices.Contains(got, "http://hq.local:8080/git/o/a/x.git") {
+		t.Errorf("BrokeredGitArgvURLs with an https HQ = %q, want no http address", got)
+	}
+}
+
+// --- offline: the real script, real git, git's http-backend -----------------
+
+// relayShells are the shells the remote script runs under: /bin/sh, and dash
+// and busybox's sh where installed. Each is the login shell too.
+func relayShells() [][]string {
+	shells := [][]string{{"/bin/sh"}}
+	binSh, _ := filepath.EvalSymlinks("/bin/sh")
+	if p, err := exec.LookPath("dash"); err == nil {
+		if real, _ := filepath.EvalSymlinks(p); real != binSh {
+			shells = append(shells, []string{p})
+		}
+	}
+	if p, err := exec.LookPath("busybox"); err == nil {
+		shells = append(shells, []string{p, "sh"})
+	}
+	return shells
+}
+
+func shellName(sh []string) string { return strings.Join(sh, "_") }
+
+// relayEachShell runs body once per relay shell, each its own parallel
+// subtest; it skips where git is not installed.
+func relayEachShell(t *testing.T, body func(t *testing.T, sh []string)) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	for _, sh := range relayShells() {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			body(t, sh)
+		})
+	}
+}
+
+// shellRunner stands in for ssh: it runs the remote command in the login
+// shell sh, the command's own `/bin/sh -c` turned into sh too, with env.
+type shellRunner struct {
+	sh  []string
+	env []string
+
+	mu       sync.Mutex
+	commands []string
+}
+
+func (r *shellRunner) ExecSSHStdio(ctx context.Context, _, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	r.mu.Lock()
+	r.commands = append(r.commands, command)
+	r.mu.Unlock()
+	line := command
+	if r.sh[0] != "/bin/sh" {
+		rest, ok := strings.CutPrefix(command, "/bin/sh -c ")
+		if !ok {
+			return -1, fmt.Errorf("remote command %q does not start with /bin/sh -c", command)
+		}
+		line = strings.Join(r.sh, " ") + " -c " + rest
+	}
+	cmd := exec.CommandContext(ctx, r.sh[0], append(slices.Clone(r.sh[1:]), "-c", line)...) //nolint:gosec // the command under test, in a test
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, stdout, stderr, r.env
+	cmd.WaitDelay = 5 * time.Second
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	if ctx.Err() != nil {
+		return -1, ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, err
+}
+
+func (r *shellRunner) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.commands)
+}
+
+const (
+	relayLabKey        = "project-key-FAKE-91c2"
+	relayLabCredential = "mate-credential-FAKE-7f3a"
+	relayLabAppID      = "app-1"
+	relayTokenUser     = "x-access-token"
+	relayFixtureToken  = "ghs_FAKEfixture"
+)
+
+// relayMint is one token the fake HQ was asked for.
+type relayMint struct{ path, access string }
+
+// relayLab is a fake HQ and a GitHub stand-in. HQ serves git under /git/
+// behind `mate:<credential>`, mints a token for any repository the stand-in
+// holds (as HQ mints for any repository the application mounts), and names
+// the record's repository origin in /api/mate/self; the stand-in serves each
+// repository behind the tokens HQ minted for it.
+type relayLab struct {
+	hq, gh   *httptest.Server
+	root     string
+	home     string
+	credPath string
+
+	mu         sync.Mutex
+	mints      []relayMint
+	tokens     map[string]string // token → repository key
+	tokenUse   map[string]int    // token → requests the stand-in accepted with it
+	challenges int               // 401s the stand-in answered
+	sawAuth    []string          // every Authorization header either server saw
+	selfOrigin string            // /api/mate/self: the origin of relayLabAppID's appdev
+	selfAsked  int
+}
+
+func newRelayLab(t *testing.T) *relayLab {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	l := &relayLab{root: t.TempDir(), home: t.TempDir(), tokens: map[string]string{relayFixtureToken: "*"}, tokenUse: map[string]int{}}
+	l.credPath = filepath.Join(t.TempDir(), "git-credential")
+	if err := os.WriteFile(l.credPath, []byte(relayLabCredential+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := func(root, prefix string) *cgi.Handler {
+		return &cgi.Handler{
+			Path: gitPath, Args: []string{"http-backend"}, Root: prefix,
+			Env: []string{
+				"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=lab",
+				"HOME=" + l.home, "GIT_CONFIG_NOSYSTEM=1",
+			},
+			InheritEnv: []string{"PATH"},
+			Stderr:     io.Discard,
+		}
+	}
+	hqGit := backend(filepath.Join(l.root, "hq"), "/git")
+	ghGit := backend(filepath.Join(l.root, "gh"), "")
+	l.hq = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.saw(r)
+		switch {
+		case r.URL.Path == "/api/mate/git-credential":
+			l.serveMint(t, w, r)
+		case r.URL.Path == "/api/mate/self":
+			l.serveSelf(w, r)
+		case strings.HasPrefix(r.URL.Path, "/git/"):
+			if user, pass, ok := r.BasicAuth(); !ok || user != hq.GitUser || pass != relayLabCredential {
+				w.Header().Set("WWW-Authenticate", `Basic realm="hq"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			hqGit.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(l.hq.Close)
+	l.gh = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.saw(r)
+		key := relayRepoKeyOf(r.URL.Path)
+		user, pass, ok := r.BasicAuth()
+		l.mu.Lock()
+		owner, minted := l.tokens[pass]
+		good := ok && user == relayTokenUser && minted && (owner == key || owner == "*")
+		if good {
+			l.tokenUse[pass]++
+		} else {
+			l.challenges++
+		}
+		l.mu.Unlock()
+		if !good {
+			w.Header().Set("WWW-Authenticate", `Basic realm="github"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		ghGit.ServeHTTP(w, r)
+	}))
+	t.Cleanup(l.gh.Close)
+	return l
+}
+
+// relayRepoKeyOf is the `<owner>/<repo>` a stand-in request path names.
+func relayRepoKeyOf(path string) string {
+	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.ToLower(parts[0] + "/" + strings.TrimSuffix(parts[1], ".git"))
+}
+
+func (l *relayLab) saw(r *http.Request) {
+	if a := r.Header.Get("Authorization"); a != "" {
+		l.mu.Lock()
+		l.sawAuth = append(l.sawAuth, a)
+		l.mu.Unlock()
+	}
+}
+
+func (l *relayLab) serveMint(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Project "+relayLabKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("host") != hq.GitHubHost {
+		t.Errorf("HQ asked for a token for host %q", q.Get("host"))
+	}
+	path := q.Get("path")
+	key := strings.ToLower(strings.TrimSuffix(path, ".git"))
+	if _, err := os.Stat(filepath.Join(l.root, "gh", key+".git")); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"code":"git_credential_refused","reason":"not_mounted"}`)
+		return
+	}
+	l.mu.Lock()
+	l.mints = append(l.mints, relayMint{path: path, access: q.Get("access")})
+	token := fmt.Sprintf("ghs_FAKE%04d", len(l.mints))
+	l.tokens[token] = key
+	l.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"username": relayTokenUser, "password": token, "expiresAt": "2026-10-29T13:00:00Z"})
+}
+
+func (l *relayLab) serveSelf(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Project "+relayLabKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	l.mu.Lock()
+	l.selfAsked++
+	origin := l.selfOrigin
+	l.mu.Unlock()
+	appID := relayLabAppID
+	state := hq.MateState{ProjectID: "p1", AppID: &appID, Repos: []hq.MateRepo{{Name: "appdev"}}}
+	if origin != "" {
+		state.Repos[0].Origin = &hq.RepoOrigin{URL: origin, Mode: hq.OriginOnGitHub}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(state)
+}
+
+// minted is every token HQ was asked for so far.
+func (l *relayLab) minted() []relayMint {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.mints)
+}
+
+// env is the dev service's environment the script runs in.
+func (l *relayLab) env(extraPath ...string) []string {
+	path := os.Getenv("PATH")
+	if len(extraPath) > 0 {
+		path = strings.Join(extraPath, string(os.PathListSeparator)) + string(os.PathListSeparator) + path
+	}
+	return []string{"HOME=" + l.home, "GIT_CONFIG_NOSYSTEM=1", "PATH=" + path, "LC_ALL=C"}
+}
+
+// git runs a fixture git command in dir, as no relayed call.
+func (l *relayLab) git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"}, args...)
+	cmd := exec.CommandContext(t.Context(), "git", full...)
+	cmd.Dir = dir
+	cmd.Env = append(l.env(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fixture git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// relayHistory is a repository's three commits: app.txt in each version,
+// lib.txt from the second — a partial clone of the third lacks the blobs of
+// the first two.
+type relayHistory struct{ first, second, third string }
+
+// repo makes the bare repository name (`<owner>/<repo>` on the stand-in,
+// `<org>/<app>/<name>` under HQ's /git/) and answers its URL and history.
+func (l *relayLab) repo(t *testing.T, onGitHub bool, name string) (string, relayHistory) {
+	t.Helper()
+	work := t.TempDir()
+	l.git(t, work, "init", "-q", "-b", "main")
+	var h relayHistory
+	for i, files := range []map[string]string{
+		{"app.txt": "first contents\n"},
+		{"app.txt": "second contents\n", "lib.txt": "lib one\n"},
+		{"app.txt": "third contents\n", "lib.txt": "lib two\n"},
+	} {
+		for f, body := range files {
+			if err := os.WriteFile(filepath.Join(work, f), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		l.git(t, work, "add", "-A")
+		l.git(t, work, "commit", "-q", "-m", fmt.Sprintf("version %d", i+1))
+		sha := l.git(t, work, "rev-parse", "HEAD")
+		switch i {
+		case 0:
+			h.first = sha
+		case 1:
+			h.second = sha
+		default:
+			h.third = sha
+		}
+	}
+	side, url := filepath.Join(l.root, "hq"), l.hq.URL+"/git/"+name+".git"
+	if onGitHub {
+		side, url = filepath.Join(l.root, "gh"), l.gh.URL+"/"+name+".git"
+	}
+	bare := filepath.Join(side, name+".git")
+	if err := os.MkdirAll(filepath.Dir(bare), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l.git(t, work, "clone", "-q", "--bare", work, bare)
+	for _, kv := range [][2]string{{"uploadpack.allowFilter", "true"}, {"uploadpack.allowAnySHA1InWant", "true"}, {"http.receivepack", "true"}} {
+		l.git(t, bare, "config", kv[0], kv[1])
+	}
+	return url, h
+}
+
+// checkout is the dev service's checkout of url: a `--filter=blob:none`
+// partial clone, origin url, the fixture's own credential never kept.
+func (l *relayLab) checkout(t *testing.T, url string) string {
+	t.Helper()
+	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabCredential))
+	if strings.HasPrefix(url, l.gh.URL) {
+		header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(relayTokenUser+":"+relayFixtureToken))
+	}
+	dir := filepath.Join(t.TempDir(), "checkout")
+	l.git(t, filepath.Dir(dir), "-c", "http.extraHeader="+header, "clone", "-q", "--filter=blob:none", url, dir)
+	l.git(t, dir, "config", "user.name", "mate")
+	l.git(t, dir, "config", "user.email", "mate@example.invalid")
+	return dir
+}
+
+// relay is the relay of a call whose records name repos.
+func (l *relayLab) relay(repos ...string) BrokeredGitRelay {
+	return BrokeredGitRelay{
+		Identity:     hq.Identity{Origin: l.hq.URL, Key: relayLabKey, ProjectID: "p1", GitCredentialPath: l.credPath},
+		HTTPClient:   l.hq.Client(),
+		Repos:        repos,
+		githubOrigin: l.gh.URL,
+	}
+}
+
+// relayRun is what one relayed call did.
+type relayRun struct {
+	code           int
+	err            error
+	stdout, stderr string
+	commands       []string
+}
+
+// run runs `zcp git appdev <gitArgs…>` relayed in dir under sh, with stdin.
+func (l *relayLab) run(t *testing.T, sh []string, dir string, relay BrokeredGitRelay, stdin string, gitArgs ...string) relayRun {
+	t.Helper()
+	return l.runEnv(t, sh, l.env(), dir, relay, stdin, gitArgs...)
+}
+
+func (l *relayLab) runEnv(t *testing.T, sh, env []string, dir string, relay BrokeredGitRelay, stdin string, gitArgs ...string) relayRun {
+	t.Helper()
+	parsed, err := ParseBrokeredGitArgs(gitArgs)
+	if err != nil {
+		t.Fatalf("ParseBrokeredGitArgs(%q): %v", gitArgs, err)
+	}
+	runner := &shellRunner{sh: sh, env: env}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	code, err := RunBrokeredGitRelayed(ctx, runner, "appdev", dir, parsed, relay, strings.NewReader(stdin), &stdout, &stderr)
+	if ctx.Err() != nil {
+		t.Fatalf("zcp git %q did not end within its bound; stderr:\n%s", gitArgs, stderr.String())
+	}
+	return relayRun{code: code, err: err, stdout: stdout.String(), stderr: stderr.String(), commands: runner.seen()}
+}
+
+// mustSucceed fails the test unless the relayed call ended 0.
+func (r relayRun) mustSucceed(t *testing.T, what string) relayRun {
+	t.Helper()
+	if r.err != nil || r.code != 0 {
+		t.Fatalf("%s: exit %d, err %v\nstdout:\n%s\nstderr:\n%s", what, r.code, r.err, r.stdout, r.stderr)
+	}
+	return r
+}
+
+// writeHook installs an executable hook in the checkout.
+func writeHook(t *testing.T, checkout, name, body string) {
+	t.Helper()
+	path := filepath.Join(checkout, ".git", "hooks", name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil { //nolint:gosec // G306: a hook must be executable
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+// missingBlobs is how many objects the checkout lacks: a partial clone's
+// deferred contents.
+func (l *relayLab) missingBlobs(t *testing.T, checkout string) int {
+	t.Helper()
+	return strings.Count(l.git(t, checkout, "rev-list", "--objects", "--all", "--missing=print"), "?")
+}
+
+// TestBrokeredGit_Relay_PushFetchLsRemote_AgainstAuthServer: ls-remote,
+// fetch and push against an HQ behind Basic auth, each answered with the
+// Mate credential over the ssh session.
+func TestBrokeredGit_Relay_PushFetchLsRemote_AgainstAuthServer(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		relay := l.relay()
+
+		run := l.run(t, sh, checkout, relay, "", "ls-remote", "origin").mustSucceed(t, "ls-remote")
+		if !strings.Contains(run.stdout, h.third+"\trefs/heads/main") {
+			t.Errorf("ls-remote stdout = %q, want main at %s", run.stdout, h.third)
+		}
+
+		bare := filepath.Join(l.root, "hq", "org/app-1/appdev.git")
+		elsewhere := t.TempDir()
+		l.git(t, elsewhere, "clone", "-q", bare, "w")
+		w := filepath.Join(elsewhere, "w")
+		l.git(t, w, "commit", "-q", "--allow-empty", "-m", "pushed from elsewhere")
+		l.git(t, w, "push", "-q", "origin", "main")
+		moved := l.git(t, w, "rev-parse", "HEAD")
+		l.run(t, sh, checkout, relay, "", "fetch", "origin").mustSucceed(t, "fetch")
+		if got := l.git(t, checkout, "rev-parse", "origin/main"); got != moved {
+			t.Errorf("origin/main = %s after fetch, want %s", got, moved)
+		}
+
+		l.git(t, checkout, "commit", "-q", "--allow-empty", "-m", "mate's work")
+		mine := l.git(t, checkout, "rev-parse", "HEAD")
+		l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
+		if got := l.git(t, bare, "rev-parse", "refs/heads/feature"); got != mine {
+			t.Errorf("HQ's feature = %s, want the pushed %s", got, mine)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_PartialClone_LazyShowCheckoutWorktreeAnswered: on a
+// blob:none partial clone, `show <old>:<path>`, `log -p`, `checkout <old>`
+// and `worktree add` fetch contents lazily, each fetch answered.
+func TestBrokeredGit_Relay_PartialClone_LazyShowCheckoutWorktreeAnswered(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		if l.missingBlobs(t, checkout) == 0 {
+			t.Fatal("the fixture checkout is no partial clone: no object missing")
+		}
+		relay := l.relay()
+
+		if run := l.run(t, sh, checkout, relay, "", "show", h.first+":app.txt").mustSucceed(t, "show"); run.stdout != "first contents\n" {
+			t.Errorf("show %s:app.txt = %q", h.first, run.stdout)
+		}
+		if run := l.run(t, sh, checkout, relay, "", "log", "-p", "--format=%H").mustSucceed(t, "log -p"); !strings.Contains(run.stdout, "+second contents") || !strings.Contains(run.stdout, "+lib one") {
+			t.Errorf("log -p = %q, want every version's diff", run.stdout)
+		}
+		wt := filepath.Join(t.TempDir(), "wt-old")
+		l.run(t, sh, checkout, relay, "", "worktree", "add", "--detach", wt, h.second).mustSucceed(t, "worktree add")
+		if got := readFile(t, filepath.Join(wt, "lib.txt")); got != "lib one\n" {
+			t.Errorf("worktree lib.txt = %q", got)
+		}
+		l.run(t, sh, checkout, relay, "", "checkout", "-q", h.first).mustSucceed(t, "checkout")
+		if got := readFile(t, filepath.Join(checkout, "app.txt")); got != "first contents\n" {
+			t.Errorf("checked-out app.txt = %q", got)
+		}
+		if n := l.missingBlobs(t, checkout); n != 0 {
+			t.Errorf("%d objects still missing after reading every version", n)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_PartialClone_GitHubLazyFetchesShareOneMintedToken:
+// a GitHub-kept partial clone asks for a credential on each lazy fetch; HQ
+// mints one token for the repository and the call answers every request
+// with it.
+func TestBrokeredGit_Relay_PartialClone_GitHubLazyFetchesShareOneMintedToken(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		checkout := l.checkout(t, url)
+		l.mu.Lock()
+		before := l.challenges
+		l.mu.Unlock()
+		run := l.run(t, sh, checkout, l.relay(url), "", "log", "-p", "--format=%H").mustSucceed(t, "log -p")
+		if !strings.Contains(run.stdout, "+first contents") {
+			t.Errorf("log -p = %q, want the first version's diff", run.stdout)
+		}
+		l.mu.Lock()
+		asked := l.challenges - before
+		l.mu.Unlock()
+		if asked < 2 {
+			t.Fatalf("git asked for a credential %d times, want at least two lazy fetches", asked)
+		}
+		if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop.git" {
+			t.Errorf("HQ minted %+v, want one token for acme/shop.git", mints)
+		}
+		l.mu.Lock()
+		used := l.tokenUse["ghs_FAKE0001"]
+		l.mu.Unlock()
+		if used < 2 {
+			t.Errorf("the minted token was used %d times, want every lazy fetch", used)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_PartialClone_HQPairWithoutGitToken_Answered: a pair
+// not wired through holds no GIT_TOKEN, and the helper persisted in its
+// checkout would answer an empty password; the relay answers its lazy
+// fetches with the Mate credential instead.
+func TestBrokeredGit_Relay_PartialClone_HQPairWithoutGitToken_Answered(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "config", "credential.helper", `!f() { echo username=mate; echo "password=$GIT_TOKEN"; }; f`)
+		if run := l.run(t, sh, checkout, l.relay(), "", "show", h.second+":lib.txt").mustSucceed(t, "show"); run.stdout != "lib one\n" {
+			t.Errorf("show = %q", run.stdout)
+		}
+		empty := "Basic " + base64.StdEncoding.EncodeToString([]byte("mate:"))
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if slices.Contains(l.sawAuth, empty) {
+			t.Error("HQ was sent an empty password")
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_HQFrame_AnsweredWithMateCredentialAnyPath: HQ is
+// answered for any path, the Mate credential covering every repository of
+// the application.
+func TestBrokeredGit_Relay_HQFrame_AnsweredWithMateCredentialAnyPath(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		other, otherHistory := l.repo(t, false, "org/app-1/other")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "remote", "add", "sibling", other)
+		run := l.run(t, sh, checkout, l.relay(), "", "ls-remote", "sibling").mustSucceed(t, "ls-remote sibling")
+		if !strings.Contains(run.stdout, otherHistory.third) {
+			t.Errorf("ls-remote sibling = %q, want its main", run.stdout)
+		}
+		want := "Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabCredential))
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		for _, a := range l.sawAuth {
+			if a != want {
+				t.Errorf("HQ was sent %q, want only the Mate credential", a)
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_FetchByURLInArgv_Answered: a URL the call's argv
+// names is answered — HQ mints for that repository — though no record names
+// it.
+func TestBrokeredGit_Relay_FetchByURLInArgv_Answered(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		lib, libHistory := l.repo(t, true, "acme/lib")
+		checkout := l.checkout(t, url)
+		args := []string{"fetch", lib, "main:refs/remotes/lib/main"}
+		parsed, err := ParseBrokeredGitArgs(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		relay := l.relay(append([]string{url}, BrokeredGitArgvURLs(parsed, l.hq.URL)...)...)
+		l.run(t, sh, checkout, relay, "", args...).mustSucceed(t, "fetch by URL")
+		if got := l.git(t, checkout, "rev-parse", "refs/remotes/lib/main"); got != libHistory.third {
+			t.Errorf("lib/main = %s, want %s", got, libHistory.third)
+		}
+		if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/lib.git" {
+			t.Errorf("HQ minted %+v, want one token for acme/lib.git", mints)
+		}
+	})
+}
+
+// assertDeclined checks a relayed call git could not authenticate: a
+// failure, zcp naming the remote it does not answer, and no token minted for
+// the repository named.
+func assertDeclined(t *testing.T, l *relayLab, run relayRun, repoPath string) {
+	t.Helper()
+	if run.code == 0 {
+		t.Errorf("exit 0, want git failing without a credential\nstderr:\n%s", run.stderr)
+	}
+	if !strings.Contains(run.stderr, "is not a remote zcp records for appdev") {
+		t.Errorf("stderr = %q, want zcp naming the remote it does not answer", run.stderr)
+	}
+	for _, m := range l.minted() {
+		if strings.EqualFold(m.path, repoPath) {
+			t.Errorf("HQ minted a token for %s", m.path)
+		}
+	}
+}
+
+// TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined: the checkout's
+// config is the dev service's to write; a remote added there is answered for
+// nothing, though HQ would mint for it.
+func TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		other, _ := l.repo(t, true, "acme/other")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "remote", "add", "evil", other)
+		assertDeclined(t, l, l.run(t, sh, checkout, l.relay(url), "", "fetch", "evil"), "acme/other.git")
+		assertDeclined(t, l, l.run(t, sh, checkout, l.relay(url), "", "ls-remote", "evil"), "acme/other.git")
+	})
+}
+
+// TestBrokeredGit_Relay_RemoteURLRecordIgnored: the record's RemoteURL is
+// written from the checkout's live origin, so an origin pointed at another
+// repository is answered for nothing: the relay is built from the record's
+// HQ origin, which zcp writes from HQ's own state.
+func TestBrokeredGit_Relay_RemoteURLRecordIgnored(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		other, _ := l.repo(t, true, "acme/other")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "remote", "set-url", "origin", other)
+		assertDeclined(t, l, l.run(t, sh, checkout, l.relay(url), "", "fetch", "origin"), "acme/other.git")
+	})
+}
+
+// TestBrokeredGit_Relay_InsteadOfRewriteToOtherRepository_Declined: a
+// url.insteadOf in the checkout's config rewriting the recorded repository
+// to another is answered for the repository git asks about, which no record
+// names.
+func TestBrokeredGit_Relay_InsteadOfRewriteToOtherRepository_Declined(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		other, _ := l.repo(t, true, "acme/other")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "config", "url."+other+".insteadOf", url)
+		assertDeclined(t, l, l.run(t, sh, checkout, l.relay(url), "", "fetch", "origin"), "acme/other.git")
+	})
+}
+
+// TestBrokeredGit_Relay_StdinPayloadOver64KiB_WithLazyFetchingPreCommitHook_NeverLeaksAnswer:
+// `commit -F -` with a message over 64 KiB while the pre-commit hook fetches
+// lazily: the message is the payload byte for byte, the hook's fetch is
+// answered, and no answer reaches the commit.
+func TestBrokeredGit_Relay_StdinPayloadOver64KiB_WithLazyFetchingPreCommitHook_NeverLeaksAnswer(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, true, "acme/shop")
+		checkout := l.checkout(t, url)
+		marker := filepath.Join(t.TempDir(), "hook-saw")
+		writeHook(t, checkout, "pre-commit", "git show "+h.first+":app.txt > "+ShellQuote(marker)+"\n")
+		var payload strings.Builder
+		payload.WriteString("subject of a long message\n\n")
+		for i := 0; payload.Len() < 100<<10; i++ {
+			fmt.Fprintf(&payload, "line %05d of the body, with 'quotes', $dollars and \\backslashes\n", i)
+		}
+		l.run(t, sh, checkout, l.relay(url), payload.String(), "commit", "--allow-empty", "--cleanup=verbatim", "-F", "-").mustSucceed(t, "commit -F -")
+		raw := l.git(t, checkout, "cat-file", "commit", "HEAD")
+		_, message, _ := strings.Cut(raw, "\n\n")
+		if message != strings.TrimSpace(payload.String()) {
+			t.Errorf("commit message differs from the payload (%d bytes vs %d)", len(message), len(payload.String()))
+		}
+		for _, leak := range []string{"ghs_FAKE", relayTokenUser, "ZCPCRED", relayLabCredential} {
+			if strings.Contains(raw, leak) {
+				t.Errorf("the commit carries %q", leak)
+			}
+		}
+		if got := readFile(t, marker); got != "first contents\n" {
+			t.Errorf("the hook's lazy fetch read %q", got)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_HookRedirectingStderr_LazyFetchCompletes: frames go
+// to their own descriptor, so a hook's `2>/dev/null` swallows none.
+func TestBrokeredGit_Relay_HookRedirectingStderr_LazyFetchCompletes(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		marker := filepath.Join(t.TempDir(), "hook-saw")
+		writeHook(t, checkout, "pre-commit", "git show "+h.first+":app.txt > "+ShellQuote(marker)+" 2>/dev/null\n")
+		run := l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+		if got := readFile(t, marker); got != "first contents\n" {
+			t.Errorf("the hook's lazy fetch read %q", got)
+		}
+		if strings.Contains(run.stdout+run.stderr, "ZCPCRED") {
+			t.Errorf("a frame reached the caller: stdout %q stderr %q", run.stdout, run.stderr)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce: a helper that
+// cannot write its frame — descriptor 4 closed — answers nothing at once
+// rather than waiting on an answer that never comes.
+func TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		result := filepath.Join(t.TempDir(), "result")
+		writeHook(t, checkout, "pre-commit", "s=$(date +%s); git show "+h.first+":app.txt >/dev/null 2>&1 4>&-; echo \"$? $(( $(date +%s) - s ))\" > "+ShellQuote(result)+"; exit 0\n")
+		start := time.Now()
+		l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+		if took := time.Since(start); took > 30*time.Second {
+			t.Errorf("the call took %s, want the frameless helper to give up at once", took)
+		}
+		fields := strings.Fields(readFile(t, result))
+		if len(fields) != 2 || fields[0] == "0" {
+			t.Fatalf("the hook's show = %q, want a failure without a credential", fields)
+		}
+		if took, _ := strconv.Atoi(fields[1]); took > 10 {
+			t.Errorf("the frameless show took %ds, want at once", took)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock: a hook that
+// starts two lazy fetches at once gets both answered right, one token shared.
+func TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, true, "acme/shop")
+		checkout := l.checkout(t, url)
+		dir := t.TempDir()
+		one, two := filepath.Join(dir, "one"), filepath.Join(dir, "two")
+		writeHook(t, checkout, "pre-commit", "git show "+h.first+":app.txt > "+ShellQuote(one)+" &\ngit show "+h.second+":lib.txt > "+ShellQuote(two)+" &\nwait\n")
+		l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+		if got := readFile(t, one); got != "first contents\n" {
+			t.Errorf("first lazy fetch read %q", got)
+		}
+		if got := readFile(t, two); got != "lib one\n" {
+			t.Errorf("second lazy fetch read %q", got)
+		}
+		if mints := l.minted(); len(mints) != 1 {
+			t.Errorf("HQ minted %+v, want one token shared", mints)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_RepoConfigProtocolExtAllow_StillRefused: the
+// checkout's `protocol.ext.allow=always` loses to GIT_ALLOW_PROTOCOL — an
+// ext:: remote fails without running its command.
+func TestBrokeredGit_Relay_RepoConfigProtocolExtAllow_StillRefused(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "config", "protocol.ext.allow", "always")
+		marker := filepath.Join(t.TempDir(), "ext-ran")
+		run := l.run(t, sh, checkout, l.relay(), "", "ls-remote", "ext::sh -c touch% "+marker)
+		if run.code == 0 {
+			t.Errorf("ls-remote ext:: exit 0, want refused")
+		}
+		if !strings.Contains(run.stderr, "transport 'ext' not allowed") {
+			t.Errorf("stderr = %q, want the ext transport refused", run.stderr)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Error("the ext:: command ran")
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_BundlePathInArgv_FileTransportAllowed: an absolute
+// .bundle path in argv allows the file transport, so a bundle copied into the
+// service is fetched; a plain local path stays refused.
+func TestBrokeredGit_Relay_BundlePathInArgv_FileTransportAllowed(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		src := t.TempDir()
+		l.git(t, src, "init", "-q", "-b", "main")
+		l.git(t, src, "commit", "-q", "--allow-empty", "-m", "from a bundle")
+		head := l.git(t, src, "rev-parse", "HEAD")
+		bundle := filepath.Join(t.TempDir(), "brought.bundle")
+		l.git(t, src, "bundle", "create", bundle, "main")
+		l.run(t, sh, checkout, l.relay(), "", "fetch", bundle, "main:refs/heads/from-bundle").mustSucceed(t, "fetch bundle")
+		if got := l.git(t, checkout, "rev-parse", "refs/heads/from-bundle"); got != head {
+			t.Errorf("from-bundle = %s, want %s", got, head)
+		}
+		run := l.run(t, sh, checkout, l.relay(), "", "fetch", src, "main:refs/heads/from-path")
+		if run.code == 0 || !strings.Contains(run.stderr, "transport 'file' not allowed") {
+			t.Errorf("fetch from a local path: exit %d, stderr %q; want the file transport refused", run.code, run.stderr)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_DeclinedHost_FailsWithoutEmptyPassword: a remote on
+// a host zcp does not answer fails with nothing sent — never an empty
+// password.
+func TestBrokeredGit_Relay_DeclinedHost_FailsWithoutEmptyPassword(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		var mu sync.Mutex
+		var sent []string
+		other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			sent = append(sent, r.Header.Get("Authorization"))
+			mu.Unlock()
+			w.Header().Set("WWW-Authenticate", `Basic realm="other"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		t.Cleanup(other.Close)
+		l.git(t, checkout, "remote", "add", "elsewhere", other.URL+"/team/app.git")
+		run := l.run(t, sh, checkout, l.relay(), "", "ls-remote", "elsewhere")
+		if run.code == 0 {
+			t.Error("ls-remote elsewhere exit 0, want a failure")
+		}
+		if !strings.Contains(run.stderr, "is not a remote zcp records for appdev") {
+			t.Errorf("stderr = %q, want zcp naming the remote it does not answer", run.stderr)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, a := range sent {
+			if a != "" {
+				t.Errorf("the declined host was sent %q, want no Authorization", a)
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigText:
+// a GitHub request naming no repository is declined with zcp's own reason —
+// never the helper config the mount fallback prints — and HQ is not asked.
+func TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigText(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, true, "acme/shop")
+		checkout := l.checkout(t, url)
+		ghHost := strings.TrimPrefix(l.gh.URL, "http://")
+		result := filepath.Join(t.TempDir(), "fill")
+		writeHook(t, checkout, "pre-commit", "printf 'protocol=http\\nhost="+ghHost+"\\n\\n' | git credential fill > "+ShellQuote(result)+" 2>/dev/null; echo \"rc=$?\" >> "+ShellQuote(result)+"; exit 0\n")
+		run := l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+		if got := readFile(t, result); strings.Contains(got, "password=") || strings.Contains(got, "rc=0") {
+			t.Errorf("a pathless GitHub request was answered: %q", got)
+		}
+		if !strings.Contains(run.stderr, "zcp git: ") || !strings.Contains(run.stderr, "no repository") {
+			t.Errorf("stderr = %q, want zcp's own reason", run.stderr)
+		}
+		for _, banned := range []string{"useHttpPath", "credential.https://github.com", "zcp hq git-credential", hq.GitHubHelperConfig} {
+			if strings.Contains(run.stderr, banned) {
+				t.Errorf("stderr carries the helper config text %q", banned)
+			}
+		}
+		if mints := l.minted(); len(mints) != 0 {
+			t.Errorf("HQ minted %+v for a pathless request", mints)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr: neither the remote
+// command (ssh's argv), nor the caller's stdout or stderr carries the Mate
+// credential, a minted token or the project key, across push, fetch, a lazy
+// read and HQ.
+func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, true, "acme/shop")
+		hqURL, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "remote", "add", "hq", hqURL)
+		relay := l.relay(url)
+		l.git(t, checkout, "commit", "-q", "--allow-empty", "-m", "work")
+		var runs []relayRun
+		for _, args := range [][]string{
+			{"push", "origin", "HEAD:refs/heads/feature"},
+			{"fetch", "origin"},
+			{"show", h.first + ":app.txt"},
+			{"ls-remote", "hq"},
+			{"push", "hq", "HEAD:refs/heads/feature"},
+		} {
+			runs = append(runs, l.run(t, sh, checkout, relay, "", args...).mustSucceed(t, strings.Join(args, " ")))
+		}
+		if len(l.minted()) == 0 {
+			t.Fatal("no token minted: the GitHub path was not exercised")
+		}
+		secrets := []string{relayLabCredential, relayLabKey, "ghs_FAKE0"}
+		for _, run := range runs {
+			for _, s := range secrets {
+				for _, c := range run.commands {
+					if strings.Contains(c, s) {
+						t.Errorf("the remote command carries %q", s)
+					}
+				}
+				if strings.Contains(run.stdout, s) || strings.Contains(run.stderr, s) {
+					t.Errorf("the caller's output carries %q", s)
+				}
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_PersistedHelperNeverRuns: helpers persisted in the
+// checkout's config — generic and URL-specific — never run on a relayed call.
+func TestBrokeredGit_Relay_PersistedHelperNeverRuns(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, true, "acme/shop")
+		checkout := l.checkout(t, url)
+		marker := filepath.Join(t.TempDir(), "persisted-ran")
+		l.git(t, checkout, "config", "credential.helper", "!f() { echo generic >> "+ShellQuote(marker)+"; }; f")
+		l.git(t, checkout, "config", "credential."+l.gh.URL+".helper", "!f() { echo url >> "+ShellQuote(marker)+"; }; f")
+		l.run(t, sh, checkout, l.relay(url), "", "show", h.first+":app.txt").mustSucceed(t, "show")
+		if _, err := os.Stat(marker); err == nil {
+			t.Errorf("a persisted helper ran: %q", readFile(t, marker))
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_WorktreeUnderTmp_UsesRecordAllowlist: a call in a
+// dev-side worktree below /tmp/ answers by the same records — its origin is
+// the checkout's — and declines what they do not name.
+func TestBrokeredGit_Relay_WorktreeUnderTmp_UsesRecordAllowlist(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, true, "acme/shop")
+		other, _ := l.repo(t, true, "acme/other")
+		checkout := l.checkout(t, url)
+		l.git(t, checkout, "remote", "add", "evil", other)
+		parent, err := os.MkdirTemp("/tmp", "zcp-relay-test-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(parent) })
+		wt := filepath.Join(parent, "wt-feature")
+		l.git(t, checkout, "worktree", "add", "-q", "--detach", wt, "HEAD")
+		if run := l.run(t, sh, checkout, l.relay(url), "", "-C", wt, "show", h.second+":lib.txt").mustSucceed(t, "show in worktree"); run.stdout != "lib one\n" {
+			t.Errorf("show in worktree = %q", run.stdout)
+		}
+		assertDeclined(t, l, l.run(t, sh, checkout, l.relay(url), "", "-C", wt, "fetch", "evil"), "acme/other.git")
+	})
+}
+
+// TestBrokeredGit_Relay_StdinTempDirRemoved: the directory the stdin payload
+// is read into is removed when the call ends, whether git succeeded or not.
+func TestBrokeredGit_Relay_StdinTempDirRemoved(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		for _, fail := range []bool{false, true} {
+			probe := "zcp-stdin-probe-" + relayRandHex(t)
+			rec := filepath.Join(t.TempDir(), "dir")
+			exit := "exit 0"
+			if fail {
+				exit = "exit 1"
+			}
+			writeHook(t, checkout, "pre-commit", "for d in /tmp/zcp-stdin.*; do if [ -f \"$d/in\" ] && grep -q "+probe+" \"$d/in\"; then echo \"$d\" > "+ShellQuote(rec)+"; fi; done\n"+exit+"\n")
+			run := l.run(t, sh, checkout, l.relay(), probe+"\n", "commit", "--allow-empty", "-F", "-")
+			if (run.code != 0) != fail {
+				t.Fatalf("commit (hook fails %v): exit %d\n%s", fail, run.code, run.stderr)
+			}
+			dir := strings.TrimSpace(readFile(t, rec))
+			if !strings.HasPrefix(dir, "/tmp/zcp-stdin.") {
+				t.Fatalf("the hook found the payload in %q, want /tmp/zcp-stdin.*", dir)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s still there after the call (hook fails %v): %v", dir, fail, err)
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_HelperText_SurvivesBothQuotingLayers: the one-line
+// helper, ShellQuoted into its -c value and again into the script the login
+// shell hands /bin/sh, reaches git byte for byte — and answers.
+func TestBrokeredGit_Relay_HelperText_SurvivesBothQuotingLayers(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, h := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		dir := t.TempDir()
+		helpers, read := filepath.Join(dir, "helpers"), filepath.Join(dir, "read")
+		writeHook(t, checkout, "pre-commit", "git config --get-all credential.helper > "+ShellQuote(helpers)+"\ngit show "+h.first+":app.txt > "+ShellQuote(read)+"\n")
+		l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+		lines := strings.Split(strings.TrimSuffix(readFile(t, helpers), "\n"), "\n")
+		if len(lines) != 2 || lines[0] != "" {
+			t.Fatalf("credential.helper values = %q, want the empty reset then the relay helper", lines)
+		}
+		nonce := regexp.MustCompile(`ZCPCRED-([0-9a-f]{16}) `).FindStringSubmatch(lines[1])
+		if nonce == nil {
+			t.Fatalf("helper %q names no nonce", lines[1])
+		}
+		if want := relayHelper(nonce[1]); lines[1] != want {
+			t.Errorf("git's helper = %q\nwant byte for byte %q", lines[1], want)
+		}
+		if got := readFile(t, read); got != "first contents\n" {
+			t.Errorf("the helper's answer read %q", got)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC: where `head`
+// takes no -c (a busybox build option), the payload is read with dd, still
+// byte for byte.
+func TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		l := newRelayLab(t)
+		url, _ := l.repo(t, false, "org/app-1/appdev")
+		checkout := l.checkout(t, url)
+		realHead, err := exec.LookPath("head")
+		if err != nil {
+			t.Skip("no head on PATH")
+		}
+		stub := t.TempDir()
+		refused := filepath.Join(t.TempDir(), "head-c-refused")
+		body := "#!/bin/sh\nfor a; do case \"$a\" in -c*) echo refused >> " + ShellQuote(refused) + "; echo 'head: illegal option -- c' >&2; exit 1;; esac; done\nexec " + ShellQuote(realHead) + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(stub, "head"), []byte(body), 0o755); err != nil { //nolint:gosec // G306: a stub executable
+			t.Fatal(err)
+		}
+		var payload strings.Builder
+		payload.WriteString("subject\n\n")
+		for i := 0; payload.Len() < 12<<10; i++ {
+			fmt.Fprintf(&payload, "body line %04d with 'quotes' and $x\n", i)
+		}
+		l.runEnv(t, sh, l.env(stub), checkout, l.relay(), payload.String(), "commit", "--allow-empty", "--cleanup=verbatim", "-F", "-").mustSucceed(t, "commit -F - via dd")
+		if _, err := os.Stat(refused); err != nil {
+			t.Fatal("the stub head was never asked for -c: the fallback was not exercised")
+		}
+		_, message, _ := strings.Cut(l.git(t, checkout, "cat-file", "commit", "HEAD"), "\n\n")
+		if message != strings.TrimSpace(payload.String()) {
+			t.Errorf("commit message differs from the payload (%d bytes vs %d)", len(message), len(payload.String()))
+		}
+	})
+}
+
+// --- offline: the helper alone, under each shell ----------------------------
+
+func relayRandHex(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(b)
+}
+
+// helperProc is the relay helper running as git runs it — `<helper> get`
+// in sh — its request on stdin, answers on descriptor 3, frames on 4.
+type helperProc struct {
+	cmd    *exec.Cmd
+	stdout bytes.Buffer
+	fd3    *os.File // the test's end: answers
+	frames chan string
+	done   chan error
+}
+
+// startHelper starts the helper of nonce under sh with env, asking for
+// protocol, host and path; closeFD4 starts it with descriptor 4 closed.
+func startHelper(t *testing.T, sh []string, nonce string, env []string, request string) *helperProc {
+	t.Helper()
+	ansR, ansW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	frR, frW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := strings.TrimPrefix(relayHelper(nonce), "!")
+	p := &helperProc{fd3: ansW, frames: make(chan string, 16), done: make(chan error, 1)}
+	p.cmd = exec.CommandContext(t.Context(), sh[0], append(slices.Clone(sh[1:]), "-c", helper+" get")...) //nolint:gosec // the helper under test
+	p.cmd.Stdin = strings.NewReader(request)
+	p.cmd.Stdout = &p.stdout
+	p.cmd.Env = env
+	p.cmd.ExtraFiles = []*os.File{ansR, frW}
+	if err := p.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = ansR.Close()
+	_ = frW.Close()
+	go func() {
+		scanner := bufio.NewScanner(frR)
+		for scanner.Scan() {
+			if line := scanner.Text(); strings.HasPrefix(line, "ZCPCRED-") {
+				p.frames <- line
+			}
+		}
+		close(p.frames)
+		_ = frR.Close()
+	}()
+	go func() { p.done <- p.cmd.Wait() }()
+	t.Cleanup(func() {
+		_ = ansW.Close()
+		_ = p.cmd.Process.Kill()
+		<-p.done
+		_ = os.Remove("/tmp/zcp-relay-" + nonce + ".lock")
+	})
+	return p
+}
+
+// frame waits for the helper's frame and answers its id and host.
+func (p *helperProc) frame(t *testing.T) (id, host string) {
+	t.Helper()
+	select {
+	case line, ok := <-p.frames:
+		if !ok {
+			t.Fatal("the helper wrote no frame")
+		}
+		f := strings.SplitN(line, " ", 5)
+		if len(f) < 5 {
+			t.Fatalf("frame %q: want ZCPCRED-<nonce> <id> <protocol> <host> <path>", line)
+		}
+		return f[1], f[3]
+	case <-time.After(30 * time.Second):
+		t.Fatal("no frame within 30s")
+	}
+	return "", ""
+}
+
+// wait waits for the helper to end and answers its exit code.
+func (p *helperProc) wait(t *testing.T) int {
+	t.Helper()
+	select {
+	case err := <-p.done:
+		p.done <- err
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return 0
+	case <-time.After(30 * time.Second):
+		t.Fatal("the helper did not end within 30s")
+	}
+	return -1
+}
+
+const helperRequest = "protocol=https\nhost=hq.example\npath=git/o/a/appdev.git\n\n"
+
+func helperEnv() []string { return []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C"} }
+
+// TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock: an answer for
+// another id — one a helper that gave up left — is discarded while the lock
+// is held, and the helper's own answer is the one it hands git.
+func TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		nonce := relayRandHex(t)
+		p := startHelper(t, sh, nonce, helperEnv(), helperRequest)
+		id, host := p.frame(t)
+		if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); err != nil {
+			t.Errorf("the helper wrote its frame without holding the lock: %v", err)
+		}
+		other, _ := strconv.Atoi(id)
+		fmt.Fprintf(p.fd3, "%d %s stale-user stale-pass\n%s %s mate own-FAKE\n", other+1, host, id, host)
+		if code := p.wait(t); code != 0 {
+			t.Errorf("helper exit %d", code)
+		}
+		if got := p.stdout.String(); got != "username=mate\npassword=own-FAKE\n" {
+			t.Errorf("helper answered %q, want its own answer", got)
+		}
+		if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the lock is still held after the helper ended: %v", err)
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_AnswerForOtherHost_IgnoredByHelper: an answer with
+// the helper's id but another host — a reused PID's — is never handed git.
+func TestBrokeredGit_Relay_AnswerForOtherHost_IgnoredByHelper(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		for _, then := range []string{"its own", "nothing"} {
+			nonce := relayRandHex(t)
+			p := startHelper(t, sh, nonce, helperEnv(), helperRequest)
+			id, host := p.frame(t)
+			fmt.Fprintf(p.fd3, "%s other.example wrong-user wrong-FAKE\n", id)
+			if then == "its own" {
+				fmt.Fprintf(p.fd3, "%s %s mate right-FAKE\n", id, host)
+			}
+			_ = p.fd3.Close()
+			if code := p.wait(t); code != 0 {
+				t.Errorf("then %s: helper exit %d", then, code)
+			}
+			want := ""
+			if then == "its own" {
+				want = "username=mate\npassword=right-FAKE\n"
+			}
+			if got := p.stdout.String(); got != want {
+				t.Errorf("then %s: helper answered %q, want %q", then, got, want)
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_HelperSignalled_LockRemovedExit129: a helper stopped
+// while it holds the lock removes it and exits 129.
+func TestBrokeredGit_Relay_HelperSignalled_LockRemovedExit129(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {
+			nonce := relayRandHex(t)
+			p := startHelper(t, sh, nonce, helperEnv(), helperRequest)
+			p.frame(t)
+			lock := "/tmp/zcp-relay-" + nonce + ".lock"
+			if _, err := os.Stat(lock); err != nil {
+				t.Fatalf("%s: the helper waits without holding the lock: %v", sig, err)
+			}
+			if err := p.cmd.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			if code := p.wait(t); code != 129 {
+				t.Errorf("%s: helper exit %d, want 129", sig, code)
+			}
+			if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s: the lock survived the signal: %v", sig, err)
+			}
+			if p.stdout.Len() != 0 {
+				t.Errorf("%s: helper answered %q", sig, p.stdout.String())
+			}
+		}
+	})
+}
+
+// TestBrokeredGit_Relay_LockBoundIsClockTimed: a helper waiting on another's
+// lock gives up 90 s by the clock after it started — `date +%s`, however few
+// times it has slept — writing no frame and leaving the lock alone.
+func TestBrokeredGit_Relay_LockBoundIsClockTimed(t *testing.T) {
+	t.Parallel()
+	relayEachShell(t, func(t *testing.T, sh []string) {
+		nonce := relayRandHex(t)
+		lock := "/tmp/zcp-relay-" + nonce + ".lock"
+		if err := os.Mkdir(lock, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(lock) })
+		stub := t.TempDir()
+		count := filepath.Join(t.TempDir(), "date-calls")
+		date := "#!/bin/sh\nn=$(cat " + ShellQuote(count) + " 2>/dev/null || echo 0)\nn=$((n + 1))\necho $n > " + ShellQuote(count) + "\ncase $n in 1) echo 1000;; 2) echo 1089;; *) echo 1091;; esac\n"
+		if err := os.WriteFile(filepath.Join(stub, "date"), []byte(date), 0o755); err != nil { //nolint:gosec // G306: a stub executable
+			t.Fatal(err)
+		}
+		env := []string{"PATH=" + stub + string(os.PathListSeparator) + os.Getenv("PATH"), "LC_ALL=C"}
+		p := startHelper(t, sh, nonce, env, helperRequest)
+		if code := p.wait(t); code != 0 {
+			t.Errorf("helper exit %d", code)
+		}
+		calls, _ := os.ReadFile(count)
+		if strings.TrimSpace(string(calls)) == "" {
+			t.Skip("this shell does not run date from PATH")
+		}
+		if got := strings.TrimSpace(string(calls)); got != "3" {
+			t.Errorf("the helper read the clock %s times, want 3: start, 89 s (still waiting), 91 s (gives up)", got)
+		}
+		if p.stdout.Len() != 0 {
+			t.Errorf("helper answered %q", p.stdout.String())
+		}
+		select {
+		case f, ok := <-p.frames:
+			if ok {
+				t.Errorf("the helper wrote a frame without the lock: %q", f)
+			}
+		default:
+		}
+		if _, err := os.Stat(lock); err != nil {
+			t.Errorf("the helper removed a lock it never held: %v", err)
+		}
+	})
+}
