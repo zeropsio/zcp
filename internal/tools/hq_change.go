@@ -359,12 +359,12 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 // fast-forward there is a no-op. ready: the change is described at HQ's
 // merge commit, which costs no new description.
 func corePushWords(number, landed int, branch string, route repoRoute, leases []string, ready bool) string {
-	ff := "git fetch origin && git merge --ff-only origin/" + branch
-	where := route.checkedOut(branch) + ": " + route.git("fetch origin", "merge --ff-only origin/"+branch)
+	ff := []string{"fetch origin", "merge --ff-only origin/" + branch}
+	where := route.checkedOut(branch) + ": " + route.git(ff...)
 	if len(leases) > 0 {
 		calls := make([]string, 0, len(leases))
 		for _, alias := range leases {
-			calls = append(calls, fmt.Sprintf("`ssh %s \"cd /var/www && %s\"`", alias, ff))
+			calls = append(calls, route.inLease(alias).git(ff...))
 		}
 		which := "in its lease"
 		if len(leases) > 1 {
