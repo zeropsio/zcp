@@ -571,6 +571,42 @@ func TestBrokeredGit_Allowlist_FromRecordsAndArgvURLsOnly(t *testing.T) {
 	}
 }
 
+// TestRunGitCmd_RelayedStdinRead_StoppedExit130: Ctrl-C while zcp git reads
+// a stdin that never ends — am with no file — stops it with exit 130 and one
+// line saying nothing ran, before any ssh call.
+func TestRunGitCmd_RelayedStdinRead_StoppedExit130(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeGitTestMeta(t, stateDir, hqWiredMeta())
+	ssh := &fakeGitSSH{}
+	deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+	deps.rt.MateEnabled = true
+	stdin, never := io.Pipe()
+	t.Cleanup(func() { _ = never.Close() })
+	deps.stdin = stdin
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	code := make(chan int, 1)
+	go func() { code <- runGitCmd(ctx, []string{"appdev", "am"}, deps) }()
+	select {
+	case c := <-code:
+		if c != 130 {
+			t.Errorf("exit = %d, want 130", c)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("zcp git kept reading stdin after Ctrl-C")
+	}
+	if len(ssh.calls) != 0 {
+		t.Errorf("ssh calls = %+v, want none", ssh.calls)
+	}
+	if msg := stderr.String(); !strings.HasPrefix(msg, "zcp git: ") || strings.Count(msg, "\n") != 1 || !strings.Contains(msg, "nothing ran") {
+		t.Errorf("stderr = %q, want one zcp git line saying nothing ran", msg)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+}
+
 // TestRunGitCmd_RelayedCall_RefusesBeforeSSH: on a relayed call, git's own
 // credential subcommands, a user -c that decides credentials or transport,
 // and stdin over the 1 MiB zcp forwards are refused with exit 2, before any

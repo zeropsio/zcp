@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"testing/iotest"
@@ -1878,6 +1879,46 @@ func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing
 				}
 			}
 		})
+	}
+}
+
+// countingRunner is an ssh seam that only counts the calls it was asked for.
+type countingRunner struct{ calls atomic.Int32 }
+
+func (c *countingRunner) ExecSSHStdio(context.Context, string, string, io.Reader, io.Writer, io.Writer) (int, error) {
+	c.calls.Add(1)
+	return 0, nil
+}
+
+// TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel: a call that reads
+// stdin — apply with no file — on a stdin that never ends is stopped by its
+// context at once, before anything runs in the service.
+func TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel(t *testing.T) {
+	t.Parallel()
+	stdin, never := io.Pipe()
+	t.Cleanup(func() { _ = never.Close() })
+	runner := &countingRunner{}
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := RunBrokeredGitRelayed(ctx, runner, "appdev", "/var/www", BrokeredGitArgs{Subcommand: "apply"}, BrokeredGitRelay{}, stdin, io.Discard, io.Discard)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrBrokeredGitStdinStopped) {
+			t.Errorf("RunBrokeredGitRelayed = %v, want stopped while reading stdin", err)
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("stopped after %s, want at once", took)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call kept reading stdin after it was stopped")
+	}
+	if n := runner.calls.Load(); n != 0 {
+		t.Errorf("%d ssh calls, want none", n)
 	}
 }
 
