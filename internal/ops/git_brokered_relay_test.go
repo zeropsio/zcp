@@ -579,6 +579,7 @@ type relayLab struct {
 	revokeAsked  []string      // every token a revoke named
 	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
 	revokeDelay  time.Duration // how long a revoke waits before answering
+	mintDelay    time.Duration // how long HQ takes to mint a token
 }
 
 // serveRevoke is GitHub's DELETE /installation/token, authenticated by the
@@ -744,6 +745,10 @@ func (l *relayLab) serveMint(t *testing.T, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	access := q.Get("access")
+	l.mu.Lock()
+	delay := l.mintDelay
+	l.mu.Unlock()
+	time.Sleep(delay)
 	l.mu.Lock()
 	l.mints = append(l.mints, relayMint{path: path, access: access})
 	if l.readOnly[key] && (access == hq.GitHubAccessWrite || access == hq.GitHubAccessWorkflows) {
@@ -1360,19 +1365,37 @@ func TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce(t *testing.T) {
 }
 
 // TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock: a hook that
-// starts two lazy fetches at once gets both answered right, one token shared.
+// starts two lazy fetches at once gets both answered right, one token
+// shared — while HQ takes its time minting, one helper finds the lock held
+// and waits its turn (a mkdir on PATH logs each attempt the lock refused).
 func TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock(t *testing.T) {
 	t.Parallel()
+	realMkdir, err := exec.LookPath("mkdir")
+	if err != nil {
+		t.Skip("no mkdir on PATH")
+	}
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
 			l := newRelayLab(t)
+			l.mu.Lock()
+			l.mintDelay = time.Second
+			l.mu.Unlock()
 			url, h := l.repo(t, true, "acme/shop")
 			checkout := l.checkout(t, url)
 			dir := t.TempDir()
 			one, two := filepath.Join(dir, "one"), filepath.Join(dir, "two")
+			held := filepath.Join(dir, "held")
+			stub := t.TempDir()
+			body := "#!/bin/sh\n" + ShellQuote(realMkdir) + " \"$@\" 2>/dev/null; rc=$?\ncase \"$*\" in *zcp-relay-*) [ $rc -eq 0 ] || echo held >> " + ShellQuote(held) + ";; esac\nexit $rc\n"
+			if err := os.WriteFile(filepath.Join(stub, "mkdir"), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt > "+ShellQuote(one)+" &\ngit show "+h.second+":lib.txt > "+ShellQuote(two)+" &\nwait\n")
-			l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			l.runEnv(t, sh, l.env(stub), checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			if _, err := os.Stat(held); err != nil {
+				t.Errorf("no helper ever found the lock held: the two fetches did not contend (%v)", err)
+			}
 			if got := readFile(t, one); got != "first contents\n" {
 				t.Errorf("first lazy fetch read %q", got)
 			}
@@ -1557,7 +1580,8 @@ func TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigTex
 // TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr: neither the remote
 // command (ssh's argv), nor the caller's stdout or stderr carries the Mate
 // credential, a minted token or the project key, across push, fetch, a lazy
-// read and HQ.
+// read and HQ — nor, after the calls, any file under the dev service's
+// $HOME, the checkout's .git, or what the relay makes in /tmp.
 func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -1595,6 +1619,26 @@ func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
 						t.Errorf("the caller's output carries %q", s)
 					}
 				}
+			}
+			left, _ := filepath.Glob("/tmp/zcp-relay-*")
+			stdinDirs, _ := filepath.Glob("/tmp/zcp-stdin.*")
+			roots := append(append([]string{l.home, filepath.Join(checkout, ".git")}, left...), stdinDirs...)
+			for _, root := range roots {
+				_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						return nil //nolint:nilerr // a file another test removes meanwhile is no leak
+					}
+					raw, err := os.ReadFile(p)
+					if err != nil {
+						return nil //nolint:nilerr // as above
+					}
+					for _, s := range secrets {
+						if bytes.Contains(raw, []byte(s)) {
+							t.Errorf("%s holds %q after the calls", p, s)
+						}
+					}
+					return nil
+				})
 			}
 		})
 	}
@@ -1728,7 +1772,7 @@ func TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine(t *testing.T) {
 			url, _ := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
 			stub := t.TempDir()
-			if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // G306: a stub executable
+			if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			before := l.git(t, checkout, "rev-parse", "HEAD")

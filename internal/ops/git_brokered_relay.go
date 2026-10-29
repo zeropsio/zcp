@@ -40,8 +40,9 @@ import (
 // record's RemoteURL, written from the checkout's live origin: HQ mints a
 // token for any repository the application mounts. An allowed remote is
 // answered as often as git asks within the call, from one token per
-// (repository, access) per call. GIT_ALLOW_PROTOCOL, the TLS pins and the
-// environment scrub are guardrails, not the boundary.
+// (repository, access) per call. GIT_ALLOW_PROTOCOL, the TLS and proxy
+// settings (which a URL-specific key in the checkout's config outranks) and
+// the environment scrub are guardrails, not the boundary.
 
 // BrokeredGitHQRepo is a repository in HQ: the application and its name, as
 // zcp's record of a wired pair holds them.
@@ -498,12 +499,21 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // descriptor 3 (answers) and its stderr as 4 (frames), removes what it made
 // when it ends, reads a forwarded stdin into a file, changes into dir and
 // runs git with zcp's helper alone — the empty helper first clears every
-// persisted one — the protocol pin and the TLS and proxy pins after the
-// user's -c, git's stdin the file or /dev/null. Every value is ShellQuoted.
+// persisted one — and the protocol pin after the user's -c, git's stdin the
+// file or /dev/null. Every value is ShellQuoted. `-c http.sslVerify=true`
+// and `-c http.proxy=` are guardrails only: a URL-specific
+// `http.<url>.sslVerify` or `http.<url>.proxy` in the checkout's config
+// outranks a generic -c; GIT_ALLOW_PROTOCOL does override every
+// `protocol.*` key.
 // Auto-gc and auto-maintenance run in the foreground: detached, they close
 // only descriptors 0-2, keep 3 and 4 — the session's — and hold the call
 // open until they finish. A passthrough call needs no such setting: its git
-// holds only 0-2.
+// holds only 0-2. Known limit: a process a hook leaves running in the
+// background holds 3 and 4 the same way, and the call lasts until it ends.
+// Running git without 3 and 4 and having the helper reopen the script's
+// through /proc/<pid>/fd does not work over sshd: the session's pipes are
+// root's, and the session user's reopen is refused (measured on alpine
+// 3.21 and ubuntu 24.04).
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
 	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
