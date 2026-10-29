@@ -288,6 +288,7 @@ flag off means
 | `zcp init` output | not one extra line — the step is not even registered (§2.1) |
 | readiness marker | not written |
 | git | untouched; zcp writes no `.gitignore` in any configuration (§6) |
+| code-server settings | the template, byte for byte — no `"git.enabled": false` (§6.8); a container whose flag is turned off converges back at its next `zcp init` (`TestConfigureVSCode_MateTurnedOff_GitSettingRemoved`) |
 
 `zcp init` is the reconciler for all of it, and it converges **both** directions: turning the flag
 off and restarting is a supported operation, not a state zcp only knows how to enter.
@@ -3866,6 +3867,104 @@ waits for more output or exit.
 
 Witnesses: `TestProjectClient_*`, `TestReconcileHQRepositories_PlainProject_*`,
 `TestRunGit_*`, and `TestGitEnv_DoesNotExposeAuthorizationThroughInheritedTracing`.
+
+### 6.8 A dev repository's git runs in its dev service
+
+`zcp git <host> [-c <key>=<value>]... [-C <dir under /tmp/>] <subcommand> [<args>...]` runs one
+git command in the dev service `host`, over ssh, in its checkout (the directory zcp's record says
+its deploys run in, else `/var/www`) or a cleaned `-C` path strictly below `/tmp/` (a dev-side
+worktree) — never in the zcp container, never on its sshfs mount (`cmd/zcp/git.go`,
+`internal/ops/git_brokered.go`). The remote command is `/bin/sh -c '<script>'` whatever the login
+shell; the script unsets git's tracing, TLS, askpass and redirecting variables and runs git with
+`GIT_TERMINAL_PROMPT=0`, every argument ShellQuoted. stdin, stdout, stderr and the exit code are
+git's (255 is ssh's own failure); `zcp git` prints nothing to stdout itself and runs before CLI
+telemetry. Ctrl-C or SIGTERM stops the ssh client with exit 130, saying the remote git may still be
+running and its lock clears when it finishes. Refused with exit 2 before any ssh call: a loopback
+or the container's own name, a name that is no hostname or lease alias, a call outside a
+container, a stage (naming its dev), a pool-keyed pair (naming the lease route), and any leading
+option but `-c` and one `-C`.
+
+**Relayed or plain.** In a Mate container every subcommand of a pair wired to an HQ repository is
+relayed, wired through or not (`isRelayedGit`): its checkout is a `blob:none` partial clone
+(§10.10, *A Mate's git*), so `checkout`, `show`, `log -p`, `worktree add` or a hook may fetch
+contents lazily and ask for a credential again and again. Every other call is the plain
+passthrough, with no helper. A relayed call also refuses, with exit 2, git's `credential`
+subcommands, a stdin over 1 MiB, and a user `-c` (named, never its value) under `credential.`,
+`http.`, `url.`, `protocol.`, `remote.`, `include.`, `includeif.`, `uploadpack.` or `alias.`, or
+`core.sshCommand`, `core.askPass`, `core.gitProxy`, `core.fsmonitor`, `fetch.parallel` or
+`submodule.fetchJobs`, matched in any letter case.
+
+**The relay** (`internal/ops/git_brokered_relay.go`). The script keeps the session's stdin as
+descriptor 3 (answers) and a dup of its stderr as 4 (frames, so a hook's `2>/dev/null` swallows
+none). A stdin the argv asks git to read is sent first and staged whole into
+`/tmp/zcp-stdin.XXXXXX` before git starts; any other call's git reads `/dev/null`, so 3 carries
+answers only. git runs with `-c credential.helper=`, clearing every persisted helper, then zcp's
+one-line get-only POSIX helper, `credential.useHttpPath=true`, and `gc.autoDetach=false` and
+`maintenance.autoDetach=false` — a detached auto-gc keeps 3 and 4 and would hold the session —
+under `GIT_ALLOW_PROTOCOL` (https, HQ's scheme, `file` only for an absolute `.bundle` path in
+argv), which overrides every `protocol.*` key in the checkout's config. The helper takes the call's
+lock, `mkdir /tmp/zcp-relay-<nonce>.lock`, giving up 90 s by the clock (`date +%s`) after it began,
+and writes `ZCPCRED-<nonce> <pid> <protocol> <host> <path>` on 4. zcp takes a frame out of ssh's
+stderr only at a line's start with this call's nonce, never relays it, and writes exactly one
+answer line per frame with a readable id: `<pid> <host> <user> <password>`, `<pid> <host> - -`
+(declined), or `<pid> - - -` (malformed); a line over 64 KiB is relayed as git's output, never
+parsed, and a frame grown past it is answered as malformed. The helper takes only an answer
+echoing its pid and host, hands git nothing for a decline, so git never sends an empty password,
+and frees the lock when it ends or is signalled. A call says at most 32 distinct lines.
+
+When git exits the script writes `ZCPDONE-<nonce> <exit>` on 4, and the call ends there: zcp
+answers no further frame, closes 3 so a waiting helper frees the lock, revokes the call's tokens at
+once, ends a session still open a second later (a process a hook left running may hold it), and
+returns the marker's exit code.
+
+**A relay frame is answered only from zcp-side records and the call's own argv — never from the
+dev checkout's config, which the dev service writes, nor from `ServiceMeta.RemoteURL`, written from
+the checkout's live origin: HQ mints for any repository the application mounts.** HQ's own origin,
+from the Mate's identity, is answered for any path with the Mate's Git credential (§3.3).
+`https://github.com` is answered for the record's HQ origin, which zcp writes from HQ's state (while
+it names none, HQ's live origin of the record's repository, read once), and for a URL a fetch, pull,
+push, ls-remote or clone names as a positional argument. A remote name, a `url.insteadOf` rewrite
+and a URL anywhere else in argv count for nothing; everything else is declined and said once.
+
+**Tokens and access.** For a GitHub repository zcp asks HQ, as the Mate (§6.6), `GET
+/api/mate/git-credential?host=github.com&path=<owner>/<name>&access=<access>` with the path in
+HQ's canonical form (lower-cased, no `.git`; a path that is no `owner/name` is declined unasked),
+once per (repository, access) per call, and answers git with that token as often as git asks.
+Access is decided on the call's first GitHub request: `read` for any call that is no push; for a
+push `write`, or `workflows` when a commit it would send touches `.github/workflows/` or what it
+sends cannot be resolved (tags, a force, a deletion, a pattern, over 1000 commits, a failed check),
+read by relayed `rev-list` and `diff-tree --root -m` calls on commits and trees only. A push only
+HQ answers runs no check; a push a hook starts inside another call gets `read`. HQ's `bad_access`
+and `read_only_remote` are declines naming the repository, never retried with another access.
+Each token is revoked when the call ends, also when it was cancelled — `DELETE
+/installation/token` at GitHub's API on a detached context, best effort, a failure one stderr line
+naming the repository, never the token. The Mate's HQ credential is never revoked. No credential
+reaches ssh's argv, the caller's stdout or stderr, or a file the call leaves in the dev service.
+
+**Residual risk.** Code the call starts in the dev service — a hook, an alias, what a hook runs —
+inherits descriptors 3 and 4 and can ask, while the call lasts, for what the call is answered with:
+the pair's GitHub token at the call's access, and the Mate's HQ credential, which covers every HQ
+repository of the application (new exposure for a pair not wired through).
+
+**What stays.** Nothing is removed: `zcp hq git-credential` and the helpers persisted in a
+checkout's `.git/config` keep working; a relayed call clears them for itself, so there they are
+inert. No agent guidance names `zcp git` yet. In a Mate container code-server's user settings carry
+`"git.enabled": false`, so its Git never opens the `/var/www/<host>` mounts (§2.0). A remote side
+killed before its traps run can leave an empty `/tmp/zcp-relay-<nonce>.lock` or a
+`/tmp/zcp-stdin.XXXXXX` holding the caller's own stdin, never a credential; a stopped call's
+`index.lock` clears when its git ends, and nothing tells an agent to delete it. After a `zcp git`
+that changes files, the mount's directory listings can show the old state for up to the 20 s of
+§6.5.
+
+Witnesses: `TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined`,
+`TestBrokeredGit_Relay_RemoteURLRecordIgnored`, `TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr`,
+`TestBrokeredGit_Relay_PartialClone_LazyShowCheckoutWorktreeAnswered`,
+`TestBrokeredGit_Relay_PersistedHelperNeverRuns`,
+`TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall`,
+`TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext`,
+`TestBrokeredGitFrames_EveryFrameWithReadableId_GetsExactlyOneAnswer`, `TestBrokeredGit_Access_*`,
+`TestRunGitCmd_*`, and `TestConfigureVSCode_MateTurnedOff_GitSettingRemoved`; the relay tests run
+the real script against real git under `/bin/sh` and, where installed, dash and busybox `sh`.
 
 ## 7. The fork
 

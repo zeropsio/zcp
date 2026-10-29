@@ -32,7 +32,7 @@ Read the home before changes:
 - `docs/spec-oss-port-flow.md` — foreign OSS porting gate.
 - `docs/spec-dataconsole.md` — data surfaces/write authority/families/fidelity/install.
 - `docs/spec-dataconsole-testing.md` — proof coverage/matrix/live lanes/versions.
-- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
+- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; `zcp git` in the dev service, relayed credentials (§6.8); trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
 - `docs/spec-telemetry.md` — ingest/trusted IP.
 - `schema.URLs` — ZCP_API_HOST-derived live schemas (`schema.CanonicalAPIHost` for dev); `internal/platform/errors.go` — error catalog.
 
@@ -90,6 +90,7 @@ Read the home before new call sites:
 - Tool 2nd return stays nil; structuredContent strips guidance; use text envelopes (`docs/spec-mate.md` §1, `TestNoStructuredContentOnToolResults`).
 - Gate every Mate effect on runtime.Info.MateEnabled, including OFF convergence (`docs/spec-mate.md` §2.0, `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`).
 - Unknown mate serve flags are fatal; use LaunchEnvLines for settings older bundles lack (`docs/spec-mate.md` §2.2, `TestServeArgv_FlagsAreContract1`, `TestStart_Mate_Argv`).
+- A `zcp git` relay frame is answered only from zcp-side records and the call's own argv, never the dev checkout's config or ServiceMeta.RemoteURL; HQ mints for any repository the application mounts (`docs/spec-mate.md` §6.8, `TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined`).
 - A new zcp-devsup ctl verb or flag is a capability: send it only when `ctl version` lists it; pool images pin older supervisors whose ctl fails on what it does not know (`TestDevServer_SupervisorWithoutEnvCapability_NotSentEnv`).
 - JSON stdout only, debug stderr; cmd/ CLI exempt (`TestNoStdoutOutsideJSONPath`).
 - tools/eval/cmd call ops.*, never client ListServices/GetServiceEnv/GetProjectEnv (`TestNoDirectClientCallsInToolsEvalCmd`).
