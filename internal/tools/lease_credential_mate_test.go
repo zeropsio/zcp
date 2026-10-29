@@ -50,7 +50,8 @@ func assertCredentialContract(t *testing.T, text string, mate bool, pools []stri
 		}
 		return
 	}
-	contract := text[strings.Index(text, "This credential is a user-held secret"):]
+	_, rest, _ := strings.Cut(text, "This credential is a user-held secret")
+	contract := "This credential is a user-held secret" + rest
 	for _, want := range []string{"GIT_TOKEN", "Mate's vault does not show", "Never ask for it in the chat", "in Zerops", "a token with access to the repository", "then retry", "NEVER generate, guess, or mutate a token"} {
 		if !strings.Contains(contract, want) {
 			t.Errorf("the Mate contract lacks %q: %s", want, contract)

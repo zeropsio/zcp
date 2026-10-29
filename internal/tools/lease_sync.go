@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -76,13 +77,29 @@ func corePushSyncRefusal(err error, stateDir, address, alias string, read func()
 	return err
 }
 
+// leaseSyncSourcePools is the pool of the lease alias a sync pushed from, as
+// zcp's record names it, for a Mate's credential contract (mate:
+// runtime.Info.MateEnabled); none outside a Mate, where the record is not
+// read, or without a record.
+func leaseSyncSourcePools(mate bool, stateDir, alias string) []string {
+	if !mate {
+		return nil
+	}
+	info, ok, err := ops.LeaseTarget(stateDir, alias)
+	if err != nil || !ok {
+		return nil
+	}
+	return []string{info.Pool}
+}
+
 // leaseSyncNext is what a sync's result tells the agent to do next: restart
 // each server nothing reloads (a runtime entry) on a lease that moved, and look at
 // each lease the sync left as it was (its note says why); a credential a
-// lease lacks is the user's to give.
-func leaseSyncNext(v ops.LeaseSyncView) string {
+// lease lacks is the user's to give — inside a Mate (mate) on the pool of
+// each lease that lacks it (matePoolCredentialContract).
+func leaseSyncNext(v ops.LeaseSyncView, mate bool) string {
 	restarts := make([]string, 0, len(v.Members))
-	var left []string
+	var left, credentialPools []string
 	credential := false
 	for _, m := range v.Members {
 		for _, name := range m.UnwatchedServers {
@@ -93,7 +110,10 @@ func leaseSyncNext(v ops.LeaseSyncView) string {
 		default:
 			left = append(left, m.Alias+" ("+m.Outcome+")")
 		}
-		credential = credential || credentialErrorCodes[m.Code]
+		if credentialErrorCodes[m.Code] {
+			credential = true
+			credentialPools = append(credentialPools, m.Pool)
+		}
 	}
 	var next []string
 	if len(restarts) > 0 {
@@ -103,7 +123,7 @@ func leaseSyncNext(v ops.LeaseSyncView) string {
 		next = append(next, "Not fast-forwarded, left as they were (each lease's note says why and what to do): "+strings.Join(left, ", ")+".")
 	}
 	if credential {
-		next = append(next, credentialUserOwnedContract)
+		next = append(next, cmp.Or(matePoolCredentialContract(mate, credentialPools), credentialUserOwnedContract))
 	}
 	if len(v.Members) == 0 {
 		next = append(next, "No other lease holds branch "+v.Branch+"; origin has it at "+shortCommit(v.Commit)+".")
