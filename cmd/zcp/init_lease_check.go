@@ -19,10 +19,11 @@ func initOptions() []zcpinit.Option {
 	return []zcpinit.Option{zcpinit.WithLeaseCheck(initLeaseCheck(resolveInitLeaseDeps))}
 }
 
-// initLeaseCheck is the lease check `zcp init` hands its lease restore:
+// initLeaseCheck is the lease check `zcp init` hands its lease restore, and
+// the one `zcp git` asks before it reaches a lease (gitLeaseTarget):
 // ops.LeaseTargetChecked — the one every tool that reaches a lease's container
 // asks — over the API client, project and orchestrators resolve builds, with
-// the records in the state dir the restore reads. They are built on the first
+// the records in the state dir the caller reads. They are built on the first
 // check, so a container with no lease to mount never reaches the API, and
 // once, however many leases ask at once. A client that cannot be built leaves
 // every lease unverified, the refusal saying why; never lost.

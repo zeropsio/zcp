@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -212,6 +214,192 @@ func TestGitHubHelperConfig_OnlyZcpAnswersGitHub(t *testing.T) {
 	got := run("protocol=https\nhost=github.com\npath=acme/app.git\n\n", "git credential fill")
 	if !strings.Contains(got, "password=minted") || strings.Contains(got, "persons-token") {
 		t.Errorf("git credential fill = %q, want only the minted token", got)
+	}
+}
+
+// TestRevokeGitHubToken_SendsDeleteWithTheToken: a token minted for one call
+// is revoked as HQ revokes the tokens it mints — `DELETE /installation/token`
+// at GitHub's API, authenticated by the token itself; GitHub's 204 and its
+// 401 (already gone) end it, anything else is an error that never carries
+// the token.
+func TestRevokeGitHubToken_SendsDeleteWithTheToken(t *testing.T) {
+	t.Parallel()
+	const token = "ghs_FAKErevoke0001"
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"revoked", http.StatusNoContent, false},
+		{"already gone", http.StatusUnauthorized, false},
+		{"GitHub failing", http.StatusInternalServerError, true},
+		{"forbidden", http.StatusForbidden, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var asked atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				asked.Add(1)
+				if r.Method != http.MethodDelete || r.URL.Path != "/installation/token" {
+					t.Errorf("asked %s %s, want DELETE /installation/token", r.Method, r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+					t.Errorf("Authorization = %q, want the token as a bearer", got)
+				}
+				if got := r.Header.Get("Accept"); got != "application/vnd.github+json" {
+					t.Errorf("Accept = %q", got)
+				}
+				if got := r.Header.Get("X-GitHub-Api-Version"); got != "2022-11-28" {
+					t.Errorf("X-GitHub-Api-Version = %q", got)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(srv.Close)
+			err := RevokeGitHubToken(context.Background(), srv.Client(), srv.URL, token)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("RevokeGitHubToken = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), token) {
+				t.Errorf("the error carries the token: %v", err)
+			}
+			if asked.Load() != 1 {
+				t.Errorf("GitHub asked %d times, want once", asked.Load())
+			}
+		})
+	}
+	t.Run("GitHub unreachable", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.NotFoundHandler())
+		addr := srv.URL
+		srv.Close()
+		err := RevokeGitHubToken(context.Background(), http.DefaultClient, addr, token)
+		if err == nil || strings.Contains(err.Error(), token) {
+			t.Errorf("RevokeGitHubToken against a closed server = %v, want an error without the token", err)
+		}
+	})
+	if GitHubAPIOrigin != "https://api.github.com" {
+		t.Errorf("GitHubAPIOrigin = %q, want GitHub's REST API", GitHubAPIOrigin)
+	}
+}
+
+// accessHQ is an HQ minting GitHub tokens that records the access each mint
+// asked for — "<none>" when the query carried no access at all — answering
+// status and body.
+func accessHQ(t *testing.T, status int, body string) (*httptest.Server, *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mate/git-credential" || r.Header.Get("Authorization") != "Project secret" {
+			t.Errorf("asked %s as %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		access := "<none>"
+		if values, ok := r.URL.Query()["access"]; ok {
+			access = strings.Join(values, ",")
+		}
+		mu.Lock()
+		asked = append(asked, access)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &asked
+}
+
+const githubShopRequest = "protocol=https\nhost=github.com\npath=acme/shop.git\n\n"
+
+// TestGitHubCredentialFor_SendsAccess: a token asked for read, write or
+// workflows carries that access on HQ's query; none asked sends none.
+func TestGitHubCredentialFor_SendsAccess(t *testing.T) {
+	t.Parallel()
+	for _, access := range []string{GitHubAccessRead, GitHubAccessWrite, GitHubAccessWorkflows, ""} {
+		srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEaccess"}`)
+		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+		client, err := Open(srv.Client(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := client.GitHubCredentialFor(context.Background(), "acme/shop.git", access)
+		if err != nil || got.Password != "ghs_FAKEaccess" {
+			t.Errorf("GitHubCredentialFor(%q) = %v, %v", access, got.Username, err)
+		}
+		want := access
+		if access == "" {
+			want = "<none>"
+		}
+		if len(*asked) != 1 || (*asked)[0] != want {
+			t.Errorf("GitHubCredentialFor(%q) asked HQ with access %q, want %q", access, *asked, want)
+		}
+		answer, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), access)
+		if err != nil || answer.Password != "ghs_FAKEaccess" {
+			t.Errorf("AnswerGitFor(%q) = %v", access, err)
+		}
+		if len(*asked) != 2 || (*asked)[1] != want {
+			t.Errorf("AnswerGitFor(%q) asked HQ with access %q, want %q", access, *asked, want)
+		}
+	}
+}
+
+// TestGitHubCredentialFor_BadAccess_Declined: HQ refusing the access asked
+// (400 bad_access) is a decline naming it — never a password.
+func TestGitHubCredentialFor_BadAccess_Declined(t *testing.T) {
+	t.Parallel()
+	srv, asked := accessHQ(t, http.StatusBadRequest, `{"code":"git_credential_refused","reason":"bad_access"}`)
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+	client, err := Open(srv.Client(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GitHubCredentialFor(context.Background(), "acme/shop.git", GitHubAccessRead); !refusedAs(err, "git_credential_refused") {
+		t.Errorf("GitHubCredentialFor = %v, want HQ's refusal", err)
+	}
+	got, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), GitHubAccessRead)
+	var declined *DeclinedError
+	if !errors.As(err, &declined) || !strings.Contains(declined.Reason, "bad_access") || got.Password != "" {
+		t.Errorf("AnswerGitFor = %q, %v; want a decline naming bad_access", got.Password, err)
+	}
+	if len(*asked) != 2 {
+		t.Errorf("HQ asked %d times, want once per call", len(*asked))
+	}
+}
+
+// TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt: a push to a
+// remote HQ keeps connected with a person's token (409 read_only_remote) is
+// declined saying the repository is read-only for this Mate — and HQ is not
+// asked again with another access.
+func TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt(t *testing.T) {
+	t.Parallel()
+	for _, access := range []string{GitHubAccessWrite, GitHubAccessWorkflows} {
+		srv, asked := accessHQ(t, http.StatusConflict, `{"code":"git_credential_refused","reason":"read_only_remote"}`)
+		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+		got, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), access)
+		var declined *DeclinedError
+		if !errors.As(err, &declined) || got.Password != "" {
+			t.Fatalf("AnswerGitFor(%s) = %q, %v; want a decline", access, got.Password, err)
+		}
+		if !strings.Contains(declined.Reason, "read-only for this Mate") || !strings.Contains(declined.Reason, "github.com/acme/shop.git") {
+			t.Errorf("AnswerGitFor(%s) reason = %q, want it to name the repository as read-only for this Mate", access, declined.Reason)
+		}
+		if !slices.Equal(*asked, []string{access}) {
+			t.Errorf("HQ asked with %q, want once with %q and no retry", *asked, access)
+		}
+	}
+}
+
+// TestAnswerGit_StillSendsNoAccess: the `zcp hq git-credential` fallback
+// asks HQ for today's token, with no access on the query.
+func TestAnswerGit_StillSendsNoAccess(t *testing.T) {
+	t.Parallel()
+	srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEbroad"}`)
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+	got, err := AnswerGit(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client())
+	if err != nil || got.Password != "ghs_FAKEbroad" {
+		t.Fatalf("AnswerGit = %v", err)
+	}
+	if !slices.Equal(*asked, []string{"<none>"}) {
+		t.Errorf("AnswerGit asked HQ with access %q, want none", *asked)
 	}
 }
 

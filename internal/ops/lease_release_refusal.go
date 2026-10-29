@@ -97,7 +97,7 @@ func unsavedWorkOf(ctx context.Context, d LeaseDeps, alias string, w unsavedWork
 // counts — every local branch and HEAD, none origin's branches reach — newest
 // first, the first leaseGuardFileLimit as "<short sha> <subject>".
 func leaseUnpushedListCommand() string {
-	wd := shellQuote(leaseWorkDir)
+	wd := shellQuote(LeaseWorkDir)
 	log := " log --format=" + shellQuote("%h %s") + " -n " + strconv.Itoa(leaseGuardFileLimit)
 	return "if " + leaseGitRead + wd + " rev-parse -q --verify HEAD >/dev/null 2>&1; then " +
 		leaseGitRead + wd + log + " --branches HEAD --not --remotes=origin; else " +

@@ -245,6 +245,87 @@ func TestExecSSHStdin_WritesTheSessionInput_NeverTheArgv(t *testing.T) {
 	}
 }
 
+// TestExecSSHStdio_StreamsBothWaysAndReturnsExitCode: ExecSSHStdio hands the
+// caller's stdin to the remote command and its stdout and stderr back apart,
+// byte for byte (no tty: -T), and returns the remote command's exit code as a
+// value — a non-zero exit is the command's answer, not an error. A call its
+// context stops says so in its error and ends promptly.
+//
+// non-parallel: t.Setenv puts a fake ssh first on PATH.
+func TestExecSSHStdio_StreamsBothWaysAndReturnsExitCode(t *testing.T) {
+	bin := t.TempDir()
+	argv := filepath.Join(t.TempDir(), "argv")
+	// The fake records its argv one per line, then runs its last argument in
+	// sh with its own stdio, as sshd runs the command.
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SSH_ARGV\"\nfor a; do cmd=$a; done\nexec sh -c \"$cmd\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SSH_ARGV", argv)
+	d := NewSystemSSHDeployer()
+
+	// Every byte value, NUL and CR LF among them, which a tty would rewrite.
+	input := make([]byte, 1<<16)
+	for i := range input {
+		input[i] = byte(i*7 + i/256)
+	}
+	for _, tc := range []struct {
+		name     string
+		command  string
+		wantExit int
+	}{
+		{"exit 0", `cat; printf 'to stderr' >&2`, 0},
+		{"exit 3", `cat; printf 'to stderr' >&2; exit 3`, 3},
+		{"exit 128", `cat; printf 'to stderr' >&2; exit 128`, 128},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exit, err := d.ExecSSHStdio(context.Background(), "appdev", tc.command, bytes.NewReader(input), &stdout, &stderr)
+			if err != nil {
+				t.Fatalf("ExecSSHStdio: %v", err)
+			}
+			if exit != tc.wantExit {
+				t.Errorf("exit = %d, want %d", exit, tc.wantExit)
+			}
+			if !bytes.Equal(stdout.Bytes(), input) {
+				t.Errorf("stdout carried %d bytes, want the %d bytes of stdin, byte for byte", stdout.Len(), len(input))
+			}
+			if stderr.String() != "to stderr" {
+				t.Errorf("stderr = %q, want %q alone", stderr.String(), "to stderr")
+			}
+		})
+	}
+
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if lines[0] != "-T" {
+		t.Errorf("ssh argv = %q, want -T first: no tty may rewrite the streams", lines)
+	}
+	for _, want := range []string{"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null", "LogLevel=ERROR", "appdev"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("ssh argv = %q, want %q", lines, want)
+		}
+	}
+
+	t.Run("stopped by its context says so", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(200*time.Millisecond, cancel)
+		start := time.Now()
+		var stdout, stderr bytes.Buffer
+		_, err := d.ExecSSHStdio(ctx, "appdev", "sleep 30", nil, &stdout, &stderr)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("ExecSSHStdio stopped by its context = %v, want an error carrying context.Canceled", err)
+		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Errorf("ExecSSHStdio took %s after its context stopped, want promptly", elapsed)
+		}
+	})
+}
+
 // TestExecSSHStdinWithin_TakesItsOwnCeiling: a call that names its ceiling is
 // stopped at that ceiling, not at the 5 min every other foreground call has —
 // shorter, as here, or longer, as a push's upload takes (docs/spec-workflows.md

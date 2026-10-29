@@ -19,8 +19,10 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// leaseWorkDir is where a leased container keeps its code.
-const leaseWorkDir = "/var/www"
+// LeaseWorkDir is where a leased container keeps its code: the checkout an
+// acquire puts on the lease's branch, where its supervisor runs and where
+// `zcp git` on its alias runs git.
+const LeaseWorkDir = "/var/www"
 
 // leaseDefaultBranch is the branch an empty branch means, and the one a new
 // branch is cut from (DP-6).
@@ -549,7 +551,7 @@ type leaseCheckedOut struct {
 func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
 	tokenScope, bind := leaseTokenScope(d.StateDir, rec.PoolHostname, hqURL, repo)
-	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(leaseWorkDir, repo, branch, base, from, hqURL, tokenScope))
+	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(LeaseWorkDir, repo, branch, base, from, hqURL, tokenScope))
 	if err == nil {
 		if bind {
 			_ = storePoolTokenScope(d.StateDir, rec.PoolHostname, tokenScope)
@@ -566,7 +568,7 @@ func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, bran
 		code, suggestion = platform.ErrPrerequisiteMissing, foreignHostSuggestion(repoScope, tokenScope)
 	}
 	pe := platform.NewPlatformError(code,
-		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), leaseWorkDir, branch, repo), suggestion)
+		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), LeaseWorkDir, branch, repo), suggestion)
 	pe.Cause = err
 	return leaseCheckedOut{}, pe
 }
@@ -813,7 +815,7 @@ const leaseGitRead = "GIT_OPTIONAL_LOCKS=0 git -C "
 // and the status read (leaseActivityCommand) both run it, so they agree on
 // what is unsaved.
 func leaseUnsavedFilesCommand() string {
-	return leaseGitRead + shellQuote(leaseWorkDir) + " status --porcelain"
+	return leaseGitRead + shellQuote(LeaseWorkDir) + " status --porcelain"
 }
 
 // leaseUnpushedCommand is the guard's second read: how many commits are on no
@@ -824,7 +826,7 @@ func leaseUnsavedFilesCommand() string {
 // commit yet, or an orphan branch) is no revision, while the branches still
 // count — 0 in a checkout with no commit at all.
 func leaseUnpushedCommand() string {
-	wd := shellQuote(leaseWorkDir)
+	wd := shellQuote(LeaseWorkDir)
 	return "if " + leaseGitRead + wd + " rev-parse -q --verify HEAD >/dev/null 2>&1; then " +
 		leaseGitRead + wd + " rev-list --count --branches HEAD --not --remotes=origin; else " +
 		leaseGitRead + wd + " rev-list --count --branches --not --remotes=origin; fi"
@@ -912,7 +914,7 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // origin's branches — nothing else in the checkout moves — authenticating
 // through the helper the lease's checkout persisted (DP-6).
 func leaseGuardFetchCommand() string {
-	return "GIT_TERMINAL_PROMPT=0 git -C " + shellQuote(leaseWorkDir) + " fetch -q --prune origin"
+	return "GIT_TERMINAL_PROMPT=0 git -C " + shellQuote(LeaseWorkDir) + " fetch -q --prune origin"
 }
 
 // compareWithOrigin counts the commits on no remote branch (w.unpushed) again

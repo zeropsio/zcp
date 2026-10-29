@@ -419,7 +419,7 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	// The pool's GIT_TOKEN answers the scope its default repository or an
 	// earlier lease bound it to; a clone never binds it (repo "").
 	tokenScope, _ := leaseTokenScope(d.StateDir, rp.svc.Name, d.hqAddress(), "")
-	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(leaseWorkDir, repo, d.hqAddress(), tokenScope))
+	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, d.hqAddress(), tokenScope))
 	if err != nil {
 		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)
 		return out

@@ -26,6 +26,9 @@ const (
 	// streamStderrKeep is how much of a streamed command's stderr — its
 	// last bytes — a failed run keeps for its error.
 	streamStderrKeep = 64 << 10
+	// sshStdioWaitDelay is how long ExecSSHStdio keeps copying a stream that
+	// is no *os.File once ssh has ended, or after its context stopped it.
+	sshStdioWaitDelay = 2 * time.Second
 )
 
 // SystemSSHDeployer implements ops.SSHDeployer using SSH to sibling Zerops containers.
@@ -156,6 +159,36 @@ func (d *SystemSSHDeployer) StreamSSH(ctx context.Context, hostname, command str
 		return &SSHExecError{Hostname: hostname, Output: stderr.String(), Err: err}
 	}
 	return nil
+}
+
+// ExecSSHStdio runs command on hostname with the caller's stdin, stdout and
+// stderr wired to the session — the remote command reads the one and its two
+// outputs arrive apart, byte for byte, as they are written (no tty: -T) — and
+// returns the exit code ssh ended with: the remote command's, or ssh's own 255.
+// A non-zero exit is the command's answer, not an error. It has no deadline
+// of its own — a push of a large repository takes as long as it takes — so
+// ctx alone stops it, and a call ctx stopped says so in its error. An *os.File
+// stream is handed to ssh as it is; any other is copied, and stops being
+// waited for sshStdioWaitDelay after ssh ends.
+func (d *SystemSSHDeployer) ExecSSHStdio(ctx context.Context, hostname, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	cmd := exec.CommandContext(ctx, "ssh", sshArgsStream(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.WaitDelay = sshStdioWaitDelay
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// The client was killed for its context, not ended by the remote command.
+		return -1, &SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (%w)", ctxErr, err)}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, &SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh did not complete: %w", err)}
 }
 
 // tailBuffer keeps the last keep bytes written to it.

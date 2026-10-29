@@ -206,7 +206,7 @@ func leasePrepareCommand(workDir, prepare string) string {
 // none.
 func readLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias, unread string) (leaseCheckoutRead, string) {
 	readCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
-	out, err := ssh.ExecSSH(readCtx, alias, leaseDeclarationCommand(leaseWorkDir))
+	out, err := ssh.ExecSSH(readCtx, alias, leaseDeclarationCommand(LeaseWorkDir))
 	cancel()
 	if err != nil {
 		return leaseCheckoutRead{}, fmt.Sprintf("zcp could not read the checked-out %s, %s (%s)", devsup.DeclarationPath, unread, sshFailureText(err))
@@ -238,7 +238,7 @@ func runLeasePrepare(ctx context.Context, ssh SSHDeployer, alias, prepare string
 	runCtx, cancel := context.WithTimeout(ctx, leasePrepareTimeout)
 	defer cancel()
 	begun := time.Now()
-	out, err := ssh.ExecSSH(runCtx, alias, leasePrepareCommand(leaseWorkDir, prepare))
+	out, err := ssh.ExecSSH(runCtx, alias, leasePrepareCommand(LeaseWorkDir, prepare))
 	p := &LeasePrepare{Command: prepare, OK: err == nil, Millis: time.Since(begun).Milliseconds()}
 	if err == nil {
 		return p, ""
@@ -248,7 +248,7 @@ func runLeasePrepare(ctx context.Context, ssh SSHDeployer, alias, prepare string
 	if p.Output == "" {
 		p.Output = boundedText(scrubSecrets(sshFailureText(err), secrets))
 	}
-	rerun := shellQuote("cd " + leaseWorkDir + " && " + prepare)
+	rerun := shellQuote("cd " + LeaseWorkDir + " && " + prepare)
 	return p, fmt.Sprintf("the repository's prepare command failed (exit %d) — the branch is checked out and the lease is held, but its dev servers may miss what the command installs; run it again over SSH: ssh %s %s",
 		p.ExitCode, alias, rerun) + supervisorOutputClause(p.Output)
 }
