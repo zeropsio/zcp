@@ -27,6 +27,8 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 
 `targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`. On this Mate's HQ the call does not run: code goes there by plain git on a branch of your own, and `main` moves only when a person merges a change. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd <repo dir> && git add -A && git commit -m '<msg>'"` for the runtime container (`/var/www`, or the code volume's `mountPath`) `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles.
 
+In a Mate, commit in the dev service with `zcp git <host> add -A && zcp git <host> commit -m '<msg>'`: zcp runs git there, in the checkout the service's record names.
+
 **Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml` (the push pre-flight validates the SOURCE setup; the remote build consumes its own setup name — for standard pairs typically `prod`). Read the project's `zerops.yaml` first and pass the matching name explicitly; an `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` for a one-round-trip recovery.
 
 If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="{hostname}" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply.

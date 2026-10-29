@@ -464,6 +464,107 @@ func runRemedyShell(t *testing.T, pair, command string) {
 	runShell(t, "cd "+shellQuote(pair)+" && "+command)
 }
 
+// remedyCommand is the one command in backticks a remedy names after "run".
+func remedyCommand(t *testing.T, remedy string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(remedy, "run `")
+	command, _, closed := strings.Cut(rest, "`")
+	if !ok || !closed {
+		t.Fatalf("the remedy names no command to run: %s", remedy)
+	}
+	return command
+}
+
+// zcpGitStandIn is a shell function standing in for `zcp git appdev <args>`
+// as git run in pair, appdev's checkout, prefixed to a command line.
+func zcpGitStandIn(pair string) string {
+	return `zcp() { [ "$1" = git ] && [ "$2" = appdev ] || return 99; shift 2; git -C ` + shellQuote(pair) + ` "$@"; }; `
+}
+
+// TestBaseBranchRefusal_NotSeed_CarriesTheCommit: zcp's own command reads the
+// checkout's commit in the dev service when it refuses a history sharing
+// nothing with a main that holds code, and the refusal carries it — so the
+// remedy can name it literally, with nothing left for the agent's shell to
+// work out.
+func TestBaseBranchRefusal_NotSeed_CarriesTheCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := baseLabOn(t, landedBase, func(t *testing.T, dir string) {
+		t.Helper()
+		writeLabFile(t, filepath.Join(dir, "app.js"), "this pair's work\n")
+		commitAll(t, dir, "init")
+	})
+	head := gitOr(t, pair, "rev-parse", "HEAD")
+	command := BuildBaseBranchCommand(pair)
+
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", command).CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("want a refusal, the command succeeded:\n%s", out)
+	}
+	if got, want := BaseBranchRefusal(string(out)), "ZCP_BASE_NOT_SEED "+head[:12]; got != want {
+		t.Errorf("BaseBranchRefusal = %q, want %q; output:\n%s", got, want, out)
+	}
+}
+
+// TestBaseBranchRefusalRemedy_Mate_NamesTheCommitLiterally: a Mate's remedy
+// runs every git command in the dev service through `zcp git <host>` and
+// names the commit its refusal carries literally — the branch keeps that
+// commit however often it is run — with no command substitution an agent's
+// shell would work out, and none that fails open.
+func TestBaseBranchRefusalRemedy_Mate_NamesTheCommitLiterally(t *testing.T) {
+	t.Parallel()
+	mate := RemedyRunner{DevHost: "appdev"}
+	tests := []struct {
+		refusal string
+		want    []string
+	}{
+		{refusal: "ZCP_BASE_NOT_SEED 0123456789ab", want: []string{
+			"run `zcp git appdev branch -f own-history-0123456789ab 0123456789ab && zcp git appdev fetch origin 'main' && zcp git appdev reset --keep FETCH_HEAD`",
+			"`zcp git appdev cherry-pick`", "never joined", "ask the person first",
+		}},
+		{refusal: "ZCP_BASE_NOT_SEED", want: []string{"`zcp git appdev rev-parse --short=12 HEAD`", "own-history-<that commit>"}},
+		{refusal: "ZCP_BRANCH_ELSEWHERE", want: []string{"run `zcp git appdev checkout 'main'`"}},
+		{refusal: "ZCP_STAGED_CHANGES", want: []string{"run `zcp git appdev restore --staged .`"}},
+		{refusal: "ZCP_UNTRACKED_COLLISION app.js", want: []string{"(app.js)", "move or delete them"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.refusal, func(t *testing.T) {
+			t.Parallel()
+			remedy := BaseBranchRefusalRemedy(tt.refusal, mate)
+			for _, want := range tt.want {
+				if !strings.Contains(remedy, want) {
+					t.Errorf("the remedy lacks %q: %s", want, remedy)
+				}
+			}
+			for _, never := range []string{"$(", "zcp hq git", "`git ", "&& git "} {
+				if strings.Contains(remedy, never) {
+					t.Errorf("the remedy says %q: %s", never, remedy)
+				}
+			}
+		})
+	}
+}
+
+// TestBaseBranchRefusalRemedy_PlainProject_Unchanged: a project without a
+// Mate keeps its git on the mounted checkout, reading HQ through `zcp hq
+// git` (docs/spec-mate.md §6.7): its remedies are byte for byte what they
+// were.
+func TestBaseBranchRefusalRemedy_PlainProject_Unchanged(t *testing.T) {
+	t.Parallel()
+	for refusal, want := range map[string]string{
+		"ZCP_BASE_NOT_SEED":              "\"main\" already holds code this history shares nothing with, and two unrelated histories are never joined: keep this history on a branch of its own and put the working copy on \"main\" — run `git branch -f \"own-history-$(git rev-parse --short=12 HEAD)\" && zcp hq git fetch origin 'main' && git reset --keep FETCH_HEAD`, which can be run again as it is — then carry what it needs over with `git cherry-pick` onto a branch cut from \"main\". That replaces the dev service's files with \"main\"'s code: when that code is not this project's own, as after the Mate moved to another application, ask the person first.",
+		"ZCP_BRANCH_ELSEWHERE":           "\"main\" already exists and the working copy is on another branch: run `git checkout 'main'`.",
+		"ZCP_STAGED_CHANGES":             "the working copy is about to take \"main\"'s files and has changes staged: run `git restore --staged .` (the files stay in the working copy).",
+		"ZCP_UNTRACKED_COLLISION app.js": "\"main\" carries files the working copy has untracked (app.js): move or delete them.",
+	} {
+		if got := BaseBranchRefusalRemedy(refusal, RemedyRunner{}); got != want {
+			t.Errorf("%s:\n got %s\nwant %s", refusal, got, want)
+		}
+	}
+}
+
 // TestBaseBranchRefusalRemedy_TheNextAttemptWires: a refusal the agent is
 // only told to wait out is a pair stuck for good — the push guard refuses
 // every push until the wiring completes. Each refusal names one remedy, and
@@ -490,14 +591,16 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 				writeLabFile(t, filepath.Join(dir, "app.js"), "this pair's work\n")
 				commitAll(t, dir, "init")
 			},
-			refusal: "ZCP_BASE_NOT_SEED",
-			remedy:  []string{KeepOwnHistory + " && git fetch origin 'main' && git reset --keep FETCH_HEAD", "never joined", "git cherry-pick", "ask the person first"},
+			refusal: "ZCP_BASE_NOT_SEED <head>",
+			remedy:  []string{"`zcp git appdev branch -f own-history-<head> <head> && zcp git appdev fetch origin 'main' && zcp git appdev reset --keep FETCH_HEAD`", "never joined", "zcp git appdev cherry-pick", "ask the person first"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
 				own := gitOr(t, pair, "rev-parse", "HEAD")
-				// Run twice: a remedy stopped half-way is run again as it is.
+				command := remedyCommand(t, BaseBranchRefusalRemedy("ZCP_BASE_NOT_SEED "+own[:12], RemedyRunner{DevHost: "appdev"}))
+				// Run twice: a remedy stopped half-way is run again as it is,
+				// and run again after it went through it keeps the same commit.
 				for range 2 {
-					runRemedyShell(t, pair, KeepOwnHistory+" && git fetch -q origin 'main' && git reset -q --keep FETCH_HEAD")
+					runRemedyShell(t, pair, zcpGitStandIn(pair)+command)
 				}
 				if got := gitOr(t, pair, "rev-parse", "own-history-"+own[:12]); got != own {
 					t.Errorf("own-history-%s = %s, want the pair's own history %s kept", own[:12], got, own)
@@ -515,7 +618,7 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 				runGit(t, dir, "checkout", "-q", "-b", "feature")
 			},
 			refusal: "ZCP_BRANCH_ELSEWHERE",
-			remedy:  []string{"git checkout 'main'"},
+			remedy:  []string{"`zcp git appdev checkout 'main'`"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
 				runRemedyShell(t, pair, "git checkout -q 'main'")
@@ -531,7 +634,7 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 				runGit(t, dir, "add", "notes.txt")
 			},
 			refusal: "ZCP_STAGED_CHANGES",
-			remedy:  []string{"git restore --staged ."},
+			remedy:  []string{"`zcp git appdev restore --staged .`"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
 				runRemedyShell(t, pair, "git restore --staged .")
@@ -563,17 +666,18 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 			pair := baseLabOn(t, base, tc.seed)
 			command := BuildBaseBranchCommand(pair)
 
+			head := gitOr(t, pair, "rev-parse", "--short=12", "HEAD")
 			out, err := exec.CommandContext(t.Context(), "sh", "-c", command).CombinedOutput()
 			if err == nil {
 				t.Fatalf("want a refusal, the command succeeded:\n%s", out)
 			}
 			refusal := BaseBranchRefusal(string(out))
-			if refusal != tc.refusal {
-				t.Fatalf("BaseBranchRefusal = %q, want %q; output:\n%s", refusal, tc.refusal, out)
+			if want := strings.ReplaceAll(tc.refusal, "<head>", head); refusal != want {
+				t.Fatalf("BaseBranchRefusal = %q, want %q; output:\n%s", refusal, want, out)
 			}
-			remedy := BaseBranchRefusalRemedy(refusal)
+			remedy := BaseBranchRefusalRemedy(refusal, RemedyRunner{DevHost: "appdev"})
 			for _, want := range tc.remedy {
-				if !strings.Contains(remedy, want) {
+				if want = strings.ReplaceAll(want, "<head>", head); !strings.Contains(remedy, want) {
 					t.Errorf("the remedy for %s must name %q:\n%s", refusal, want, remedy)
 				}
 			}
@@ -626,6 +730,9 @@ func assertRefusedNothingMoved(t *testing.T, pair string, before pairSnapshot, r
 	t.Helper()
 	if err == nil {
 		t.Fatalf("want a refusal, the command succeeded:\n%s", out)
+	}
+	if refusal == "ZCP_BASE_NOT_SEED" {
+		refusal += " " + before.head[:12]
 	}
 	if got := BaseBranchRefusal(out); got != refusal {
 		t.Errorf("BaseBranchRefusal = %q, want %q; output:\n%s", got, refusal, out)

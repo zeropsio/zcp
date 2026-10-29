@@ -1054,12 +1054,21 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 		f.meta.RemoteURL = ""
 		f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
 	}
+	// A project without a Mate wired to HQ through the project door: its git
+	// stays on the mounted checkout, reading HQ through `zcp hq git` (owner
+	// decision Q1), where `zcp git` cannot authenticate — its words are as
+	// they were before `zcp git`.
+	plainHQ := func(f *poolMigrateFixture) {
+		f.meta.RemoteURL = "https://hq.example/git/org-1/app-1/appdev.git"
+	}
 	tests := []struct {
 		name        string
 		mutate      func(*poolMigrateFixture)
 		wantBranch  string
 		wantSource  string
 		wantMissing []string
+		// neverMissing is what missing must not say.
+		neverMissing []string
 	}{
 		{
 			name: "in a Mate, the open change's branch",
@@ -1083,7 +1092,7 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 			mutate: func(f *poolMigrateFixture) {
 				inMate(f)
 			},
-			wantMissing: []string{`"main"`, "git switch -c"},
+			wantMissing: []string{`"main"`, "`zcp git appdev switch -c <branch>`", "`zcp git appdev push -u origin <branch>`"},
 		},
 		{
 			name: "in a Mate on the Mate's own branch",
@@ -1091,7 +1100,7 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 				inMate(f)
 				f.ssh.output = poolMigrateCensusFor("mate/proj-1", "origin", "mate/proj-1", "")
 			},
-			wantMissing: []string{`"mate/proj-1"`, "git switch -c"},
+			wantMissing: []string{`"mate/proj-1"`, "`zcp git appdev switch -c <branch>`"},
 		},
 		{
 			name: "outside a Mate, the current branch's upstream on origin",
@@ -1103,23 +1112,37 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 		{
 			name: "outside a Mate, a branch with no upstream",
 			mutate: func(f *poolMigrateFixture) {
+				plainHQ(f)
 				f.ssh.output = poolMigrateCensusFor("feat", "", "", "")
 			},
-			wantMissing: []string{`"feat"`, "git push -u origin feat"},
+			wantMissing:  []string{"the dev service's checkout is on \"feat\", which tracks no branch on origin, so a lease has none to check out: push it (`git push -u origin feat`)."},
+			neverMissing: []string{"zcp git"},
 		},
 		{
 			name: "outside a Mate, an upstream on another remote",
 			mutate: func(f *poolMigrateFixture) {
+				plainHQ(f)
 				f.ssh.output = poolMigrateCensusFor("feat", "fork", "feat", "")
 			},
-			wantMissing: []string{"fork/feat", "origin", "git push -u origin feat"},
+			wantMissing:  []string{"the dev service's checkout is on \"feat\", which tracks fork/feat, and a lease clones origin: push it there (`git push -u origin feat`)."},
+			neverMissing: []string{"zcp git"},
 		},
 		{
-			name: "a detached checkout",
+			name: "a detached checkout outside a Mate",
 			mutate: func(f *poolMigrateFixture) {
+				plainHQ(f)
 				f.ssh.output = poolMigrateCensusFor("", "", "", "")
 			},
-			wantMissing: []string{"no branch", "git switch -c"},
+			wantMissing:  []string{"the dev service's checkout is on no branch (a detached HEAD), so a lease has none to check out: put the work on a branch of your own (`git switch -c <branch>`) and push it (`git push -u origin <branch>`)."},
+			neverMissing: []string{"zcp git"},
+		},
+		{
+			name: "a detached checkout in a Mate",
+			mutate: func(f *poolMigrateFixture) {
+				inMate(f)
+				f.ssh.output = poolMigrateCensusFor("", "", "", "")
+			},
+			wantMissing: []string{"no branch", "`zcp git appdev switch -c <branch>`", "`zcp git appdev push -u origin <branch>`"},
 		},
 	}
 	for _, tt := range tests {
@@ -1152,6 +1175,14 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 				if !strings.Contains(missing, want) {
 					t.Errorf("missing %q does not name %q", missing, want)
 				}
+			}
+			for _, never := range tt.neverMissing {
+				if strings.Contains(missing, never) {
+					t.Errorf("missing %q says %q", missing, never)
+				}
+			}
+			if f.rt.MateEnabled && strings.Contains(missing, "(`git ") {
+				t.Errorf("missing %q runs a Mate's git outside the dev service", missing)
 			}
 		})
 	}

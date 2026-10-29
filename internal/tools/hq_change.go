@@ -65,15 +65,16 @@ func recordHQChange(stateDir, appID, repo string, number int, branch, title, sou
 func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
 
 // takeChangeBranch says how the agent takes branch, the Mate's open change's,
-// in its own shell on the mounted checkout. A checkout an older zcp kept the
+// where route runs the repository's git. A checkout an older zcp kept the
 // change's work on holds it as the Mate's own branch (hqReleasedBranch),
 // which git cannot keep beside the change's branch beneath it: that one is
-// renamed instead.
-func takeChangeBranch(hqc hq.Client, branch string) string {
-	take := fmt.Sprintf("in your own shell on the mounted checkout take it (`git fetch origin %s && git checkout %s`)", branch, branch)
-	if released := hqReleasedBranch(hqc); strings.HasPrefix(branch, released+"/") {
-		take += fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (`git branch -m %s %s && git checkout %s`)",
-			released, released, branch, branch)
+// renamed instead. A lease checks its branch out afresh, so a dev pool has
+// nothing to rename.
+func takeChangeBranch(route repoRoute, hqc hq.Client, branch string) string {
+	take := fmt.Sprintf("%s take it (%s)", route.where(), route.take(branch))
+	if released := hqReleasedBranch(hqc); strings.HasPrefix(branch, released+"/") && route.pool == "" {
+		take += fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (%s)",
+			released, route.git("branch -m "+released+" "+branch, "checkout "+branch))
 	}
 	return take
 }
@@ -83,12 +84,12 @@ func takeChangeBranch(hqc hq.Client, branch string) string {
 // branch, and how to take it: work cut from main is no fast-forward of that
 // branch, and that HQ opens no second change for it. "" for a change whose
 // branch HQ did not name.
-func hqOpenChangeWork(hqc hq.Client, c workflow.HQChange) string {
+func hqOpenChangeWork(route repoRoute, hqc hq.Client, c workflow.HQChange) string {
 	if c.Branch == "" {
 		return ""
 	}
-	return fmt.Sprintf("change #%d in %q is open on the branch %q, so this Mate's work there goes on that branch rather than on a branch cut from %q: %s, carry the work on and push it (`git push origin %s`), never force-pushing; cut the next work's branch from %q once #%d is merged or closed",
-		c.Number, c.Repo, c.Branch, hqBase, takeChangeBranch(hqc, c.Branch), c.Branch, hqBase, c.Number)
+	return fmt.Sprintf("change #%d in %q is open on the branch %q, so this Mate's work there goes on that branch rather than on a branch cut from %q: %s, carry the work on and push it (%s), never force-pushing; cut the next work's branch from %q once #%d is merged or closed",
+		c.Number, c.Repo, c.Branch, hqBase, takeChangeBranch(route, hqc, c.Branch), route.git("push origin "+c.Branch), hqBase, c.Number)
 }
 
 // handedChangesIn is the open changes state says a person handed the Mate in
@@ -109,17 +110,18 @@ func handedChangesIn(state hq.MateState, appID, repo string) []hq.MateChange {
 
 // handedWork says a handed change is the Mate's and where its work goes:
 // onto its branch, taken from HQ when its gone Mate pushed to it, cut from
-// main when nothing is there yet. On an HQ that keeps one open change per
-// repository (onePerRepo) no other change opens there while it is open.
-func handedWork(change hq.MateChange, repo, branch string, onePerRepo bool) string {
-	take := fmt.Sprintf("its work so far is on the branch %q: in your own shell on the mounted checkout take that branch (`git fetch origin %s && git checkout %s`)",
-		branch, branch, branch)
+// main when nothing is there yet — where route runs the repository's git. On
+// an HQ that keeps one open change per repository (onePerRepo) no other
+// change opens there while it is open.
+func handedWork(route repoRoute, change hq.MateChange, repo, branch string, onePerRepo bool) string {
+	take := fmt.Sprintf("its work so far is on the branch %q: %s take that branch (%s)",
+		branch, route.where(), route.take(branch))
 	if change.Head == nil {
-		take = fmt.Sprintf("nothing is pushed to its branch %q yet: in your own shell on the mounted checkout cut it from %q (`git fetch origin %s && git checkout -b %s origin/%s`)",
-			branch, hqBase, hqBase, branch, hqBase)
+		take = fmt.Sprintf("nothing is pushed to its branch %q yet: %s cut it from %q (%s)",
+			branch, route.where(), hqBase, route.cut(branch))
 	}
-	words := fmt.Sprintf("change #%d in %q was handed to this Mate from a Mate that is gone and is its change now — %s, carry the change on there and push to it (`git push origin %s`), never force-pushing",
-		change.Number, repo, take, branch)
+	words := fmt.Sprintf("change #%d in %q was handed to this Mate from a Mate that is gone and is its change now — %s, carry the change on there and push to it (%s), never force-pushing",
+		change.Number, repo, take, route.git("push origin "+branch))
 	if onePerRepo {
 		words += fmt.Sprintf(", and open no other change in %q while it is open", repo)
 	}
@@ -138,7 +140,7 @@ func hqTakeHanded(stateDir string, hqc hq.Client, state hq.MateState, appID, rep
 		}
 		branch := hqc.BranchOf(handed.Number, handed.Branch)
 		recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded)
-		lines = append(lines, handedWork(handed, repo, branch, !state.OpenPerBranch))
+		lines = append(lines, handedWork(repoDevHost(stateDir, appID, repo), handed, repo, branch, !state.OpenPerBranch))
 	}
 	return lines
 }
@@ -228,13 +230,26 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	_ = workflow.ForgetHQChange(stateDir, c.AppID, c.Repo, c.Number)
 	switch outcome {
 	case changeMerged:
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; bring it up to date in your own shell on the mounted checkout, never over ssh (`git checkout %s && git fetch origin && git merge --ff-only origin/%s`), and cut the next work's branch from it", c.Number, hqBase, hqBase, hqBase) +
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
 			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
 	case changeStillOpen, changeClosed, changeUnknown:
 	}
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", c.Number, hqBase)
+}
+
+// mainTakesTheMerge says how the repository's main takes a merged change
+// where route runs its git, and that the next work's branch is cut from it:
+// main fast-forwarded in a dev service; in a dev pool a lease acquired on a
+// new branch cuts it from main as HQ has it.
+func mainTakesTheMerge(route repoRoute) string {
+	if route.pool != "" {
+		return fmt.Sprintf("cut the next work's branch from it in a lease of the dev pool %s (%s cuts a new branch from %q)",
+			route.pool, leaseAcquire(route.pool, "<branch>"), hqBase)
+	}
+	return fmt.Sprintf("bring it up to date %s (%s), and cut the next work's branch from it",
+		route.where(), route.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
 }
 
 // mergedLeases names the leases zcp still holds on a merged change's branch,
@@ -337,19 +352,19 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 // (hq.CorePush): the agent's branch is where it was, so its next push is
 // refused as non-fast-forward until it fetches and fast-forwards — over ssh
 // in each lease on the branch (leases), since a lease's git runs there; with
-// none, where the branch is checked out, in the agent's own shell on the
-// mounted checkout or its /tmp worktree, never over ssh, since only that
-// shell has HQ's credential. zcp reads none of those checkouts — each is
-// another container — so it cannot tell one already fast-forwarded, and a
+// none, where the branch is checked out where route runs the repository's
+// git: in its dev service through `zcp git <host>`, the checkout or the
+// branch's /tmp/wt- worktree there. zcp reads none of those checkouts — each
+// is another container — so it cannot tell one already fast-forwarded, and a
 // fast-forward there is a no-op. ready: the change is described at HQ's
 // merge commit, which costs no new description.
-func corePushWords(number, landed int, branch string, leases []string, ready bool) string {
-	ff := "git fetch origin && git merge --ff-only origin/" + branch
-	where := fmt.Sprintf("where it is checked out (the mounted checkout, or its /tmp/%s worktree), in your own shell, never over ssh: `%s`", branch, ff)
+func corePushWords(number, landed int, branch string, route repoRoute, leases []string, ready bool) string {
+	ff := []string{"fetch origin", "merge --ff-only origin/" + branch}
+	where := route.checkedOut(branch) + ": " + route.git(ff...)
 	if len(leases) > 0 {
 		calls := make([]string, 0, len(leases))
 		for _, alias := range leases {
-			calls = append(calls, fmt.Sprintf("`ssh %s \"cd /var/www && %s\"`", alias, ff))
+			calls = append(calls, route.inLease(alias).git(ff...))
 		}
 		which := "in its lease"
 		if len(leases) > 1 {
@@ -374,18 +389,18 @@ func corePushWords(number, landed int, branch string, leases []string, ready boo
 // nothing. leases are the leases on c's branch. It answers the standing to
 // keep as told. Never a rebase, never a force: a branch takes main by a
 // merge, checked on its own preview before it is pushed.
-func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (string, workflow.HQChangeTold) {
+func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, leases []string) (string, workflow.HQChangeTold) {
 	now := standingOf(s)
 	told := workflow.HQChangeTold{}
 	if c.Told != nil {
 		told = *c.Told
 	}
 	branch := cmp.Or(c.Branch, cmp.Or(s.Branch, "its branch"))
-	standing := standingWords(c.Number, branch, now, told, leases)
+	standing := standingWords(c.Number, branch, now, told, route, leases)
 	if now.CoreHead == "" || now.CoreHead == told.CoreHead {
 		return standing, now
 	}
-	core := corePushWords(c.Number, now.CoreLanded, branch, leases, standing == "" && now.Ready != nil && *now.Ready)
+	core := corePushWords(c.Number, now.CoreLanded, branch, route, leases, standing == "" && now.Ready != nil && *now.Ready)
 	if standing == "" {
 		return core, now
 	}
@@ -395,29 +410,32 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (st
 // standingWords is what the agent is told of change number on branch whose
 // standing is now — a draft with a push to describe, behind main, no longer
 // merging cleanly — when it differs from what it was told; "" otherwise.
-// leases are the leases on the branch.
-func standingWords(number int, branch string, now, told workflow.HQChangeTold, leases []string) string {
+// leases are the leases on the branch, whose git runs there over ssh; with
+// none, its git runs where route says.
+func standingWords(number int, branch string, now, told workflow.HQChangeTold, route repoRoute, leases []string) string {
 	label := standingLabel(now)
 	if label == "" || label == standingLabel(told) {
 		return ""
 	}
 	describe := fmt.Sprintf("describe it again (zerops_workflow action=\"describe-change\" branch=%q)", branch)
-	where, sync := "where its branch is checked out", ""
+	where, sync := route.checkedOut(branch), ""
 	if len(leases) > 0 {
-		where = fmt.Sprintf("in a lease of it (%s)", strings.Join(leases, ", "))
+		route = route.inLease(leases[0])
+		where = fmt.Sprintf("in a lease of it (%s), over ssh", strings.Join(leases, ", "))
 		sync = fmt.Sprintf(", `zerops_lease action=sync lease=%s`", leases[0])
 	}
+	merge, push := route.git("fetch origin", "merge origin/"+hqBase), route.git("push origin "+branch)
 	switch label {
 	case "conflict":
-		return fmt.Sprintf("change #%d on %q no longer merges cleanly with main: %s, merge origin/main in (`git fetch origin && git merge origin/main`), resolve the conflicts, check it works, commit and push it (`git push origin %s`)%s — never rebase, never force-push — and %s",
-			number, branch, where, branch, sync, describe)
+		return fmt.Sprintf("change #%d on %q no longer merges cleanly with main: %s, merge origin/main in (%s), resolve the conflicts, check it works, commit and push it (%s)%s — never rebase, never force-push — and %s",
+			number, branch, where, merge, push, sync, describe)
 	case "behind":
 		clean := "and still merges cleanly"
 		if now.Mergeability != hq.MergeClean {
 			clean = "(whether it still merges cleanly is not judged yet)"
 		}
-		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, `git fetch origin && git merge origin/main`, check it works there, push it (`git push origin %s`)%s, and %s; or leave it, and the person merges it on top of what it was not checked with",
-			number, branch, clean, where, branch, sync, describe)
+		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, %s, check it works there, push it (%s)%s, and %s; or leave it, and the person merges it on top of what it was not checked with",
+			number, branch, clean, where, merge, push, sync, describe)
 	}
 	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q) — the person is asked to review it only then",
 		number, branch, branch)
@@ -457,6 +475,7 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		}
 	}
 	for _, repo := range hqChangeRepos(stateDir, hqc.Address(), app, changes) {
+		route := repoDevHost(stateDir, app, repo)
 		var said []string
 		for _, c := range changesIn(changes, app, repo) {
 			if line := passChange(ctx, stateDir, hqc.Address(), c, state); line != "" {
@@ -469,11 +488,11 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		switch {
 		case !atStart || len(handed) > 0:
 		case state.OpenPerBranch:
-			if open := openChangesWords(openChangesOf(hqc, state, app, repo)); open != "" {
+			if open := openChangesWords(openChangesOf(hqc, state, app, repo), route); open != "" {
 				said = append(said, open)
 			}
 		case len(kept) == 1:
-			if work := hqOpenChangeWork(hqc, kept[0]); work != "" {
+			if work := hqOpenChangeWork(route, hqc, kept[0]); work != "" {
 				said = append(said, work)
 			}
 		}
@@ -501,7 +520,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 	if outcome != changeStillOpen {
 		return ""
 	}
-	words, now := hqChangeStanding(c, *s, leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
+	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
 	if c.Told == nil || *c.Told != now {
 		_ = workflow.UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *workflow.HQChange, existed bool) error {
 			if !existed {
@@ -534,8 +553,9 @@ func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string) []work
 // openChangesWords lists a repository's open changes, by number and branch,
 // with each one's standing as told, and says where work goes: work on a change
 // stays on its own branch, new work goes on a branch of its own cut from an
-// up-to-date main, opening its own change. "" for none.
-func openChangesWords(kept []workflow.HQChange) string {
+// up-to-date main, opening its own change — each taken where route runs the
+// repository's git. "" for none.
+func openChangesWords(kept []workflow.HQChange, route repoRoute) string {
 	if len(kept) == 0 {
 		return ""
 	}
@@ -547,8 +567,8 @@ func openChangesWords(kept []workflow.HQChange) string {
 		}
 		named = append(named, name)
 	}
-	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (`git fetch origin <branch> && git checkout <branch>`); new work goes on a branch of its own, cut from an up-to-date %q (`git checkout main && git fetch origin && git merge --ff-only origin/main && git checkout -b <branch>`), and opens its own change",
-		strings.Join(named, ", "), hqBase)
+	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (%s); new work goes on a branch of its own, cut from an up-to-date %q (%s), and opens its own change",
+		strings.Join(named, ", "), route.take("<branch>"), hqBase, route.fromMain("<branch>"))
 }
 
 // hqChangeRepos is every repository of app a pass turns to for its changes:

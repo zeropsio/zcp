@@ -188,9 +188,21 @@ func TestReconcileHQRepositories_ARefusalNamesItsRemedy(t *testing.T) {
 	lab.git("add", "-A")
 	lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "own history")
 
+	own := lab.git("rev-parse", "--short=12", "HEAD")
+
 	report := lab.wire()
-	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED") || !strings.Contains(report[0], "git reset --keep FETCH_HEAD") {
-		t.Fatalf("report = %q, want the refusal and its remedy", report)
+	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED "+own) {
+		t.Fatalf("report = %q, want the refusal carrying the checkout's commit %s", report, own)
+	}
+	// The remedy runs in the dev service through zcp git and names that
+	// commit literally: nothing is left for the agent's shell to work out.
+	if want := "`zcp git appdev branch -f own-history-" + own + " " + own + " && zcp git appdev fetch origin 'main' && zcp git appdev reset --keep FETCH_HEAD`"; !strings.Contains(report[0], want) {
+		t.Errorf("report = %q, want the remedy %s", report[0], want)
+	}
+	for _, never := range []string{"$(", "`git ", "&& git "} {
+		if strings.Contains(report[0], never) {
+			t.Errorf("report = %q says %q", report[0], never)
+		}
 	}
 	if lab.meta().HQ != nil {
 		t.Errorf("a refused pair must not be recorded as wired")
@@ -220,9 +232,10 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 		settle func(*fakeHQ)
 		want   []string
 	}{
-		// The checkout is brought up to date where git can ask zcp, whether its
-		// origin is HQ or GitHub.
-		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged", "in your own shell on the mounted checkout, never over ssh"}},
+		// The checkout is brought up to date in its dev service, through zcp
+		// git, which zcp answers whether its origin is HQ or GitHub.
+		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged",
+			"bring it up to date in its dev service appdev (`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main`)"}},
 		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: []string{"change #1 was closed without merging"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -582,7 +595,7 @@ func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.
 	if got := lab.git("rev-parse", "main"); got != own {
 		t.Errorf("main moved: %s → %s", own, got)
 	}
-	for _, step := range []string{"git branch <name> main", "git reset --keep origin/main"} {
+	for _, step := range []string{"`zcp git appdev branch <name> main`", "`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev reset --keep origin/main`"} {
 		if !strings.Contains(text, step) {
 			t.Errorf("develop's start does not name %q:\n%s", step, text)
 		}
@@ -615,7 +628,8 @@ func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T
 	for _, want := range []string{
 		"first history",
 		"holds only its initial commit",
-		"`git checkout -b <branch> main && git push origin <branch>`",
+		"in its dev service appdev",
+		"`zcp git appdev checkout -b <branch> main && zcp git appdev push origin <branch>`",
 		`zerops_workflow action="open-change" branch="<branch>"`,
 		"HQ makes it",
 		"never merge or rebase it onto that initial commit",
@@ -627,13 +641,13 @@ func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T
 	// The pass's own line for the pair (the git-push start guidance beside it
 	// names a reset for a main that merely fell behind).
 	line := text
-	if i := strings.Index(line, "first history"); i >= 0 {
+	if i := strings.Index(line, "is this repository's first history"); i >= 0 {
 		line = line[i:]
-		if j := strings.Index(line, "initial commit;"); j >= 0 {
+		if j := strings.Index(line, "onto that initial commit"); j >= 0 {
 			line = line[:j]
 		}
 	}
-	for _, never := range []string{"git cherry-pick", "git reset --keep origin/main"} {
+	for _, never := range []string{"cherry-pick", "reset --keep origin/main", "own shell"} {
 		if strings.Contains(line, never) {
 			t.Errorf("develop's start carries the first history onto HQ's root (%q):\n%s", never, line)
 		}
@@ -662,9 +676,9 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 			record: workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: github},
 			want: []string{
 				"origin.mode=github", "origin=" + github, "its checkout's origin is GitHub",
-				"git push origin <branch>", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
+				"`zcp git appdev fetch origin`", "`zcp git appdev push origin <branch>`", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
 			},
-			never: []string{"remote add", "set-url origin", "--fill"},
+			never: []string{"remote add", "set-url origin", "--fill", "own shell", "never over ssh"},
 		},
 		{
 			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},

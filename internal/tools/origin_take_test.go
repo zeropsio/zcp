@@ -29,16 +29,27 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// takeFromHQ runs, in pair, what originFromHQ tells the agent to run there.
+// takeFromHQ runs what originFromHQ tells the agent to run in appdev's dev
+// service, with zcp git standing in for the ssh to it: the checkout is pair.
 func takeFromHQ(t *testing.T, pair string) (string, error) {
 	t.Helper()
-	text := originFromHQ(pair)
+	return takeThroughZcpGit(t, pair, "")
+}
+
+// takeThroughZcpGit runs originFromHQ's command for appdev as the agent's
+// shell would, with `zcp git appdev <args>` standing in as git run in pair —
+// or failing as ssh does, exit 255 and nothing run, for the git subcommand
+// failing names ("" for none).
+func takeThroughZcpGit(t *testing.T, pair, failing string) (string, error) {
+	t.Helper()
+	text := originFromHQ("appdev")
 	_, command, ok := strings.Cut(text, "`")
 	command, _, closed := strings.Cut(command, "`")
-	if !ok || !closed || !strings.HasPrefix(command, "cd "+pair+" && ") {
-		t.Fatalf("not a command run in the checkout: %s", text)
+	if !ok || !closed || !strings.HasPrefix(command, "zcp git appdev ") {
+		t.Fatalf("not a command run in appdev's dev service through zcp git: %s", text)
 	}
-	out, err := exec.CommandContext(context.Background(), "sh", "-c", command).CombinedOutput()
+	stub := `zcp() { [ "$1" = git ] && [ "$2" = appdev ] || return 99; shift 2; [ "$1" = ` + ops.ShellQuote(failing) + ` ] && return 255; git -C ` + ops.ShellQuote(pair) + ` "$@"; }; `
+	out, err := exec.CommandContext(context.Background(), "sh", "-c", stub+command).CombinedOutput() //nolint:gosec // test-only: the command under test, run against a t.TempDir checkout
 	return string(out), err
 }
 
@@ -150,4 +161,55 @@ func TestOriginFromHQ_CheckoutHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 			t.Errorf("HEAD shares history with the Mate's work: two unrelated histories were joined")
 		}
 	})
+}
+
+// TestOriginTake_SubstitutionsFailClosedThroughZcpGit: the take reads the
+// checkout through `zcp git` into a variable before it decides anything, and
+// an assignment chained with && stops the chain when zcp git fails — ssh down,
+// the service restarting — so no decision is made on an empty answer: a
+// checkout holding only the seed is never reset as if it were, and work of its
+// own is never moved off without its branch.
+func TestOriginTake_SubstitutionsFailClosedThroughZcpGit(t *testing.T) {
+	t.Parallel()
+	text := originFromHQ("appdev")
+	for _, want := range []string{
+		"n=$(zcp git appdev rev-list --count HEAD) && t=$(zcp git appdev ls-tree HEAD) && if [ \"$n\" = 1 ] && [ -z \"$t\" ]; then",
+		"h=$(zcp git appdev rev-parse --short=12 HEAD) && zcp git appdev branch -f \"own-history-$h\" && zcp git appdev reset --keep FETCH_HEAD",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the take lacks %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "$(git ") || strings.Contains(text, "\"$(") {
+		t.Errorf("the take decides on a substitution that fails open: %s", text)
+	}
+	tests := []struct {
+		name    string
+		own     bool
+		failing string
+	}{
+		{name: "commit count unread, seed only", failing: "rev-list"},
+		{name: "tree unread, seed only", failing: "ls-tree"},
+		{name: "commit count unread, work of its own", own: true, failing: "rev-list"},
+		{name: "its commit unread, work of its own", own: true, failing: "rev-parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pair, _, _ := originFixture(t, true, tt.own)
+			before := gitOut(t, pair, "rev-parse", "HEAD")
+
+			out, err := takeThroughZcpGit(t, pair, tt.failing)
+
+			if err == nil {
+				t.Errorf("the take succeeded though zcp git failed for %s:\n%s", tt.failing, out)
+			}
+			if got := gitOut(t, pair, "rev-parse", "HEAD"); got != before {
+				t.Errorf("HEAD moved to %s, want %s kept: a decision was made on an unread checkout", got, before)
+			}
+			if branches := gitOut(t, pair, "branch", "--list", "own-history-*"); branches != "" {
+				t.Errorf("a branch was made on an unread commit: %s", branches)
+			}
+		})
+	}
 }

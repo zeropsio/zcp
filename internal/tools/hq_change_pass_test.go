@@ -109,7 +109,7 @@ func TestHQPass_OtherChangeBehindAfterMerge_ToldOnce(t *testing.T) {
 	report := lab.passReport()
 
 	for _, want := range []string{"change #1 is merged", `change #2 on "add-signup" is behind main and still merges cleanly`,
-		"git fetch origin && git merge origin/main", `action="describe-change" branch="add-signup"`} {
+		"`zcp git appdev fetch origin && zcp git appdev merge origin/main`", "`zcp git appdev push origin add-signup`", `action="describe-change" branch="add-signup"`} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the pass lacks %q:\n%s", want, report)
 		}
@@ -141,7 +141,7 @@ func TestHQPass_ConflictToldWithMergeNotRebase(t *testing.T) {
 
 	report := lab.passReport()
 
-	for _, want := range []string{`change #2 on "rework" no longer merges cleanly with main`, "git merge origin/main", "resolve", "never rebase", "never force"} {
+	for _, want := range []string{`change #2 on "rework" no longer merges cleanly with main`, "in its dev service appdev", "`zcp git appdev fetch origin && zcp git appdev merge origin/main`", "resolve", "never rebase", "never force"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the conflict note lacks %q:\n%s", want, report)
 		}
@@ -181,7 +181,11 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 		{name: "a draft told already", now: at(&no, "clean", &no, true), told: told(&no, "clean", false)},
 		{name: "nothing pushed yet", now: at(&no, "unknown", &no, false)},
 		{name: "behind and clean, with a lease", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false), leases: []string{"hqpool-4"},
-			want: []string{"behind main and still merges cleanly", "git merge origin/main", "zerops_lease action=sync lease=hqpool-4"}},
+			want: []string{"behind main and still merges cleanly", "`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge origin/main\"`",
+				"`ssh hqpool-4 \"cd /var/www && git push origin badge\"`", "zerops_lease action=sync lease=hqpool-4"}},
+		{name: "behind and clean, in its dev service", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false),
+			want: []string{"behind main and still merges cleanly", "in its dev service appsdev", "`zcp git appsdev fetch origin && zcp git appsdev merge origin/main`",
+				"`zcp git appsdev push origin badge`"}},
 		{name: "behind told already", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", true)},
 		{name: "a conflict after behind", now: at(&yes, "conflict", &yes, true), told: told(&yes, "clean", true),
 			want: []string{"no longer merges cleanly", "never rebase"}},
@@ -191,7 +195,10 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge", Told: tt.told}
-			words, now := hqChangeStanding(c, tt.now, tt.leases)
+			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases)
+			if strings.Contains(words, "(`git ") || strings.Contains(words, "own shell") {
+				t.Errorf("words %q run git outside the dev service or a lease", words)
+			}
 			if len(tt.want) == 0 && words != "" {
 				t.Errorf("said %q, want nothing", words)
 			}
@@ -205,6 +212,15 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// appsdevRoute is where git runs for appsdev, a repository wired to the pair
+// of that name.
+func appsdevRoute(t *testing.T) repoRoute {
+	t.Helper()
+	stateDir := t.TempDir()
+	writeWiredPair(t, stateDir, "appsdev", "appsdev")
+	return repoDevHost(stateDir, labApp, "appsdev")
 }
 
 // The commits of a change HQ brought main into (protocol.md, "A stacked change
@@ -238,7 +254,7 @@ func corePushed(head string, push bool, behind bool) hq.MateChange {
 func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 	t.Parallel()
 	const line = "HQ brought main into #6 after #5 merged: fetch and fast-forward `badge` before your next push"
-	const ff = "`git fetch origin && git merge --ff-only origin/badge`"
+	const ff = "`zcp git appsdev fetch origin && zcp git appsdev merge --ff-only origin/badge`"
 	tests := []struct {
 		name     string
 		now      hq.MateChange
@@ -248,13 +264,13 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 		wantHead string
 	}{
 		{name: "at head, the checkout", now: corePushed(corePushMerge, true, false),
-			want:  []string{line, ff, "in your own shell", "never over ssh", "/tmp/badge", "non-fast-forward", "nothing to describe again"},
-			never: []string{"git rebase", "--force", "behind main"}, wantHead: corePushMerge},
+			want:  []string{line, ff, "in its dev service appsdev", "`-C /tmp/wt-badge`", "non-fast-forward", "nothing to describe again"},
+			never: []string{"git rebase", "--force", "behind main", "your own shell", "never over ssh", "/tmp/badge"}, wantHead: corePushMerge},
 		{name: "at head, leases of it", now: corePushed(corePushMerge, true, false), leases: []string{"boxpool-6", "hqpool-4"},
 			want: []string{line,
 				"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`",
 				"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`"},
-			never: []string{"in your own shell"}, wantHead: corePushMerge},
+			never: []string{"in your own shell", "zcp git"}, wantHead: corePushMerge},
 		{name: "at head, and main moved on past the squash", now: corePushed(corePushMerge, true, true),
 			want: []string{line, ff, "is behind main"}, wantHead: corePushMerge},
 		{name: "pushed past HQ's merge commit", now: corePushed(corePushLater, true, false), never: []string{"HQ brought main"}},
@@ -269,7 +285,7 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge",
 				Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &yes, Mergeability: hq.MergeClean}}
 
-			words, now := hqChangeStanding(c, tt.now, tt.leases)
+			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases)
 
 			if len(tt.want) == 0 && words != "" {
 				t.Errorf("said %q, want nothing", words)
@@ -293,7 +309,7 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			}
 
 			c.Told = &now
-			if again, _ := hqChangeStanding(c, tt.now, tt.leases); again != "" {
+			if again, _ := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases); again != "" {
 				t.Errorf("the next pass says again: %q", again)
 			}
 		})
@@ -333,7 +349,7 @@ func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
 
 	for _, want := range []string{"change #1 is merged",
 		"HQ brought main into #2 after #1 merged: fetch and fast-forward `add-signup` before your next push",
-		"`git fetch origin && git merge --ff-only origin/add-signup`", "nothing to describe again"} {
+		"`zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/add-signup`", "nothing to describe again"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the pass lacks %q:\n%s", want, report)
 		}
@@ -475,7 +491,9 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 
 	text := lab.developStart()
 
-	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "new work goes on a branch of its own", "cut from an up-to-date"} {
+	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "new work goes on a branch of its own", "cut from an up-to-date",
+		"`zcp git appdev fetch origin <branch> && zcp git appdev checkout <branch>`",
+		"`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main && zcp git appdev checkout -b <branch>`"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("develop's start lacks %q:\n%s", want, text)
 		}

@@ -21,7 +21,7 @@ func isHQGit(args []string) bool {
 func runHQGit(args []string) int {
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
 	if runtime.EnvEnabled(lookup("ZCP_MATE_ENABLED")) {
-		fmt.Fprintln(os.Stderr, "zcp hq git: this project has a Mate; use plain git with the Mate's own Git credential from its checkout")
+		fmt.Fprintln(os.Stderr, "zcp hq git: this project has a Mate; run git in the repository's dev service with `zcp git <host> <git args>`, which zcp answers with the Mate's own Git credential")
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

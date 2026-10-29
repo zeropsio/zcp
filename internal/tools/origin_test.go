@@ -83,19 +83,21 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	for _, want := range []string{
 		"Mate asks where the code of appdev is kept — on GitHub at https://github.com/zeropsio/mate, or in Mate, only following it",
 		"Never ask for a token in the chat",
-		"Either way take the code from HQ first: " + originFromHQ("/var/www/appdev"),
-		"Kept on GitHub: ZCP points the checkout's origin at GitHub, never a second remote; work on it in your own shell, never over ssh: `cd /var/www/appdev && git fetch origin`",
-		"`git push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\"",
+		"Either way take the code from HQ first: " + originFromHQ("appdev"),
+		"Kept on GitHub: ZCP points the checkout's origin at GitHub, never a second remote; work on it in its dev service, where zcp answers git for GitHub: `zcp git appdev fetch origin`",
+		"a branch of your own (`zcp git appdev checkout -b <branch> origin/main`)",
+		"`zcp git appdev push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\"",
 		"HQ opens its pull request on GitHub from that branch and the person merges it in Mate",
 		"Never push `main` and never force-push",
-		"Kept in Mate: HQ stays the origin and GitHub is only followed — in your own shell, never over ssh: `cd /var/www/appdev && git remote add upstream https://github.com/zeropsio/mate && git remote set-url --push upstream no_push && " + hq.GitHubHelperConfig + " && git fetch upstream`",
+		"Kept in Mate: HQ stays the origin and GitHub is only followed — in its dev service: `zcp git appdev remote add upstream https://github.com/zeropsio/mate && zcp git appdev remote set-url --push upstream no_push && zcp git appdev fetch upstream`",
+		"take its new work in on a branch of your own with `zcp git appdev merge upstream/main`",
 		"a private one is read with HQ's read token for it, and when HQ holds none, say so",
 		// HQ takes main from GitHub: an existing history is never merged
 		// onto the initial commit HQ seeds main with.
 		"Connected, HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`: never clone it in and merge it, and never merge HQ's initial commit into its history",
 		"your own setup goes in after it, as an ordinary change on a branch cut from that `main` — on GitHub a pull request, merged by squash",
 		// Declined — or GitHub HQ cannot connect — the code comes in as it is.
-		"Declined: nothing changes; should its code still come in, its history goes in exactly as it is, as a branch of its own (`cd /var/www/appdev && git fetch https://github.com/zeropsio/mate HEAD:<branch> && git push origin <branch>`)",
+		"Declined: nothing changes; should its code still come in, its history goes in exactly as it is, as a branch of its own (`zcp git appdev fetch https://github.com/zeropsio/mate HEAD:<branch> && zcp git appdev push origin <branch>`)",
 		"whose change you open with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"`: merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
@@ -104,6 +106,13 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	}
 	if strings.Contains(answer.NextActions, "allow-unrelated-histories") {
 		t.Errorf("nextActions joins unrelated histories: %s", answer.NextActions)
+	}
+	// Every command runs in the dev service, where zcp answers git: none on
+	// the mount, none in the agent's own shell, no helper of zcp's own written.
+	for _, never := range []string{"own shell", "cd /var/www", "credential.https://github.com.helper", "(`git ", "&& git "} {
+		if strings.Contains(answer.NextActions, never) {
+			t.Errorf("nextActions says %q: %s", never, answer.NextActions)
+		}
 	}
 	// The wiring is the one writer of a wired checkout's origin.
 	if strings.Contains(answer.NextActions, "set-url origin") {
@@ -259,7 +268,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of appdev in HQ.",
 		"never ask for a token",
-		originFromHQ("/var/www/appdev"),
+		originFromHQ("appdev"),
 		"HQ does not say which way the person keeps it: ask them in one sentence",
 		"Kept on GitHub: ZCP points the checkout's origin at GitHub",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed",
@@ -299,7 +308,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 		"Nothing was asked: https://github.com/acme/app is already the origin of web in HQ, not of appdev.",
 		"Its code comes from that repository, web",
 		"never ask for a token",
-		originFromHQ("/var/www/web"),
+		originFromHQ("web"),
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
@@ -333,7 +342,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 	if strings.Contains(answer.NextActions, "ssh web") {
 		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
 	}
-	want := originTake("/var/www/appdev", "git fetch "+address+"/git/"+labOrg+"/a1/web.git main")
+	want := originTake("appdev", "fetch "+address+"/git/"+labOrg+"/a1/web.git main")
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
 	}
@@ -351,9 +360,14 @@ func TestOriginRequest_OriginKeptOnGitHubUnderAnotherProjectsRepository_FetchesI
 	if answer.Connected == nil || answer.Connected.Repo != "web" {
 		t.Fatalf("want connected, held by web: %s", text)
 	}
-	want := originTake("/var/www/appdev", hq.GitHubHelperConfig+" && git fetch https://github.com/acme/app main")
+	want := originTake("appdev", "fetch https://github.com/acme/app main")
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from GitHub %s: %s", want, answer.NextActions)
+	}
+	// The fetch names GitHub's address in its argv, which zcp answers: no
+	// helper of zcp's own is written into the checkout for it.
+	if strings.Contains(answer.NextActions, hq.GitHubHelperConfig) {
+		t.Errorf("nextActions writes zcp's GitHub helper: %s", answer.NextActions)
 	}
 	if strings.Contains(answer.NextActions, address) {
 		t.Errorf("nextActions fetches from HQ code kept on GitHub: %s", answer.NextActions)
@@ -379,7 +393,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 			if answer.Connected == nil {
 				t.Fatalf("want connected: %s", text)
 			}
-			for _, want := range []string{tt.want, originFromHQ("/var/www/appdev")} {
+			for _, want := range []string{tt.want, originFromHQ("appdev")} {
 				if !strings.Contains(answer.NextActions, want) {
 					t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
 				}
@@ -393,8 +407,10 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 	}
 }
 
-// A code-volume pair's checkout is the volume below the dev service's mount,
-// never the runtime's own /var/www: the origin's commands run there.
+// A code-volume pair's checkout is the volume, never the runtime's own
+// /var/www: the origin's commands run through zcp git, which runs git in the
+// directory the pair's record says its deploys run in — never a path on the
+// mount.
 func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
 	stateDir := t.TempDir()
 	writeVariantBPair(t, stateDir)
@@ -409,13 +425,13 @@ func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
 		t.Fatalf("want an answer, got: %s", getTextContent(t, result))
 	}
 	text := answer.NextActions
-	for _, want := range []string{"`cd /var/www/webdev/ws && git fetch origin main", "`cd /var/www/webdev/ws && git fetch origin`", "`cd /var/www/webdev/ws && git remote add upstream"} {
+	for _, want := range []string{"`zcp git webdev fetch origin main", "`zcp git webdev fetch origin`", "`zcp git webdev remote add upstream"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("answer lacks %q: %s", want, text)
 		}
 	}
-	if strings.Contains(text, "cd /var/www/webdev &&") {
-		t.Errorf("answer runs git in the runtime's own /var/www: %s", text)
+	if strings.Contains(text, "cd /var/www") {
+		t.Errorf("answer runs git on the mount: %s", text)
 	}
 }
 
@@ -432,11 +448,12 @@ func TestOriginRequest_RepositoryOutsideGitHub_IsOnlyFollowed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Mate asks whether appdev follows https://gitlab.com/acme/app — a repository outside GitHub is only followed, never pushed to",
-		"`cd /var/www/appdev && git remote add upstream https://gitlab.com/acme/app && git remote set-url --push upstream no_push && git fetch upstream`",
+		"`zcp git appdev remote add upstream https://gitlab.com/acme/app && zcp git appdev remote set-url --push upstream no_push && zcp git appdev fetch upstream`",
 		"only a public one can be fetched",
 		// HQ does not take main from outside GitHub: while main holds only
 		// its initial commit, the followed history goes in as it is.
-		"while `main` still holds only HQ's initial commit, its history goes in exactly as it is, as a branch of its own (`git checkout -b <branch> upstream/main && git push origin <branch>`)",
+		"while `main` still holds only HQ's initial commit, its history goes in exactly as it is, as a branch of its own (`zcp git appdev checkout -b <branch> upstream/main && zcp git appdev push origin <branch>`)",
+		"take its new work in on a branch of your own with `zcp git appdev merge upstream/main`",
 		"merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
 	} {
 		if !strings.Contains(answer.NextActions, want) {

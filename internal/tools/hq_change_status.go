@@ -337,7 +337,7 @@ func groupChangeWords(changes []workflow.HQChange, leases []hqLeaseBranch, state
 	words, merged, open := groupChange(changes, state, g)
 	if merged == 0 {
 		if open != nil && open.Told != nil && open.Told.CoreHead != "" {
-			words += " — " + corePushWords(open.Number, open.Told.CoreLanded, g.branch, groupAliases(leases, g), false)
+			words += " — " + corePushWords(open.Number, open.Told.CoreLanded, g.branch, repoRoute{}.inLease(g.alias), groupAliases(leases, g), false)
 		}
 		return words
 	}

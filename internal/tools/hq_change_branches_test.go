@@ -119,7 +119,7 @@ func TestOpenChange_SameBranchAnswered(t *testing.T) {
 	if isError || answer.Created || answer.PullRequest != 1 || answer.Branch != "fix-login" {
 		t.Fatalf("want change #1 on fix-login answered: %s", text)
 	}
-	for _, want := range []string{`Change #1 on "fix-login" is already open: it stays`, "`git push origin fix-login`", `action="describe-change"`} {
+	for _, want := range []string{`Change #1 on "fix-login" is already open: it stays`, "`zcp git appdev push origin fix-login`", `action="describe-change"`} {
 		if !strings.Contains(answer.Message, want) {
 			t.Errorf("message lacks %q: %s", want, answer.Message)
 		}

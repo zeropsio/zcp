@@ -91,11 +91,11 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 		`repository "appdev": `,
 		"have diverged",
 		"since 2026-10-28T10:00:00.000Z",
-		"git remote set-head origin --auto",
+		"zcp git appdev remote set-head origin --auto",
 		"+main:refs/remotes/hq/main",
-		"git checkout -b realign-github origin/HEAD",
-		"git merge refs/remotes/hq/main",
-		"git push " + lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git realign-github",
+		"zcp git appdev checkout -b realign-github origin/HEAD",
+		"zcp git appdev merge refs/remotes/hq/main",
+		"zcp git appdev push " + lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git realign-github",
 		`action="open-change" branch="realign-github"`,
 		"squash",
 	} {
@@ -118,6 +118,40 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 	lab.hq.diverge("appdev", "2026-10-29T08:00:00.000Z")
 	if later := lab.passReport(); !strings.Contains(later, "since 2026-10-29T08:00:00.000Z") {
 		t.Errorf("a later divergence is not said:\n%s", later)
+	}
+}
+
+// TestDivergedWords_RunsGitInTheService: the realignment is git in the
+// repository's dev service through `zcp git <host>` — its origin is GitHub,
+// which zcp answers for the record's origin, and the push names HQ's address
+// in its argv, which zcp answers with the Mate's credential — never in the
+// agent's own shell on the mount.
+func TestDivergedWords_RunsGitInTheService(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	hqc, linked := openHQ(lab.hq.srv.Client(), lab.rt)
+	if !linked {
+		t.Fatal("the lab's Mate is not linked")
+	}
+	address := lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git"
+
+	words := divergedWords(lab.stateDir, hqc, labApp, "appdev", "2026-10-28T10:00:00.000Z")
+
+	for _, want := range []string{
+		"in its dev service appdev",
+		"`zcp git appdev fetch origin && zcp git appdev remote set-head origin --auto && zcp git appdev fetch " + address + " +main:refs/remotes/hq/main`",
+		"`zcp git appdev checkout -b realign-github origin/HEAD && zcp git appdev merge refs/remotes/hq/main`",
+		"`zcp git appdev push " + address + " realign-github`",
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the realignment lacks %q: %s", want, words)
+		}
+	}
+	for _, never := range []string{"own shell", "mounted checkout", "(`git ", "`git "} {
+		if strings.Contains(words, never) {
+			t.Errorf("the realignment says %q: %s", never, words)
+		}
 	}
 }
 

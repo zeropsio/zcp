@@ -101,6 +101,13 @@ func baseBranchCommand(workingDir string, joinRoot bool) string {
 	refuse := func(state string) string {
 		return fmt.Sprintf(`{ echo "%s%s"; exit 5; }`, baseBranchRefusalMarker, state)
 	}
+	// A Mate's refusal of a history of its own carries the commit it read
+	// here, in the dev service, so its remedy names that commit literally
+	// (BaseBranchRefusalRemedy); a plain project's stays as it always was.
+	notSeed := refuse("ZCP_BASE_NOT_SEED")
+	if !joinRoot {
+		notSeed = fmt.Sprintf(`{ echo "%sZCP_BASE_NOT_SEED $(git rev-parse --short=12 HEAD)"; exit 5; }`, baseBranchRefusalMarker)
+	}
 	name := `[ "$cur" = "$ref" ] || git checkout -q -b "$b"; `
 	onRoot := name
 	if joinRoot {
@@ -139,7 +146,7 @@ func baseBranchCommand(workingDir string, joinRoot bool) string {
 			`git checkout -q --detach FETCH_HEAD && git update-ref "$ref" "$(git rev-parse FETCH_HEAD)" "$old" && git symbolic-ref HEAD "$ref"; ` +
 			`else echo "` + baseBranchRefusalMarker + `ZCP_UNTRACKED_COLLISION $collide"; exit 5; fi; ` +
 			`elif [ -n "$isroot" ]; then ` + onRoot +
-			`else ` + refuse("ZCP_BASE_NOT_SEED") + `; fi; }`,
+			`else ` + notSeed + `; fi; }`,
 	}, " && ")
 }
 
@@ -159,30 +166,79 @@ func markedLine(output, marker string) string {
 const baseBranchRefusalMarker = "ZCP_BRANCH_REFUSED:"
 
 // BaseBranchRefusal reads the state BuildBaseBranchCommand refused out of its
-// output, with anything it names ("ZCP_BASE_NOT_SEED",
-// "ZCP_UNTRACKED_COLLISION app.js"); empty when it refused none.
+// output, with anything it names ("ZCP_BASE_NOT_SEED 0123456789ab", the
+// checkout's commit; "ZCP_UNTRACKED_COLLISION app.js"); empty when it refused
+// none.
 func BaseBranchRefusal(output string) string { return markedLine(output, baseBranchRefusalMarker) }
 
 // KeepOwnHistory keeps a checkout's history on a branch named after its
 // commit before the checkout moves onto a `main` it shares nothing with: run
 // again, it names the same commit again, and a commit made in between gets a
-// branch of its own.
+// branch of its own. The form a project without a Mate runs on its mounted
+// checkout (docs/spec-mate.md §6.7); a Mate's remedy names the commit its
+// refusal carries instead (BaseBranchRefusalRemedy).
 const KeepOwnHistory = `git branch -f "own-history-$(git rev-parse --short=12 HEAD)"`
 
+// RemedyRunner says how a branch refusal's remedy writes its git commands.
+type RemedyRunner struct {
+	// DevHost is a Mate's dev service: each command is `zcp git <host> …`,
+	// git run there, never on the mount (docs/spec-mate.md §6.8). "" is a
+	// project without a Mate, whose git runs on its mounted checkout and
+	// reads HQ through `zcp hq git` (§6.7).
+	DevHost string
+}
+
+// git is one git command, its arguments args, as the agent runs it.
+func (r RemedyRunner) git(args string) string {
+	if r.DevHost != "" {
+		return "zcp git " + r.DevHost + " " + args
+	}
+	return "git " + args
+}
+
+// fetch is a fetch from HQ, args its arguments: a project without a Mate
+// reads HQ through `zcp hq git`, which presents its key.
+func (r RemedyRunner) fetch(args string) string {
+	if r.DevHost != "" {
+		return r.git("fetch " + args)
+	}
+	return "zcp hq git fetch " + args
+}
+
+// keepOwnHistory is the step that keeps the checkout's history on a branch
+// named after its commit: for a Mate, the commit its refusal carries (named,
+// "" when an older refusal carries none), set with its start point so that
+// run again — after the checkout moved onto main, too — it keeps that commit.
+func (r RemedyRunner) keepOwnHistory(named string) string {
+	if r.DevHost == "" {
+		return KeepOwnHistory
+	}
+	return r.git("branch -f own-history-" + named + " " + named)
+}
+
 // BaseBranchRefusalRemedy is the one thing to do about a refusal
-// BaseBranchRefusal read, run in the pair's working copy; the next wiring
-// then finds the state it can wire. Empty for a refusal it does not know.
-func BaseBranchRefusalRemedy(refusal string) string {
+// BaseBranchRefusal read, its git commands written as run says; the next
+// wiring then finds the state it can wire. Empty for a refusal it does not
+// know.
+func BaseBranchRefusalRemedy(refusal string, run RemedyRunner) string {
 	state, named, _ := strings.Cut(refusal, " ")
 	switch state {
 	case "ZCP_BASE_NOT_SEED":
-		return fmt.Sprintf("%q already holds code this history shares nothing with, and two unrelated histories are never joined: keep this history on a branch of its own and put the working copy on %q — run `%s && git fetch origin %s && git reset --keep FETCH_HEAD`, which can be run again as it is — then carry what it needs over with `git cherry-pick` onto a branch cut from %q. That replaces the dev service's files with %q's code: when that code is not this project's own, as after the Mate moved to another application, ask the person first.",
-			baseBranch, baseBranch, KeepOwnHistory, shellQuote(baseBranch), baseBranch, baseBranch)
+		commit := strings.TrimSpace(named)
+		read := ""
+		if run.DevHost != "" && commit == "" {
+			// An older refusal carries no commit: read it first.
+			read = fmt.Sprintf("read the checkout's commit with `%s`, then ", run.git("rev-parse --short=12 HEAD"))
+			commit = "<that commit>"
+		}
+		return fmt.Sprintf("%q already holds code this history shares nothing with, and two unrelated histories are never joined: keep this history on a branch of its own and put the working copy on %q — %srun `%s && %s && %s`, which can be run again as it is — then carry what it needs over with `%s` onto a branch cut from %q. That replaces the dev service's files with %q's code: when that code is not this project's own, as after the Mate moved to another application, ask the person first.",
+			baseBranch, baseBranch, read, run.keepOwnHistory(commit), run.fetch("origin "+shellQuote(baseBranch)), run.git("reset --keep FETCH_HEAD"),
+			run.git("cherry-pick"), baseBranch, baseBranch)
 	case "ZCP_BRANCH_ELSEWHERE":
-		return fmt.Sprintf("%q already exists and the working copy is on another branch: run `git checkout %s`.",
-			baseBranch, shellQuote(baseBranch))
+		return fmt.Sprintf("%q already exists and the working copy is on another branch: run `%s`.",
+			baseBranch, run.git("checkout "+shellQuote(baseBranch)))
 	case "ZCP_STAGED_CHANGES":
-		return fmt.Sprintf("the working copy is about to take %q's files and has changes staged: run `git restore --staged .` (the files stay in the working copy).", baseBranch)
+		return fmt.Sprintf("the working copy is about to take %q's files and has changes staged: run `%s` (the files stay in the working copy).", baseBranch, run.git("restore --staged ."))
 	case "ZCP_UNTRACKED_COLLISION":
 		return fmt.Sprintf("%q carries files the working copy has untracked (%s): move or delete them.",
 			baseBranch, strings.TrimSpace(named))

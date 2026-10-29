@@ -250,6 +250,11 @@ call commits nothing):
 | `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `git branch <branch> <commit>` and push the ones you want on the origin |
 | `trees[].envFiles` | `.env` files, which git does not carry | move each value into the pool's service env with `zerops_env`, then delete the file |
 
+In a Mate, run each git command in the dev service, `zcp git <dev> <git args>`
+— a worktree below `/tmp/` with `-C <its path>` — never on its mount; a
+detached HEAD's commits get their branch from its main checkout with
+`zcp git <dev> branch <branch> <head>`, that tree's `head`.
+
 `trees[].ignored` and `t3Refs` are named for the record, not moved: ignored
 files come back from the repository (dependencies, build output), and refs
 under `refs/t3/` are the Mate app's own.

@@ -213,13 +213,16 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 	}
 }
 
-// A pair wired to this Mate's HQ runs git in the Mate's own shell on the
-// mounted checkout, never over ssh: a checkout whose code the person keeps on
-// GitHub has git ask `zcp hq git-credential`, which only that shell has. Its
-// dev service keeps one change open at a time; the checkout is what the dev
-// server runs, so another open change's branch is updated in a worktree
-// outside the mount, made from that shell, pushed and removed.
-func TestDevelopGitPushStartFromRemoteAtom_WiredPairWorksInTheMatesOwnShell(t *testing.T) {
+// A pair wired to this Mate's HQ runs every git command in its dev service,
+// `zcp git <push-source-host> …`, never on the mounted checkout: two gits on
+// one `.git`, one of them over the mount, break it, and zcp answers the dev
+// service's git for HQ and GitHub. After a command that changes files the
+// mount can show the old ones for a while, so a file is re-read before it is
+// edited. The dev service keeps one change open at a time; its checkout is
+// what the dev server runs, so another open change's branch is updated in a
+// worktree the dev service holds below `/tmp/wt-`, pushed and removed — a
+// namespace no older session's zcp-side `/tmp/<branch>` worktree takes.
+func TestDevelopGitPushStartFromRemoteAtom_WiredPairRunsGitInItsDevService(t *testing.T) {
 	t.Parallel()
 	atoms, err := ReadAllAtoms()
 	if err != nil {
@@ -235,21 +238,38 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairWorksInTheMatesOwnShell(t *t
 	if !found {
 		t.Fatal("develop-git-push-start-from-remote.md has no guidance for a pair wired to HQ")
 	}
-	if strings.Contains(wired, "ssh ") {
-		t.Errorf("a wired pair's sync runs over ssh: %s", wired)
+	for _, never := range []string{"your own shell", "zcp hq git-credential", "cd /var/www", "ssh ", "worktree add -f", "prune", "index.lock"} {
+		if strings.Contains(wired, never) {
+			t.Errorf("a wired pair's guidance says %q", never)
+		}
 	}
 	for _, want := range []string{
-		"your own shell",
-		"git merge --ff-only origin/main",
+		"`zcp git <push-source-host> …`",
+		"never on the mounted checkout",
+		"re-read a file before editing it",
+		"zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout main && zcp git <push-source-host> merge --ff-only origin/main && zcp git <push-source-host> checkout -b <your-branch>",
 		"one change open at a time",
 		"what its dev server runs",
-		"git worktree add /tmp/<branch> <branch>",
-		"git worktree remove /tmp/<branch>",
+		"zcp git <push-source-host> worktree add --detach /tmp/wt-<branch> origin/<branch>",
+		"zcp git <push-source-host> -C /tmp/wt-<branch> merge origin/main",
+		"zcp git <push-source-host> -C /tmp/wt-<branch> push origin HEAD:<branch>",
+		"zcp git <push-source-host> worktree remove /tmp/wt-<branch>",
 		"Nothing runs or deploys from it",
+		"`zcp git <push-source-host> branch <name>`",
+		"`zcp git <push-source-host> reset --keep origin/main`",
 	} {
 		if !strings.Contains(wired, want) {
-			t.Errorf("a wired pair's guidance lacks %q: %s", want, wired)
+			t.Errorf("a wired pair's guidance lacks %q", want)
 		}
+	}
+	// Every command it gives runs in the dev service.
+	for line := range strings.SplitSeq(wired, "\n") {
+		if strings.HasPrefix(line, "git ") || strings.HasPrefix(line, "cd ") || strings.Contains(line, "(`git ") {
+			t.Errorf("a wired pair's guidance runs git outside its dev service: %s", line)
+		}
+	}
+	if t.Failed() {
+		t.Logf("the wired pair's guidance:\n%s", wired)
 	}
 }
 

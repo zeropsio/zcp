@@ -246,15 +246,21 @@ func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 }
 
 // hqGitPushRefusal refuses a git-push from a pair wired to this Mate's HQ, or
-// to HQ: a Mate's code reaches HQ by plain git in the checkout, on a branch of
-// the agent's own, and HQ's `main` moves only when a person merges — a deploy
-// strategy that pushes the tracked branch would push `main`, and to another
-// remote it would hand over the HQ credential the dev service holds.
-func hqGitPushRefusal(hostname string) *platform.PlatformError {
+// to HQ: a Mate's code reaches HQ by plain git in the dev service, through
+// `zcp git <host>`, on a branch of the agent's own, and HQ's `main` moves only
+// when a person merges — a deploy strategy that pushes the tracked branch
+// would push `main`, and to another remote it would hand over the HQ
+// credential the dev service holds. A project without a Mate (mate false)
+// pushes from its checkout as it did before `zcp git` (plainGit).
+func hqGitPushRefusal(hostname string, mate bool) *platform.PlatformError {
+	push := fmt.Sprintf("In %s's checkout, commit on a branch of your own and run %s", hostname, plainGit("push origin <branch>"))
+	if mate {
+		push = fmt.Sprintf("In %s's dev service, commit on a branch of your own and push it with `zcp git %s push origin <branch>`", hostname, hostname)
+	}
 	return platform.NewPlatformError(
 		platform.ErrInvalidUsage,
 		fmt.Sprintf("git-push from %s did not run: its code goes to this Mate's HQ by plain git, not by a deploy.", hostname),
-		fmt.Sprintf("In %s's checkout, commit on a branch of your own and run `git push origin <branch>` — never push %q and never force-push: %q moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code.", hostname, hqBase, hqBase),
+		fmt.Sprintf("%s — never push %q and never force-push: %q moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code.", push, hqBase, hqBase),
 	)
 }
 
@@ -450,7 +456,7 @@ func handleGitPush(
 	// A pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN: a push
 	// to any remote would hand it over, so none runs, whatever the remote.
 	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote, rt) {
-		refusal := hqGitPushRefusal(hostname)
+		refusal := hqGitPushRefusal(hostname, rt.MateEnabled)
 		recordAttempt(refusal.Message, topology.FailureClassConfig)
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
