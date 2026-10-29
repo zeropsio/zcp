@@ -3992,7 +3992,13 @@ the develop, delivery and pool-migrate atoms, the AGENTS.md git host, and the wo
 about changes, origins, branch refusals and their remedies — found by the record's repository
 (`repoDevHost`; a recipe may name it otherwise), the agent's worktrees below `/tmp/wt-<branch>` in
 the dev service; a lease's git stays `ssh <alias> "cd /var/www && …"`, and a project without a Mate
-keeps `zcp hq git` on its mounted checkout (§6.7). A Mate's branch refusal of a history of its own
+keeps `zcp hq git` on its mounted checkout (§6.7), where `zcp git` has no Mate identity to answer
+with: a text it reads too keeps the commands it gave before `zcp git` — the git-push refusal and
+pool-migrate's work branch byte for byte, gated on `runtime.Info.MateEnabled`; an atom, which has
+no axis for a Mate, with its Mate's form in an "In a Mate" paragraph of its own
+(`TestGitPushToHQ_PlainProject_KeepsTheCheckoutPushWords`,
+`TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream`,
+`TestAgentGitContent_OutsideAMateKeepsItsCommands`). A Mate's branch refusal of a history of its own
 carries the commit zcp's command read in the service (`ZCP_BASE_NOT_SEED <commit>`), so its remedy
 names `zcp git <host> branch -f own-history-<commit> <commit>` literally
 (`TestBaseBranchRefusalRemedy_Mate_NamesTheCommitLiterally`); a plain project's remedy is unchanged
