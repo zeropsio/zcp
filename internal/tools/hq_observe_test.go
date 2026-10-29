@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -42,6 +43,24 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 	if tool == nil || tool.Description != wantDescription {
 		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
 	}
+	schemaJSON, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if len(schema.Properties) != 6 {
+		t.Fatalf("observe schema has unexpected authority/transport inputs: %s", schemaJSON)
+	}
+	for _, name := range []string{"action", "projectId", "serviceId", "processId", "versionId", "limit"} {
+		if _, ok := schema.Properties[name]; !ok {
+			t.Fatalf("missing fixed input %s", name)
+		}
+	}
 	for _, tt := range []struct {
 		name, action, project, service, path, body string
 		status                                     int
@@ -49,25 +68,25 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 		// the transport's words between them.
 		want, wantEnd string
 	}{
-		{"environments", "environments", "", "", "/api/mate/environments", `{"appId":"a1","environments":[{"projectId":"P_STAGE","name":"stage","tier":"stage"}]}`, 200, "", ""},
-		{"status", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":{"id":"V1","activatedAt":null}}]}`, 200, "", ""},
-		{"logs", "logs", "P_STAGE", "S1", "/api/mate/environments/P_STAGE/services/S1/logs?limit=2", `{"projectId":"P_STAGE","serviceId":"S1","entries":[{"timestamp":"now","severity":"info","message":"serving"}]}`, 200, "", ""},
-		{"forbidden", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"code":"observation_refused","reason":"forbidden"}`, 403,
+		{"environments", "environments", "", "", "/api/mate/observe", `{"appId":"a1","environments":[{"projectId":"P_STAGE","name":"stage","tier":"stage"}]}`, 200, "", ""},
+		{"status", "status", "P_STAGE", "", "/api/mate/observe", `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":{"id":"V1","activatedAt":null}}]}`, 200, "", ""},
+		{"logs", "logs", "P_STAGE", "S1", "/api/mate/observe", `{"projectId":"P_STAGE","serviceId":"S1","entries":[{"timestamp":"now","severity":"info","message":"serving"}]}`, 200, "", ""},
+		{"forbidden", "status", "P_STAGE", "", "/api/mate/observe", `{"code":"observation_refused","reason":"forbidden"}`, 403,
 			"HQ refused the observation: 403 observation_refused (forbidden); the same call gets the same answer.", ""},
-		{"unavailable", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"code":"zerops_unavailable"}`, 503,
+		{"unavailable", "status", "P_STAGE", "", "/api/mate/observe", `{"code":"zerops_unavailable"}`, 503,
 			"HQ could not read Zerops right now (zerops_unavailable); try again later — nothing to fix on your side.", ""},
-		{"an environment HQ does not know is named as HQ's refusal", "logs", "P_GONE", "S1", "/api/mate/environments/P_GONE/services/S1/logs?limit=2", `{"code":"environment_not_found","reason":"environment_not_found"}`, 404,
+		{"an environment HQ does not know is named as HQ's refusal", "logs", "P_GONE", "S1", "/api/mate/observe", `{"code":"environment_not_found","reason":"environment_not_found"}`, 404,
 			"HQ refused the observation: 404 environment_not_found; the same call gets the same answer.", ""},
-		{"a standby HQ asks the agent to try again later with nothing to fix", "environments", "", "", "/api/mate/environments", `{"code":"not_active"}`, 503,
+		{"a standby HQ asks the agent to try again later with nothing to fix", "environments", "", "", "/api/mate/observe", `{"code":"not_active"}`, 503,
 			"HQ is not serving right now (not_active); try again later — nothing to fix on your side.", ""},
-		{"an HQ that drops the call asks the agent to try again later with nothing to fix", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", "", 0,
-			"HQ is not serving right now (hq /api/mate/environments/P_STAGE: ", "); try again later — nothing to fix on your side."},
+		{"an HQ that drops the call asks the agent to try again later with nothing to fix", "status", "P_STAGE", "", "/api/mate/observe", "", 0,
+			"HQ is not serving right now (HQ observation request did not complete", "); try again later — nothing to fix on your side."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var reads atomic.Int32
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				reads.Add(1)
-				if r.Method != http.MethodGet || r.URL.String() != tt.path || r.Header.Get("Authorization") != "Project good" {
+				if r.Method != http.MethodPost || r.URL.String() != tt.path || r.Header.Get("Authorization") != "Observe "+observeTestToken {
 					t.Errorf("unexpected request %s %s", r.Method, r.URL)
 				}
 				if tt.status == 0 {
@@ -80,12 +99,13 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 					return
 				}
 				w.WriteHeader(tt.status)
-				if _, err := w.Write([]byte(tt.body)); err != nil {
+				if _, err := w.Write([]byte(observeTestWire(t, tt.action, tt.body, tt.status))); err != nil {
 					t.Error(err)
 				}
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			observeTestProfile(t)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": tt.action, "projectId": tt.project, "serviceId": tt.service, "limit": 2})
@@ -142,13 +162,13 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 			}
 			var environmentReads, selfReads atomic.Int32
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Project good" {
+				if r.URL.Path == "/api/mate/self" && (r.Method != http.MethodGet || r.Header.Get("Authorization") != "Project good") || r.URL.Path == "/api/mate/observe" && (r.Method != http.MethodPost || r.Header.Get("Authorization") != "Observe "+observeTestToken) {
 					t.Errorf("unexpected request method or authorization")
 				}
 				switch r.URL.Path {
-				case "/api/mate/environments":
+				case "/api/mate/observe":
 					environmentReads.Add(1)
-					writeHQJSON(w, http.StatusOK, map[string]any{"appId": "a1", "environments": []any{}})
+					_, _ = w.Write([]byte(observeTestWire(t, "environments", `{"appId":"a1","environments":[]}`, 200)))
 				case "/api/mate/self":
 					selfReads.Add(1)
 					if tt.status != http.StatusOK {
@@ -166,6 +186,7 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			observeTestProfile(t)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", stateDir, runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "environments"})
@@ -254,7 +275,8 @@ func TestObserve_StatusActiveVersion_PassesIDAndActivationThrough(t *testing.T) 
 		{"a service without a running version stays null", `null`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			body := `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":` + tt.version + `}]}`
+			legacyBody := `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":` + tt.version + `}]}`
+			body := observeTestWire(t, "status", legacyBody, 200)
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if _, err := w.Write([]byte(body)); err != nil {
 					t.Error(err)
@@ -262,6 +284,7 @@ func TestObserve_StatusActiveVersion_PassesIDAndActivationThrough(t *testing.T) 
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			observeTestProfile(t)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "status", "projectId": "P_STAGE"})
@@ -269,5 +292,178 @@ func TestObserve_StatusActiveVersion_PassesIDAndActivationThrough(t *testing.T) 
 				t.Fatalf("status = %q (error %v), want %q", text, result.IsError, body)
 			}
 		})
+	}
+}
+
+// A project integration key does not prove personal observe authorization.
+func TestObserve_MissingCredential_ProjectKeyCannotAuthorize(t *testing.T) {
+	// non-parallel: isolates the fixed profile path and project environment.
+	t.Setenv("HOME", t.TempDir())
+	var reads atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		writeHQJSON(w, http.StatusOK, map[string]any{"appId": "a1", "environments": []any{}})
+	}))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "P_MATE", "good")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+	result := callTool(t, srv, "zerops_observe", map[string]any{"action": "environments"})
+	if !result.IsError || reads.Load() != 0 {
+		t.Fatalf("missing observe credential must fail closed before HTTP; error=%v requests=%d", result.IsError, reads.Load())
+	}
+	if text := result.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "observe authorization required") || strings.Contains(text, "good") {
+		t.Fatalf("missing credential must ask for observe authorization without exposing a key: %q", text)
+	}
+}
+
+const observeTestToken = "zobs.org.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+func observeTestProfile(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	hqtest.GitCredential(t, hq.ObserveCredentialPath(), observeTestToken)
+}
+
+// Original fact fixtures retain their scenario values inside the new HQ envelope.
+func observeTestWire(t *testing.T, action, body string, status int) string {
+	t.Helper()
+	if status != http.StatusOK {
+		return body
+	}
+	var facts map[string]any
+	if err := json.Unmarshal([]byte(body), &facts); err != nil {
+		t.Fatal(err)
+	}
+	facts["action"] = action
+	if _, ok := facts["appId"]; !ok {
+		facts["appId"] = "a1"
+	}
+	if environment, ok := facts["environment"].(map[string]any); ok {
+		facts["projectId"] = environment["projectId"]
+		delete(facts, "environment")
+	}
+	if _, ok := facts["projectId"]; !ok {
+		facts["projectId"] = nil
+	}
+	delete(facts, "serviceId")
+	if environments, ok := facts["environments"].([]any); ok {
+		for _, v := range environments {
+			environment := v.(map[string]any)
+			environment["kind"] = environment["tier"]
+			delete(environment, "tier")
+		}
+	}
+	facts["coverage"] = map[string]any{"source": "hq", "observedAt": "2026-10-29T12:00:00Z", "freshness": "fresh", "scope": "authorized current facts", "truncated": false}
+	encoded, err := json.Marshal(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.T) {
+	// non-parallel: fixed profile HOME and project identity are process state.
+	observeTestProfile(t)
+	var expectedAuthorization string
+	var requests int
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/mate/observe" || r.Header.Get("Authorization") != expectedAuthorization {
+			t.Error("wrong observation route or authority")
+		}
+		var in map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Error(err)
+			return
+		}
+		action, _ := in["action"].(string)
+		field := map[string]string{"environments": "environments", "status": "services", "deployments": "deployments", "processes": "processes", "process": "processes", "versions": "versions", "version": "versions", "logs": "entries", "build_logs": "entries"}[action]
+		if field == "" {
+			t.Error("unknown action reached HQ")
+			return
+		}
+		if in["limit"] != float64(100) {
+			t.Error("default limit was not normalized")
+		}
+		if _, ok := in["credential"]; ok {
+			t.Error("credential entered input")
+		}
+		out := map[string]any{"action": action, "appId": "a1", "projectId": in["projectId"], "coverage": map[string]any{"source": "hq", "observedAt": "2026-10-29T12:00:00Z", "freshness": "fresh", "scope": "visible current facts", "truncated": false}, field: []any{}}
+		if action == "process" {
+			out[field] = []any{map[string]any{"id": "PR1", "status": "ACTIVE"}}
+		}
+		if action == "version" {
+			out[field] = []any{map[string]any{"id": "V1", "status": "ACTIVE"}}
+		}
+		writeHQJSON(w, 200, out)
+	}))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "P_MATE", "")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+	for _, action := range []string{"environments", "status", "deployments", "processes", "process", "versions", "version", "logs", "build_logs"} {
+		// Replacing the profile file changes authority on the same registered tool.
+		token := "zobs.org." + strings.Repeat("A", 43)
+		if requests%2 == 1 {
+			token = "zobs.org." + strings.Repeat("B", 42) + "A"
+		}
+		hqtest.GitCredential(t, hq.ObserveCredentialPath(), token)
+		expectedAuthorization = "Observe " + token
+		args := map[string]any{"action": action}
+		if action != "environments" && action != "deployments" {
+			args["projectId"] = "P_STAGE"
+		}
+		if action == "logs" || action == "versions" {
+			args["serviceId"] = "S1"
+		}
+		if action == "process" {
+			args["processId"] = "PR1"
+		}
+		if action == "version" || action == "build_logs" {
+			args["versionId"] = "V1"
+		}
+		result := callTool(t, srv, "zerops_observe", args)
+		text := result.Content[0].(*mcp.TextContent).Text
+		if result.IsError || result.StructuredContent != nil || strings.Contains(text, token) {
+			t.Fatalf("%s did not deliver safe text facts: %s", action, text)
+		}
+		var got struct {
+			Action string `json:"action"`
+			AppID  string `json:"appId"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil || got.Action != action || got.AppID != "a1" {
+			t.Fatalf("%s facts changed: %s", action, text)
+		}
+	}
+	if requests != 9 {
+		t.Fatalf("requests=%d want exactly 9", requests)
+	}
+}
+
+func TestObserve_InvalidFixedSelectors_NoHTTPRequest(t *testing.T) {
+	// non-parallel: profile path and project configuration are process state.
+	observeTestProfile(t)
+	var requests atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "P_MATE", "project-key")
+	for _, args := range []map[string]any{
+		{"action": "process", "projectId": "P"},
+		{"action": "version", "projectId": "P"},
+		{"action": "build_logs", "projectId": "P"},
+		{"action": "versions", "projectId": "P"},
+		{"action": "processes"},
+		{"action": "logs", "projectId": "P", "serviceId": "S", "limit": -1},
+		{"action": "environments", "versionId": "../escape"},
+	} {
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+		RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+		if result := callTool(t, srv, "zerops_observe", args); !result.IsError {
+			t.Errorf("invalid input accepted: %v", args)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("invalid selectors reached HTTP %d times", requests.Load())
 	}
 }

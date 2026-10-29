@@ -507,8 +507,8 @@ func (s *Server) registerTools() {
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
+	tools.RegisterObserve(s.server, httpClient, projectID, stateDir, s.rtInfo)
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-		tools.RegisterObserve(s.server, httpClient, projectID, stateDir, s.rtInfo)
 		// A Mate's agent asks where the code of the repository it came from
 		// is kept (docs/spec-mate.md §5.10); a Mate's client
 		// draws the card, so it is Mate-gated like every mate-shaped effect.
