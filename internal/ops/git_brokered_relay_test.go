@@ -2973,6 +2973,12 @@ func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) 
 
 func helperEnv() []string { return []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C"} }
 
+// credAnswer is what the helper hands git for user and pass, in git's
+// credential protocol.
+func credAnswer(user, pass string) string {
+	return "username=" + user + "\npassword=" + pass + "\n"
+}
+
 // TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock: an answer for
 // another id — one a helper that gave up left — is discarded while the lock
 // is held, and the helper's own answer is the one it hands git.
@@ -2992,7 +2998,7 @@ func TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock(t *testing.T) {
 			if code := p.wait(t); code != 0 {
 				t.Errorf("helper exit %d", code)
 			}
-			if got := p.stdout.String(); got != "username=mate\npassword=own-FAKE\n" {
+			if got := p.stdout.String(); got != credAnswer("mate", "own-FAKE") {
 				t.Errorf("helper answered %q, want its own answer", got)
 			}
 			if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); !errors.Is(err, os.ErrNotExist) {
@@ -3023,7 +3029,7 @@ func TestBrokeredGit_Relay_AnswerForOtherHost_IgnoredByHelper(t *testing.T) {
 				}
 				want := ""
 				if then == "its own" {
-					want = "username=mate\npassword=right-FAKE\n"
+					want = credAnswer("mate", "right-FAKE")
 				}
 				if got := p.stdout.String(); got != want {
 					t.Errorf("then %s: helper answered %q, want %q", then, got, want)
