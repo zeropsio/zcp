@@ -181,12 +181,12 @@ func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
 	if take == nil || push == nil {
 		t.Fatalf("the answer gives no command that takes the open change's branch, or pushes it: %s", answer.Message)
 	}
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+take[1]); err != nil {
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(take[1])); err != nil {
 		t.Fatalf("taking the branch as the answer says (%s): %v\n%s", take[1], err, out)
 	}
 	lab.write(map[string]string{"signup.js": "the signup\n"})
 	lab.commit("Add the signup")
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+push[1]); err != nil {
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
 		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
 	}
 	if got, want := lab.remoteHead("fix-login"), lab.git("rev-parse", "HEAD"); got != want {
@@ -251,7 +251,7 @@ func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
 	if push == nil {
 		t.Fatalf("the answer gives no push: %s", answer.Message)
 	}
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+push[1]); err != nil {
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
 		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
 	}
 	if got, want := lab.remoteHead(bound), lab.git("rev-parse", "fix-signup"); got != want {

@@ -80,6 +80,7 @@ func handleOpenChange(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	branch := target.Branch
+	route := changeRoute(stateDir, target)
 	var result changeOpenResult
 	result.Service, result.Parts = changeService(stateDir, hqc.Address(), target, input.Service, branch)
 
@@ -121,7 +122,7 @@ func handleOpenChange(
 			recordHQChange(stateDir, target.AppID, target.Repo, h.Number, held, titleOf(h), workflow.HQChangeFromHanded)
 			result.Branch, result.PullRequest = held, h.Number
 			result.PullRequestURL = hqc.ChangeURL(target.AppID, target.Repo, h.Number)
-			result.Message = sentenceOf(handedWork(h, target.Repo, held, !state.OpenPerBranch))
+			result.Message = sentenceOf(handedWork(route, h, target.Repo, held, !state.OpenPerBranch))
 			if held == branch {
 				result.Message += fmt.Sprintf(" It is the change of %q, so nothing else was opened.", branch)
 			} else {
@@ -185,13 +186,13 @@ func handleOpenChange(
 	// asked for when HQ answered another.
 	recordHQChange(stateDir, target.AppID, target.Repo, number, result.Branch, titleIfCreated(opened), workflow.HQChangeFromOpen)
 	if !opened.Created {
-		result.Message = lostNote + answeredOpenChange(hqc, target.Repo, branch, held, number)
+		result.Message = lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
 		return jsonResult(result), nil, nil
 	}
 	handedNote := handedElsewhere(hqc, handed, target.Repo)
 	if origin == hq.OriginOnGitHub {
-		result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (`git push origin %s`, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
-			number, target.Repo, result.Branch, result.Branch) + handedNote
+		result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (%s, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+			number, target.Repo, result.Branch, route.git("push origin "+result.Branch)) + handedNote
 		return jsonResult(result), nil, nil
 	}
 	push, bound := result.Branch, ""
@@ -199,8 +200,8 @@ func handleOpenChange(
 		push = branch + ":" + result.Branch
 		bound = fmt.Sprintf(", not %q — this HQ binds a change to a branch of its own, as HQ did before changes were bound to the branch they name —", branch)
 	}
-	result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
-		number, target.Repo, result.Branch, bound, push) + handedNote
+	result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + handedNote
 	return jsonResult(result), nil, nil
 }
 
@@ -311,20 +312,20 @@ func titleIfCreated(opened hq.OpenedChange) string {
 // rather than opened: the one on the branch asked for, which stays and takes
 // the work by a push — or, from an HQ that keeps one open change per
 // repository, its open one on another branch (held, "" when that HQ names
-// none), which this work goes onto.
-func answeredOpenChange(hqc hq.Client, repo, branch, held string, number int) string {
+// none), which this work goes onto; git run where route says.
+func answeredOpenChange(route repoRoute, hqc hq.Client, repo, branch, held string, number int) string {
 	switch held {
 	case branch:
-		return fmt.Sprintf("Change #%d on %q is already open: it stays; push to it (`git push origin %s`), never force-pushing, and describe it again with zerops_workflow action=\"describe-change\" branch=%q once the push is ready — a push that moves it makes it a draft until then.",
-			number, branch, branch, branch)
+		return fmt.Sprintf("Change #%d on %q is already open: it stays; push to it (%s), never force-pushing, and describe it again with zerops_workflow action=\"describe-change\" branch=%q once the push is ready — a push that moves it makes it a draft until then.",
+			number, branch, route.git("push origin "+branch), branch)
 	case "":
 		return fmt.Sprintf("Change #%d is already open in %q, and a Mate has one open change per repository: it stays. Push this work to its branch, or open its change once #%d is merged or closed.",
 			number, repo, number)
 	}
 	// Work cut from main is no fast-forward of the open change's branch: it
 	// goes onto that branch, or HQ refuses its push.
-	return fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays, and this work goes on its branch — %s, bring this work onto it (`git merge %s`) and push it (`git push origin %s`), never force-pushing; or open this work's change once #%d is merged or closed.",
-		number, repo, held, takeChangeBranch(hqc, held), branch, held, number)
+	return fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays, and this work goes on its branch — %s, bring this work onto it (%s) and push it (%s), never force-pushing; or open this work's change once #%d is merged or closed.",
+		number, repo, held, takeChangeBranch(route, hqc, held), route.git("merge "+branch), route.git("push origin "+held), number)
 }
 
 // handedElsewhere names the changes handed to the Mate in repo, each on a

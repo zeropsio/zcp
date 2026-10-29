@@ -59,7 +59,7 @@ func TestRepoDevHost_PoolPair_NamesLeaseRoute(t *testing.T) {
 	if got, want := route.git("push origin fix-login"), "`ssh <alias> \"cd /var/www && git push origin fix-login\"`"; got != want {
 		t.Errorf("git = %s, want %s", got, want)
 	}
-	if got := route.where(); got != "in a lease of the dev pool webpool, over ssh" {
+	if got := route.where(); got != "in a lease of the dev pool webpool" {
 		t.Errorf("where = %q, want a lease of webpool", got)
 	}
 	if got, want := route.take("fix-login"), "`zerops_lease action=\"acquire\" pool=\"webpool\" branch=\"fix-login\"`"; got != want {
@@ -72,7 +72,7 @@ func TestRepoDevHost_PoolPair_NamesLeaseRoute(t *testing.T) {
 	if got, want := leased.git("push origin fix-login"), "`ssh webpool-3 \"cd /var/www && git push origin fix-login\"`"; got != want {
 		t.Errorf("in its lease, git = %s, want %s", got, want)
 	}
-	if got := leased.where(); got != "in its lease webpool-3, over ssh" {
+	if got := leased.where(); got != "in its lease webpool-3" {
 		t.Errorf("in its lease, where = %q", got)
 	}
 }
