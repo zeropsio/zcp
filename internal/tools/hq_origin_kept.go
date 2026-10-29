@@ -97,7 +97,7 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 	case !strings.Contains(string(out), originMovedMarker):
 		return ""
 	case helper != "":
-		return fmt.Sprintf("its code is kept on GitHub, so its checkout's origin is %s now: fetch and push it in your own shell on the mounted checkout, never over ssh", url)
+		return fmt.Sprintf("its code is kept on GitHub, so its checkout's origin is %s now: fetch and push it in its dev service through `zcp git %s`, which zcp answers for GitHub", url, m.Hostname)
 	}
 	return fmt.Sprintf("its code is kept in HQ, so its checkout's origin is its repository there again (%s)", url)
 }
@@ -201,7 +201,7 @@ func hqKeptOnGitHub(stateDir string) []string {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s: its code is kept on GitHub at %s, and its checkout's origin is GitHub: %s",
-			m.Hostname, m.HQ.Origin.URL, originOnGitHub(originCheckout(stateDir, m.Hostname))))
+			m.Hostname, m.HQ.Origin.URL, originOnGitHub(m.Hostname)))
 	}
 	return lines
 }

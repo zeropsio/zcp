@@ -665,7 +665,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 				"origin.mode=github", "origin=" + github, "its checkout's origin is GitHub",
 				"`zcp git appdev fetch origin`", "`zcp git appdev push origin <branch>`", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
 			},
-			never: []string{"remote add", "set-url origin", "--fill", "own shell", "cd /var/www"},
+			never: []string{"remote add", "set-url origin", "--fill", "own shell", "never over ssh"},
 		},
 		{
 			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},

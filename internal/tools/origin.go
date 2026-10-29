@@ -123,15 +123,15 @@ func originWithdrawWords(req ops.OriginRequest) string {
 // connected when the asked address already is the origin of the asked
 // repository, or of another one of the application; else asked, also by an
 // HQ older than repositories in that state. hqAddress and stateDir say where
-// the code comes in (originFromHolder, originCheckout).
+// the code comes in (originFromHolder, originHost).
 func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID, stateDir string) originAnswer {
-	dir := originCheckout(stateDir, req.Repo)
+	host := originHost(stateDir, req.Repo)
 	if holder, origin := originHolder(req, state); holder != "" {
 		connected := &originConnected{Origin: req, Repo: holder}
 		if holder == req.Repo {
 			return originAnswer{Connected: connected,
 				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code first, and never ask for a token: %s. %s",
-					req.URL, holder, originFromHQ(dir), originKept(req, origin.Mode, dir))}
+					req.URL, holder, originFromHQ(host), originKept(req, origin.Mode, host))}
 		}
 		return originAnswer{Connected: connected,
 			NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that repository, %s, never from the asked address, and never ask for a token: %s.",
@@ -141,14 +141,14 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 		return originAnswer{
 			Requested: &originRequested{Origin: req},
 			NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether %[2]s follows %[1]s — a repository outside GitHub is only followed, never pushed to; the code is kept in Mate. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you how it ended. Followed: take the code from HQ — %[3]s — then %[4]s; only a public one can be fetched. Declined: nothing changes. %[5]s End your turn.",
-				req.URL, req.Repo, originFromHQ(dir), originFollowed(req, dir), originWithdrawWords(req)),
+				req.URL, req.Repo, originFromHQ(host), originFollowed(req, host), originWithdrawWords(req)),
 		}
 	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
 		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. %[4]s Which they picked, that message says. %[5]s %[6]s Declined: nothing changes; should its code still come in, %[7]s. %[8]s End your turn.",
-			req.URL, req.Repo, originFromHQ(dir), originMainFromGitHub, "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir),
-			originAsItsOwnBranch(fmt.Sprintf("cd %s && git fetch %s HEAD:<branch>", dir, req.URL)), originWithdrawWords(req)),
+			req.URL, req.Repo, originFromHQ(host), originMainFromGitHub, "Kept on GitHub: "+originOnGitHub(host), originInMate(req, host),
+			originAsItsOwnBranch(host, "fetch "+req.URL+" HEAD:<branch>"), originWithdrawWords(req)),
 	}
 }
 
@@ -161,80 +161,90 @@ const originMainFromGitHub = "Connected, HQ takes the repository's `main` from G
 	"your own setup goes in after it, as an ordinary change on a branch cut from that `main` — on GitHub a pull request, merged by squash."
 
 // originAsItsOwnBranch is how code HQ takes from no origin comes in: its
-// history, put on a branch by fetchOnto, pushed exactly as it is and its
-// change opened from that branch — merged, HQ makes that history `main`. It
-// is never merged or rebased onto the initial commit HQ made `main` with,
-// which would leave `main` holding commits its origin never had.
-func originAsItsOwnBranch(fetchOnto string) string {
-	return fmt.Sprintf("its history goes in exactly as it is, as a branch of its own (`%s && git push origin <branch>`) "+
+// history, put on a branch by onto (a git command's arguments, run in host's
+// dev service), pushed exactly as it is and its change opened from that
+// branch — merged, HQ makes that history `main`. It is never merged or
+// rebased onto the initial commit HQ made `main` with, which would leave
+// `main` holding commits its origin never had.
+func originAsItsOwnBranch(host, onto string) string {
+	return fmt.Sprintf("its history goes in exactly as it is, as a branch of its own (%s) "+
 		"whose change you open with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"`: "+
 		"merged, HQ makes that history `main`; never merge or rebase it onto `main`'s initial commit, nor merge that commit into it",
-		fetchOnto)
+		inDevService(host, onto, "push origin <branch>"))
+}
+
+// inDevService is cmds — each a git command's arguments — run one after
+// another in host's dev service through `zcp git`, which runs git in the
+// checkout zcp's record names and answers it for HQ and GitHub
+// (docs/spec-mate.md §6.8): one command line in backticks, stopping at the
+// first that fails.
+func inDevService(host string, cmds ...string) string {
+	return repoRoute{host: host}.git(cmds...)
 }
 
 // originKept is what the way HQ says the person keeps a connected origin's
-// code means for the pair's checkout. An HQ older than that way says none,
-// and the agent asks the person rather than guess.
-func originKept(req ops.OriginRequest, mode, dir string) string {
+// code means for the pair's checkout, in host's dev service. An HQ older than
+// that way says none, and the agent asks the person rather than guess.
+func originKept(req ops.OriginRequest, mode, host string) string {
 	switch {
 	case !ops.IsGitHubRepository(req.URL):
-		return "It is only followed: " + originFollowed(req, dir) + "; only a public one can be fetched."
+		return "It is only followed: " + originFollowed(req, host) + "; only a public one can be fetched."
 	case mode == hq.OriginOnGitHub:
-		return "Kept on GitHub: " + originOnGitHub(dir)
+		return "Kept on GitHub: " + originOnGitHub(host)
 	case mode == hq.OriginFollowed:
-		return originInMate(req, dir)
+		return originInMate(req, host)
 	}
 	return fmt.Sprintf("HQ does not say which way the person keeps it: ask them in one sentence — on GitHub, or in Mate, only following it — and end your turn; their answer picks one of these. %s %s",
-		"Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir))
+		"Kept on GitHub: "+originOnGitHub(host), originInMate(req, host))
 }
 
 // originOnGitHub is how a repository whose code is kept on GitHub is worked
-// on in its checkout at dir: its origin is GitHub — the wiring points it there
-// (hqPairOrigin), never a second remote — and git asks `zcp hq git-credential`
-// for it, which only the Mate's own shell has; work goes on a branch of the
-// agent's own, pushed to origin, and its change is opened after the push. HQ
-// opens the branch's pull request and the person merges it in Mate, so the
-// agent's own pull request is never where the work ends.
-func originOnGitHub(dir string) string {
-	return fmt.Sprintf("ZCP points the checkout's origin at GitHub, never a second remote; work on it in your own shell, never over ssh: `cd %s && git fetch origin`, a branch of your own (`git checkout -b <branch> origin/main`), commit, `git push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: HQ opens its pull request on GitHub from that branch and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. Never push `main` and never force-push: `main` moves only by a merge.",
-		dir)
+// on in host's dev service: its origin is GitHub — the wiring points it there
+// (hqPairOrigin), never a second remote — and zcp answers git there for it
+// (`zcp git`); work goes on a branch of the agent's own, pushed to origin,
+// and its change is opened after the push. HQ opens the branch's pull request
+// and the person merges it in Mate, so the agent's own pull request is never
+// where the work ends.
+func originOnGitHub(host string) string {
+	return fmt.Sprintf("ZCP points the checkout's origin at GitHub, never a second remote; work on it in its dev service, where zcp answers git for GitHub: %s, a branch of your own (%s), commit, %s, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: HQ opens its pull request on GitHub from that branch and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. Never push `main` and never force-push: `main` moves only by a merge.",
+		inDevService(host, "fetch origin"), inDevService(host, "checkout -b <branch> origin/main"), inDevService(host, "push origin <branch>"))
 }
 
 // originInMate keeps HQ the checkout's origin and follows the repository.
-func originInMate(req ops.OriginRequest, dir string) string {
-	return "Kept in Mate: HQ stays the origin and GitHub is only followed — " + originFollowed(req, dir) +
+func originInMate(req ops.OriginRequest, host string) string {
+	return "Kept in Mate: HQ stays the origin and GitHub is only followed — " + originFollowed(req, host) +
 		"; a private one is read with HQ's read token for it, and when HQ holds none, say so."
 }
 
-// originCheckout is the repository's checkout as the Mate's own shell mounts
-// it — a code-volume pair's below the mount, where the deploy reads it. Only
-// that shell runs `zcp`, which git's GitHub helper is, so git that talks to
-// GitHub runs there and never over ssh in the service; HQ's git runs there
-// too, through the same helper.
-func originCheckout(stateDir, repo string) string {
-	workingDir := ""
+// originHost is the dev service whose checkout repo's code comes into: the
+// dev half of the pair the records keep under that hostname — `zcp git` runs
+// git in the directory the record says its deploys run in, a code-volume
+// pair's volume — else repo itself, a service the records do not name yet.
+func originHost(stateDir, repo string) string {
 	if meta, err := workflow.FindServiceMeta(stateDir, repo); err == nil && meta != nil {
-		workingDir = meta.WorkingDirFor(repo)
+		return meta.Hostname
 	}
-	return ops.SourceMountDir(ops.DefaultWorkingDir, repo, workingDir)
+	return repo
 }
 
 // originFollowed adds the repository as a fetch-only `upstream` beside HQ's
-// origin: a push to it is refused by git itself. A GitHub one is fetched
-// through `zcp hq git-credential`, which answers a private one with HQ's read
-// token when HQ holds one, and HQ takes its `main` itself; one elsewhere
-// first comes in as a branch of its own (originAsItsOwnBranch), its new work
-// merged only once `main` shares its history.
-func originFollowed(req ops.OriginRequest, dir string) string {
+// origin, in host's dev service: a push to it is refused by git itself. A
+// GitHub one is fetched through `zcp git`, which zcp answers for the
+// repository's origin with HQ's read token for a private one when HQ holds
+// one, and HQ takes its `main` itself; one elsewhere first comes in as a
+// branch of its own (originAsItsOwnBranch), its new work merged only once
+// `main` shares its history.
+func originFollowed(req ops.OriginRequest, host string) string {
+	follow := inDevService(host, "remote add upstream "+req.URL, "remote set-url --push upstream no_push", "fetch upstream")
+	merge := inDevService(host, "merge upstream/main")
 	if ops.IsGitHubRepository(req.URL) {
-		return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push && %s && git fetch upstream`, and take its new work in on a branch of your own with `git merge upstream/main`",
-			dir, req.URL, hq.GitHubHelperConfig)
+		return fmt.Sprintf("in its dev service: %s, and take its new work in on a branch of your own with %s", follow, merge)
 	}
 	// HQ takes `main` from GitHub alone: a repository followed elsewhere
 	// first comes in as a branch of its own.
-	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push && git fetch upstream`; "+
-		"while `main` still holds only HQ's initial commit, %s; after that, take its new work in on a branch of your own with `git merge upstream/main`",
-		dir, req.URL, originAsItsOwnBranch("git checkout -b <branch> upstream/main"))
+	return fmt.Sprintf("in its dev service: %s; "+
+		"while `main` still holds only HQ's initial commit, %s; after that, take its new work in on a branch of your own with %s",
+		follow, originAsItsOwnBranch(host, "checkout -b <branch> upstream/main"), merge)
 }
 
 // originHolder is the repository in HQ the asked address already is the
@@ -256,24 +266,33 @@ func originHolder(req ops.OriginRequest, state hq.MateState) (string, hq.RepoOri
 	return holder, held
 }
 
-// originFromHQ takes the code of the checkout's origin into the checkout at
-// dir (originTake).
-func originFromHQ(dir string) string { return originTake(dir, "git fetch origin main") }
+// originFromHQ takes the code of the checkout's origin into host's checkout
+// (originTake).
+func originFromHQ(host string) string { return originTake(host, "fetch origin main") }
 
-// originTake runs fetch in the checkout at dir, in the Mate's own shell, and
-// takes the fetched main in. Taken onto an untouched repository, main is the
-// origin's own history and shares nothing with HQ's seed, so a checkout
-// holding only the seed — one commit of the empty tree, as the wiring cut it
-// — moves onto it (`reset --keep` refuses rather than overwrite a file in
-// the way); a checkout with work sharing history with it merges it in; work
-// sharing none stays on a branch named after its commit and the checkout
-// moves onto main — two unrelated histories are never joined.
-func originTake(dir, fetch string) string {
-	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && %s && "+
-		"if [ \"$(git rev-list --count HEAD)\" = 1 ] && [ -z \"$(git ls-tree HEAD)\" ]; then git reset --keep FETCH_HEAD; "+
-		"elif git merge-base HEAD FETCH_HEAD >/dev/null; then git merge --no-edit FETCH_HEAD; "+
-		"else %s && git reset --keep FETCH_HEAD; fi` — work of its own sharing no history with that main stays on its branch `own-history-<commit>`; carry what it needs over with `git cherry-pick` onto a branch cut from main",
-		dir, fetch, ops.KeepOwnHistory)
+// originTake runs fetch — a git fetch's arguments — in host's dev service
+// through `zcp git` and takes the fetched main in. Taken onto an untouched
+// repository, main is the origin's own history and shares nothing with HQ's
+// seed, so a checkout holding only the seed — one commit of the empty tree,
+// as the wiring cut it — moves onto it (`reset --keep` refuses rather than
+// overwrite a file in the way); a checkout with work sharing history with it
+// merges it in; work sharing none stays on a branch named after its commit
+// and the checkout moves onto main — two unrelated histories are never
+// joined. Each read the decision rests on is an assignment chained with &&,
+// so a `zcp git` that fails — ssh, a restarting service — stops the chain
+// before anything is decided; a merge-base that fails for any reason but "no
+// common history" (its status 1) decides nothing either.
+func originTake(host, fetch string) string {
+	git := func(args string) string { return "zcp git " + host + " " + args }
+	return fmt.Sprintf("in its dev service: `%s && n=$(%s) && t=$(%s) && "+
+		"if [ \"$n\" = 1 ] && [ -z \"$t\" ]; then %s; "+
+		"elif %s >/dev/null; then %s; "+
+		"elif [ $? = 1 ]; then h=$(%s) && %s && %s; fi` — work of its own sharing no history with that main stays on its branch `own-history-<commit>`; carry what it needs over with %s onto a branch cut from main",
+		git(fetch), git("rev-list --count HEAD"), git("ls-tree HEAD"),
+		git("reset --keep FETCH_HEAD"),
+		git("merge-base HEAD FETCH_HEAD"), git("merge --no-edit FETCH_HEAD"),
+		git("rev-parse --short=12 HEAD"), git(`branch -f "own-history-$h"`), git("reset --keep FETCH_HEAD"),
+		inDevService(host, "cherry-pick <commit>"))
 }
 
 // originFromHolder takes the code of holder, another repository in HQ, into
@@ -284,11 +303,12 @@ func originTake(dir, fetch string) string {
 // from HQ.
 func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateState, hqAddress, orgID, stateDir string) string {
 	if meta, err := workflow.FindServiceMeta(stateDir, holder); err == nil && meta != nil {
-		return originFromHQ(originCheckout(stateDir, holder))
+		return originFromHQ(meta.Hostname)
 	}
-	dir := originCheckout(stateDir, repo)
+	host := originHost(stateDir, repo)
 	if origin.Mode == hq.OriginOnGitHub {
-		return originTake(dir, hq.GitHubHelperConfig+" && git fetch "+origin.URL+" main")
+		// GitHub's address in the fetch's own argv is what zcp answers.
+		return originTake(host, "fetch "+origin.URL+" main")
 	}
 	appID := ""
 	if state.AppID != nil {
@@ -298,5 +318,5 @@ func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateSt
 	if err != nil {
 		return "(HQ's address for it cannot be built: " + err.Error() + ")"
 	}
-	return originTake(dir, "git fetch "+holderURL+" main")
+	return originTake(host, "fetch "+holderURL+" main")
 }

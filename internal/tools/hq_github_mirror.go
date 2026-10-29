@@ -133,20 +133,27 @@ func mirroredWords(name string) string {
 // merged in, pushed to HQ — so HQ makes its branch on GitHub and pushes it,
 // which the realignment reads (a branch HQ did not make there it never
 // pushes) — opened as a change and merged in Mate; HQ squash-merges its pull
-// request on GitHub and moves `main` onto that squash.
-func divergedWords(_ string, hqc hq.Client, app, repo, since string) string {
+// request on GitHub and moves `main` onto that squash. Its git runs where the
+// repository's git runs (repoDevHost): the checkout's origin is GitHub, which
+// zcp answers for the record's origin, and the fetch and push name HQ's
+// address in their argv, which zcp answers with the Mate's credential.
+func divergedWords(stateDir string, hqc hq.Client, app, repo, since string) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
 		address = "<its repository's address in HQ>"
 	}
+	route := repoDevHost(stateDir, app, repo)
 	return fmt.Sprintf("GitHub's default branch and HQ's `main` have diverged (since %s): neither holds the other, so HQ's follow moves neither. "+
 		"One change brings them back in step — a branch holding both, which the person merges in Mate: HQ squash-merges its pull request on GitHub and moves `main` onto that squash. "+
-		"In your own shell on the mounted checkout, its origin GitHub: `git fetch origin && git remote set-head origin --auto && git fetch %s +main:refs/remotes/hq/main`, "+
-		"then `git checkout -b %s origin/HEAD && git merge refs/remotes/hq/main` — resolve any conflict so the branch keeps what both sides should, and commit — "+
-		"then push it to HQ, never to GitHub (`git push %s %s`: HQ makes its branch on GitHub and pushes it, which the realignment needs), "+
+		"Make it %s, its origin GitHub: %s, "+
+		"then %s — resolve any conflict so the branch keeps what both sides should, and commit — "+
+		"then push it to HQ, never to GitHub (%s: HQ makes its branch on GitHub and pushes it, which the realignment needs), "+
 		"open its change with zerops_workflow action=\"open-change\" branch=%q title=\"Bring HQ and GitHub back in step\" and describe it. "+
 		"Never push GitHub's default branch and never force-push.",
-		since, address, realignBranch, address, realignBranch, realignBranch)
+		since, route.where(),
+		route.git("fetch origin", "remote set-head origin --auto", "fetch "+address+" +main:refs/remotes/hq/main"),
+		route.git("checkout -b "+realignBranch+" origin/HEAD", "merge refs/remotes/hq/main"),
+		route.git("push "+address+" "+realignBranch), realignBranch)
 }
 
 // gitHubRepoName is a GitHub repository's address as owner/name, the
