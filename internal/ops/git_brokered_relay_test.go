@@ -527,6 +527,9 @@ type relayLab struct {
 	selfOrigin string            // /api/mate/self: the origin of relayLabAppID's appdev
 	selfAsked  int
 
+	tokenAccess map[string]string // token → the access it was minted with
+	readOnly    map[string]bool   // repository key → connected with a person's token
+
 	// GitHub's API on the stand-in: DELETE /installation/token.
 	revokeAsked  []string      // every token a revoke named
 	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
@@ -584,7 +587,10 @@ func newRelayLab(t *testing.T) *relayLab {
 	if err != nil {
 		t.Skip("git is not installed")
 	}
-	l := &relayLab{root: t.TempDir(), home: t.TempDir(), tokens: map[string]string{relayFixtureToken: "*"}, tokenUse: map[string]int{}}
+	l := &relayLab{
+		root: t.TempDir(), home: t.TempDir(), tokens: map[string]string{relayFixtureToken: "*"}, tokenUse: map[string]int{},
+		tokenAccess: map[string]string{}, readOnly: map[string]bool{},
+	}
 	l.credPath = filepath.Join(t.TempDir(), "git-credential")
 	if err := os.WriteFile(l.credPath, []byte(relayLabCredential+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -632,6 +638,12 @@ func newRelayLab(t *testing.T) *relayLab {
 		l.mu.Lock()
 		owner, minted := l.tokens[pass]
 		good := ok && user == relayTokenUser && minted && (owner == key || owner == "*")
+		pushing := strings.HasSuffix(r.URL.Path, "/git-receive-pack") || r.URL.Query().Get("service") == "git-receive-pack"
+		if good && pushing && l.tokenAccess[pass] == hq.GitHubAccessRead {
+			l.mu.Unlock()
+			http.Error(w, "a read token cannot push", http.StatusForbidden)
+			return
+		}
 		if good {
 			l.tokenUse[pass]++
 		} else {
@@ -686,10 +698,19 @@ func (l *relayLab) serveMint(t *testing.T, w http.ResponseWriter, r *http.Reques
 		_, _ = io.WriteString(w, `{"code":"git_credential_refused","reason":"not_mounted"}`)
 		return
 	}
+	access := q.Get("access")
 	l.mu.Lock()
-	l.mints = append(l.mints, relayMint{path: path, access: q.Get("access")})
+	l.mints = append(l.mints, relayMint{path: path, access: access})
+	if l.readOnly[key] && (access == hq.GitHubAccessWrite || access == hq.GitHubAccessWorkflows) {
+		l.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"code":"git_credential_refused","reason":"read_only_remote"}`)
+		return
+	}
 	token := fmt.Sprintf("ghs_FAKE%04d", len(l.mints))
 	l.tokens[token] = key
+	l.tokenAccess[token] = access
 	l.mu.Unlock()
 	writeJSON(w, map[string]string{"username": relayTokenUser, "password": token, "expiresAt": "2026-10-29T13:00:00Z"})
 }
@@ -1853,6 +1874,481 @@ func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing
 					t.Errorf("%s: the call took %s, want the revoke bounded at 5 s", tc.name, took)
 				}
 			}
+		})
+	}
+}
+
+// --- unit + offline: the access a GitHub token carries ----------------------
+
+// TestBrokeredGitPushPlan_SourcesAndUnresolvableForms: a push's repository
+// and each refspec's source are read from argv; anything zcp cannot resolve
+// to the commits it sends — all, mirror, tags, followed tags, a force, a
+// deletion, a pattern, a negative refspec, the tag form, --repo — is
+// unresolvable.
+func TestBrokeredGitPushPlan_SourcesAndUnresolvableForms(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		rest   []string
+		remote string
+		srcs   []string
+	}{
+		{nil, "", nil},
+		{[]string{"origin"}, "origin", nil},
+		{[]string{"origin", "HEAD:refs/heads/x"}, "origin", []string{"HEAD"}},
+		{[]string{"-u", "--no-verify", "-q", "origin", "feature"}, "origin", []string{"feature"}},
+		{[]string{"-o", "ci.skip", "--push-option", "x", "origin", "a:b", "c"}, "origin", []string{"a", "c"}},
+		{[]string{"-ofo=do", "origin", "main"}, "origin", []string{"main"}},
+		{[]string{"--dry-run", "--porcelain", "--atomic", "https://github.com/acme/shop", "HEAD:main"}, "https://github.com/acme/shop", []string{"HEAD"}},
+		{[]string{"origin", "--", "feature"}, "origin", []string{"feature"}},
+	} {
+		args := BrokeredGitArgs{Subcommand: "push", Rest: tc.rest}
+		plan := planBrokeredGitPush(args)
+		if plan.unresolvable || plan.remote != tc.remote || !slices.Equal(plan.srcs, tc.srcs) {
+			t.Errorf("plan(push %q) = %+v, want remote %q, sources %q", tc.rest, plan, tc.remote, tc.srcs)
+		}
+	}
+	for _, rest := range [][]string{
+		{"--all", "origin"}, {"--branches", "origin"}, {"--mirror", "origin"}, {"--tags", "origin"},
+		{"--follow-tags", "origin", "main"}, {"--force", "origin", "main"}, {"-f", "origin", "main"},
+		{"-uf", "origin", "main"}, {"--force-with-lease", "origin", "main"}, {"--force-with-lease=main:abc", "origin", "main"},
+		{"--force-if-includes", "origin", "main"}, {"--delete", "origin", "main"}, {"-d", "origin", "main"},
+		{"--prune", "origin", "refs/heads/*:refs/heads/*"}, {"origin", "+main:main"}, {"origin", ":gone"},
+		{"origin", "refs/heads/*:refs/heads/*"}, {"origin", "^refs/heads/x"}, {"origin", "tag", "v1"},
+		{"--repo=origin", "main"}, {"origin", "main", ":"}, {"origin", "--", "--all"},
+	} {
+		if plan := planBrokeredGitPush(BrokeredGitArgs{Subcommand: "push", Rest: rest}); !plan.unresolvable {
+			t.Errorf("plan(push %q) = %+v, want unresolvable", rest, plan)
+		}
+	}
+}
+
+const workflowFile = ".github/workflows/ci.yml"
+
+// accesses is the access every GitHub mint so far asked for.
+func (l *relayLab) accesses() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, len(l.mints))
+	for i, m := range l.mints {
+		out[i] = m.access
+	}
+	return out
+}
+
+// authGit runs a fixture git command in dir that may reach the GitHub
+// stand-in, with the fixture's own token, as no relayed call.
+func (l *relayLab) authGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(relayTokenUser+":"+relayFixtureToken))
+	l.git(t, dir, append([]string{"-c", "http.extraHeader=" + header}, args...)...)
+}
+
+// commitFiles writes files in dir and commits them (a fixture commit).
+func (l *relayLab) commitFiles(t *testing.T, dir, message string, files map[string]string) {
+	t.Helper()
+	for file, body := range files {
+		writeLabFile(t, filepath.Join(dir, file), body)
+	}
+	l.git(t, dir, "add", "-A")
+	l.git(t, dir, "commit", "-q", "-m", message)
+}
+
+// pushElsewhere commits files on branch of the stand-in's acme/shop —
+// branching it from main when new — as a push from another place.
+func (l *relayLab) pushElsewhere(t *testing.T, branch string, files map[string]string) {
+	t.Helper()
+	work := filepath.Join(t.TempDir(), "w")
+	l.git(t, filepath.Dir(work), "clone", "-q", filepath.Join(l.root, "gh", "acme/shop.git"), work)
+	if branch != "main" {
+		l.git(t, work, "checkout", "-q", "-b", branch)
+	}
+	l.commitFiles(t, work, "from elsewhere", files)
+	l.git(t, work, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+}
+
+// dropTracking deletes every remote-tracking ref of origin in the checkout.
+func (l *relayLab) dropTracking(t *testing.T, checkout string) {
+	t.Helper()
+	_ = gitOr(t, checkout, "remote", "set-head", "origin", "-d")
+	for ref := range strings.FieldsSeq(l.git(t, checkout, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")) {
+		l.git(t, checkout, "update-ref", "-d", ref)
+	}
+}
+
+// assertAccesses checks every access HQ was asked for, in order.
+func (l *relayLab) assertAccesses(t *testing.T, want ...string) {
+	t.Helper()
+	if got := l.accesses(); !slices.Equal(got, want) {
+		t.Errorf("HQ was asked for access %q, want %q", got, want)
+	}
+}
+
+// accessLab is a lab with a GitHub-kept partial clone of acme/shop and the
+// relay its record names.
+func accessLab(t *testing.T) (*relayLab, relayHistory, string, BrokeredGitRelay) {
+	t.Helper()
+	l := newRelayLab(t)
+	url, h := l.repo(t, true, "acme/shop")
+	return l, h, l.checkout(t, url), l.relay(url)
+}
+
+// TestBrokeredGit_Access_NonPushCallAsksRead: every token a call that is no
+// push obtains is a read token — a lazy fetch inside checkout included.
+func TestBrokeredGit_Access_NonPushCallAsksRead(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, h, checkout, relay := accessLab(t)
+			l.run(t, sh, checkout, relay, "", "checkout", "-q", h.first).mustSucceed(t, "checkout")
+			l.run(t, sh, checkout, relay, "", "fetch", "origin").mustSucceed(t, "fetch")
+			l.run(t, sh, checkout, relay, "", "ls-remote", "origin").mustSucceed(t, "ls-remote")
+			l.assertAccesses(t, hq.GitHubAccessRead, hq.GitHubAccessRead, hq.GitHubAccessRead)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_PushWithoutWorkflowChange_AsksWrite: a push whose
+// commits touch no workflow asks for a write token, and pushes.
+func TestBrokeredGit_Access_PushWithoutWorkflowChange_AsksWrite(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "mate's work\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWrite)
+			if got, want := l.git(t, filepath.Join(l.root, "gh", "acme/shop.git"), "rev-parse", "refs/heads/feature"), l.git(t, checkout, "rev-parse", "HEAD"); got != want {
+				t.Errorf("the stand-in's feature = %s, want the pushed %s", got, want)
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Access_PushTouchingWorkflows_AsksWorkflows: a push whose
+// commits touch .github/workflows/ asks for a workflows token.
+func TestBrokeredGit_Access_PushTouchingWorkflows_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_NewBranchWithoutTrackingRef_ChecksOnlyUnpushedCommits:
+// a new branch has no tracking ref of its own, yet only the commits origin
+// lacks are checked — a workflow change already on origin's main does not
+// count.
+func TestBrokeredGit_Access_NewBranchWithoutTrackingRef_ChecksOnlyUnpushedCommits(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
+			l.authGit(t, checkout, "fetch", "-q", "origin")
+			l.authGit(t, checkout, "checkout", "-q", "-b", "feature", "origin/main")
+			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin", "feature:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWrite)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_NoOriginHEAD_LimitedByOriginMain: a checkout made by
+// init and fetch has no refs/remotes/origin/HEAD, only origin/main — still
+// enough to limit the check to what origin lacks.
+func TestBrokeredGit_Access_NoOriginHEAD_LimitedByOriginMain(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
+			l.authGit(t, checkout, "fetch", "-q", "origin")
+			_ = gitOr(t, checkout, "remote", "set-head", "origin", "-d")
+			if got := gitOr(t, checkout, "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD"); got != "" {
+				t.Fatalf("origin/HEAD still at %s", got)
+			}
+			l.authGit(t, checkout, "checkout", "-q", "-b", "feature", "origin/main")
+			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin", "feature:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWrite)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_NoRemoteTrackingRefsAtAll_FallsBackToLocalMain: with
+// no refs/remotes/origin/* at all, the commits local main holds — kept on
+// HQ's main by zcp — do not count; with no local main either, every commit
+// of the branch does.
+func TestBrokeredGit_Access_NoRemoteTrackingRefsAtAll_FallsBackToLocalMain(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
+			l.authGit(t, checkout, "fetch", "-q", "origin")
+			l.authGit(t, checkout, "checkout", "-q", "-B", "main", "origin/main")
+			l.authGit(t, checkout, "checkout", "-q", "-b", "feature")
+			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
+			l.dropTracking(t, checkout)
+			l.run(t, sh, checkout, relay, "", "push", "origin", "feature:refs/heads/feature").mustSucceed(t, "push")
+
+			l.dropTracking(t, checkout)
+			l.git(t, checkout, "branch", "-q", "-D", "main")
+			l.commitFiles(t, checkout, "more work", map[string]string{"app.txt": "more\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin", "feature:refs/heads/feature2").mustSucceed(t, "push without main")
+			l.assertAccesses(t, hq.GitHubAccessWrite, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_RootCommitAddingWorkflows_AsksWorkflows: an
+// unrelated history whose root commit adds a workflow asks for workflows —
+// diff-tree counts a root commit's files only with --root.
+func TestBrokeredGit_Access_RootCommitAddingWorkflows_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.git(t, checkout, "checkout", "-q", "--orphan", "unrelated")
+			l.git(t, checkout, "rm", "-rq", "--cached", ".")
+			writeLabFile(t, filepath.Join(checkout, workflowFile), "on: push\n")
+			l.git(t, checkout, "add", workflowFile)
+			l.git(t, checkout, "commit", "-q", "-m", "root")
+			l.run(t, sh, checkout, relay, "", "push", "origin", "unrelated:refs/heads/unrelated").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_MergeBringingWorkflowChange_AsksWorkflows: a merge
+// commit bringing a workflow change from a branch origin already has asks
+// for workflows — diff-tree counts a merge's changes only with -m.
+func TestBrokeredGit_Access_MergeBringingWorkflowChange_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "side", map[string]string{workflowFile: "on: push\n"})
+			l.authGit(t, checkout, "fetch", "-q", "origin")
+			l.authGit(t, checkout, "checkout", "-q", "-b", "feature", "origin/main")
+			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
+			l.authGit(t, checkout, "merge", "-q", "--no-ff", "-m", "bring side in", "origin/side")
+			l.run(t, sh, checkout, relay, "", "push", "origin", "feature:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_ChangeMadeThenReverted_AsksWorkflows: commits that
+// add a workflow and then remove it still each touch one.
+func TestBrokeredGit_Access_ChangeMadeThenReverted_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
+			l.git(t, checkout, "rm", "-q", workflowFile)
+			l.git(t, checkout, "commit", "-q", "-m", "no ci after all")
+			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_PushWithoutRefspec_ResolvesViaAtPush: a push naming
+// no refspec pushes the current branch to @{push}; that branch's unpushed
+// commits decide.
+func TestBrokeredGit_Access_PushWithoutRefspec_ResolvesViaAtPush(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.git(t, checkout, "checkout", "-q", "-b", "feature")
+			l.authGit(t, checkout, "push", "-q", "-u", "origin", "feature")
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			l.run(t, sh, checkout, relay, "", "push").mustSucceed(t, "push")
+			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
+			l.run(t, sh, checkout, relay, "", "push", "origin").mustSucceed(t, "push origin")
+			l.assertAccesses(t, hq.GitHubAccessWrite, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_FollowTagsOrTags_AsksWorkflows: tags pushed — by
+// --tags, --follow-tags or push.followTags, from argv or the checkout's
+// config — point at commits zcp does not resolve: workflows.
+func TestBrokeredGit_Access_FollowTagsOrTags_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			for _, args := range [][]string{
+				{"push", "--tags", "origin"},
+				{"push", "--follow-tags", "origin", "HEAD:refs/heads/f1"},
+				{"-c", "push.followTags=true", "push", "origin", "HEAD:refs/heads/f2"},
+			} {
+				l.run(t, sh, checkout, relay, "", args...).mustSucceed(t, strings.Join(args, " "))
+			}
+			l.git(t, checkout, "config", "push.followTags", "true")
+			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/f3").mustSucceed(t, "push with push.followTags set")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_ForcedRefspec_AsksWorkflows: a forced push may
+// rewrite what the remote holds: workflows.
+func TestBrokeredGit_Access_ForcedRefspec_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			for _, args := range [][]string{
+				{"push", "origin", "+HEAD:refs/heads/f1"},
+				{"push", "--force", "origin", "HEAD:refs/heads/f2"},
+				{"push", "-f", "origin", "HEAD:refs/heads/f3"},
+				{"push", "--force-with-lease", "origin", "HEAD:refs/heads/f4"},
+			} {
+				l.run(t, sh, checkout, relay, "", args...).mustSucceed(t, strings.Join(args, " "))
+			}
+			l.assertAccesses(t, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_UnresolvablePush_AsksWorkflows: all, mirror, a
+// deletion, a forced short flag and more than 1000 commits to check are
+// unresolvable: never less than today's token.
+func TestBrokeredGit_Access_UnresolvablePush_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			var stream strings.Builder
+			for i := 1; i <= 1001; i++ {
+				fmt.Fprintf(&stream, "commit refs/heads/long\nmark :%d\ncommitter A <a@example.invalid> %d +0000\ndata 2\nc\n", i, 1700000000+i)
+				if i > 1 {
+					fmt.Fprintf(&stream, "from :%d\n", i-1)
+				}
+				stream.WriteString("\n")
+			}
+			cmd := exec.CommandContext(t.Context(), "git", "fast-import", "--quiet")
+			cmd.Dir, cmd.Env, cmd.Stdin = checkout, l.env(), strings.NewReader(stream.String())
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("fast-import: %v\n%s", err, out)
+			}
+			cases := [][]string{
+				{"push", "--dry-run", "--all", "origin"},
+				{"push", "--dry-run", "--mirror", "origin"},
+				{"push", "--dry-run", "origin", ":refs/heads/main"},
+				{"push", "--dry-run", "--delete", "origin", "main"},
+				{"push", "--dry-run", "-fu", "origin", "HEAD:refs/heads/x"},
+				{"push", "--dry-run", "origin", "long:refs/heads/long"},
+			}
+			want := make([]string, 0, len(cases))
+			for _, args := range cases {
+				l.run(t, sh, checkout, relay, "", args...)
+				want = append(want, hq.GitHubAccessWorkflows)
+			}
+			l.assertAccesses(t, want...)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_CheckRunsInTheSameTmpWorktreeAsThePush: the check
+// reads the commits where the push runs — its -C worktree below /tmp/,
+// whose HEAD is not the checkout's.
+func TestBrokeredGit_Access_CheckRunsInTheSameTmpWorktreeAsThePush(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			parent, err := os.MkdirTemp("/tmp", "zcp-relay-test-") //nolint:usetesting // -C takes only a path below /tmp/; t.TempDir() is elsewhere on macOS
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(parent) })
+			wt := filepath.Join(parent, "wt-feature")
+			l.git(t, checkout, "worktree", "add", "-q", "-b", "wt-feature", wt, "HEAD")
+			l.commitFiles(t, wt, "ci in the worktree", map[string]string{workflowFile: "on: push\n"})
+			l.run(t, sh, checkout, relay, "", "-C", wt, "push", "origin", "HEAD:refs/heads/wt-feature").mustSucceed(t, "push in the worktree")
+			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/from-checkout").mustSucceed(t, "push in the checkout")
+			l.assertAccesses(t, hq.GitHubAccessWorkflows, hq.GitHubAccessWrite)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_PushInsideNonPushCall_GetsReadAndFails: a push a
+// hook starts inside a call that is no push gets the call's read token, and
+// GitHub refuses it.
+func TestBrokeredGit_Access_PushInsideNonPushCall_GetsReadAndFails(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			result := filepath.Join(t.TempDir(), "auto-push")
+			hook := filepath.Join(checkout, ".git", "hooks", "post-commit")
+			if err := os.WriteFile(hook, []byte("#!/bin/sh\ngit push origin HEAD:refs/heads/auto > "+ShellQuote(result)+" 2>&1; echo \"rc=$?\" >> "+ShellQuote(result)+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			l.run(t, sh, checkout, relay, "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			if got := readFile(t, result); strings.Contains(got, "rc=0") {
+				t.Errorf("the hook's push succeeded with a read token: %q", got)
+			}
+			if got := gitOr(t, filepath.Join(l.root, "gh", "acme/shop.git"), "rev-parse", "--verify", "-q", "refs/heads/auto"); got != "" {
+				t.Errorf("the stand-in took the hook's push: auto at %s", got)
+			}
+			for _, a := range l.accesses() {
+				if a != hq.GitHubAccessRead {
+					t.Errorf("HQ was asked for %q inside a commit, want read only", a)
+				}
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Access_ReadOnlyRemote_PushDeclinedNamingIt: a push to a
+// remote connected with a person's token is declined naming the repository
+// read-only for this Mate, with no retry for another access.
+func TestBrokeredGit_Access_ReadOnlyRemote_PushDeclinedNamingIt(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, relay := accessLab(t)
+			l.mu.Lock()
+			l.readOnly["acme/shop"] = true
+			l.mu.Unlock()
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			run := l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature")
+			if run.code == 0 {
+				t.Error("a push to a read-only remote exit 0")
+			}
+			if !strings.Contains(run.stderr, "zcp git: ") || !strings.Contains(run.stderr, "read-only for this Mate") {
+				t.Errorf("stderr = %q, want zcp naming the repository read-only for this Mate", run.stderr)
+			}
+			l.assertAccesses(t, hq.GitHubAccessWrite)
 		})
 	}
 }
