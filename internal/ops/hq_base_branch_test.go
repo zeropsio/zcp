@@ -496,8 +496,9 @@ func TestBaseBranchRefusal_NotSeed_CarriesTheCommit(t *testing.T) {
 		commitAll(t, dir, "init")
 	})
 	head := gitOr(t, pair, "rev-parse", "HEAD")
+	command := BuildBaseBranchCommand(pair)
 
-	out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildBaseBranchCommand(pair)).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", command).CombinedOutput()
 
 	if err == nil {
 		t.Fatalf("want a refusal, the command succeeded:\n%s", out)

@@ -497,7 +497,7 @@ func renewHQPairCredential(ctx context.Context, client platform.Client, projectI
 		if m.DevIsPool() {
 			return fmt.Sprintf("HQ sent the Mate a new Git credential, and git in the leases of the dev pool %s cannot reach HQ until the pool's %s holds it, which could not be written (%v) — retrying on the next pass; a lease's next fresh session reads it once written.", m.Hostname, ops.PoolHQCredentialEnvKey, err)
 		}
-		return fmt.Sprintf("HQ sent the Mate a new Git credential, and git in %s's sessions cannot reach HQ until it holds it, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
+		return fmt.Sprintf("HQ sent the Mate a new Git credential, and git in %s's sessions cannot reach HQ until it holds it, which could not be written (%v) — retrying on the next pass; `zcp git %s` is unaffected: zcp answers its git with the Mate's own credential.", m.Hostname, err, m.Hostname)
 	}
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.HQ == nil {
@@ -677,15 +677,22 @@ func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client,
 		return ""
 	}
 	state, detail := ops.MainSync(string(out))
+	// Its git runs in its dev service, through zcp git (docs/spec-mate.md
+	// §6.8): the pair is a plain one, never a pool's.
+	route := repoRoute{host: m.Hostname}
 	switch state {
 	case ops.MainFromSeed:
 		return fmt.Sprintf("its %q held only zcp's empty seed and nothing of yours, so it is HQ's %q now (%.12s) and takes HQ's work by fast-forward", hqBase, hqBase, detail)
 	case ops.MainSeedInTheWay:
-		return fmt.Sprintf("its %q holds only zcp's empty seed, and files the working copy holds uncommitted stand where HQ's %q puts its own: in your own shell on the mounted checkout, commit them on a branch of your own (`git checkout -b <branch> && git add -A && git commit`); the next develop start then puts %q on HQ's", hqBase, hqBase, hqBase)
+		return fmt.Sprintf("its %q holds only zcp's empty seed, and files the working copy holds uncommitted stand where HQ's %q puts its own: %s, commit them on a branch of your own (%s); the next develop start then puts %q on HQ's",
+			hqBase, hqBase, route.where(), route.git("checkout -b <branch>", "add -A", "commit -m '<what>'"), hqBase)
 	case ops.MainFirstHistory:
-		return fmt.Sprintf("its %q is this repository's first history and HQ's %q holds only its initial commit: in your own shell on the mounted checkout, push it as it is on a branch of your own (`git checkout -b <branch> main && git push origin <branch>`) and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"` — merged, HQ makes it %q; never merge or rebase it onto that initial commit", hqBase, hqBase, hqBase)
+		return fmt.Sprintf("its %q is this repository's first history and HQ's %q holds only its initial commit: %s, push it as it is on a branch of your own (%s) and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"` — merged, HQ makes it %q; never merge or rebase it onto that initial commit",
+			hqBase, hqBase, route.where(), route.git("checkout -b <branch> "+hqBase, "push origin <branch>"), hqBase)
 	case ops.MainOwnCommits:
-		return fmt.Sprintf("its %q holds %s commit(s) HQ's %q does not, and %q moves only by a merge: in your own shell on the mounted checkout, keep them on a branch (`git branch <name> main`), put %q on HQ's (`git checkout main && git fetch origin && git reset --keep origin/main`), and carry what they need onto a branch cut from it with `git cherry-pick`", hqBase, detail, hqBase, hqBase, hqBase)
+		return fmt.Sprintf("its %q holds %s commit(s) HQ's %q does not, and %q moves only by a merge: %s, keep them on a branch (%s), put %q on HQ's (%s), and carry what they need onto a branch cut from it with %s",
+			hqBase, detail, hqBase, hqBase, route.where(), route.git("branch <name> "+hqBase), hqBase,
+			route.git("checkout "+hqBase, "fetch origin", "reset --keep origin/"+hqBase), route.git("cherry-pick <commit>"))
 	}
 	return ""
 }
@@ -903,10 +910,12 @@ func wireHQPair(
 		ops.BuildBaseBranchCommand(hqPairWorkingDir(m))); branchErr != nil {
 		prefix := fmt.Sprintf("repository %q is ready in HQ, but %s could not be put on %q", repo.Name, m.Hostname, hqBase)
 		refusal := ops.BaseBranchRefusal(string(out))
+		// The remedy's git runs in the dev service through zcp git, which
+		// runs it in the checkout the record names.
 		if remedy := ops.BaseBranchRefusalRemedy(refusal, ops.RemedyRunner{DevHost: m.Hostname}); remedy != "" {
 			return hqWiringOutcome{
-				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir(m), m.Hostname, remedy),
-				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir(m), m.Hostname, remedy),
+				line:   fmt.Sprintf("%s (%s): in %s's dev service, %s", prefix, refusal, m.Hostname, remedy),
+				remedy: fmt.Sprintf("In %s's dev service, %s", m.Hostname, remedy),
 			}
 		}
 		return hqWiringOutcome{line: fmt.Sprintf("%s (%v) — a branch cut from it could not land on %q; retrying on the next pass.", prefix, branchErr, hqBase)}

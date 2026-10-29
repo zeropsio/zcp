@@ -49,7 +49,7 @@ func TestGitPushToHQ_RefusedForPlainGitOnABranch(t *testing.T) {
 				args["branch"] = branch
 			}
 			text := getTextContent(t, callTool(t, lab.gitPushTool(), "zerops_deploy", args))
-			for _, want := range []string{"did not run", "a branch of your own", "never force-push", "`zcp git appdev push origin <branch>`"} {
+			for _, want := range []string{"did not run", "a branch of your own", "never force-push", "`zcp git appdev push origin "} {
 				if !strings.Contains(text, want) {
 					t.Errorf("the refusal must say %q:\n%s", want, text)
 				}

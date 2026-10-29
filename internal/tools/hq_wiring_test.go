@@ -641,9 +641,9 @@ func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T
 	// The pass's own line for the pair (the git-push start guidance beside it
 	// names a reset for a main that merely fell behind).
 	line := text
-	if i := strings.Index(line, "first history"); i >= 0 {
+	if i := strings.Index(line, "is this repository's first history"); i >= 0 {
 		line = line[i:]
-		if j := strings.Index(line, "initial commit;"); j >= 0 {
+		if j := strings.Index(line, "onto that initial commit"); j >= 0 {
 			line = line[:j]
 		}
 	}
