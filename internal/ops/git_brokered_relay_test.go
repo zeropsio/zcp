@@ -421,6 +421,47 @@ func TestBrokeredGit_ArgvURLs_LiteralURLsOnly(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_ArgvURLs_OnlyTransportPositionals: a URL — or an absolute
+// .bundle path, which allows the file transport — counts only as a
+// positional argument of fetch, pull, push, ls-remote or clone; never in a
+// commit message, a grep, a config value, or as an option's value.
+func TestBrokeredGit_ArgvURLs_OnlyTransportPositionals(t *testing.T) {
+	t.Parallel()
+	const u = "https://github.com/acme/lib"
+	for _, tc := range []struct {
+		argv []string
+		urls []string
+		file bool
+	}{
+		{[]string{"commit", "-m", u}, nil, false},
+		{[]string{"log", "--grep", u}, nil, false},
+		{[]string{"config", "remote.x.url", u}, nil, false},
+		{[]string{"tag", "-m", "/tmp/x.bundle", "v1"}, nil, false},
+		{[]string{"fetch", "-o", u, "origin"}, nil, false},
+		{[]string{"fetch", "--upload-pack", u, "--depth", "1", u, "main"}, []string{u}, false},
+		{[]string{"fetch", "--", u}, []string{u}, false},
+		{[]string{"pull", "--rebase", u, "main"}, []string{u}, false},
+		{[]string{"push", "-u", u, "HEAD:main"}, []string{u}, false},
+		{[]string{"push", "--push-option", u, "origin"}, nil, false},
+		{[]string{"ls-remote", "--sort", "version:refname", u}, []string{u}, false},
+		{[]string{"clone", "-b", "main", "--origin", "up", u, "/tmp/wt-x"}, []string{u}, false},
+		{[]string{"fetch", "/tmp/x.bundle", "main:refs/heads/b"}, nil, true},
+		{[]string{"ls-remote", "/tmp/x.bundle"}, nil, true},
+		{[]string{"fetch", "--refmap", "/tmp/x.bundle", "origin"}, nil, false},
+	} {
+		args, err := ParseBrokeredGitArgs(tc.argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := BrokeredGitArgvURLs(args, "https://hq.example"); !slices.Equal(got, tc.urls) {
+			t.Errorf("BrokeredGitArgvURLs(%q) = %q, want %q", tc.argv, got, tc.urls)
+		}
+		if got := strings.Contains(brokeredGitAllowProtocol(args, "https://hq.example"), "file"); got != tc.file {
+			t.Errorf("file transport for %q = %v, want %v", tc.argv, got, tc.file)
+		}
+	}
+}
+
 // --- offline: the real script, real git, git's http-backend -----------------
 
 // relayShells are the shells the remote script runs under: /bin/sh, and dash
