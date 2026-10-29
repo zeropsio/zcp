@@ -2372,6 +2372,39 @@ func TestBrokeredGit_Access_PushInsideNonPushCall_GetsReadAndFails(t *testing.T)
 	}
 }
 
+// TestBrokeredGit_Access_HQOnlyPush_MakesNoPreCheckCalls: access means
+// nothing for HQ's own git, so a push that only HQ answers runs as one ssh
+// call, no workflows check before or during it; a push GitHub answers still
+// decides its access.
+func TestBrokeredGit_Access_HQOnlyPush_MakesNoPreCheckCalls(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			hqURL, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, hqURL)
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			run := l.run(t, sh, checkout, l.relay(), "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push to HQ")
+			if len(run.commands) != 1 {
+				t.Errorf("an HQ-only push made %d ssh calls, want the push alone", len(run.commands))
+			}
+			run = l.run(t, sh, checkout, l.relay(), "", "push", hqURL, "HEAD:refs/heads/feature2").mustSucceed(t, "push to HQ by URL")
+			if len(run.commands) != 1 {
+				t.Errorf("an HQ-only push by URL made %d ssh calls, want the push alone", len(run.commands))
+			}
+
+			gh, _ := l.repo(t, true, "acme/shop")
+			l.git(t, checkout, "remote", "add", "github", gh)
+			run = l.run(t, sh, checkout, l.relay(gh), "", "push", "github", "HEAD:refs/heads/feature").mustSucceed(t, "push to GitHub")
+			if len(run.commands) < 2 {
+				t.Errorf("a push to GitHub made %d ssh calls, want its workflows check too", len(run.commands))
+			}
+			l.assertAccesses(t, hq.GitHubAccessWrite)
+		})
+	}
+}
+
 // TestBrokeredGit_Access_ReadOnlyRemote_PushDeclinedNamingIt: a push to a
 // remote connected with a person's token is declined naming the repository
 // read-only for this Mate, with no retry for another access.
