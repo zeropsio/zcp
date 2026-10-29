@@ -390,12 +390,15 @@ const brokeredGitStdinCap = 1 << 20
 
 // ErrBrokeredGitStdinOverCap is a call whose stdin is over the 1 MiB zcp
 // forwards; ErrBrokeredGitStdinUnread one whose stdin could not be read;
-// ErrBrokeredGitStdinStopped one stopped while its stdin was being read.
-// Each ends the call before anything runs.
+// ErrBrokeredGitStdinStopped one stopped while its stdin was being read;
+// ErrBrokeredGitSetup one zcp could not set up in its own container (the
+// nonce, the session's pipes) — no ssh failure. Each ends the call before
+// anything runs.
 var (
 	ErrBrokeredGitStdinOverCap = errors.New("stdin is over the 1 MiB zcp git forwards to git")
 	ErrBrokeredGitStdinUnread  = errors.New("read stdin")
 	ErrBrokeredGitStdinStopped = errors.New("stopped while reading stdin")
+	ErrBrokeredGitSetup        = errors.New("set up the relay")
 )
 
 // readBrokeredGitStdin reads all of stdin, refusing more than the cap — in
@@ -468,10 +471,12 @@ func relayFramePrefix(nonce string) string { return "ZCPCRED-" + nonce + " " }
 // descriptor 3 into a file of a fresh directory, all of it before git
 // starts, and checks its size; `head -c` where it takes -c (a busybox build
 // option), else `dd bs=1`. Neither can read past the payload: zcp writes
-// nothing more until a frame arrives, and none can before git starts.
-const relayStdinStep = `d=$(mktemp -d /tmp/zcp-stdin.XXXXXX) && f=$d/in && IFS= read -r n <&3 && ` +
-	`if head -c 0 </dev/null >/dev/null 2>&1; then head -c "$n" <&3 >"$f"; else dd bs=1 count="$n" <&3 >"$f" 2>/dev/null; fi && ` +
-	`n2=$(( $(wc -c < "$f") )) && [ "$n2" -eq "$n" ] || exit 128`
+// nothing more until a frame arrives, and none can before git starts. A
+// failure says so in one line and ends the call with 128, git never run.
+const relayStdinStep = `d=$(mktemp -d /tmp/zcp-stdin.XXXXXX 2>/dev/null) && f=$d/in && IFS= read -r n <&3 && ` +
+	`if head -c 0 </dev/null >/dev/null 2>&1; then head -c "$n" <&3 >"$f" 2>/dev/null; else dd bs=1 count="$n" <&3 >"$f" 2>/dev/null; fi && ` +
+	`n2=$(( $(wc -c < "$f") )) && [ "$n2" -eq "$n" ] || ` +
+	`{ echo 'zcp git: the service could not stage the stdin zcp forwarded, so git did not run' >&2; exit 128; }`
 
 // relayCleanup removes the stdin directory and a lock a helper left.
 const relayCleanup = `[ -z "$d" ] || rm -rf "$d"; rmdir "$L" 2>/dev/null`
@@ -1002,7 +1007,7 @@ func (c *relayCall) revoke(ctx context.Context) {
 func relayNonce() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("relay nonce: %w", err)
+		return "", fmt.Errorf("%w: relay nonce: %w", ErrBrokeredGitSetup, err)
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -1055,13 +1060,13 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 
 	answersR, answersW, err := os.Pipe()
 	if err != nil {
-		return -1, fmt.Errorf("relay pipe: %w", err)
+		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
 	}
 	framesR, framesW, err := os.Pipe()
 	if err != nil {
 		_ = answersR.Close()
 		_ = answersW.Close()
-		return -1, fmt.Errorf("relay pipe: %w", err)
+		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
 	}
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
