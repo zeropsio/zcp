@@ -71,6 +71,36 @@ authored type (`php@8.4`) matches a composite-only live enum
 
 The export and launch bundle builders validate the YAML they emit against a **structure-only** schema (`internal/schema/validate_structure.go`: `ValidateImportYAMLStructure` / `ValidateZeropsYAMLStructure`), called from `internal/ops/bundle/export.go` + `launch.go` (and the recipe push path in `internal/sync/push_recipes.go`). The volatile membership enums (`services[].type`, `zerops[].build.base`, `zerops[].run.base`) are stripped, but the **stable** enums are preserved — so a bad `objectStoragePolicy` / `corePackage` / `location` / `cpuMode` value, a typo'd field (`additionalProperties:false`), or a missing required field still rejects client-side here. See `validate_structure_test.go` ("bad objectStoragePolicy still rejected"). This is NOT the `zerops_import` path.
 
+### 4. Group recipe proposals
+
+Decision: Every generated or targeted group tier is checked against the cached published Zerops import schema before it is proposed, and a failure names the service, the tier file, the schema path and the correction.
+
+Decision: Configuration is validated against the schema Zerops publishes, never against a zcp field list; a missing or uncompilable schema is "validation unavailable", never "invalid recipe".
+
+Decision: A tier that fails validation is not proposed; the agent's tool result says what to fix, and an edited (agent- or person-owned) proposal is never overwritten.
+
+The server shares its host-derived `schema.Cache` with every recipe pass. `Cache.ImportValidator`
+compiles the cached publication's full import document with its declared JSON Schema draft,
+retaining the source URL and canonical JSON SHA-256. The embedded seed remains the catalog and
+offline-validator floor; it cannot establish a published-schema verdict before the first
+successful fetch. A refresh failure retains the last fetched publication. The runtime ACTIVE
+overlay affects the extracted type catalog, not this document.
+
+Composition validates every generated tier, and `writeRecipeChange` validates the final tier
+bytes after scaling and service splices, before opening or pushing a change. Findings carry
+service identity, tier path, instance pointer, schema pointer and a correction derived from the
+same document. Nested `verticalAutoscaling`, `objectStorageSize` and the unversioned
+`object-storage` type follow the publication; there is no additional field list. An edited
+proposal keeps its existing ownership protection. This checks configuration only: placement,
+closure and HQ delivery remain their existing owners, and Zerops' import API remains the final
+import authority. `zerops_import` retains its API-only contract above.
+
+Tests: `TestImportValidator_CachedPublication_UsesPublishedConstraints`,
+`TestImportValidator_PublicationUnavailable_NeverUsesEmbeddedFloor`,
+`TestGroupRecipeScaling_FlatMinCPU_RefusesBeforeProposal`,
+`TestGroupRecipe_FlipShape_ProposesAgainstPublishedSchema`,
+`TestGroupRecipe_SchemaUnavailable_ReportsUnavailableWithoutProposal`.
+
 ## What we explicitly do NOT use schema for
 
 ### LLM knowledge injection
@@ -126,6 +156,7 @@ HTTPS GETs against the canonical public schema endpoints.
 | `internal/schema` | `schema.go` | Parse JSON schemas, extract enums, build O(1) lookup sets |
 | `internal/schema` | `cache.go` | 15-min TTL runtime cache, embedded-seeded + poison guard, concurrent-fetch coalescing, ACTIVE-provider composition |
 | `internal/schema` | `active_filter.go` | Runtime-only ACTIVE overlay for concrete import service versions; keeps versionless/rolling forms |
+| `internal/schema` | `validate_jsonschema.go` | `Cache.ImportValidator` compiles the cached publication for group tiers; source URL/digest and service/schema-path/correction findings; existing embedded validators remain offline floors |
 | `internal/schema` | `validate_structure.go` | Structure-only validators for export/launch (`ValidateImportYAMLStructure`/`ValidateZeropsYAMLStructure`; volatile type/base enums stripped, stable enums kept) |
 | `internal/schema` | `validate_bases.go` | `CheckZeropsBasesLive` — validate `zerops[].build.base`/`run.base` against the live base enums (`HasBuildBase`/`HasRunBase`) |
 | `internal/schema` | `sync.go` | `schema sync`/`check`: canonicalize public schemas, refresh embedded copies, and detect exact drift |

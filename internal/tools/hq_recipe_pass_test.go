@@ -76,7 +76,7 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range outcomes {
 		wg.Go(func() {
-			outcomes[i] = groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+			outcomes[i] = groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 		})
 	}
 	wg.Wait()
@@ -122,7 +122,7 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	asked := func() int { return lab.hq.callCount("POST /api/mate/repos") + lab.hq.callCount("GET /api/mate/self") }
 	askedBefore := asked()
 
-	outcome := groupRecipeOutcome(ctx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+	outcome := groupRecipeOutcome(ctx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 
 	if lab.hq.changeIn(hq.RecipeRepo, 1) != nil || outcome.Created || outcome.Committed {
 		t.Fatalf("a pass while another runs = %+v, change %+v; want nothing changed", outcome, lab.hq.changeIn(hq.RecipeRepo, 1))
@@ -137,7 +137,7 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	if err := unlockFile(lock); err != nil {
 		t.Fatal(err)
 	}
-	if next := groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir); !next.Created || next.Change != 1 {
+	if next := groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas); !next.Created || next.Change != 1 {
 		t.Errorf("the pass after the other is done = %+v, want it to propose change #1", next)
 	}
 }
@@ -173,7 +173,7 @@ func TestGroupRecipePass_NothingToDo_WritesNothing(t *testing.T) {
 			}
 			rt := runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: tt.link}
 
-			outcome := groupRecipeOutcome(t.Context(), platform.NewMock(), http.DefaultClient, rt, stateDir)
+			outcome := groupRecipeOutcome(t.Context(), platform.NewMock(), http.DefaultClient, rt, stateDir, nil)
 
 			if outcome.Blocked == "" {
 				t.Fatalf("outcome = %+v, want the pass blocked", outcome)

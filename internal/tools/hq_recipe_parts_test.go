@@ -64,7 +64,7 @@ func addWorker(t *testing.T, lab *hqLab) platform.Client {
 // proposeService is the agent's group-recipe service=host over the lab.
 func (l *hqLab) proposeService(client platform.Client, host string) (*hqServiceAnswer, string) {
 	l.t.Helper()
-	result, _, _ := handleGroupRecipeService(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, host)
+	result, _, _ := handleGroupRecipeService(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, host, l.schemas)
 	text := getTextContent(l.t, result)
 	if result.IsError {
 		return nil, text
@@ -220,7 +220,7 @@ const recipePreviewYAML = `zerops:
 // pair's zerops.yaml read as yaml — the lab mounts no checkout.
 func composeLabWithYAML(t *testing.T, lab *hqLab, client platform.Client, yaml string) groupRecipeComposition {
 	t.Helper()
-	comp, outcome, ok := composeGroupRecipe(t.Context(), client, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+	comp, outcome, ok := composeGroupRecipe(t.Context(), client, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 	if !ok {
 		t.Fatalf("compose: %+v", outcome)
 	}

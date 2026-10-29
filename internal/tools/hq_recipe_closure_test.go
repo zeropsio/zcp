@@ -141,7 +141,7 @@ func TestGroupRecipe_TierClosure_RefusalIsARequiredStep(t *testing.T) {
 	t.Parallel()
 	lab := newClosureLab(t)
 
-	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff)
+	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff, lab.schemas)
 
 	step := closureStepOf(report.required)
 	if step == "" {
@@ -184,7 +184,7 @@ func TestGroupRecipe_TierClosure_StepGoneOnceItComposes(t *testing.T) {
 	}
 
 	lab.hq.landOnMain("appdev", map[string]string{"zerops.yaml": closureFixed})
-	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff)
+	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff, lab.schemas)
 
 	if len(report.required) != 0 {
 		t.Errorf("required = %v once the recipe composes, want none (lines %v)", report.required, report.lines)
@@ -220,7 +220,7 @@ func TestGroupRecipe_NonClosureComposeError_NoClosureStep(t *testing.T) {
 	}
 	lab.hq.landOnMain("appdev", map[string]string{"zerops.yaml": closureReadsMail +
 		"  - setup: preview\n    run:\n      base: nodejs@22\n"})
-	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff)
+	report := reconcileMateRepositories(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, nil, lab.rt, lab.rt.ProjectID, lab.stateDir, hqPassBackedOff, lab.schemas)
 
 	if step := closureStepOf(report.required); step != "" {
 		t.Errorf("a compose that failed for another reason carries the closure step:\n%s", step)

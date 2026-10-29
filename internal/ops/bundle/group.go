@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -1446,4 +1447,24 @@ func dedupeStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+// ValidateGroupTier checks the exact tier bytes against the cached publication.
+// Composition and targeted edits share this verdict; the caller controls writes.
+func ValidateGroupTier(validator *schema.ImportValidator, path, body string) error {
+	if validator == nil {
+		return fmt.Errorf("%s: validation unavailable; correction: restore access to the published Zerops import schema and retry", path)
+	}
+	var problems []string
+	for _, finding := range validator.Validate(body) {
+		where := "tier"
+		if finding.Service != "" {
+			where = "service " + finding.Service
+		}
+		problems = append(problems, fmt.Sprintf("%s, %s, instance path %s, schema path %s: %s; correction: %s", where, path, finding.Path, finding.SchemaPath, finding.Message, finding.Correction))
+	}
+	if len(problems) != 0 {
+		return fmt.Errorf("published import schema %s (sha256=%s): %s", validator.SourceURL, validator.Digest, strings.Join(problems, "; "))
+	}
+	return nil
 }

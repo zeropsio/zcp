@@ -25,6 +25,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -1083,6 +1084,7 @@ func (s *labSSH) gitToken(ctx context.Context, serviceID string) string {
 // hqLab is a Mate enrolled with the fake HQ, holding one bootstrapped
 // appdev/appstage pair whose dev half's checkout is fresh from `zcp init`.
 type hqLab struct {
+	schemas  *schema.Cache
 	t        *testing.T
 	hq       *fakeHQ
 	stateDir string
@@ -1105,9 +1107,10 @@ func newHQLab(t *testing.T) *hqLab {
 
 func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
 	t.Helper()
+	schemas := newRecipeSchemaCache(t, true)
 	link := fake.link(t)
 	hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
-	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
+	lab := &hqLab{t: t, hq: fake, schemas: schemas, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: link}}
 	lab.git("init", "-q", "-b", "main")
 	tree := lab.git("mktree")
@@ -1121,6 +1124,49 @@ func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
 		t.Fatal(err)
 	}
 	return lab
+}
+
+// newRecipeSchemaCache serves the real schema documents through the publication
+// cache. Existing recipe tests are compatibility controls with legacy bare types;
+// preserveLegacyTypes widens only service-type membership for those fixtures.
+// Schema-regression tests use false and the exact published type constraints.
+func newRecipeSchemaCache(t *testing.T, preserveLegacyTypes bool) *schema.Cache {
+	t.Helper()
+	zeropsBody, err := os.ReadFile("../schema/testdata/zerops_yml_schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	importBody, err := os.ReadFile("../schema/testdata/import_yml_schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserveLegacyTypes {
+		var doc map[string]any
+		if err := json.Unmarshal(importBody, &doc); err != nil {
+			t.Fatal(err)
+		}
+		typeNode := doc["properties"].(map[string]any)["services"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["type"].(map[string]any)
+		publishedTypes := typeNode["enum"]
+		delete(typeNode, "enum")
+		// Keep the catalog's enum extraction populated for its poison guard while
+		// admitting the legacy strings used by compatibility controls. These two
+		// disjoint branches only widen membership; type:string remains in force.
+		typeNode["oneOf"] = []any{map[string]any{"enum": publishedTypes}, map[string]any{"not": map[string]any{"enum": publishedTypes}}}
+		importBody, err = json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	schemaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := zeropsBody
+		if strings.Contains(r.URL.Path, "import-project") {
+			body = importBody
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(schemaServer.Close)
+	return schema.NewCache(time.Hour, schemaServer.URL, nil)
 }
 
 // git runs git in the pair's checkout.
@@ -1156,6 +1202,7 @@ func (l *hqLab) wire() []string {
 	if l.completion != nil {
 		opts = append(opts, withLeaseCompletion(l.completion))
 	}
+	opts = append(opts, withRecipeSchemas(l.schemas))
 	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff, opts...)
 }
 

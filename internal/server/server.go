@@ -45,6 +45,7 @@ var (
 type Server struct {
 	server      *mcp.Server
 	client      platform.Client
+	schemaCache *schema.Cache
 	authInfo    *auth.Info
 	store       knowledge.Provider
 	logFetcher  platform.LogFetcher
@@ -179,13 +180,15 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		stateDir:    stateDir,
 	}
 
+	s.schemaCache = schema.NewCache(schema.DefaultCacheTTL, s.authInfo.APIHost, s.client.ActiveServiceTypeVersions)
+
 	// A Mate's group recipe follows its project after every tool call that
 	// changes what the recipe reads (tools.RecipeFollower): the pass runs off
 	// the call's path, as the server's background work under its own
 	// context, which Stop ends; its line goes to the log.
 	if follower := tools.NewRecipeFollower(background, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir, s.background.Go, func(line string) {
 		fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
-	}); follower != nil {
+	}, s.schemaCache); follower != nil {
 		s.recipeFollower = follower
 	}
 
@@ -217,7 +220,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	// work (Stop); its line goes to the log.
 	if rtInfo.InContainer && rtInfo.MateEnabled {
 		s.background.Go(func() {
-			if line := tools.GroupRecipeAtStart(background, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
+			if line := tools.GroupRecipeAtStart(background, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir, s.schemaCache); line != "" {
 				fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
 			}
 		})
@@ -372,7 +375,7 @@ func (s *Server) registerTools() {
 	// base-validation + workflow recipe-plan validation (which share this cache
 	// via SetSchemaProvider/RegisterWorkflow) validate against the instance the
 	// user actually deploys to. Empty host → CanonicalAPIHost via URLs.
-	schemaCache := schema.NewCache(schema.DefaultCacheTTL, s.authInfo.APIHost, s.client.ActiveServiceTypeVersions)
+	schemaCache := s.schemaCache
 
 	// Workflow engine: state at .zcp/state/ relative to working directory.
 	var (
@@ -517,7 +520,7 @@ func (s *Server) registerTools() {
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
-	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
+	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir, schemaCache)
 	// Lowering a pool's maxContainers deletes its highest-numbered containers,
 	// leases included: scale reads the pool's orchestrator first
 	// (docs/spec-workflows.md §8 PS-7).

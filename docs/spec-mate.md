@@ -4544,6 +4544,20 @@ repositories in HQ (a hostname names one repository there), and the repository r
 checkout on `main` — a checkout with no commit of its own takes `main`'s tree. The adopt-time
 reconcile runs where the metas are complete.
 
+**Published-schema validation before proposal.** Every generated tier and the exact final bytes
+of a targeted scaling or service proposal are checked against the cached published Zerops import
+schema before opening or pushing the recipe change. A failure names the service, tier file,
+instance and schema paths, and correction; no failing tier is proposed. A missing or
+uncompilable publication says "validation unavailable", never "invalid recipe". The source URL
+and schema digest identify the authority; the embedded catalog floor cannot substitute for it.
+The existing ownership check still leaves agent- or person-edited proposals untouched. Nested
+scaling, object storage size and unversioned types follow the publication, with no zcp field
+list. Placement and closure keep their existing composition rules; `zerops_import` keeps its
+API-only validation contract (`schema-integration.md` §4;
+`TestGroupRecipeScaling_FlatMinCPU_RefusesBeforeProposal`,
+`TestGroupRecipe_FlipShape_ProposesAgainstPublishedSchema`,
+`TestGroupRecipe_SchemaUnavailable_ReportsUnavailableWithoutProposal`).
+
 **The recipe follows the project (D36).** The tiers describe the Mate's project as it really is —
 each part its dev pool (or dev service) and its stage, every runtime typed, scaled and named from
 its own part, a Mate's own dev tooling on the AI Agent tier alone (§2.8a.5) — and the reader takes

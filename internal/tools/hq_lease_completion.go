@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // A branch's leases are the person's work in progress on that branch
@@ -100,6 +101,7 @@ type hqPassOption func(*hqPassConfig)
 
 // hqPassConfig is what a pass's options set.
 type hqPassConfig struct {
+	schemas *schema.Cache
 	// release releases a finished change's leases (DP-34); nil releases
 	// none.
 	release leaseBranchRelease
@@ -331,4 +333,9 @@ func followLeaseCompletion(ctx context.Context, d devGitDeps, at, last time.Time
 		return nil, at
 	}
 	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), state, hqc.BranchOf, d.release), at
+}
+
+// withRecipeSchemas shares the server schema cache with recipe conflict passes.
+func withRecipeSchemas(schemas *schema.Cache) hqPassOption {
+	return func(c *hqPassConfig) { c.schemas = schemas }
 }

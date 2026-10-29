@@ -299,7 +299,7 @@ func recipeShapedClient(minContainers int32, mode string, extra ...platform.Serv
 // a tier of zcp's own.
 func (l *hqLab) composedTier(client platform.Client, path string) string {
 	l.t.Helper()
-	comp, outcome, ok := composeGroupRecipe(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir)
+	comp, outcome, ok := composeGroupRecipe(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, l.schemas)
 	if !ok {
 		l.t.Fatalf("the recipe does not compose: %+v", outcome)
 	}

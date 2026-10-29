@@ -33,7 +33,7 @@ type recipeEditAnswer struct {
 func (l *hqLab) editRecipe(client platform.Client, branch, title string) (*recipeEditAnswer, string, bool) {
 	l.t.Helper()
 	result, _, _ := handleGroupRecipeAction(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir,
-		WorkflowInput{Action: "group-recipe", Branch: branch, Title: title})
+		WorkflowInput{Action: "group-recipe", Branch: branch, Title: title}, l.schemas)
 	text := getTextContent(l.t, result)
 	if result.IsError {
 		return nil, text, true
@@ -297,7 +297,7 @@ func TestGroupRecipe_NothingToPropose_NamesTheTierEdit(t *testing.T) {
 			t.Parallel()
 			lab := newScalingLab(t)
 
-			result, _, _ := handleGroupRecipeAction(t.Context(), scalingRecipeClient(1, 0.25), lab.hq.srv.Client(), lab.rt, lab.stateDir, tt.input)
+			result, _, _ := handleGroupRecipeAction(t.Context(), scalingRecipeClient(1, 0.25), lab.hq.srv.Client(), lab.rt, lab.stateDir, tt.input, lab.schemas)
 			text := getTextContent(t, result)
 
 			if result.IsError || !strings.Contains(text, `action=\"group-recipe\" branch=`) {

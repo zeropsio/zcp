@@ -309,7 +309,7 @@ func TestNewRecipeFollower_OutsideAMate_FollowsNothing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := NewRecipeFollower(t.Context(), mock, &http.Client{}, tt.rt, t.TempDir(), spawn, nil)
+			f := NewRecipeFollower(t.Context(), mock, &http.Client{}, tt.rt, t.TempDir(), spawn, nil, nil)
 			if f != nil {
 				t.Fatal("a follower outside a Mate")
 			}
@@ -329,7 +329,7 @@ func (l *hqLab) followRecipe(client platform.Client, tool string) []string {
 		said []string
 	)
 	f := newRecipeFollower(l.t.Context(), l.stateDir, func(ctx context.Context) string {
-		return groupRecipeUnasked(ctx, client, l.hq.srv.Client(), l.rt, l.stateDir)
+		return groupRecipeUnasked(ctx, client, l.hq.srv.Client(), l.rt, l.stateDir, l.schemas)
 	}, wg.Go, func(line string) {
 		mu.Lock()
 		defer mu.Unlock()

@@ -2,10 +2,14 @@ package schema
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -26,6 +30,12 @@ var embeddedZeropsSchema []byte
 type ValidationError struct {
 	Path    string
 	Message string
+
+	// Publication diagnostics are populated by ImportValidator. Existing floor
+	// validators keep their Path/Message contract.
+	SchemaPath string
+	Service    string
+	Correction string
 }
 
 // Error renders the violation in human-readable form for logs / errors.
@@ -71,6 +81,148 @@ func compileEmbeddedSchemas() {
 			compileErrors = append(compileErrors, fmt.Errorf("compile zerops schema: %w", err))
 		}
 	})
+}
+
+// ImportValidator validates against one cached publication, identified by its
+// source URL and the SHA-256 of its canonical parsed JSON. It is immutable and
+// safe for concurrent readers; it never substitutes the embedded floor.
+type ImportValidator struct {
+	SourceURL string
+	Digest    string
+	compiled  *jsonschema.Schema
+	raw       map[string]any
+}
+
+func compileImportPublication(sourceURL string, raw map[string]any) (*ImportValidator, error) {
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("encode published import schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	// All authority is the fetched publication. An unknown external reference
+	// makes validation unavailable instead of doing unbounded remote I/O here.
+	compiler.LoadURL = func(url string) (io.ReadCloser, error) {
+		return nil, fmt.Errorf("published schema reference %q is not cached", url)
+	}
+	if err := compiler.AddResource(sourceURL, bytes.NewReader(body)); err != nil {
+		return nil, fmt.Errorf("read published import schema: %w", err)
+	}
+	compiled, err := compiler.Compile(sourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("compile published import schema: %w", err)
+	}
+	return &ImportValidator{SourceURL: sourceURL, Digest: fmt.Sprintf("%x", sha256.Sum256(body)), compiled: compiled, raw: raw}, nil
+}
+
+// Validate returns schema findings with instance and schema JSON pointers,
+// service identity when the offending instance belongs to a service, and a
+// correction derived from that same schema. Obtain the validator through Cache.
+func (v *ImportValidator) Validate(content string) []ValidationError {
+	doc, errs := yamlToJSONForValidate(content)
+	if errs != nil {
+		for i := range errs {
+			errs[i].Correction = "Correct the tier YAML syntax before proposing it."
+		}
+		return errs
+	}
+	if err := v.compiled.Validate(doc); err != nil {
+		var schemaErr *jsonschema.ValidationError
+		if !errors.As(err, &schemaErr) {
+			return []ValidationError{{Message: err.Error(), Correction: "Correct the tier to satisfy the published import schema."}}
+		}
+		var findings []ValidationError
+		for _, leaf := range collectValidationLeaves(schemaErr) {
+			finding := ValidationError{Path: leaf.InstanceLocation, Message: leaf.Message, SchemaPath: leaf.KeywordLocation}
+			if parts := strings.Split(strings.TrimPrefix(finding.Path, "/"), "/"); len(parts) >= 2 && parts[0] == "services" {
+				if index, err := strconv.Atoi(parts[1]); err == nil {
+					if services, ok := pointerValue(doc, "/services").([]any); ok && index >= 0 && index < len(services) {
+						if service, ok := services[index].(map[string]any); ok {
+							finding.Service, _ = service["hostname"].(string)
+						}
+					}
+				}
+			}
+			finding.Correction = v.correction(doc, finding)
+			findings = append(findings, finding)
+		}
+		return findings
+	}
+	return nil
+}
+
+func (v *ImportValidator) correction(doc any, failure ValidationError) string {
+	correction := "Correct " + failure.Path + " to satisfy " + failure.SchemaPath + "."
+	if !strings.HasSuffix(failure.SchemaPath, "/additionalProperties") {
+		return correction
+	}
+	object, ok := pointerValue(doc, failure.Path).(map[string]any)
+	if !ok {
+		return correction
+	}
+	parent := strings.TrimSuffix(failure.SchemaPath, "/additionalProperties")
+	properties, ok := pointerValue(v.raw, parent+"/properties").(map[string]any)
+	if !ok {
+		return correction
+	}
+	var actions []string
+	for field := range object {
+		if _, allowed := properties[field]; allowed {
+			continue
+		}
+		paths := nestedPropertyPaths(properties, field, "")
+		if len(paths) == 1 {
+			actions = append(actions, "Move "+field+" to "+paths[0]+".")
+		} else {
+			actions = append(actions, "Remove unsupported field "+field+".")
+		}
+	}
+	sort.Strings(actions)
+	if len(actions) > 0 {
+		return strings.Join(actions, " ")
+	}
+	return correction
+}
+
+// nestedPropertyPaths follows schema properties, never a zcp field list.
+func nestedPropertyPaths(properties map[string]any, field, prefix string) []string {
+	var paths []string
+	for name, value := range properties {
+		node, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		path := prefix + name
+		if name == field {
+			paths = append(paths, path)
+		}
+		if children, ok := node["properties"].(map[string]any); ok {
+			paths = append(paths, nestedPropertyPaths(children, field, path+".")...)
+		}
+	}
+	return paths
+}
+
+func pointerValue(doc any, pointer string) any {
+	if pointer == "" {
+		return doc
+	}
+	current := doc
+	for encoded := range strings.SplitSeq(strings.TrimPrefix(pointer, "/"), "/") {
+		part := strings.ReplaceAll(strings.ReplaceAll(encoded, "~1", "/"), "~0", "~")
+		switch value := current.(type) {
+		case map[string]any:
+			current = value[part]
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil || index < 0 || index >= len(value) {
+				return nil
+			}
+			current = value[index]
+		default:
+			return nil
+		}
+	}
+	return current
 }
 
 // ValidateImportYAML parses content as YAML, converts to a generic JSON

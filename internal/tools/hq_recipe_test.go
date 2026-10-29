@@ -57,7 +57,7 @@ func newRecipeLab(t *testing.T) *hqLab {
 // proposeRecipe is one pass of the recipe reconcile over the lab.
 func (l *hqLab) proposeRecipe(client platform.Client) recipeOutcome {
 	l.t.Helper()
-	return groupRecipeOutcome(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir)
+	return groupRecipeOutcome(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, l.schemas)
 }
 
 // recipeBranch is the branch of the Mate's change number in the recipe
@@ -278,7 +278,7 @@ func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
 				tt.settle(lab.hq)
 			}
 
-			line := GroupRecipeAtStart(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+			line := GroupRecipeAtStart(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 
 			open := 0
 			for number := 1; number <= 2; number++ {
@@ -395,7 +395,7 @@ func TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline(t *testing.T) {
 
 			// The project changed shape since: a reason to propose zcp's own
 			// tiers anew, unless a person declined the recipe.
-			line := GroupRecipeAtStart(t.Context(), recipeReconcileClient(cache), lab.hq.srv.Client(), lab.rt, lab.stateDir)
+			line := GroupRecipeAtStart(t.Context(), recipeReconcileClient(cache), lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 
 			open := 0
 			for number := 1; number <= 3; number++ {
@@ -648,7 +648,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 				tt.setup(lab)
 			}
 			handle := func() *mcp.CallToolResult {
-				res, typed, err := handleGroupRecipe(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+				res, typed, err := handleGroupRecipe(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 				if err != nil || typed != nil {
 					t.Fatalf("handleGroupRecipe: %v, typed %v", err, typed)
 				}

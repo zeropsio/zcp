@@ -21,6 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -177,14 +178,15 @@ func reconcileMateRepositories(
 	projectID string,
 	stateDir string,
 	pace hqPassPace,
+	schemas *schema.Cache,
 ) mateRepositoryReport {
 	if !rt.MateEnabled {
 		return mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace)}
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	report := mateRepositoryReport{lines: reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, pace,
-		withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt)), withRecipeFollowing())}
-	recipe := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir)
+		withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt)), withRecipeFollowing(), withRecipeSchemas(schemas))}
+	recipe := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir, schemas)
 	if recipe.Line != "" {
 		report.lines = append(report.lines, "the group's recipe: "+recipe.Line)
 	}
@@ -355,7 +357,7 @@ func reconcileHQPairs(
 			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state, hqc.BranchOf, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
-			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows)...)
+			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows, cfg.schemas)...)
 		}
 	}
 	return report

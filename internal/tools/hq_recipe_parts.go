@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -260,8 +261,9 @@ func handleGroupRecipeService(
 	httpClient ops.HTTPDoer,
 	rt runtime.Info,
 	stateDir, host string,
+	schemas *schema.Cache,
 ) (*mcp.CallToolResult, any, error) {
-	comp, outcome, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	comp, outcome, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
 	if !ok {
 		reason := outcome.Blocked
 		if reason == "" {

@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // ScaleInput is the input type for zerops_scale.
@@ -63,12 +64,12 @@ func WithPoolOrchestratorsForScale(stateDir string, swarm ops.SwarmFactory) Scal
 type GroupRecipeSteer func(ctx context.Context, host string) string
 
 // NewGroupRecipeSteer is the steer for a Mate's container; nil anywhere else.
-func NewGroupRecipeSteer(client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) GroupRecipeSteer {
+func NewGroupRecipeSteer(client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, schemas *schema.Cache) GroupRecipeSteer {
 	if !rt.MateEnabled || httpClient == nil {
 		return nil
 	}
 	return func(ctx context.Context, host string) string {
-		return groupRecipeScalingSteer(ctx, client, httpClient, rt, stateDir, host)
+		return groupRecipeScalingSteer(ctx, client, httpClient, rt, stateDir, host, schemas)
 	}
 }
 

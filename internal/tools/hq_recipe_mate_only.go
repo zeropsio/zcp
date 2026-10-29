@@ -17,6 +17,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -104,6 +105,7 @@ func handleGroupRecipeMateOnly(
 	rt runtime.Info,
 	stateDir string,
 	choice map[string]bool,
+	schemas *schema.Cache,
 ) (*mcp.CallToolResult, any, error) {
 	if !rt.InContainer || !rt.MateEnabled || client == nil {
 		return convertError(platform.NewPlatformError(
@@ -128,7 +130,7 @@ func handleGroupRecipeMateOnly(
 		return mateOnlyNotRecorded(err), nil, nil
 	}
 	said := mateOnlyLine(choice)
-	outcome := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir)
+	outcome := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir, schemas)
 	if outcome.Blocked != "" {
 		return jsonResult(map[string]any{
 			"mateOnly": chosen,

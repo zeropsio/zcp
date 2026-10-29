@@ -39,6 +39,9 @@ type Cache struct {
 	// fetchCh is non-nil when a fetch is in progress. Concurrent callers
 	// wait on this channel instead of firing duplicate HTTP requests.
 	fetchCh chan struct{}
+
+	// compiledImport belongs to the last successfully fetched publication.
+	compiledImport *ImportValidator
 }
 
 // NewCache creates a new schema cache with the given TTL, seeded with the
@@ -113,6 +116,7 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 	c.mu.Lock()
 	if err == nil {
 		c.schemas = schemas
+		c.compiledImport = nil
 		c.fetchedAt = time.Now()
 		c.activeStatusUnavailable = activeUnavailable || c.activeVersions == nil
 	}
@@ -130,6 +134,40 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 		return result
 	}
 	return schemas
+}
+
+// ImportValidator returns a validator for the cached published import schema.
+// The embedded seed is a catalog floor only: until a fetch succeeds it cannot
+// establish a publication verdict. A failed refresh keeps the last publication.
+func (c *Cache) ImportValidator(ctx context.Context) (*ImportValidator, error) {
+	if c == nil {
+		return nil, fmt.Errorf("validation unavailable: no published import schema cache")
+	}
+	c.Get(ctx)
+	c.mu.Lock()
+	if c.fetchedAt.IsZero() || c.schemas == nil || c.schemas.ImportYml == nil || c.schemas.ImportYml.Raw == nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("validation unavailable: published import schema has not been fetched")
+	}
+	if c.compiledImport != nil {
+		result := c.compiledImport
+		c.mu.Unlock()
+		return result, nil
+	}
+	publication := c.schemas
+	_, sourceURL := URLs(c.apiHost)
+	c.mu.Unlock()
+
+	validator, err := compileImportPublication(sourceURL, publication.ImportYml.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("validation unavailable: %w", err)
+	}
+	c.mu.Lock()
+	if c.schemas == publication {
+		c.compiledImport = validator
+	}
+	c.mu.Unlock()
+	return validator, nil
 }
 
 // ActiveStatusUnavailable reports whether the current runtime cache may still

@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Core lands the Mate's import-files change in the recipe repository by
@@ -45,7 +46,7 @@ const recipeVerdictHeadMoved = "head_moved"
 // what it did or what waits for a person, none for a change in step with
 // main that Core refused nothing of. recipeFollows: the recipe reconcile runs
 // right after this pass (bootstrap and adopt), so a conflict is left to it.
-func recipeChangeTurn(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, hqc hq.Client, state hq.MateState, recipeFollows bool) []string {
+func recipeChangeTurn(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, hqc hq.Client, state hq.MateState, recipeFollows bool, schemas *schema.Cache) []string {
 	open := openRecipeChange(state)
 	if !rt.MateEnabled || state.AppID == nil || open == nil || open.Title == nil || *open.Title != hq.RecipeProposalTitle {
 		return nil
@@ -57,7 +58,7 @@ func recipeChangeTurn(ctx context.Context, client platform.Client, httpClient op
 		if recipeFollows {
 			return nil
 		}
-		line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
+		line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
 		if line == "" {
 			line = "it already holds main"
 		}

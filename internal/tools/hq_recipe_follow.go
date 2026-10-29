@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -86,12 +87,12 @@ type RecipeFollower struct {
 // — the server's own, which Stop ends — through spawn, the server's
 // background work, and each pass's line goes to say once. Nil anywhere else
 // (docs/spec-mate.md §2.0).
-func NewRecipeFollower(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, spawn func(func()), say func(string)) *RecipeFollower {
+func NewRecipeFollower(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, spawn func(func()), say func(string), schemas *schema.Cache) *RecipeFollower {
 	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil || stateDir == "" || spawn == nil {
 		return nil
 	}
 	return newRecipeFollower(ctx, stateDir, func(ctx context.Context) string {
-		return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir)
+		return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir, schemas)
 	}, spawn, say, recipeFollowQuiet, recipeFollowLongest)
 }
 

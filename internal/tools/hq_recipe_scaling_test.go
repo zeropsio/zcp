@@ -59,7 +59,7 @@ func newScalingLab(t *testing.T) *hqLab {
 // proposeScaling is the agent's group-recipe scaling=host over the lab.
 func (l *hqLab) proposeScaling(client platform.Client, host string) (*hqScalingAnswer, string) {
 	l.t.Helper()
-	result, _, _ := handleGroupRecipeScaling(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, host)
+	result, _, _ := handleGroupRecipeScaling(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, host, l.schemas)
 	text := getTextContent(l.t, result)
 	if result.IsError {
 		return nil, text
@@ -107,7 +107,7 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := groupRecipeScalingSteer(t.Context(), tt.client, lab.hq.srv.Client(), lab.rt, lab.stateDir, tt.host)
+			got := groupRecipeScalingSteer(t.Context(), tt.client, lab.hq.srv.Client(), lab.rt, lab.stateDir, tt.host, lab.schemas)
 			if len(tt.want) == 0 && got != "" {
 				t.Errorf("steer = %q, want nothing: the recipe would not change", got)
 			}

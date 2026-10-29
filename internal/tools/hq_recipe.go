@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -138,29 +140,30 @@ func reconcileGroupRecipe(
 	httpClient ops.HTTPDoer,
 	rt runtime.Info,
 	stateDir string,
+	schemas *schema.Cache,
 ) string {
-	return groupRecipeOutcome(ctx, client, httpClient, rt, stateDir).Line
+	return groupRecipeOutcome(ctx, client, httpClient, rt, stateDir, schemas).Line
 }
 
 // GroupRecipeAtStart is the recipe pass zcp's start in a Mate runs
 // (server.New), off the startup path: a recipe no earlier pass got through
 // goes out without waiting for the next bootstrap or adopt. A start comes
 // with every agent session and nobody asked for it (groupRecipeUnasked).
-func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
-	return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir)
+func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, schemas *schema.Cache) string {
+	return groupRecipeUnasked(ctx, client, httpClient, rt, stateDir, schemas)
 }
 
 // groupRecipeUnasked is a recipe pass nobody asked for — zcp's start in a
 // Mate, a tool call that changed what the recipe reads (RecipeFollower) — so
 // a proposal a person closed unmerged is not opened again here; bootstrap,
 // adopt and the agent's ask still propose it.
-func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, schemas *schema.Cache) string {
 	if hqc, linked := openHQ(httpClient, rt); linked {
 		if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
 			return ""
 		}
 	}
-	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
 }
 
 // recipeDeclinedAtStart is recipeDeclined before the start's pass composes
@@ -191,6 +194,7 @@ func groupRecipeOutcome(
 	httpClient ops.HTTPDoer,
 	rt runtime.Info,
 	stateDir string,
+	schemas *schema.Cache,
 ) recipeOutcome {
 	// A pass that stops before asking HQ anything takes no turn and writes
 	// nothing — every zcp start in a Mate is one — but one with no pair left
@@ -207,7 +211,7 @@ func groupRecipeOutcome(
 		return recipeOutcome{Line: recipePassHeldLine(err)}
 	}
 	defer release()
-	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
 	if early.decided {
 		writeRecipeRequired(stateDir, early.Required)
 	}
@@ -343,6 +347,7 @@ type groupRecipeComposition struct {
 	inputs      bundle.GroupRecipeInputs
 	files       []recipe.File
 	warnings    []string
+	validator   *schema.ImportValidator
 }
 
 func (c groupRecipeComposition) close() { c.scratch.Close() }
@@ -426,6 +431,7 @@ func composeGroupRecipe(
 	httpClient ops.HTTPDoer,
 	rt runtime.Info,
 	stateDir string,
+	schemas *schema.Cache,
 ) (groupRecipeComposition, recipeOutcome, bool) {
 	hqc, metas, blocked, ready := recipePassReady(client, httpClient, rt, stateDir)
 	if !ready {
@@ -515,6 +521,22 @@ func composeGroupRecipe(
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return groupRecipeComposition{}, outcome, false
 	}
+	validator, err := schemas.ImportValidator(ctx)
+	if err != nil {
+		comp.close()
+		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v).", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file.Path, "/import.yaml") {
+			if err := bundle.ValidateGroupTier(validator, file.Path, file.Body); err != nil {
+				comp.close()
+				outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v).", err)
+				return groupRecipeComposition{}, outcome, false
+			}
+		}
+	}
+	comp.validator = validator
 	comp.inputs, comp.files, comp.warnings = inputs, files, outcome.Warnings
 	return comp, outcome, true
 }
@@ -601,6 +623,15 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 	written, err := files(ctx, scratch, main, comp.paths)
 	if err != nil {
 		return recipeWrite{}, err
+	}
+	// Validate the exact proposed bytes, including targeted splices over main,
+	// before opening a change or moving its branch.
+	for _, path := range slices.Sorted(maps.Keys(written)) {
+		if strings.HasSuffix(path, "/import.yaml") {
+			if err := bundle.ValidateGroupTier(comp.validator, path, written[path]); err != nil {
+				return recipeWrite{}, fmt.Errorf("group recipe: %w", err)
+			}
+		}
 	}
 	// A tier zcp owns stays its own through zcp's own edits of it — a
 	// part's, a managed service's, a scale's: its mark follows the edit.
@@ -793,6 +824,7 @@ func handleGroupRecipeAction(
 	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
+	schemas *schema.Cache,
 ) (*mcp.CallToolResult, any, error) {
 	switch {
 	case input.Branch != "":
@@ -802,18 +834,18 @@ func handleGroupRecipeAction(
 	case len(input.MateOnly) > 0:
 		// The person's choice of what serves only this Mate, recorded, then
 		// the recipe pass (hq_recipe_mate_only.go).
-		return handleGroupRecipeMateOnly(ctx, client, httpClient, rt, stateDir, input.MateOnly)
+		return handleGroupRecipeMateOnly(ctx, client, httpClient, rt, stateDir, input.MateOnly, schemas)
 	case input.Scaling != "":
 		// That host's scale into the tiers on main (hq_recipe_scaling.go).
-		return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
+		return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling, schemas)
 	case input.Service != "":
 		// That host's part added to or removed from the tiers on main
 		// (hq_recipe_parts.go).
-		return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service)
+		return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service, schemas)
 	default:
 		// A2: the group's recipe outright — the same reconcile every
 		// bootstrap and adopt pass runs, reported to whoever asked.
-		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
+		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
 	}
 }
 
@@ -834,8 +866,9 @@ func handleGroupRecipe(
 	httpClient ops.HTTPDoer,
 	rt runtime.Info,
 	stateDir string,
+	schemas *schema.Cache,
 ) (*mcp.CallToolResult, any, error) {
-	outcome := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir)
+	outcome := groupRecipeOutcome(ctx, client, httpClient, rt, stateDir, schemas)
 	if outcome.Blocked != "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
