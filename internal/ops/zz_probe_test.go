@@ -32,7 +32,7 @@ func TestZZProbe_AutoGC(t *testing.T) {
 	l := newRelayLab(t)
 	url, _ := l.repo(t, false, "org/app-1/appdev")
 	checkout := l.checkout(t, url)
-	for _, kv := range [][2]string{{"gc.auto", "1"}, {"gc.autoDetach", "true"}, {"maintenance.autoDetach", "true"}} {
+	for _, kv := range [][2]string{{"gc.auto", "1"}, {"gc.autoDetach", "true"}, {"maintenance.autoDetach", "true"}, {"maintenance.gc.enabled", "true"}} {
 		l.git(t, checkout, "config", kv[0], kv[1])
 	}
 	l.looseObjectsUnder17(t, checkout, 3)
