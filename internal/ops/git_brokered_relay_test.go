@@ -2851,6 +2851,48 @@ func TestBrokeredGit_Access_PushWithoutRefspec_ResolvesViaAtPush(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_Access_PushRefspecFromConfig_AsksWorkflows: a push naming
+// no refspec sends what the config decides — the pushed remote's
+// remote.<name>.push or remote.<name>.mirror, or push.default=matching, from
+// the checkout's config or the call's -c — not just the current branch, so
+// it cannot be resolved: workflows, though only another branch's unpushed
+// commit touches .github/workflows/. Such config of a remote the push does
+// not go to decides nothing.
+func TestBrokeredGit_Access_PushRefspecFromConfig_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name   string
+				config [][2]string
+				args   []string
+				want   string
+			}{
+				{"push.default=matching", [][2]string{{"push.default", "matching"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWorkflows},
+				{"push.default=matching in -c", nil, []string{"-c", "push.default=matching", "push", "--dry-run", "origin"}, hq.GitHubAccessWorkflows},
+				{"remote.origin.push", [][2]string{{"remote.origin.push", "refs/heads/*:refs/heads/*"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWorkflows},
+				{"remote.origin.mirror", [][2]string{{"remote.origin.mirror", "true"}}, []string{"push", "--dry-run", "origin"}, hq.GitHubAccessWorkflows},
+				{"another remote's push", [][2]string{{"remote.upstream.url", "https://example.invalid/x.git"}, {"remote.upstream.push", "refs/heads/*:refs/heads/*"}, {"remote.upstream.mirror", "true"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWrite},
+			} {
+				l, _, checkout, relay := accessLab(t)
+				l.git(t, checkout, "checkout", "-q", "-b", "ci-branch")
+				l.authGit(t, checkout, "push", "-q", "origin", "ci-branch")
+				l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
+				l.git(t, checkout, "checkout", "-q", "main")
+				l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+				for _, kv := range tc.config {
+					l.git(t, checkout, "config", kv[0], kv[1])
+				}
+				l.run(t, sh, checkout, relay, "", tc.args...).mustSucceed(t, tc.name)
+				if got := l.accesses(); !slices.Equal(got, []string{tc.want}) {
+					t.Errorf("%s: HQ was asked for access %q, want %q", tc.name, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestBrokeredGit_Access_FollowTagsOrTags_AsksWorkflows: tags pushed — by
 // --tags, --follow-tags or push.followTags, from argv or the checkout's
 // config — point at commits zcp does not resolve: workflows.
