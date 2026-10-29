@@ -903,7 +903,7 @@ func wireHQPair(
 		ops.BuildBaseBranchCommand(hqPairWorkingDir(m))); branchErr != nil {
 		prefix := fmt.Sprintf("repository %q is ready in HQ, but %s could not be put on %q", repo.Name, m.Hostname, hqBase)
 		refusal := ops.BaseBranchRefusal(string(out))
-		if remedy := ops.BaseBranchRefusalRemedy(refusal); remedy != "" {
+		if remedy := ops.BaseBranchRefusalRemedy(refusal, ops.RemedyRunner{DevHost: m.Hostname}); remedy != "" {
 			return hqWiringOutcome{
 				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir(m), m.Hostname, remedy),
 				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir(m), m.Hostname, remedy),

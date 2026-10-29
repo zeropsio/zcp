@@ -41,7 +41,7 @@ func TestRunHQGit_MateUsesItsOwnGitCredential(t *testing.T) {
 			cmd.Env = append(os.Environ(), "ZCP_TEST_HQ_GIT_CHILD=1", "ZCP_MATE_ENABLED="+tc.value, "T3CODE_ZEROPS_HQ_ORIGIN=https://hq.example", "ZCP_API_KEY=test-key", "projectId=p")
 			out, err := cmd.CombinedOutput()
 			if tc.refused {
-				if err == nil || !strings.Contains(string(out), "Mate's own Git credential") || strings.Contains(string(out), "git version") {
+				if err == nil || !strings.Contains(string(out), "Mate's own Git credential") || !strings.Contains(string(out), "zcp git <host> <git args>") || strings.Contains(string(out), "git version") {
 					t.Fatalf("Mate wrapper result = %q, %v", out, err)
 				}
 			} else if err != nil || !strings.Contains(string(out), "git version") {

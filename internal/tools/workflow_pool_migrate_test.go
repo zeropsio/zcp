@@ -1083,7 +1083,7 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 			mutate: func(f *poolMigrateFixture) {
 				inMate(f)
 			},
-			wantMissing: []string{`"main"`, "git switch -c"},
+			wantMissing: []string{`"main"`, "`zcp git appdev switch -c <branch>`", "`zcp git appdev push -u origin <branch>`"},
 		},
 		{
 			name: "in a Mate on the Mate's own branch",
@@ -1091,7 +1091,7 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 				inMate(f)
 				f.ssh.output = poolMigrateCensusFor("mate/proj-1", "origin", "mate/proj-1", "")
 			},
-			wantMissing: []string{`"mate/proj-1"`, "git switch -c"},
+			wantMissing: []string{`"mate/proj-1"`, "`zcp git appdev switch -c <branch>`"},
 		},
 		{
 			name: "outside a Mate, the current branch's upstream on origin",
@@ -1105,21 +1105,21 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 			mutate: func(f *poolMigrateFixture) {
 				f.ssh.output = poolMigrateCensusFor("feat", "", "", "")
 			},
-			wantMissing: []string{`"feat"`, "git push -u origin feat"},
+			wantMissing: []string{`"feat"`, "`zcp git appdev push -u origin feat`"},
 		},
 		{
 			name: "outside a Mate, an upstream on another remote",
 			mutate: func(f *poolMigrateFixture) {
 				f.ssh.output = poolMigrateCensusFor("feat", "fork", "feat", "")
 			},
-			wantMissing: []string{"fork/feat", "origin", "git push -u origin feat"},
+			wantMissing: []string{"fork/feat", "origin", "`zcp git appdev push -u origin feat`"},
 		},
 		{
 			name: "a detached checkout",
 			mutate: func(f *poolMigrateFixture) {
 				f.ssh.output = poolMigrateCensusFor("", "", "", "")
 			},
-			wantMissing: []string{"no branch", "git switch -c"},
+			wantMissing: []string{"no branch", "`zcp git appdev switch -c <branch>`", "`zcp git appdev push -u origin <branch>`"},
 		},
 	}
 	for _, tt := range tests {
@@ -1152,6 +1152,9 @@ func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
 				if !strings.Contains(missing, want) {
 					t.Errorf("missing %q does not name %q", missing, want)
 				}
+			}
+			if strings.Contains(missing, "(`git ") {
+				t.Errorf("missing %q runs git outside the dev service", missing)
 			}
 		})
 	}

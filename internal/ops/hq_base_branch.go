@@ -169,10 +169,16 @@ func BaseBranchRefusal(output string) string { return markedLine(output, baseBra
 // branch of its own.
 const KeepOwnHistory = `git branch -f "own-history-$(git rev-parse --short=12 HEAD)"`
 
+// RemedyRunner says how a branch refusal's remedy writes its git commands.
+type RemedyRunner struct {
+	// DevHost is a Mate's dev service; "" is a project without a Mate.
+	DevHost string
+}
+
 // BaseBranchRefusalRemedy is the one thing to do about a refusal
 // BaseBranchRefusal read, run in the pair's working copy; the next wiring
 // then finds the state it can wire. Empty for a refusal it does not know.
-func BaseBranchRefusalRemedy(refusal string) string {
+func BaseBranchRefusalRemedy(refusal string, _ RemedyRunner) string {
 	state, named, _ := strings.Cut(refusal, " ")
 	switch state {
 	case "ZCP_BASE_NOT_SEED":

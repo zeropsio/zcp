@@ -152,7 +152,7 @@ func passProjectPair(ctx context.Context, client hq.ProjectClient, ssh ops.SSHDe
 			out = append(out, []byte("\n"+sshErr.Output)...)
 		}
 		refusal = ops.BaseBranchRefusal(string(out))
-		if remedy := ops.BaseBranchRefusalRemedy(refusal); remedy != "" {
+		if remedy := ops.BaseBranchRefusalRemedy(refusal, ops.RemedyRunner{}); remedy != "" {
 			checkout, err = projectCheckoutState(ctx, ssh, m)
 			if err != nil {
 				checkout = ""
