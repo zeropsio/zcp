@@ -1023,8 +1023,8 @@ func TestBrokeredGit_Relay_PartialClone_GitHubLazyFetchesShareOneMintedToken(t *
 			if asked < 2 {
 				t.Fatalf("git asked for a credential %d times, want at least two lazy fetches", asked)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop.git" {
-				t.Errorf("HQ minted %+v, want one token for acme/shop.git", mints)
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
+				t.Errorf("HQ minted %+v, want one token minted with the canonical path acme/shop", mints)
 			}
 			l.mu.Lock()
 			used := l.tokenUse["ghs_FAKE0001"]
@@ -1113,8 +1113,8 @@ func TestBrokeredGit_Relay_FetchByURLInArgv_Answered(t *testing.T) {
 			if got := l.git(t, checkout, "rev-parse", "refs/remotes/lib/main"); got != libHistory.third {
 				t.Errorf("lib/main = %s, want %s", got, libHistory.third)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/lib.git" {
-				t.Errorf("HQ minted %+v, want one token for acme/lib.git", mints)
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/lib" {
+				t.Errorf("HQ minted %+v, want one token minted with the canonical path acme/lib", mints)
 			}
 		})
 	}
@@ -1146,7 +1146,7 @@ func TestBrokeredGit_Relay_NoRecordedOrigin_AnswersHQsLiveOriginReadOnce(t *test
 			if asked != 1 {
 				t.Errorf("HQ's live state read %d times in the call, want once", asked)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop.git" {
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
 				t.Errorf("HQ minted %+v, want one token for the live origin", mints)
 			}
 			assertDeclined(t, l, l.run(t, sh, checkout, relay, "", "fetch", "evil"))
@@ -1166,7 +1166,7 @@ func assertDeclined(t *testing.T, l *relayLab, run relayRun) {
 		t.Errorf("stderr = %q, want zcp naming the remote it does not answer", run.stderr)
 	}
 	for _, m := range l.minted() {
-		if strings.EqualFold(m.path, "acme/other.git") {
+		if strings.EqualFold(strings.TrimSuffix(m.path, ".git"), "acme/other") {
 			t.Errorf("HQ minted a token for %s", m.path)
 		}
 	}
@@ -1438,6 +1438,45 @@ func TestBrokeredGit_Relay_DeclinedHost_FailsWithoutEmptyPassword(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+// TestBrokeredGit_Relay_GitHubPath_MintedCanonicalOddDeclined: HQ is asked
+// for a GitHub repository by its canonical path — owner/name, lower-cased,
+// no .git or trailing slash, as HQ keys it — and a path that is no
+// owner/name of letters, digits, dot, underscore and hyphen is declined
+// before HQ is asked, said once, quoted.
+func TestBrokeredGit_Relay_GitHubPath_MintedCanonicalOddDeclined(t *testing.T) {
+	t.Parallel()
+	l := newRelayLab(t)
+	url, _ := l.repo(t, true, "acme/shop")
+	ghHost := strings.TrimPrefix(l.gh.URL, "http://")
+	var stderr bytes.Buffer
+	call := newRelayCall(l.relay(url), "appdev", func(context.Context) string { return hq.GitHubAccessRead }, &stderr)
+	for _, path := range []string{"acme/shop.git", "Acme/Shop", "acme/shop/", "ACME/SHOP.GIT"} {
+		if user, pass := call.answer(t.Context(), "http", ghHost, path); user == "" || pass == "" {
+			t.Errorf("answer(%q) declined, want the token for acme/shop", path)
+		}
+	}
+	if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
+		t.Errorf("HQ minted %+v, want one token, asked by the canonical path acme/shop", mints)
+	}
+	for _, path := range []string{"acme", "acme/shop/extra", "acme/../shop", "a b/shop", "acme/sh%6fp", "acme/shop?x=1", "./shop", "acme/" + strings.Repeat("x", 300) + "\x1b[2J"} {
+		if user, pass := call.answer(t.Context(), "http", ghHost, path); user != "" || pass != "" {
+			t.Errorf("answer(%q) answered, want declined", path)
+		}
+	}
+	if mints := l.minted(); len(mints) != 1 {
+		t.Errorf("HQ minted %+v, want nothing asked for an odd path", mints)
+	}
+	said := stderr.String()
+	if !strings.Contains(said, `"acme/shop/extra"`) || strings.Contains(said, "\x1b") {
+		t.Errorf("stderr = %q, want each odd path quoted, never raw", said)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(said), "\n") {
+		if len(line) > 400 {
+			t.Errorf("stderr line of %d bytes, want a dev-controlled path capped: %q", len(line), line[:80])
+		}
 	}
 }
 
