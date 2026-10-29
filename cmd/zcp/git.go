@@ -160,6 +160,9 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 		case errors.Is(err, ops.ErrBrokeredGitStdinUnread):
 			fmt.Fprintf(d.stderr, "zcp git: %v\n", err)
 			return gitExitFailed
+		case errors.Is(err, ops.ErrBrokeredGitStdinStopped):
+			fmt.Fprintf(d.stderr, "zcp git: stopped while reading stdin; nothing ran in %s\n", host)
+			return gitExitStopped
 		}
 	} else {
 		code, err = ops.RunBrokeredGit(ctx, d.ssh, host, dir, gitArgs, d.stdin, d.stdout, d.stderr)

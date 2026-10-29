@@ -331,26 +331,44 @@ func hasOperand(args []string, valueOptions map[string]bool) bool {
 const brokeredGitStdinCap = 1 << 20
 
 // ErrBrokeredGitStdinOverCap is a call whose stdin is over the 1 MiB zcp
-// forwards; ErrBrokeredGitStdinUnread one whose stdin could not be read.
-// Either ends the call before anything runs.
+// forwards; ErrBrokeredGitStdinUnread one whose stdin could not be read;
+// ErrBrokeredGitStdinStopped one stopped while its stdin was being read.
+// Each ends the call before anything runs.
 var (
 	ErrBrokeredGitStdinOverCap = errors.New("stdin is over the 1 MiB zcp git forwards to git")
 	ErrBrokeredGitStdinUnread  = errors.New("read stdin")
+	ErrBrokeredGitStdinStopped = errors.New("stopped while reading stdin")
 )
 
-// readBrokeredGitStdin reads all of stdin, refusing more than the cap.
-func readBrokeredGitStdin(stdin io.Reader) ([]byte, error) {
+// readBrokeredGitStdin reads all of stdin, refusing more than the cap — in
+// a goroutine of its own, so ctx stops the call even on a stdin that never
+// ends (the read itself is left to the process's end).
+func readBrokeredGitStdin(ctx context.Context, stdin io.Reader) ([]byte, error) {
 	if stdin == nil {
 		return []byte{}, nil
 	}
-	payload, err := io.ReadAll(io.LimitReader(stdin, brokeredGitStdinCap+1))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinUnread, err)
+	type read struct {
+		payload []byte
+		err     error
 	}
-	if len(payload) > brokeredGitStdinCap {
+	done := make(chan read, 1)
+	go func() {
+		payload, err := io.ReadAll(io.LimitReader(stdin, brokeredGitStdinCap+1))
+		done <- read{payload, err}
+	}()
+	var r read
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinStopped, ctx.Err())
+	case r = <-done:
+	}
+	if r.err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinUnread, r.err)
+	}
+	if len(r.payload) > brokeredGitStdinCap {
 		return nil, ErrBrokeredGitStdinOverCap
 	}
-	return payload, nil
+	return r.payload, nil
 }
 
 // relayLockBound is how long, by the clock, a helper waits for the call's
@@ -902,7 +920,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	var payload []byte
 	if forward {
 		var err error
-		if payload, err = readBrokeredGitStdin(stdin); err != nil {
+		if payload, err = readBrokeredGitStdin(ctx, stdin); err != nil {
 			return -1, err
 		}
 	}
