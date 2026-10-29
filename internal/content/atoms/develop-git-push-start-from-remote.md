@@ -21,6 +21,8 @@ ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default
 
 Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
 
+In a Mate, read both in the dev service: `zcp git <push-source-host> remote show origin`, `zcp git <push-source-host> status --short`.
+
 Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed. Run every git command for it in its dev service with `zcp git <push-source-host> …`, never on the mounted checkout `/var/www/<push-source-host>`: git there and git in the dev service on one `.git` break it, and zcp answers the dev service's git for HQ and GitHub. After a command that changes files, re-read a file before editing it — the mount can show the old one for up to 20 s: <!-- axis-n-keep: a pair wired to HQ is a Mate's, always in a container -->
 
 ```

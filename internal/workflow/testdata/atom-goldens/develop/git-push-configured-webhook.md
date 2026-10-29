@@ -25,6 +25,8 @@ ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default
 
 Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
 
+In a Mate, read both in the dev service: `zcp git <push-source-host> remote show origin`, `zcp git <push-source-host> status --short`.
+
 Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed. Run every git command for it in its dev service with `zcp git <push-source-host> …`, never on the mounted checkout `/var/www/<push-source-host>`: git there and git in the dev service on one `.git` break it, and zcp answers the dev service's git for HQ and GitHub. After a command that changes files, re-read a file before editing it — the mount can show the old one for up to 20 s:
 
 ```
@@ -78,7 +80,9 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
 ```
 
-`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`. On this Mate's HQ the call does not run: code goes there by plain git on a branch of your own, and `main` moves only when a person merges a change. The call refuses an empty tree or uncommitted changes — commit first (`zcp git <host> add -A && zcp git <host> commit -m '<msg>'` in a container, which runs git in the service's checkout; `git -C <workingDir> add -A && git -C <workingDir> commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles.
+`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`. On this Mate's HQ the call does not run: code goes there by plain git on a branch of your own, and `main` moves only when a person merges a change. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd <repo dir> && git add -A && git commit -m '<msg>'"` for the runtime container (`/var/www`, or the code volume's `mountPath`) `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles.
+
+In a Mate, commit in the dev service with `zcp git <host> add -A && zcp git <host> commit -m '<msg>'`: zcp runs git there, in the checkout the service's record names.
 
 **Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml` (the push pre-flight validates the SOURCE setup; the remote build consumes its own setup name — for standard pairs typically `prod`). Read the project's `zerops.yaml` first and pass the matching name explicitly; an `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` for a one-round-trip recovery.
 

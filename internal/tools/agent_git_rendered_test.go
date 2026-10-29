@@ -24,8 +24,10 @@ import (
 // service through `zcp git <host>` (a lease's over ssh), never on the mount,
 // in the agent's own shell or a zcp-side worktree, and decides nothing on a
 // substitution that fails open. A project without a Mate keeps `zcp hq git`
-// on its mounted checkout (owner decision Q1): its remedies are not checked
-// here, and TestBaseBranchRefusalRemedy_PlainProject_Unchanged pins them.
+// on its mounted checkout (owner decision Q1): its texts are not checked
+// here — TestBaseBranchRefusalRemedy_PlainProject_Unchanged,
+// TestGitPushToHQ_PlainProject_KeepsTheCheckoutPushWords and
+// TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream pin them.
 func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 	t.Parallel()
 	hqc, err := hq.Open(http.DefaultClient, hq.Identity{Origin: "https://hq.example", Key: "key", ProjectID: labMate, OrgID: labOrg})
@@ -54,7 +56,7 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 		"originFromHolder, a sibling's on GH": originFromHolder("appdev", "web", hq.RepoOrigin{URL: "https://github.com/acme/web", Mode: hq.OriginOnGitHub}, hq.MateState{}, "https://hq.example", labOrg, stateDir),
 		"originFromHolder, a sibling's in HQ": originFromHolder("appdev", "web", hq.RepoOrigin{}, hq.MateState{AppID: &app}, "https://hq.example", labOrg, stateDir),
 		"divergedWords":                       divergedWords(stateDir, hqc, labApp, "appdev", "2026-10-28T10:00:00.000Z"),
-		"hqGitPushRefusal":                    hqGitPushRefusal("appdev").Suggestion,
+		"hqGitPushRefusal":                    hqGitPushRefusal("appdev", true).Suggestion,
 		"AGENTS.md":                           agentsMDForAMate(t),
 	}
 	for name, route := range map[string]repoRoute{"its dev service": plain, "a dev pool": pool, "a lease": leased, "no pair here": none} {
@@ -78,7 +80,6 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 	for _, branch := range []string{"", hqBase, "feat"} {
 		census := &ops.PoolMigrateCensus{Trees: []ops.PoolMigrateTree{{Path: "/var/www", Branch: branch}}}
 		texts["poolMigrateWorkBranchOf in a Mate, on "+branch] = poolMigrateWorkBranchOf(meta, census, runtime.Info{MateEnabled: true}, nil).Missing
-		texts["poolMigrateWorkBranchOf, on "+branch] = poolMigrateWorkBranchOf(meta, census, runtime.Info{}, nil).Missing
 	}
 
 	for name, text := range texts {

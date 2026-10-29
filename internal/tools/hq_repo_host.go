@@ -155,6 +155,12 @@ func (r repoRoute) fromMain(branch string) string {
 	return r.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase, "checkout -b "+branch)
 }
 
+// plainGit is cmds — each a git command's arguments — as a project without a
+// Mate runs them, on its mounted checkout, reading HQ through `zcp hq git`
+// (owner decision Q1, docs/spec-mate.md §6.7): `zcp git` has no Mate identity
+// to answer its git with, so its words stay as they were before `zcp git`.
+func plainGit(cmds ...string) string { return "`git " + strings.Join(cmds, " && git ") + "`" }
+
 // leaseAcquire is the call that checks branch out in a lease of pool, cut
 // from main when origin does not hold it yet.
 func leaseAcquire(pool, branch string) string {

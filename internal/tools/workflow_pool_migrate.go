@@ -976,25 +976,30 @@ func poolMigrateWorkBranchOf(meta *workflow.ServiceMeta, census *ops.PoolMigrate
 	if len(census.Trees) > 0 {
 		main = census.Trees[0]
 	}
-	// The dev service's git runs there, through zcp git, never on its mount.
-	dev := repoRoute{host: meta.Hostname}
+	// A Mate's dev service runs its git there, through zcp git, never on its
+	// mount; a project without a Mate keeps its git on the mounted checkout
+	// (plainGit).
+	git := plainGit
+	if rt.MateEnabled {
+		git = repoRoute{host: meta.Hostname}.git
+	}
 	branch := main.Branch
 	if branch == "" {
 		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on no branch (a detached HEAD), so a lease has none to check out: put the work on a branch of your own (%s) and push it (%s).",
-			dev.git("switch -c <branch>"), dev.git("push -u origin <branch>"))}
+			git("switch -c <branch>"), git("push -u origin <branch>"))}
 	}
 	if rt.MateEnabled {
 		if branch == hqBase || strings.HasPrefix(branch, "mate/") {
 			return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, a branch HQ takes no push to: %q moves only by a person's merge, and a mate/ branch only as an open change's. Move the work onto a branch of your own (%s) and push it (%s).",
-				branch, hqBase, dev.git("switch -c <branch>"), dev.git("push -u origin <branch>"))}
+				branch, hqBase, git("switch -c <branch>"), git("push -u origin <branch>"))}
 		}
 		return &poolMigrateWorkBranch{Branch: branch, Source: poolMigrateWorkFromCurrent}
 	}
 	switch up := main.Upstream; {
 	case up == nil:
-		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks no branch on origin, so a lease has none to check out: push it (%s).", branch, dev.git("push -u origin "+branch))}
+		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks no branch on origin, so a lease has none to check out: push it (%s).", branch, git("push -u origin "+branch))}
 	case up.Remote != poolMigrateOrigin:
-		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks %s/%s, and a lease clones origin: push it there (%s).", branch, up.Remote, up.Branch, dev.git("push -u origin "+branch))}
+		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks %s/%s, and a lease clones origin: push it there (%s).", branch, up.Remote, up.Branch, git("push -u origin "+branch))}
 	default:
 		return &poolMigrateWorkBranch{Branch: up.Branch, Source: poolMigrateWorkFromUpstream}
 	}

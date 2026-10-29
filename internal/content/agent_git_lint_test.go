@@ -55,12 +55,14 @@ type agentGitAllow struct{ decl, piece, why string }
 // starts at ("" for the whole text): every git command there runs in the
 // dev service. Elsewhere a text may name a git command in passing — what a
 // status reads, a local dev machine's git — and only the phrases and
-// commands that run git on the mount are refused.
+// commands that run git on the mount are refused. pool-migrate-move.md is no
+// surface: it renders for a project without a Mate too, whose table of git
+// commands stays as it was (owner decision Q1), its Mate's form a paragraph
+// of its own (agentGitOutsideAMate).
 var agentGitSurfaces = map[string]string{
 	"templates/agents_git_host.md":                "",
 	"atoms/develop-git-push-start-from-remote.md": "Wired to this Mate's HQ",
 	"atoms/develop-git-push-delivery.md":          "",
-	"atoms/pool-migrate-move.md":                  "",
 }
 
 // agentGitContentAllowed are the lines of embedded texts that run git where
@@ -68,8 +70,8 @@ var agentGitSurfaces = map[string]string{
 // with why.
 var agentGitContentAllowed = map[string]map[string]string{
 	"atoms/develop-git-push-delivery.md": {
-		"`git -C <workingDir> add -A && git -C <workingDir> commit -m '<msg>'` on a dev machine": "local mode: git in the dev machine's own working directory, no mount",
-		"never run `git push --force`": "names the force-push it forbids",
+		"`git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine": "local mode: git in the dev machine's own working directory, no mount",
+		"never run `git push --force`":                                           "names the force-push it forbids",
 	},
 }
 
