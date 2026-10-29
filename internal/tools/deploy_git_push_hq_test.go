@@ -4,11 +4,14 @@
 package tools
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // gitPushTool is zerops_deploy over the lab.
@@ -61,6 +64,38 @@ func TestGitPushToHQ_RefusedForPlainGitOnABranch(t *testing.T) {
 				t.Errorf("nothing may be opened or pushed")
 			}
 		})
+	}
+}
+
+// TestGitPushToHQ_PlainProject_KeepsTheCheckoutPushWords: a project without a
+// Mate wired to HQ through the project door keeps its git on the mounted
+// checkout, reading HQ through `zcp hq git` (owner decision Q1,
+// docs/spec-mate.md §6.7) — `zcp git` has no Mate identity to answer it with
+// there — so the git-push refusal says the push as it did before `zcp git`,
+// byte for byte, and a Mate's names `zcp git`.
+func TestGitPushToHQ_PlainProject_KeepsTheCheckoutPushWords(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.rt.MateEnabled = false
+	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta) error {
+		meta.GitPushState = topology.GitPushConfigured
+		meta.RemoteURL = lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(t, callTool(t, lab.gitPushTool(), "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
+
+	var refusal struct {
+		Suggestion string `json:"suggestion"`
+	}
+	if err := json.Unmarshal([]byte(text), &refusal); err != nil {
+		t.Fatalf("not a refusal: %v\n%s", err, text)
+	}
+	const want = "In appdev's checkout, commit on a branch of your own and run `git push origin <branch>` — never push \"main\" and never force-push: \"main\" moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code."
+	if refusal.Suggestion != want {
+		t.Errorf("suggestion = %q, want the words before zcp git %q", refusal.Suggestion, want)
 	}
 }
 

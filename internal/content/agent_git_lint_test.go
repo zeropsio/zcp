@@ -303,3 +303,80 @@ func TestAgentGitViolations_KnownTexts(t *testing.T) {
 		}
 	}
 }
+
+// agentGitOutsideAMate are the embedded texts that also render for a project
+// without a Mate, whose git stays on its mounted checkout where `zcp git`
+// cannot authenticate (owner decision Q1, docs/spec-mate.md §6.7): each keeps
+// the commands it gave before `zcp git` byte for byte (plain), and gives a
+// Mate its `zcp git` form in a paragraph of its own that says it is a Mate's
+// (mate) — the atoms have no axis that renders a part for a Mate alone. A
+// text with a Mate's part ("Wired to this Mate's HQ") is checked before it.
+var agentGitOutsideAMate = []struct {
+	file  string
+	plain []string
+	mate  []string
+}{
+	{
+		file:  "atoms/develop-git-push-delivery.md",
+		plain: []string{"The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> \"cd <repo dir> && git add -A && git commit -m '<msg>'\"` for the runtime container (`/var/www`, or the code volume's `mountPath`) `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles."},
+		mate:  []string{"`zcp git <host> add -A && zcp git <host> commit -m '<msg>'`"},
+	},
+	{
+		file: "atoms/pool-migrate-move.md",
+		plain: []string{
+			"Each item the census names, and how to keep it (you commit and push; the\ncall commits nothing):\n\n| census |",
+			"| `trees[].detachedCommits` | commits only a detached HEAD holds | `git switch -c <branch>` in that checkout, then push it |",
+			"| `branches[]` | a local branch's commits on no remote branch | `git push -u origin <branch>` |",
+			"| `stashes[]` | stash entries | `git stash branch <branch> <ref>` with the entry's `ref`, then commit and push; drop the ones you do not keep |",
+			"| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `git branch <branch> <commit>` and push the ones you want on the origin |",
+		},
+		mate: []string{"`zcp git <dev> <git args>`", "-C <its path>", "never on its mount", "`zcp git <dev> branch <branch> <head>`"},
+	},
+	{
+		file: "atoms/develop-git-push-start-from-remote.md",
+		plain: []string{
+			"ssh <push-source-host> \"cd /var/www && git fetch origin && git checkout <default-branch> && git reset --hard origin/<default-branch>\"",
+			"Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`).",
+		},
+		mate: []string{"`zcp git <push-source-host> remote show origin`", "`zcp git <push-source-host> status --short`"},
+	},
+}
+
+// TestAgentGitContent_OutsideAMateKeepsItsCommands: a text that renders for a
+// project without a Mate too keeps the commands that project runs, as they
+// were before `zcp git`, and names `zcp git` only in a paragraph that says it
+// is a Mate's.
+func TestAgentGitContent_OutsideAMateKeepsItsCommands(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	bodies := map[string]string{}
+	for _, a := range atoms {
+		bodies["atoms/"+a.Name] = a.Content
+	}
+	for _, tt := range agentGitOutsideAMate {
+		body, ok := bodies[tt.file]
+		if !ok {
+			t.Errorf("no atom %s", tt.file)
+			continue
+		}
+		body, _, _ = strings.Cut(body, "Wired to this Mate's HQ")
+		for _, want := range tt.plain {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s no longer gives a project without a Mate %q", tt.file, want)
+			}
+		}
+		for _, want := range tt.mate {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s gives a Mate no %q", tt.file, want)
+			}
+		}
+		for paragraph := range strings.SplitSeq(body, "\n\n") {
+			if strings.Contains(paragraph, "zcp git") && !strings.Contains(paragraph, "In a Mate") {
+				t.Errorf("%s names zcp git where a project without a Mate reads it as its own:\n%s", tt.file, paragraph)
+			}
+		}
+	}
+}
