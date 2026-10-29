@@ -79,13 +79,10 @@ func isGit(args []string) bool {
 
 // runGit is `zcp git` in this container: the runtime read from the live env
 // store (the process's own environment may be a unit's), zcp's records from
-// their fixed directory, and the call stopped by Ctrl-C or SIGTERM. SIGPIPE
-// is ignored: a relayed call writes git's stdout itself, and a reader that
-// went away (`zcp git … | head -1`) must end that copy with an error the
-// call handles — passing it on to ssh, revoking its tokens, returning git's
-// exit code — not kill zcp.
+// their fixed directory, SIGPIPE handled by handleSIGPIPE, and the call
+// stopped by Ctrl-C or SIGTERM.
 func runGit(args []string) int {
-	signal.Ignore(syscall.SIGPIPE)
+	handleSIGPIPE()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
@@ -100,6 +97,14 @@ func runGit(args []string) int {
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
 	})
+}
+
+// handleSIGPIPE ignores SIGPIPE: a relayed call writes git's stdout itself,
+// and a reader that went away (`zcp git … | head -1`) must end that copy
+// with an error the call handles — passing it on to ssh, revoking its
+// tokens — not kill zcp.
+func handleSIGPIPE() {
+	signal.Ignore(syscall.SIGPIPE)
 }
 
 // brokeredGitStateDir is where zcp keeps its records in a zcp container —
