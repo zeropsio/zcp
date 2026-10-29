@@ -154,6 +154,32 @@ func TestRun_Mate_EnsureInstalledReportsNone_StillRegistersUnit(t *testing.T) {
 	}
 }
 
+// TestLogMateEnsureResult_NamesWhatHappened pins the one line a boot logs for
+// the mate bundle. The no-change line says the installed release is current:
+// the boot fetched the manifest to learn that, so the line never claims the
+// network went unreached.
+func TestLogMateEnsureResult_NamesWhatHappened(t *testing.T) {
+	cases := []struct {
+		name   string
+		result mate.Result
+		want   string
+	}{
+		{"none", mate.Result{Action: mate.ActionNone, From: "0.16.34", To: "0.16.34"}, "    (mate 0.16.34 already current)\n"},
+		{"installed", mate.Result{Action: mate.ActionInstalled, To: "0.16.37"}, "    (installed mate 0.16.37)\n"},
+		{"updated", mate.Result{Action: mate.ActionUpdated, From: "0.16.35", To: "0.16.37"}, "    (updated mate 0.16.35 -> 0.16.37)\n"},
+		{"warning", mate.Result{Action: mate.ActionNone, From: "0.16.34", To: "0.16.34", Warning: "manifest unreachable"}, "    ! manifest unreachable\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			zcpinit.LogMateEnsureResult(&out, tc.result)
+			if out.String() != tc.want {
+				t.Errorf("line = %q, want %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
 // TestRun_Mate_ManifestUnreachable_KeepsInstalled is MD-10's second half: an
 // unreachable/invalid release manifest with something already installed is
 // not a failure. mateEnsureInstalled reports ActionNone with a Warning

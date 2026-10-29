@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,9 +114,9 @@ func disableMate() error {
 // mate.CurrentLink(), the identity contract on disk, and a supervised unit.
 //
 // The bundle itself is mateEnsureInstalled's job in full — same version already
-// live (the common warm-restart case) costs no network, and a hand-pushed dev
-// build at or above MinimumMateVersion is kept unless forced. See
-// mate.EnsureInstalled for the pass in detail.
+// live (the common warm-restart case) costs only the manifest read, and a
+// hand-pushed dev build at or above MinimumMateVersion is kept unless forced.
+// See mate.EnsureInstalled for the pass in detail.
 //
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
@@ -169,7 +170,7 @@ func enableMate(rt runtime.Info) error {
 	if err != nil {
 		return fmt.Errorf("ensure mate bundle: %w", err)
 	}
-	logMateEnsureResult(result)
+	logMateEnsureResult(os.Stderr, result)
 
 	bin := mate.BinPath()
 	if _, err := os.Stat(bin); err != nil {
@@ -314,19 +315,19 @@ func bundleChanged(result mate.Result) bool {
 // logMateEnsureResult prints one line naming what mateEnsureInstalled did, so a
 // container boot's log tells "nothing changed" from "fetched a new release"
 // without having to infer it from the absence of a download line.
-func logMateEnsureResult(result mate.Result) {
+func logMateEnsureResult(w io.Writer, result mate.Result) {
 	switch {
 	case result.Warning != "":
 		// An unreachable/invalid release manifest with something already
 		// installed (MD-10): the installed version keeps serving, so this
 		// is a logged miss, not a degrade — enableMate proceeds normally.
-		fmt.Fprintf(os.Stderr, "    ! %s\n", result.Warning)
+		fmt.Fprintf(w, "    ! %s\n", result.Warning)
 	case result.Action == mate.ActionNone:
-		fmt.Fprintf(os.Stderr, "    (mate %s already installed, no network reached)\n", result.To)
+		fmt.Fprintf(w, "    (mate %s already current)\n", result.To)
 	case result.Action == mate.ActionInstalled:
-		fmt.Fprintf(os.Stderr, "    (installed mate %s)\n", result.To)
+		fmt.Fprintf(w, "    (installed mate %s)\n", result.To)
 	case result.Action == mate.ActionUpdated:
-		fmt.Fprintf(os.Stderr, "    (updated mate %s -> %s)\n", result.From, result.To)
+		fmt.Fprintf(w, "    (updated mate %s -> %s)\n", result.From, result.To)
 	}
 }
 
