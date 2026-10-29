@@ -3,6 +3,7 @@
 package init
 
 import (
+	"io"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -71,6 +72,9 @@ func ResetMateLockWait()              { mateLockWait = defaultMateLockWait }
 
 func SetMateUnitFilePath(path string) { mateUnitFilePath = path }
 func ResetMateUnitFilePath()          { mateUnitFilePath = mate.UnitFilePath }
+
+// LogMateEnsureResult writes the line the mate step logs for result to w.
+func LogMateEnsureResult(w io.Writer, result mate.Result) { logMateEnsureResult(w, result) }
 
 // RegisteredAdapterNames lists the container adapters `zcp init` dispatches,
 // in dispatch order.
