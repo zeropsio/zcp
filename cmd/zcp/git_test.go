@@ -182,9 +182,53 @@ func TestRunGitCmd_NotInContainer_Refused(t *testing.T) {
 	assertGitRefused(t, args, code, stdout, stderr, ssh)
 }
 
-// TestRunGitCmd_PassesStdinStdoutExitCode: the caller's stdin reaches git,
-// git's stdout and stderr reach the caller byte for byte, and the exit code is
-// git's; ssh's own 255, or an ssh that did not run, is said as an ssh failure.
+// TestRunGitCmd_PlainCall_StdinOnlyWhenGitReadsIt: a plain call hands ssh the
+// caller's stdin only when the argv makes git read it — the same rule a
+// relayed call forwards by — so `while read h; do zcp git "$h" status; done <
+// hosts` leaves the loop its input; any other call's remote reads nothing.
+func TestRunGitCmd_PlainCall_StdinOnlyWhenGitReadsIt(t *testing.T) {
+	t.Parallel()
+	const hosts = "appdev\napidev\n"
+	for _, tc := range []struct {
+		args []string
+		read bool
+	}{
+		{[]string{"appdev", "status"}, false},
+		{[]string{"appdev", "log", "-1"}, false},
+		{[]string{"appdev", "commit", "-F", "-"}, true},
+		{[]string{"appdev", "hash-object", "--stdin"}, true},
+	} {
+		var got []byte
+		ssh := &fakeGitSSH{run: func(stdin io.Reader, _, _ io.Writer) (int, error) {
+			if stdin != nil {
+				b, err := io.ReadAll(stdin)
+				got = b
+				return 0, err
+			}
+			return 0, nil
+		}}
+		deps, _, stderr := gitTestDeps(t.TempDir(), ssh)
+		caller := strings.NewReader(hosts)
+		deps.stdin = caller
+		if code := runGitCmd(t.Context(), tc.args, deps); code != 0 {
+			t.Fatalf("zcp git %q exit %d, stderr %q", tc.args, code, stderr.String())
+		}
+		if tc.read {
+			if string(got) != hosts {
+				t.Errorf("zcp git %q: the remote read %q, want the caller's stdin %q", tc.args, got, hosts)
+			}
+			continue
+		}
+		if len(got) != 0 || caller.Len() != len(hosts) {
+			t.Errorf("zcp git %q: the remote read %q and %d of the caller's %d bytes are left, want nothing read", tc.args, got, caller.Len(), len(hosts))
+		}
+	}
+}
+
+// TestRunGitCmd_PassesStdinStdoutExitCode: the caller's stdin reaches git
+// that reads it, git's stdout and stderr reach the caller byte for byte, and
+// the exit code is git's; ssh's own 255, or an ssh that did not run, is said
+// as an ssh failure.
 func TestRunGitCmd_PassesStdinStdoutExitCode(t *testing.T) {
 	t.Parallel()
 	input := "subject line\n\nbody with 'quotes' and $dollar\x00\r\n"

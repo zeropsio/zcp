@@ -409,6 +409,57 @@ func TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_StdinReaders_PlumbingStdinPathsAndSeparatedValues: the
+// plumbing that reads stdin by its nature — mktag, pack-objects,
+// unpack-objects, show-index and mailinfo always, fmt-merge-msg without
+// -F/--file, mailsplit without an mbox — a file option or operand naming
+// stdin's own path (/dev/stdin, /dev/fd/0), and an apply or am whose only
+// non-option argument is the separated value of -p or -C, all read stdin.
+func TestBrokeredGit_StdinReaders_PlumbingStdinPathsAndSeparatedValues(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		rest []string
+		want bool
+	}{
+		{[]string{"mktag"}, true},
+		{[]string{"mktag", "--strict"}, true},
+		{[]string{"pack-objects", "--stdout"}, true},
+		{[]string{"pack-objects", "--revs", "/tmp/pack"}, true},
+		{[]string{"unpack-objects", "-q"}, true},
+		{[]string{"show-index"}, true},
+		{[]string{"mailinfo", "/tmp/msg", "/tmp/patch"}, true},
+		{[]string{"fmt-merge-msg"}, true},
+		{[]string{"fmt-merge-msg", "-m", "merge"}, true},
+		{[]string{"fmt-merge-msg", "-F", "/tmp/merged"}, false},
+		{[]string{"fmt-merge-msg", "--file=/tmp/merged"}, false},
+		{[]string{"fmt-merge-msg", "--file", "/tmp/merged"}, false},
+		{[]string{"mailsplit", "-o/tmp/out"}, true},
+		{[]string{"mailsplit", "-o/tmp/out", "/tmp/mbox"}, false},
+		{[]string{"commit", "-F", "/dev/stdin"}, true},
+		{[]string{"commit", "-F/dev/stdin"}, true},
+		{[]string{"commit", "--file=/dev/stdin"}, true},
+		{[]string{"tag", "-a", "v1", "--file", "/dev/fd/0"}, true},
+		{[]string{"commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-F", "/dev/stdin"}, true},
+		{[]string{"apply", "/dev/stdin"}, true},
+		{[]string{"commit", "-F", "/tmp/dev/stdin-notes"}, false},
+		{[]string{"apply", "-p", "1"}, true},
+		{[]string{"apply", "-C", "3", "--check"}, true},
+		{[]string{"am", "-p", "1"}, true},
+		{[]string{"am", "-C", "3"}, true},
+		{[]string{"apply", "-p", "1", "fix.patch"}, false},
+		{[]string{"am", "-C", "3", "0001-fix.patch"}, false},
+		{[]string{"apply", "-p1", "fix.patch"}, false},
+	} {
+		args, err := ParseBrokeredGitArgs(tc.rest)
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", tc.rest, err)
+		}
+		if got := BrokeredGitReadsStdin(args); got != tc.want {
+			t.Errorf("BrokeredGitReadsStdin(%q) = %v, want %v", tc.rest, got, tc.want)
+		}
+	}
+}
+
 // TestBrokeredGit_UserConfig_SecurityKeysRefused: on a relayed call a user
 // -c may not set anything that decides credentials, transports, URLs,
 // remotes, included config, upload-pack, aliases or command hooks git runs
