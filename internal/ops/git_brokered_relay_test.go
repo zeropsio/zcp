@@ -1716,6 +1716,36 @@ func TestBrokeredGit_Relay_HelperText_SurvivesBothQuotingLayers(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine: a forwarded
+// stdin the service cannot stage — mktemp failing — ends the call with 128
+// and one line saying so, git never run.
+func TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			stub := t.TempDir()
+			if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // G306: a stub executable
+				t.Fatal(err)
+			}
+			before := l.git(t, checkout, "rev-parse", "HEAD")
+			run := l.runEnv(t, sh, l.env(stub), checkout, l.relay(), "message\n", "commit", "--allow-empty", "-F", "-")
+			if run.code != 128 {
+				t.Errorf("exit %d, want 128", run.code)
+			}
+			if got := strings.TrimSpace(run.stderr); strings.Count(got, "\n") != 0 || !strings.HasPrefix(got, "zcp git: ") || !strings.Contains(got, "stdin") {
+				t.Errorf("stderr = %q, want one zcp git line about the stdin", run.stderr)
+			}
+			if after := l.git(t, checkout, "rev-parse", "HEAD"); after != before {
+				t.Errorf("git ran: HEAD moved to %s", after)
+			}
+		})
+	}
+}
+
 // TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC: where `head`
 // takes no -c (a busybox build option), the payload is read with dd, still
 // byte for byte.

@@ -571,6 +571,39 @@ func TestBrokeredGit_Allowlist_FromRecordsAndArgvURLsOnly(t *testing.T) {
 	}
 }
 
+// TestRunGitCmd_HQIdentityReadOnlyForRelayedCalls: the Mate's HQ identity —
+// the live env store, the installed Mate's package — is read only for a
+// call that is relayed, once.
+func TestRunGitCmd_HQIdentityReadOnlyForRelayedCalls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		meta  *workflow.ServiceMeta
+		mate  bool
+		reads int
+	}{
+		{"relayed", hqWiredMeta(), true, 1},
+		{"wired, no Mate", hqWiredMeta(), false, 0},
+		{"no record", nil, true, 0},
+	} {
+		stateDir := t.TempDir()
+		if tc.meta != nil {
+			writeGitTestMeta(t, stateDir, tc.meta)
+		}
+		ssh := &fakeGitSSH{}
+		deps, _, stderr := gitTestDeps(stateDir, ssh)
+		deps.rt.MateEnabled = tc.mate
+		reads := 0
+		deps.hqIdentity = func() hq.Identity { reads++; return hq.Identity{Origin: "https://hq.example"} }
+		if code := runGitCmd(t.Context(), []string{"appdev", "status"}, deps); code != 0 {
+			t.Fatalf("%s: exit %d, stderr %q", tc.name, code, stderr.String())
+		}
+		if reads != tc.reads {
+			t.Errorf("%s: the HQ identity was read %d times, want %d", tc.name, reads, tc.reads)
+		}
+	}
+}
+
 // TestRunGitCmd_RelayedStdinRead_StoppedExit130: Ctrl-C while zcp git reads
 // a stdin that never ends — am with no file — stops it with exit 130 and one
 // line saying nothing ran, before any ssh call.
