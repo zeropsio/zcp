@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -102,27 +103,67 @@ func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) *
 	return &state
 }
 
-// statusHQChanges is status's Changes section with each change's standing as
-// the Mate's state names it now: a merge since the last pass reads merged,
-// never open, while the pair backoff holds the pass off. The state is read
-// once, inside a Mate, only when the section has a change or a leased branch
-// to name — an idle Mate costs HQ nothing — and nothing is written: the pass
-// still says a merge or a standing once, with what to do. asLastRead: the
-// state was not read — outside a Mate, or HQ did not answer — and the section
-// is the ledger's, as last told.
-func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time) (changes []workflow.HQRepoChanges, asLastRead bool) {
+// statusHQChanges reads the Mate's state once for changes and unresolved app
+// findings, even without open changes, unless the pairs already record an
+// HQ older than repositories. Outside a Mate or while HQ cannot answer,
+// only the ledger's changes remain, labelled as last read.
+func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time, includeProblems bool) (changes []workflow.HQRepoChanges, asLastRead bool, problems []hq.Problem) {
 	kept := hqChangesStatus(stateDir, address, now, nil)
+	// Environment observation consumes only changes and retains its no-read
+	// behavior when empty. Lifecycle status also asks for app findings.
+	if len(kept) == 0 && !includeProblems {
+		return kept, false, nil
+	}
 	if len(kept) == 0 {
-		return kept, false
+		// The origin lookup has already recorded an old HQ's unknown mode.
+		// Any pair naming a mode (or still unrecorded) keeps status fresh,
+		// whether or not that HQ includes the optional problems field.
+		metas, _ := workflow.ListServiceMetas(stateDir)
+		olderHQ := false
+		for _, m := range metas {
+			if !hqPairWired(m) {
+				continue
+			}
+			if m.HQ.Origin == nil || m.HQ.Origin.Mode != "" {
+				olderHQ = false
+				break
+			}
+			olderHQ = true
+		}
+		if olderHQ {
+			return kept, false, nil
+		}
 	}
 	if !rt.MateEnabled {
-		return kept, true
+		return kept, len(kept) > 0, nil
 	}
 	state := hqStateNow(ctx, httpClient, rt)
 	if state == nil {
-		return kept, true
+		return kept, len(kept) > 0, nil
 	}
-	return hqChangesStatus(stateDir, address, now, state), false
+	return hqChangesStatus(stateDir, address, now, state), false, hqStateProblems(*state)
+}
+
+// hqStateProblems forwards every HQ finding from the existing self read.
+// The same finding can occur at app, change and validation level; render an
+// identical finding once, without choosing a verdict or dropping distinct ones.
+func hqStateProblems(state hq.MateState) []hq.Problem {
+	var problems []hq.Problem
+	add := func(findings []hq.Problem) {
+		for _, finding := range findings {
+			if !slices.ContainsFunc(problems, func(known hq.Problem) bool { return reflect.DeepEqual(known, finding) }) {
+				problems = append(problems, finding)
+			}
+		}
+	}
+	add(state.Problems)
+	for _, change := range state.Changes {
+		add(change.Problems)
+		if change.RecipeValidation != nil {
+			add(change.RecipeValidation.Problems)
+		}
+	}
+	return problems
 }
 
 // hqChangesStatus is status's Changes section: per repository, each change

@@ -799,12 +799,12 @@ func TestStatusHQChanges_OutsideAMate_AsLastRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now())
+	changes, asLastRead, _ := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now(), true)
 
 	if len(changes) == 0 || !asLastRead {
 		t.Errorf("outside a Mate status names %+v with asLastRead=%v, want the ledger's, as last read", changes, asLastRead)
 	}
-	if changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now()); len(changes) != 0 || asLastRead {
+	if changes, asLastRead, _ := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now(), true); len(changes) != 0 || asLastRead {
 		t.Errorf("with nothing to name status says %+v, asLastRead=%v", changes, asLastRead)
 	}
 }

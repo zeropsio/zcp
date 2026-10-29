@@ -58,7 +58,7 @@ func TestStatusHQChanges_ReadsTheHQTheInstalledMateDeclares(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changes, asLastRead := statusHQChanges(context.Background(), srv.Client(), runtime.Info{InContainer: true, MateEnabled: true}, stateDir, srv.URL, time.Now())
+	changes, asLastRead, _ := statusHQChanges(context.Background(), srv.Client(), runtime.Info{InContainer: true, MateEnabled: true}, stateDir, srv.URL, time.Now(), true)
 
 	if asLastRead {
 		t.Errorf("status named the ledger's changes as last read: the HQ the installed Mate declares was not read (asked %v)", asked)
