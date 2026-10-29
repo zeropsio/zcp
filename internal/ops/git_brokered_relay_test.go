@@ -248,6 +248,43 @@ func TestBrokeredGitFrames_EmptyLineBeforeFrame_Dropped(t *testing.T) {
 	}
 }
 
+// TestBrokeredGitDone_MarkerEndsAnsweringAndCarriesTheCode: the script's
+// `ZCPDONE-<nonce> <exit>` line, once git ended, is taken out of the
+// stream and handed on with git's exit code, once; a frame after it gets
+// no answer; a marker with another nonce or none is git's output; one with
+// this nonce but no exit code is dropped and ends nothing.
+func TestBrokeredGitDone_MarkerEndsAnsweringAndCarriesTheCode(t *testing.T) {
+	t.Parallel()
+	done := "ZCPDONE-" + frameTestNonce + " "
+	input := framePrefix + "71 https hq.example x\n" +
+		"ZCPDONE-fedcba9876543210 0\n" +
+		"ZCPDONE- 0\n" +
+		done + "abc\n" +
+		done + "999\n" +
+		"\n" + done + "7\n" +
+		framePrefix + "72 https hq.example x\n" +
+		done + "0\n" +
+		"after\n"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "one byte": iotest.OneByteReader} {
+		var r io.Reader = strings.NewReader(input)
+		if wrap != nil {
+			r = wrap(r)
+		}
+		var stderr, answers bytes.Buffer
+		var codes []int
+		relayStream(r, frameTestNonce, &stderr, &answers, func(string, string, string) (string, string) { return "mate", "s3cret-FAKE" }, func(code int) { codes = append(codes, code) })
+		if want := "71 hq.example mate s3cret-FAKE\n"; answers.String() != want {
+			t.Errorf("%s: answers = %q, want only the frame before the marker answered %q", name, answers.String(), want)
+		}
+		if !slices.Equal(codes, []int{7}) {
+			t.Errorf("%s: done with %v, want once with git's exit code 7", name, codes)
+		}
+		if want := "ZCPDONE-fedcba9876543210 0\nZCPDONE- 0\nafter\n"; stderr.String() != want {
+			t.Errorf("%s: relayed %q, want %q", name, stderr.String(), want)
+		}
+	}
+}
+
 // --- unit: what a relayed call refuses and forwards -------------------------
 
 // TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded: zcp forwards its
@@ -515,12 +552,15 @@ func (r *shellRunner) ExecSSHStdio(ctx context.Context, _, command string, stdin
 		line = strings.Join(r.sh, " ") + " -c " + rest
 	}
 	cmd := exec.CommandContext(ctx, r.sh[0], append(slices.Clone(r.sh[1:]), "-c", line)...) //nolint:gosec // the command under test, in a test
-	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, stdout, stderr, r.env
+	// stdout and stderr are copied through pipes of the runner's own, so
+	// the call ends only when every process holding them closed them — as
+	// sshd keeps a session open until its stdout and stderr reach EOF.
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, struct{ io.Writer }{stdout}, struct{ io.Writer }{stderr}, r.env
 	// A stopped call ends the whole remote side, as a dropped ssh session
 	// does: the script, git and whatever its hooks started.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = 30 * time.Second
 	err := cmd.Run()
 	if err == nil {
 		return 0, nil
@@ -577,6 +617,7 @@ type relayLab struct {
 
 	// GitHub's API on the stand-in: DELETE /installation/token.
 	revokeAsked  []string      // every token a revoke named
+	revokedAt    []time.Time   // when each revoke arrived
 	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
 	revokeDelay  time.Duration // how long a revoke waits before answering
 	mintDelay    time.Duration // how long HQ takes to mint a token
@@ -590,6 +631,7 @@ func (l *relayLab) serveRevoke(w http.ResponseWriter, r *http.Request) {
 	delay, status := l.revokeDelay, l.revokeStatus
 	if ok {
 		l.revokeAsked = append(l.revokeAsked, token)
+		l.revokedAt = append(l.revokedAt, time.Now())
 	}
 	l.mu.Unlock()
 	if delay > 0 {
@@ -1900,6 +1942,127 @@ func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.
 			}
 			if !strings.Contains(run.stderr, "Auto packing the repository for optimum performance") || strings.Contains(run.stderr, "in background") {
 				t.Errorf("stderr = %q, want git's auto-gc run in the foreground", run.stderr)
+			}
+		})
+	}
+}
+
+// --- offline: the call ends when git does -----------------------------------
+
+// detachedHolder is a hook line leaving a process in the background with
+// descriptors 3 and 4 — the session's — open for six seconds.
+const detachedHolder = "(sleep 6 >/dev/null 2>&1 </dev/null &)\n"
+
+// TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall: a hook
+// leaving a process in the background that holds the session's descriptors
+// no longer holds the call: it returns once git ended, in well under the
+// six seconds, with git's own exit code — 0, 1 or 128 — from the script's
+// marker, though zcp ends the session itself.
+func TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name string
+				hook string
+				code int
+			}{
+				{"git succeeds", "exit 0\n", 0},
+				{"the hook refuses", "exit 1\n", 1},
+				{"git dies after the hook", ": > .git/HEAD.lock\nexit 0\n", 128},
+			} {
+				l := newRelayLab(t)
+				url, _ := l.repo(t, false, "org/app-1/appdev")
+				checkout := l.checkout(t, url)
+				writePreCommitHook(t, checkout, detachedHolder+tc.hook)
+				start := time.Now()
+				run := l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x")
+				took := time.Since(start)
+				if run.err != nil || run.code != tc.code {
+					t.Errorf("%s: exit %d, err %v; want git's %d\n%s", tc.name, run.code, run.err, tc.code, run.stderr)
+				}
+				if took > 4*time.Second {
+					t.Errorf("%s: the call took %s, held by the background process", tc.name, took)
+				}
+				if strings.Contains(run.stderr, "ZCPDONE") {
+					t.Errorf("%s: the marker reached the caller: %q", tc.name, run.stderr)
+				}
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_DoneMarker_BackgroundFrameAfterGitGetsNothing: a
+// process a hook leaves behind that asks for a credential after git ended
+// gets none — zcp answers nothing once the marker came — and its helper
+// does not keep the lock.
+func TestBrokeredGit_Relay_DoneMarker_BackgroundFrameAfterGitGetsNothing(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, h := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			dir := t.TempDir()
+			out, rc := filepath.Join(dir, "out"), filepath.Join(dir, "rc")
+			writePreCommitHook(t, checkout, "(sleep 0.5; git show "+h.first+":app.txt > "+ShellQuote(out)+" 2>/dev/null; echo $? > "+ShellQuote(rc)+") >/dev/null 2>&1 </dev/null &\n")
+			start := time.Now()
+			l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			if took := time.Since(start); took > 4*time.Second {
+				t.Errorf("the call took %s", took)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for time.Now().Before(deadline) {
+				if b, err := os.ReadFile(rc); err == nil && len(bytes.TrimSpace(b)) > 0 {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			code, err := os.ReadFile(rc)
+			if err == nil && strings.TrimSpace(string(code)) == "0" {
+				t.Errorf("the background lazy fetch after git ended was answered: %q", readFile(t, out))
+			}
+			if b, _ := os.ReadFile(out); len(b) > 0 {
+				t.Errorf("the background process read %q", b)
+			}
+			locks, _ := filepath.Glob("/tmp/zcp-relay-*.lock")
+			for _, lock := range locks {
+				if fi, err := os.Stat(lock); err == nil && fi.ModTime().After(start) && time.Since(fi.ModTime()) > 5*time.Second {
+					t.Errorf("%s still held", lock)
+				}
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker: the call's
+// tokens are revoked as soon as git ended — not when a process the hook
+// left behind finally lets the session close.
+func TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, h := l.repo(t, true, "acme/shop")
+			checkout := l.checkout(t, url)
+			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt >/dev/null\n"+detachedHolder)
+			start := time.Now()
+			l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			ended := time.Now()
+			if took := ended.Sub(start); took > 4*time.Second {
+				t.Errorf("the call took %s", took)
+			}
+			l.mu.Lock()
+			revoked, at := slices.Clone(l.revokeAsked), slices.Clone(l.revokedAt)
+			l.mu.Unlock()
+			if want := l.mintedTokens(); len(want) != 1 || !slices.Equal(revoked, want) {
+				t.Fatalf("revoked %q, want the minted %q", revoked, want)
+			}
+			if at[0].After(ended.Add(-500 * time.Millisecond)) {
+				t.Errorf("revoked %s before the call returned, want right after the marker, ahead of the session's end", ended.Sub(at[0]))
 			}
 		})
 	}

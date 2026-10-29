@@ -446,6 +446,7 @@ var relayedScriptMarks = []string{
 	"'-c' 'credential.helper=' '-c' 'credential.helper=!f() {",
 	"GIT_ALLOW_PROTOCOL=",
 	"'status' < /dev/null",
+	"ZCPDONE-",
 }
 
 // TestRunGitCmd_NotWiredThrough_StillRelayed: in a Mate container every
