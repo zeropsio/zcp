@@ -52,7 +52,7 @@ const leasePreviewReadSeconds = 2
 // status, so a failed git read stays the read's failure.
 func leaseActivityCommand() string {
 	return strings.Join([]string{
-		"cd " + shellQuote(leaseWorkDir),
+		"cd " + shellQuote(LeaseWorkDir),
 		"printf " + shellQuote(leaseActivityMarker+"%s %s\\n") +
 			` "$(stat -c %Y .git/logs/HEAD 2>/dev/null || echo 0)"` +
 			` "$(GIT_OPTIONAL_LOCKS=0 git ls-files -z -m -o --exclude-standard 2>/dev/null | xargs -0 -r stat -c %Y -- 2>/dev/null | sort -n | tail -1)"`,
@@ -348,7 +348,7 @@ func checkoutReadFailure(callCtx, readCtx context.Context, budget time.Duration,
 	case exitStatus(err) == leaseSSHUnreachableExit:
 		what, said = "zcp could not reach the container over ssh", r.before
 	case !r.activity:
-		what, said = "the checkout at "+leaseWorkDir+" could not be read", r.before
+		what, said = "the checkout at "+LeaseWorkDir+" could not be read", r.before
 	case !r.unpushedSeen:
 		what, said = "git status failed, so the unsaved work was not read", r.status
 	default:

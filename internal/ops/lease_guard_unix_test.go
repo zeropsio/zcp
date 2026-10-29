@@ -30,7 +30,7 @@ type localCheckoutSSH struct {
 
 func (s *localCheckoutSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
 	s.commands = append(s.commands, command)
-	local := strings.ReplaceAll(command, shellQuote(leaseWorkDir), shellQuote(s.dir))
+	local := strings.ReplaceAll(command, shellQuote(LeaseWorkDir), shellQuote(s.dir))
 	cmd := exec.CommandContext(ctx, "sh", "-c", local)
 	env := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}
 	for _, kv := range os.Environ() {

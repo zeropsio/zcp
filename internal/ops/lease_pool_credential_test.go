@@ -600,7 +600,7 @@ func TestLeaseAcquire_HQThenOutsideHQ_TheMateCredentialReachesOnlyHQ(t *testing.
 	outside := map[string]func() (string, string, bool){
 		"the checkout's fetch": func() (string, string, bool) { return inlineAnswer(t, checkouts[1].command, session, testRepo) },
 		"a warm clone of it": func() (string, string, bool) {
-			return inlineAnswer(t, leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo)), session, testRepo)
+			return inlineAnswer(t, leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo)), session, testRepo)
 		},
 		"its persisted helper": func() (string, string, bool) { return persistedAnswer(t, testRepo, session) },
 	}
@@ -653,7 +653,7 @@ func TestLeaseAcquire_HQRepo_TheUsersGitTokenStays(t *testing.T) {
 	if _, password, _ := persistedAnswer(t, testRepo, session); password != usersToken {
 		t.Errorf("the user's lease pushes with %q, want the user's token", password)
 	}
-	if _, password, _ := inlineAnswer(t, leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo)), session, testRepo); password != usersToken {
+	if _, password, _ := inlineAnswer(t, leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo)), session, testRepo); password != usersToken {
 		t.Errorf("a warm clone of the user's repository fetches with %q, want the user's token", password)
 	}
 	if user, password, _ := inlineAnswer(t, checkouts[1].command, session, leaseHQRepo); user != "mate" || password != poolMateCredential {

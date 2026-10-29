@@ -110,7 +110,7 @@ func leaseSupervisorCommand(workDir string, waitSeconds int) string {
 // every server); an acquire reloads one that answered by its own call, after
 // the overlay (afterLeaseCheckout).
 func ensureLeaseSupervisor(ctx context.Context, ssh SSHDeployer, alias string) (leaseSupervisorResult, error) {
-	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait)
+	return ensureSupervisorIn(ctx, ssh, alias, LeaseWorkDir, leaseSupervisorWait)
 }
 
 // ensureSupervisorIn is ensureLeaseSupervisor with the work dir and the wait

@@ -88,7 +88,7 @@ func TestLeaseActivity_CommandIsReadOnly(t *testing.T) {
 	if head < 0 || changed < 0 || files < 0 || unpushed < 0 || head > files || changed > files || files > unpushed {
 		t.Fatalf("command must read logs/HEAD and the changed files first, then the guard's two reads in order:\n%s", cmd)
 	}
-	if !strings.HasPrefix(cmd, "cd "+shellQuote(leaseWorkDir)+" && ") {
+	if !strings.HasPrefix(cmd, "cd "+shellQuote(LeaseWorkDir)+" && ") {
 		t.Errorf("command must run in the quoted checkout: %s", cmd)
 	}
 	if strings.Contains(cmd, ".git/index") {
