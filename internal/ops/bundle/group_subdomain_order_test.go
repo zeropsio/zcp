@@ -35,11 +35,13 @@ var flipManaged = []string{"agenthome", "db", "storage"}
 // (live, Mate2 lab, 2026-10-28). The platform creates a tier's services a
 // priority at a time, each wave deployed before the next starts, so every
 // service a tier's runtime reads that way gets a higher priority than the
-// runtime, in every tier: a reference the rewrite writes, one a person
-// wrote, and one in the setup the tier builds for the runtime — chained when
-// the service read reads another. A variable of the service that is no
-// public address orders nothing, and neither does a service's own address.
-// The header says so.
+// runtime, in every tier: a reference a person wrote in the runtime's own
+// variables, and one in the setup the tier builds for the runtime — chained
+// when the service read reads another. The address the rewrite writes for
+// one written out names the project's subdomain label, which exists from
+// the project's creation, so it orders nothing (Mate2 lab, 2026-10-29); nor
+// does a variable of the service that is no public address, or a service's
+// own address. The header says so.
 func TestBuildGroupRecipe_SubdomainReference_TheServiceItNamesComesFirst(t *testing.T) {
 	t.Parallel()
 	docs := func(in *GroupRecipeInputs) {
@@ -60,10 +62,10 @@ func TestBuildGroupRecipe_SubdomainReference_TheServiceItNamesComesFirst(t *test
 		agent, group map[string]int
 	}{
 		{
-			name:  "flip's case: the reference the rewrite writes",
+			name:  "flip's case: the address the rewrite writes orders nothing",
 			edit:  func(*GroupRecipeInputs) {},
-			agent: map[string]int{"flipdev": 1, "flipstage": 2, "agentrunner": 1},
-			group: map[string]int{"flip": 2, "agentrunner": 1},
+			agent: map[string]int{"flipdev": 1, "flipstage": 1, "agentrunner": 1},
+			group: map[string]int{"flip": 1, "agentrunner": 1},
 		},
 		{
 			name:  "a reference a person wrote",
@@ -72,8 +74,11 @@ func TestBuildGroupRecipe_SubdomainReference_TheServiceItNamesComesFirst(t *test
 			group: map[string]int{"flip": 2, "agentrunner": 1},
 		},
 		{
-			name:  "a reference in the app's setup, chained through the app to the agent",
-			edit:  docs,
+			name: "a reference in the app's setup, chained through the app to the agent",
+			edit: func(in *GroupRecipeInputs) {
+				docs(in)
+				server("${flipstage_zeropsSubdomain}")(in)
+			},
 			agent: map[string]int{"flipdev": 1, "flipstage": 2, "agentrunner": 1, "docs": 3},
 			group: map[string]int{"flip": 2, "agentrunner": 1, "docs": 3},
 		},
@@ -120,12 +125,13 @@ func TestBuildGroupRecipe_SubdomainReference_TheServiceItNamesComesFirst(t *test
 }
 
 // TestBuildGroupRecipe_SubdomainReference_ACycleKeepsOneSideAsWritten: two
-// runtimes naming each other's public address cannot both come first. The
-// rewrite keeps one side's address as written and says so, rather than write
-// a reference certain to reach its reader as the literal text, and the side
-// it writes is ordered: the service it names comes first. References a
-// person wrote are theirs: both stay, and the pass says no priority orders
-// them.
+// runtimes reading each other's public address through
+// ${<host>_zeropsSubdomain} cannot both come first: references a person wrote
+// are theirs, both stay, and the pass says no priority orders them. Two
+// addresses written out are no such pair: each is written with the project's
+// subdomain label, which exists from the project's creation, so neither
+// needs the other first, the pair orders nothing and the pass says nothing
+// of it.
 func TestBuildGroupRecipe_SubdomainReference_ACycleKeepsOneSideAsWritten(t *testing.T) {
 	t.Parallel()
 	const (
@@ -143,7 +149,7 @@ func TestBuildGroupRecipe_SubdomainReference_ACycleKeepsOneSideAsWritten(t *test
 		return in
 	}
 
-	t.Run("addresses the rewrite would write as references", func(t *testing.T) {
+	t.Run("addresses the rewrite writes, which order nothing", func(t *testing.T) {
 		t.Parallel()
 		layout, warnings, err := BuildGroupRecipe(both(agentAddress, stageAddress))
 		if err != nil {
@@ -155,25 +161,21 @@ func TestBuildGroupRecipe_SubdomainReference_ACycleKeepsOneSideAsWritten(t *test
 				app = "flipstage"
 			}
 			agentURL, _ := tierVaultValue(t, tier.ImportYAML, app, "AGENT_URL")
+			if want := "https://agentrunner-${zeropsSubdomainHost}-8080.prg1.zerops.app"; agentURL != want {
+				t.Errorf("tier %q: AGENT_URL = %q, want %q", tier.Title, agentURL, want)
+			}
 			server, _ := tierVaultValue(t, tier.ImportYAML, "agentrunner", "FLIP_SERVER")
-			priorities := tierPriorities(t, tier.ImportYAML, flipManaged...)
-			switch {
-			case agentURL == agentAddress && server == "${"+app+"_zeropsSubdomain}":
-				if priorities[app] <= priorities["agentrunner"] {
-					t.Errorf("tier %q: %s at %d, not above agentrunner at %d, which reads it", tier.Title, app, priorities[app], priorities["agentrunner"])
-				}
-			case server == stageAddress && agentURL == "${agentrunner_zeropsSubdomain}":
-				if priorities["agentrunner"] <= priorities[app] {
-					t.Errorf("tier %q: agentrunner at %d, not above %s at %d, which reads it", tier.Title, priorities["agentrunner"], app, priorities[app])
-				}
-			default:
-				t.Errorf("tier %q: AGENT_URL = %q, FLIP_SERVER = %q, want exactly one a reference and the other as written", tier.Title, agentURL, server)
+			if want := "https://" + app + "-${zeropsSubdomainHost}-5195.prg1.zerops.app"; server != want {
+				t.Errorf("tier %q: FLIP_SERVER = %q, want %q", tier.Title, server, want)
+			}
+			if priorities := tierPriorities(t, tier.ImportYAML, flipManaged...); priorities[app] != priorities["agentrunner"] {
+				t.Errorf("tier %q: %s at %d, agentrunner at %d, want the addresses to order neither", tier.Title, app, priorities[app], priorities["agentrunner"])
 			}
 		}
-		if !slices.ContainsFunc(warnings, func(w string) bool {
-			return strings.Contains(w, "no priority") && (strings.Contains(w, "agentrunner-3901-8080") || strings.Contains(w, "flipstage-3901-5195"))
-		}) {
-			t.Errorf("no warning says which address is kept and that no priority orders the two:\n%s", strings.Join(warnings, "\n"))
+		for _, w := range warnings {
+			if strings.Contains(w, "AGENT_URL") || strings.Contains(w, "FLIP_SERVER") {
+				t.Errorf("an address written in every tier is warned of: %s", w)
+			}
 		}
 	})
 

@@ -25,7 +25,7 @@ import (
 // names and renames nothing. A public address of a service of the Mate's own
 // project written out (`https://flipstage-3901-5195.prg1.zerops.app`) is
 // never renamed here: every tier writes it as the environment's own
-// reference, or keeps it as written (tierAddresses).
+// address, or keeps it as written (tierAddresses).
 
 // promotePairHostnames rewrites a value for a group environment. renames maps
 // each pair half's hostname to its pair's promoted one.

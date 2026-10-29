@@ -31,6 +31,10 @@ still-running supervisor restarts. A shell opened afterwards already
 reads the value, so its `env` proves nothing. Restart the service
 (`zerops_manage action="restart"`) or redeploy it.
 
+**One URL per variable.** `zeropsSubdomain` holds one `https://` address
+per HTTP port, one per line. A variable that needs one URL writes
+`https://<hostname>-${zeropsSubdomainHost}-<port>.prg1.zerops.app`.
+
 **Suppress restart**: pass `skipRestart=true`; response reports
 `restartSkipped: true`, `nextActions` names the readers to restart, and
 the value is **not live** until then. Partial failures land in

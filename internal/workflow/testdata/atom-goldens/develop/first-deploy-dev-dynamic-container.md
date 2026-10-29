@@ -216,9 +216,10 @@ default to
    check route per service shape).
 2. **Subdomain URL** — static / implicit-webserver:
    `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
-   adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
-   not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
-   use `zerops_discover` for the resolved URL. Do not guess a UUID.
+   adds `-{port}`. `${zeropsSubdomainHost}` is a project label, not always
+   numeric (`396e`), never a UUID. Read it with
+   `env | grep zeropsSubdomainHost`, or use `zerops_discover` for the
+   resolved URL.
    A subdomain URL answering 502 (not a connection error — the L7
    balancer is up, the runtime behind it isn't reachable) after it used
    to work often means the subdomain was switched off (`zerops_discover`'s

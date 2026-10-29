@@ -780,9 +780,10 @@ type groupTier struct {
 // the AI Agent tier): it knows what the tier carries and builds once the
 // tier's services are composed.
 func (plan groupPlan) addressWriter(policy groupTierPolicy, promote func(string) string) *tierAddresses {
+	_, domain, _ := strings.Cut(strings.TrimSpace(plan.inputs.MateSubdomainHost), ".")
 	t := &tierAddresses{
-		mate: plan.mate, title: policy.title, promote: promote,
-		builds: map[string]addressBuild{}, unordered: map[[2]string]string{},
+		mate: plan.mate, domain: domain, title: policy.title, promote: promote,
+		builds: map[string]addressBuild{},
 	}
 	if promote != nil {
 		t.renames = plan.promoter.renames

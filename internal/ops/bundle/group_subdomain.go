@@ -16,31 +16,46 @@ import (
 // with its part (`flip-3901-5195`) a host that exists nowhere: flip.studio's
 // Stage and Small Production came up with their cloud agent's server so
 // (group change #2, 2026-10-28). Every project a tier makes — the AI Agent
-// tier's too — gets a subdomain label of its own, and the platform gives each
-// of its services its address there as `zeropsSubdomain`: the whole
-// `https://` address with no slash after it, one line for each HTTP port the
-// service serves. So every tier writes such an address as a reference to the
-// address the service it names has in the environment the tier makes:
+// tier's too — gets a subdomain label of its own, and the platform gives it
+// to the project's services and variables as `${zeropsSubdomainHost}` from
+// the project's creation, before any service is built: an address written
+// with it resolved on the first boot, in a service variable and a project
+// variable alike, on a project with no subdomain enabled anywhere (Mate2
+// lab, 2026-10-29: `https://app-${zeropsSubdomainHost}-8080.prg1.zerops.app`
+// read `https://app-396e-8080.prg1.zerops.app`). So every tier writes such
+// an address as the address the service it names has in the environment the
+// tier makes:
 //
-//   - `${<host>_zeropsSubdomain}` for another service, <host> the tier's name
-//     for it (a group environment's part renamed: flipstage → flip);
-//   - `${zeropsSubdomain}` for the address of the service the value is of;
+//   - `https://<host>-${zeropsSubdomainHost}-<port>.` and the domain as
+//     written, <host> the tier's name for the service (a group environment's
+//     part renamed: flipstage → flip), no `-<port>` where the address names
+//     none (port 80);
 //   - what follows the address — a path, a query — kept.
 //
-// A reference stands for the address only where the tier's service builds a
-// setup declaring exactly one HTTP port, the one the address names (80 when
-// it names none), and the value writes the address `https://` with no port
-// after it. An address the reference cannot be shown to express is kept as
-// written and said, never guessed: a setup declaring several HTTP ports,
-// another one or none; a service the recipe reads no setup of (a utility, a
-// managed service, a Box, a dev pool); a bare host or another scheme; a
-// reference no priority orders before its reader (orderSubdomainReads); and
-// any address in a project variable, which every service reads, so no
-// priority creates the service it names before all of its readers. An
-// address of a service the tier does not carry is kept as it is: an address
-// written out reads nothing (spec-workflows.md §8 PS-3), what a tier's
-// runtimes read is the closure check's (PS-3a), and a reference the rewrite
-// writes names only what the tier carries, so it adds no read.
+// Never as `${zeropsSubdomain}` or `${<host>_zeropsSubdomain}`:
+// zeropsSubdomain holds one `https://` address for each HTTP port the
+// service serves, one per line, so a reference written for a setup of one
+// HTTP port became two lines once flip's setup gained a second (5196), and
+// flip's app refused to start (2026-10-29). And since the label is there from
+// the start, the address needs no service created before its reader: it adds
+// no read the order sees (orderSubdomainReads), and a project variable, which
+// every service reads, is written the same way.
+//
+// A tier writes it so only where its service builds a setup whose HTTP
+// ports — any number of them — include the one the address names, and the
+// value writes the address `https://` with no port after it. An address that
+// cannot be shown to be the service's is kept as written and said, never
+// guessed: a setup declaring another HTTP port or none; a service the recipe
+// reads no setup of (a utility, a managed service, a Box, a dev pool); a
+// bare host or another scheme. A reference a person wrote —
+// `${zeropsSubdomain}` of the value's own service, `${<host>_zeropsSubdomain}`
+// of another the tier carries — to a service whose setup declares several
+// HTTP ports is kept as written and said the same way, naming the form to
+// write for the one meant, and the order still orders it. An address of a
+// service the tier does not carry is kept as it is: an address written out
+// reads nothing (spec-workflows.md §8 PS-3), what a
+// tier's runtimes read is the closure check's (PS-3a), and the address the
+// rewrite writes names only what the tier carries, so it adds no read.
 //
 // The address is as public as the subdomain it names, so it never makes a
 // value look secret: the secret rule reads its label — the platform's name
@@ -63,7 +78,7 @@ type mateAddress struct {
 	// address is the host as written: `flipstage-3901-5195.prg1.zerops.app`.
 	address string
 	// https reports the address written `https://` with no port after it,
-	// the form zeropsSubdomain holds.
+	// the form the platform serves it in.
 	https bool
 }
 
@@ -237,22 +252,30 @@ func (w vaultWriter) leaveOut(key string) {
 // ownSubdomainReference is the reference to a service's own public address.
 const ownSubdomainReference = "${zeropsSubdomain}"
 
+// subdomainHostReference is the reference to the subdomain label of the
+// project that reads it.
+const subdomainHostReference = "${zeropsSubdomainHost}"
+
 // addressBuild is the setup a tier's runtime builds, in its pair's
 // zerops.yaml.
 type addressBuild struct{ body, setup string }
 
 // keptAddress is an address of the Mate's own project a tier keeps as
 // written for a person to set (tierAddresses): the variable's owner and key,
-// the address, why the tier keeps it, and the tier.
+// the address, why the tier keeps it, and the tier. reference reports a
+// reference a person wrote (`${zeropsSubdomain}`) in place of the address.
 type keptAddress struct {
 	owner, key, address, why, tier string
+	reference                      bool
 }
 
 // tierAddresses writes the Mate's own addresses in one tier's values.
 type tierAddresses struct {
-	// mate tells an address of the Mate's own project.
-	mate  mateAddressReader
-	title string
+	// mate tells an address of the Mate's own project, and domain is the
+	// domain its subdomain host is under (`prg1.zerops.app`), "" unknown.
+	mate   mateAddressReader
+	domain string
+	title  string
 	// promote names a group environment's own runtimes in the rest of a
 	// value (pairPromoter), nil on the AI Agent tier; renames is its pair
 	// halves' renames.
@@ -270,10 +293,6 @@ type tierAddresses struct {
 	collecting   bool
 	reads        []subdomainRead
 	projectReads []projectRead
-	// unordered is why no priority orders a reference the rewrite would
-	// write, by its reader and the service it names: the address is kept as
-	// written instead.
-	unordered map[[2]string]string
 	// kept is what the tier kept as written for a person to set.
 	kept []keptAddress
 	// unset is what the tier left out for a person to set, a value set by
@@ -302,25 +321,19 @@ func (t *tierAddresses) writer(owner, own string) valueWriter {
 }
 
 // write writes one value: each address of the Mate's own project as the
-// tier's reference to it, or as written; the rest through promote.
+// address its service has in the environment the tier makes, or as written;
+// the rest through promote.
 func (t *tierAddresses) write(owner, own, key, value string) string {
 	var b strings.Builder
 	at := 0
 	for _, a := range t.mate.in(value) {
-		b.WriteString(t.rest(own, key, value[at:a.start]))
+		b.WriteString(t.rest(owner, own, key, value[at:a.start]))
 		written := value[a.start:a.end]
 		if host := t.tierHost(a.host); t.carried[host] {
-			ref, why := t.reference(own, host, a)
-			if why == "" && host != own {
-				if t.collecting {
-					t.reads = append(t.reads, subdomainRead{reader: own, target: host, variable: "its " + key, rewritten: true})
-				} else if unordered, ok := t.unordered[[2]string{own, host}]; ok {
-					why = unordered
-				}
-			}
+			address, why := t.environmentAddress(host, a)
 			switch {
 			case why == "":
-				written = ref
+				written = address
 			case !t.collecting:
 				t.kept = append(t.kept, keptAddress{owner: owner, key: key, address: a.address, why: why, tier: t.title})
 			}
@@ -328,25 +341,32 @@ func (t *tierAddresses) write(owner, own, key, value string) string {
 		b.WriteString(written)
 		at = a.end
 	}
-	b.WriteString(t.rest(own, key, value[at:]))
+	b.WriteString(t.rest(owner, own, key, value[at:]))
 	return b.String()
 }
 
 // rest writes text of a value that holds no address of the Mate's own
-// project, through promote, and collects the public-address references it
-// holds while the tier collects them.
-func (t *tierAddresses) rest(own, key, text string) string {
+// project, through promote. While the tier collects, it collects the
+// public-address references text holds; on the write that renders the tier,
+// it says each one that stands for no single address (severalHTTPPorts),
+// kept as written.
+func (t *tierAddresses) rest(owner, own, key, text string) string {
 	if t.promote != nil {
 		text = t.promote(text)
-	}
-	if !t.collecting {
-		return text
 	}
 	for _, name := range parseDollarBraceRefs(text) {
 		spelled, ok := subdomainRefHost(name)
 		target := t.refHosts[spelled]
+		if "${"+name+"}" == ownSubdomainReference {
+			target, ok = own, own != ""
+		}
 		switch {
-		case !ok || target == "" || target == own:
+		case !ok || target == "":
+		case !t.collecting:
+			if why := t.severalHTTPPorts(target); why != "" {
+				t.kept = append(t.kept, keptAddress{owner: owner, key: key, address: "${" + name + "}", why: why, tier: t.title, reference: true})
+			}
+		case target == own:
 		case own == "":
 			t.projectReads = append(t.projectReads, projectRead{key: key, target: target})
 		default:
@@ -364,34 +384,53 @@ func (t *tierAddresses) tierHost(host string) string {
 	return host
 }
 
-// reference is the reference that stands for a in a value of the tier's
-// service own ("" for a project variable), host the tier's name for a's
-// service; why says why none does.
-func (t *tierAddresses) reference(own, host string, a mateAddress) (ref, why string) {
-	ref = subdomainReference(host)
-	if own != "" && own == host {
-		ref = ownSubdomainReference
-	}
-	if own == "" {
-		return "", fmt.Sprintf("every service reads a project variable, and %s resolves only in one started after %q is deployed, so no priority orders it", ref, host)
-	}
+// environmentAddress is a as the address of the tier's service host in the
+// environment the tier makes — `https://<host>-${zeropsSubdomainHost}`, then
+// the port and the domain as a writes them; why says why it cannot be.
+func (t *tierAddresses) environmentAddress(host string, a mateAddress) (address, why string) {
 	if !a.https {
-		return "", ref + " holds the address as https:// with no port after it, which this value does not write"
+		return "", "the platform serves the address as https:// with no port after it, which this value does not write"
 	}
 	build, read := t.builds[host]
 	if !read {
-		return "", fmt.Sprintf("the recipe reads no setup of %q, so which HTTP ports it serves is unknown, and %s holds an address for each", host, ref)
+		return "", fmt.Sprintf("the recipe reads no setup of %q, so whether it serves HTTP port %d is unknown", host, a.port)
 	}
 	ports := setupHTTPPorts(build.body, build.setup)
 	switch {
 	case len(ports) == 0:
 		return "", fmt.Sprintf("%q builds setup %q, which declares no HTTP port", host, build.setup)
-	case len(ports) > 1:
-		return "", fmt.Sprintf("%q builds setup %q, which declares HTTP ports %s, and %s holds an address for each", host, build.setup, joinPorts(ports), ref)
-	case ports[0] != a.port:
+	case len(ports) == 1 && ports[0] != a.port:
 		return "", fmt.Sprintf("%q builds setup %q, whose HTTP port is %d, not %d", host, build.setup, ports[0], a.port)
+	case !slices.Contains(ports, a.port):
+		return "", fmt.Sprintf("%q builds setup %q, whose HTTP ports are %s, not %d", host, build.setup, joinPorts(ports), a.port)
 	}
-	return ref, ""
+	first, domain, _ := strings.Cut(a.address, ".")
+	address = "https://" + host + "-" + subdomainHostReference
+	if labels := strings.Split(first, "-"); len(labels) == 3 {
+		address += "-" + labels[2]
+	}
+	return address + "." + domain, ""
+}
+
+// severalHTTPPorts says why a reference to the public address of the tier's
+// service host stands for no single address: the setup it builds declares
+// several HTTP ports, and zeropsSubdomain holds an address for each — ""
+// when it does not.
+func (t *tierAddresses) severalHTTPPorts(host string) string {
+	build, read := t.builds[host]
+	if !read {
+		return ""
+	}
+	ports := setupHTTPPorts(build.body, build.setup)
+	if len(ports) < 2 {
+		return ""
+	}
+	domain := t.domain
+	if domain == "" {
+		domain = "<region>.zerops.app"
+	}
+	return fmt.Sprintf("zeropsSubdomain holds one https:// address per HTTP port, one per line, and %q builds setup %q, which declares HTTP ports %s: write https://%s-%s-<port>.%s for the one meant",
+		host, build.setup, joinPorts(ports), host, subdomainHostReference, domain)
 }
 
 // joinPorts reads ports as `3000`, `3000 and 5195`, or `80, 3000 and 5195`.
@@ -406,9 +445,9 @@ func joinPorts(ports []int) string {
 	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
 
-// keptAddressWarnings says each address a tier kept as written for a person
-// to set, once for every tier that kept it for the same reason, in the order
-// the tiers kept them.
+// keptAddressWarnings says each address — or a person's reference — a tier
+// kept as written for a person to set, once for every tier that kept it for
+// the same reason, in the order the tiers kept them.
 func keptAddressWarnings(kept []keptAddress) []string {
 	order, tiers := saidInTiers(kept, func(k keptAddress) (keptAddress, string) {
 		tier := k.tier
@@ -421,14 +460,18 @@ func keptAddressWarnings(kept []keptAddress) []string {
 		if k.owner != "" {
 			variable = k.key + " of " + k.owner
 		}
+		names := "names " + k.address + ", an address of this Mate's own project,"
+		if k.reference {
+			names = "reads " + k.address + ","
+		}
 		in, several := tierPhrase(tiers[k])
 		keep, them := in+" keeps", "it"
 		if several {
 			keep, them = in+" keep", "them"
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"%s names %s, an address of this Mate's own project, and %s it as written: %s — set it by hand in an environment made from %s",
-			variable, k.address, keep, k.why, them))
+			"%s %s and %s it as written: %s — set it by hand in an environment made from %s",
+			variable, names, keep, k.why, them))
 	}
 	return warnings
 }

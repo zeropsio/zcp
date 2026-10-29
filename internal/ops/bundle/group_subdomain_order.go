@@ -26,22 +26,20 @@ import (
 //
 // So each tier lifts, on top of the ranks the build reads give
 // (rankGroupApps), every runtime another runtime of the tier reads that way
-// above that reader: a reference in the reader's own variables as the tier
-// writes them — one the rewrite writes for an address (tierAddresses) or one
-// a person wrote — or in the build and run variables of the setup the tier
-// builds for it. A runtime lifted lifts what its build reads above it in
-// turn. A managed service or a Box is created first anyway.
+// above that reader: a reference a person wrote in the reader's own
+// variables, as the tier writes them, or one in the build and run variables
+// of the setup the tier builds for it. A runtime lifted lifts what its build
+// reads above it in turn. A managed service or a Box is created first
+// anyway. The address the rewrite writes for one written out
+// (tierAddresses) names the project's ${zeropsSubdomainHost}, which exists
+// from the project's creation, so it is no such read and orders nothing.
 //
 // Two runtimes naming each other, directly or through what their builds
-// read, cannot both come first. The reads a person wrote are ordered first
-// and kept whatever comes of them; then the rewrite's, each ordered unless
-// the runtime it names has to be up before its reader already — then the
-// address is kept as written and said, rather than written as a reference
-// certain to boot literal. A chain deeper than the priorities below the
-// managed services is said the same way. A project variable is read by
-// every service, so no priority puts the service it names before all of
-// them: an address there is kept as written (tierAddresses), and a person's
-// reference there is said.
+// read, cannot both come first: the reads are ordered in turn and kept
+// whatever comes of them, and each one no priority orders is said, as is
+// a chain deeper than the priorities below the managed services. A project
+// variable is read by every service, so no priority puts the service it
+// names before all of them: a person's reference there is said.
 
 // tierRank is a runtime of a tier the order ranks: its hostname in the tier,
 // the app it is of (groupApp.key), and the priority the build reads give it.
@@ -53,12 +51,9 @@ type tierRank struct {
 // subdomainRead is a read by a runtime of a tier (reader) of another of the
 // tier's services' public address (target), through a
 // ${<host>_zeropsSubdomain} reference: where the reader reads it
-// (variable: `its FLIP_SERVER`, `setup "prod"'s run.envVariables.API_URL`),
-// and whether the tier's rewrite writes it for an address written out
-// (rewritten), which it keeps as written instead when no priority orders it.
+// (variable: `its FLIP_SERVER`, `setup "prod"'s run.envVariables.API_URL`).
 type subdomainRead struct {
 	reader, target, variable string
-	rewritten                bool
 }
 
 // unorderedRead is a read no priority orders, and why.
@@ -123,9 +118,6 @@ func orderSubdomainReads(ranks []tierRank, reads []subdomainRead, ranking groupR
 	sorted := append([]subdomainRead(nil), reads...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := sorted[i], sorted[j]
-		if a.rewritten != b.rewritten {
-			return !a.rewritten
-		}
 		if a.reader != b.reader {
 			return a.reader < b.reader
 		}
@@ -192,8 +184,7 @@ func orderSubdomainReads(ranks []tierRank, reads []subdomainRead, ranking groupR
 // (orderSubdomainReads): those addresses collected from the values it
 // writes, beside those of the setup each of its runtimes (ranks) builds. It
 // returns each runtime's priority and says each read the tier keeps that no
-// priority orders; a reference the rewrite would write that none orders is
-// kept as written instead (tierAddresses.unordered).
+// priority orders.
 func orderTierReads(ranking groupRanking, ranks []tierRank, addresses *tierAddresses, title string) (map[string]int, []orderNote) {
 	reads := append([]subdomainRead(nil), addresses.reads...)
 	for _, rank := range ranks {
@@ -208,12 +199,8 @@ func orderTierReads(ranking groupRanking, ranks []tierRank, addresses *tierAddre
 		}
 	}
 	priorities, unordered := orderSubdomainReads(ranks, reads, ranking)
-	var notes []orderNote
+	notes := make([]orderNote, 0, len(unordered)+len(addresses.projectReads))
 	for _, u := range unordered {
-		if u.read.rewritten {
-			addresses.unordered[[2]string{u.read.reader, u.read.target}] = u.why
-			continue
-		}
 		notes = append(notes, orderNote{
 			subject: fmt.Sprintf("runtime %q reads %s in %s", u.read.reader, subdomainReference(u.read.target), u.read.variable),
 			why:     u.why, tier: title,
