@@ -5230,8 +5230,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   HQ's conflict, empty, already-merged and unrelated verdicts say `not mergeable` with the reason;
   a clean verdict keeps the ready label (`TestStatus_ReadyChangeNamesHQMergeability`). Each change's
   standing is the Mate's state's now: status reads `GET /api/mate/self` once (bounded to 5 s, sent
-  once), inside a Mate and only when the section has a change or a leased branch to name — an idle
-  Mate costs HQ nothing — so a merge since the last pass reads merged while the pair backoff holds
+  once), inside a Mate unless its pairs already record an HQ older than repositories, even when no change or leased branch is recorded, so app-level HQ problems
+  remain readable after changes settle. A merge since the last pass reads merged while the pair backoff holds
   the pass off: a merged change names the leases still on its branch, to release, and that new work
   starts from `main`; a closed or no longer listed one is said so. The read writes nothing (neither
   the ledger nor what was told), so the pass still says a merge or a standing once, with what to do.
@@ -5239,7 +5239,30 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   ledger's standing as told, labelled as last read
   (`TestStatus_OneBlockPerRepository`, `TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown`,
   `TestStatusHQChanges_OutsideAMate_AsLastRead`,
-  `TestRenderStatus_ChangesBlockPerRepository`). `zerops_lease action=status` names each group's
+  `TestRenderStatus_ChangesBlockPerRepository`).
+
+  Decision: Normal status and develop results report the app's unresolved HQ problems even with no open change, without a person pasting an error or a fabricated lifecycle envelope.
+  Decision: zcp shows HQ's finding as given (what, where, rule, next actor/action); it never derives a second verdict.
+  Decision: An HQ older than repositories is asked once, as today.
+  Decision: Any HQ that names repositories is read on each normal status, so a new finding appears without an open change.
+
+  Status carries optional app `problems`, change `problems` and group `recipeValidation.problems`
+  from that same self read into its prose. Develop's existing HQ pass reports the same findings,
+  including when no repository needs work; an error result keeps its leaf payload and gains no
+  lifecycle envelope. The shared renderer preserves HQ's code, what, proven location, rule,
+  next actor/action/target and optional evidence as structured text; identical findings repeated
+  across the wire fields appear once. It neither interprets validation state nor creates another
+  verdict, timer, poll, task or cache. Omitted findings add no section and preserve today's output
+  (`TestHQProblems_NoOpenChange_StatusAndDevelopReportHQFinding`,
+  `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`,
+  `TestHQProblems_PresentProblems_EachStatusReadsNewFindings`,
+  `TestHQProblems_RepositoriesWithoutProblems_EachStatusReadsNewFindings`,
+  `TestHQProblems_NoRepositories_DevelopStillReportsHQFinding`,
+  `TestHQProblems_InvalidGroupHead_StatusReportsValidationFinding`,
+  `TestHQProblems_OmittedProblems_StatusOutputUnchanged`,
+  `TestClient_Self_Problems_DecodesHQFindingsAndOlderHQ`).
+
+  `zerops_lease action=status` names each group's
   change (repository@branch, once however many leases it has) from zcp's ledger and lease records,
   its standing read the same way — once, inside a Mate, only when a lease group of an HQ repository
   is in view; as last read while HQ does not answer (`TestLeaseGroupChanges_NamesEachGroupsChange`).

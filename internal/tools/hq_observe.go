@@ -76,7 +76,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 			if readErr != nil {
 				return readFailure(readErr, failure), nil, nil
 			}
-			changes, asLastRead := statusHQChanges(ctx, httpClient, rt, stateDir, hqAddress(rt), time.Now())
+			changes, asLastRead, _ := statusHQChanges(ctx, httpClient, rt, stateDir, hqAddress(rt), time.Now(), false)
 			body, err = json.Marshal(struct {
 				hq.ObservedEnvironments
 				Changes           []workflow.HQRepoChanges `json:"changes"`

@@ -351,9 +351,17 @@ func reconcileHQPairs(
 	// pair to take a turn (work only in leases) — at every pass, while a
 	// wired pair, the ledger or an HQ lease names a repository. A finished
 	// change's leases are released first (DP-34), so what a merged change's
-	// note names is what is still held.
-	if selfRead() || ((pace == hqPassNow || len(pending) == 0) && hqChangesHaveRepo(stateDir, address, pending)) {
+	// note names is what is still held. Develop's start also reads with no
+	// repositories, so app findings do not depend on an open change.
+	changesDue := selfRead() || ((pace == hqPassNow || len(pending) == 0) && hqChangesHaveRepo(stateDir, address, pending))
+	if changesDue || pace == hqPassNow {
 		if state, err := self(); err == nil {
+			if problems := workflow.RenderHQProblems(hqStateProblems(state)); problems != "" {
+				report = append(report, problems)
+			}
+			if !changesDue {
+				return report
+			}
 			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state, hqc.BranchOf, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -52,6 +53,8 @@ type StateEnvelope struct {
 	// HQChangesAsLastRead is HQChanges being the ledger's standing as last
 	// told, HQ not answering status's read of the Mate's state.
 	HQChangesAsLastRead bool `json:"-"`
+	// HQProblems are HQ's findings from the same read, for prose only.
+	HQProblems []hq.Problem `json:"-"`
 	// Required are the steps a Mate's setup is not done without, each
 	// naming what is missing and the call that fixes it — its group recipe
 	// that cannot be proposed (docs/spec-mate.md §10.10) — as the last

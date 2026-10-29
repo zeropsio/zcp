@@ -1,10 +1,12 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -18,7 +20,7 @@ type Response struct {
 }
 
 // RenderStatus produces the markdown status block from a Response. Section
-// order is stable: Phase → Services → Leases → Changes → Progress → Blockers →
+// order is stable: Phase → Services → Leases → Changes → HQ problems → Progress → Blockers →
 // Required → Guidance → Next. Each section is skipped when it has no content, keeping the
 // output compact. Blockers is a one-line call-to-action surfaced above
 // the (large) Guidance section so the auto-close gate is visible
@@ -31,6 +33,7 @@ func RenderStatus(resp Response) string {
 	renderServices(&b, resp.Envelope)
 	renderLeases(&b, resp.Envelope)
 	renderHQChanges(&b, resp.Envelope)
+	b.WriteString(RenderHQProblems(resp.Envelope.HQProblems))
 	renderProgressAndBlockers(&b, resp.Envelope)
 	renderRequired(&b, resp.Envelope)
 	renderProdSourceControlSignpost(&b, resp.Envelope)
@@ -38,6 +41,19 @@ func RenderStatus(resp Response) string {
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
+}
+
+// RenderHQProblems renders HQ's structured findings unchanged in tool text,
+// shared by status and develop's existing repository report. It adds no verdict.
+func RenderHQProblems(problems []hq.Problem) string {
+	if len(problems) == 0 {
+		return ""
+	}
+	body, err := json.MarshalIndent(problems, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("HQ problems could not be rendered: %v\n", err)
+	}
+	return "### HQ problems\n\n```json\n" + string(body) + "\n```\n\n"
 }
 
 // renderRequired puts every step the Mate's setup is not done without in the

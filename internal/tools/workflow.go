@@ -1180,7 +1180,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
-	envelope.HQChanges, envelope.HQChangesAsLastRead = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(rt), time.Now())
+	envelope.HQChanges, envelope.HQChangesAsLastRead, envelope.HQProblems = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(rt), time.Now(), true)
 	if rt.MateEnabled {
 		envelope.Required = readRecipeRequired(engine.StateDir())
 	}

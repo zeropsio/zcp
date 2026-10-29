@@ -27,6 +27,9 @@ type MateState struct {
 	// settled ones; from an older HQ, the latest MateChangesPerRepo in any
 	// state — an open one older than those is not listed.
 	Changes []MateChange `json:"changes"`
+	// Problems are HQ's unresolved application findings, independent of changes.
+	// nil from an HQ that does not send findings.
+	Problems []Problem `json:"problems,omitempty"`
 	// OpenPerBranch says HQ keeps a Mate an open change per branch it names,
 	// beside its one change opened naming none, and lists every open change
 	// in Changes. false from an HQ that keeps one open change per repository.
@@ -114,6 +117,69 @@ type MateChange struct {
 	// CorePush is HQ's latest own push on the change's branch: nil on a
 	// change whose branch HQ never moved, and from an HQ older than it.
 	CorePush *CorePush `json:"corePush,omitempty"`
+	// Problems and RecipeValidation are HQ's findings for this head, absent
+	// from an older HQ. zcp reports them without judging validity itself.
+	Problems         []Problem         `json:"problems,omitempty"`
+	RecipeValidation *RecipeValidation `json:"recipeValidation,omitempty"`
+}
+
+// Problem is HQ's actionable finding, as given by the owning boundary.
+// Location and diagnostic fields contain only HQ's proven, safe evidence.
+type Problem struct {
+	Code     string           `json:"code"`
+	What     string           `json:"what"`
+	Where    ProblemWhere     `json:"where"`
+	Rule     ProblemRule      `json:"rule"`
+	Next     ProblemNext      `json:"next"`
+	Evidence *ProblemEvidence `json:"evidence,omitempty"`
+}
+
+// ProblemWhere names the locations HQ has proved for a finding.
+type ProblemWhere struct {
+	AppID       string `json:"appId"`
+	ProjectID   string `json:"projectId,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	Service     string `json:"service,omitempty"`
+	Tier        string `json:"tier,omitempty"`
+	File        string `json:"file,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	Change      int    `json:"change,omitempty"`
+	Head        string `json:"head,omitempty"`
+	ReleaseTag  string `json:"releaseTag,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+}
+
+// ProblemRule identifies the authority and rule HQ reports.
+type ProblemRule struct {
+	Source       string `json:"source"`
+	Code         string `json:"code,omitempty"`
+	SchemaURL    string `json:"schemaUrl,omitempty"`
+	SchemaDigest string `json:"schemaDigest,omitempty"`
+	SchemaPath   string `json:"schemaPath,omitempty"`
+	InstancePath string `json:"instancePath,omitempty"`
+}
+
+// ProblemNext is the actor and recovery action HQ names.
+type ProblemNext struct {
+	Actor  string `json:"actor"`
+	Action string `json:"action"`
+	Target string `json:"target,omitempty"`
+}
+
+// ProblemEvidence holds HQ's safe handles for inspecting the original operation.
+type ProblemEvidence struct {
+	ProcessID    string `json:"processId,omitempty"`
+	AppVersionID string `json:"appVersionId,omitempty"`
+	LogURL       string `json:"logUrl,omitempty"`
+}
+
+// RecipeValidation is HQ's published-schema result for one exact group head.
+type RecipeValidation struct {
+	Head         string    `json:"head"`
+	State        string    `json:"state"`
+	SchemaURL    string    `json:"schemaUrl,omitempty"`
+	SchemaDigest string    `json:"schemaDigest,omitempty"`
+	Problems     []Problem `json:"problems"`
 }
 
 // CorePush is HQ's own push on a change's branch (protocol.md, "A stacked
