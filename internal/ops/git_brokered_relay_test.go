@@ -2506,11 +2506,12 @@ func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) 
 				start := time.Now()
 				err = cmd.Wait()
 				took := time.Since(start)
+				timedOut := ctx.Err() != nil
 				cancel()
 				_ = answersW.Close()
 				<-relayed
 				_ = framesR.Close()
-				if ctx.Err() != nil || took > 10*time.Second {
+				if timedOut || took > 10*time.Second {
 					t.Errorf("%s: the helper did not end after zcp's decline (%s, %v)", tc.name, took, err)
 				}
 				if err != nil {

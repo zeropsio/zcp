@@ -368,10 +368,11 @@ func relayLockPath(nonce string) string { return "/tmp/zcp-relay-" + nonce + ".l
 // it reads git's request, takes the call's lock (giving up relayLockBound
 // seconds by the clock after it began), writes its frame to descriptor 4 —
 // answering nothing at once when it cannot — and reads descriptor 3 until
-// the answer carrying its own id and host, discarding any other (one a
-// helper that gave up left, or a reused PID's), then hands git the user and
-// password, or nothing for a declined one (`-`). The lock is removed when
-// it ends, also when it is signalled (exit 129).
+// the answer carrying its own id and its host, or `-` for a frame zcp could
+// not read, discarding any other (one a helper that gave up left, or a
+// reused PID's), then hands git the user and password, or nothing for a
+// declined one (`-`). The lock is removed when it ends, also when it is
+// signalled (exit 129).
 func relayHelper(nonce string) string {
 	return "!f() { test \"$1\" = get || return 0; pr=; h=; p=; " +
 		"while IFS= read -r l && [ -n \"$l\" ]; do case \"$l\" in protocol=*) pr=${l#protocol=};; host=*) h=${l#host=};; path=*) p=${l#path=};; esac; done; " +
@@ -379,7 +380,7 @@ func relayHelper(nonce string) string {
 		"until mkdir \"$L\" 2>/dev/null; do [ \"$(date +%s)\" -lt \"$end\" ] || return 0; sleep 0.1 2>/dev/null || sleep 1; done; " +
 		"trap 'rmdir \"$L\" 2>/dev/null' EXIT; trap 'rmdir \"$L\" 2>/dev/null; exit 129' INT TERM HUP; " +
 		"printf '\\n" + relayFramePrefix(nonce) + "%s %s %s %s\\n' \"$$\" \"$pr\" \"$h\" \"${p:--}\" >&4 || return 0; " +
-		"id=; while IFS=' ' read -r id ah u w <&3; do [ \"$id\" = \"$$\" ] && [ \"$ah\" = \"$h\" ] && break; [ \"$(date +%s)\" -lt \"$end\" ] || return 0; done; " +
+		"id=; while IFS=' ' read -r id ah u w <&3; do [ \"$id\" = \"$$\" ] && { [ \"$ah\" = \"$h\" ] || [ \"$ah\" = - ]; } && break; [ \"$(date +%s)\" -lt \"$end\" ] || return 0; done; " +
 		"[ \"$id\" = \"$$\" ] && [ \"$ah\" = \"$h\" ] && [ -n \"$u\" ] && [ \"$u\" != - ] || return 0; " +
 		"printf 'username=%s\\npassword=%s\\n' \"$u\" \"$w\"; }; f"
 }
@@ -552,6 +553,7 @@ func (s *frameStream) write(p []byte) {
 				take = p[:i]
 			}
 			if len(s.line)+len(take) > relayLineCap {
+				s.declineOverlong(take)
 				s.release()
 				s.mode = frameModePass
 				continue
@@ -597,6 +599,24 @@ func (s *frameStream) write(p []byte) {
 				s.mode = frameModeFrame
 			}
 		}
+	}
+}
+
+// declineOverlong answers a frame grown past relayLineCap — collected so
+// far, then next — with a decline for its id when the id is readable: its
+// helper waits for an answer with that id, and the line itself is relayed,
+// never parsed.
+func (s *frameStream) declineOverlong(next []byte) {
+	start := len(s.prefix)
+	if s.line[0] == '\r' {
+		start++
+	}
+	head := slices.Clone(s.line[start:])
+	if len(head) < 16 {
+		head = append(head, next[:min(len(next), 16-len(head))]...)
+	}
+	if id, _, ok := bytes.Cut(head, []byte{' '}); ok && readableFrameID(string(id)) {
+		s.onFrame(string(id))
 	}
 }
 
