@@ -5032,39 +5032,47 @@ subdomain host) names that Mate's service from every project a tier makes, and r
 part a host that exists nowhere (flip.studio's group change #2, 2026-10-28: agentrunner's
 `FLIP_SERVER` reached Stage as `https://flip-3901-5195.prg1.zerops.app` and a person set it to
 `${flip_zeropsSubdomain}` by hand). So every tier — the AI Agent tier too, since a project made
-from it gets a label of its own — writes it as a reference to the address the service has in the
-environment the tier makes: `${<host>_zeropsSubdomain}` for another service, `<host>` the tier's
-name for it after the rename (flipstage → flip), `${zeropsSubdomain}` for the service's own, and a
-path or query after it kept. `zeropsSubdomain` is the whole `https://` address with no slash after
+from it gets a label of its own — writes it as the address the service has in the environment the
+tier makes: `https://<host>-${zeropsSubdomainHost}-<port>.` and the domain as written, `<host>` the
+tier's name for the service after the rename (flipstage → flip), no `-<port>` where the address
+names none (port 80), and a path or query after it kept. `${zeropsSubdomainHost}` is the project's
+label, given to its services and variables from the project's creation, before any service is
+built: an address written with it resolved on the first boot in a service variable and a project
+variable alike, on a project with no subdomain enabled (live, Mate2 lab, 2026-10-29:
+`https://app-${zeropsSubdomainHost}-8080.prg1.zerops.app` read `https://app-396e-8080.prg1.zerops.app`;
+the label is not always a number). So the address needs no service created before its reader and is
+written the same way in a project variable. Never as `${zeropsSubdomain}` or
+`${<host>_zeropsSubdomain}`: `zeropsSubdomain` is the whole `https://` address with no slash after
 it, one line for each HTTP port the service serves, and no variable names a single port
-(`TestE2E_SubdomainLifecycle`, `TestE2E_Import_Box_FinishesSetup`). A `${…}` in an import's `vault:`
-under `#zeropsPreprocessor=on` is stored as written, at project and service level, sensitive or not
-(a `<@…>` still expands); a service's zeropsSubdomain exists from its first build, subdomain access
-on or not; a service's own `${zeropsSubdomain}` resolves on its first boot; and another service's
-`${A_zeropsSubdomain}` — in a service variable, a setup's variables or a project variable, which
-resolves per service — resolves in B only when A was deployed before B's container started: else B
-reads the literal text and keeps it until it restarts. The order services are written in decides
-nothing; their priorities do — A at 9, its reader at 1, resolved on the first boot (live, Mate2 lab,
-2026-10-28). So the reference stands for the address only where the tier's service builds a setup
-declaring exactly one HTTP port, the one the address names (80 when it names none), and the value
-writes it `https://` with no port after it. Anything else — several HTTP ports, another one or none,
-a service whose setup the recipe does not read (a utility, a managed service, a Box, a dev pool), a
+(`TestE2E_SubdomainLifecycle`, `TestE2E_Import_Box_FinishesSetup`), so a reference written for a
+setup of one HTTP port became two lines once flip's setup gained a second (5196) and flip's app
+refused to start (2026-10-29). A tier writes the address so only where its service builds a setup
+whose HTTP ports — any number of them — include the one the address names, and the value writes it
+`https://` with no port after it. Anything else — a setup declaring another HTTP port or none, a
+service whose setup the recipe does not read (a utility, a managed service, a Box, a dev pool), a
 bare host or another scheme — is kept as written and the pass says so, naming the variable, the
-address, the tiers and why, never guessed. And every tier creates the service a runtime reads that
-way before the runtime: each runtime of a tier that another reads through
-`${<host>_zeropsSubdomain}` — a reference the rewrite writes, one a person wrote in the runtime's own
-variables, or one in the build or run variables of the setup the tier builds for it — gets a higher
-priority than every runtime reading it, on top of the ranks the build reads give, a runtime lifted
-lifting what its build reads above it in turn (flip's Stage: `flip` at 2, `agentrunner`, which
-reads it, at 1); a managed service or a Box is created first anyway. Two runtimes that read each
-other, directly or through their builds, cannot both come first: the reads a person wrote are
-ordered first and kept whatever comes of them, said when no priority orders them; the rewrite's
-are ordered after, and one no priority orders — or that a chain deeper than the priorities below
-the managed services leaves unordered — keeps its address as written and is said, rather than
-written as a reference certain to reach its reader as the literal text. A project variable is
-read by every service, so no priority puts the service it names before all of them: an address in
-one is kept as written and said, and a person's `${<host>_zeropsSubdomain}` there is said
-(`bundle.orderSubdomainReads`). An address of a service the tier does not carry is kept as it is:
+address, the tiers and why, never guessed. A reference a person wrote — `${zeropsSubdomain}` of the
+value's own service, `${<host>_zeropsSubdomain}` of another the tier carries — to a service whose
+setup declares several HTTP ports is kept as written and said the same way, naming the form to write
+for the one meant. A `${…}` in an import's `vault:` under `#zeropsPreprocessor=on` is stored as
+written, at project and service level, sensitive or not (a `<@…>` still expands); a service's
+zeropsSubdomain exists from its first build, subdomain access on or not; a service's own
+`${zeropsSubdomain}` resolves on its first boot; and another service's `${A_zeropsSubdomain}` — in a
+service variable, a setup's variables or a project variable, which resolves per service — resolves
+in B only when A was deployed before B's container started: else B reads the literal text and keeps
+it until it restarts. The order services are written in decides nothing; their priorities do — A at
+9, its reader at 1, resolved on the first boot (live, Mate2 lab, 2026-10-28). So every tier creates
+the service a runtime reads through a reference a person wrote before the runtime: each runtime of a
+tier that another reads through `${<host>_zeropsSubdomain}` — in the runtime's own variables, or in
+the build or run variables of the setup the tier builds for it — gets a higher priority than every
+runtime reading it, on top of the ranks the build reads give, a runtime lifted lifting what its build
+reads above it in turn; a managed service or a Box is created first anyway. The address the tier
+writes adds no such read (flip's Stage: `flip` and `agentrunner`, which names its address, both at
+1). Two runtimes that read each other, directly or through their builds, cannot both come first:
+those reads are ordered and kept whatever comes of them, said when no priority orders them. A
+project variable is read by every service, so no priority puts the service it names before all of
+them: a person's `${<host>_zeropsSubdomain}` there is said (`bundle.orderSubdomainReads`). An
+address of a service the tier does not carry is kept as it is:
 an address written out reads nothing (docs/spec-workflows.md §8 PS-3) and a reference the rewrite
 writes names only what the tier carries, so the rewrite adds no read the closure check (PS-3a) or
 the Box rule would see.

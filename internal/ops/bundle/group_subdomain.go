@@ -51,8 +51,9 @@ import (
 // `${zeropsSubdomain}` of the value's own service, `${<host>_zeropsSubdomain}`
 // of another the tier carries — to a service whose setup declares several
 // HTTP ports is kept as written and said the same way, naming the form to
-// write for the one meant, and the order still orders it. An address of a service the tier does not carry is kept as it is:
-// an address written out reads nothing (spec-workflows.md §8 PS-3), what a
+// write for the one meant, and the order still orders it. An address of a
+// service the tier does not carry is kept as it is: an address written out
+// reads nothing (spec-workflows.md §8 PS-3), what a
 // tier's runtimes read is the closure check's (PS-3a), and the address the
 // rewrite writes names only what the tier carries, so it adds no read.
 //
