@@ -750,13 +750,29 @@ func (c *relayCall) gitHubAccess(ctx context.Context) string {
 	return c.access
 }
 
-// say tells the caller msg once per call.
+// relaySayCap bounds how many distinct lines one call says, so code in the
+// dev service cannot make zcp print without end.
+const relaySayCap = 32
+
+// say tells the caller msg once per call, at most relaySayCap lines.
 func (c *relayCall) say(msg string) {
-	if c.said[msg] {
+	if c.said[msg] || len(c.said) >= relaySayCap {
 		return
 	}
 	c.said[msg] = true
 	fmt.Fprintf(c.stderr, "zcp git: %s\n", msg)
+}
+
+// relayQuoteCap bounds a dev-controlled value zcp quotes in what it says.
+const relayQuoteCap = 200
+
+// quoted is s — a value code in the dev service decides — Go-quoted, so no
+// control byte reaches the caller's terminal, and capped at relayQuoteCap.
+func quoted(s string) string {
+	if len(s) > relayQuoteCap {
+		s = s[:relayQuoteCap] + "…"
+	}
+	return strconv.Quote(s)
 }
 
 // notRecorded says a remote is none the records name.
@@ -765,7 +781,38 @@ func (c *relayCall) notRecorded(host, path string) {
 	if path != "-" {
 		remote += "/" + path
 	}
-	c.say(fmt.Sprintf("%s is not a remote zcp records for %s", remote, c.host))
+	c.say(fmt.Sprintf("%s is not a remote zcp records for %s", quoted(remote), c.host))
+}
+
+// canonicalGitHubPath is path, as git names a GitHub repository, in HQ's
+// canonical form: owner/name lower-cased, without a trailing slash or .git
+// (mate-hq gitTransport.ts remoteIdentity); false for a path that is no
+// owner/name of letters, digits, dot, underscore and hyphen.
+func canonicalGitHubPath(path string) (string, bool) {
+	p := strings.TrimRight(path, "/")
+	if len(p) >= 4 && strings.EqualFold(p[len(p)-4:], ".git") {
+		p = p[:len(p)-4]
+	}
+	owner, name, ok := strings.Cut(p, "/")
+	if !ok || !gitHubPathPart(owner) || !gitHubPathPart(name) {
+		return "", false
+	}
+	return strings.ToLower(owner + "/" + name), true
+}
+
+// gitHubPathPart is an owner or repository name GitHub can hold.
+func gitHubPathPart(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // answer answers one request: HQ by its scheme and host, any path, with the
@@ -781,13 +828,18 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			c.say(fmt.Sprintf("git named no repository on %s, and zcp git answers %s only for a repository it names", host, host))
 			return "", ""
 		}
-		repo := strings.TrimRight(c.relay.github(), "/") + "/" + path
+		canonical, ok := canonicalGitHubPath(path)
+		if !ok {
+			c.say(fmt.Sprintf("%s is no GitHub repository path (owner/name), so zcp git answers nothing for it", quoted(path)))
+			return "", ""
+		}
+		repo := strings.TrimRight(c.relay.github(), "/") + "/" + canonical
 		if !c.allows(ctx, repo) {
 			c.notRecorded(host, path)
 			return "", ""
 		}
 		access := c.gitHubAccess(ctx)
-		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n", host+"/"+path, access)
+		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+canonical+"\n", host+"/"+canonical, access)
 	}
 	c.notRecorded(host, path)
 	return "", ""
