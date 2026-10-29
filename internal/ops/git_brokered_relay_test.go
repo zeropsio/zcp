@@ -332,6 +332,9 @@ func TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt(t *testing.T) {
 			if dst.String() != tc.want || ended != tc.ended {
 				t.Errorf("%s, split at %d: passed %q, ended before EOF %v; want %q, %v", tc.name, split, dst.String(), ended, tc.want, tc.ended)
 			}
+			if _, err := s.r.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+				t.Errorf("%s, split at %d: a read of the pipe once the copy ended = %v, want it closed (no descriptor left open per call)", tc.name, split, err)
+			}
 		}
 	}
 }
