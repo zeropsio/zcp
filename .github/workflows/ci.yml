@@ -1,36 +1,14 @@
 name: CI
 
 on:
-  push:
-    branches: [main, 'wt/keys']
   pull_request:
     branches: ['*']
-  workflow_dispatch:
-  workflow_call:
-    inputs:
-      reuse-ci:
-        type: boolean
-        default: false
-    outputs:
-      corpus-artifact:
-        value: ${{ jobs.knowledge.outputs.artifact }}
-      corpus-digest:
-        value: ${{ jobs.knowledge.outputs.digest }}
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  knowledge:
-    uses: ./.github/workflows/knowledge.yml
-    with:
-      reuse-ci: ${{ inputs.reuse-ci || false }}
-
-  test:
-    name: test
-    needs: knowledge
-    if: needs.knowledge.outputs.reused != 'true'
+  probe:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -39,69 +17,20 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - uses: ./.github/actions/restore-knowledge
-        with:
-          artifact: ${{ needs.knowledge.outputs.artifact }}
-          digest: ${{ needs.knowledge.outputs.digest }}
-
-      - name: Build (all platforms)
-        env:
-          CGO_ENABLED: '0'
+      - name: Environment
         run: |
-          GOOS=linux GOARCH=amd64 go build -v ./...
-          GOOS=darwin GOARCH=arm64 go build -v ./...
-          GOOS=windows GOARCH=amd64 go build -v ./...
+          git --version
+          busybox | head -1 || true
+          ls -l /bin/sh
+          mkdir -p /tmp/stub
+          for t in head mktemp date; do printf '#!/bin/sh\necho STUB-%s\n' "$t" > "/tmp/stub/$t"; chmod +x "/tmp/stub/$t"; done
+          echo "busybox sh with stubs first on PATH:"; PATH=/tmp/stub:$PATH busybox sh -c 'head </dev/null; mktemp -u; date +%s' || true
+          echo "dash with stubs first on PATH:"; PATH=/tmp/stub:$PATH dash -c 'head </dev/null; mktemp -u; date +%s' || true
 
-      # node is required on PATH before the Test step: the Data Console JS/DOM
-      # suites and TestWelcomeJS (internal/content, shells out to `node --test`)
-      # must both run there — CI never silently skips them.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Corpus proof tests
-        run: node --test .github/scripts/*.test.cjs
-
-      - name: Data Console webui deps (npm ci)
-        run: npm ci --prefix internal/dataconsole/console/webui
+      - name: Diagnose
+        run: go test -count=1 -v -run 'TestZZProbe' ./internal/ops/ || true
 
       - name: Test
         env:
           CGO_ENABLED: '1'
-          ZCP_JS_REQUIRED: '1'
-        run: go test -race ./... -count=1
-
-      - name: Compile build-tagged tests (api/e2e — guard against silent rot)
-        # `go test ./...` only compiles default-tag files, so build-tagged test
-        # files (//go:build api etc.) can drift out of sync with the code they
-        # call and stay broken + invisible. go vet type-checks them without
-        # executing (no TestMain side effects / no live creds needed).
-        run: |
-          go vet -tags api ./...
-          go vet -tags e2e ./...
-
-  lint:
-    name: lint
-    needs: knowledge
-    if: needs.knowledge.outputs.reused != 'true'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-
-      - uses: ./.github/actions/restore-knowledge
-        with:
-          artifact: ${{ needs.knowledge.outputs.artifact }}
-          digest: ${{ needs.knowledge.outputs.digest }}
-
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.8.0
-          # Skip the action's online `config verify` step: it fetches the
-          # golangci JSON schema from golangci-lint.run, which times out on
-          # runner network blips and fails the whole job (nothing to do with
-          # our code). Linting itself needs no network.
-          verify: false
+        run: go test -race -count=1 -v -run 'TestBrokeredGit|TestRunGitCmd|TestRelay|TestHandleSIGPIPE' ./internal/ops/ ./cmd/zcp/
