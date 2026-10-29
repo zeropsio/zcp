@@ -145,13 +145,16 @@ func TestBrokeredGitFrames_WrongNonce_RelayedAsText(t *testing.T) {
 func TestBrokeredGitFrames_OverlongLine_RelayedNotParsed(t *testing.T) {
 	t.Parallel()
 	long := framePrefix + "61 https hq.example " + strings.Repeat("a", 70<<10) + "\n"
-	input := framePrefix + "60 https hq.example x\n" + long + framePrefix + "62 https hq.example y\n"
-	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "halves": iotest.HalfReader} {
-		relayed, answers := relayFramesOf(input, wrap, declineAll)
-		if relayed != long {
-			t.Errorf("%s: relayed %d bytes, want the overlong line alone (%d bytes)", name, len(relayed), len(long))
+	noID := framePrefix + "x9 https hq.example " + strings.Repeat("b", 70<<10) + "\n"
+	input := framePrefix + "60 https hq.example x\n" + long + noID + framePrefix + "62 https hq.example y\n"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "halves": iotest.HalfReader, "one byte": iotest.OneByteReader} {
+		relayed, answers := relayFramesOf(input, wrap, func(string, string, string) (string, string) { return "mate", "never-FAKE" })
+		if relayed != long+noID {
+			t.Errorf("%s: relayed %d bytes, want the overlong lines alone (%d bytes)", name, len(relayed), len(long+noID))
 		}
-		if want := "60 hq.example - -\n62 hq.example - -\n"; answers != want {
+		// The helper behind an overlong frame waits for an answer with its
+		// id: it gets a decline, never a credential.
+		if want := "60 hq.example mate never-FAKE\n61 - - -\n62 hq.example mate never-FAKE\n"; answers != want {
 			t.Errorf("%s: answers = %q, want %q", name, answers, want)
 		}
 	}
@@ -2458,6 +2461,72 @@ func (p *helperProc) wait(t *testing.T) int {
 }
 
 const helperRequest = "protocol=https\nhost=hq.example\npath=git/o/a/appdev.git\n\n"
+
+// TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce: the real
+// helper, its frames read by relayFrames and its answers written back, asks
+// for a host zcp cannot read (an IDN), an empty host, or a path that makes
+// its frame overlong: zcp's decline for its id ends it at once — no
+// credential, the lock free — rather than leaving it reading descriptor 3.
+func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct{ name, request string }{
+				{"unreadable host", "protocol=https\nhost=bücher.example\npath=acme/shop.git\n\n"},
+				{"empty host", "protocol=https\nhost=\npath=acme/shop.git\n\n"},
+				{"empty protocol", "protocol=\nhost=hq.example\npath=x\n\n"},
+				{"overlong frame", "protocol=https\nhost=hq.example\npath=" + strings.Repeat("a", 70<<10) + "\n\n"},
+			} {
+				nonce := relayRandHex(t)
+				answersR, answersW, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				framesR, framesW, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+				helper := strings.TrimPrefix(relayHelper(nonce), "!")
+				cmd := exec.CommandContext(ctx, sh[0], append(slices.Clone(sh[1:]), "-c", helper+" get")...) //nolint:gosec // the helper under test
+				var stdout bytes.Buffer
+				cmd.Stdin, cmd.Stdout, cmd.Env = strings.NewReader(tc.request), &stdout, helperEnv()
+				cmd.ExtraFiles = []*os.File{answersR, framesW}
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				_ = answersR.Close()
+				_ = framesW.Close()
+				relayed := make(chan struct{})
+				go func() {
+					defer close(relayed)
+					relayFrames(framesR, nonce, io.Discard, answersW, func(string, string, string) (string, string) { return "mate", "never-FAKE" })
+				}()
+				start := time.Now()
+				err = cmd.Wait()
+				took := time.Since(start)
+				cancel()
+				_ = answersW.Close()
+				<-relayed
+				_ = framesR.Close()
+				if ctx.Err() != nil || took > 10*time.Second {
+					t.Errorf("%s: the helper did not end after zcp's decline (%s, %v)", tc.name, took, err)
+				}
+				if err != nil {
+					t.Errorf("%s: helper exit %v, want 0", tc.name, err)
+				}
+				if stdout.Len() != 0 {
+					t.Errorf("%s: the helper handed git %q", tc.name, stdout.String())
+				}
+				if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s: the lock is still held: %v", tc.name, err)
+					_ = os.Remove("/tmp/zcp-relay-" + nonce + ".lock")
+				}
+			}
+		})
+	}
+}
 
 func helperEnv() []string { return []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C"} }
 
