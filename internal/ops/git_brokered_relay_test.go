@@ -470,6 +470,10 @@ func (r *shellRunner) ExecSSHStdio(ctx context.Context, _, command string, stdin
 	}
 	cmd := exec.CommandContext(ctx, r.sh[0], append(slices.Clone(r.sh[1:]), "-c", line)...) //nolint:gosec // the command under test, in a test
 	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, stdout, stderr, r.env
+	// A stopped call ends the whole remote side, as a dropped ssh session
+	// does: the script, git and whatever its hooks started.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
 	if err == nil {

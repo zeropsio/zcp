@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -69,6 +70,16 @@ type BrokeredGitRelay struct {
 	// githubOrigin is where the tokens HQ mints are good, https://github.com
 	// when empty; a test points it at a stand-in.
 	githubOrigin string
+	// githubAPI is where the minted tokens are revoked, hq.GitHubAPIOrigin
+	// when empty; a test points it at a stand-in.
+	githubAPI string
+}
+
+func (r BrokeredGitRelay) api() string {
+	if r.githubAPI != "" {
+		return r.githubAPI
+	}
+	return hq.GitHubAPIOrigin
 }
 
 // gitHubOrigin is the origin GitHub requests are recognized by.
@@ -664,10 +675,17 @@ type relayCall struct {
 	answers  map[string]relayAnswer
 	said     map[string]bool
 	liveRead bool
+	// minted are the GitHub tokens the call obtained, each once, to be
+	// revoked when it ends.
+	minted []relayMinted
 }
 
 // relayAnswer is a cached answer: a credential, or a decline.
 type relayAnswer struct{ user, password string }
+
+// relayMinted is a GitHub token a call obtained, and the repository it was
+// minted for (host/path, as git named it) — what a failed revoke names.
+type relayMinted struct{ repo, token string }
 
 func newRelayCall(relay BrokeredGitRelay, host string, stderr io.Writer) *relayCall {
 	return &relayCall{relay: relay, host: host, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
@@ -698,7 +716,7 @@ func (c *relayCall) notRecorded(host, path string) {
 func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (string, string) {
 	switch {
 	case sameOrigin(protocol, host, c.relay.Identity.Origin):
-		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host))
+		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "")
 	case sameOrigin(protocol, host, c.relay.github()):
 		if path == "-" {
 			c.say(fmt.Sprintf("git named no repository on %s, and zcp git answers %s only for a repository it names", host, host))
@@ -709,7 +727,7 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			c.notRecorded(host, path)
 			return "", ""
 		}
-		return c.cached(ctx, brokeredGitRepoKey(repo), "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n")
+		return c.cached(ctx, brokeredGitRepoKey(repo), "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n", host+"/"+path)
 	}
 	c.notRecorded(host, path)
 	return "", ""
@@ -766,8 +784,9 @@ func (c *relayCall) liveOrigin(ctx context.Context) string {
 
 // cached answers request (git's credential attributes, as hq.AnswerGit
 // reads them) once per key per call, a decline included, saying a
-// declined one's reason once.
-func (c *relayCall) cached(ctx context.Context, key, request string) (string, string) {
+// declined one's reason once. A token obtained for a GitHub repository
+// (minted names it, "" for HQ) is kept to be revoked when the call ends.
+func (c *relayCall) cached(ctx context.Context, key, request, minted string) (string, string) {
 	if a, ok := c.answers[key]; ok {
 		return a.user, a.password
 	}
@@ -775,6 +794,9 @@ func (c *relayCall) cached(ctx context.Context, key, request string) (string, st
 	var a relayAnswer
 	if err == nil {
 		a = relayAnswer{user: got.Username, password: got.Password}
+		if minted != "" && got.Password != "" {
+			c.minted = append(c.minted, relayMinted{repo: minted, token: got.Password})
+		}
 	} else {
 		var declined *hq.DeclinedError
 		if errors.As(err, &declined) && declined.Reason != "" {
@@ -783,6 +805,26 @@ func (c *relayCall) cached(ctx context.Context, key, request string) (string, st
 	}
 	c.answers[key] = a
 	return a.user, a.password
+}
+
+// relayRevokeBound bounds each token's revoke.
+const relayRevokeBound = 5 * time.Second
+
+// revoke revokes each GitHub token the call minted, once, when the call has
+// ended — on a context detached from the call's, which may already be
+// cancelled, each bounded relayRevokeBound. Best effort: the token expires
+// within the hour regardless, so a failure is one stderr line naming the
+// repository, never the token, and changes nothing else.
+func (c *relayCall) revoke(ctx context.Context) {
+	for _, m := range c.minted {
+		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), relayRevokeBound)
+		err := hq.RevokeGitHubToken(revokeCtx, c.relay.HTTPClient, c.relay.api(), m.token)
+		cancel()
+		if err != nil {
+			fmt.Fprintf(c.stderr, "zcp git: the GitHub token minted for %s in this call was not revoked; it expires by itself within the hour: %v\n", m.repo, err)
+		}
+	}
+	c.minted = nil
 }
 
 // relayNonce is a call's 16 random hex digits.
@@ -818,8 +860,13 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 // is read — whole, at most 1 MiB, else ErrBrokeredGitStdinOverCap before
 // anything runs — and forwarded only when the argv asks git to read it
 // (BrokeredGitReadsStdin). No credential is printed, put in argv, or kept
-// past the call. The caller refuses what CheckRelayedGitArgs refuses first.
+// past the call: each GitHub token it minted is revoked when it ends, also
+// when ctx stopped it. The caller refuses what CheckRelayedGitArgs refuses
+// first.
 func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if relay.HTTPClient == nil {
+		relay.HTTPClient = &http.Client{}
+	}
 	forward := BrokeredGitReadsStdin(args)
 	var payload []byte
 	if forward {
@@ -876,6 +923,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	_ = answersW.Close()
 	wg.Wait()
 	_ = framesR.Close()
+	call.revoke(ctx)
 
 	if runErr != nil {
 		return exit, fmt.Errorf("run git over ssh: %w", runErr)
