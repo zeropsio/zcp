@@ -2102,6 +2102,149 @@ func TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker(t *testing.T) {
 	}
 }
 
+// windowBuffer is an ssh client's channel buffer: it takes in whatever the
+// session writes at once and hands it out in chunks.
+type windowBuffer struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	data   []byte
+	closed bool
+	stop   bool
+}
+
+func newWindowBuffer() *windowBuffer {
+	b := &windowBuffer{}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+func (b *windowBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	b.cond.Broadcast()
+	return len(p), nil
+}
+
+// next is the next chunk, at most 32 KiB, waiting for one; nil once the
+// buffer is closed and empty, or stopped.
+func (b *windowBuffer) next() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for len(b.data) == 0 && !b.closed && !b.stop {
+		b.cond.Wait()
+	}
+	if b.stop || len(b.data) == 0 {
+		return nil
+	}
+	n := min(len(b.data), 32<<10)
+	chunk := slices.Clone(b.data[:n])
+	b.data = b.data[n:]
+	return chunk
+}
+
+func (b *windowBuffer) end(stop bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	b.stop = b.stop || stop
+	b.cond.Broadcast()
+}
+
+// windowRunner stands in for an ssh client over the shellRunner's session:
+// what the remote side writes to stdout it takes in at once, into a buffer
+// of its own — an ssh client reads a channel's data as far as its window
+// allows, ahead of the caller — and hands it to the caller's stdout at the
+// caller's pace. A call that ends by itself returns once all of it reached
+// the caller, as ssh writes out what it holds before it exits; a call its
+// context stops loses what the buffer still holds, as a killed ssh client
+// does.
+type windowRunner struct{ session *shellRunner }
+
+func (r *windowRunner) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	buf := newWindowBuffer()
+	forwarded := make(chan struct{})
+	go func() {
+		defer close(forwarded)
+		for chunk := buf.next(); chunk != nil; chunk = buf.next() {
+			if _, err := stdout.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	code, err := r.session.ExecSSHStdio(ctx, host, command, stdin, buf, stderr)
+	buf.end(false)
+	select {
+	case <-forwarded:
+		return code, err
+	case <-ctx.Done():
+		buf.end(true)
+		<-forwarded
+		return -1, ctx.Err()
+	}
+}
+
+// lateReader is a caller's stdout that is read only after a pause — the
+// first write waits it out, as a pipe whose reader has not started reading —
+// and then takes everything at once.
+type lateReader struct {
+	pause time.Duration
+	once  sync.Once
+	mu    sync.Mutex
+	got   bytes.Buffer
+}
+
+func (w *lateReader) Write(p []byte) (int, error) {
+	w.once.Do(func() { time.Sleep(w.pause) })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.got.Write(p)
+}
+
+func (w *lateReader) bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.got.Bytes())
+}
+
+// TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte: git's output the
+// ssh client still holds when the done marker arrives — the caller reading
+// slowly, here only well past the grace — all reaches the caller: the
+// session is ended only once every byte git wrote did, and the exit code is
+// git's.
+func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			var want strings.Builder
+			for i := range 300_000 {
+				fmt.Fprintf(&want, "line %08d\n", i)
+			}
+			l.commitFiles(t, checkout, "big", map[string]string{"big.txt": want.String()})
+			parsed, err := ParseBrokeredGitArgs([]string{"cat-file", "-p", "HEAD:big.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &windowRunner{session: &shellRunner{sh: sh, env: l.env()}}
+			stdout := &lateReader{pause: relayDoneGrace + 1500*time.Millisecond}
+			var stderr bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			defer cancel()
+			code, err := RunBrokeredGitRelayed(ctx, runner, "appdev", checkout, parsed, l.relay(), strings.NewReader(""), stdout, &stderr)
+			if err != nil || code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", code, err, stderr.String())
+			}
+			if got := stdout.bytes(); !bytes.Equal(got, []byte(want.String())) {
+				t.Errorf("the caller got %d of git's %d bytes", len(got), want.Len())
+			}
+		})
+	}
+}
+
 // --- offline: tokens revoked when the call ends -----------------------------
 
 // TestBrokeredGit_Relay_RevokesEachCachedTokenOnce: when a call ends, each
