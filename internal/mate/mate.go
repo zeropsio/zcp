@@ -484,7 +484,7 @@ type Action string
 
 const (
 	// ActionNone: nothing changed. Either the desired version was already
-	// live (no network reached at all), or a dev build is being kept.
+	// live (nothing downloaded), or a dev build is being kept.
 	ActionNone Action = "none"
 	// ActionInstalled: nothing usable was live before; the desired release
 	// is now live.
@@ -506,7 +506,7 @@ type Result struct {
 	// anything, but noticed something worth a log line: today, only an
 	// unreachable release manifest with an installed version already
 	// serving (MD-10) — Action stays ActionNone with From==To, and the
-	// caller logs Warning instead of the ordinary "no network reached"
+	// caller logs Warning instead of the ordinary "already current"
 	// line, without treating it as a degrade.
 	Warning string
 }

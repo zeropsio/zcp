@@ -114,9 +114,9 @@ func disableMate() error {
 // mate.CurrentLink(), the identity contract on disk, and a supervised unit.
 //
 // The bundle itself is mateEnsureInstalled's job in full — same version already
-// live (the common warm-restart case) costs no network, and a hand-pushed dev
-// build at or above MinimumMateVersion is kept unless forced. See
-// mate.EnsureInstalled for the pass in detail.
+// live (the common warm-restart case) costs only the manifest read, and a
+// hand-pushed dev build at or above MinimumMateVersion is kept unless forced.
+// See mate.EnsureInstalled for the pass in detail.
 //
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
@@ -323,7 +323,7 @@ func logMateEnsureResult(w io.Writer, result mate.Result) {
 		// is a logged miss, not a degrade — enableMate proceeds normally.
 		fmt.Fprintf(w, "    ! %s\n", result.Warning)
 	case result.Action == mate.ActionNone:
-		fmt.Fprintf(w, "    (mate %s already installed, no network reached)\n", result.To)
+		fmt.Fprintf(w, "    (mate %s already current)\n", result.To)
 	case result.Action == mate.ActionInstalled:
 		fmt.Fprintf(w, "    (installed mate %s)\n", result.To)
 	case result.Action == mate.ActionUpdated:
