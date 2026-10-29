@@ -417,6 +417,10 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // runs git with zcp's helper alone — the empty helper first clears every
 // persisted one — the protocol pin and the TLS and proxy pins after the
 // user's -c, git's stdin the file or /dev/null. Every value is ShellQuoted.
+// Auto-gc and auto-maintenance run in the foreground: detached, they close
+// only descriptors 0-2, keep 3 and 4 — the session's — and hold the call
+// open until they finish. A passthrough call needs no such setting: its git
+// holds only 0-2.
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
 	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
@@ -444,6 +448,8 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 		"-c", "submodule.fetchJobs=1",
 		"-c", "http.sslVerify=true",
 		"-c", "http.proxy=",
+		"-c", "gc.autoDetach=false",
+		"-c", "maintenance.autoDetach=false",
 		args.Subcommand)
 	argv = append(argv, args.Rest...)
 	for _, a := range argv {

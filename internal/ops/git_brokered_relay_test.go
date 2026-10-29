@@ -1693,12 +1693,11 @@ func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.
 			seen := filepath.Join(t.TempDir(), "detach")
 			hook := filepath.Join(checkout, ".git", "hooks", "pre-auto-gc")
 			body := "#!/bin/sh\necho \"gc=$(git config --get gc.autoDetach) maintenance=$(git config --get maintenance.autoDetach)\" >> " + ShellQuote(seen) + "\n"
-			if err := os.WriteFile(hook, []byte(body), 0o755); err != nil { //nolint:gosec // G306: a hook must be executable
+			if err := os.WriteFile(hook, []byte(body), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			run := l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
-			lines := strings.Split(strings.TrimSpace(readFile(t, seen)), "\n")
-			for _, line := range lines {
+			for line := range strings.SplitSeq(strings.TrimSpace(readFile(t, seen)), "\n") {
 				if line != "gc=false maintenance=false" {
 					t.Errorf("the auto-gc saw %q, want detaching off for both", line)
 				}
