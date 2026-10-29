@@ -72,16 +72,31 @@ func isolate(home string) error {
 			}
 		}
 	}
-	for name, value := range map[string]string{
-		"HOME":                home,
-		"XDG_CONFIG_HOME":     filepath.Join(home, "xdg"),
-		"GIT_CONFIG_GLOBAL":   filepath.Join(home, ".gitconfig"),
-		"GIT_CONFIG_SYSTEM":   os.DevNull,
-		"GIT_CONFIG_NOSYSTEM": "1",
-	} {
+	for _, entry := range Env(home) {
+		name, value, _ := strings.Cut(entry, "=")
 		if err := os.Setenv(name, value); err != nil {
 			return fmt.Errorf("set isolated Git environment %s: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// Env isolates a fixture's Git subprocess without changing the test process's
+// home, so live test harnesses retain their own CLI sessions.
+func Env(home string) []string {
+	env := make([]string, 0, len(os.Environ())+5)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if name == "HOME" || name == "XDG_CONFIG_HOME" || (strings.HasPrefix(name, "GIT_") && name != "GIT_SSL_CAINFO") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env,
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+filepath.Join(home, "xdg"),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
 }

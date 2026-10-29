@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops/origintest"
+	"github.com/zeropsio/zcp/internal/testgit"
 )
 
 // TestMain also trusts, once and before any test, the certificate of the
@@ -30,7 +31,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	code := m.Run()
+	code := testgit.Run(m)
 	os.RemoveAll(".zcp")
 	os.RemoveAll(dir)
 	os.Exit(code)

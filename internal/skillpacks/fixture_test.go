@@ -7,35 +7,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zeropsio/zcp/internal/testgit"
 )
 
 // isolatedGitEnv builds a git-only environment pointed at a throwaway HOME
-// (mirrors internal/ops/deploy_ssh_test.go's helper) so fixture repo
-// creation never reads or writes the developer's real global gitconfig, and
+// so fixture repo creation never reads or writes the developer's Git config, and
 // commits always have an identity via GIT_AUTHOR_*/GIT_COMMITTER_* rather
 // than depending on one being configured.
 func isolatedGitEnv(t *testing.T) []string {
 	t.Helper()
-	home := t.TempDir()
-	env := os.Environ()
-	filtered := make([]string, 0, len(env)+6)
-	for _, e := range env {
-		switch {
-		case strings.HasPrefix(e, "HOME="),
-			strings.HasPrefix(e, "GIT_CONFIG_GLOBAL="),
-			strings.HasPrefix(e, "GIT_CONFIG_SYSTEM="),
-			strings.HasPrefix(e, "GIT_CONFIG_NOSYSTEM="):
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	return append(filtered,
-		"HOME="+home,
-		"GIT_CONFIG_NOSYSTEM=1",
+	return append(testgit.Env(t.TempDir()),
 		"GIT_AUTHOR_NAME=zcp-test",
 		"GIT_AUTHOR_EMAIL=zcp-test@example.com",
 		"GIT_COMMITTER_NAME=zcp-test",

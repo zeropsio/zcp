@@ -24,6 +24,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/testgit"
 )
 
 func TestMain(m *testing.M) {
@@ -403,6 +404,9 @@ func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	env := append(testgit.Env(t.TempDir()),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com")
 	for _, args := range [][]string{
 		{"init"},
 		{"add", "."},
@@ -410,9 +414,7 @@ func gitInit(t *testing.T, dir string) {
 	} {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com")
+		cmd.Env = env
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %s (%v)", args, string(out), err)
 		}
