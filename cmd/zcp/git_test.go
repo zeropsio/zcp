@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -420,5 +424,184 @@ func TestRun_GitVerb_SkipsTelemetryAndServe(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".zcp", "telemetry", "install.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("telemetry install file stat = %v, want absent: CLI telemetry ran", err)
+	}
+}
+
+// hqWiredMeta is a pair wired to HQ's repository appdev in app-1 — wired
+// through or not (no credential fingerprint: no GIT_TOKEN in its dev).
+func hqWiredMeta() *workflow.ServiceMeta {
+	return &workflow.ServiceMeta{
+		Hostname: "appdev",
+		Mode:     topology.PlanModeStandard,
+		Stages:   []topology.StageRef{{Hostname: "appstage"}},
+		HQ:       &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"},
+	}
+}
+
+// relayedScriptMarks are what only a relayed call's script holds: answers
+// and frames on their own descriptors, persisted helpers cleared for zcp's
+// own, the protocol pin, and git's stdin taken off the session.
+var relayedScriptMarks = []string{
+	"exec 3<&0 4>&2",
+	"'-c' 'credential.helper=' '-c' 'credential.helper=!f() {",
+	"GIT_ALLOW_PROTOCOL=",
+	"'status' < /dev/null",
+}
+
+// TestRunGitCmd_NotWiredThrough_StillRelayed: in a Mate container every
+// subcommand of an HQ-wired pair is relayed — a partial clone's lazy fetches
+// need a credential on any of them — whether the pair was wired through (its
+// dev holds GIT_TOKEN) or not.
+func TestRunGitCmd_NotWiredThrough_StillRelayed(t *testing.T) {
+	t.Parallel()
+	for _, fingerprint := range []string{"", "fp-1"} {
+		stateDir := t.TempDir()
+		meta := hqWiredMeta()
+		meta.HQ.CredentialFingerprint = fingerprint
+		writeGitTestMeta(t, stateDir, meta)
+		ssh := &fakeGitSSH{}
+		deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+		deps.rt.MateEnabled = true
+		if code := runGitCmd(t.Context(), []string{"appdev", "status"}, deps); code != 0 {
+			t.Fatalf("fingerprint %q: exit %d, stderr %q", fingerprint, code, stderr.String())
+		}
+		if len(ssh.calls) != 1 || ssh.calls[0].host != "appdev" {
+			t.Fatalf("fingerprint %q: ssh calls = %+v, want one to appdev", fingerprint, ssh.calls)
+		}
+		script := remoteScript(t, ssh.calls[0].command)
+		for _, mark := range relayedScriptMarks {
+			if !strings.Contains(script, mark) {
+				t.Errorf("fingerprint %q: script lacks %q:\n%s", fingerprint, mark, script)
+			}
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("fingerprint %q: stdout = %q", fingerprint, stdout.String())
+		}
+	}
+}
+
+// TestRunGitCmd_NotWired_PassthroughOnly: a pair not wired to HQ, a host no
+// record names, and any host outside a Mate container stay the plain
+// passthrough — no helper, no relay.
+func TestRunGitCmd_NotWired_PassthroughOnly(t *testing.T) {
+	t.Parallel()
+	notWired := hqWiredMeta()
+	notWired.HQ = nil
+	noRepo := hqWiredMeta()
+	noRepo.HQ.Repo = ""
+	for _, tc := range []struct {
+		name string
+		meta *workflow.ServiceMeta
+		host string
+		mate bool
+	}{
+		{"not wired", notWired, "appdev", true},
+		{"wired with no repository", noRepo, "appdev", true},
+		{"no record", nil, "otherdev", true},
+		{"wired, no Mate", hqWiredMeta(), "appdev", false},
+	} {
+		stateDir := t.TempDir()
+		if tc.meta != nil {
+			writeGitTestMeta(t, stateDir, tc.meta)
+		}
+		ssh := &fakeGitSSH{}
+		deps, _, stderr := gitTestDeps(stateDir, ssh)
+		deps.rt.MateEnabled = tc.mate
+		if code := runGitCmd(t.Context(), []string{tc.host, "status"}, deps); code != 0 {
+			t.Fatalf("%s: exit %d, stderr %q", tc.name, code, stderr.String())
+		}
+		if len(ssh.calls) != 1 {
+			t.Fatalf("%s: ssh calls = %+v", tc.name, ssh.calls)
+		}
+		script := remoteScript(t, ssh.calls[0].command)
+		if !strings.HasSuffix(script, "GIT_TERMINAL_PROMPT=0 exec git 'status'") || strings.Contains(script, "credential.helper") {
+			t.Errorf("%s: script = %q, want the plain passthrough", tc.name, script)
+		}
+	}
+}
+
+// TestBrokeredGit_Allowlist_FromRecordsAndArgvURLsOnly: what a relayed call
+// answers GitHub for is the record's HQ origin — written by zcp from HQ's own
+// state — and the URLs its argv writes literally; never the record's
+// RemoteURL, written from the checkout's live origin, and never a remote
+// name. Addresses compare by repository: case, the default port and .git
+// aside.
+func TestBrokeredGit_Allowlist_FromRecordsAndArgvURLsOnly(t *testing.T) {
+	t.Parallel()
+	id := hq.Identity{Origin: "https://hq.example", Key: "key-FAKE", ProjectID: "p1"}
+	args, err := ops.ParseBrokeredGitArgs([]string{"fetch", "upstream", "https://github.com/acme/lib", "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta := hqWiredMeta()
+	meta.RemoteURL = "https://github.com/acme/evil.git"
+	meta.HQ.Origin = &workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: "https://GitHub.com/Acme/Shop.git"}
+	relay := brokeredGitRelayFor(meta, id, nil, args)
+	if want := []string{"https://GitHub.com/Acme/Shop.git", "https://github.com/acme/lib"}; !slices.Equal(relay.Repos, want) {
+		t.Errorf("relay repositories = %q, want the record's origin and the argv URL %q", relay.Repos, want)
+	}
+	if relay.LiveOrigin != nil {
+		t.Errorf("relay reads HQ's live origin %+v though the record names one", relay.LiveOrigin)
+	}
+	if relay.Identity != id {
+		t.Errorf("relay identity = %+v, want the call's", relay.Identity)
+	}
+	for _, same := range []string{"https://github.com:443/acme/shop", "https://github.com/acme/shop.git/", "https://GITHUB.COM/ACME/SHOP"} {
+		if !relay.AllowsRepo(same) {
+			t.Errorf("AllowsRepo(%q) = false, want the record's repository", same)
+		}
+	}
+	for _, other := range []string{meta.RemoteURL, "upstream", "https://github.com/acme/shopx", "https://github.com:8443/acme/shop", "http://github.com/acme/shop", ""} {
+		if relay.AllowsRepo(other) {
+			t.Errorf("AllowsRepo(%q) = true, want declined", other)
+		}
+	}
+	if strings.Contains(fmt.Sprintf("%+v", relay), "evil") {
+		t.Errorf("the relay carries the record's RemoteURL: %+v", relay)
+	}
+
+	meta.HQ.Origin = &workflow.HQOrigin{Mode: workflow.HQOriginNone}
+	relay = brokeredGitRelayFor(meta, id, nil, args)
+	if want := []string{"https://github.com/acme/lib"}; !slices.Equal(relay.Repos, want) {
+		t.Errorf("relay repositories without a recorded origin = %q, want the argv URL alone", relay.Repos)
+	}
+	if relay.LiveOrigin == nil || *relay.LiveOrigin != (ops.BrokeredGitHQRepo{AppID: "app-1", Repo: "appdev"}) {
+		t.Errorf("relay live origin = %+v, want HQ's for app-1/appdev", relay.LiveOrigin)
+	}
+}
+
+// TestRunGitCmd_RelayedCall_RefusesBeforeSSH: on a relayed call, git's own
+// credential subcommands, a user -c that decides credentials or transport,
+// and stdin over the 1 MiB zcp forwards are refused with exit 2, before any
+// ssh call.
+func TestRunGitCmd_RelayedCall_RefusesBeforeSSH(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeGitTestMeta(t, stateDir, hqWiredMeta())
+	for _, tc := range []struct {
+		args  []string
+		stdin string
+		want  string
+	}{
+		{[]string{"appdev", "credential", "fill"}, "", "credential"},
+		{[]string{"appdev", "credential-store", "get"}, "", "credential-store"},
+		{[]string{"appdev", "-c", "credential.helper=!x", "fetch"}, "", "credential.helper"},
+		{[]string{"appdev", "-c", "url.https://evil.example/.insteadOf=https://github.com/", "fetch"}, "", "url."},
+		{[]string{"appdev", "commit", "-F", "-"}, strings.Repeat("m", 1<<20+1), "1 MiB"},
+	} {
+		ssh := &fakeGitSSH{}
+		deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+		deps.rt.MateEnabled = true
+		deps.stdin = strings.NewReader(tc.stdin)
+		code := runGitCmd(t.Context(), tc.args, deps)
+		assertGitRefused(t, tc.args, code, stdout, stderr, ssh, tc.want)
+	}
+	ssh := &fakeGitSSH{}
+	deps, _, stderr := gitTestDeps(stateDir, ssh)
+	deps.rt.MateEnabled = true
+	deps.stdin = strings.NewReader(strings.Repeat("m", 1<<20))
+	if code := runGitCmd(t.Context(), []string{"appdev", "commit", "-F", "-"}, deps); code != 0 || len(ssh.calls) != 1 {
+		t.Errorf("a 1 MiB message: exit %d, ssh calls %d, stderr %q; want it forwarded", code, len(ssh.calls), stderr.String())
 	}
 }
