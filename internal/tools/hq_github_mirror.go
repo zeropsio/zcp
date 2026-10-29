@@ -110,7 +110,7 @@ func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.Rep
 			lines = append(lines, mirroredWords(now.Mirror))
 		}
 		if now.DivergedSince != "" && now.DivergedSince != told.DivergedSince {
-			lines = append(lines, divergedWords(hqc, app, repo, now.DivergedSince))
+			lines = append(lines, divergedWords(stateDir, hqc, app, repo, now.DivergedSince))
 		}
 		*told = now
 		return nil
@@ -134,7 +134,7 @@ func mirroredWords(name string) string {
 // which the realignment reads (a branch HQ did not make there it never
 // pushes) — opened as a change and merged in Mate; HQ squash-merges its pull
 // request on GitHub and moves `main` onto that squash.
-func divergedWords(hqc hq.Client, app, repo, since string) string {
+func divergedWords(_ string, hqc hq.Client, app, repo, since string) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
 		address = "<its repository's address in HQ>"
