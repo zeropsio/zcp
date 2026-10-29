@@ -521,6 +521,56 @@ type relayLab struct {
 	sawAuth    []string          // every Authorization header either server saw
 	selfOrigin string            // /api/mate/self: the origin of relayLabAppID's appdev
 	selfAsked  int
+
+	// GitHub's API on the stand-in: DELETE /installation/token.
+	revokeAsked  []string      // every token a revoke named
+	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
+	revokeDelay  time.Duration // how long a revoke waits before answering
+}
+
+// serveRevoke is GitHub's DELETE /installation/token, authenticated by the
+// token it revokes.
+func (l *relayLab) serveRevoke(w http.ResponseWriter, r *http.Request) {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	l.mu.Lock()
+	delay, status := l.revokeDelay, l.revokeStatus
+	if ok {
+		l.revokeAsked = append(l.revokeAsked, token)
+	}
+	l.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
+	if status != 0 {
+		w.WriteHeader(status)
+		return
+	}
+	l.mu.Lock()
+	delete(l.tokens, token)
+	l.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// revokes is every token a revoke named so far.
+func (l *relayLab) revokes() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.revokeAsked)
+}
+
+// mintedTokens is every token HQ minted so far, in order.
+func (l *relayLab) mintedTokens() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	tokens := make([]string, len(l.mints))
+	for i := range l.mints {
+		tokens[i] = fmt.Sprintf("ghs_FAKE%04d", i+1)
+	}
+	return tokens
 }
 
 func newRelayLab(t *testing.T) *relayLab {
@@ -567,6 +617,10 @@ func newRelayLab(t *testing.T) *relayLab {
 	}))
 	t.Cleanup(l.hq.Close)
 	l.gh = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/installation/token" {
+			l.serveRevoke(w, r)
+			return
+		}
 		l.saw(r)
 		key := relayRepoKeyOf(r.URL.Path)
 		user, pass, ok := r.BasicAuth()
@@ -764,6 +818,7 @@ func (l *relayLab) relay(repos ...string) BrokeredGitRelay {
 		HTTPClient:   l.hq.Client(),
 		Repos:        repos,
 		githubOrigin: l.gh.URL,
+		githubAPI:    l.gh.URL,
 	}
 }
 
@@ -1584,6 +1639,154 @@ func TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC(t *testing.T) {
 			_, message, _ := strings.Cut(l.git(t, checkout, "cat-file", "commit", "HEAD"), "\n\n")
 			if message != strings.TrimSpace(payload.String()) {
 				t.Errorf("commit message differs from the payload (%d bytes vs %d)", len(message), len(payload.String()))
+			}
+		})
+	}
+}
+
+// --- offline: tokens revoked when the call ends -----------------------------
+
+// TestBrokeredGit_Relay_RevokesEachCachedTokenOnce: when a call ends, each
+// GitHub token it minted is revoked once — however many requests it
+// answered — and the Mate credential HQ holds is never revoked.
+func TestBrokeredGit_Relay_RevokesEachCachedTokenOnce(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, true, "acme/shop")
+			lib, _ := l.repo(t, true, "acme/lib")
+			hqURL, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			l.git(t, checkout, "remote", "add", "hq", hqURL)
+
+			l.run(t, sh, checkout, l.relay(url), "", "log", "-p", "--format=%H").mustSucceed(t, "log -p")
+			l.mu.Lock()
+			used := l.tokenUse["ghs_FAKE0001"]
+			l.mu.Unlock()
+			if used < 2 {
+				t.Fatalf("the token answered %d requests, want several lazy fetches", used)
+			}
+			if got := l.revokes(); !slices.Equal(got, []string{"ghs_FAKE0001"}) {
+				t.Errorf("revoked %q after one mint, want the one token once", got)
+			}
+
+			writePreCommitHook(t, checkout, "git ls-remote "+ShellQuote(url)+" >/dev/null && git ls-remote "+ShellQuote(lib)+" >/dev/null && git ls-remote "+ShellQuote(url)+" >/dev/null\n")
+			l.run(t, sh, checkout, l.relay(url, lib), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit reading two repositories")
+			got := l.revokes()
+			slices.Sort(got)
+			if want := l.mintedTokens(); len(want) != 3 || !slices.Equal(got, want) {
+				t.Errorf("revoked %q, want each minted token %q once", got, want)
+			}
+
+			before := len(l.revokes())
+			l.run(t, sh, checkout, l.relay(url), "", "ls-remote", "hq").mustSucceed(t, "ls-remote hq")
+			if after := l.revokes(); len(after) != before {
+				t.Errorf("an HQ-only call revoked %q", after[before:])
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext: a call
+// stopped — its context cancelled while git still runs — still revokes the
+// token it minted, on a context of its own.
+func TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, h := l.repo(t, true, "acme/shop")
+			checkout := l.checkout(t, url)
+			marker := filepath.Join(t.TempDir(), "fetched")
+			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt > "+ShellQuote(marker)+"\nsleep 15\n")
+			parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-m", "x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() {
+				deadline := time.Now().Add(60 * time.Second)
+				for time.Now().Before(deadline) {
+					if b, err := os.ReadFile(marker); err == nil && len(b) > 0 {
+						cancel()
+						return
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}()
+			var stdout, stderr bytes.Buffer
+			start := time.Now()
+			_, err = RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), nil, &stdout, &stderr)
+			if ctx.Err() == nil {
+				t.Fatalf("the call ended before it was stopped: %v\n%s", err, stderr.String())
+			}
+			if err == nil {
+				t.Error("a stopped call answered no error")
+			}
+			if took := time.Since(start); took > 14*time.Second {
+				t.Errorf("the stopped call took %s, want it to end once stopped", took)
+			}
+			if got, want := l.revokes(), l.mintedTokens(); len(want) != 1 || !slices.Equal(got, want) {
+				t.Errorf("revoked %q after the call was stopped, want the minted %q", got, want)
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted: a revoke
+// GitHub refuses or never answers is best effort — git's exit code stands,
+// the call ends within the revoke's 5 s bound, and one stderr line says so
+// without the token.
+func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name   string
+				status int
+				delay  time.Duration
+				args   []string
+				code   int
+			}{
+				{"refused, git succeeding", http.StatusInternalServerError, 0, []string{"log", "-p", "--format=%H"}, 0},
+				{"refused, git failing", http.StatusForbidden, 0, []string{"fetch", "origin", "refs/heads/no-such-branch"}, 128},
+				{"never answered", 0, 30 * time.Second, []string{"log", "-p", "--format=%H"}, 0},
+			} {
+				l := newRelayLab(t)
+				url, _ := l.repo(t, true, "acme/shop")
+				checkout := l.checkout(t, url)
+				l.mu.Lock()
+				l.revokeStatus, l.revokeDelay = tc.status, tc.delay
+				l.mu.Unlock()
+				start := time.Now()
+				run := l.run(t, sh, checkout, l.relay(url), "", tc.args...)
+				took := time.Since(start)
+				if run.err != nil || run.code != tc.code {
+					t.Errorf("%s: exit %d, err %v; want git's %d\n%s", tc.name, run.code, run.err, tc.code, run.stderr)
+				}
+				if len(l.mintedTokens()) != 1 || len(l.revokes()) != 1 {
+					t.Fatalf("%s: minted %q, revoked %q; want one of each", tc.name, l.mintedTokens(), l.revokes())
+				}
+				var said []string
+				for line := range strings.SplitSeq(run.stderr, "\n") {
+					if strings.Contains(line, "revoke") {
+						said = append(said, line)
+					}
+				}
+				if len(said) != 1 || !strings.HasPrefix(said[0], "zcp git: ") {
+					t.Errorf("%s: stderr lines about the revoke = %q, want one zcp git line", tc.name, said)
+				}
+				if strings.Contains(run.stderr, "ghs_FAKE") {
+					t.Errorf("%s: stderr carries the token: %q", tc.name, run.stderr)
+				}
+				if tc.delay > 0 && took > 20*time.Second {
+					t.Errorf("%s: the call took %s, want the revoke bounded at 5 s", tc.name, took)
+				}
 			}
 		})
 	}

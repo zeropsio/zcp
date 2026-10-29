@@ -215,6 +215,71 @@ func TestGitHubHelperConfig_OnlyZcpAnswersGitHub(t *testing.T) {
 	}
 }
 
+// TestRevokeGitHubToken_SendsDeleteWithTheToken: a token minted for one call
+// is revoked as HQ revokes the tokens it mints — `DELETE /installation/token`
+// at GitHub's API, authenticated by the token itself; GitHub's 204 and its
+// 401 (already gone) end it, anything else is an error that never carries
+// the token.
+func TestRevokeGitHubToken_SendsDeleteWithTheToken(t *testing.T) {
+	t.Parallel()
+	const token = "ghs_FAKErevoke0001"
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"revoked", http.StatusNoContent, false},
+		{"already gone", http.StatusUnauthorized, false},
+		{"GitHub failing", http.StatusInternalServerError, true},
+		{"forbidden", http.StatusForbidden, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var asked atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				asked.Add(1)
+				if r.Method != http.MethodDelete || r.URL.Path != "/installation/token" {
+					t.Errorf("asked %s %s, want DELETE /installation/token", r.Method, r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+					t.Errorf("Authorization = %q, want the token as a bearer", got)
+				}
+				if got := r.Header.Get("Accept"); got != "application/vnd.github+json" {
+					t.Errorf("Accept = %q", got)
+				}
+				if got := r.Header.Get("X-GitHub-Api-Version"); got != "2022-11-28" {
+					t.Errorf("X-GitHub-Api-Version = %q", got)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(srv.Close)
+			err := RevokeGitHubToken(context.Background(), srv.Client(), srv.URL, token)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("RevokeGitHubToken = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), token) {
+				t.Errorf("the error carries the token: %v", err)
+			}
+			if asked.Load() != 1 {
+				t.Errorf("GitHub asked %d times, want once", asked.Load())
+			}
+		})
+	}
+	t.Run("GitHub unreachable", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.NotFoundHandler())
+		addr := srv.URL
+		srv.Close()
+		err := RevokeGitHubToken(context.Background(), http.DefaultClient, addr, token)
+		if err == nil || strings.Contains(err.Error(), token) {
+			t.Errorf("RevokeGitHubToken against a closed server = %v, want an error without the token", err)
+		}
+	})
+	if GitHubAPIOrigin != "https://api.github.com" {
+		t.Errorf("GitHubAPIOrigin = %q, want GitHub's REST API", GitHubAPIOrigin)
+	}
+}
+
 // linkedCredential is the path of the Git credential file the Mate's server
 // would write: holding "secret" when linked, absent otherwise.
 func linkedCredential(t *testing.T, linked bool) string {
