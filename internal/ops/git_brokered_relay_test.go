@@ -551,28 +551,61 @@ func (r *shellRunner) ExecSSHStdio(ctx context.Context, _, command string, stdin
 		}
 		line = strings.Join(r.sh, " ") + " -c " + rest
 	}
-	cmd := exec.CommandContext(ctx, r.sh[0], append(slices.Clone(r.sh[1:]), "-c", line)...) //nolint:gosec // the command under test, in a test
-	// stdout and stderr are copied through pipes of the runner's own, so
-	// the call ends only when every process holding them closed them — as
-	// sshd keeps a session open until its stdout and stderr reach EOF.
-	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, struct{ io.Writer }{stdout}, struct{ io.Writer }{stderr}, r.env
-	// A stopped call ends the whole remote side, as a dropped ssh session
-	// does: the script, git and whatever its hooks started.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 30 * time.Second
-	err := cmd.Run()
-	if err == nil {
-		return 0, nil
+	// stdout and stderr go through pipes of the runner's own, and the call
+	// ends only when the shell exited and every process holding them closed
+	// them — as sshd keeps a session open until its stdout and stderr reach
+	// EOF. A stopped call ends the whole remote side, as a dropped ssh
+	// session does: the script, git and whatever its hooks started, even
+	// after the shell itself exited.
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return -1, err
 	}
-	if ctx.Err() != nil {
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		return -1, err
+	}
+	cmd := exec.Command(r.sh[0], append(slices.Clone(r.sh[1:]), "-c", line)...) //nolint:gosec,noctx // the command under test, in a test; ctx is honoured below, by process group
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, outW, errW, r.env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	_ = outW.Close()
+	_ = errW.Close()
+	pgid := cmd.Process.Pid
+	copied := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(stdout, outR); copied <- struct{}{} }()
+	go func() { _, _ = io.Copy(stderr, errR); copied <- struct{}{} }()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	var waitErr error
+	stopped := false
+	done := ctx.Done()
+	for pending := 3; pending > 0; {
+		select {
+		case waitErr = <-exited:
+			pending--
+		case <-copied:
+			pending--
+		case <-done:
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			stopped, done = true, nil
+		}
+	}
+	_ = outR.Close()
+	_ = errR.Close()
+	if stopped {
 		return -1, ctx.Err()
 	}
+	if waitErr == nil {
+		return 0, nil
+	}
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+	if errors.As(waitErr, &exitErr) && exitErr.ExitCode() >= 0 {
 		return exitErr.ExitCode(), nil
 	}
-	return -1, err
+	return -1, waitErr
 }
 
 func (r *shellRunner) seen() []string {

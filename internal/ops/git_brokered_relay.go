@@ -508,12 +508,13 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // Auto-gc and auto-maintenance run in the foreground: detached, they close
 // only descriptors 0-2, keep 3 and 4 — the session's — and hold the call
 // open until they finish. A passthrough call needs no such setting: its git
-// holds only 0-2. Known limit: a process a hook leaves running in the
-// background holds 3 and 4 the same way, and the call lasts until it ends.
-// Running git without 3 and 4 and having the helper reopen the script's
-// through /proc/<pid>/fd does not work over sshd: the session's pipes are
-// root's, and the session user's reopen is refused (measured on alpine
-// 3.21 and ubuntu 24.04).
+// holds only 0-2. A process a hook leaves running in the background holds 3
+// and 4 the same way, so once git ended the script writes its done marker,
+// `ZCPDONE-<nonce> <exit>`, and zcp ends the call from it (relayStream,
+// RunBrokeredGitRelayed). Running git without 3 and 4 and having the helper
+// reopen the script's through /proc/<pid>/fd does not work over sshd: the
+// session's pipes are root's, and the session user's reopen is refused
+// (measured on alpine 3.21 and ubuntu 24.04).
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
 	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
@@ -554,7 +555,10 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 	} else {
 		b.WriteString(" < /dev/null")
 	}
-	b.WriteString("; exit $?")
+	// git ended: say so, with its exit code, before the traps clean up, so
+	// zcp ends the call even while something git started still holds the
+	// session's descriptors.
+	b.WriteString(`; r=$?; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
 	return "/bin/sh -c " + ShellQuote(b.String())
 }
 
@@ -566,19 +570,53 @@ const relayLineCap = 64 << 10
 // ssh ended.
 const relayDrainBound = 2 * time.Second
 
-// relayFrames copies the ssh stderr r to stderr line by line as it arrives,
+// relayDoneGrace is how long zcp lets the session close by itself once the
+// script said git ended, before it ends the session: something git started
+// may hold the session's descriptors.
+const relayDoneGrace = time.Second
+
+// relayFrames is relayStream for a stream read without a done marker's
+// receiver: a marker still ends the answering.
+func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
+	relayStream(r, nonce, stderr, answers, answer, nil)
+}
+
+// relayStream copies the ssh stderr r to stderr line by line as it arrives,
 // taking out every frame of nonce — a line that begins with its prefix after
 // at most one carriage return — and writing to answers exactly one answer
-// line per frame with a readable id (answerFrame). The empty line directly
-// before a frame, the frame's own leading newline, is dropped; every other
-// byte reaches stderr unchanged: split reads, carriage-return progress, a
-// trailing partial line, and a line longer than relayLineCap.
-func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
-	s := frameStream{prefix: []byte(relayFramePrefix(nonce)), stderr: stderr, onFrame: func(frame string) {
-		if line, ok := answerFrame(frame, answer); ok {
-			_, _ = io.WriteString(answers, line)
-		}
-	}}
+// line per frame with a readable id (answerFrame), and the script's done
+// marker, `ZCPDONE-<nonce> <exit>` once git ended: from then on no frame is
+// answered, and onDone (when not nil) gets git's exit code, once. A marker
+// of the nonce without an exit code (0-255) is dropped and ends nothing.
+// The empty line directly before a frame or marker, its own leading
+// newline, is dropped; every other byte reaches stderr unchanged: split
+// reads, carriage-return progress, a trailing partial line, a line longer
+// than relayLineCap, and any marker with another nonce.
+func relayStream(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string), onDone func(code int)) {
+	done := false
+	s := frameStream{
+		prefix:     []byte(relayFramePrefix(nonce)),
+		donePrefix: []byte(relayDonePrefix(nonce)),
+		stderr:     stderr,
+		onFrame: func(frame string) {
+			if done {
+				return
+			}
+			if line, ok := answerFrame(frame, answer); ok {
+				_, _ = io.WriteString(answers, line)
+			}
+		},
+		onDone: func(rest string) {
+			code, ok := relayDoneCode(rest)
+			if !ok || done {
+				return
+			}
+			done = true
+			if onDone != nil {
+				onDone(code)
+			}
+		},
+	}
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := r.Read(buf)
@@ -590,6 +628,22 @@ func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer fu
 	s.flush()
 }
 
+// relayDonePrefix is how the script's done marker begins on its line.
+func relayDonePrefix(nonce string) string { return "ZCPDONE-" + nonce + " " }
+
+// relayDoneCode is the exit code a done marker carries: one to three
+// digits, at most 255.
+func relayDoneCode(rest string) (int, bool) {
+	if rest == "" || len(rest) > 3 {
+		return 0, false
+	}
+	code, err := strconv.Atoi(rest)
+	if err != nil || code < 0 || code > 255 || strings.TrimLeft(rest, "0123456789") != "" {
+		return 0, false
+	}
+	return code, true
+}
+
 // frameStream modes: at a line's start (deciding whether it is a frame),
 // passing a line through, or collecting a frame.
 const (
@@ -598,13 +652,17 @@ const (
 	frameModeFrame
 )
 
-// frameStream is relayFrames' line state.
+// frameStream is relayStream's line state. A frame and a done marker are
+// lines of the same shape, each with its prefix of one length.
 type frameStream struct {
-	prefix  []byte
-	stderr  io.Writer
-	onFrame func(frame string)
+	prefix     []byte
+	donePrefix []byte
+	stderr     io.Writer
+	onFrame    func(frame string)
+	onDone     func(rest string)
 
 	mode      int
+	marker    bool   // the line being collected is a done marker
 	line      []byte // the current line while it may be, or is, a frame
 	heldEmpty bool   // an empty line not yet relayed: a frame may follow it
 }
@@ -644,7 +702,9 @@ func (s *frameStream) write(p []byte) {
 				take = p[:i]
 			}
 			if len(s.line)+len(take) > relayLineCap {
-				s.declineOverlong(take)
+				if !s.marker {
+					s.declineOverlong(take)
+				}
 				s.release()
 				s.mode = frameModePass
 				continue
@@ -655,12 +715,19 @@ func (s *frameStream) write(p []byte) {
 			}
 			p = p[i+1:]
 			start := len(s.prefix)
+			if s.marker {
+				start = len(s.donePrefix)
+			}
 			if s.line[0] == '\r' {
 				start++
 			}
-			frame := s.line[start:]
+			rest := string(s.line[start:])
 			s.heldEmpty = false
-			s.onFrame(string(frame))
+			if s.marker {
+				s.onDone(rest)
+			} else {
+				s.onFrame(rest)
+			}
 			s.line = s.line[:0]
 			s.mode = frameModeStart
 		default:
@@ -678,15 +745,21 @@ func (s *frameStream) write(p []byte) {
 			if body[0] == '\r' {
 				body = body[1:]
 			}
+			frame := len(body) <= len(s.prefix) && bytes.HasPrefix(s.prefix, body)
+			marker := len(body) <= len(s.donePrefix) && bytes.HasPrefix(s.donePrefix, body)
 			switch {
-			case len(body) > len(s.prefix) || !bytes.HasPrefix(s.prefix, body):
+			case !frame && !marker:
 				s.release()
 				if c == '\n' {
 					s.mode = frameModeStart
 				} else {
 					s.mode = frameModePass
 				}
-			case len(body) == len(s.prefix):
+			case frame && len(body) == len(s.prefix):
+				s.marker = false
+				s.mode = frameModeFrame
+			case marker && len(body) == len(s.donePrefix):
+				s.marker = true
 				s.mode = frameModeFrame
 			}
 		}
@@ -1048,8 +1121,12 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 // (BrokeredGitReadsStdin). No credential is printed, put in argv, or kept
 // past the call: each GitHub token it minted is revoked when it ends, also
 // when ctx stopped it. Every GitHub token carries only what the call needs
-// (brokeredGitAccess). The caller refuses what CheckRelayedGitArgs refuses
-// first.
+// (brokeredGitAccess). The call ends when git does: on the script's done
+// marker zcp answers nothing more, closes descriptor 3, revokes at once,
+// ends a session that does not close within relayDoneGrace — something git
+// started may hold it — and returns the exit code the marker carries; with
+// no marker (ssh dropped or killed) the exit code is ssh's. The caller
+// refuses what CheckRelayedGitArgs refuses first.
 func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if relay.HTTPClient == nil {
 		relay.HTTPClient = &http.Client{}
@@ -1088,15 +1165,31 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		wg.Go(func() { _, _ = answers.Write(append(fmt.Appendf(nil, "%d\n", len(payload)), payload...)) })
 	}
 	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
+	// git's end, from the script's marker: no answer after it — descriptor
+	// 3 closed, so a waiting helper reads EOF and lets the lock go — the
+	// call's tokens revoked at once, and the session ended after a grace if
+	// something git started still holds it.
+	sshCtx, stopSSH := context.WithCancel(ctx)
+	defer stopSSH()
+	gitExit := -1
+	var grace *time.Timer
+	onDone := func(code int) {
+		gitExit = code
+		mu.Lock()
+		_ = answersW.Close()
+		mu.Unlock()
+		call.revoke(ctx)
+		grace = time.AfterFunc(relayDoneGrace, stopSSH)
+	}
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
-		relayFrames(framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
+		relayStream(framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
 			return call.answer(callCtx, protocol, host, path)
-		})
+		}, onDone)
 	}()
 
-	exit, runErr := ssh.ExecSSHStdio(ctx, host, command, answersR, stdout, framesW)
+	exit, runErr := ssh.ExecSSHStdio(sshCtx, host, command, answersR, stdout, framesW)
 	_ = framesW.Close()
 	_ = answersR.Close()
 	select {
@@ -1106,12 +1199,18 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		_ = framesR.Close()
 		<-relayed
 	}
+	if grace != nil {
+		grace.Stop()
+	}
 	cancel()
 	_ = answersW.Close()
 	wg.Wait()
 	_ = framesR.Close()
 	call.revoke(ctx)
 
+	if gitExit >= 0 {
+		return gitExit, nil
+	}
 	if runErr != nil {
 		return exit, fmt.Errorf("run git over ssh: %w", runErr)
 	}
