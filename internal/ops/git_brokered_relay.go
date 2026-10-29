@@ -716,9 +716,12 @@ type relayCall struct {
 	relay  BrokeredGitRelay
 	host   string
 	stderr io.Writer
-	// access is what every GitHub token the call obtains carries, decided
-	// once from its argv (brokeredGitAccess).
-	access string
+	// decideAccess decides what every GitHub token the call obtains
+	// carries (brokeredGitAccess); it runs once, on the call's first GitHub
+	// request, and access keeps its answer — a call only HQ answers never
+	// decides one.
+	decideAccess func(ctx context.Context) string
+	access       string
 
 	answers  map[string]relayAnswer
 	said     map[string]bool
@@ -735,8 +738,16 @@ type relayAnswer struct{ user, password string }
 // minted for (host/path, as git named it) — what a failed revoke names.
 type relayMinted struct{ repo, token string }
 
-func newRelayCall(relay BrokeredGitRelay, host, access string, stderr io.Writer) *relayCall {
-	return &relayCall{relay: relay, host: host, access: access, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
+func newRelayCall(relay BrokeredGitRelay, host string, decideAccess func(context.Context) string, stderr io.Writer) *relayCall {
+	return &relayCall{relay: relay, host: host, decideAccess: decideAccess, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
+}
+
+// gitHubAccess is the call's access, decided on first use.
+func (c *relayCall) gitHubAccess(ctx context.Context) string {
+	if c.access == "" {
+		c.access = c.decideAccess(ctx)
+	}
+	return c.access
 }
 
 // say tells the caller msg once per call.
@@ -764,7 +775,7 @@ func (c *relayCall) notRecorded(host, path string) {
 func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (string, string) {
 	switch {
 	case sameOrigin(protocol, host, c.relay.Identity.Origin):
-		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "")
+		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "", "")
 	case sameOrigin(protocol, host, c.relay.github()):
 		if path == "-" {
 			c.say(fmt.Sprintf("git named no repository on %s, and zcp git answers %s only for a repository it names", host, host))
@@ -775,7 +786,8 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			c.notRecorded(host, path)
 			return "", ""
 		}
-		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+c.access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n", host+"/"+path)
+		access := c.gitHubAccess(ctx)
+		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n", host+"/"+path, access)
 	}
 	c.notRecorded(host, path)
 	return "", ""
@@ -833,12 +845,13 @@ func (c *relayCall) liveOrigin(ctx context.Context) string {
 // cached answers request (git's credential attributes, as hq.AnswerGit
 // reads them) once per key per call, a decline included, saying a
 // declined one's reason once. A token obtained for a GitHub repository
-// (minted names it, "" for HQ) is kept to be revoked when the call ends.
-func (c *relayCall) cached(ctx context.Context, key, request, minted string) (string, string) {
+// (minted names it, "" for HQ) carries access and is kept to be revoked
+// when the call ends.
+func (c *relayCall) cached(ctx context.Context, key, request, minted, access string) (string, string) {
 	if a, ok := c.answers[key]; ok {
 		return a.user, a.password
 	}
-	got, err := hq.AnswerGitFor(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient, c.access)
+	got, err := hq.AnswerGitFor(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient, access)
 	var a relayAnswer
 	if err == nil {
 		a = relayAnswer{user: got.Username, password: got.Password}
@@ -924,7 +937,6 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 			return -1, err
 		}
 	}
-	access := brokeredGitAccess(ctx, ssh, host, dir, args, relay)
 	nonce, err := relayNonce()
 	if err != nil {
 		return -1, err
@@ -950,7 +962,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		// One write, so nothing can come between the length and the bytes.
 		wg.Go(func() { _, _ = answers.Write(append(fmt.Appendf(nil, "%d\n", len(payload)), payload...)) })
 	}
-	call := newRelayCall(relay, host, access, stderr)
+	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
@@ -985,11 +997,13 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 }
 
 // brokeredGitAccess is the access every GitHub token of the call carries,
-// decided once from its argv: read for any call that is no push — the lazy
-// fetches inside it included; for a push, write, or workflows when a commit
-// it would send touches .github/workflows/ or what it sends cannot be
-// resolved (brokeredGitPushAccess). A push a hook or alias starts inside a
-// call that is no push gets read, and GitHub refuses it.
+// decided once from its argv when GitHub first asks — access means nothing
+// for HQ's own git, so a push only HQ answers runs no check: read for any
+// call that is no push — the lazy fetches inside it included; for a push,
+// write, or workflows when a commit it would send touches
+// .github/workflows/ or what it sends cannot be resolved
+// (brokeredGitPushAccess). A push a hook or alias starts inside a call that
+// is no push gets read, and GitHub refuses it.
 func brokeredGitAccess(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay) string {
 	if args.Subcommand != "push" {
 		return hq.GitHubAccessRead
@@ -1079,9 +1093,11 @@ const pushCheckCommitCap = 1000
 
 // brokeredGitPushAccess is a push's access: write, or workflows when a
 // commit the push would send touches .github/workflows/ or what it sends
-// cannot be resolved — never less than today's token. The check runs before
-// the push as relayed read calls in the same checkout, with the push's -C
-// and -c: push.followTags set is unresolvable; a push naming no refspec
+// cannot be resolved — never less than today's token. The check runs when
+// GitHub first asks during the push, before any token is minted, as relayed
+// read calls in the same checkout with the push's -C and -c (it only reads,
+// so it runs beside the waiting push): push.followTags set is
+// unresolvable; a push naming no refspec
 // sends the current branch to @{push}; the commits the remote lacks are
 // `rev-list <src>… --not --remotes=<remote>`, or `--not refs/heads/main`
 // when the remote has no tracking refs at all (zcp keeps local main on HQ's
