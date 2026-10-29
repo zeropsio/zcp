@@ -45,7 +45,13 @@ func (ownEditShell) ExecSSHBackground(context.Context, string, string, time.Dura
 // zcp's files — a new one included — signed as zcp, and leaves the person's
 // own staged and unstaged work as it was.
 func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
-	t.Parallel()
+	// non-parallel: isolate fixture identities from the caller's Git hook environment.
+	for _, name := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx := context.Background()
 	root := t.TempDir()
 	write := func(name, body string) {
