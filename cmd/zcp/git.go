@@ -24,8 +24,9 @@ import (
 
 // `zcp git <host> <git args…>` runs one git command inside the dev service
 // host, over ssh, in that service's checkout (ops.RunBrokeredGit): git's
-// stdout and stderr pass through byte for byte, stdin too (`commit -F -`), and
-// the exit code is git's. Ctrl-C or SIGTERM stop the call; there is no
+// stdout and stderr pass through byte for byte, stdin too when the argv makes
+// git read it (`commit -F -`, ops.BrokeredGitReadsStdin), and the exit code
+// is git's. Ctrl-C or SIGTERM stop the call; there is no
 // deadline of its own, since a push of a large repository takes as long as it
 // takes. It is a passthrough of git's own streams, so it writes nothing to
 // stdout itself and runs before CLI telemetry.

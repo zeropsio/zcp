@@ -312,11 +312,27 @@ var previousBranchDash = map[string]bool{
 }
 
 // patchValueOptions are apply's and am's options that take their value as
-// the next argument, so it is no patch file.
+// the next argument, so it is no patch file — -p and -C too, when their
+// value is not attached.
 var patchValueOptions = map[string]bool{
 	"--exclude": true, "--include": true, "--directory": true, "--whitespace": true,
 	"--build-fake-ancestor": true, "--patch-format": true, "--resolvemsg": true,
-	"--empty": true, "--quoted-cr": true,
+	"--empty": true, "--quoted-cr": true, "-p": true, "-C": true,
+}
+
+// stdinPaths are the paths through which a process reads its own stdin.
+var stdinPaths = []string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+
+// namesStdinPath reports whether a — an operand, an option's separated or
+// attached value — names one of stdinPaths.
+func namesStdinPath(a string) bool {
+	for _, p := range stdinPaths {
+		attachedShort := len(a) == 2+len(p) && a[0] == '-' && a[1] != '-' && a[2:] == p
+		if a == p || strings.HasSuffix(a, "="+p) || attachedShort {
+			return true
+		}
+	}
+	return false
 }
 
 // amNoPatch are am's options that read no patch: they act on the session
@@ -334,24 +350,33 @@ var trailerValueOptions = map[string]bool{
 
 // BrokeredGitReadsStdin reports whether the call's argv asks git to read its
 // stdin, so zcp forwards its own — explicitly (a standalone `-`, --stdin…,
-// -F -, --file=-) or by the subcommand's nature (cat-file --batch…,
+// -F -, --file=-, a file option or operand naming /dev/stdin, /dev/fd/0 or
+// /proc/self/fd/0) or by the subcommand's nature (cat-file --batch…,
 // commit-tree without -m/-F, apply/am/interpret-trailers without a file,
-// mktree, fast-import, patch-id, stripspace, update-index --index-info).
-// Anything else reads /dev/null, so an open stdin never holds a call that
-// does not read it; a `-` that names the previous branch is no stdin.
+// mktree, mktag, fast-import, patch-id, stripspace, pack-objects,
+// unpack-objects, show-index, mailinfo, fmt-merge-msg without -F/--file,
+// mailsplit without an mbox, update-index --index-info). Anything else
+// reads /dev/null, so an open stdin never holds a call that does not read
+// it, nor is taken from a caller that reads it on; a `-` that names the
+// previous branch is no stdin. A relayed call and a plain one forward by
+// this one rule.
 func BrokeredGitReadsStdin(args BrokeredGitArgs) bool {
 	rest := args.Rest
 	for _, a := range rest {
 		switch {
 		case a == "-" && !previousBranchDash[args.Subcommand]:
 			return true
-		case strings.HasPrefix(a, "--stdin"), a == "-F-", a == "--file=-":
+		case strings.HasPrefix(a, "--stdin"), a == "-F-", a == "--file=-", namesStdinPath(a):
 			return true
 		}
 	}
 	switch args.Subcommand {
-	case "mktree", "fast-import", "patch-id", "stripspace":
+	case "mktree", "mktag", "fast-import", "patch-id", "stripspace", "pack-objects", "unpack-objects", "show-index", "mailinfo":
 		return true
+	case "fmt-merge-msg":
+		return !slices.ContainsFunc(rest, func(a string) bool { return strings.HasPrefix(a, "-F") || strings.HasPrefix(a, "--file") })
+	case "mailsplit":
+		return !hasOperand(rest, nil)
 	case "cat-file":
 		return slices.ContainsFunc(rest, func(a string) bool { return strings.HasPrefix(a, "--batch") })
 	case "commit-tree":
