@@ -762,12 +762,6 @@ func endAfterGrace(gitEnded, outEnded, sshEnded <-chan struct{}, stop func()) {
 	}
 }
 
-// relayFrames is relayStream for a stream read without a done marker's
-// receiver: a marker still ends the answering.
-func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
-	relayStream(r, nonce, stderr, answers, answer, nil)
-}
-
 // relayStream copies the ssh stderr r to stderr line by line as it arrives,
 // taking out every frame of nonce — a line that begins with its prefix after
 // at most one carriage return — and writing to answers exactly one answer
@@ -1277,7 +1271,7 @@ func (c *relayCall) revoke(ctx context.Context) {
 func relayNonce() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("%w: relay nonce: %w", ErrBrokeredGitSetup, err)
+		return "", fmt.Errorf("relay nonce: %w", err)
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -1354,12 +1348,12 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	if forward {
 		var err error
 		if payload, err = readBrokeredGitStdin(ctx, stdin); err != nil {
-			return -1, err
+			return -1, fmt.Errorf("forward stdin: %w", err)
 		}
 	}
 	nonce, err := relayNonce()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
 	command := buildRelayedGitCommand(dir, args, nonce, forward, brokeredGitAllowProtocol(args, relay.Identity.Origin))
 

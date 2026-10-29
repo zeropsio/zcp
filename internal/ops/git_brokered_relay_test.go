@@ -50,6 +50,12 @@ const frameTestNonce = "0123456789abcdef"
 // framePrefix is how every frame of frameTestNonce starts.
 const framePrefix = "ZCPCRED-" + frameTestNonce + " "
 
+// relayFrames is relayStream for a stream read without a done marker's
+// receiver: a marker still ends the answering.
+func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
+	relayStream(r, nonce, stderr, answers, answer, nil)
+}
+
 // relayFramesOf runs relayFrames over input read through wrap (nil: whole),
 // answering with answer; it returns what reached stderr and the answers.
 func relayFramesOf(input string, wrap func(io.Reader) io.Reader, answer func(protocol, host, path string) (string, string)) (relayed, answers string) {
