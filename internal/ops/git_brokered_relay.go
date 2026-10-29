@@ -471,17 +471,24 @@ func relayLockPath(nonce string) string { return "/tmp/zcp-relay-" + nonce + ".l
 
 // relayHelper is the call's credential helper, one line for git's
 // `-c credential.helper=` (POSIX sh, get only, GNU and busybox userland):
-// it reads git's request, takes the call's lock (giving up relayLockBound
-// seconds by the clock after it began), writes its frame to descriptor 4 —
-// answering nothing at once when it cannot — and reads descriptor 3 until
-// the answer carrying its own id and its host, or `-` for a frame zcp could
-// not read, discarding any other (one a helper that gave up left, or a
-// reused PID's), then hands git the user and password, or nothing for a
-// declined one (`-`). The lock is removed when it ends, also when it is
-// signalled (exit 129).
+// it reads git's request, checks that descriptors 3 and 4 are still the
+// session's — the same files as the script's copies 8 and 9 (`test -ef` on
+// /dev/fd, where the system has it) — and answers nothing at once when
+// either is not: a hook may have pointed one elsewhere, or closed it and let
+// git reuse the number (git-remote-http's sockets take it without
+// close-on-exec on Linux), and a frame written there would go to whatever it
+// is now while the helper waited on an answer that never comes. It then
+// takes the call's lock (giving up relayLockBound seconds by the clock after
+// it began), writes its frame to descriptor 4 — answering nothing at once
+// when it cannot — and reads descriptor 3 until the answer carrying its own
+// id and its host, or `-` for a frame zcp could not read, discarding any
+// other (one a helper that gave up left, or a reused PID's), then hands git
+// the user and password, or nothing for a declined one (`-`). The lock is
+// removed when it ends, also when it is signalled (exit 129).
 func relayHelper(nonce string) string {
 	return "!f() { test \"$1\" = get || return 0; pr=; h=; p=; " +
 		"while IFS= read -r l && [ -n \"$l\" ]; do case \"$l\" in protocol=*) pr=${l#protocol=};; host=*) h=${l#host=};; path=*) p=${l#path=};; esac; done; " +
+		"if [ -e /dev/fd/0 ]; then [ /dev/fd/3 -ef /dev/fd/8 ] && [ /dev/fd/4 -ef /dev/fd/9 ] || return 0; fi; " +
 		"L=" + relayLockPath(nonce) + "; end=$(( $(date +%s) + " + fmt.Sprint(relayLockBound) + " )); " +
 		"until mkdir \"$L\" 2>/dev/null; do [ \"$(date +%s)\" -lt \"$end\" ] || return 0; sleep 0.1 2>/dev/null || sleep 1; done; " +
 		"trap 'rmdir \"$L\" 2>/dev/null' EXIT; trap 'rmdir \"$L\" 2>/dev/null; exit 129' INT TERM HUP; " +
@@ -522,7 +529,8 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 
 // buildRelayedGitCommand is a relayed call's remote command: /bin/sh runs a
 // script that scrubs the environment, keeps the session's stdin as
-// descriptor 3 (answers) and its stderr as 4 (frames), removes what it made
+// descriptor 3 (answers) and its stderr as 4 (frames), each with a copy — 8
+// and 9 — a helper checks them against (relayHelper), removes what it made
 // when it ends, reads a forwarded stdin into a file, changes into dir and
 // runs git with zcp's helper alone — the empty helper first clears every
 // persisted one — and the protocol pin after the user's -c, git's stdin the
@@ -546,7 +554,7 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
 	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
-	b.WriteString("exec 3<&0 4>&2; ")
+	b.WriteString("exec 3<&0 4>&2 8<&0 9>&2; ")
 	b.WriteString("L=" + ShellQuote(relayLockPath(nonce)) + "; d=; ")
 	b.WriteString("trap " + ShellQuote(relayCleanup) + " EXIT; ")
 	b.WriteString("trap " + ShellQuote(relayCleanup+"; exit 129") + " INT TERM HUP; ")
