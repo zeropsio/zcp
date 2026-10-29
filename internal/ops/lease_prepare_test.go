@@ -115,7 +115,7 @@ func TestLeaseAcquire_RunsTheRepositorysPrepareAfterTheCheckout(t *testing.T) {
 				if prepare < read || prepare > supervisor {
 					t.Fatalf("commands = %v, want the prepare after the read and before the supervisor", cmds)
 				}
-				if want := "cd " + shellQuote(leaseWorkDir) + " && /bin/sh -c " + shellQuote(prep) + " </dev/null"; cmds[prepare] != want {
+				if want := "cd " + shellQuote(LeaseWorkDir) + " && /bin/sh -c " + shellQuote(prep) + " </dev/null"; cmds[prepare] != want {
 					t.Errorf("prepare command = %q, want %q", cmds[prepare], want)
 				}
 				if strings.Contains(cmds[prepare], "fetch") || strings.Contains(cmds[checkout], prep) {

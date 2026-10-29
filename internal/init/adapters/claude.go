@@ -295,7 +295,7 @@ const mateGitSetting = `"git.enabled": false`
 func renderVSCodeSettings(mateEnabled bool) (string, error) {
 	tmpl, err := content.GetTemplate("vscode-settings.json")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("vscode settings template: %w", err)
 	}
 	if !mateEnabled {
 		return tmpl, nil

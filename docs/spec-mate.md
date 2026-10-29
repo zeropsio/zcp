@@ -3872,20 +3872,36 @@ Witnesses: `TestProjectClient_*`, `TestReconcileHQRepositories_PlainProject_*`,
 
 `zcp git <host> [-c <key>=<value>]... [-C <dir under /tmp/>] <subcommand> [<args>...]` runs one
 git command in the dev service `host`, over ssh, in its checkout (the directory zcp's record says
-its deploys run in, else `/var/www`) or a cleaned `-C` path strictly below `/tmp/` (a dev-side
-worktree) — never in the zcp container, never on its sshfs mount (`cmd/zcp/git.go`,
-`internal/ops/git_brokered.go`). The remote command is `/bin/sh -c '<script>'` whatever the login
-shell; the script unsets git's tracing, TLS, askpass and redirecting variables and runs git with
-`GIT_TERMINAL_PROMPT=0`, every argument ShellQuoted. stdin, stdout, stderr and the exit code are
-git's (255 is ssh's own failure); `zcp git` prints nothing to stdout itself and runs before CLI
-telemetry. Ctrl-C or SIGTERM stops the ssh client with exit 130, saying the remote git may still be
-running and its lock clears when it finishes. Refused with exit 2 before any ssh call: a loopback
-or the container's own name, a name that is no hostname or lease alias, a call outside a
-container, a stage (naming its dev), a pool-keyed pair (naming the lease route), and any leading
-option but `-c` and one `-C`.
+its deploys run in, else `/var/www`; a lease's `/var/www`) or a cleaned `-C` path strictly below
+`/tmp/` (a dev-side worktree) — never in the zcp container, never on its sshfs mount
+(`cmd/zcp/git.go`, `internal/ops/git_brokered.go`). The remote command is `/bin/sh -c '<script>'`
+whatever the login shell; the script unsets git's tracing, TLS, askpass and redirecting variables
+and runs git with `GIT_TERMINAL_PROMPT=0`, every argument ShellQuoted. stdout, stderr and the exit
+code are git's (255 is ssh's own failure); `zcp git` prints nothing to stdout itself and runs before
+CLI telemetry. stdin is git's only when the argv makes git read it — a standalone `-`, `--stdin…`,
+`-F -`, a file option or operand naming `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0`, or a
+subcommand that reads it by its nature (`BrokeredGitReadsStdin`, one rule for plain and relayed
+calls) — so any other call's remote reads nothing and a caller reading its stdin on, such as a
+loop over hosts, keeps it. Ctrl-C or SIGTERM stops the ssh client with exit 130, saying the remote
+git may still be running and its lock clears when it finishes. Refused with exit 2 before any ssh
+call: a loopback or the container's own name, a name that is no hostname or lease alias, a call
+outside a container, a stage (naming its dev), a pool-keyed pair (naming the lease route), a lease
+alias the lease check refuses (below), and any leading option but `-c` and one `-C`. Exit 1 is a
+record zcp could not read.
 
-**Relayed or plain.** In a Mate container every subcommand of a pair wired to an HQ repository is
-relayed, wired through or not (`isRelayedGit`): its checkout is a `blob:none` partial clone
+**Leases.** A lease alias `<pool>-<n>` is asked about before any ssh call (docs/spec-workflows.md
+§8 DP-2): `ops.LeaseTargetChecked` over the API client and orchestrators `zcp init`'s lease restore
+builds, one renew of the record's lease. Only zcp's own lease records make an alias reachable, so
+one it holds no record of is refused without asking anyone. A lost lease is refused naming the
+release that drops its record; an unverified one — the orchestrator did not answer, or this zcp has
+no orchestrator or API client to ask with — naming why and the status that asks again; a parked one
+(DP-28) naming the unpark. Each is a refusal, exit 2, in the check's own words: nothing reached the
+container. A lease the orchestrator gives zcp runs git in its checkout, `/var/www` of its
+container, reached by the alias; in a Mate container a lease of a pool pair wired to HQ is relayed,
+answered from that pool pair's record.
+
+**Relayed or plain.** In a Mate container every subcommand of a pair wired to an HQ repository, or
+of a lease of such a pool pair, is relayed, wired through or not (`isRelayedGit`): its checkout is a `blob:none` partial clone
 (§10.10, *A Mate's git*), so `checkout`, `show`, `log -p`, `worktree add` or a hook may fetch
 contents lazily and ask for a credential again and again. Every other call is the plain
 passthrough, with no helper. A relayed call also refuses, with exit 2, git's `credential`
@@ -3912,10 +3928,21 @@ parsed, and a frame grown past it is answered as malformed. The helper takes onl
 echoing its pid and host, hands git nothing for a decline, so git never sends an empty password,
 and frees the lock when it ends or is signalled. A call says at most 32 distinct lines.
 
-When git exits the script writes `ZCPDONE-<nonce> <exit>` on 4, and the call ends there: zcp
-answers no further frame, closes 3 so a waiting helper frees the lock, revokes the call's tokens at
-once, ends a session still open a second later (a process a hook left running may hold it), and
-returns the marker's exit code.
+When git exits the script writes `ZCPEND-<nonce>` on stdout, then `ZCPDONE-<nonce> <exit>` on 4,
+and the call ends there: zcp answers no further frame, closes 3 so a waiting helper frees the lock,
+revokes the call's tokens at once, and returns the marker's exit code. git's stdout passes through
+a pipe of zcp's own, copied to the caller at the caller's pace with ssh waiting behind it and the
+end mark taken out, so no byte git wrote is lost however slowly the caller reads. A session still
+open a second after both the marker arrived and every byte before the end mark reached the caller
+is ended: a process a hook or alias left running may hold descriptors 3 and 4, or stdout too, and
+what it writes to stdout after the end mark is dropped. Once ssh ended, zcp reads the stdout pipe
+while it gives more or the caller is still being written to, and closes one silent for 2 s; a call
+the caller stopped waits at most 2 s for it. A caller whose reader went away ends the copy, which
+closes the pipe: ssh dies of SIGPIPE writing to it, as it did writing there itself, and the remote
+git with its session. `zcp git` catches SIGPIPE and never ignores it — an ignored disposition
+survives exec, a caught one is reset in every child — so its own write fails with EPIPE while ssh
+keeps the default; the call still revokes its tokens, and returns git's exit code when the marker
+came first, else ssh's failure (`TestHandleSIGPIPE_*`).
 
 **A relay frame is answered only from zcp-side records and the call's own argv — never from the
 dev checkout's config, which the dev service writes, nor from `ServiceMeta.RemoteURL`, written from
@@ -3932,8 +3959,12 @@ HQ's canonical form (lower-cased, no `.git`; a path that is no `owner/name` is d
 once per (repository, access) per call, and answers git with that token as often as git asks.
 Access is decided on the call's first GitHub request: `read` for any call that is no push; for a
 push `write`, or `workflows` when a commit it would send touches `.github/workflows/` or what it
-sends cannot be resolved (tags, a force, a deletion, a pattern, over 1000 commits, a failed check),
-read by relayed `rev-list` and `diff-tree --root -m` calls on commits and trees only. A push only
+sends cannot be resolved (tags, a force, a deletion, a pattern, over 1000 commits, a failed check,
+and what the config decides: `push.followTags`, the pushed remote's `remote.<name>.mirror`, and for
+a push naming no refspec `push.default=matching` or the pushed remote's `remote.<name>.push`, from
+the checkout's config or the call's `-c`), read by relayed `config --get-regexp`, `rev-list` and
+`diff-tree --root -m` calls on config, commits and trees only; any other push naming no refspec
+sends the current branch to `@{push}`. A push only
 HQ answers runs no check; a push a hook starts inside another call gets `read`. HQ's `bad_access`
 and `read_only_remote` are declines naming the repository, never retried with another access.
 Each token is revoked when the call ends, also when it was cancelled — `DELETE
@@ -3961,9 +3992,20 @@ Witnesses: `TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined`,
 `TestBrokeredGit_Relay_PartialClone_LazyShowCheckoutWorktreeAnswered`,
 `TestBrokeredGit_Relay_PersistedHelperNeverRuns`,
 `TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall`,
+`TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte`,
+`TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace`,
+`TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode`,
+`TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt`,
 `TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext`,
-`TestBrokeredGitFrames_EveryFrameWithReadableId_GetsExactlyOneAnswer`, `TestBrokeredGit_Access_*`,
-`TestRunGitCmd_*`, and `TestConfigureVSCode_MateTurnedOff_GitSettingRemoved`; the relay tests run
+`TestBrokeredGitFrames_EveryFrameWithReadableId_GetsExactlyOneAnswer`,
+`TestBrokeredGit_StdinReaders_PlumbingStdinPathsAndSeparatedValues`,
+`TestBrokeredGitPushConfig_ReadAsGitReadsIt`, `TestBrokeredGit_Access_*` (config-decided pushes:
+`TestBrokeredGit_Access_PushRefspecFromConfig_AsksWorkflows`), `TestRunGitCmd_*` (leases:
+`TestRunGitCmd_LeaseAlias_NoRecord_Refused`, `TestRunGitCmd_LeaseAlias_NotVouched_RefusedBeforeSSH`,
+`TestRunGitCmd_LeaseAlias_Parked_RefusedNamingTheUnpark`,
+`TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout`; plain stdin:
+`TestRunGitCmd_PlainCall_StdinOnlyWhenGitReadsIt`), and
+`TestConfigureVSCode_MateTurnedOff_GitSettingRemoved`; the relay tests run
 the real script against real git under `/bin/sh` and, where installed, dash and busybox `sh`.
 
 ## 7. The fork

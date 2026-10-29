@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -311,11 +312,27 @@ var previousBranchDash = map[string]bool{
 }
 
 // patchValueOptions are apply's and am's options that take their value as
-// the next argument, so it is no patch file.
+// the next argument, so it is no patch file — -p and -C too, when their
+// value is not attached.
 var patchValueOptions = map[string]bool{
 	"--exclude": true, "--include": true, "--directory": true, "--whitespace": true,
 	"--build-fake-ancestor": true, "--patch-format": true, "--resolvemsg": true,
-	"--empty": true, "--quoted-cr": true,
+	"--empty": true, "--quoted-cr": true, "-p": true, "-C": true,
+}
+
+// stdinPaths are the paths through which a process reads its own stdin.
+var stdinPaths = []string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+
+// namesStdinPath reports whether a — an operand, an option's separated or
+// attached value — names one of stdinPaths.
+func namesStdinPath(a string) bool {
+	for _, p := range stdinPaths {
+		attachedShort := len(a) == 2+len(p) && a[0] == '-' && a[1] != '-' && a[2:] == p
+		if a == p || strings.HasSuffix(a, "="+p) || attachedShort {
+			return true
+		}
+	}
+	return false
 }
 
 // amNoPatch are am's options that read no patch: they act on the session
@@ -333,24 +350,33 @@ var trailerValueOptions = map[string]bool{
 
 // BrokeredGitReadsStdin reports whether the call's argv asks git to read its
 // stdin, so zcp forwards its own — explicitly (a standalone `-`, --stdin…,
-// -F -, --file=-) or by the subcommand's nature (cat-file --batch…,
+// -F -, --file=-, a file option or operand naming /dev/stdin, /dev/fd/0 or
+// /proc/self/fd/0) or by the subcommand's nature (cat-file --batch…,
 // commit-tree without -m/-F, apply/am/interpret-trailers without a file,
-// mktree, fast-import, patch-id, stripspace, update-index --index-info).
-// Anything else reads /dev/null, so an open stdin never holds a call that
-// does not read it; a `-` that names the previous branch is no stdin.
+// mktree, mktag, fast-import, patch-id, stripspace, pack-objects,
+// unpack-objects, show-index, mailinfo, fmt-merge-msg without -F/--file,
+// mailsplit without an mbox, update-index --index-info). Anything else
+// reads /dev/null, so an open stdin never holds a call that does not read
+// it, nor is taken from a caller that reads it on; a `-` that names the
+// previous branch is no stdin. A relayed call and a plain one forward by
+// this one rule.
 func BrokeredGitReadsStdin(args BrokeredGitArgs) bool {
 	rest := args.Rest
 	for _, a := range rest {
 		switch {
 		case a == "-" && !previousBranchDash[args.Subcommand]:
 			return true
-		case strings.HasPrefix(a, "--stdin"), a == "-F-", a == "--file=-":
+		case strings.HasPrefix(a, "--stdin"), a == "-F-", a == "--file=-", namesStdinPath(a):
 			return true
 		}
 	}
 	switch args.Subcommand {
-	case "mktree", "fast-import", "patch-id", "stripspace":
+	case "mktree", "mktag", "fast-import", "patch-id", "stripspace", "pack-objects", "unpack-objects", "show-index", "mailinfo":
 		return true
+	case "fmt-merge-msg":
+		return !slices.ContainsFunc(rest, func(a string) bool { return strings.HasPrefix(a, "-F") || strings.HasPrefix(a, "--file") })
+	case "mailsplit":
+		return !hasOperand(rest, nil)
 	case "cat-file":
 		return slices.ContainsFunc(rest, func(a string) bool { return strings.HasPrefix(a, "--batch") })
 	case "commit-tree":
@@ -511,7 +537,9 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // holds only 0-2. A process a hook leaves running in the background holds 3
 // and 4 the same way, so once git ended the script writes its done marker,
 // `ZCPDONE-<nonce> <exit>`, and zcp ends the call from it (relayStream,
-// RunBrokeredGitRelayed). Running git without 3 and 4 and having the helper
+// RunBrokeredGitRelayed) — after its end mark on stdout, `ZCPEND-<nonce>`,
+// which every byte git wrote to stdout precedes (relayStdout). Running git
+// without 3 and 4 and having the helper
 // reopen the script's through /proc/<pid>/fd does not work over sshd: the
 // session's pipes are root's, and the session user's reopen is refused
 // (measured on alpine 3.21 and ubuntu 24.04).
@@ -555,10 +583,11 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 	} else {
 		b.WriteString(" < /dev/null")
 	}
-	// git ended: say so, with its exit code, before the traps clean up, so
-	// zcp ends the call even while something git started still holds the
-	// session's descriptors.
-	b.WriteString(`; r=$?; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
+	// git ended: mark the end of its stdout on stdout itself, then say so,
+	// with its exit code, before the traps clean up, so zcp ends the call
+	// even while something git started still holds the session's
+	// descriptors — once every byte git wrote reached the caller.
+	b.WriteString(`; r=$?; printf '` + relayEndMark(nonce) + `' 2>/dev/null; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
 	return "/bin/sh -c " + ShellQuote(b.String())
 }
 
@@ -567,18 +596,171 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 const relayLineCap = 64 << 10
 
 // relayDrainBound is how long zcp keeps reading the session's stderr once
-// ssh ended.
+// ssh ended, and how long its stdout pipe may give nothing while nothing is
+// being written to the caller before zcp stops reading it (relayStdout.drain).
 const relayDrainBound = 2 * time.Second
 
 // relayDoneGrace is how long zcp lets the session close by itself once the
-// script said git ended, before it ends the session: something git started
-// may hold the session's descriptors.
+// script said git ended and every byte git wrote to stdout reached the
+// caller, before it ends the session: something git started may hold the
+// session's descriptors.
 const relayDoneGrace = time.Second
 
-// relayFrames is relayStream for a stream read without a done marker's
-// receiver: a marker still ends the answering.
-func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
-	relayStream(r, nonce, stderr, answers, answer, nil)
+// relayEndMark is what the script writes to stdout once git exited: every
+// byte git wrote to stdout comes before it.
+func relayEndMark(nonce string) string { return "ZCPEND-" + nonce }
+
+// relayStdout is a relayed call's stdout. ssh writes into a pipe of zcp's
+// own (w), and copy passes what arrives to the caller's stdout at the
+// caller's pace, ssh waiting behind it — so ssh never holds git's output
+// when zcp ends the session — and takes out the script's end mark. ended is
+// closed once every byte before the mark reached the caller, or the stream
+// ended without one, or the caller's stdout failed (its reader is gone, and
+// the pipe is closed so ssh learns it as it did writing there itself): no
+// byte of git's can reach the caller after that. What arrives after the
+// mark — written by a process a hook left holding the session's stdout — is
+// not git's: it is read and dropped, so it never holds the call. Code in
+// the dev service that writes the mark itself, nonce and all, ends its own
+// call's output there.
+type relayStdout struct {
+	r, w  *os.File
+	dst   io.Writer
+	mark  []byte
+	ended chan struct{}
+	done  chan struct{}
+
+	// read counts the reads that gave bytes; writing is set while copy
+	// writes to the caller (drain).
+	read    atomic.Int64
+	writing atomic.Bool
+}
+
+func newRelayStdout(dst io.Writer, nonce string) (*relayStdout, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	return &relayStdout{r: r, w: w, dst: dst, mark: []byte(relayEndMark(nonce)), ended: make(chan struct{}), done: make(chan struct{})}, nil
+}
+
+// copy runs until the pipe gives no more — EOF once every holder of w closed
+// it, or a closed r — and closes r.
+func (s *relayStdout) copy() {
+	defer close(s.done)
+	defer func() { _ = s.r.Close() }()
+	end := sync.OnceFunc(func() { close(s.ended) })
+	defer end()
+	var held []byte // the tail of what was read that may begin the mark
+	passing := true
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := s.r.Read(buf)
+		if n > 0 {
+			s.read.Add(1)
+		}
+		if n > 0 && passing {
+			pending := append(slices.Clone(held), buf[:n]...)
+			var out []byte
+			if i := bytes.Index(pending, s.mark); i >= 0 {
+				out, held, passing = pending[:i], nil, false
+			} else {
+				keep := markPrefixTail(pending, s.mark)
+				out, held = pending[:len(pending)-keep], pending[len(pending)-keep:]
+			}
+			if !s.pass(out) {
+				end()
+				_ = s.r.Close()
+				return
+			}
+			if !passing {
+				end()
+			}
+		}
+		if err != nil {
+			if passing {
+				s.pass(held)
+			}
+			return
+		}
+	}
+}
+
+// pass writes p to the caller, false when the caller's stdout failed.
+func (s *relayStdout) pass(p []byte) bool {
+	if len(p) == 0 {
+		return true
+	}
+	s.writing.Store(true)
+	defer s.writing.Store(false)
+	_, err := s.dst.Write(p)
+	return err == nil
+}
+
+// markPrefixTail is the length of the longest tail of p that begins mark,
+// shorter than mark.
+func markPrefixTail(p, mark []byte) int {
+	for k := min(len(mark)-1, len(p)); k > 0; k-- {
+		if bytes.Equal(p[len(p)-k:], mark[:k]) {
+			return k
+		}
+	}
+	return 0
+}
+
+// drain waits, once ssh ended and w is closed, for copy to pass on the rest
+// of what ssh wrote: as long as the caller is being written to or the pipe
+// gives more, however slowly the caller reads. A pipe that gives nothing for
+// relayDrainBound while nothing is written to the caller — only another
+// holder of its write end could keep it open — is closed. A call its caller
+// stopped (stopped) waits at most relayDrainBound, and a write to a caller
+// that does not read then finishes on its own.
+func (s *relayStdout) drain(stopped bool) {
+	if stopped {
+		select {
+		case <-s.done:
+		case <-time.After(relayDrainBound):
+			_ = s.r.Close()
+		}
+		return
+	}
+	tick := time.NewTicker(relayDrainBound)
+	defer tick.Stop()
+	last := s.read.Load()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-tick.C:
+			if n := s.read.Load(); n != last || s.writing.Load() {
+				last = n
+				continue
+			}
+			_ = s.r.Close()
+			<-s.done
+			return
+		}
+	}
+}
+
+// endAfterGrace ends the session (stop) relayDoneGrace after git ended —
+// the script's done marker (gitEnded) — and every byte git wrote to stdout
+// reached the caller (outEnded), unless the session ended by itself first
+// (sshEnded).
+func endAfterGrace(gitEnded, outEnded, sshEnded <-chan struct{}, stop func()) {
+	for _, c := range []<-chan struct{}{gitEnded, outEnded} {
+		select {
+		case <-c:
+		case <-sshEnded:
+			return
+		}
+	}
+	grace := time.NewTimer(relayDoneGrace)
+	defer grace.Stop()
+	select {
+	case <-grace.C:
+		stop()
+	case <-sshEnded:
+	}
 }
 
 // relayStream copies the ssh stderr r to stderr line by line as it arrives,
@@ -1090,7 +1272,7 @@ func (c *relayCall) revoke(ctx context.Context) {
 func relayNonce() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("%w: relay nonce: %w", ErrBrokeredGitSetup, err)
+		return "", fmt.Errorf("relay nonce: %w", err)
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -1112,6 +1294,34 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// relayPipes are a relayed call's own pipes: the session's stdin (answers,
+// after a forwarded stdin), its stderr (frames) and its stdout.
+type relayPipes struct {
+	answersR, answersW *os.File
+	framesR, framesW   *os.File
+	out                *relayStdout
+}
+
+func openRelayPipes(stdout io.Writer, nonce string) (relayPipes, error) {
+	var p relayPipes
+	var err error
+	if p.answersR, p.answersW, err = os.Pipe(); err != nil {
+		return relayPipes{}, fmt.Errorf("answers pipe: %w", err)
+	}
+	if p.framesR, p.framesW, err = os.Pipe(); err != nil {
+		_ = p.answersR.Close()
+		_ = p.answersW.Close()
+		return relayPipes{}, fmt.Errorf("frames pipe: %w", err)
+	}
+	if p.out, err = newRelayStdout(stdout, nonce); err != nil {
+		for _, f := range []*os.File{p.answersR, p.answersW, p.framesR, p.framesW} {
+			_ = f.Close()
+		}
+		return relayPipes{}, err
+	}
+	return p, nil
+}
+
 // RunBrokeredGitRelayed runs git with args in host's checkout at dir over
 // ssh like RunBrokeredGit, with zcp answering git's credential requests
 // over the session from relay: git's stdout and the rest of its stderr pass
@@ -1122,11 +1332,14 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 // past the call: each GitHub token it minted is revoked when it ends, also
 // when ctx stopped it. Every GitHub token carries only what the call needs
 // (brokeredGitAccess). The call ends when git does: on the script's done
-// marker zcp answers nothing more, closes descriptor 3, revokes at once,
-// ends a session that does not close within relayDoneGrace — something git
-// started may hold it — and returns the exit code the marker carries; with
-// no marker (ssh dropped or killed) the exit code is ssh's. The caller
-// refuses what CheckRelayedGitArgs refuses first.
+// marker zcp answers nothing more, closes descriptor 3, revokes at once, and
+// returns the exit code the marker carries; with no marker (ssh dropped or
+// killed) the exit code is ssh's. git's stdout passes through relayStdout,
+// so none of it is lost however slowly the caller reads: a session still
+// open relayDoneGrace after both the marker and the last byte git wrote to
+// stdout reached the caller is ended — something git started holds it — and
+// what such a process writes to stdout after git ended is dropped. The
+// caller refuses what CheckRelayedGitArgs refuses first.
 func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if relay.HTTPClient == nil {
 		relay.HTTPClient = &http.Client{}
@@ -1136,29 +1349,24 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	if forward {
 		var err error
 		if payload, err = readBrokeredGitStdin(ctx, stdin); err != nil {
-			return -1, err
+			return -1, fmt.Errorf("forward stdin: %w", err)
 		}
 	}
 	nonce, err := relayNonce()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
 	command := buildRelayedGitCommand(dir, args, nonce, forward, brokeredGitAllowProtocol(args, relay.Identity.Origin))
 
-	answersR, answersW, err := os.Pipe()
+	p, err := openRelayPipes(stdout, nonce)
 	if err != nil {
-		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
+		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
-	framesR, framesW, err := os.Pipe()
-	if err != nil {
-		_ = answersR.Close()
-		_ = answersW.Close()
-		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
-	}
+	go p.out.copy()
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var mu sync.Mutex
-	answers := lockedWriter{mu: &mu, w: answersW}
+	answers := lockedWriter{mu: &mu, w: p.answersW}
 	var wg sync.WaitGroup
 	if forward {
 		// One write, so nothing can come between the length and the bytes.
@@ -1167,45 +1375,47 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
 	// git's end, from the script's marker: no answer after it — descriptor
 	// 3 closed, so a waiting helper reads EOF and lets the lock go — the
-	// call's tokens revoked at once, and the session ended after a grace if
-	// something git started still holds it.
+	// call's tokens revoked at once, and the session ended after a grace,
+	// once every byte git wrote reached the caller, if something git started
+	// still holds it.
 	sshCtx, stopSSH := context.WithCancel(ctx)
 	defer stopSSH()
 	gitExit := -1
-	var grace *time.Timer
+	gitEnded, sshEnded := make(chan struct{}), make(chan struct{})
 	onDone := func(code int) {
 		gitExit = code
 		mu.Lock()
-		_ = answersW.Close()
+		_ = p.answersW.Close()
 		mu.Unlock()
 		call.revoke(ctx)
-		grace = time.AfterFunc(relayDoneGrace, stopSSH)
+		close(gitEnded)
 	}
+	go endAfterGrace(gitEnded, p.out.ended, sshEnded, stopSSH)
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
-		relayStream(framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
+		relayStream(p.framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
 			return call.answer(callCtx, protocol, host, path)
 		}, onDone)
 	}()
 
-	exit, runErr := ssh.ExecSSHStdio(sshCtx, host, command, answersR, stdout, framesW)
-	_ = framesW.Close()
-	_ = answersR.Close()
+	exit, runErr := ssh.ExecSSHStdio(sshCtx, host, command, p.answersR, p.out.w, p.framesW)
+	close(sshEnded)
+	_ = p.out.w.Close()
+	_ = p.framesW.Close()
+	_ = p.answersR.Close()
 	select {
 	case <-relayed:
 	case <-time.After(relayDrainBound):
 		cancel()
-		_ = framesR.Close()
+		_ = p.framesR.Close()
 		<-relayed
 	}
-	if grace != nil {
-		grace.Stop()
-	}
 	cancel()
-	_ = answersW.Close()
+	_ = p.answersW.Close()
 	wg.Wait()
-	_ = framesR.Close()
+	_ = p.framesR.Close()
+	p.out.drain(ctx.Err() != nil)
 	call.revoke(ctx)
 
 	if gitExit >= 0 {
@@ -1311,6 +1521,84 @@ func planBrokeredGitPush(args BrokeredGitArgs) brokeredGitPushPlan {
 // localMainRef is local main, which zcp keeps on HQ's main.
 const localMainRef = "refs/heads/main"
 
+// brokeredGitPushConfigKeys is the config a push's check reads, as `git
+// config --get-regexp` matches keys — section and variable lower-cased, a
+// remote's name as written.
+const brokeredGitPushConfigKeys = `^(push\.(followtags|default)|remote\..+\.(push|mirror))$`
+
+// brokeredGitPushConfig is what the checkout's config and the call's -c
+// say about what a push sends: push.followTags, push.default, the remotes
+// with a remote.<name>.push refspec, and remote.<name>.mirror of each.
+// unreadable is a value git itself refuses, which fails the push.
+type brokeredGitPushConfig struct {
+	followTags  bool
+	pushDefault string
+	pushSpecs   map[string]bool
+	mirror      map[string]bool
+	unreadable  bool
+}
+
+// parseBrokeredGitPushConfig reads `git config -z --get-regexp` output:
+// `<key>\n<value>` NUL-terminated, a key with no value alone. A later value
+// of a key replaces an earlier one, as for git.
+func parseBrokeredGitPushConfig(out string) brokeredGitPushConfig {
+	cfg := brokeredGitPushConfig{pushSpecs: map[string]bool{}, mirror: map[string]bool{}}
+	for entry := range strings.SplitSeq(out, "\x00") {
+		if entry == "" {
+			continue
+		}
+		key, value, hasValue := strings.Cut(entry, "\n")
+		readBool := func() bool {
+			b, ok := gitConfigBool(value, hasValue)
+			cfg.unreadable = cfg.unreadable || !ok
+			return b
+		}
+		remote, isRemote := strings.CutPrefix(key, "remote.")
+		switch {
+		case key == "push.followtags":
+			cfg.followTags = readBool()
+		case key == "push.default":
+			cfg.pushDefault = value
+			cfg.unreadable = cfg.unreadable || !hasValue
+		case isRemote && strings.HasSuffix(remote, ".push"):
+			cfg.pushSpecs[strings.TrimSuffix(remote, ".push")] = true
+		case isRemote && strings.HasSuffix(remote, ".mirror"):
+			cfg.mirror[strings.TrimSuffix(remote, ".mirror")] = readBool()
+		}
+	}
+	return cfg
+}
+
+// sendsCurrentBranch reports whether push.default makes a push naming no
+// refspec send the current branch alone: unset (simple), simple, current,
+// upstream or tracking — never matching (every branch of the same name on
+// the remote), nothing, or a value git refuses.
+func (c brokeredGitPushConfig) sendsCurrentBranch() bool {
+	switch c.pushDefault {
+	case "", "simple", "current", "upstream", "tracking":
+		return true
+	}
+	return false
+}
+
+// gitConfigBool is a boolean config value as git reads it: no value, true,
+// yes, on or a non-zero integer is true; false, no, off, an empty value or
+// zero is false; ok is false for anything else, which git refuses.
+func gitConfigBool(value string, hasValue bool) (b, ok bool) {
+	lower := strings.ToLower(value)
+	switch {
+	case !hasValue, slices.Contains([]string{"true", "yes", "on"}, lower):
+		return true, true
+	case slices.Contains([]string{"false", "no", "off", ""}, lower):
+		return false, true
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return false, false
+	}
+	return n != 0, true
+}
+
 // pushCheckCommitCap is how many commits the workflows check reads at
 // most: more is unresolvable.
 const pushCheckCommitCap = 1000
@@ -1320,9 +1608,12 @@ const pushCheckCommitCap = 1000
 // cannot be resolved — never less than today's token. The check runs when
 // GitHub first asks during the push, before any token is minted, as relayed
 // read calls in the same checkout with the push's -C and -c (it only reads,
-// so it runs beside the waiting push): push.followTags set is
-// unresolvable; a push naming no refspec
-// sends the current branch to @{push}; the commits the remote lacks are
+// so it runs beside the waiting push): the config that decides what a push
+// sends is read first (brokeredGitPushConfig) — push.followTags set, the
+// pushed remote's remote.<name>.mirror set, and for a push naming no
+// refspec push.default=matching or the pushed remote's remote.<name>.push
+// are unresolvable; any other push naming no refspec sends the current
+// branch to @{push}; the commits the remote lacks are
 // `rev-list <src>… --not --remotes=<remote>`, or `--not refs/heads/main`
 // when the remote has no tracking refs at all (zcp keeps local main on HQ's
 // main), else every commit of the sources; more than 1000 is unresolvable;
@@ -1341,11 +1632,15 @@ func brokeredGitPushAccess(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		}, relay, strings.NewReader(stdin), &stdout, io.Discard)
 		return stdout.String(), code, err == nil
 	}
-	out, code, ok := check("", "config", "--bool", "--get", "push.followTags")
-	if followTags, _ := strconv.ParseBool(strings.TrimSpace(out)); !ok || code > 1 || followTags {
+	out, code, ok := check("", "config", "-z", "--get-regexp", brokeredGitPushConfigKeys)
+	if !ok || code > 1 {
 		return hq.GitHubAccessWorkflows
 	}
+	cfg := parseBrokeredGitPushConfig(out)
 	srcs, remote := plan.srcs, plan.remote
+	if cfg.unreadable || cfg.followTags || len(srcs) == 0 && !cfg.sendsCurrentBranch() {
+		return hq.GitHubAccessWorkflows
+	}
 	if len(srcs) == 0 {
 		out, code, ok := check("", "rev-parse", "--symbolic-full-name", "HEAD", "@{push}")
 		lines := strings.Fields(out)
@@ -1356,6 +1651,12 @@ func brokeredGitPushAccess(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		if remote == "" {
 			remote, _, _ = strings.Cut(strings.TrimPrefix(lines[1], "refs/remotes/"), "/")
 		}
+		if cfg.pushSpecs[remote] {
+			return hq.GitHubAccessWorkflows
+		}
+	}
+	if cfg.mirror[remote] {
+		return hq.GitHubAccessWorkflows
 	}
 	patterns := []string{localMainRef}
 	named := remote != "" && !strings.ContainsAny(remote, "/:*?[\\") && !strings.HasPrefix(remote, "-")

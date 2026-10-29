@@ -13,12 +13,14 @@ import (
 	goruntime "runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -180,9 +182,53 @@ func TestRunGitCmd_NotInContainer_Refused(t *testing.T) {
 	assertGitRefused(t, args, code, stdout, stderr, ssh)
 }
 
-// TestRunGitCmd_PassesStdinStdoutExitCode: the caller's stdin reaches git,
-// git's stdout and stderr reach the caller byte for byte, and the exit code is
-// git's; ssh's own 255, or an ssh that did not run, is said as an ssh failure.
+// TestRunGitCmd_PlainCall_StdinOnlyWhenGitReadsIt: a plain call hands ssh the
+// caller's stdin only when the argv makes git read it — the same rule a
+// relayed call forwards by — so `while read h; do zcp git "$h" status; done <
+// hosts` leaves the loop its input; any other call's remote reads nothing.
+func TestRunGitCmd_PlainCall_StdinOnlyWhenGitReadsIt(t *testing.T) {
+	t.Parallel()
+	const hosts = "appdev\napidev\n"
+	for _, tc := range []struct {
+		args []string
+		read bool
+	}{
+		{[]string{"appdev", "status"}, false},
+		{[]string{"appdev", "log", "-1"}, false},
+		{[]string{"appdev", "commit", "-F", "-"}, true},
+		{[]string{"appdev", "hash-object", "--stdin"}, true},
+	} {
+		var got []byte
+		ssh := &fakeGitSSH{run: func(stdin io.Reader, _, _ io.Writer) (int, error) {
+			if stdin != nil {
+				b, err := io.ReadAll(stdin)
+				got = b
+				return 0, err
+			}
+			return 0, nil
+		}}
+		deps, _, stderr := gitTestDeps(t.TempDir(), ssh)
+		caller := strings.NewReader(hosts)
+		deps.stdin = caller
+		if code := runGitCmd(t.Context(), tc.args, deps); code != 0 {
+			t.Fatalf("zcp git %q exit %d, stderr %q", tc.args, code, stderr.String())
+		}
+		if tc.read {
+			if string(got) != hosts {
+				t.Errorf("zcp git %q: the remote read %q, want the caller's stdin %q", tc.args, got, hosts)
+			}
+			continue
+		}
+		if len(got) != 0 || caller.Len() != len(hosts) {
+			t.Errorf("zcp git %q: the remote read %q and %d of the caller's %d bytes are left, want nothing read", tc.args, got, caller.Len(), len(hosts))
+		}
+	}
+}
+
+// TestRunGitCmd_PassesStdinStdoutExitCode: the caller's stdin reaches git
+// that reads it, git's stdout and stderr reach the caller byte for byte, and
+// the exit code is git's; ssh's own 255, or an ssh that did not run, is said
+// as an ssh failure.
 func TestRunGitCmd_PassesStdinStdoutExitCode(t *testing.T) {
 	t.Parallel()
 	input := "subject line\n\nbody with 'quotes' and $dollar\x00\r\n"
@@ -346,30 +392,317 @@ func TestRunGitCmd_FromAnotherWorkingDir_FindsTheRecordAndCodeVolumeDir(t *testi
 	}
 }
 
-// TestRunGitCmd_LeaseAlias_PlainPassthroughInVarWww: a host no record names —
-// a lease alias of a pool, an unadopted service — runs git in /var/www, where
-// a runtime's code lives, with nothing else decided for it.
-func TestRunGitCmd_LeaseAlias_PlainPassthroughInVarWww(t *testing.T) {
+// TestRunGitCmd_UnrecordedService_PlainPassthroughInVarWww: a service no
+// record names — an unadopted one — runs git in /var/www, where a runtime's
+// code lives, with nothing else decided for it.
+func TestRunGitCmd_UnrecordedService_PlainPassthroughInVarWww(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	writeGitTestMeta(t, stateDir, &workflow.ServiceMeta{
+	writeGitTestMeta(t, stateDir, gitPoolPairMeta())
+	ssh := &fakeGitSSH{}
+	deps, _, stderr := gitTestDeps(stateDir, ssh)
+	if code := runGitCmd(t.Context(), []string{"otherdev", "-C", "/tmp/wt-b", "status"}, deps); code != 0 {
+		t.Fatalf("zcp git otherdev exit = %d, stderr %q", code, stderr.String())
+	}
+	if len(ssh.calls) != 1 || ssh.calls[0].host != "otherdev" {
+		t.Fatalf("ssh calls = %+v, want one to otherdev", ssh.calls)
+	}
+	if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(remoteScript(t, ssh.calls[0].command), want) {
+		t.Errorf("remote command = %q, want it to end with %q", ssh.calls[0].command, want)
+	}
+}
+
+// gitPoolPairMeta is a pair keyed by its dev pool apppool.
+func gitPoolPairMeta() *workflow.ServiceMeta {
+	return &workflow.ServiceMeta{
 		Hostname: "apppool",
 		Mode:     topology.PlanModeStandard,
 		Stages:   []topology.StageRef{{Hostname: "appstage"}},
-		DevPool:  &workflow.DevPoolRef{ServiceID: "pool-1"},
-	})
-	for _, host := range []string{"apppool-3", "otherdev"} {
-		ssh := &fakeGitSSH{}
-		deps, _, stderr := gitTestDeps(stateDir, ssh)
-		if code := runGitCmd(t.Context(), []string{host, "-C", "/tmp/wt-b", "status"}, deps); code != 0 {
-			t.Fatalf("zcp git %s exit = %d, stderr %q", host, code, stderr.String())
-		}
-		if len(ssh.calls) != 1 || ssh.calls[0].host != host {
-			t.Fatalf("ssh calls = %+v, want one to %s", ssh.calls, host)
-		}
-		if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(remoteScript(t, ssh.calls[0].command), want) {
-			t.Errorf("remote command for %s = %q, want it to end with %q", host, ssh.calls[0].command, want)
-		}
+		DevPool:  &workflow.DevPoolRef{ServiceID: "svc-pool"},
+	}
+}
+
+// writeGitLeaseRecord writes the record zerops_lease keeps of apppool-3, a
+// lease of the pool apppool, parked or not.
+func writeGitLeaseRecord(t *testing.T, stateDir string, parked bool) {
+	t.Helper()
+	writeInitLeaseRecord(t, stateDir)
+	if !parked {
+		return
+	}
+	path := filepath.Join(stateDir, "leases", "apppool-3.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.Replace(body, []byte(`{`), []byte(`{"parked":true,"parkedAt":"2026-10-23T11:00:00Z",`), 1)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gitLeaseOrch stands in for the pool's orchestrator a lease check asks: a
+// renew of apppool-3's lease answers renew, a read of its container by id
+// answers byID. Any other call is none a check makes.
+type gitLeaseOrch struct {
+	ops.SwarmAPI
+
+	renew func() (platform.SwarmContainer, error)
+	byID  platform.SwarmContainer
+
+	mu     sync.Mutex
+	renews int
+}
+
+func (o *gitLeaseOrch) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	o.renews++
+	o.mu.Unlock()
+	return o.renew()
+}
+
+func (o *gitLeaseOrch) Container(context.Context, string) (platform.SwarmContainer, error) {
+	return o.byID, nil
+}
+
+func (o *gitLeaseOrch) renewed() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.renews
+}
+
+// ownedLease is the renew answer of a lease whose container is its own and
+// running; stoppedLease of one whose container is its own and stopped.
+func ownedLease() (platform.SwarmContainer, error) {
+	return platform.SwarmContainer{ID: "c-3", LockState: "reserved", Status: platform.SwarmContainerActive}, nil
+}
+
+func stoppedLease() (platform.SwarmContainer, error) {
+	return platform.SwarmContainer{ID: "c-3", LockState: "reserved", Status: platform.SwarmContainerStopped}, nil
+}
+
+// gitLeaseDeps builds what the lease check asks with — the project holding
+// the pool apppool, its orchestrator orch, the bearer in the live env — and
+// counts each build.
+func gitLeaseDeps(orch *gitLeaseOrch, built *int) func(context.Context) (ops.LeaseDeps, error) {
+	return func(context.Context) (ops.LeaseDeps, error) {
+		*built++
+		return ops.LeaseDeps{
+			Client: platform.NewMock().WithServices([]platform.ServiceStack{{
+				ID: "svc-pool", Name: "apppool", ProjectID: "proj", Status: platform.ServiceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"},
+			}}),
+			ProjectID: "proj",
+			Swarm:     func(string, string) ops.SwarmAPI { return orch },
+			Env: func(key string) (string, bool) {
+				if key == "apppool_API_TOKEN" {
+					return "orch-bearer-FAKE", true
+				}
+				return "", false
+			},
+		}, nil
+	}
+}
+
+// TestRunGitCmd_LeaseAlias_NoRecord_Refused: only zcp's own lease records
+// make an alias reachable (docs/spec-workflows.md §8 DP-2): an alias zcp
+// holds no lease of is refused before any ssh call, and nobody is asked.
+func TestRunGitCmd_LeaseAlias_NoRecord_Refused(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeGitTestMeta(t, stateDir, gitPoolPairMeta())
+	ssh := &fakeGitSSH{}
+	deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+	built := 0
+	deps.leaseDeps = gitLeaseDeps(&gitLeaseOrch{renew: ownedLease}, &built)
+	args := []string{"apppool-3", "status"}
+	code := runGitCmd(t.Context(), args, deps)
+	assertGitRefused(t, args, code, stdout, stderr, ssh, "apppool-3", "zerops_lease action=status")
+	if built != 0 {
+		t.Errorf("the lease check's client was built %d times for an alias with no record, want never", built)
+	}
+}
+
+// TestRunGitCmd_LeaseAlias_NotVouched_RefusedBeforeSSH: a lease's container
+// is asked about before anything reaches it (DP-2). One that is no longer
+// the lease's — another holder's, gone — is refused naming the release that
+// drops its record; one the orchestrator does not answer about, or that this
+// zcp cannot ask (no orchestrator, no API client), naming why and the status
+// that asks again. Each is refused with exit 2 and no ssh call.
+func TestRunGitCmd_LeaseAlias_NotVouched_RefusedBeforeSSH(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		orch  *gitLeaseOrch
+		deps  func(ops.LeaseDeps) (ops.LeaseDeps, error)
+		want  []string
+		asked bool
+	}{
+		{
+			name: "another holder's",
+			orch: &gitLeaseOrch{
+				renew: func() (platform.SwarmContainer, error) {
+					return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Reason: platform.SwarmReasonUnknownLease}
+				},
+				byID: platform.SwarmContainer{ID: "c-3", LockState: "reserved", Status: platform.SwarmContainerActive},
+			},
+			want:  []string{"apppool-3", "zerops_lease action=release lease=apppool-3"},
+			asked: true,
+		},
+		{
+			name: "gone",
+			orch: &gitLeaseOrch{renew: func() (platform.SwarmContainer, error) {
+				return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Reason: platform.SwarmReasonContainerNotFound}
+			}},
+			want:  []string{"apppool-3", "zerops_lease action=release lease=apppool-3"},
+			asked: true,
+		},
+		{
+			name: "not answered",
+			orch: &gitLeaseOrch{renew: func() (platform.SwarmContainer, error) {
+				return platform.SwarmContainer{}, errors.New("dial tcp: connection refused")
+			}},
+			want:  []string{"apppool-3", "zerops_lease action=status"},
+			asked: true,
+		},
+		{
+			name: "no orchestrator",
+			orch: &gitLeaseOrch{renew: ownedLease},
+			deps: func(d ops.LeaseDeps) (ops.LeaseDeps, error) { d.Swarm = nil; return d, nil },
+			want: []string{"apppool-3", "zerops_lease action=status"},
+		},
+		{
+			name: "no API client",
+			orch: &gitLeaseOrch{renew: ownedLease},
+			deps: func(ops.LeaseDeps) (ops.LeaseDeps, error) {
+				return ops.LeaseDeps{}, errors.New("auth: No authentication found: set ZCP_API_KEY or log in with zcli")
+			},
+			want: []string{"apppool-3", "API client", "set ZCP_API_KEY"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeGitTestMeta(t, stateDir, gitPoolPairMeta())
+			writeGitLeaseRecord(t, stateDir, false)
+			ssh := &fakeGitSSH{}
+			deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+			built := 0
+			base := gitLeaseDeps(tc.orch, &built)
+			deps.leaseDeps = func(ctx context.Context) (ops.LeaseDeps, error) {
+				d, err := base(ctx)
+				if tc.deps != nil {
+					return tc.deps(d)
+				}
+				return d, err
+			}
+			args := []string{"apppool-3", "status"}
+			code := runGitCmd(t.Context(), args, deps)
+			assertGitRefused(t, args, code, stdout, stderr, ssh, tc.want...)
+			if asked := tc.orch.renewed() > 0; asked != tc.asked {
+				t.Errorf("the orchestrator was asked %d times, want asked = %v", tc.orch.renewed(), tc.asked)
+			}
+		})
+	}
+}
+
+// TestRunGitCmd_LeaseAlias_Parked_RefusedNamingTheUnpark: nothing answers on
+// a parked lease (DP-28) — parked by zcp's record, or its container stopped
+// outside zcp — so the call is refused with exit 2 naming the unpark, before
+// any ssh call.
+func TestRunGitCmd_LeaseAlias_Parked_RefusedNamingTheUnpark(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		parked bool
+		renew  func() (platform.SwarmContainer, error)
+	}{
+		{"parked by zcp", true, stoppedLease},
+		{"stopped outside zcp", false, stoppedLease},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeGitTestMeta(t, stateDir, gitPoolPairMeta())
+			writeGitLeaseRecord(t, stateDir, tc.parked)
+			ssh := &fakeGitSSH{}
+			deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+			built := 0
+			deps.leaseDeps = gitLeaseDeps(&gitLeaseOrch{renew: tc.renew}, &built)
+			args := []string{"apppool-3", "status"}
+			code := runGitCmd(t.Context(), args, deps)
+			assertGitRefused(t, args, code, stdout, stderr, ssh, "apppool-3", "parked", "zerops_lease action=unpark lease=apppool-3")
+		})
+	}
+}
+
+// TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout: a lease the
+// orchestrator gives zcp — asked once, before the ssh call — runs git in the
+// lease's checkout, /var/www of its container, reached by the alias; in a
+// Mate container a lease of a pool pair wired to HQ is relayed, answered
+// from the pool pair's record, and one of a pair not wired stays the plain
+// passthrough.
+func TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout(t *testing.T) {
+	t.Parallel()
+	wired := gitPoolPairMeta()
+	wired.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+	for _, tc := range []struct {
+		name    string
+		meta    *workflow.ServiceMeta
+		mate    bool
+		relayed bool
+	}{
+		{"plain, no Mate", wired, false, false},
+		{"plain, pair not wired", gitPoolPairMeta(), true, false},
+		{"relayed, pair wired to HQ", wired, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeGitTestMeta(t, stateDir, tc.meta)
+			writeGitLeaseRecord(t, stateDir, false)
+			ssh := &fakeGitSSH{}
+			deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+			deps.rt.MateEnabled = tc.mate
+			orch := &gitLeaseOrch{renew: ownedLease}
+			built := 0
+			deps.leaseDeps = gitLeaseDeps(orch, &built)
+			reads := 0
+			deps.hqIdentity = func() hq.Identity { reads++; return hq.Identity{Origin: "https://hq.example"} }
+			if code := runGitCmd(t.Context(), []string{"apppool-3", "-C", "/tmp/wt-b", "status"}, deps); code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+			if orch.renewed() != 1 {
+				t.Errorf("the orchestrator was asked %d times, want once before the ssh call", orch.renewed())
+			}
+			if len(ssh.calls) != 1 || ssh.calls[0].host != "apppool-3" {
+				t.Fatalf("ssh calls = %+v, want one to apppool-3", ssh.calls)
+			}
+			script := remoteScript(t, ssh.calls[0].command)
+			if !strings.Contains(script, "cd '/var/www'") {
+				t.Errorf("script = %q, want git run in the lease's checkout /var/www", script)
+			}
+			if tc.relayed {
+				for _, mark := range relayedScriptMarks {
+					if !strings.Contains(script, mark) {
+						t.Errorf("script lacks %q:\n%s", mark, script)
+					}
+				}
+				if reads != 1 {
+					t.Errorf("the HQ identity was read %d times, want once for a relayed call", reads)
+				}
+			} else {
+				if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(script, want) {
+					t.Errorf("script = %q, want the plain passthrough ending %q", script, want)
+				}
+				if reads != 0 {
+					t.Errorf("the HQ identity was read %d times for a plain call", reads)
+				}
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q", stdout.String())
+			}
+		})
 	}
 }
 

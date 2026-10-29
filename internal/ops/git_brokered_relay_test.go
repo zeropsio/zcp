@@ -50,6 +50,12 @@ const frameTestNonce = "0123456789abcdef"
 // framePrefix is how every frame of frameTestNonce starts.
 const framePrefix = "ZCPCRED-" + frameTestNonce + " "
 
+// relayFrames is relayStream for a stream read without a done marker's
+// receiver: a marker still ends the answering.
+func relayFrames(r io.Reader, nonce string, stderr, answers io.Writer, answer func(protocol, host, path string) (string, string)) {
+	relayStream(r, nonce, stderr, answers, answer, nil)
+}
+
 // relayFramesOf runs relayFrames over input read through wrap (nil: whole),
 // answering with answer; it returns what reached stderr and the answers.
 func relayFramesOf(input string, wrap func(io.Reader) io.Reader, answer func(protocol, host, path string) (string, string)) (relayed, answers string) {
@@ -285,6 +291,54 @@ func TestBrokeredGitDone_MarkerEndsAnsweringAndCarriesTheCode(t *testing.T) {
 	}
 }
 
+// TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt: the script's end mark
+// is taken out of stdout however reads split it, ended closes once every
+// byte before it was passed on, and what follows it is dropped; another
+// nonce's mark, or a tail that only begins the mark when the stream ends, is
+// git's output, passed on unchanged.
+func TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt(t *testing.T) {
+	t.Parallel()
+	mark := relayEndMark(frameTestNonce)
+	for _, tc := range []struct {
+		name, input, want string
+		ended             bool
+	}{
+		{"mark after output", "git output\nno newline at the end" + mark + "late-from-a-holder\n", "git output\nno newline at the end", true},
+		{"another nonce's mark", "a ZCPEND-fedcba9876543210 b\n", "a ZCPEND-fedcba9876543210 b\n", false},
+		{"only the start of a mark at the end", "output ZCPEND-0123", "output ZCPEND-0123", false},
+		{"mark alone", mark, "", true},
+	} {
+		for split := 1; split < len(tc.input); split++ {
+			var dst bytes.Buffer
+			s, err := newRelayStdout(&dst, frameTestNonce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			go s.copy()
+			for _, part := range []string{tc.input[:split], tc.input[split:]} {
+				if _, err := s.w.WriteString(part); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			ended := false
+			select {
+			case <-s.ended:
+				ended = true
+			case <-time.After(20 * time.Millisecond):
+			}
+			_ = s.w.Close()
+			<-s.done
+			if dst.String() != tc.want || ended != tc.ended {
+				t.Errorf("%s, split at %d: passed %q, ended before EOF %v; want %q, %v", tc.name, split, dst.String(), ended, tc.want, tc.ended)
+			}
+			if _, err := s.r.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+				t.Errorf("%s, split at %d: a read of the pipe once the copy ended = %v, want it closed (no descriptor left open per call)", tc.name, split, err)
+			}
+		}
+	}
+}
+
 // --- unit: what a relayed call refuses and forwards -------------------------
 
 // TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded: zcp forwards its
@@ -360,6 +414,57 @@ func TestBrokeredGit_StdinReaders_ExplicitAndImplicitForwarded(t *testing.T) {
 		}
 		if BrokeredGitReadsStdin(args) {
 			t.Errorf("BrokeredGitReadsStdin(%q) = true, want git's stdin /dev/null", rest)
+		}
+	}
+}
+
+// TestBrokeredGit_StdinReaders_PlumbingStdinPathsAndSeparatedValues: the
+// plumbing that reads stdin by its nature — mktag, pack-objects,
+// unpack-objects, show-index and mailinfo always, fmt-merge-msg without
+// -F/--file, mailsplit without an mbox — a file option or operand naming
+// stdin's own path (/dev/stdin, /dev/fd/0), and an apply or am whose only
+// non-option argument is the separated value of -p or -C, all read stdin.
+func TestBrokeredGit_StdinReaders_PlumbingStdinPathsAndSeparatedValues(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		rest []string
+		want bool
+	}{
+		{[]string{"mktag"}, true},
+		{[]string{"mktag", "--strict"}, true},
+		{[]string{"pack-objects", "--stdout"}, true},
+		{[]string{"pack-objects", "--revs", "/tmp/pack"}, true},
+		{[]string{"unpack-objects", "-q"}, true},
+		{[]string{"show-index"}, true},
+		{[]string{"mailinfo", "/tmp/msg", "/tmp/patch"}, true},
+		{[]string{"fmt-merge-msg"}, true},
+		{[]string{"fmt-merge-msg", "-m", "merge"}, true},
+		{[]string{"fmt-merge-msg", "-F", "/tmp/merged"}, false},
+		{[]string{"fmt-merge-msg", "--file=/tmp/merged"}, false},
+		{[]string{"fmt-merge-msg", "--file", "/tmp/merged"}, false},
+		{[]string{"mailsplit", "-o/tmp/out"}, true},
+		{[]string{"mailsplit", "-o/tmp/out", "/tmp/mbox"}, false},
+		{[]string{"commit", "-F", "/dev/stdin"}, true},
+		{[]string{"commit", "-F/dev/stdin"}, true},
+		{[]string{"commit", "--file=/dev/stdin"}, true},
+		{[]string{"tag", "-a", "v1", "--file", "/dev/fd/0"}, true},
+		{[]string{"commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-F", "/dev/stdin"}, true},
+		{[]string{"apply", "/dev/stdin"}, true},
+		{[]string{"commit", "-F", "/tmp/dev/stdin-notes"}, false},
+		{[]string{"apply", "-p", "1"}, true},
+		{[]string{"apply", "-C", "3", "--check"}, true},
+		{[]string{"am", "-p", "1"}, true},
+		{[]string{"am", "-C", "3"}, true},
+		{[]string{"apply", "-p", "1", "fix.patch"}, false},
+		{[]string{"am", "-C", "3", "0001-fix.patch"}, false},
+		{[]string{"apply", "-p1", "fix.patch"}, false},
+	} {
+		args, err := ParseBrokeredGitArgs(tc.rest)
+		if err != nil {
+			t.Fatalf("ParseBrokeredGitArgs(%q): %v", tc.rest, err)
+		}
+		if got := BrokeredGitReadsStdin(args); got != tc.want {
+			t.Errorf("BrokeredGitReadsStdin(%q) = %v, want %v", tc.rest, got, tc.want)
 		}
 	}
 }
@@ -2102,6 +2207,218 @@ func TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker(t *testing.T) {
 	}
 }
 
+// windowBuffer is an ssh client's channel buffer: it takes in whatever the
+// session writes at once and hands it out in chunks.
+type windowBuffer struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	data   []byte
+	closed bool
+	stop   bool
+}
+
+func newWindowBuffer() *windowBuffer {
+	b := &windowBuffer{}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+func (b *windowBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	b.cond.Broadcast()
+	return len(p), nil
+}
+
+// next is the next chunk, at most 32 KiB, waiting for one; nil once the
+// buffer is closed and empty, or stopped.
+func (b *windowBuffer) next() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for len(b.data) == 0 && !b.closed && !b.stop {
+		b.cond.Wait()
+	}
+	if b.stop || len(b.data) == 0 {
+		return nil
+	}
+	n := min(len(b.data), 32<<10)
+	chunk := slices.Clone(b.data[:n])
+	b.data = b.data[n:]
+	return chunk
+}
+
+func (b *windowBuffer) end(stop bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	b.stop = b.stop || stop
+	b.cond.Broadcast()
+}
+
+// windowRunner stands in for an ssh client over the shellRunner's session:
+// what the remote side writes to stdout it takes in at once, into a buffer
+// of its own — an ssh client reads a channel's data as far as its window
+// allows, ahead of the caller — and hands it to the caller's stdout at the
+// caller's pace. A call that ends by itself returns once all of it reached
+// the caller, as ssh writes out what it holds before it exits; a call its
+// context stops loses what the buffer still holds, as a killed ssh client
+// does.
+type windowRunner struct{ session *shellRunner }
+
+func (r *windowRunner) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	buf := newWindowBuffer()
+	forwarded := make(chan struct{})
+	go func() {
+		defer close(forwarded)
+		for chunk := buf.next(); chunk != nil; chunk = buf.next() {
+			if _, err := stdout.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	code, err := r.session.ExecSSHStdio(ctx, host, command, stdin, buf, stderr)
+	buf.end(false)
+	select {
+	case <-forwarded:
+		return code, err
+	case <-ctx.Done():
+		buf.end(true)
+		<-forwarded
+		return -1, ctx.Err()
+	}
+}
+
+// lateReader is a caller's stdout that is read only after a pause — the
+// first write waits it out, as a pipe whose reader has not started reading —
+// and then takes everything at once.
+type lateReader struct {
+	pause time.Duration
+	once  sync.Once
+	mu    sync.Mutex
+	got   bytes.Buffer
+}
+
+func (w *lateReader) Write(p []byte) (int, error) {
+	w.once.Do(func() { time.Sleep(w.pause) })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.got.Write(p)
+}
+
+func (w *lateReader) bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.got.Bytes())
+}
+
+// TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte: git's output the
+// ssh client still holds when the done marker arrives — the caller reading
+// slowly, here only well past the grace — all reaches the caller: the
+// session is ended only once every byte git wrote did, and the exit code is
+// git's.
+func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			var want strings.Builder
+			for i := range 300_000 {
+				fmt.Fprintf(&want, "line %08d\n", i)
+			}
+			l.commitFiles(t, checkout, "big", map[string]string{"big.txt": want.String()})
+			parsed, err := ParseBrokeredGitArgs([]string{"cat-file", "-p", "HEAD:big.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &windowRunner{session: &shellRunner{sh: sh, env: l.env()}}
+			stdout := &lateReader{pause: relayDoneGrace + 1500*time.Millisecond}
+			var stderr bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			defer cancel()
+			code, err := RunBrokeredGitRelayed(ctx, runner, "appdev", checkout, parsed, l.relay(), strings.NewReader(""), stdout, &stderr)
+			if err != nil || code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", code, err, stderr.String())
+			}
+			if got := stdout.bytes(); !bytes.Equal(got, []byte(want.String())) {
+				t.Errorf("the caller got %d of git's %d bytes", len(got), want.Len())
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace: a process
+// git started that keeps the session's stdout open too — a shell alias of the
+// checkout's config leaving one in the background — holds the call no longer
+// than the grace after git's output reached the caller, and what it writes
+// to stdout after git ended is not git's output: it never reaches the caller.
+func TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			l.git(t, checkout, "config", "alias.hold", "!(sleep 1; echo late-from-the-holder; sleep 20) 2>/dev/null </dev/null & echo own-output")
+			start := time.Now()
+			run := l.run(t, sh, checkout, l.relay(), "", "hold").mustSucceed(t, "hold")
+			if took := time.Since(start); took > 10*time.Second {
+				t.Errorf("the call took %s, held by the background process", took)
+			}
+			if run.stdout != "own-output\n" {
+				t.Errorf("stdout = %q, want git's own output alone", run.stdout)
+			}
+		})
+	}
+}
+
+// closedStdout is a caller's stdout whose reader is gone.
+type closedStdout struct{}
+
+func (closedStdout) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode: a caller whose
+// stdout reader went away (`zcp git … | head -1` after head exited) holds
+// nothing: zcp's copy ends and closes its pipe, and the call ends with its
+// tokens revoked as ever. The stand-in ssh here outlives the closed pipe, so
+// the session ends by itself and the call returns git's exit code from the
+// marker. A real ssh keeps SIGPIPE's default (zcp git catches it, never
+// ignores it) and dies writing to the closed pipe, taking the remote git
+// with it; the call then returns git's code only when the marker came
+// first, else ssh's failure.
+func TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, h := l.repo(t, true, "acme/shop")
+			checkout := l.checkout(t, url)
+			parsed, err := ParseBrokeredGitArgs([]string{"show", h.first + ":app.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			var stderr bytes.Buffer
+			code, err := RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), strings.NewReader(""), closedStdout{}, &stderr)
+			if ctx.Err() != nil {
+				t.Fatalf("the call did not end; stderr:\n%s", stderr.String())
+			}
+			if err != nil || code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", code, err, stderr.String())
+			}
+			if want := l.mintedTokens(); len(want) != 1 || !slices.Equal(l.revokes(), want) {
+				t.Errorf("revoked %q, want the minted %q", l.revokes(), want)
+			}
+		})
+	}
+}
+
 // --- offline: tokens revoked when the call ends -----------------------------
 
 // TestBrokeredGit_Relay_RevokesEachCachedTokenOnce: when a call ends, each
@@ -2330,6 +2647,42 @@ func TestBrokeredGitPushPlan_SourcesAndUnresolvableForms(t *testing.T) {
 	} {
 		if plan := planBrokeredGitPush(BrokeredGitArgs{Subcommand: "push", Rest: rest}); !plan.unresolvable {
 			t.Errorf("plan(push %q) = %+v, want unresolvable", rest, plan)
+		}
+	}
+}
+
+// TestBrokeredGitPushConfig_ReadAsGitReadsIt: the config a push's check
+// reads is parsed as git reads it — a boolean with no value is true, an
+// integer counts, a later value replaces an earlier one, a remote's name may
+// hold dots, pushurl is no push refspec — and a value git refuses is
+// unreadable.
+func TestBrokeredGitPushConfig_ReadAsGitReadsIt(t *testing.T) {
+	t.Parallel()
+	cfg := parseBrokeredGitPushConfig("push.followtags\ntrue\x00push.followtags\x00push.followtags\n0\x00" +
+		"push.default\nmatching\x00push.default\ncurrent\x00" +
+		"remote.my.fork.push\nrefs/heads/*:refs/heads/*\x00remote.origin.pushurl\nhttps://example.invalid/x\x00" +
+		"remote.origin.mirror\x00remote.upstream.mirror\noff\x00")
+	if cfg.followTags || cfg.unreadable || !cfg.sendsCurrentBranch() {
+		t.Errorf("config = %+v, want followTags off by its last value, push.default current, nothing unreadable", cfg)
+	}
+	if !cfg.pushSpecs["my.fork"] || cfg.pushSpecs["origin"] || len(cfg.pushSpecs) != 1 {
+		t.Errorf("push refspecs = %v, want my.fork's alone", cfg.pushSpecs)
+	}
+	if !cfg.mirror["origin"] || cfg.mirror["upstream"] {
+		t.Errorf("mirror = %v, want origin's (no value) on and upstream's off", cfg.mirror)
+	}
+	for _, out := range []string{"push.followtags\nmaybe\x00", "remote.origin.mirror\nsometimes\x00", "push.default\x00"} {
+		if cfg := parseBrokeredGitPushConfig(out); !cfg.unreadable {
+			t.Errorf("config %q read as %+v, want unreadable", out, cfg)
+		}
+	}
+	for value, current := range map[string]bool{"": true, "simple": true, "upstream": true, "tracking": true, "matching": false, "nothing": false, "Matching": false} {
+		cfg := parseBrokeredGitPushConfig("push.default\n" + value + "\x00")
+		if value == "" {
+			cfg = parseBrokeredGitPushConfig("")
+		}
+		if cfg.sendsCurrentBranch() != current {
+			t.Errorf("push.default=%q sends the current branch alone = %v, want %v", value, cfg.sendsCurrentBranch(), current)
 		}
 	}
 }
@@ -2596,6 +2949,48 @@ func TestBrokeredGit_Access_PushWithoutRefspec_ResolvesViaAtPush(t *testing.T) {
 			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
 			l.run(t, sh, checkout, relay, "", "push", "origin").mustSucceed(t, "push origin")
 			l.assertAccesses(t, hq.GitHubAccessWrite, hq.GitHubAccessWorkflows)
+		})
+	}
+}
+
+// TestBrokeredGit_Access_PushRefspecFromConfig_AsksWorkflows: a push naming
+// no refspec sends what the config decides — the pushed remote's
+// remote.<name>.push or remote.<name>.mirror, or push.default=matching, from
+// the checkout's config or the call's -c — not just the current branch, so
+// it cannot be resolved: workflows, though only another branch's unpushed
+// commit touches .github/workflows/. Such config of a remote the push does
+// not go to decides nothing.
+func TestBrokeredGit_Access_PushRefspecFromConfig_AsksWorkflows(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name   string
+				config [][2]string
+				args   []string
+				want   string
+			}{
+				{"push.default=matching", [][2]string{{"push.default", "matching"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWorkflows},
+				{"push.default=matching in -c", nil, []string{"-c", "push.default=matching", "push", "--dry-run", "origin"}, hq.GitHubAccessWorkflows},
+				{"remote.origin.push", [][2]string{{"remote.origin.push", "refs/heads/*:refs/heads/*"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWorkflows},
+				{"remote.origin.mirror", [][2]string{{"remote.origin.mirror", "true"}}, []string{"push", "--dry-run", "origin"}, hq.GitHubAccessWorkflows},
+				{"another remote's push", [][2]string{{"remote.upstream.url", "https://example.invalid/x.git"}, {"remote.upstream.push", "refs/heads/*:refs/heads/*"}, {"remote.upstream.mirror", "true"}}, []string{"push", "--dry-run"}, hq.GitHubAccessWrite},
+			} {
+				l, _, checkout, relay := accessLab(t)
+				l.git(t, checkout, "checkout", "-q", "-b", "ci-branch")
+				l.authGit(t, checkout, "push", "-q", "origin", "ci-branch")
+				l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
+				l.git(t, checkout, "checkout", "-q", "main")
+				l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+				for _, kv := range tc.config {
+					l.git(t, checkout, "config", kv[0], kv[1])
+				}
+				l.run(t, sh, checkout, relay, "", tc.args...).mustSucceed(t, tc.name)
+				if got := l.accesses(); !slices.Equal(got, []string{tc.want}) {
+					t.Errorf("%s: HQ was asked for access %q, want %q", tc.name, got, tc.want)
+				}
+			}
 		})
 	}
 }
@@ -2973,6 +3368,12 @@ func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) 
 
 func helperEnv() []string { return []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C"} }
 
+// credAnswer is what the helper hands git for user and pass, in git's
+// credential protocol.
+func credAnswer(user, pass string) string {
+	return "username=" + user + "\npassword=" + pass + "\n"
+}
+
 // TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock: an answer for
 // another id — one a helper that gave up left — is discarded while the lock
 // is held, and the helper's own answer is the one it hands git.
@@ -2992,7 +3393,7 @@ func TestBrokeredGit_Relay_StaleAnswerDiscardedWhileHoldingLock(t *testing.T) {
 			if code := p.wait(t); code != 0 {
 				t.Errorf("helper exit %d", code)
 			}
-			if got := p.stdout.String(); got != "username=mate\npassword=own-FAKE\n" {
+			if got := p.stdout.String(); got != credAnswer("mate", "own-FAKE") {
 				t.Errorf("helper answered %q, want its own answer", got)
 			}
 			if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); !errors.Is(err, os.ErrNotExist) {
@@ -3023,7 +3424,7 @@ func TestBrokeredGit_Relay_AnswerForOtherHost_IgnoredByHelper(t *testing.T) {
 				}
 				want := ""
 				if then == "its own" {
-					want = "username=mate\npassword=right-FAKE\n"
+					want = credAnswer("mate", "right-FAKE")
 				}
 				if got := p.stdout.String(); got != want {
 					t.Errorf("then %s: helper answered %q, want %q", then, got, want)

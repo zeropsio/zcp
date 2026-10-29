@@ -272,7 +272,7 @@ func checkSyncSource(ctx context.Context, d LeaseDeps, rec leaseRecord) error {
 // authenticates through the helper the lease's checkout persisted (DP-6).
 func leaseSyncPushCommand(branch string) string {
 	q := shellQuote
-	wd := q(leaseWorkDir)
+	wd := q(LeaseWorkDir)
 	read := leaseGitRead + wd
 	return strings.Join([]string{
 		"b=$(" + read + " symbolic-ref -q --short HEAD)",
@@ -334,8 +334,8 @@ func pushLeaseBranch(ctx context.Context, ssh SSHDeployer, alias, branch string,
 			on = "branch " + head
 		}
 		return LeaseSyncPush{}, "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Lease %s's %s is on %s, not on its branch %s, so nothing was pushed", alias, leaseWorkDir, on, branch),
-			fmt.Sprintf("A sync pushes the lease's own branch: check %s out in %s (git -C %s checkout %s) with the commits on it, then sync again: %s", branch, alias, leaseWorkDir, branch, LeaseSyncCall(alias)))
+			fmt.Sprintf("Lease %s's %s is on %s, not on its branch %s, so nothing was pushed", alias, LeaseWorkDir, on, branch),
+			fmt.Sprintf("A sync pushes the lease's own branch: check %s out in %s (git -C %s checkout %s) with the commits on it, then sync again: %s", branch, alias, LeaseWorkDir, branch, LeaseSyncCall(alias)))
 	}
 	flag, summary, reported := a.pushedRef(branch)
 	if err != nil {
@@ -379,7 +379,7 @@ func syncPushRefusal(err error, alias, branch string, onHQ bool, summary string)
 	case IsNonFastForwardRejection(output):
 		pe = platform.NewPlatformError(platform.ErrGitPushNonFastForward,
 			fmt.Sprintf("Origin's %s has commits lease %s lacks (%s), so nothing was pushed and no other lease was touched", branch, alias, cmp.Or(summary, "rejected")),
-			fmt.Sprintf("Integrate origin/%s in %s over ssh (git -C %s pull --ff-only origin %s, or rebase or merge when both moved), then sync again: %s", branch, alias, leaseWorkDir, branch, LeaseSyncCall(alias)))
+			fmt.Sprintf("Integrate origin/%s in %s over ssh (git -C %s pull --ff-only origin %s, or rebase or merge when both moved), then sync again: %s", branch, alias, LeaseWorkDir, branch, LeaseSyncCall(alias)))
 	default:
 		code, suggestion := classifyCheckoutFailure(err, onHQ)
 		pe = platform.NewPlatformError(code, fmt.Sprintf("Lease %s could not push branch %s to origin, so no other lease was touched", alias, branch), suggestion)
@@ -400,7 +400,7 @@ func syncPushRefusal(err error, alias, branch string, onHQ bool, summary string)
 // <branch> and is not touched.
 func leaseSyncMemberCommand(branch string) string {
 	q := shellQuote
-	wd := q(leaseWorkDir)
+	wd := q(LeaseWorkDir)
 	read := leaseGitRead + wd
 	mark := func(s string) string { return `echo "` + leaseSyncMarker + s + `"` }
 	return strings.Join([]string{
@@ -461,7 +461,7 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *Lea
 		}
 		m.Outcome = LeaseSyncOnAnotherBranch
 		m.Note = fmt.Sprintf("%s's %s is on %s, not %s, so zcp left it as it was; check %s out there (git -C %s checkout %s), then sync again: %s",
-			m.Alias, leaseWorkDir, on, branch, branch, leaseWorkDir, branch, again)
+			m.Alias, LeaseWorkDir, on, branch, branch, LeaseWorkDir, branch, again)
 		return
 	}
 	m.From = a.marks["from"]

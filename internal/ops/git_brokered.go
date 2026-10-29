@@ -21,9 +21,9 @@ import (
 
 // SSHStdioRunner is the side of an SSH deployer that runs a remote command
 // with the caller's own stdin, stdout and stderr wired to the session and no
-// deadline of its own, returning the exit code ssh ended with. It is an
-// interface of its own, so every SSHDeployer fake stays as it is.
-// platform.SystemSSHDeployer implements it.
+// deadline of its own, returning the exit code ssh ended with; a nil stdin
+// is the null device. It is an interface of its own, so every SSHDeployer
+// fake stays as it is. platform.SystemSSHDeployer implements it.
 type SSHStdioRunner interface {
 	ExecSSHStdio(ctx context.Context, hostname, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
@@ -163,12 +163,19 @@ func BuildBrokeredGitCommand(dir string, args BrokeredGitArgs) string {
 const sshTransportExit = 255
 
 // RunBrokeredGit runs git with args in host's checkout at dir over ssh, the
-// caller's stdin, stdout and stderr passed through, and returns git's exit
-// code. When no git verdict came back — ssh ended with its own 255, could
-// not run, or ctx stopped it — it returns an error saying so, with exit code
-// 255 (or -1 when ssh did not end by itself). A stopped call's remote git
-// may still be running; whatever lock it holds clears when it finishes.
+// caller's stdout and stderr passed through, and returns git's exit code.
+// The caller's stdin reaches ssh only when the argv makes git read it
+// (BrokeredGitReadsStdin, the rule a relayed call forwards by); any other
+// call hands ssh none, so its remote reads nothing and a caller reading its
+// stdin on — a loop over hosts — keeps it. When no git verdict came back —
+// ssh ended with its own 255, could not run, or ctx stopped it — it returns
+// an error saying so, with exit code 255 (or -1 when ssh did not end by
+// itself). A stopped call's remote git may still be running; whatever lock
+// it holds clears when it finishes.
 func RunBrokeredGit(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if !BrokeredGitReadsStdin(args) {
+		stdin = nil
+	}
 	exit, err := ssh.ExecSSHStdio(ctx, host, BuildBrokeredGitCommand(dir, args), stdin, stdout, stderr)
 	if err != nil {
 		return exit, fmt.Errorf("run git over ssh: %w", err)
