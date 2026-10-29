@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // G505: git names objects by SHA-1
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1643,6 +1644,67 @@ func TestBrokeredGit_Relay_StdinStep_FallsBackToDdWithoutHeadC(t *testing.T) {
 			_, message, _ := strings.Cut(l.git(t, checkout, "cat-file", "commit", "HEAD"), "\n\n")
 			if message != strings.TrimSpace(payload.String()) {
 				t.Errorf("commit message differs from the payload (%d bytes vs %d)", len(message), len(payload.String()))
+			}
+		})
+	}
+}
+
+// --- offline: nothing outlives the call -------------------------------------
+
+// looseObjectsUnder17 writes n loose blobs whose names start with 17 — the
+// directory `gc --auto` samples — so gc.auto=1 makes git want to pack.
+func (l *relayLab) looseObjectsUnder17(t *testing.T, checkout string, n int) {
+	t.Helper()
+	dir := t.TempDir()
+	for i, found := 0, 0; found < n; i++ {
+		content := fmt.Sprintf("zcp gc probe %d\n", i)
+		sum := sha1.Sum(fmt.Appendf(nil, "blob %d\x00%s", len(content), content)) //nolint:gosec // G401: git's own object naming
+		if sum[0] != 0x17 {
+			continue
+		}
+		file := filepath.Join(dir, fmt.Sprintf("probe-%d", i))
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := l.git(t, checkout, "hash-object", "-w", file); !strings.HasPrefix(got, "17") {
+			t.Fatalf("hash-object = %s, want a name under 17/", got)
+		}
+		found++
+	}
+}
+
+// TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession: git's
+// detached auto-gc (and auto-maintenance) closes only descriptors 0-2, so it
+// would keep 3 and 4 — the session's stdin and stderr — and hold the call
+// open until it finished; a relayed call runs it in the foreground, whatever
+// the checkout's config says, and ends when git ends.
+func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			for _, kv := range [][2]string{{"gc.auto", "1"}, {"gc.autoDetach", "true"}, {"maintenance.autoDetach", "true"}} {
+				l.git(t, checkout, "config", kv[0], kv[1])
+			}
+			l.looseObjectsUnder17(t, checkout, 3)
+			seen := filepath.Join(t.TempDir(), "detach")
+			hook := filepath.Join(checkout, ".git", "hooks", "pre-auto-gc")
+			body := "#!/bin/sh\necho \"gc=$(git config --get gc.autoDetach) maintenance=$(git config --get maintenance.autoDetach)\" >> " + ShellQuote(seen) + "\n"
+			if err := os.WriteFile(hook, []byte(body), 0o755); err != nil { //nolint:gosec // G306: a hook must be executable
+				t.Fatal(err)
+			}
+			run := l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			lines := strings.Split(strings.TrimSpace(readFile(t, seen)), "\n")
+			for _, line := range lines {
+				if line != "gc=false maintenance=false" {
+					t.Errorf("the auto-gc saw %q, want detaching off for both", line)
+				}
+			}
+			if !strings.Contains(run.stderr, "Auto packing the repository for optimum performance") || strings.Contains(run.stderr, "in background") {
+				t.Errorf("stderr = %q, want git's auto-gc run in the foreground", run.stderr)
 			}
 		})
 	}
