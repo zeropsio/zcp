@@ -1899,7 +1899,7 @@ func TestBrokeredGitPushPlan_SourcesAndUnresolvableForms(t *testing.T) {
 		{[]string{"-o", "ci.skip", "--push-option", "x", "origin", "a:b", "c"}, "origin", []string{"a", "c"}},
 		{[]string{"-ofo=do", "origin", "main"}, "origin", []string{"main"}},
 		{[]string{"--dry-run", "--porcelain", "--atomic", "https://github.com/acme/shop", "HEAD:main"}, "https://github.com/acme/shop", []string{"HEAD"}},
-		{[]string{"origin", "--", "-weird"}, "origin", []string{"-weird"}},
+		{[]string{"origin", "--", "feature"}, "origin", []string{"feature"}},
 	} {
 		args := BrokeredGitArgs{Subcommand: "push", Rest: tc.rest}
 		plan := planBrokeredGitPush(args)
@@ -1914,7 +1914,7 @@ func TestBrokeredGitPushPlan_SourcesAndUnresolvableForms(t *testing.T) {
 		{"--force-if-includes", "origin", "main"}, {"--delete", "origin", "main"}, {"-d", "origin", "main"},
 		{"--prune", "origin", "refs/heads/*:refs/heads/*"}, {"origin", "+main:main"}, {"origin", ":gone"},
 		{"origin", "refs/heads/*:refs/heads/*"}, {"origin", "^refs/heads/x"}, {"origin", "tag", "v1"},
-		{"--repo=origin", "main"}, {"origin", "main", ":"},
+		{"--repo=origin", "main"}, {"origin", "main", ":"}, {"origin", "--", "--all"},
 	} {
 		if plan := planBrokeredGitPush(BrokeredGitArgs{Subcommand: "push", Rest: rest}); !plan.unresolvable {
 			t.Errorf("plan(push %q) = %+v, want unresolvable", rest, plan)
@@ -1937,10 +1937,10 @@ func (l *relayLab) accesses() []string {
 
 // authGit runs a fixture git command in dir that may reach the GitHub
 // stand-in, with the fixture's own token, as no relayed call.
-func (l *relayLab) authGit(t *testing.T, dir string, args ...string) string {
+func (l *relayLab) authGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(relayTokenUser+":"+relayFixtureToken))
-	return l.git(t, dir, append([]string{"-c", "http.extraHeader=" + header}, args...)...)
+	l.git(t, dir, append([]string{"-c", "http.extraHeader=" + header}, args...)...)
 }
 
 // commitFiles writes files in dir and commits them (a fixture commit).
@@ -1953,12 +1953,12 @@ func (l *relayLab) commitFiles(t *testing.T, dir, message string, files map[stri
 	l.git(t, dir, "commit", "-q", "-m", message)
 }
 
-// pushElsewhere commits files on branch of the stand-in's repository name —
+// pushElsewhere commits files on branch of the stand-in's acme/shop —
 // branching it from main when new — as a push from another place.
-func (l *relayLab) pushElsewhere(t *testing.T, name, branch string, files map[string]string) {
+func (l *relayLab) pushElsewhere(t *testing.T, branch string, files map[string]string) {
 	t.Helper()
 	work := filepath.Join(t.TempDir(), "w")
-	l.git(t, filepath.Dir(work), "clone", "-q", filepath.Join(l.root, "gh", name+".git"), work)
+	l.git(t, filepath.Dir(work), "clone", "-q", filepath.Join(l.root, "gh", "acme/shop.git"), work)
 	if branch != "main" {
 		l.git(t, work, "checkout", "-q", "-b", branch)
 	}
@@ -1970,7 +1970,7 @@ func (l *relayLab) pushElsewhere(t *testing.T, name, branch string, files map[st
 func (l *relayLab) dropTracking(t *testing.T, checkout string) {
 	t.Helper()
 	_ = gitOr(t, checkout, "remote", "set-head", "origin", "-d")
-	for _, ref := range strings.Fields(l.git(t, checkout, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")) {
+	for ref := range strings.FieldsSeq(l.git(t, checkout, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")) {
 		l.git(t, checkout, "update-ref", "-d", ref)
 	}
 }
@@ -1985,11 +1985,11 @@ func (l *relayLab) assertAccesses(t *testing.T, want ...string) {
 
 // accessLab is a lab with a GitHub-kept partial clone of acme/shop and the
 // relay its record names.
-func accessLab(t *testing.T) (*relayLab, string, relayHistory, string, BrokeredGitRelay) {
+func accessLab(t *testing.T) (*relayLab, relayHistory, string, BrokeredGitRelay) {
 	t.Helper()
 	l := newRelayLab(t)
 	url, h := l.repo(t, true, "acme/shop")
-	return l, url, h, l.checkout(t, url), l.relay(url)
+	return l, h, l.checkout(t, url), l.relay(url)
 }
 
 // TestBrokeredGit_Access_NonPushCallAsksRead: every token a call that is no
@@ -1999,7 +1999,7 @@ func TestBrokeredGit_Access_NonPushCallAsksRead(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, h, checkout, relay := accessLab(t)
+			l, h, checkout, relay := accessLab(t)
 			l.run(t, sh, checkout, relay, "", "checkout", "-q", h.first).mustSucceed(t, "checkout")
 			l.run(t, sh, checkout, relay, "", "fetch", "origin").mustSucceed(t, "fetch")
 			l.run(t, sh, checkout, relay, "", "ls-remote", "origin").mustSucceed(t, "ls-remote")
@@ -2015,7 +2015,7 @@ func TestBrokeredGit_Access_PushWithoutWorkflowChange_AsksWrite(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "mate's work\n"})
 			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
 			l.assertAccesses(t, hq.GitHubAccessWrite)
@@ -2033,7 +2033,7 @@ func TestBrokeredGit_Access_PushTouchingWorkflows_AsksWorkflows(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
 			l.run(t, sh, checkout, relay, "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push")
 			l.assertAccesses(t, hq.GitHubAccessWorkflows)
@@ -2050,8 +2050,8 @@ func TestBrokeredGit_Access_NewBranchWithoutTrackingRef_ChecksOnlyUnpushedCommit
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
-			l.pushElsewhere(t, "acme/shop", "main", map[string]string{workflowFile: "on: push\n"})
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
 			l.authGit(t, checkout, "fetch", "-q", "origin")
 			l.authGit(t, checkout, "checkout", "-q", "-b", "feature", "origin/main")
 			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
@@ -2069,8 +2069,8 @@ func TestBrokeredGit_Access_NoOriginHEAD_LimitedByOriginMain(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
-			l.pushElsewhere(t, "acme/shop", "main", map[string]string{workflowFile: "on: push\n"})
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
 			l.authGit(t, checkout, "fetch", "-q", "origin")
 			_ = gitOr(t, checkout, "remote", "set-head", "origin", "-d")
 			if got := gitOr(t, checkout, "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD"); got != "" {
@@ -2093,8 +2093,8 @@ func TestBrokeredGit_Access_NoRemoteTrackingRefsAtAll_FallsBackToLocalMain(t *te
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
-			l.pushElsewhere(t, "acme/shop", "main", map[string]string{workflowFile: "on: push\n"})
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "main", map[string]string{workflowFile: "on: push\n"})
 			l.authGit(t, checkout, "fetch", "-q", "origin")
 			l.authGit(t, checkout, "checkout", "-q", "-B", "main", "origin/main")
 			l.authGit(t, checkout, "checkout", "-q", "-b", "feature")
@@ -2119,7 +2119,7 @@ func TestBrokeredGit_Access_RootCommitAddingWorkflows_AsksWorkflows(t *testing.T
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.git(t, checkout, "checkout", "-q", "--orphan", "unrelated")
 			l.git(t, checkout, "rm", "-rq", "--cached", ".")
 			writeLabFile(t, filepath.Join(checkout, workflowFile), "on: push\n")
@@ -2139,8 +2139,8 @@ func TestBrokeredGit_Access_MergeBringingWorkflowChange_AsksWorkflows(t *testing
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
-			l.pushElsewhere(t, "acme/shop", "side", map[string]string{workflowFile: "on: push\n"})
+			l, _, checkout, relay := accessLab(t)
+			l.pushElsewhere(t, "side", map[string]string{workflowFile: "on: push\n"})
 			l.authGit(t, checkout, "fetch", "-q", "origin")
 			l.authGit(t, checkout, "checkout", "-q", "-b", "feature", "origin/main")
 			l.commitFiles(t, checkout, "feature work", map[string]string{"app.txt": "feature\n"})
@@ -2158,7 +2158,7 @@ func TestBrokeredGit_Access_ChangeMadeThenReverted_AsksWorkflows(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.commitFiles(t, checkout, "ci", map[string]string{workflowFile: "on: push\n"})
 			l.git(t, checkout, "rm", "-q", workflowFile)
 			l.git(t, checkout, "commit", "-q", "-m", "no ci after all")
@@ -2176,7 +2176,7 @@ func TestBrokeredGit_Access_PushWithoutRefspec_ResolvesViaAtPush(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.git(t, checkout, "checkout", "-q", "-b", "feature")
 			l.authGit(t, checkout, "push", "-q", "-u", "origin", "feature")
 			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
@@ -2196,7 +2196,7 @@ func TestBrokeredGit_Access_FollowTagsOrTags_AsksWorkflows(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
 			for _, args := range [][]string{
 				{"push", "--tags", "origin"},
@@ -2219,7 +2219,7 @@ func TestBrokeredGit_Access_ForcedRefspec_AsksWorkflows(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
 			for _, args := range [][]string{
 				{"push", "origin", "+HEAD:refs/heads/f1"},
@@ -2242,7 +2242,7 @@ func TestBrokeredGit_Access_UnresolvablePush_AsksWorkflows(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			var stream strings.Builder
 			for i := 1; i <= 1001; i++ {
 				fmt.Fprintf(&stream, "commit refs/heads/long\nmark :%d\ncommitter A <a@example.invalid> %d +0000\ndata 2\nc\n", i, 1700000000+i)
@@ -2282,7 +2282,7 @@ func TestBrokeredGit_Access_CheckRunsInTheSameTmpWorktreeAsThePush(t *testing.T)
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			parent, err := os.MkdirTemp("/tmp", "zcp-relay-test-") //nolint:usetesting // -C takes only a path below /tmp/; t.TempDir() is elsewhere on macOS
 			if err != nil {
 				t.Fatal(err)
@@ -2306,7 +2306,7 @@ func TestBrokeredGit_Access_PushInsideNonPushCall_GetsReadAndFails(t *testing.T)
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			result := filepath.Join(t.TempDir(), "auto-push")
 			hook := filepath.Join(checkout, ".git", "hooks", "post-commit")
 			if err := os.WriteFile(hook, []byte("#!/bin/sh\ngit push origin HEAD:refs/heads/auto > "+ShellQuote(result)+" 2>&1; echo \"rc=$?\" >> "+ShellQuote(result)+"\n"), 0o755); err != nil {
@@ -2336,7 +2336,7 @@ func TestBrokeredGit_Access_ReadOnlyRemote_PushDeclinedNamingIt(t *testing.T) {
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
-			l, _, _, checkout, relay := accessLab(t)
+			l, _, checkout, relay := accessLab(t)
 			l.mu.Lock()
 			l.readOnly["acme/shop"] = true
 			l.mu.Unlock()
