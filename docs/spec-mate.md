@@ -3912,7 +3912,11 @@ subcommands, a stdin over 1 MiB, and a user `-c` (named, never its value) under 
 
 **The relay** (`internal/ops/git_brokered_relay.go`). The script keeps the session's stdin as
 descriptor 3 (answers) and a dup of its stderr as 4 (frames, so a hook's `2>/dev/null` swallows
-none). A stdin the argv asks git to read is sent first and staged whole into
+none), with copies of both at 8 and 9. A helper whose 3 or 4 is not the same file as its copy
+(`test -ef` on `/dev/fd`, where the system has it) answers nothing at once and writes no frame: a
+hook pointed it elsewhere, or closed it and git reused the number — on Linux git-remote-http's
+sockets take it without close-on-exec, and a frame written there would go onto the wire while the
+helper waited for an answer that never comes. A stdin the argv asks git to read is sent first and staged whole into
 `/tmp/zcp-stdin.XXXXXX` before git starts; any other call's git reads `/dev/null`, so 3 carries
 answers only. git runs with `-c credential.helper=`, clearing every persisted helper, then zcp's
 one-line get-only POSIX helper, `credential.useHttpPath=true`, and `gc.autoDetach=false` and
@@ -3991,6 +3995,7 @@ Witnesses: `TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined`,
 `TestBrokeredGit_Relay_RemoteURLRecordIgnored`, `TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr`,
 `TestBrokeredGit_Relay_PartialClone_LazyShowCheckoutWorktreeAnswered`,
 `TestBrokeredGit_Relay_PersistedHelperNeverRuns`,
+`TestBrokeredGit_Relay_HelperDescriptorsNotTheSessions_AnswersNothingAtOnce`,
 `TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall`,
 `TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte`,
 `TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace`,
