@@ -154,14 +154,72 @@ func sameOrigin(protocol, host, origin string) bool {
 	return strings.EqualFold(protocol, u.Scheme) && brokeredGitHostPort(host, protocol) == brokeredGitHostPort(u.Host, u.Scheme)
 }
 
+// transportValueOptions are, per subcommand that names a repository by its
+// positional arguments, the options whose value is the next argument.
+var transportValueOptions = map[string]map[string]bool{
+	"fetch": fetchValueOptions,
+	"pull":  pullValueOptions,
+	"push":  {"-o": true, "--push-option": true, "--receive-pack": true, "--exec": true, "--repo": true},
+	"ls-remote": {
+		"-o": true, "--server-option": true, "--upload-pack": true, "--sort": true,
+	},
+	"clone": {
+		"-o": true, "--origin": true, "-b": true, "--branch": true, "-u": true, "--upload-pack": true,
+		"--reference": true, "--reference-if-able": true, "--separate-git-dir": true, "--depth": true,
+		"--shallow-since": true, "--shallow-exclude": true, "-c": true, "--config": true,
+		"--server-option": true, "--filter": true, "--template": true, "-j": true, "--jobs": true,
+		"--bundle-uri": true, "--ref-format": true,
+	},
+}
+
+var (
+	fetchValueOptions = map[string]bool{
+		"-o": true, "--server-option": true, "--upload-pack": true, "--depth": true, "--deepen": true,
+		"--shallow-since": true, "--shallow-exclude": true, "--negotiation-tip": true, "--refmap": true,
+		"-j": true, "--jobs": true, "--filter": true,
+	}
+	pullValueOptions = func() map[string]bool {
+		m := map[string]bool{"-s": true, "--strategy": true, "-X": true, "--strategy-option": true}
+		for k := range fetchValueOptions {
+			m[k] = true
+		}
+		return m
+	}()
+)
+
+// brokeredGitTransportPositionals are the positional arguments of a fetch,
+// pull, push, ls-remote or clone — where git reads a repository's address —
+// skipping options and their values; none for any other subcommand.
+func brokeredGitTransportPositionals(args BrokeredGitArgs) []string {
+	values, ok := transportValueOptions[args.Subcommand]
+	if !ok {
+		return nil
+	}
+	var positional []string
+	for i := 0; i < len(args.Rest); i++ {
+		a := args.Rest[i]
+		switch {
+		case a == "--":
+			return append(positional, args.Rest[i+1:]...)
+		case values[a]:
+			i++
+		case strings.HasPrefix(a, "-") && a != "-":
+		default:
+			positional = append(positional, a)
+		}
+	}
+	return positional
+}
+
 // BrokeredGitArgvURLs are the URLs the call's argv writes literally — each
-// argument after the subcommand that is an https address, or one of HQ's
-// own scheme, with a host. A remote name, a path, an scp-style address and
-// a leading -c value count for nothing.
+// positional argument of a fetch, pull, push, ls-remote or clone that is an
+// https address, or one of HQ's own scheme, with a host. A remote name, a
+// path, an scp-style address, an option's value, a leading -c value and
+// any other subcommand's arguments count for nothing.
 func BrokeredGitArgvURLs(args BrokeredGitArgs, hqOrigin string) []string {
 	schemes := brokeredGitSchemes(hqOrigin)
 	var urls []string
-	for _, a := range args.Rest {
+	for _, a := range brokeredGitTransportPositionals(args) {
 		u, err := url.Parse(a)
 		if err != nil || u.Host == "" {
 			continue
@@ -424,7 +482,7 @@ const relayCleanup = `[ -z "$d" ] || rm -rf "$d"; rmdir "$L" 2>/dev/null`
 // https.
 func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 	protocols := brokeredGitSchemes(hqOrigin)
-	if slices.ContainsFunc(args.Rest, func(a string) bool { return path.IsAbs(a) && strings.HasSuffix(a, ".bundle") }) {
+	if slices.ContainsFunc(brokeredGitTransportPositionals(args), func(a string) bool { return path.IsAbs(a) && strings.HasSuffix(a, ".bundle") }) {
 		protocols = append(protocols, "file")
 	}
 	return strings.Join(protocols, ":")
