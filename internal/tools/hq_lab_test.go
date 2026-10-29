@@ -153,7 +153,7 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 		Path: gitPath, Args: []string{"http-backend"}, Root: "/git/" + labOrg,
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + f.root, "GIT_HTTP_EXPORT_ALL=1", "FAKE_HQ_REFS=" + f.refsFile,
-			"HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1",
+			"HOME=" + t.TempDir(), "GIT_CONFIG_GLOBAL=" + filepath.Join(t.TempDir(), ".gitconfig"), "GIT_CONFIG_NOSYSTEM=1",
 		},
 		InheritEnv: []string{"PATH"},
 	}
@@ -767,10 +767,11 @@ func (f *fakeHQ) branchHead(ctx context.Context, change *hq.Change) *string {
 
 func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 	f.t.Helper()
-	if dir != "" {
-		args = append([]string{"-C", dir}, args...)
+	if dir == "" {
+		dir = f.root
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1050,7 +1051,7 @@ func (s *labSSH) run(ctx context.Context, hostname, command string, stdin []byte
 		token = s.sessionToken(command, token)
 	}
 	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
+		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_GLOBAL=" + filepath.Join(s.home, ".gitconfig"), "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
 		"GIT_TOKEN=" + token,
 	}
 	if stdin != nil {

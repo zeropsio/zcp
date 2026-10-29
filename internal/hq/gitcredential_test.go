@@ -197,7 +197,7 @@ func TestGitHubHelperConfig_OnlyZcpAnswersGitHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+global, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
+		"HOME="+root, "GIT_CONFIG_GLOBAL="+global, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	run := func(stdin, script string) string {
 		t.Helper()
