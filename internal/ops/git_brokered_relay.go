@@ -40,8 +40,9 @@ import (
 // record's RemoteURL, written from the checkout's live origin: HQ mints a
 // token for any repository the application mounts. An allowed remote is
 // answered as often as git asks within the call, from one token per
-// (repository, access) per call. GIT_ALLOW_PROTOCOL, the TLS pins and the
-// environment scrub are guardrails, not the boundary.
+// (repository, access) per call. GIT_ALLOW_PROTOCOL, the TLS and proxy
+// settings (which a URL-specific key in the checkout's config outranks) and
+// the environment scrub are guardrails, not the boundary.
 
 // BrokeredGitHQRepo is a repository in HQ: the application and its name, as
 // zcp's record of a wired pair holds them.
@@ -154,14 +155,72 @@ func sameOrigin(protocol, host, origin string) bool {
 	return strings.EqualFold(protocol, u.Scheme) && brokeredGitHostPort(host, protocol) == brokeredGitHostPort(u.Host, u.Scheme)
 }
 
+// transportValueOptions are, per subcommand that names a repository by its
+// positional arguments, the options whose value is the next argument.
+var transportValueOptions = map[string]map[string]bool{
+	"fetch": fetchValueOptions,
+	"pull":  pullValueOptions,
+	"push":  {"-o": true, "--push-option": true, "--receive-pack": true, "--exec": true, "--repo": true},
+	"ls-remote": {
+		"-o": true, "--server-option": true, "--upload-pack": true, "--sort": true,
+	},
+	"clone": {
+		"-o": true, "--origin": true, "-b": true, "--branch": true, "-u": true, "--upload-pack": true,
+		"--reference": true, "--reference-if-able": true, "--separate-git-dir": true, "--depth": true,
+		"--shallow-since": true, "--shallow-exclude": true, "-c": true, "--config": true,
+		"--server-option": true, "--filter": true, "--template": true, "-j": true, "--jobs": true,
+		"--bundle-uri": true, "--ref-format": true,
+	},
+}
+
+var (
+	fetchValueOptions = map[string]bool{
+		"-o": true, "--server-option": true, "--upload-pack": true, "--depth": true, "--deepen": true,
+		"--shallow-since": true, "--shallow-exclude": true, "--negotiation-tip": true, "--refmap": true,
+		"-j": true, "--jobs": true, "--filter": true,
+	}
+	pullValueOptions = func() map[string]bool {
+		m := map[string]bool{"-s": true, "--strategy": true, "-X": true, "--strategy-option": true}
+		for k := range fetchValueOptions {
+			m[k] = true
+		}
+		return m
+	}()
+)
+
+// brokeredGitTransportPositionals are the positional arguments of a fetch,
+// pull, push, ls-remote or clone — where git reads a repository's address —
+// skipping options and their values; none for any other subcommand.
+func brokeredGitTransportPositionals(args BrokeredGitArgs) []string {
+	values, ok := transportValueOptions[args.Subcommand]
+	if !ok {
+		return nil
+	}
+	var positional []string
+	for i := 0; i < len(args.Rest); i++ {
+		a := args.Rest[i]
+		switch {
+		case a == "--":
+			return append(positional, args.Rest[i+1:]...)
+		case values[a]:
+			i++
+		case strings.HasPrefix(a, "-") && a != "-":
+		default:
+			positional = append(positional, a)
+		}
+	}
+	return positional
+}
+
 // BrokeredGitArgvURLs are the URLs the call's argv writes literally — each
-// argument after the subcommand that is an https address, or one of HQ's
-// own scheme, with a host. A remote name, a path, an scp-style address and
-// a leading -c value count for nothing.
+// positional argument of a fetch, pull, push, ls-remote or clone that is an
+// https address, or one of HQ's own scheme, with a host. A remote name, a
+// path, an scp-style address, an option's value, a leading -c value and
+// any other subcommand's arguments count for nothing.
 func BrokeredGitArgvURLs(args BrokeredGitArgs, hqOrigin string) []string {
 	schemes := brokeredGitSchemes(hqOrigin)
 	var urls []string
-	for _, a := range args.Rest {
+	for _, a := range brokeredGitTransportPositionals(args) {
 		u, err := url.Parse(a)
 		if err != nil || u.Host == "" {
 			continue
@@ -331,26 +390,47 @@ func hasOperand(args []string, valueOptions map[string]bool) bool {
 const brokeredGitStdinCap = 1 << 20
 
 // ErrBrokeredGitStdinOverCap is a call whose stdin is over the 1 MiB zcp
-// forwards; ErrBrokeredGitStdinUnread one whose stdin could not be read.
-// Either ends the call before anything runs.
+// forwards; ErrBrokeredGitStdinUnread one whose stdin could not be read;
+// ErrBrokeredGitStdinStopped one stopped while its stdin was being read;
+// ErrBrokeredGitSetup one zcp could not set up in its own container (the
+// nonce, the session's pipes) — no ssh failure. Each ends the call before
+// anything runs.
 var (
 	ErrBrokeredGitStdinOverCap = errors.New("stdin is over the 1 MiB zcp git forwards to git")
 	ErrBrokeredGitStdinUnread  = errors.New("read stdin")
+	ErrBrokeredGitStdinStopped = errors.New("stopped while reading stdin")
+	ErrBrokeredGitSetup        = errors.New("set up the relay")
 )
 
-// readBrokeredGitStdin reads all of stdin, refusing more than the cap.
-func readBrokeredGitStdin(stdin io.Reader) ([]byte, error) {
+// readBrokeredGitStdin reads all of stdin, refusing more than the cap — in
+// a goroutine of its own, so ctx stops the call even on a stdin that never
+// ends (the read itself is left to the process's end).
+func readBrokeredGitStdin(ctx context.Context, stdin io.Reader) ([]byte, error) {
 	if stdin == nil {
 		return []byte{}, nil
 	}
-	payload, err := io.ReadAll(io.LimitReader(stdin, brokeredGitStdinCap+1))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinUnread, err)
+	type read struct {
+		payload []byte
+		err     error
 	}
-	if len(payload) > brokeredGitStdinCap {
+	done := make(chan read, 1)
+	go func() {
+		payload, err := io.ReadAll(io.LimitReader(stdin, brokeredGitStdinCap+1))
+		done <- read{payload, err}
+	}()
+	var r read
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinStopped, ctx.Err())
+	case r = <-done:
+	}
+	if r.err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBrokeredGitStdinUnread, r.err)
+	}
+	if len(r.payload) > brokeredGitStdinCap {
 		return nil, ErrBrokeredGitStdinOverCap
 	}
-	return payload, nil
+	return r.payload, nil
 }
 
 // relayLockBound is how long, by the clock, a helper waits for the call's
@@ -368,10 +448,11 @@ func relayLockPath(nonce string) string { return "/tmp/zcp-relay-" + nonce + ".l
 // it reads git's request, takes the call's lock (giving up relayLockBound
 // seconds by the clock after it began), writes its frame to descriptor 4 —
 // answering nothing at once when it cannot — and reads descriptor 3 until
-// the answer carrying its own id and host, discarding any other (one a
-// helper that gave up left, or a reused PID's), then hands git the user and
-// password, or nothing for a declined one (`-`). The lock is removed when
-// it ends, also when it is signalled (exit 129).
+// the answer carrying its own id and its host, or `-` for a frame zcp could
+// not read, discarding any other (one a helper that gave up left, or a
+// reused PID's), then hands git the user and password, or nothing for a
+// declined one (`-`). The lock is removed when it ends, also when it is
+// signalled (exit 129).
 func relayHelper(nonce string) string {
 	return "!f() { test \"$1\" = get || return 0; pr=; h=; p=; " +
 		"while IFS= read -r l && [ -n \"$l\" ]; do case \"$l\" in protocol=*) pr=${l#protocol=};; host=*) h=${l#host=};; path=*) p=${l#path=};; esac; done; " +
@@ -379,7 +460,7 @@ func relayHelper(nonce string) string {
 		"until mkdir \"$L\" 2>/dev/null; do [ \"$(date +%s)\" -lt \"$end\" ] || return 0; sleep 0.1 2>/dev/null || sleep 1; done; " +
 		"trap 'rmdir \"$L\" 2>/dev/null' EXIT; trap 'rmdir \"$L\" 2>/dev/null; exit 129' INT TERM HUP; " +
 		"printf '\\n" + relayFramePrefix(nonce) + "%s %s %s %s\\n' \"$$\" \"$pr\" \"$h\" \"${p:--}\" >&4 || return 0; " +
-		"id=; while IFS=' ' read -r id ah u w <&3; do [ \"$id\" = \"$$\" ] && [ \"$ah\" = \"$h\" ] && break; [ \"$(date +%s)\" -lt \"$end\" ] || return 0; done; " +
+		"id=; while IFS=' ' read -r id ah u w <&3; do [ \"$id\" = \"$$\" ] && { [ \"$ah\" = \"$h\" ] || [ \"$ah\" = - ]; } && break; [ \"$(date +%s)\" -lt \"$end\" ] || return 0; done; " +
 		"[ \"$id\" = \"$$\" ] && [ \"$ah\" = \"$h\" ] && [ -n \"$u\" ] && [ \"$u\" != - ] || return 0; " +
 		"printf 'username=%s\\npassword=%s\\n' \"$u\" \"$w\"; }; f"
 }
@@ -391,10 +472,12 @@ func relayFramePrefix(nonce string) string { return "ZCPCRED-" + nonce + " " }
 // descriptor 3 into a file of a fresh directory, all of it before git
 // starts, and checks its size; `head -c` where it takes -c (a busybox build
 // option), else `dd bs=1`. Neither can read past the payload: zcp writes
-// nothing more until a frame arrives, and none can before git starts.
-const relayStdinStep = `d=$(mktemp -d /tmp/zcp-stdin.XXXXXX) && f=$d/in && IFS= read -r n <&3 && ` +
-	`if head -c 0 </dev/null >/dev/null 2>&1; then head -c "$n" <&3 >"$f"; else dd bs=1 count="$n" <&3 >"$f" 2>/dev/null; fi && ` +
-	`n2=$(( $(wc -c < "$f") )) && [ "$n2" -eq "$n" ] || exit 128`
+// nothing more until a frame arrives, and none can before git starts. A
+// failure says so in one line and ends the call with 128, git never run.
+const relayStdinStep = `d=$(mktemp -d /tmp/zcp-stdin.XXXXXX 2>/dev/null) && f=$d/in && IFS= read -r n <&3 && ` +
+	`if head -c 0 </dev/null >/dev/null 2>&1; then head -c "$n" <&3 >"$f" 2>/dev/null; else dd bs=1 count="$n" <&3 >"$f" 2>/dev/null; fi && ` +
+	`n2=$(( $(wc -c < "$f") )) && [ "$n2" -eq "$n" ] || ` +
+	`{ echo 'zcp git: the service could not stage the stdin zcp forwarded, so git did not run' >&2; exit 128; }`
 
 // relayCleanup removes the stdin directory and a lock a helper left.
 const relayCleanup = `[ -z "$d" ] || rm -rf "$d"; rmdir "$L" 2>/dev/null`
@@ -405,7 +488,7 @@ const relayCleanup = `[ -z "$d" ] || rm -rf "$d"; rmdir "$L" 2>/dev/null`
 // https.
 func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 	protocols := brokeredGitSchemes(hqOrigin)
-	if slices.ContainsFunc(args.Rest, func(a string) bool { return path.IsAbs(a) && strings.HasSuffix(a, ".bundle") }) {
+	if slices.ContainsFunc(brokeredGitTransportPositionals(args), func(a string) bool { return path.IsAbs(a) && strings.HasSuffix(a, ".bundle") }) {
 		protocols = append(protocols, "file")
 	}
 	return strings.Join(protocols, ":")
@@ -416,12 +499,21 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // descriptor 3 (answers) and its stderr as 4 (frames), removes what it made
 // when it ends, reads a forwarded stdin into a file, changes into dir and
 // runs git with zcp's helper alone — the empty helper first clears every
-// persisted one — the protocol pin and the TLS and proxy pins after the
-// user's -c, git's stdin the file or /dev/null. Every value is ShellQuoted.
+// persisted one — and the protocol pin after the user's -c, git's stdin the
+// file or /dev/null. Every value is ShellQuoted. `-c http.sslVerify=true`
+// and `-c http.proxy=` are guardrails only: a URL-specific
+// `http.<url>.sslVerify` or `http.<url>.proxy` in the checkout's config
+// outranks a generic -c; GIT_ALLOW_PROTOCOL does override every
+// `protocol.*` key.
 // Auto-gc and auto-maintenance run in the foreground: detached, they close
 // only descriptors 0-2, keep 3 and 4 — the session's — and hold the call
 // open until they finish. A passthrough call needs no such setting: its git
-// holds only 0-2.
+// holds only 0-2. Known limit: a process a hook leaves running in the
+// background holds 3 and 4 the same way, and the call lasts until it ends.
+// Running git without 3 and 4 and having the helper reopen the script's
+// through /proc/<pid>/fd does not work over sshd: the session's pipes are
+// root's, and the session user's reopen is refused (measured on alpine
+// 3.21 and ubuntu 24.04).
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
 	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
@@ -552,6 +644,7 @@ func (s *frameStream) write(p []byte) {
 				take = p[:i]
 			}
 			if len(s.line)+len(take) > relayLineCap {
+				s.declineOverlong(take)
 				s.release()
 				s.mode = frameModePass
 				continue
@@ -597,6 +690,24 @@ func (s *frameStream) write(p []byte) {
 				s.mode = frameModeFrame
 			}
 		}
+	}
+}
+
+// declineOverlong answers a frame grown past relayLineCap — collected so
+// far, then next — with a decline for its id when the id is readable: its
+// helper waits for an answer with that id, and the line itself is relayed,
+// never parsed.
+func (s *frameStream) declineOverlong(next []byte) {
+	start := len(s.prefix)
+	if s.line[0] == '\r' {
+		start++
+	}
+	head := slices.Clone(s.line[start:])
+	if len(head) < 16 {
+		head = append(head, next[:min(len(next), 16-len(head))]...)
+	}
+	if id, _, ok := bytes.Cut(head, []byte{' '}); ok && readableFrameID(string(id)) {
+		s.onFrame(string(id))
 	}
 }
 
@@ -678,9 +789,12 @@ type relayCall struct {
 	relay  BrokeredGitRelay
 	host   string
 	stderr io.Writer
-	// access is what every GitHub token the call obtains carries, decided
-	// once from its argv (brokeredGitAccess).
-	access string
+	// decideAccess decides what every GitHub token the call obtains
+	// carries (brokeredGitAccess); it runs once, on the call's first GitHub
+	// request, and access keeps its answer — a call only HQ answers never
+	// decides one.
+	decideAccess func(ctx context.Context) string
+	access       string
 
 	answers  map[string]relayAnswer
 	said     map[string]bool
@@ -697,17 +811,41 @@ type relayAnswer struct{ user, password string }
 // minted for (host/path, as git named it) — what a failed revoke names.
 type relayMinted struct{ repo, token string }
 
-func newRelayCall(relay BrokeredGitRelay, host, access string, stderr io.Writer) *relayCall {
-	return &relayCall{relay: relay, host: host, access: access, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
+func newRelayCall(relay BrokeredGitRelay, host string, decideAccess func(context.Context) string, stderr io.Writer) *relayCall {
+	return &relayCall{relay: relay, host: host, decideAccess: decideAccess, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
 }
 
-// say tells the caller msg once per call.
+// gitHubAccess is the call's access, decided on first use.
+func (c *relayCall) gitHubAccess(ctx context.Context) string {
+	if c.access == "" {
+		c.access = c.decideAccess(ctx)
+	}
+	return c.access
+}
+
+// relaySayCap bounds how many distinct lines one call says, so code in the
+// dev service cannot make zcp print without end.
+const relaySayCap = 32
+
+// say tells the caller msg once per call, at most relaySayCap lines.
 func (c *relayCall) say(msg string) {
-	if c.said[msg] {
+	if c.said[msg] || len(c.said) >= relaySayCap {
 		return
 	}
 	c.said[msg] = true
 	fmt.Fprintf(c.stderr, "zcp git: %s\n", msg)
+}
+
+// relayQuoteCap bounds a dev-controlled value zcp quotes in what it says.
+const relayQuoteCap = 200
+
+// quoted is s — a value code in the dev service decides — Go-quoted, so no
+// control byte reaches the caller's terminal, and capped at relayQuoteCap.
+func quoted(s string) string {
+	if len(s) > relayQuoteCap {
+		s = s[:relayQuoteCap] + "…"
+	}
+	return strconv.Quote(s)
 }
 
 // notRecorded says a remote is none the records name.
@@ -716,7 +854,38 @@ func (c *relayCall) notRecorded(host, path string) {
 	if path != "-" {
 		remote += "/" + path
 	}
-	c.say(fmt.Sprintf("%s is not a remote zcp records for %s", remote, c.host))
+	c.say(fmt.Sprintf("%s is not a remote zcp records for %s", quoted(remote), c.host))
+}
+
+// canonicalGitHubPath is path, as git names a GitHub repository, in HQ's
+// canonical form: owner/name lower-cased, without a trailing slash or .git
+// (mate-hq gitTransport.ts remoteIdentity); false for a path that is no
+// owner/name of letters, digits, dot, underscore and hyphen.
+func canonicalGitHubPath(path string) (string, bool) {
+	p := strings.TrimRight(path, "/")
+	if len(p) >= 4 && strings.EqualFold(p[len(p)-4:], ".git") {
+		p = p[:len(p)-4]
+	}
+	owner, name, ok := strings.Cut(p, "/")
+	if !ok || !gitHubPathPart(owner) || !gitHubPathPart(name) {
+		return "", false
+	}
+	return strings.ToLower(owner + "/" + name), true
+}
+
+// gitHubPathPart is an owner or repository name GitHub can hold.
+func gitHubPathPart(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // answer answers one request: HQ by its scheme and host, any path, with the
@@ -726,18 +895,24 @@ func (c *relayCall) notRecorded(host, path string) {
 func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (string, string) {
 	switch {
 	case sameOrigin(protocol, host, c.relay.Identity.Origin):
-		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "")
+		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "", "")
 	case sameOrigin(protocol, host, c.relay.github()):
 		if path == "-" {
 			c.say(fmt.Sprintf("git named no repository on %s, and zcp git answers %s only for a repository it names", host, host))
 			return "", ""
 		}
-		repo := strings.TrimRight(c.relay.github(), "/") + "/" + path
+		canonical, ok := canonicalGitHubPath(path)
+		if !ok {
+			c.say(fmt.Sprintf("%s is no GitHub repository path (owner/name), so zcp git answers nothing for it", quoted(path)))
+			return "", ""
+		}
+		repo := strings.TrimRight(c.relay.github(), "/") + "/" + canonical
 		if !c.allows(ctx, repo) {
 			c.notRecorded(host, path)
 			return "", ""
 		}
-		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+c.access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+path+"\n", host+"/"+path)
+		access := c.gitHubAccess(ctx)
+		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+canonical+"\n", host+"/"+canonical, access)
 	}
 	c.notRecorded(host, path)
 	return "", ""
@@ -795,12 +970,13 @@ func (c *relayCall) liveOrigin(ctx context.Context) string {
 // cached answers request (git's credential attributes, as hq.AnswerGit
 // reads them) once per key per call, a decline included, saying a
 // declined one's reason once. A token obtained for a GitHub repository
-// (minted names it, "" for HQ) is kept to be revoked when the call ends.
-func (c *relayCall) cached(ctx context.Context, key, request, minted string) (string, string) {
+// (minted names it, "" for HQ) carries access and is kept to be revoked
+// when the call ends.
+func (c *relayCall) cached(ctx context.Context, key, request, minted, access string) (string, string) {
 	if a, ok := c.answers[key]; ok {
 		return a.user, a.password
 	}
-	got, err := hq.AnswerGitFor(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient, c.access)
+	got, err := hq.AnswerGitFor(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient, access)
 	var a relayAnswer
 	if err == nil {
 		a = relayAnswer{user: got.Username, password: got.Password}
@@ -841,7 +1017,7 @@ func (c *relayCall) revoke(ctx context.Context) {
 func relayNonce() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("relay nonce: %w", err)
+		return "", fmt.Errorf("%w: relay nonce: %w", ErrBrokeredGitSetup, err)
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -882,11 +1058,10 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	var payload []byte
 	if forward {
 		var err error
-		if payload, err = readBrokeredGitStdin(stdin); err != nil {
+		if payload, err = readBrokeredGitStdin(ctx, stdin); err != nil {
 			return -1, err
 		}
 	}
-	access := brokeredGitAccess(ctx, ssh, host, dir, args, relay)
 	nonce, err := relayNonce()
 	if err != nil {
 		return -1, err
@@ -895,13 +1070,13 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 
 	answersR, answersW, err := os.Pipe()
 	if err != nil {
-		return -1, fmt.Errorf("relay pipe: %w", err)
+		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
 	}
 	framesR, framesW, err := os.Pipe()
 	if err != nil {
 		_ = answersR.Close()
 		_ = answersW.Close()
-		return -1, fmt.Errorf("relay pipe: %w", err)
+		return -1, fmt.Errorf("%w: relay pipe: %w", ErrBrokeredGitSetup, err)
 	}
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -912,7 +1087,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		// One write, so nothing can come between the length and the bytes.
 		wg.Go(func() { _, _ = answers.Write(append(fmt.Appendf(nil, "%d\n", len(payload)), payload...)) })
 	}
-	call := newRelayCall(relay, host, access, stderr)
+	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
@@ -947,11 +1122,13 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 }
 
 // brokeredGitAccess is the access every GitHub token of the call carries,
-// decided once from its argv: read for any call that is no push — the lazy
-// fetches inside it included; for a push, write, or workflows when a commit
-// it would send touches .github/workflows/ or what it sends cannot be
-// resolved (brokeredGitPushAccess). A push a hook or alias starts inside a
-// call that is no push gets read, and GitHub refuses it.
+// decided once from its argv when GitHub first asks — access means nothing
+// for HQ's own git, so a push only HQ answers runs no check: read for any
+// call that is no push — the lazy fetches inside it included; for a push,
+// write, or workflows when a commit it would send touches
+// .github/workflows/ or what it sends cannot be resolved
+// (brokeredGitPushAccess). A push a hook or alias starts inside a call that
+// is no push gets read, and GitHub refuses it.
 func brokeredGitAccess(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay) string {
 	if args.Subcommand != "push" {
 		return hq.GitHubAccessRead
@@ -1041,9 +1218,11 @@ const pushCheckCommitCap = 1000
 
 // brokeredGitPushAccess is a push's access: write, or workflows when a
 // commit the push would send touches .github/workflows/ or what it sends
-// cannot be resolved — never less than today's token. The check runs before
-// the push as relayed read calls in the same checkout, with the push's -C
-// and -c: push.followTags set is unresolvable; a push naming no refspec
+// cannot be resolved — never less than today's token. The check runs when
+// GitHub first asks during the push, before any token is minted, as relayed
+// read calls in the same checkout with the push's -C and -c (it only reads,
+// so it runs beside the waiting push): push.followTags set is
+// unresolvable; a push naming no refspec
 // sends the current branch to @{push}; the commits the remote lacks are
 // `rev-list <src>… --not --remotes=<remote>`, or `--not refs/heads/main`
 // when the remote has no tracking refs at all (zcp keeps local main on HQ's

@@ -49,13 +49,14 @@ type gitCmdDeps struct {
 	rt       runtime.Info
 	stateDir string
 	ssh      ops.SSHStdioRunner
-	// hqID and hqHTTP are the Mate's HQ identity, read per call, and the
-	// client that reaches HQ: a relayed call answers from them.
-	hqID   hq.Identity
-	hqHTTP hq.Doer
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	// hqIdentity reads the Mate's HQ identity — only for a relayed call,
+	// which answers from it and hqHTTP, the client that reaches HQ. nil
+	// reads none.
+	hqIdentity func() hq.Identity
+	hqHTTP     hq.Doer
+	stdin      io.Reader
+	stdout     io.Writer
+	stderr     io.Writer
 }
 
 // isGit recognizes `zcp git` before CLI telemetry can add output to git's
@@ -72,14 +73,14 @@ func runGit(args []string) int {
 	defer stop()
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
 	return runGitCmd(ctx, args, gitCmdDeps{
-		rt:       runtime.DetectFrom(lookup),
-		stateDir: brokeredGitStateDir(),
-		ssh:      platform.NewSystemSSHDeployer(),
-		hqID:     mate.HQIdentity(lookup),
-		hqHTTP:   &http.Client{},
-		stdin:    os.Stdin,
-		stdout:   os.Stdout,
-		stderr:   os.Stderr,
+		rt:         runtime.DetectFrom(lookup),
+		stateDir:   brokeredGitStateDir(),
+		ssh:        platform.NewSystemSSHDeployer(),
+		hqIdentity: func() hq.Identity { return mate.HQIdentity(lookup) },
+		hqHTTP:     &http.Client{},
+		stdin:      os.Stdin,
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
 	})
 }
 
@@ -152,14 +153,21 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 		if err := ops.CheckRelayedGitArgs(gitArgs); err != nil {
 			return refuse(err.Error())
 		}
-		relay := brokeredGitRelayFor(meta, d.hqID, d.hqHTTP, gitArgs)
+		var id hq.Identity
+		if d.hqIdentity != nil {
+			id = d.hqIdentity()
+		}
+		relay := brokeredGitRelayFor(meta, id, d.hqHTTP, gitArgs)
 		code, err = ops.RunBrokeredGitRelayed(ctx, d.ssh, host, dir, gitArgs, relay, d.stdin, d.stdout, d.stderr)
 		switch {
 		case errors.Is(err, ops.ErrBrokeredGitStdinOverCap):
 			return refuse(err.Error())
-		case errors.Is(err, ops.ErrBrokeredGitStdinUnread):
+		case errors.Is(err, ops.ErrBrokeredGitStdinUnread), errors.Is(err, ops.ErrBrokeredGitSetup):
 			fmt.Fprintf(d.stderr, "zcp git: %v\n", err)
 			return gitExitFailed
+		case errors.Is(err, ops.ErrBrokeredGitStdinStopped):
+			fmt.Fprintf(d.stderr, "zcp git: stopped while reading stdin; nothing ran in %s\n", host)
+			return gitExitStopped
 		}
 	} else {
 		code, err = ops.RunBrokeredGit(ctx, d.ssh, host, dir, gitArgs, d.stdin, d.stdout, d.stderr)

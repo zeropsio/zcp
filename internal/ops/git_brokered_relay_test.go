@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"testing/iotest"
@@ -145,13 +146,16 @@ func TestBrokeredGitFrames_WrongNonce_RelayedAsText(t *testing.T) {
 func TestBrokeredGitFrames_OverlongLine_RelayedNotParsed(t *testing.T) {
 	t.Parallel()
 	long := framePrefix + "61 https hq.example " + strings.Repeat("a", 70<<10) + "\n"
-	input := framePrefix + "60 https hq.example x\n" + long + framePrefix + "62 https hq.example y\n"
-	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "halves": iotest.HalfReader} {
-		relayed, answers := relayFramesOf(input, wrap, declineAll)
-		if relayed != long {
-			t.Errorf("%s: relayed %d bytes, want the overlong line alone (%d bytes)", name, len(relayed), len(long))
+	noID := framePrefix + "x9 https hq.example " + strings.Repeat("b", 70<<10) + "\n"
+	input := framePrefix + "60 https hq.example x\n" + long + noID + framePrefix + "62 https hq.example y\n"
+	for name, wrap := range map[string]func(io.Reader) io.Reader{"whole": nil, "halves": iotest.HalfReader, "one byte": iotest.OneByteReader} {
+		relayed, answers := relayFramesOf(input, wrap, func(string, string, string) (string, string) { return "mate", "never-FAKE" })
+		if relayed != long+noID {
+			t.Errorf("%s: relayed %d bytes, want the overlong lines alone (%d bytes)", name, len(relayed), len(long+noID))
 		}
-		if want := "60 hq.example - -\n62 hq.example - -\n"; answers != want {
+		// The helper behind an overlong frame waits for an answer with its
+		// id: it gets a decline, never a credential.
+		if want := "60 hq.example mate never-FAKE\n61 - - -\n62 hq.example mate never-FAKE\n"; answers != want {
 			t.Errorf("%s: answers = %q, want %q", name, answers, want)
 		}
 	}
@@ -417,6 +421,47 @@ func TestBrokeredGit_ArgvURLs_LiteralURLsOnly(t *testing.T) {
 	}
 }
 
+// TestBrokeredGit_ArgvURLs_OnlyTransportPositionals: a URL — or an absolute
+// .bundle path, which allows the file transport — counts only as a
+// positional argument of fetch, pull, push, ls-remote or clone; never in a
+// commit message, a grep, a config value, or as an option's value.
+func TestBrokeredGit_ArgvURLs_OnlyTransportPositionals(t *testing.T) {
+	t.Parallel()
+	const u = "https://github.com/acme/lib"
+	for _, tc := range []struct {
+		argv []string
+		urls []string
+		file bool
+	}{
+		{[]string{"commit", "-m", u}, nil, false},
+		{[]string{"log", "--grep", u}, nil, false},
+		{[]string{"config", "remote.x.url", u}, nil, false},
+		{[]string{"tag", "-m", "/tmp/x.bundle", "v1"}, nil, false},
+		{[]string{"fetch", "-o", u, "origin"}, nil, false},
+		{[]string{"fetch", "--upload-pack", u, "--depth", "1", u, "main"}, []string{u}, false},
+		{[]string{"fetch", "--", u}, []string{u}, false},
+		{[]string{"pull", "--rebase", u, "main"}, []string{u}, false},
+		{[]string{"push", "-u", u, "HEAD:main"}, []string{u}, false},
+		{[]string{"push", "--push-option", u, "origin"}, nil, false},
+		{[]string{"ls-remote", "--sort", "version:refname", u}, []string{u}, false},
+		{[]string{"clone", "-b", "main", "--origin", "up", u, "/tmp/wt-x"}, []string{u}, false},
+		{[]string{"fetch", "/tmp/x.bundle", "main:refs/heads/b"}, nil, true},
+		{[]string{"ls-remote", "/tmp/x.bundle"}, nil, true},
+		{[]string{"fetch", "--refmap", "/tmp/x.bundle", "origin"}, nil, false},
+	} {
+		args, err := ParseBrokeredGitArgs(tc.argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := BrokeredGitArgvURLs(args, "https://hq.example"); !slices.Equal(got, tc.urls) {
+			t.Errorf("BrokeredGitArgvURLs(%q) = %q, want %q", tc.argv, got, tc.urls)
+		}
+		if got := strings.Contains(brokeredGitAllowProtocol(args, "https://hq.example"), "file"); got != tc.file {
+			t.Errorf("file transport for %q = %v, want %v", tc.argv, got, tc.file)
+		}
+	}
+}
+
 // --- offline: the real script, real git, git's http-backend -----------------
 
 // relayShells are the shells the remote script runs under: /bin/sh, and dash
@@ -534,6 +579,7 @@ type relayLab struct {
 	revokeAsked  []string      // every token a revoke named
 	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
 	revokeDelay  time.Duration // how long a revoke waits before answering
+	mintDelay    time.Duration // how long HQ takes to mint a token
 }
 
 // serveRevoke is GitHub's DELETE /installation/token, authenticated by the
@@ -699,6 +745,10 @@ func (l *relayLab) serveMint(t *testing.T, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	access := q.Get("access")
+	l.mu.Lock()
+	delay := l.mintDelay
+	l.mu.Unlock()
+	time.Sleep(delay)
 	l.mu.Lock()
 	l.mints = append(l.mints, relayMint{path: path, access: access})
 	if l.readOnly[key] && (access == hq.GitHubAccessWrite || access == hq.GitHubAccessWorkflows) {
@@ -1019,8 +1069,8 @@ func TestBrokeredGit_Relay_PartialClone_GitHubLazyFetchesShareOneMintedToken(t *
 			if asked < 2 {
 				t.Fatalf("git asked for a credential %d times, want at least two lazy fetches", asked)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop.git" {
-				t.Errorf("HQ minted %+v, want one token for acme/shop.git", mints)
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
+				t.Errorf("HQ minted %+v, want one token minted with the canonical path acme/shop", mints)
 			}
 			l.mu.Lock()
 			used := l.tokenUse["ghs_FAKE0001"]
@@ -1109,8 +1159,8 @@ func TestBrokeredGit_Relay_FetchByURLInArgv_Answered(t *testing.T) {
 			if got := l.git(t, checkout, "rev-parse", "refs/remotes/lib/main"); got != libHistory.third {
 				t.Errorf("lib/main = %s, want %s", got, libHistory.third)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/lib.git" {
-				t.Errorf("HQ minted %+v, want one token for acme/lib.git", mints)
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/lib" {
+				t.Errorf("HQ minted %+v, want one token minted with the canonical path acme/lib", mints)
 			}
 		})
 	}
@@ -1142,7 +1192,7 @@ func TestBrokeredGit_Relay_NoRecordedOrigin_AnswersHQsLiveOriginReadOnce(t *test
 			if asked != 1 {
 				t.Errorf("HQ's live state read %d times in the call, want once", asked)
 			}
-			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop.git" {
+			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
 				t.Errorf("HQ minted %+v, want one token for the live origin", mints)
 			}
 			assertDeclined(t, l, l.run(t, sh, checkout, relay, "", "fetch", "evil"))
@@ -1162,7 +1212,7 @@ func assertDeclined(t *testing.T, l *relayLab, run relayRun) {
 		t.Errorf("stderr = %q, want zcp naming the remote it does not answer", run.stderr)
 	}
 	for _, m := range l.minted() {
-		if strings.EqualFold(m.path, "acme/other.git") {
+		if strings.EqualFold(strings.TrimSuffix(m.path, ".git"), "acme/other") {
 			t.Errorf("HQ minted a token for %s", m.path)
 		}
 	}
@@ -1315,19 +1365,37 @@ func TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce(t *testing.T) {
 }
 
 // TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock: a hook that
-// starts two lazy fetches at once gets both answered right, one token shared.
+// starts two lazy fetches at once gets both answered right, one token
+// shared — while HQ takes its time minting, one helper finds the lock held
+// and waits its turn (a mkdir on PATH logs each attempt the lock refused).
 func TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock(t *testing.T) {
 	t.Parallel()
+	realMkdir, err := exec.LookPath("mkdir")
+	if err != nil {
+		t.Skip("no mkdir on PATH")
+	}
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
 			l := newRelayLab(t)
+			l.mu.Lock()
+			l.mintDelay = time.Second
+			l.mu.Unlock()
 			url, h := l.repo(t, true, "acme/shop")
 			checkout := l.checkout(t, url)
 			dir := t.TempDir()
 			one, two := filepath.Join(dir, "one"), filepath.Join(dir, "two")
+			held := filepath.Join(dir, "held")
+			stub := t.TempDir()
+			body := "#!/bin/sh\n" + ShellQuote(realMkdir) + " \"$@\" 2>/dev/null; rc=$?\ncase \"$*\" in *zcp-relay-*) [ $rc -eq 0 ] || echo held >> " + ShellQuote(held) + ";; esac\nexit $rc\n"
+			if err := os.WriteFile(filepath.Join(stub, "mkdir"), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt > "+ShellQuote(one)+" &\ngit show "+h.second+":lib.txt > "+ShellQuote(two)+" &\nwait\n")
-			l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			l.runEnv(t, sh, l.env(stub), checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			if _, err := os.Stat(held); err != nil {
+				t.Errorf("no helper ever found the lock held: the two fetches did not contend (%v)", err)
+			}
 			if got := readFile(t, one); got != "first contents\n" {
 				t.Errorf("first lazy fetch read %q", got)
 			}
@@ -1437,6 +1505,62 @@ func TestBrokeredGit_Relay_DeclinedHost_FailsWithoutEmptyPassword(t *testing.T) 
 	}
 }
 
+// TestBrokeredGit_Relay_GitHubPath_MintedCanonicalOddDeclined: HQ is asked
+// for a GitHub repository by its canonical path — owner/name, lower-cased,
+// no .git or trailing slash, as HQ keys it — and a path that is no
+// owner/name of letters, digits, dot, underscore and hyphen is declined
+// before HQ is asked, said once, quoted.
+func TestBrokeredGit_Relay_GitHubPath_MintedCanonicalOddDeclined(t *testing.T) {
+	t.Parallel()
+	l := newRelayLab(t)
+	url, _ := l.repo(t, true, "acme/shop")
+	ghHost := strings.TrimPrefix(l.gh.URL, "http://")
+	var stderr bytes.Buffer
+	call := newRelayCall(l.relay(url), "appdev", func(context.Context) string { return hq.GitHubAccessRead }, &stderr)
+	for _, path := range []string{"acme/shop.git", "Acme/Shop", "acme/shop/", "ACME/SHOP.GIT"} {
+		if user, pass := call.answer(t.Context(), "http", ghHost, path); user == "" || pass == "" {
+			t.Errorf("answer(%q) declined, want the token for acme/shop", path)
+		}
+	}
+	if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
+		t.Errorf("HQ minted %+v, want one token, asked by the canonical path acme/shop", mints)
+	}
+	for _, path := range []string{"acme", "acme/shop/extra", "acme/../shop", "a b/shop", "acme/sh%6fp", "acme/shop?x=1", "./shop", "acme/" + strings.Repeat("x", 300) + "\x1b[2J"} {
+		if user, pass := call.answer(t.Context(), "http", ghHost, path); user != "" || pass != "" {
+			t.Errorf("answer(%q) answered, want declined", path)
+		}
+	}
+	if mints := l.minted(); len(mints) != 1 {
+		t.Errorf("HQ minted %+v, want nothing asked for an odd path", mints)
+	}
+	said := stderr.String()
+	if !strings.Contains(said, `"acme/shop/extra"`) || strings.Contains(said, "\x1b") {
+		t.Errorf("stderr = %q, want each odd path quoted, never raw", said)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(said), "\n") {
+		if len(line) > 400 {
+			t.Errorf("stderr line of %d bytes, want a dev-controlled path capped: %q", len(line), line[:80])
+		}
+	}
+}
+
+// TestBrokeredGit_Relay_SaidLines_CappedPerCall: code in the dev service
+// that asks for many remotes zcp does not record makes zcp say at most 32
+// distinct lines in a call — and every request is still declined.
+func TestBrokeredGit_Relay_SaidLines_CappedPerCall(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	call := newRelayCall(BrokeredGitRelay{Identity: hq.Identity{Origin: "https://hq.example"}}, "appdev", func(context.Context) string { return hq.GitHubAccessRead }, &stderr)
+	for i := range 100 {
+		if user, _ := call.answer(t.Context(), "https", fmt.Sprintf("other%d.example", i), "x"); user != "" {
+			t.Fatalf("request %d answered", i)
+		}
+	}
+	if n := strings.Count(stderr.String(), "\n"); n != relaySayCap {
+		t.Errorf("said %d lines, want the cap of %d", n, relaySayCap)
+	}
+}
+
 // TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigText:
 // a GitHub request naming no repository is declined with zcp's own reason —
 // never the helper config the mount fallback prints — and HQ is not asked.
@@ -1473,7 +1597,8 @@ func TestBrokeredGit_Relay_GitHubFrameWithoutPath_DeclinedWithoutHelperConfigTex
 // TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr: neither the remote
 // command (ssh's argv), nor the caller's stdout or stderr carries the Mate
 // credential, a minted token or the project key, across push, fetch, a lazy
-// read and HQ.
+// read and HQ — nor, after the calls, any file under the dev service's
+// $HOME, the checkout's .git, or what the relay makes in /tmp.
 func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -1511,6 +1636,26 @@ func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
 						t.Errorf("the caller's output carries %q", s)
 					}
 				}
+			}
+			left, _ := filepath.Glob("/tmp/zcp-relay-*")
+			stdinDirs, _ := filepath.Glob("/tmp/zcp-stdin.*")
+			roots := append(append([]string{l.home, filepath.Join(checkout, ".git")}, left...), stdinDirs...)
+			for _, root := range roots {
+				_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						return nil //nolint:nilerr // a file another test removes meanwhile is no leak
+					}
+					raw, err := os.ReadFile(p)
+					if err != nil {
+						return nil //nolint:nilerr // as above
+					}
+					for _, s := range secrets {
+						if bytes.Contains(raw, []byte(s)) {
+							t.Errorf("%s holds %q after the calls", p, s)
+						}
+					}
+					return nil
+				})
 			}
 		})
 	}
@@ -1627,6 +1772,36 @@ func TestBrokeredGit_Relay_HelperText_SurvivesBothQuotingLayers(t *testing.T) {
 			}
 			if got := readFile(t, read); got != "first contents\n" {
 				t.Errorf("the helper's answer read %q", got)
+			}
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine: a forwarded
+// stdin the service cannot stage — mktemp failing — ends the call with 128
+// and one line saying so, git never run.
+func TestBrokeredGit_Relay_StdinStagingFails_SaysSoInOneLine(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			url, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, url)
+			stub := t.TempDir()
+			if err := os.WriteFile(filepath.Join(stub, "mktemp"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := l.git(t, checkout, "rev-parse", "HEAD")
+			run := l.runEnv(t, sh, l.env(stub), checkout, l.relay(), "message\n", "commit", "--allow-empty", "-F", "-")
+			if run.code != 128 {
+				t.Errorf("exit %d, want 128", run.code)
+			}
+			if got := strings.TrimSpace(run.stderr); strings.Count(got, "\n") != 0 || !strings.HasPrefix(got, "zcp git: ") || !strings.Contains(got, "stdin") {
+				t.Errorf("stderr = %q, want one zcp git line about the stdin", run.stderr)
+			}
+			if after := l.git(t, checkout, "rev-parse", "HEAD"); after != before {
+				t.Errorf("git ran: HEAD moved to %s", after)
 			}
 		})
 	}
@@ -1875,6 +2050,46 @@ func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing
 				}
 			}
 		})
+	}
+}
+
+// countingRunner is an ssh seam that only counts the calls it was asked for.
+type countingRunner struct{ calls atomic.Int32 }
+
+func (c *countingRunner) ExecSSHStdio(context.Context, string, string, io.Reader, io.Writer, io.Writer) (int, error) {
+	c.calls.Add(1)
+	return 0, nil
+}
+
+// TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel: a call that reads
+// stdin — apply with no file — on a stdin that never ends is stopped by its
+// context at once, before anything runs in the service.
+func TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel(t *testing.T) {
+	t.Parallel()
+	stdin, never := io.Pipe()
+	t.Cleanup(func() { _ = never.Close() })
+	runner := &countingRunner{}
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := RunBrokeredGitRelayed(ctx, runner, "appdev", "/var/www", BrokeredGitArgs{Subcommand: "apply"}, BrokeredGitRelay{}, stdin, io.Discard, io.Discard)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrBrokeredGitStdinStopped) {
+			t.Errorf("RunBrokeredGitRelayed = %v, want stopped while reading stdin", err)
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("stopped after %s, want at once", took)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call kept reading stdin after it was stopped")
+	}
+	if n := runner.calls.Load(); n != 0 {
+		t.Errorf("%d ssh calls, want none", n)
 	}
 }
 
@@ -2328,6 +2543,39 @@ func TestBrokeredGit_Access_PushInsideNonPushCall_GetsReadAndFails(t *testing.T)
 	}
 }
 
+// TestBrokeredGit_Access_HQOnlyPush_MakesNoPreCheckCalls: access means
+// nothing for HQ's own git, so a push that only HQ answers runs as one ssh
+// call, no workflows check before or during it; a push GitHub answers still
+// decides its access.
+func TestBrokeredGit_Access_HQOnlyPush_MakesNoPreCheckCalls(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l := newRelayLab(t)
+			hqURL, _ := l.repo(t, false, "org/app-1/appdev")
+			checkout := l.checkout(t, hqURL)
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "work\n"})
+			run := l.run(t, sh, checkout, l.relay(), "", "push", "origin", "HEAD:refs/heads/feature").mustSucceed(t, "push to HQ")
+			if len(run.commands) != 1 {
+				t.Errorf("an HQ-only push made %d ssh calls, want the push alone", len(run.commands))
+			}
+			run = l.run(t, sh, checkout, l.relay(), "", "push", hqURL, "HEAD:refs/heads/feature2").mustSucceed(t, "push to HQ by URL")
+			if len(run.commands) != 1 {
+				t.Errorf("an HQ-only push by URL made %d ssh calls, want the push alone", len(run.commands))
+			}
+
+			gh, _ := l.repo(t, true, "acme/shop")
+			l.git(t, checkout, "remote", "add", "github", gh)
+			run = l.run(t, sh, checkout, l.relay(gh), "", "push", "github", "HEAD:refs/heads/feature").mustSucceed(t, "push to GitHub")
+			if len(run.commands) < 2 {
+				t.Errorf("a push to GitHub made %d ssh calls, want its workflows check too", len(run.commands))
+			}
+			l.assertAccesses(t, hq.GitHubAccessWrite)
+		})
+	}
+}
+
 // TestBrokeredGit_Access_ReadOnlyRemote_PushDeclinedNamingIt: a push to a
 // remote connected with a person's token is declined naming the repository
 // read-only for this Mate, with no retry for another access.
@@ -2458,6 +2706,73 @@ func (p *helperProc) wait(t *testing.T) int {
 }
 
 const helperRequest = "protocol=https\nhost=hq.example\npath=git/o/a/appdev.git\n\n"
+
+// TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce: the real
+// helper, its frames read by relayFrames and its answers written back, asks
+// for a host zcp cannot read (an IDN), an empty host, or a path that makes
+// its frame overlong: zcp's decline for its id ends it at once — no
+// credential, the lock free — rather than leaving it reading descriptor 3.
+func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct{ name, request string }{
+				{"unreadable host", "protocol=https\nhost=bücher.example\npath=acme/shop.git\n\n"},
+				{"empty host", "protocol=https\nhost=\npath=acme/shop.git\n\n"},
+				{"empty protocol", "protocol=\nhost=hq.example\npath=x\n\n"},
+				{"overlong frame", "protocol=https\nhost=hq.example\npath=" + strings.Repeat("a", 70<<10) + "\n\n"},
+			} {
+				nonce := relayRandHex(t)
+				answersR, answersW, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				framesR, framesW, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+				helper := strings.TrimPrefix(relayHelper(nonce), "!")
+				cmd := exec.CommandContext(ctx, sh[0], append(slices.Clone(sh[1:]), "-c", helper+" get")...) //nolint:gosec // the helper under test
+				var stdout bytes.Buffer
+				cmd.Stdin, cmd.Stdout, cmd.Env = strings.NewReader(tc.request), &stdout, helperEnv()
+				cmd.ExtraFiles = []*os.File{answersR, framesW}
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				_ = answersR.Close()
+				_ = framesW.Close()
+				relayed := make(chan struct{})
+				go func() {
+					defer close(relayed)
+					relayFrames(framesR, nonce, io.Discard, answersW, func(string, string, string) (string, string) { return "mate", "never-FAKE" })
+				}()
+				start := time.Now()
+				err = cmd.Wait()
+				took := time.Since(start)
+				timedOut := ctx.Err() != nil
+				cancel()
+				_ = answersW.Close()
+				<-relayed
+				_ = framesR.Close()
+				if timedOut || took > 10*time.Second {
+					t.Errorf("%s: the helper did not end after zcp's decline (%s, %v)", tc.name, took, err)
+				}
+				if err != nil {
+					t.Errorf("%s: helper exit %v, want 0", tc.name, err)
+				}
+				if stdout.Len() != 0 {
+					t.Errorf("%s: the helper handed git %q", tc.name, stdout.String())
+				}
+				if _, err := os.Stat("/tmp/zcp-relay-" + nonce + ".lock"); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s: the lock is still held: %v", tc.name, err)
+					_ = os.Remove("/tmp/zcp-relay-" + nonce + ".lock")
+				}
+			}
+		})
+	}
+}
 
 func helperEnv() []string { return []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C"} }
 
