@@ -99,12 +99,17 @@ func runGit(args []string) int {
 	})
 }
 
-// handleSIGPIPE ignores SIGPIPE: a relayed call writes git's stdout itself,
-// and a reader that went away (`zcp git … | head -1`) must end that copy
-// with an error the call handles — passing it on to ssh, revoking its
-// tokens — not kill zcp.
+// handleSIGPIPE catches SIGPIPE, into a channel nobody reads: a relayed call
+// writes git's stdout itself, and once SIGPIPE is caught a write to a stdout
+// whose reader went away (`zcp git … | head -1`) fails with EPIPE — the copy
+// ends, closes its pipe and the call revokes its tokens — instead of killing
+// zcp. Caught, not ignored: an ignored disposition survives exec, a caught
+// one is reset to the default in every child, so ssh still dies of SIGPIPE
+// when it writes to a gone reader — and the remote git with its session —
+// rather than keeping the session open and discarding what git goes on
+// producing (on a partial clone, fetching every blob lazily).
 func handleSIGPIPE() {
-	signal.Ignore(syscall.SIGPIPE)
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 }
 
 // brokeredGitStateDir is where zcp keeps its records in a zcp container —

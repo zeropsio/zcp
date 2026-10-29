@@ -3937,9 +3937,12 @@ open a second after both the marker arrived and every byte before the end mark r
 is ended: a process a hook or alias left running may hold descriptors 3 and 4, or stdout too, and
 what it writes to stdout after the end mark is dropped. Once ssh ended, zcp reads the stdout pipe
 while it gives more or the caller is still being written to, and closes one silent for 2 s; a call
-the caller stopped waits at most 2 s for it. A caller whose reader went away ends the copy, and ssh
-learns it as it did writing there itself; `zcp git` ignores SIGPIPE, so the call still revokes its
-tokens and returns git's exit code.
+the caller stopped waits at most 2 s for it. A caller whose reader went away ends the copy, which
+closes the pipe: ssh dies of SIGPIPE writing to it, as it did writing there itself, and the remote
+git with its session. `zcp git` catches SIGPIPE and never ignores it — an ignored disposition
+survives exec, a caught one is reset in every child — so its own write fails with EPIPE while ssh
+keeps the default; the call still revokes its tokens, and returns git's exit code when the marker
+came first, else ssh's failure (`TestHandleSIGPIPE_*`).
 
 **A relay frame is answered only from zcp-side records and the call's own argv — never from the
 dev checkout's config, which the dev service writes, nor from `ServiceMeta.RemoteURL`, written from

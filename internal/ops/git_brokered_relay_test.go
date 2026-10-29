@@ -2383,7 +2383,13 @@ func (closedStdout) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 // TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode: a caller whose
 // stdout reader went away (`zcp git … | head -1` after head exited) holds
-// nothing: the call ends with git's exit code, its tokens revoked as ever.
+// nothing: zcp's copy ends and closes its pipe, and the call ends with its
+// tokens revoked as ever. The stand-in ssh here outlives the closed pipe, so
+// the session ends by itself and the call returns git's exit code from the
+// marker. A real ssh keeps SIGPIPE's default (zcp git catches it, never
+// ignores it) and dies writing to the closed pipe, taking the remote git
+// with it; the call then returns git's code only when the marker came
+// first, else ssh's failure.
 func TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
