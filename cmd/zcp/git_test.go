@@ -775,7 +775,7 @@ func hqWiredMeta() *workflow.ServiceMeta {
 // and frames on their own descriptors, persisted helpers cleared for zcp's
 // own, the protocol pin, and git's stdin taken off the session.
 var relayedScriptMarks = []string{
-	"exec 3<&0 4>&2",
+	"exec 3<&0 4>&2 8<&0 9>&2",
 	"'-c' 'credential.helper=' '-c' 'credential.helper=!f() {",
 	"GIT_ALLOW_PROTOCOL=",
 	"'status' < /dev/null",
