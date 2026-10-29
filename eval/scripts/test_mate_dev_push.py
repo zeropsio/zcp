@@ -1,4 +1,4 @@
-"""Dev-push contract tests: stop at packing; never build or contact a container."""
+"""Delivery contract tests: mock external effects; never build or contact a container."""
 
 import json
 import os
@@ -117,6 +117,79 @@ class MateDevPushTests(unittest.TestCase):
         result = self.run_push()
         self.assertIn("release source is not an ancestor", result.stderr)
         self.assertFalse(self.args_file.exists())
+
+
+class BuildDeployTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.entry = self.root / "eval/scripts/build-deploy.sh"
+        self.entry.parent.mkdir(parents=True)
+        shutil.copy2(ENTRY.with_name("build-deploy.sh"), self.entry)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        self.commands_file = self.root / "commands.jsonl"
+        mock = (
+            '#!/usr/bin/env python3\n'
+            'import json, os, sys\n'
+            'from pathlib import Path\n'
+            'name = Path(sys.argv[0]).name\n'
+            'with open(os.environ["DELIVERY_COMMANDS"], "a") as log:\n'
+            ' log.write(json.dumps([name, *sys.argv[1:]]) + "\\n")\n'
+            'if name == "make":\n'
+            ' target = Path("builds/zcp-linux-amd64")\n'
+            ' target.parent.mkdir(parents=True, exist_ok=True)\n'
+            ' target.write_bytes(b"fixture binary")\n'
+            'elif name == "shasum": print("a" * 64 + "  " + sys.argv[-1])\n'
+            'elif name == "ssh" and sys.argv[-1].startswith("sha256sum "):\n'
+            ' print(os.environ["DELIVERY_REMOTE_HASH"] + "  /usr/local/bin/zcp")\n'
+        )
+        for name in ("make", "scp", "ssh", "shasum"):
+            command = bin_dir / name
+            command.write_text(mock)
+            command.chmod(0o755)
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("EVAL_")}
+        self.env.update(PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                        EVAL_REMOTE_HOST="fixture.invalid", EVAL_SSH_OPTS="-F /dev/null",
+                        DELIVERY_COMMANDS=str(self.commands_file), DELIVERY_REMOTE_HASH="a" * 64)
+
+    def run_deploy(self):
+        result = subprocess.run(["bash", str(self.entry)], cwd=self.root, env=self.env,
+                                capture_output=True, text=True)
+        commands = [json.loads(line) for line in self.commands_file.read_text().splitlines()]
+        return result, commands
+
+    def test_verified_install_does_not_terminate_unowned_processes(self):
+        result, commands = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        binary = str(self.root / "builds/zcp-linux-amd64")
+        self.assertEqual(commands[0], ["make", "linux-amd"])
+        self.assertEqual(commands[1][:4], ["scp", "-F", "/dev/null", binary])
+        self.assertRegex(commands[1][4], r"^fixture\.invalid:/tmp/zcp\.deploy\.\d+$")
+        remote_tmp = commands[1][4].split(":", 1)[1]
+        remote = [command[-1] for command in commands if command[0] == "ssh"]
+        self.assertTrue(all(command[1:4] == ["-F", "/dev/null", "fixture.invalid"]
+                            for command in commands if command[0] == "ssh"))
+        self.assertEqual(remote[0],
+                         f"sudo install -m 0755 '{remote_tmp}' '/usr/local/bin/zcp' && rm -f '{remote_tmp}'")
+        self.assertIn('LOCAL_BIN="$HOME/.local/bin/zcp"', remote[1])
+        self.assertIn("ln -s '/usr/local/bin/zcp' \"$LOCAL_BIN\"", remote[1])
+        self.assertIn(["shasum", "-a", "256", binary], commands)
+        self.assertEqual(remote[2], "sha256sum /usr/local/bin/zcp")
+        self.assertIn("Deploy OK (hash match:", result.stdout)
+        self.assertNotRegex("\n".join(remote), r"\b(?:pkill|killall|kill)\b",
+                            "installer must never request process termination")
+        self.assertEqual(len(remote), 3)
+
+    def test_checksum_mismatch_still_refuses_delivery_success(self):
+        self.env["DELIVERY_REMOTE_HASH"] = "b" * 64
+        result, commands = self.run_deploy()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("WARNING: Hash mismatch!", result.stdout)
+        self.assertNotIn("Deploy OK", result.stdout)
+        self.assertEqual(commands[-1],
+                         ["ssh", "-F", "/dev/null", "fixture.invalid", "sha256sum /usr/local/bin/zcp"])
 
 
 if __name__ == "__main__":
