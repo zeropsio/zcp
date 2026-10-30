@@ -287,7 +287,7 @@ func hqReleaseHandoff(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.I
 		"status":   "release-person-required",
 		"message":  "A release is a person's action in Mate. HQ Core creates the application's release; this tool cannot push release tags to HQ.",
 		"pipeline": "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate; this tool has not checked them.",
-		"nextStep": "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live (beside the change to review, or on the project) merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
+		"nextStep": "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
 	}
 	if open := releaseOpenChangesWords(ctx, httpClient, rt, stateDir); open != "" {
 		answer["openChanges"] = open

@@ -98,7 +98,7 @@ func RegisterDeployBatch(
 		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, services)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
-			WorkSessionState:  sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
+			WorkSessionState:  sessionAnnotations(stateDir),
 		}), nil, nil
 	})
 }

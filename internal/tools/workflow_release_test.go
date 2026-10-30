@@ -295,7 +295,7 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 			if body["pipeline"] != wantPipeline {
 				t.Errorf("pipeline = %q, want %q", body["pipeline"], wantPipeline)
 			}
-			wantNextStep := "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live (beside the change to review, or on the project) merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview."
+			wantNextStep := "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview."
 			if body["nextStep"] != wantNextStep {
 				t.Errorf("nextStep = %q, want %q", body["nextStep"], wantNextStep)
 			}

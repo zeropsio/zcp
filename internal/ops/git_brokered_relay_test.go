@@ -3207,17 +3207,25 @@ func TestBrokeredGit_Access_UnresolvablePush_AsksWorkflows(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("fast-import: %v\n%s", err, out)
 			}
-			cases := [][]string{
-				{"push", "--dry-run", "--all", "origin"},
-				{"push", "--dry-run", "--mirror", "origin"},
-				{"push", "--dry-run", "origin", ":refs/heads/main"},
-				{"push", "--dry-run", "--delete", "origin", "main"},
-				{"push", "--dry-run", "-fu", "origin", "HEAD:refs/heads/x"},
-				{"push", "--dry-run", "origin", "long:refs/heads/long"},
+			cases := []struct {
+				name string
+				args []string
+			}{
+				{"all", []string{"push", "--dry-run", "--all", "origin"}},
+				{"mirror", []string{"push", "--dry-run", "--mirror", "origin"}},
+				{"delete-refspec", []string{"push", "--dry-run", "origin", ":refs/heads/main"}},
+				{"delete-option", []string{"push", "--dry-run", "--delete", "origin", "main"}},
+				{"force-short-flags", []string{"push", "--dry-run", "-fu", "origin", "HEAD:refs/heads/x"}},
+				{"commit-cap", []string{"push", "--dry-run", "origin", "long:refs/heads/long"}},
 			}
 			want := make([]string, 0, len(cases))
-			for _, args := range cases {
-				l.run(t, sh, checkout, relay, "", args...)
+			// Cases share the checkout and mint history, so keep them sequential.
+			for _, tc := range cases {
+				before := len(l.accesses())
+				run := l.run(t, sh, checkout, relay, "", tc.args...)
+				if got := l.accesses()[before:]; !slices.Equal(got, []string{hq.GitHubAccessWorkflows}) {
+					t.Errorf("%s: git %q: HQ access %q, want exactly one workflows mint; exit=%d err=%v\nstdout:\n%s\nstderr:\n%s", tc.name, tc.args, got, run.code, run.err, run.stdout, run.stderr)
+				}
 				want = append(want, hq.GitHubAccessWorkflows)
 			}
 			l.assertAccesses(t, want...)

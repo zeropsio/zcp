@@ -136,7 +136,7 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt
 		for _, repo := range repos {
 			state, err := self()
 			if err != nil {
-				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", err)
+				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added with Put it live on the project's card and released with Release in Mate.", err)
 			}
 			if state.AppID == nil || *state.AppID != repo.AppID {
 				continue
@@ -169,12 +169,12 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt
 			lands = "they land"
 		}
 		return "Tell the person to merge " + strings.Join(open, ", and ") +
-			" first — an open change is never in a release, which takes main as it is; once " + lands + ", production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
+			" first — an open change is never in a release, which takes main as it is; once " + lands + ", production is added with Put it live on the project's card and released with Release in Mate."
 	}
 	if merged {
-		return "Tell the person: production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
+		return "Tell the person: production is added with Put it live on the project's card and released with Release in Mate."
 	}
-	return "Tell the person: none of this Mate's work has reached its repository's main yet — it goes there by a branch of your own, pushed and merged first, then production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
+	return "Tell the person: none of this Mate's work has reached its repository's main yet — it goes there by a branch of your own, pushed and merged first, then production is added with Put it live on the project's card and released with Release in Mate."
 }
 
 // changeNumbersWords names change numbers as one list: "#2", "#2 and #6",
@@ -218,30 +218,10 @@ func hqRemoteOfThisMate(remoteURL string, rt runtime.Info) bool {
 	return ops.IsHQRemote(remoteURL, hqAddress(rt))
 }
 
-// hqHandoffNote is what the person needs from the Mate's closing message in a
-// Mate that keeps its code in HQ: the change to review, and what they do next —
-// in the words Mate shows under that message (Review, Put it live), never a
-// path through other pages. Put it live is Mate's only while the application
-// has no production, so it is named only while HQ says of none
-// (hasProduction false, or an HQ that cannot say). Once production runs a
-// release, Mate's turn note gives its address, and that, not the Mate's
-// preview, is the app.
-func hqHandoffNote(hasProduction bool) string {
-	next := ", or, while the application has no production, Put it live to merge it and release it to production in one go"
-	if hasProduction {
-		next = ""
-	}
-	return "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it" + next + ". Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
-}
-
-// hqHasProduction is whether HQ says the Mate's application has a
-// production; false where it says none, cannot be read, or is older than
-// the answer.
-func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) bool {
-	hqc, linked := openHQ(httpClient, rt)
-	if !linked {
-		return false
-	}
-	state, err := hqc.Self(ctx)
-	return err == nil && state.Production != nil && *state.Production
+// hqHandoffNote points to a change's Review, the action Mate shows there.
+// Production setup belongs to the project's card, so this text needs no
+// production fact from HQ. A release's confirmed address is the app;
+// the Mate's address remains its preview.
+func hqHandoffNote() string {
+	return "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it. Production setup belongs to the project's card; Mate shows the available release actions. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
 }
