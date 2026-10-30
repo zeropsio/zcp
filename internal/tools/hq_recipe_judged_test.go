@@ -63,6 +63,7 @@ func TestHQPass_RecipeChangeJudged(t *testing.T) {
 		wantMain     bool
 		wantLine     []string
 		wantAgain    []string
+		wantNot      []string
 	}{
 		{name: "conflict", mergeability: hq.MergeConflict, wantPushes: 1, wantMain: true,
 			wantLine: []string{"change #1", "conflict", "main"}},
@@ -70,7 +71,9 @@ func TestHQPass_RecipeChangeJudged(t *testing.T) {
 		{name: "head_moved", mergeability: hq.MergeClean, verdict: "head_moved", wantPushes: 1,
 			wantLine: []string{"change #1", "head_moved", "pushed"}, wantAgain: []string{"change #1", "head_moved", "person"}},
 		{name: "recipe_changes_environments", mergeability: hq.MergeClean, verdict: "recipe_changes_environments",
-			wantLine: []string{"change #1", "recipe_changes_environments", "person"}, wantAgain: []string{"recipe_changes_environments"}},
+			wantLine:  []string{"change #1", "recipe_changes_environments", "how Stage or Production is built", "a person with production rights", "on the project's page", "Changes how"},
+			wantAgain: []string{"recipe_changes_environments", "on the project's page"},
+			wantNot:   []string{"in Review", "press Merge", "in HQ"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,6 +114,11 @@ func TestHQPass_RecipeChangeJudged(t *testing.T) {
 			for _, want := range tt.wantAgain {
 				if !strings.Contains(again, want) {
 					t.Errorf("the next pass lacks %q:\n%s", want, again)
+				}
+			}
+			for _, not := range tt.wantNot {
+				if strings.Contains(report+again, not) {
+					t.Errorf("the pass names %q, a place or step the person cannot follow:\n%s", not, report)
 				}
 			}
 			if tt.wantLine == nil && strings.Contains(report, "change #1") {
