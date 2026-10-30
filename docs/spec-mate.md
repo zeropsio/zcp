@@ -845,7 +845,10 @@ A project without a Mate uses the plain-project door (§6.7); it does not read t
 credential file or change this Mate contract. Once the project has a Mate, zcp uses the
 existing Mate routes and credential flow at the same repository addresses.
 
-The Mate's hello carries `{type: "hello", key, serviceId, origin}`. `origin` is its public
+The Mate's hello carries `{type: "hello", key, serviceId, origin, gitFingerprint?}`.
+`gitFingerprint`, when present, is the lowercase SHA-256 fingerprint of the Mate's existing
+Git credential; it lets HQ retain that credential across a relink without sending its secret.
+`origin` is its public
 origin: HTTPS, a host ending in a Zerops-managed subdomain suffix, no path. HQ validates it,
 keeps it with the link and returns it in the ticket answer; an invalid origin closes the link as
 bad hello. No Zerops read discovers it: the server takes it from the platform's `zeropsSubdomain`,
@@ -2180,12 +2183,14 @@ sequenceDiagram
   distinct close code (`superseded`), and HQ shows "replaced at T", so a flapping pair of links is
   visible. This is what the Mate's own rotation needs: it opens a successor beside the old link before
   the balancer's IPv4 cut and lets the old one go only once HQ answered on the new one; the Mate
-  treats `superseded` as expected, never as a failure that triggers backoff. Links are held by HQ's
-  leader only; no registry spans instances.
+  treats `superseded` as expected, never as a failure that triggers backoff. Any HQ process may
+  hold a link. PostgreSQL records its owning instance and opaque link id; a successor on another
+  process supersedes only that project's older link.
 - Liveness is the connection: a transport ping at HQ's period (mate-hq `spec/protocol.md`, Mate
-  link). HQ writes only connect and disconnect transitions; a new leader marks every link
-  disconnected at its start, so a crashed leader leaves no Mate reading "connected", and each Mate's
-  reconnect marks it connected again. A Mate reconnects with random backoff.
+  link). Connection ownership and instance liveness are shared through PostgreSQL. A process's
+  stop or loss of its instance liveness retires its links; starting another process does not
+  disconnect links held by a healthy peer. A Mate reconnects with random backoff and gets a
+  fresh snapshot.
   No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
   fleet at once.
 - On every link HQ sends the Mate's state, then the full access snapshot, then versioned deltas
@@ -2311,12 +2316,14 @@ sequenceDiagram
   transiently (a timeout, a `5xx`, a `429`). A definite refusal of the organisation's key does not
   wait for it (below). 15 min outlasts an HQ deploy; a removed member never stays for long after a
   flap.
-- **HQ deploy or restart.** HQ's leader goes away (`1001`), every link and person socket closes and
-  reconnects with random backoff to the new leader; known keys link from the hash cache without a
-  Zerops call; each link gets a fresh snapshot. Opening a Mate (a new ticket) waits for the deploy;
-  open Mate connections stay within the cap. A follower asked for a ticket answers `503 not_active`,
-  which the GUI shows as connecting. The new leader marks every link disconnected at its start
-  (§3.5).
+- **HQ deploy or restart.** Every HQ process serves requests and may hold links. A rolling deploy
+  drains the departing process's Mate links with `1012` and person scopes with `4410`; clients
+  reconnect with backoff to a process that stays. Known keys link from the hash cache without a
+  Zerops call; each link gets a fresh snapshot. A ticket request can reach any process and is
+  returned only after the owning link acknowledged it. While no link exists or no acknowledgement
+  arrives, it answers `409 mate_not_connected` (`no-link` or `no-ack`), as HQ's protocol specifies.
+  Existing Mate connections stay within the access cap. Stopping one process retires its links,
+  leaving healthy peers' links connected (§3.5).
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in waits
   for Zerops. Access decisions follow HQ's outage window (HQ `spec/protocol.md`); an outage longer
   than the cap closes open Mate connections, since no fresh view reaches them.
@@ -2507,7 +2514,7 @@ compatibility declaration (§2.1d).
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server). |
 | TC-13 | The Mate's 15 min cap counts from the organisation view its latest access list was computed from, not from the link. Test to be written (Mate server, injected clock). |
 | TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server). |
-| TC-15 | A new HQ leader marks every link disconnected at its start. Test to be written (HQ link). |
+| TC-15 | Starting an HQ process leaves a healthy peer's links connected; stopping or losing the owning instance retires only its links. Covered by mate-hq's multi-process link and rolling-restart conformance cases.                                                                                      |
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the organisation's key. Test to be written (HQ link). |
 | TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link). |
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp with the background-work loss of §3.11. Test to be written (Mate server). |
