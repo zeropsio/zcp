@@ -118,6 +118,52 @@ func TestRunNginx_AuthCookiePartitioned(t *testing.T) {
 	}
 }
 
+// code-server 4.144.0 checks a WebSocket's Origin against X-Forwarded-Host
+// plus X-Forwarded-Port: a forwarded port other than the origin's default
+// (80 or 8080 behind the Zerops balancer) makes every editor WebSocket a 403,
+// and the embedded IDE fails with "WebSocket close with status code 1006".
+// The editor location drops those headers, so code-server compares the Origin
+// with the Host nginx sets: the result every earlier code-server gave.
+func TestRunNginx_EditorLocation_ClearsForwardedHostAndPort(t *testing.T) {
+	for _, password := range []string{"alnum123token", ""} {
+		t.Run("password="+password, func(t *testing.T) {
+			// Not parallel — mutates package-level vars.
+			tmpDir := t.TempDir()
+			outputPath := filepath.Join(tmpDir, "nginx.conf")
+			zcpinit.SetNginxOutputPath(outputPath)
+			t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
+			zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
+			t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+			zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+			t.Cleanup(func() { zcpinit.ResetNginxOwner() })
+			t.Setenv("VSCODE_PASSWORD", password)
+
+			if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
+				t.Fatalf("RunNginx() error: %v", err)
+			}
+			data, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatalf("read nginx.conf: %v", err)
+			}
+			_, block, found := strings.Cut(string(data), "location / {")
+			if !found {
+				t.Fatal("nginx.conf has no editor location")
+			}
+			block, _, _ = strings.Cut(block, "\n        }")
+			for _, want := range []string{
+				`proxy_set_header X-Forwarded-Host "";`,
+				`proxy_set_header X-Forwarded-Port "";`,
+				`proxy_set_header Forwarded "";`,
+				"proxy_set_header Host $host;",
+			} {
+				if !strings.Contains(block, want) {
+					t.Errorf("the editor location lacks %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestRunNginx_WithoutPassword(t *testing.T) {
 	// Not parallel — mutates package-level vars.
 	tmpDir := t.TempDir()
