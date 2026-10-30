@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,8 +17,18 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 )
 
+func orphanSwitchVersions(t *testing.T) (installed, candidate, newer string) {
+	t.Helper()
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(manifestVersion, "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatalf("parse orphan-switch fixture version: %v", err)
+	}
+	return manifestVersion, fmt.Sprintf("%d.%d.%d", major, minor, patch+2), fmt.Sprintf("%d.%d.%d", major, minor, patch+4)
+}
+
 // non-parallel: the status command reads HOME and uses the default HTTP clients.
 func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
+	installedVersion, candidateVersion, newerVersion := orphanSwitchVersions(t)
 	if mode := os.Getenv("ZCP_TEST_ORPHAN_SWITCH_WORKER"); mode != "" {
 		runTimedOutSwitchWorker(t, mode)
 		return
@@ -26,12 +37,12 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		containerEnv(t)
-		seedInstalledBundle(t, home, "0.16.12")
-		pkg := filepath.Join(mate.VersionDir("0.16.14"), "node_modules", mate.PackageName)
+		seedInstalledBundle(t, home, installedVersion)
+		pkg := filepath.Join(mate.VersionDir(candidateVersion), "node_modules", mate.PackageName)
 		if err := os.MkdirAll(pkg, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"version":"0.16.14"}`), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"version":"`+candidateVersion+`"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		binary := zcpBinary(t)
@@ -46,11 +57,11 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if before.Phase != "switching" || before.FailedVersion != "0.16.14" || before.WorkerPID == 0 {
+		if before.Phase != "switching" || before.FailedVersion != candidateVersion || before.WorkerPID == 0 {
 			t.Fatalf("recovery timeout lost unfinished switch: %+v", before)
 		}
-		manifestServerForVersion(t, "0.16.14")
-		transport := &lateSwitchTransport{fallback: http.DefaultClient.Transport}
+		manifestServerForVersion(t, candidateVersion)
+		transport := &lateSwitchTransport{fallback: http.DefaultClient.Transport, installedVersion: installedVersion}
 		http.DefaultTransport = transport
 		client := http.DefaultClient
 		http.DefaultClient = &http.Client{Transport: transport}
@@ -73,14 +84,14 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 		}
 		transport.ready = true
 		status := readStatus()
-		if status.Error != "" || status.Installed != "0.16.12" || status.Updater.Phase != "postponed" || status.Updater.RunningVersion != "0.16.12" || status.Updater.FailedVersion != "0.16.14" {
-			t.Fatalf("ASSERTION: ordinary status after late readiness = %+v, updater=%+v; want postponed on 0.16.12 retaining failed 0.16.14", status, status.Updater)
+		if status.Error != "" || status.Installed != installedVersion || status.Updater.Phase != "postponed" || status.Updater.RunningVersion != installedVersion || status.Updater.FailedVersion != candidateVersion {
+			t.Fatalf("ASSERTION: ordinary status after late readiness = %+v, updater=%+v; want postponed on %s retaining failed %s", status, status.Updater, installedVersion, candidateVersion)
 		}
 		state, err := mate.ReadUpdateState()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if state.WorkerPID != 0 || state.WorkerStart != "" || state.Candidate != "0.16.14" || state.OldBoot != "old-boot" {
+		if state.WorkerPID != 0 || state.WorkerStart != "" || state.Candidate != candidateVersion || state.OldBoot != "old-boot" {
 			t.Fatalf("settlement lost receipt or retained ownership: %+v", state)
 		}
 		if transport.environmentCalls != 1 {
@@ -89,8 +100,8 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 		for _, tc := range []struct {
 			version string
 			allowed bool
-		}{{"0.16.14", false}, {"0.16.16", true}} {
-			candidate := mate.Manifest{Version: tc.version, RollbackCompatible: true, CompatibleFrom: "0.16.12"}
+		}{{candidateVersion, false}, {newerVersion, true}} {
+			candidate := mate.Manifest{Version: tc.version, RollbackCompatible: true, CompatibleFrom: installedVersion}
 			if allowed := mate.AutomaticUpdateAllowed(status.Installed, status.Updater.FailedVersion, candidate); allowed != tc.allowed {
 				t.Fatalf("automatic admission for %s=%t, want %t", tc.version, allowed, tc.allowed)
 			}
@@ -102,6 +113,7 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 // supplied at SwitchHooks; activation, persisted ownership and recovery are real.
 func runTimedOutSwitchWorker(t *testing.T, mode string) {
 	t.Helper()
+	installedVersion, candidateVersion, _ := orphanSwitchVersions(t)
 	var restarts []string
 	hooks := mate.SwitchHooks{
 		Restart: func() error {
@@ -119,11 +131,11 @@ func runTimedOutSwitchWorker(t *testing.T, mode string) {
 	var err error
 	var wantRestarts []string
 	if mode == "switch" {
-		err = mate.SwitchUpdate("0.16.14", "old-boot", hooks)
-		wantRestarts = []string{"0.16.14", "0.16.12"}
+		err = mate.SwitchUpdate(candidateVersion, "old-boot", hooks)
+		wantRestarts = []string{candidateVersion, installedVersion}
 	} else {
 		err = mate.RecoverStoppedUpdate(hooks)
-		wantRestarts = []string{"0.16.12"}
+		wantRestarts = []string{installedVersion}
 	}
 	if !errors.Is(err, context.DeadlineExceeded) || !reflect.DeepEqual(restarts, wantRestarts) {
 		t.Fatalf("%s: restarts=%v, error=%v; want %v and readiness timeout", mode, restarts, err, wantRestarts)
@@ -147,6 +159,7 @@ func runTimedOutSwitchWorker(t *testing.T, mode string) {
 
 type lateSwitchTransport struct {
 	fallback         http.RoundTripper
+	installedVersion string
 	ready            bool
 	environmentCalls int
 }
@@ -155,9 +168,9 @@ func (p *lateSwitchTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	if req.URL.Host != "127.0.0.1:3773" {
 		return p.fallback.RoundTrip(req)
 	}
-	body := `{"protocol":1,"version":"0.16.12","bootId":"restored-boot","ready":false}`
+	body := `{"protocol":1,"version":"` + p.installedVersion + `","bootId":"restored-boot","ready":false}`
 	if p.ready {
-		body = `{"protocol":1,"version":"0.16.12","bootId":"restored-boot","ready":true}`
+		body = `{"protocol":1,"version":"` + p.installedVersion + `","bootId":"restored-boot","ready":true}`
 	}
 	if req.URL.Path == "/.well-known/t3/environment" {
 		p.environmentCalls++

@@ -497,7 +497,7 @@ func TestEnsureInstalled_SupervisorRestartPreservesTheInstalledRelease(t *testin
 		keep                  bool
 	}{
 		{"supervisor keeps a release at the floor without confirming a candidate", mate.MinimumMateVersion, mate.MinimumMateVersion, true},
-		{"supervisor keeps newer release", "0.16.9", "0.16.9", true},
+		{"supervisor keeps newer release", "0.17.0", "0.17.0", true},
 		{"supervisor first installation resolves the release", "", desiredVersion, true},
 		{"attended init retains the explicit upgrade path", mate.MinimumMateVersion, desiredVersion, false},
 	} {
@@ -540,7 +540,7 @@ func TestEnsureInstalled_BelowTheFloorIsReplacedFromAFreshManifest(t *testing.T)
 		{"a dev build below the floor is replaced", "0.15.153-dev.a1b2c3", false, false, desiredVersion},
 		{"supervisor restart replaces a dev build below the floor", "0.15.153-dev.a1b2c3", true, false, desiredVersion},
 		{"a dev build at the floor stays", mate.MinimumMateVersion + "-dev.a1b2c3", false, false, mate.MinimumMateVersion + "-dev.a1b2c3"},
-		{"a dev build above the floor stays on a supervisor restart", "0.16.9-dev.a1b2c3", true, false, "0.16.9-dev.a1b2c3"},
+		{"a dev build above the floor stays on a supervisor restart", "0.17.0-dev.a1b2c3", true, false, "0.17.0-dev.a1b2c3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newEnsureRig(t)

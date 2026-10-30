@@ -26,9 +26,9 @@ import (
 func validManifestJSON(t *testing.T, overrides map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
-		"version":     "0.16.0",
-		"asset":       "zerops-mate-0.16.0.tgz",
-		"url":         "https://github.com/zeropsio/mate/releases/download/v0.16.0/zerops-mate-0.16.0.tgz",
+		"version":     mate.MinimumMateVersion,
+		"asset":       "zerops-mate-" + mate.MinimumMateVersion + ".tgz",
+		"url":         "https://github.com/zeropsio/mate/releases/download/v" + mate.MinimumMateVersion + "/zerops-mate-" + mate.MinimumMateVersion + ".tgz",
 		"sha256":      strings.Repeat("a", 64),
 		"size":        21690443,
 		"contract":    mate.SupportedContract,
@@ -64,8 +64,8 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.16.0" || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version 0.16.0 contract %d", got, mate.SupportedContract)
+	if got.Version != mate.MinimumMateVersion || got.Contract != mate.SupportedContract {
+		t.Errorf("DesiredRelease() = %+v, want version %s contract %d", got, mate.MinimumMateVersion, mate.SupportedContract)
 	}
 	if requests != 1 {
 		t.Fatalf("expected exactly one fetch, got %d", requests)
@@ -85,25 +85,28 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 }
 
 func TestDesiredRelease_SemanticVersions_PreserveTheReleaseFloor(t *testing.T) {
+	// Preserve the regression titles while arranging valid candidates around
+	// the current floor. TestVersionOlder keeps the original numeric controls.
 	for _, tt := range []struct {
+		name    string
 		version string
 		allowed bool
 	}{
-		{"0.16.38-dev.1e84132e76", true},
-		{"0.16.1-alpha.1+build.42", true},
-		{"0.16.0+build.42", true},
-		{"0.16.0-rc.1", false},
-		{"0.15.999-dev.1", false},
-		{"0.16.38-dev..sha", false},
-		{"0.16.38-dev.01", false},
-		{"0.16.38-", false},
-		{"0.16.38+", false},
-		{"00.16.38", false},
-		{"v0.16.38", false},
-		{"0.16", false},
-		{"0.16.38-dev/escape", false},
+		{"0.16.38-dev.1e84132e76", "0.17.0-dev.1e84132e76", true},
+		{"0.16.1-alpha.1+build.42", "0.17.0-alpha.1+build.42", true},
+		{"0.16.0+build.42", mate.MinimumMateVersion + "+build.42", true},
+		{"0.16.0-rc.1", mate.MinimumMateVersion + "-rc.1", false},
+		{"0.15.999-dev.1", "0.15.999-dev.1", false},
+		{"0.16.38-dev..sha", "0.16.38-dev..sha", false},
+		{"0.16.38-dev.01", "0.16.38-dev.01", false},
+		{"0.16.38-", "0.16.38-", false},
+		{"0.16.38+", "0.16.38+", false},
+		{"00.16.38", "00.16.38", false},
+		{"v0.16.38", "v0.16.38", false},
+		{"0.16", "0.16", false},
+		{"0.16.38-dev/escape", "0.16.38-dev/escape", false},
 	} {
-		t.Run(tt.version, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write(validManifestJSON(t, map[string]any{"version": tt.version}))
@@ -292,8 +295,8 @@ func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.16.0" || requests != 2 {
-		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.16.0, never the cached 0.12.3", got.Version, requests)
+	if got.Version != mate.MinimumMateVersion || requests != 2 {
+		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched %s, never the cached 0.12.3", got.Version, requests, mate.MinimumMateVersion)
 	}
 }
 
@@ -360,6 +363,9 @@ func TestVersionOlder(t *testing.T) {
 		installed, latest string
 		want              bool
 	}{
+		{"0.16.38-dev.1e84132e76", "0.16.0", false},
+		{"0.16.1-alpha.1+build.42", "0.16.0", false},
+		{"0.16.0+build.42", "0.16.0", false},
 		{"0.8.1", "0.9.0", true},
 		{"0.9.0", "0.9.0", false},
 		{"0.9.0", "0.8.1", false},

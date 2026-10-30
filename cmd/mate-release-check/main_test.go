@@ -52,7 +52,10 @@ func TestRun_PublishedMate_DecidesWhetherZcpMayRelease(t *testing.T) {
 		wantExit   int
 		wantText   string
 	}{
-		{"published Mate at the floor permits release", "0.16.0", 2, 200, false, false, 0, "Published Mate 0.16.0"},
+		{"published Mate at the floor permits release", mate.MinimumMateVersion, 2, 200, false, false, 0, "Published Mate " + mate.MinimumMateVersion},
+		{"published Mate without the Observe receiver refuses release", "0.16.39", 2, 200, false, false, 1, "older than the minimum"},
+		{"Observe receiver prerelease below the stable floor refuses release", "0.16.40-rc.1", 2, 200, false, false, 1, "older than the minimum"},
+		{"published Observe receiver permits release", "0.16.40", 2, 200, false, false, 0, "Published Mate 0.16.40"},
 		{"newer published Mate permits release", "0.17.0", 2, 200, false, false, 0, "Published Mate 0.17.0"},
 		{"published Mate below the floor refuses release", "0.15.999", 2, 200, false, false, 1, "older than the minimum"},
 		{"published Mate with another contract refuses release", "0.16.0", 1, 200, false, false, 1, "declares contract 1"},
@@ -101,7 +104,7 @@ func (f fakeFetcher) RoundTrip(req *http.Request) (*http.Response, error) {
 // non-parallel: HOME determines the installation manifest cache.
 func TestRun_UnreachablePublishedMate_CachedReleaseDoesNotAuthorizePublishing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	body, err := json.Marshal(mate.Manifest{Version: "0.16.0", Contract: 2,
+	body, err := json.Marshal(mate.Manifest{Version: mate.MinimumMateVersion, Contract: 2,
 		URL: "https://example.invalid/mate.tgz", SHA256: strings.Repeat("a", 64)})
 	if err != nil {
 		t.Fatal(err)
