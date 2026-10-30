@@ -35,7 +35,15 @@ const recipePairMountRoot = "/var/www"
 // import, stop or start a service in an environment made from a tier — that
 // one waits for a person with recipe_changes_environments. Said after a
 // proposal is made; a steer names the call and leaves the landing to it.
-const recipeLanding = "HQ lands the change on main by itself; one whose merge would import, stop or start a service in a stage or production environment made from a tier waits for a person to merge it in Review"
+// Where the person accepts it is Mate's own surface — the project's page,
+// whose card lists it as a change row — so the line names that and nothing
+// else: an agent that invented "Mate → Review … press Merge" sent a person
+// to a place that does not exist (flip.studio, 2026-10-30).
+const recipeLanding = "HQ lands the change on main by itself; one whose merge would import, stop or start a service in a stage or production environment made from a tier — " + recipeHeldForPerson + ". Tell the person so in one line, and what accepting does: Stage gets it at once, Production on its next release, billed"
+
+// recipeHeldForPerson is where a change that changes an environment waits:
+// the words both the proposal and a held change's pass give the person.
+const recipeHeldForPerson = "it changes how Stage or Production is built — waits for a person with production rights to accept it on the project's page, whose card lists it as a change row worded \"Changes how … is built\"; never name another place to accept it, nor a button to press"
 
 // recipeOutcome is what one pass did. The reconcile reads Line (empty when
 // there is nothing worth saying on a bootstrap response); the agent-facing
