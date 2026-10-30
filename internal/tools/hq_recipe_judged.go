@@ -41,6 +41,11 @@ const recipeJudgedDir = "hq-recipe-repushed"
 // push moved while it judged: judged again on the next push.
 const recipeVerdictHeadMoved = "head_moved"
 
+// recipeVerdictChangesEnvironments is Core's refusal of a recipe change whose
+// merge would change an environment made from a tier: it waits for a person
+// with production rights (recipeHeldForPerson).
+const recipeVerdictChangesEnvironments = "recipe_changes_environments"
+
 // recipeChangeTurn is a Mate pass's turn for its own open import-files change
 // (hq.RecipeProposalTitle in hq.RecipeRepo) as state names it; one line for
 // what it did or what waits for a person, none for a change in step with
@@ -65,6 +70,8 @@ func recipeChangeTurn(ctx context.Context, client platform.Client, httpClient op
 		return []string{fmt.Sprintf("the group's import files change #%d (%s) is in conflict with main — a tier landed there first — so zcp composed it again from main: %s", open.Number, where, line)}
 	case open.Verdict == "":
 		return nil
+	case open.Verdict == recipeVerdictChangesEnvironments:
+		return []string{fmt.Sprintf("Core did not land the group's import files change #%d (%s): %s — %s; zcp pushes nothing more for it", open.Number, where, open.Verdict, recipeHeldForPerson)}
 	case open.Verdict != recipeVerdictHeadMoved:
 		return []string{fmt.Sprintf("Core did not land the group's import files change #%d (%s): %s — it waits for a person, who lands or closes it in HQ; zcp pushes nothing more for it", open.Number, where, open.Verdict)}
 	case recipeRepushed(stateDir, app, open.Number):

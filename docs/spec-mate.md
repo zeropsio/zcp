@@ -4885,7 +4885,12 @@ of a pool, whose hostname reaches a random container.
   retyped; a scale, a variable, a comment or a part's hostname is no shape) is written over main's on
   the Mate's recipe change, the same title, only that tier's `import.yaml`, marked. Core lands it by
   itself unless its merge would import, stop or start a service in a stage or production environment
-  made from a tier, which waits for a person to merge it in Review (D37); the AI Agent tier proposed
+  made from a tier, which waits for a person with production rights to accept it on the project's
+  page, whose card lists it as a change row worded "Changes how … is built" (D37). The agent says so in
+  one line with what accepting does (Stage at once, Production on its next release) and names no other
+  place or button: an agent that invented "Mate → Review … press Merge" sent a person to a place that
+  does not exist (flip.studio, 2026-10-30; `recipeLanding`, `recipeHeldForPerson`,
+  `TestHQPass_RecipeChangeJudged`); the AI Agent tier proposed
   anew after a pool migration changes no environment. What main lacks still goes first and alone: a
   tier HQ sees for the first time imports nothing, so that change always lands by itself. A person
   who closes such a proposal unmerged is not asked again until a later recipe change of this Mate's

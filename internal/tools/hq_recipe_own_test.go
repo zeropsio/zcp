@@ -130,9 +130,14 @@ func TestGroupRecipe_ItsOwnTiersFromBeforeAPoolMigration_ProposedAnew(t *testing
 	if len(outcome.Proposed) != 1 || outcome.Proposed[0] != "0 — AI Agent" {
 		t.Errorf("proposed = %v, want the AI Agent tier alone", outcome.Proposed)
 	}
-	for _, want := range []string{"0 — AI Agent", "HQ lands the change on main by itself", "import, stop or start a service in a stage or production environment made from a tier", "a person to merge it in Review"} {
+	for _, want := range []string{"0 — AI Agent", "HQ lands the change on main by itself", "import, stop or start a service in a stage or production environment made from a tier", "a person with production rights to accept it on the project's page", "Changes how"} {
 		if !strings.Contains(outcome.Line, want) {
 			t.Errorf("line %q does not say %q", outcome.Line, want)
+		}
+	}
+	for _, not := range []string{"in Review", "Review"} {
+		if strings.Contains(outcome.Line, not) {
+			t.Errorf("line %q names %q, a place the person cannot find", outcome.Line, not)
 		}
 	}
 	if strings.Contains(outcome.Line, "a person reviews and merges it") {
