@@ -81,6 +81,36 @@ func TestObserveClient_Rotation_StrictDirectRequests(t *testing.T) {
 	}
 }
 
+func TestObserveClient_AppDeployments_PreserveBoundedPushOutcomes(t *testing.T) {
+	// non-parallel: fixed profile credential follows HOME.
+	path := observeProfile(t)
+	if err := os.WriteFile(path, []byte("zobs.org."+strings.Repeat("A", 43)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	push := `{"environment":"stage","kind":"push","service":"web","sha":"` + strings.Repeat("a", 40) + `","job":"push-job","state":"queued","processId":null,"behind":null,"reason":null}`
+	for _, tt := range []struct{ name, pushes string }{
+		{"empty app push page", `[]`},
+		{"retained push outcome", `[` + push + `]`},
+		{"maximum bounded push page", `[` + strings.Repeat(push+`,`, 99) + push + `]`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.TrimSuffix(observeEnvelope("deployments", "null", "deployments"), "}") + `,"pushes":` + tt.pushes + `}`
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer fake.Close()
+			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.Observe(context.Background(), ObservationRequest{Action: "deployments"})
+			if err != nil || string(got) != body {
+				t.Fatalf("app deployment and push facts must survive unchanged: error=%v unchanged=%v", err, string(got) == body)
+			}
+		})
+	}
+}
+
 func TestObserveClient_BadAnswers_FailClosedWithoutSecrets(t *testing.T) {
 	// non-parallel: fixed profile file follows HOME.
 	path := observeProfile(t)
@@ -96,6 +126,10 @@ func TestObserveClient_BadAnswers_FailClosedWithoutSecrets(t *testing.T) {
 		{"bad sibling array", observeEnvelope("environments", "null", "environments")[:len(observeEnvelope("environments", "null", "environments"))-1] + `,"siblingMates":{"raw":"DTO"}}`, 200},
 		{"bad extra array", strings.Replace(valid, `"services":[]`, `"services":[],"entries":{"raw":"DTO"}`, 1), 200},
 		{"oversize extra array", strings.Replace(valid, `"services":[]`, `"services":[],"entries":[`+strings.Repeat(`{},`, 100)+`{}]`, 1), 200},
+		{"bad push array", strings.Replace(valid, `"services":[]`, `"services":[],"pushes":{"raw":"DTO"}`, 1), 200},
+		{"null push array", strings.Replace(valid, `"services":[]`, `"services":[],"pushes":null`, 1), 200},
+		{"string push array", strings.Replace(valid, `"services":[]`, `"services":[],"pushes":"invalid"`, 1), 200},
+		{"oversize push array", strings.Replace(valid, `"services":[]`, `"services":[],"pushes":[`+strings.Repeat(`{},`, 100)+`{}]`, 1), 200},
 		{"null", "null", 200}, {"array", "[]", 200}, {"legacy", `{"services":[]}`, 200},
 		{"trailing", valid + `{}`, 200}, {"wrong action", strings.Replace(valid, `"action":"status"`, `"action":"logs"`, 1), 200},
 		{"wrong target", strings.Replace(valid, `"projectId":"target"`, `"projectId":"other"`, 1), 200},

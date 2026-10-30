@@ -205,6 +205,7 @@ func validateObservation(raw []byte, in ObservationRequest) error {
 		SiblingMates json.RawMessage `json:"siblingMates"`
 		Services     json.RawMessage `json:"services"`
 		Deployments  json.RawMessage `json:"deployments"`
+		Pushes       json.RawMessage `json:"pushes"`
 		Processes    json.RawMessage `json:"processes"`
 		Versions     json.RawMessage `json:"versions"`
 		Entries      json.RawMessage `json:"entries"`
@@ -247,7 +248,7 @@ func validateObservation(raw []byte, in ObservationRequest) error {
 	if len(payload) == 0 {
 		return invalid
 	}
-	for _, array := range []json.RawMessage{out.Environments, out.SiblingMates, out.Services, out.Deployments, out.Processes, out.Versions, out.Entries} {
+	for _, array := range []json.RawMessage{out.Environments, out.SiblingMates, out.Services, out.Deployments, out.Pushes, out.Processes, out.Versions, out.Entries} {
 		if len(array) == 0 {
 			continue
 		}
