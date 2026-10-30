@@ -161,10 +161,13 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 			Reason string `json:"reason"`
 		}
 		_ = json.Unmarshal(raw, &refusal)
-		const forbidden = "forbidden"
+		const (
+			forbidden = "forbidden"
+			notActive = "not_active"
+		)
 		code := "observation_refused"
 		switch refusal.Code {
-		case "observation_refused", forbidden, "environment_not_found", "service_not_found", "process_not_found", "version_not_found", "invalid_request", "not_active", "zerops_unavailable", "observe_credential_required", "observe_credential_refused", "too_many_requests", "observation_unavailable", "observation_output_too_large":
+		case "observation_refused", forbidden, "environment_not_found", "service_not_found", "process_not_found", "version_not_found", "invalid_request", notActive, "zerops_unavailable", "observe_credential_required", "observe_credential_refused", "too_many_requests", "observation_unavailable", "observation_output_too_large":
 			code = refusal.Code
 		}
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
