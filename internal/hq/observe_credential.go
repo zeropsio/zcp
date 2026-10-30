@@ -13,14 +13,14 @@ import (
 )
 
 // ObserveCredentialPath is the single profile credential, written atomically
-// by Mate after explicit personal HQ authorization. zcp never writes it.
+// by Mate through ordinary ZCP authorization and its HQ link. zcp never writes it.
 func ObserveCredentialPath() string {
 	return filepath.Join(runtime.HomeDir(), ".zcp", "hq", "observe-credential")
 }
 
 var (
-	ErrNoObserveCredential      = errors.New("observe authorization required: authorize this zcp profile in HQ")
-	ErrInvalidObserveCredential = errors.New("observe authorization required: the profile credential is malformed; authorize this zcp profile again")
+	ErrNoObserveCredential      = errors.New("observe authorization required: check normal ZCP authorization and the Mate connection")
+	ErrInvalidObserveCredential = errors.New("observe authorization required: the profile credential is malformed; check normal ZCP authorization and the Mate connection")
 	ErrReadObserveCredential    = errors.New("observe authorization required: the profile credential could not be read")
 )
 

@@ -17,8 +17,8 @@ import (
 // ObserveInput is HQ's fixed read contract; credentials never enter model input.
 type ObserveInput = hq.ObservationRequest
 
-// RegisterObserve needs no SSH or project key. HQ authorizes each request
-// with the profile credential and current native permissions.
+// RegisterObserve needs no SSH. HQ authorizes each request with the profile
+// child, current native parent proof and current target permissions.
 func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string, rt runtime.Info) {
 	// Availability is not authorization. Keep the container flag surface, and
 	// allow a standalone profile with an explicitly configured HQ and source.
@@ -30,7 +30,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Read stage/production status, processes, versions and complete native logs through HQ with explicit profile observe authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal.",
+		Description: "Read stage/production status, processes, versions and complete native logs through HQ with automatic ZCP profile authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 		InputSchema: observeInputSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {

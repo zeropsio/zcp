@@ -942,13 +942,14 @@ func TestServer_ObserveStandalone_ConfiguredProfileStillRequiresCredential(t *te
 	requests := 0
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.Method != http.MethodPost || r.URL.String() != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+credential {
+		if r.Method != http.MethodPost || r.URL.String() != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+credential || r.Header.Get("X-Api-Key") != "native-project-key" {
 			t.Error("standalone did not use strict Observe authority")
 		}
 		_, _ = w.Write([]byte(`{"action":"status","appId":"a1","projectId":"target","coverage":{"source":"zerops","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"current services","truncated":false},"services":[]}`))
 	}))
 	defer fake.Close()
 	hqtest.Link(t, fake.URL, "p1", "")
+	t.Setenv(hq.EnvKey, "native-project-key")
 	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil).WithProcess(&platform.Process{ID: "native-process", Status: "RUNNING", ActionName: "stack.start"})
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {

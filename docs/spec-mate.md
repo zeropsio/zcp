@@ -850,14 +850,16 @@ environment instead, never a probed flag (§2.2).
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
 | C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass and `KeepMateDevGit` |
 
-The independent observe credential is a separate HQ authorization seam: Mate writes
+The Observe child credential belongs to the normal ZCP authorization context: Mate writes
 `~/.zcp/hq/observe-credential` atomically with mode `0600`, or removes it on revocation;
 zcp reads that fixed file for each observation and never writes it. Its value is
 `zobs.<orgId>.<32 random bytes as base64url>`, used only as `Authorization: Observe …`
 on `POST /api/mate/observe`. It is not the Git credential, a project key, a provider
 setting, or a model argument. No new `serve` flag or provider environment is involved.
-Explicit personal authorization and acknowledged delivery belong to HQ/Mate; opening a
-page, starting a turn, and provider login never authorize the profile (§3.3, §3.6).
+HQ binds ordinary ZCP credential establishment to the verified person and exact native parent;
+child issue, renewal and acknowledged delivery belong to HQ/Mate. No separate Observe consent
+is required. Opening a page, starting a turn and provider login never establish this context
+(§3.3, §3.6).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -2089,11 +2091,14 @@ a span attribute.
   delivered by Mate into `~/.zcp/hq/observe-credential`, and read by zcp at every use.
   HQ stores only its hash and binds it to the verified person, organisation, source
   project and application. It has a default 30-day lifetime configurable at HQ,
-  independent of browser sessions; explicit reauthorization replaces the prior grant,
-  and revocation invalidates it even if an offline Mate cannot remove the file.
-  Only the Observe route accepts it. Each request checks current source placement,
-  target ownership and fresh native permissions. A project-token creator, project
-  owner or zcli email proves no personal observe identity. Same-profile processes
+  independent of browser sessions. HQ issues and renews the child automatically for
+  the same verified person and exact currently valid native parent established during
+  ordinary ZCP setup; revocation invalidates it even if an offline Mate cannot remove
+  the file. Only the Observe route accepts it. Each request presents both this child
+  and the current own-project native key, checks the exact parent against the recorded
+  context and child generation, and verifies current source placement, target ownership
+  and fresh native permissions. A registry entry or live link alone is insufficient.
+  A project-token creator, project owner or zcli email proves no personal observe identity. Same-profile processes
   share this authority; mode `0600` does not isolate processes of the same Unix user.
 - **HQ's key entry** — not a credential HQ issues: `hash(key) → project`, one entry per project, kept
   so a known key is admitted without a Zerops read (reconnect storms after an HQ deploy, a Zerops
@@ -2235,10 +2240,15 @@ sequenceDiagram
   Zerops refuses is `key_refused` on both transports (`401` here, close `4401` on the link); a
   missing header is `project_key_required`.
 - `zerops_observe` uses the fixed profile credential with `Authorization: Observe` on
-  `POST /api/mate/observe`, never `ZCP_API_KEY`, an MCP bearer, or a broad personal
-  Zerops credential. Missing, malformed, expired, revoked or refused authorization
-  fails visibly without a project-key fallback. The configured HQ/source identifies
-  where to call; HQ owns the token's source/application/organisation binding and
+  `POST /api/mate/observe`, alongside `X-Api-Key` from the current runtime
+  `Identity.Key` (`ZCP_API_KEY`): the existing own-project native key proves the
+  parent, never independent observation authority. Both are hidden from model inputs,
+  errors and header tracing. Identity is resolved again at each tool invocation and
+  the child file is read at each request. Missing, malformed, expired, revoked or
+  refused authorization fails visibly without a child-only or project-only fallback.
+  Setup guidance points to normal ZCP authorization and the Mate connection; no
+  extra Observe consent, credential mint or runtime flag is introduced. The configured
+  HQ/source identifies where to call; HQ owns the token's source/application/organisation binding and
   rejects changed placement or mismatched objects for direct HTTP and standalone zcp
   alike. Tool availability and the Mate flag confer no authority.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
@@ -4548,7 +4558,8 @@ side. §10.10 is what zcp does with it.
 **A profile's application observation.** `zerops_observe` needs no SSH. It is available
 in a Mate's enabled container and in standalone zcp with an explicitly configured HQ
 and source project. Every action uses `POST /api/mate/observe` with the profile's
-Observe credential (§3.3, §3.6). The fixed model inputs are `action`, `projectId`,
+Observe child credential and current own-project native parent proof (§3.3, §3.6).
+The fixed model inputs are `action`, `projectId`,
 `serviceId`, `processId`, `versionId`, `limit` (1–100, default 100), and optional
 `from`/`till` for log reads; no token,
 application/person ID, URL, API path or command is accepted.
@@ -4569,12 +4580,12 @@ requires the matching `action`, `appId`, nullable `projectId`, and
 bounded array; malformed, oversized or mismatched envelopes fail. It returns JSON
 as text with nil `structuredContent`. Authorized log records retain every native
 field and unchanged content, including sensitive source data; zcp does not scan,
-redact or slice it. zcp never adds its credential to output or errors, and failed
+redact or slice it. zcp never adds either credential to output, errors or header traces, and failed
 or invalid responses do not expose raw bodies. Responses are at most 512 KiB and
 lists at most 100 records; resource limits fail explicitly rather than edit records.
 An HQ `413 observation_output_too_large` asks for a lower `limit` or narrower
 `from`/`till` window; a single record over the output budget cannot be returned.
-No redirect forwards the credential. Each observation attempts once, including a
+No redirect forwards either credential. Each observation attempts once, including a
 `503`, within 45 seconds; unavailable and denied reads remain visible failures.
 HQ validates current native `read_project` for each target and `observe_mate` for
 sibling metadata, with object ownership checked before projection. The token cannot

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestObserveClient_Rotation_StrictDirectRequests(t *testing.T) {
 			fields := map[string]string{"environments": "environments", "status": "services", "deployments": "deployments", "processes": "processes", "process": "processes", "versions": "versions", "version": "versions", "logs": "entries", "build_logs": "entries"}
 			var calls int
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.String() != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+tokens[calls] {
+				if r.Method != http.MethodPost || r.URL.String() != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+tokens[calls] || r.Header.Get("X-Api-Key") != "project-key" {
 					t.Error("wrong direct observe request or authorization")
 				}
 				var request map[string]any
@@ -58,7 +59,7 @@ func TestObserveClient_Rotation_StrictDirectRequests(t *testing.T) {
 				_, _ = w.Write([]byte(observeEnvelope(action, `"target"`, fields[action])))
 			}))
 			defer fake.Close()
-			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +100,7 @@ func TestObserveClient_AppDeployments_PreserveBoundedPushOutcomes(t *testing.T) 
 				_, _ = w.Write([]byte(body))
 			}))
 			defer fake.Close()
-			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,6 +140,9 @@ func TestObserveClient_BadAnswers_FailClosedWithoutSecrets(t *testing.T) {
 		{"expired", `{"code":"observe_authorization_required"}`, 401},
 		{"revoked", `{"code":"observe_authorization_required"}`, 401},
 		{"reflected auth", `{"code":"` + token + `","reason":"` + token + `"}`, 401},
+		{"reflected parent", `{"code":"project-key","reason":"project-key"}`, 403},
+		{"reflected parent unavailable", `{"code":"project-key","reason":"project-key"}`, 503},
+		{"reflected parent unauthorized", `{"code":"project-key","reason":"project-key"}`, 401},
 		{"reflected denial", `{"code":"forbidden","reason":"` + token + `"}`, 403},
 		{"reflected invalid envelope", strings.Replace(valid, `"services":[]`, `"services":"`+token+`"`, 1), 200},
 		{"no content", "", 204}, {"reflected unavailable", `{"code":"` + token + `"}`, 503},
@@ -187,7 +191,7 @@ func TestObserveClient_Redirect_NoCredentialForwarded(t *testing.T) {
 	}))
 	defer fake.Close()
 	transport := fake.Client()
-	client, err := OpenObservation(transport, Identity{Origin: fake.URL, ProjectID: "source"})
+	client, err := OpenObservation(transport, Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +216,7 @@ func TestObserveClient_Overload_RetryLaterWithoutRepeating(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"too_many_requests"}`))
 	}))
 	defer fake.Close()
-	client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+	client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +251,7 @@ func TestObserveClient_AuthorizedLogs_PreserveHQCoverageAndOpaqueRecords(t *test
 					_, _ = w.Write([]byte(body))
 				}))
 				defer fake.Close()
-				client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+				client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -305,7 +309,7 @@ func TestObserveClient_LogBounds_ValidateAndForwardNativeScalars(t *testing.T) {
 						_, _ = w.Write([]byte(observeEnvelope(action, `"target"`, "entries")))
 					}))
 					defer fake.Close()
-					client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+					client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -316,5 +320,89 @@ func TestObserveClient_LogBounds_ValidateAndForwardNativeScalars(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestObserveClient_MissingParent_NoRequest(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer fake.Close()
+	_, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source"})
+	if !errors.Is(err, ErrNoIdentity) || calls.Load() != 0 {
+		t.Fatalf("missing native parent must refuse before HTTP: error=%v calls=%d", err, calls.Load())
+	}
+}
+
+func TestObserveClient_HeaderTrace_HidesBothProofs(t *testing.T) {
+	// non-parallel: fixed credential follows HOME.
+	path := observeProfile(t)
+	const child = "zobs.org.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const parent = "native-parent-secret"
+	if err := os.WriteFile(path, []byte(child), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, protocol := range []string{"http1", "http2"} {
+		t.Run(protocol, func(t *testing.T) {
+			fake := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Observe "+child || r.Header.Get("X-Api-Key") != parent {
+					t.Error("both proofs must reach HQ unchanged")
+				}
+				_, _ = w.Write([]byte(observeEnvelope("status", `"target"`, "services")))
+			}))
+			fake.EnableHTTP2 = protocol == "http2"
+			fake.StartTLS()
+			defer fake.Close()
+			client, err := OpenObservation(fake.Client(), Identity{Origin: fake.URL, ProjectID: "source", Key: parent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var headers strings.Builder
+			var connected atomic.Bool
+			trace := &httptrace.ClientTrace{
+				WroteHeaderField: func(key string, values []string) { headers.WriteString(key + ": " + strings.Join(values, ",") + "\n") },
+				GotConn:          func(httptrace.GotConnInfo) { connected.Store(true) },
+			}
+			ctx := httptrace.WithClientTrace(context.Background(), trace)
+			out, err := client.Observe(ctx, ObservationRequest{Action: "status", ProjectID: "target"})
+			if err != nil || string(out) != observeEnvelope("status", `"target"`, "services") {
+				t.Fatalf("traced request must preserve facts: %v", err)
+			}
+			got := headers.String()
+			if strings.Contains(got, child) || strings.Contains(got, parent) {
+				t.Fatal("HTTP header tracing exposed an Observe proof")
+			}
+			if !strings.Contains(strings.ToLower(got), "content-type: application/json") || !connected.Load() || strings.Count(got, "[redacted]") != 2 {
+				t.Fatal("non-secret tracing must remain available")
+			}
+			trace.WroteHeaderField("X-Api-Key", []string{"original-hook"})
+			if !strings.Contains(headers.String(), "original-hook") {
+				t.Fatal("Observe mutated the caller's trace")
+			}
+		})
+	}
+}
+
+type observeErrorDoer struct{}
+
+func (observeErrorDoer) Do(req *http.Request) (*http.Response, error) {
+	return nil, errors.New(req.Header.Get("Authorization") + " " + req.Header.Get("X-Api-Key"))
+}
+
+func TestObserveClient_TransportEcho_NoProofInError(t *testing.T) {
+	// non-parallel: fixed credential follows HOME.
+	path := observeProfile(t)
+	const child = "zobs.org.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const parent = "native-parent-secret"
+	if err := os.WriteFile(path, []byte(child), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := OpenObservation(observeErrorDoer{}, Identity{Origin: "https://hq.test", ProjectID: "source", Key: parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Observe(context.Background(), ObservationRequest{})
+	if !IsUnavailable(err) || len(out) != 0 || strings.Contains(err.Error(), child) || strings.Contains(err.Error(), parent) {
+		t.Fatal("transport errors must expose neither proof nor source data")
 	}
 }

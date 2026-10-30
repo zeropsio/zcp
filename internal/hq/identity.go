@@ -1,7 +1,7 @@
 // Package hq is zcp's side of HQ: the project's Mate API and git, the Git
-// credential Mate holds for its dev services, and the independently authorized
-// profile's Observe reads (docs/spec-mate.md §3.3, §3.6). Project calls present
-// the project key; Observe reads use only the profile's narrow credential.
+// credential Mate holds for its dev services, and the profile's Observe reads
+// (docs/spec-mate.md §3.3, §3.6). Observe presents its narrow child credential
+// alongside the current native project key as parent proof.
 package hq
 
 import (

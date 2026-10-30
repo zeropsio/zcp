@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strings"
@@ -90,16 +91,20 @@ func (in ObservationRequest) Normalize() (ObservationRequest, error) {
 	return in, nil
 }
 
-// ObservationClient has only Observe authority. Project keys are neither
-// required nor sent. HQ binds the credential to its issued source/app/org.
+// ObservationClient presents the narrow Observe authority and its current
+// native parent proof. HQ checks their source/app/org binding on every read.
 type ObservationClient struct {
 	doer   Doer
 	origin string
+	key    string
 }
 
 func OpenObservation(doer Doer, id Identity) (ObservationClient, error) {
+	if err := id.check(); err != nil {
+		return ObservationClient{}, fmt.Errorf("open HQ observation: %w", err)
+	}
 	origin, err := url.Parse(id.Origin)
-	if err != nil || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" || origin.Scheme != "https" && origin.Scheme != "http" || id.ProjectID == "" {
+	if err != nil || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" || origin.Scheme != "https" && origin.Scheme != "http" {
 		return ObservationClient{}, fmt.Errorf("open HQ observation: %w", ErrNoIdentity)
 	}
 	if doer == nil {
@@ -111,14 +116,14 @@ func OpenObservation(doer Doer, id Identity) (ObservationClient, error) {
 		isolated.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		doer = &isolated
 	}
-	return ObservationClient{doer: doer, origin: strings.TrimRight(id.Origin, "/")}, nil
+	return ObservationClient{doer: doer, origin: strings.TrimRight(id.Origin, "/"), key: id.Key}, nil
 }
 
 // ObserveOutputLimit bounds HQ facts and the tool's final text, including own metadata.
 const ObserveOutputLimit = 512 * 1024
 
-// Observe makes one bounded request, rereading the profile's sole credential
-// immediately before it. No retry, cache, project-key fallback or /self call.
+// Observe makes one bounded request, rereading the profile's child credential
+// immediately before it. Both proofs are required; no retry, cache or /self call.
 func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (json.RawMessage, error) {
 	in, err := in.Normalize()
 	if err != nil {
@@ -132,6 +137,18 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 	if err != nil {
 		return nil, errors.New("HQ observation: request could not be encoded")
 	}
+	// WithClientTrace runs this hook before existing hooks. Mask their trace
+	// values in place after net/http has written the headers; the wire values
+	// and the caller's hooks remain unchanged.
+	if trace := httptrace.ContextClientTrace(ctx); trace != nil && trace.WroteHeaderField != nil {
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaderField: func(key string, values []string) {
+			if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "X-Api-Key") {
+				for i := range values {
+					values[i] = "[redacted]"
+				}
+			}
+		}})
+	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+"/api/mate/observe", bytes.NewReader(body))
@@ -139,6 +156,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		return nil, errors.New("HQ observation: request could not be created")
 	}
 	req.Header.Set("Authorization", "Observe "+credential)
+	req.Header.Set("X-Api-Key", c.key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.doer.Do(req)
 	if err != nil {
@@ -151,7 +169,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		return nil, &UnavailableError{Err: errors.New("HQ observation response could not be read")}
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("HQ refused observe authorization; authorize this profile again: %w", ErrNoObserveCredential)
+		return nil, fmt.Errorf("HQ refused observe authorization: %w", ErrNoObserveCredential)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Only fixed machine codes survive; arbitrary upstream reason strings may

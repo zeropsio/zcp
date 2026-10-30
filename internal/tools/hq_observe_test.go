@@ -39,7 +39,7 @@ func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
 		t.Fatalf("list observe tool: result=%+v err=%v", listed, err)
 	}
 	tool := listed.Tools[0]
-	wantDescription := "Read stage/production status, processes, versions and complete native logs through HQ with explicit profile observe authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal."
+	wantDescription := "Read stage/production status, processes, versions and complete native logs through HQ with automatic ZCP profile authorization and current target permissions. For failed builds, follow process.versionId to build_logs for build/preparation; active runtime is separate. Log from/till accept record IDs or ISO timestamps. environments includes known changes; absent/changesAsLastRead means unknown, so refresh before merge advice. Errors distinguish input, unavailability and refusal."
 	if tool == nil || tool.Description != wantDescription {
 		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
 	}
@@ -372,10 +372,11 @@ func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.
 	// non-parallel: fixed profile HOME and project identity are process state.
 	observeTestProfile(t)
 	var expectedAuthorization string
+	var expectedParent string
 	var requests int
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/mate/observe" || r.Header.Get("Authorization") != expectedAuthorization {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/mate/observe" || r.Header.Get("Authorization") != expectedAuthorization || r.Header.Get("X-Api-Key") != expectedParent {
 			t.Error("wrong observation route or authority")
 		}
 		var in map[string]any
@@ -406,6 +407,7 @@ func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.
 	}))
 	defer fake.Close()
 	hqtest.Link(t, fake.URL, "P_MATE", "")
+	t.Setenv(hq.EnvKey, "native-project-key")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 	for _, action := range []string{"environments", "status", "deployments", "processes", "process", "versions", "version", "logs", "build_logs"} {
@@ -416,6 +418,8 @@ func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.
 		}
 		hqtest.GitCredential(t, hq.ObserveCredentialPath(), token)
 		expectedAuthorization = "Observe " + token
+		expectedParent = "native-parent-" + action
+		t.Setenv(hq.EnvKey, expectedParent)
 		args := map[string]any{"action": action}
 		if action != "environments" && action != "deployments" {
 			args["projectId"] = "P_STAGE"
@@ -431,7 +435,7 @@ func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.
 		}
 		result := callTool(t, srv, "zerops_observe", args)
 		text := result.Content[0].(*mcp.TextContent).Text
-		if result.IsError || result.StructuredContent != nil || strings.Contains(text, token) {
+		if result.IsError || result.StructuredContent != nil || strings.Contains(text, token) || strings.Contains(text, expectedParent) {
 			t.Fatalf("%s did not deliver safe text facts: %s", action, text)
 		}
 		var got struct {
@@ -444,6 +448,11 @@ func TestObserve_AllActions_FixedInputsAndCredentialRotationReachMCP(t *testing.
 	}
 	if requests != 9 {
 		t.Fatalf("requests=%d want exactly 9", requests)
+	}
+	t.Setenv(hq.EnvKey, "")
+	result := callTool(t, srv, "zerops_observe", map[string]any{"action": "status", "projectId": "P_STAGE"})
+	if !result.IsError || requests != 9 {
+		t.Fatalf("removing the current parent must refuse without reusing a cached key: error=%v requests=%d", result.IsError, requests)
 	}
 }
 
@@ -505,6 +514,7 @@ func TestObserve_AuthorizedLogs_PreserveHQCoverageAndOpaqueRecordsThroughMCP(t *
 				}))
 				defer fake.Close()
 				hqtest.Link(t, fake.URL, "P_MATE", "")
+				t.Setenv(hq.EnvKey, "native-project-key")
 				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 				RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 				result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "serviceId": "service", "versionId": "version"})
@@ -560,6 +570,7 @@ func TestObserve_FailedAttempt_ExactVersionBuildLogsSeparateFromActiveRuntime(t 
 	}))
 	defer fake.Close()
 	hqtest.Link(t, fake.URL, "P_MATE", "")
+	t.Setenv(hq.EnvKey, "native-project-key")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 	read := func(action, versionID string) map[string]json.RawMessage {
@@ -640,6 +651,7 @@ func TestObserve_LogBounds_NativePaginationReachesMCP(t *testing.T) {
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "")
+			t.Setenv(hq.EnvKey, "native-project-key")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			for page := range bodies {
@@ -676,6 +688,7 @@ func TestObserve_ReflectedToken_FailedResponsesDoNotReachMCP(t *testing.T) {
 		status     int
 	}{
 		{"reflected auth", `{"code":"` + observeTestToken + `","reason":"` + observeTestToken + `"}`, http.StatusUnauthorized},
+		{"reflected parent", `{"code":"native-project-key","reason":"native-project-key"}`, http.StatusForbidden},
 		{"reflected denial", `{"code":"forbidden","reason":"` + observeTestToken + `"}`, http.StatusForbidden},
 		{"reflected unavailable", `{"code":"` + observeTestToken + `"}`, http.StatusServiceUnavailable},
 		{"invalid success", `{"entries":[{"content":"` + observeTestToken + `"}]}`, http.StatusOK},
@@ -688,11 +701,12 @@ func TestObserve_ReflectedToken_FailedResponsesDoNotReachMCP(t *testing.T) {
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "")
+			t.Setenv(hq.EnvKey, "native-project-key")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "logs", "projectId": "target", "serviceId": "service"})
 			text := result.Content[0].(*mcp.TextContent).Text
-			if !result.IsError || result.StructuredContent != nil || strings.Contains(text, observeTestToken) || strings.Contains(text, `"content"`) {
+			if !result.IsError || result.StructuredContent != nil || strings.Contains(text, observeTestToken) || strings.Contains(text, "native-project-key") || strings.Contains(text, `"content"`) {
 				t.Fatal("failed or invalid HQ response must expose no source body or reflected token")
 			}
 		})
@@ -719,6 +733,7 @@ func TestObserve_OutputTooLarge_NarrowsSourceBoundsWithoutLeakingThroughMCP(t *t
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "")
+			t.Setenv(hq.EnvKey, "native-project-key")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": action, "projectId": "target", "serviceId": "service", "versionId": "failed-version", "limit": 2, "from": "2026-10-29T11:00:00Z", "till": "native-last-record"})
@@ -731,5 +746,21 @@ func TestObserve_OutputTooLarge_NarrowsSourceBoundsWithoutLeakingThroughMCP(t *t
 				t.Fatal("resource refusal exposed failed response content or authorization")
 			}
 		})
+	}
+}
+
+func TestObserve_MissingParent_ChildCannotAuthorize(t *testing.T) {
+	// non-parallel: the fixed credential and current parent follow HOME and environment.
+	observeTestProfile(t)
+	var calls atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "P_MATE", "")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterObserve(srv, fake.Client(), "P_MATE", t.TempDir(), runtime.Info{InContainer: true, MateEnabled: true})
+	result := callTool(t, srv, "zerops_observe", map[string]any{"action": "status", "projectId": "target"})
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !result.IsError || calls.Load() != 0 || !strings.Contains(text, "ZCP_API_KEY") || strings.Contains(text, observeTestToken) {
+		t.Fatalf("child alone must fail safely before HTTP: error=%v calls=%d", result.IsError, calls.Load())
 	}
 }
