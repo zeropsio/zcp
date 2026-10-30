@@ -265,7 +265,8 @@ mate rides inside the `zcp` container rather than the platform's `zcp@1` recipe:
 supervised by `zcp init` (a `run.init` command), reached through the container's existing nginx on
 port 8080. A plain restart re-runs the recipe's `install.sh`, picks up the latest zcp release, and
 turns mate on for a project whose container predates it — no platform-side change. Everything zcp
-knows about mate lives in `internal/mate`, kept to stdlib plus `runtime`, `schema` and `hq`.
+knows about mate lives in `internal/mate`: stdlib, the Go-maintained
+`golang.org/x/mod/semver` comparator, and the existing `runtime`, `schema` and `hq` seams.
 
 ### 2.0 The gate — nothing mate-shaped happens unasked
 
@@ -455,6 +456,12 @@ own `internal/update` cache) so a warm restart and `zcp mate status` reach the n
 hourly; `zcp mate update` always refreshes. An unreachable manifest with a mate already installed is
 **not** a failure: the installed version keeps serving and the step logs the miss. With nothing
 installed it degrades like any other install failure (MD-1).
+
+- Private manifests selected by `ZCP_MATE_MANIFEST_URL` may name a full, unprefixed semantic
+  prerelease version. Version checks preserve SemVer precedence: a prerelease of the minimum
+  release is below that release, numeric prerelease identifiers compare numerically, and build
+  metadata does not change precedence. The contract, version floor and tarball digest gates apply
+  before installation exactly as for stable releases; the default latest-stable source is unchanged.
 
 **What zcp checks, and what it does not.**
 
