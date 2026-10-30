@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -262,48 +263,19 @@ func writeManifestCache(m Manifest) {
 	_ = os.WriteFile(manifestCachePath(), data, 0o600)
 }
 
-// semver holds a parsed plain "major.minor.patch" version.
-type semver struct {
-	major, minor, patch int
-}
-
-// compare returns -1, 0 or 1 for s relative to other.
-func (s semver) compare(other semver) int {
-	switch {
-	case s.major != other.major:
-		return cmpInt(s.major, other.major)
-	case s.minor != other.minor:
-		return cmpInt(s.minor, other.minor)
-	default:
-		return cmpInt(s.patch, other.patch)
-	}
-}
-
-func cmpInt(a, b int) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	default:
-		return 0
-	}
-}
-
-// compareSemver compares two plain "major.minor.patch" semver strings —
-// never a "v" prefix, never a prerelease suffix, since the fork's release
-// workflow publishes stable.json only for stable v<major>.<minor>.<patch>
-// tags. Returns -1, 0 or 1; an error names whichever side fails to parse.
+// compareSemver compares full, unprefixed semantic versions, including
+// prerelease precedence and build metadata. Private release manifests use the
+// same ordering and minimum-version gate as stable releases.
 func compareSemver(a, b string) (int, error) {
-	am, err := parseSemver(a)
+	av, err := parseSemver(a)
 	if err != nil {
 		return 0, fmt.Errorf("version %q: %w", a, err)
 	}
-	bm, err := parseSemver(b)
+	bv, err := parseSemver(b)
 	if err != nil {
 		return 0, fmt.Errorf("version %q: %w", b, err)
 	}
-	return am.compare(bm), nil
+	return semver.Compare(av, bv), nil
 }
 
 // EnvelopeCarriesParts reports whether this zcp sends stages[] and
@@ -319,7 +291,7 @@ func carriesParts(minimum, accepting string) bool {
 }
 
 // VersionOlder reports whether installed names a strictly older release
-// than latest, by plain "major.minor.patch" comparison — what `zcp mate
+// than latest, by semantic version precedence — what `zcp mate
 // status` answers updateAvailable from. A version that fails to parse on
 // either side answers false rather than guessing.
 func VersionOlder(installed, latest string) bool {
@@ -327,24 +299,16 @@ func VersionOlder(installed, latest string) bool {
 	return err == nil && cmp < 0
 }
 
-func parseSemver(v string) (semver, error) {
-	parts := strings.SplitN(v, ".", 3)
-	if len(parts) != 3 {
-		return semver{}, fmt.Errorf("not major.minor.patch")
+func parseSemver(v string) (string, error) {
+	// x/mod also accepts abbreviated vMAJOR and vMAJOR.MINOR; release
+	// manifests require all three components and never a leading v.
+	core, _, _ := strings.Cut(v, "-")
+	core, _, _ = strings.Cut(core, "+")
+	prefixed := "v" + v
+	if strings.Count(core, ".") != 2 || !semver.IsValid(prefixed) {
+		return "", fmt.Errorf("not a full unprefixed semantic version")
 	}
-	major, err := strconv.Atoi(parts[0])
-	if err != nil || major < 0 {
-		return semver{}, fmt.Errorf("component %q is not a non-negative integer", parts[0])
-	}
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil || minor < 0 {
-		return semver{}, fmt.Errorf("component %q is not a non-negative integer", parts[1])
-	}
-	patch, err := strconv.Atoi(parts[2])
-	if err != nil || patch < 0 {
-		return semver{}, fmt.Errorf("component %q is not a non-negative integer", parts[2])
-	}
-	return semver{major: major, minor: minor, patch: patch}, nil
+	return prefixed, nil
 }
 
 // CachedRelease reads only the existing resolver cache, without network IO.

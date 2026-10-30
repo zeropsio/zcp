@@ -265,7 +265,8 @@ mate rides inside the `zcp` container rather than the platform's `zcp@1` recipe:
 supervised by `zcp init` (a `run.init` command), reached through the container's existing nginx on
 port 8080. A plain restart re-runs the recipe's `install.sh`, picks up the latest zcp release, and
 turns mate on for a project whose container predates it — no platform-side change. Everything zcp
-knows about mate lives in `internal/mate`, kept to stdlib plus `runtime`, `schema` and `hq`.
+knows about mate lives in `internal/mate`: stdlib, the Go-maintained
+`golang.org/x/mod/semver` comparator, and the existing `runtime`, `schema` and `hq` seams.
 
 ### 2.0 The gate — nothing mate-shaped happens unasked
 
@@ -455,6 +456,12 @@ own `internal/update` cache) so a warm restart and `zcp mate status` reach the n
 hourly; `zcp mate update` always refreshes. An unreachable manifest with a mate already installed is
 **not** a failure: the installed version keeps serving and the step logs the miss. With nothing
 installed it degrades like any other install failure (MD-1).
+
+- Private manifests selected by `ZCP_MATE_MANIFEST_URL` may name a full, unprefixed semantic
+  prerelease version. Version checks preserve SemVer precedence: a prerelease of the minimum
+  release is below that release, numeric prerelease identifiers compare numerically, and build
+  metadata does not change precedence. The contract, version floor and tarball digest gates apply
+  before installation exactly as for stable releases; the default latest-stable source is unchanged.
 
 **What zcp checks, and what it does not.**
 
@@ -838,6 +845,15 @@ environment instead, never a probed flag (§2.2).
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
 | C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass and `KeepMateDevGit` |
+
+The independent observe credential is a separate HQ authorization seam: Mate writes
+`~/.zcp/hq/observe-credential` atomically with mode `0600`, or removes it on revocation;
+zcp reads that fixed file for each observation and never writes it. Its value is
+`zobs.<orgId>.<32 random bytes as base64url>`, used only as `Authorization: Observe …`
+on `POST /api/mate/observe`. It is not the Git credential, a project key, a provider
+setting, or a model argument. No new `serve` flag or provider environment is involved.
+Explicit personal authorization and acknowledged delivery belong to HQ/Mate; opening a
+page, starting a turn, and provider login never authorize the profile (§3.3, §3.6).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -2065,6 +2081,16 @@ a span attribute.
   ("make it a sensitive service variable"). The key passes HQ in memory at each first use — the
   link's first frame, a zcp call's header. HQ keeps it only in memory: a call drops it after
   resolution; a link retains it for its life solely for the recheck below. HQ never persists it.
+- **The profile's observe credential** — a narrow personal authorization issued by HQ,
+  delivered by Mate into `~/.zcp/hq/observe-credential`, and read by zcp at every use.
+  HQ stores only its hash and binds it to the verified person, organisation, source
+  project and application. It has a default 30-day lifetime configurable at HQ,
+  independent of browser sessions; explicit reauthorization replaces the prior grant,
+  and revocation invalidates it even if an offline Mate cannot remove the file.
+  Only the Observe route accepts it. Each request checks current source placement,
+  target ownership and fresh native permissions. A project-token creator, project
+  owner or zcli email proves no personal observe identity. Same-profile processes
+  share this authority; mode `0600` does not isolate processes of the same Unix user.
 - **HQ's key entry** — not a credential HQ issues: `hash(key) → project`, one entry per project, kept
   so a known key is admitted without a Zerops read (reconnect storms after an HQ deploy, a Zerops
   outage). A new hash for the project replaces the entry once verified. The entry is a fallback,
@@ -2198,12 +2224,19 @@ sequenceDiagram
 
 ### 3.6 zcp's calls and git
 
-- zcp's HTTP calls to HQ's Mate API — its state, repositories, changes, the recipe, observation,
+- zcp's HTTP calls to HQ's Mate API — its state, repositories, changes, the recipe,
   the AI key, GitHub tokens per call, the Chief's overview — present `ZCP_API_KEY` in a header on
   every call. HQ recognises the key by its hash exactly as on the link (§3.3): Zerops is asked only
   the first time a hash is seen, then in the background. A refusal carries the link's code: a key
   Zerops refuses is `key_refused` on both transports (`401` here, close `4401` on the link); a
   missing header is `project_key_required`.
+- `zerops_observe` uses the fixed profile credential with `Authorization: Observe` on
+  `POST /api/mate/observe`, never `ZCP_API_KEY`, an MCP bearer, or a broad personal
+  Zerops credential. Missing, malformed, expired, revoked or refused authorization
+  fails visibly without a project-key fallback. The configured HQ/source identifies
+  where to call; HQ owns the token's source/application/organisation binding and
+  rejects changed placement or mismatched objects for direct HTTP and standalone zcp
+  alike. Tool availability and the Mate flag confer no authority.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
   same way, as a header scoped to HQ's host, never stored in a git config or a URL.
 - git from a Mate's dev service presents the Mate's Git credential (§3.3), never the project key.
@@ -4507,36 +4540,67 @@ on the branch of its own open change, only forward — zcp's guidance already pu
 agent's own, which takes design B's relaxed rule (any branch name; `main` and tags HQ's) on HQ's
 side. §10.10 is what zcp does with it.
 
-**A Mate's environment observation** (ADR 0003; parity 84, 260, 275). `zerops_observe` is
-registered only in a Mate's container, with no SSH requirement. It presents the project key
-(§3.6): `action="environments"` reads `GET /api/mate/environments`; `action="status"` reads
-`GET /api/mate/environments/:projectId`; `action="logs"` reads
-`GET /api/mate/environments/:projectId/services/:serviceId/logs?limit=`, 1–100 entries (default
-100), each message at most 4,096 characters. It reads no CI: a Git environment's push and its CI
-are not zcp's any more, and the note that the pair's change merged carries no CI line until HQ
-records CI on a change's head or on `main`'s new commit (design B §3.3). The first call supplies environment project IDs, the second service IDs. No application ID or Zerops credential is accepted from the model.
-The environment result also carries `changes` and `changesAsLastRead`: the same per-repository
-known-change projection as workflow status, refreshed once from the Mate's own HQ state when it
-has a change or leased branch to name. A change merged since the last pass reads merged; if HQ
-does not answer, the ledger's standing is explicitly as last read. The read does not consume the
-pass's next notification. Before advising a merge, the agent uses current change status or says
-it is unknown; an absent change or one only as last read cannot establish its current status
-(`TestObserve_Environments_CurrentChanges`).
-HQ resolves the Mate's current placement by ID on each call and permits only environments of
-that application that every active person able to operate the Mate may read in Zerops. These
-permission facts are read for the call, never served from the outage fallback. HQ opens and checks
-the environment's deploy key against its one-project Basic user scope before reading services,
-active-version IDs and names, or the platform's signed log backend. No env, raw service DTO,
-deploy key or signed log address is returned. A missing or widened key is a visible refusal;
-an unavailable read is a failure, not an empty answer. Each observation attempts once, including
-a `503`; it ends visibly and asks the agent to call again manually. No sibling grants are minted
-or synchronized; legacy grants still require separate manual removal. A Mate's AGENTS.md says
-so: its token reaches no other project, stage and production are observed with `zerops_observe`,
-and the application's other Mates are not readable from the Mate; a container that is not a Mate
-reads a block on its own token's reach instead (`agents_application.md`, `agents_group.md`).
-Tests: the fork's `observation.test.ts`, `zerops/observationHttp.test.ts`; zcp `TestObserve_*`,
-`TestServer_ObserveToolGating`, `TestAnnotations_ObserveTool`,
-`TestBuildAgentsMD_Container_GroupAndGitHost`.
+**A profile's application observation.** `zerops_observe` needs no SSH. It is available
+in a Mate's enabled container and in standalone zcp with an explicitly configured HQ
+and source project. Every action uses `POST /api/mate/observe` with the profile's
+Observe credential (§3.3, §3.6). The fixed model inputs are `action`, `projectId`,
+`serviceId`, `processId`, `versionId`, `limit` (1–100, default 100), and optional
+`from`/`till` for log reads; no token,
+application/person ID, URL, API path or command is accepted.
+
+| Action | Target inputs | Facts |
+|---|---|---|
+| `environments` (default) | none required | Permission-filtered stage/production catalog and sibling Mate metadata |
+| `status` | projectId | Services and actually active versions |
+| `deployments` | optional projectId | Visible HQ deployment jobs; requests are separate from platform runtime |
+| `processes` / `process` | projectId; processId for detail | Platform processes, with direct ownership-checked detail and nullable native versionId |
+| `versions` / `version` | projectId; serviceId for list, versionId for detail | Exact service version facts |
+| `logs` | projectId, serviceId; optional from/till | Complete native service log records |
+| `build_logs` | projectId, versionId; optional from/till | Exact-version pipeline build/preparation records, never a builder's latest unrelated log |
+
+HQ owns the typed facts and raw log record contract in `wire/observation.ts` and `spec/protocol.md`. zcp
+requires the matching `action`, `appId`, nullable `projectId`, and
+`coverage:{source,observedAt,freshness,scope,truncated,logWindow?}` envelope with the action's
+bounded array; malformed, oversized or mismatched envelopes fail. It returns JSON
+as text with nil `structuredContent`. Authorized log records retain every native
+field and unchanged content, including sensitive source data; zcp does not scan,
+redact or slice it. zcp never adds its credential to output or errors, and failed
+or invalid responses do not expose raw bodies. Responses are at most 512 KiB and
+lists at most 100 records; resource limits fail explicitly rather than edit records.
+An HQ `413 observation_output_too_large` asks for a lower `limit` or narrower
+`from`/`till` window; a single record over the output budget cannot be returned.
+No redirect forwards the credential. Each observation attempts once, including a
+`503`, within 45 seconds; unavailable and denied reads remain visible failures.
+HQ validates current native `read_project` for each target and `observe_mate` for
+sibling metadata, with object ownership checked before projection. The token cannot
+write, release, retry a deployment, approve, or create a review plan. Own-project
+native tools retain their existing credentials and behavior.
+
+Log `from`/`till` boundaries are native record IDs or ISO timestamps, each a
+nonempty scalar of at most 256 printable ASCII characters, forwarded unchanged.
+Other actions reject these inputs. Every page is independently authorized by HQ.
+`coverage.logWindow` retains HQ's `rawCount`, `rawLimit`, `rawWindowFull`, and native
+boolean `nextPage`; `false` remains false. Complete records retain the IDs used for
+continuation. To inspect a failed build, follow its process `versionId` or exact
+version-list ID to `version` and `build_logs`; an older active runtime version is a
+separate fact and never substitutes for the failed attempt.
+
+After successful `environments` authorization, the result also carries `changes` and
+`changesAsLastRead`: the existing own-project known-change projection, refreshed
+with that project's own authority when a recorded change or leased branch needs it.
+This metadata read neither authorizes observation nor substitutes for its token.
+A change merged since the last pass reads merged; if HQ does not answer the metadata
+read, its standing is explicitly as last read. The read does not consume the next
+notification. Before merge advice, the agent uses current change status or says it
+is unknown; absent or last-read changes cannot establish current status
+(`TestObserve_Environments_CurrentChanges`). The final text, including metadata,
+remains subject to the output bound.
+
+Tests: `TestReadObserveCredential_*`, `TestObserveClient_*`, `TestObserve_*`,
+`TestServer_ObserveToolGating`,
+`TestServer_ObserveStandalone_ConfiguredProfileStillRequiresCredential`,
+`TestAnnotations_ObserveTool`; HQ's strict observation tests own authorization,
+projection and native object checks.
 
 **A person's side** (`Authorization: Bearer <session>`, from sign-in, §3.7): the structure
 (`GET /api/structure`, and its stream over a WebSocket ticket) — applications, the projects attached

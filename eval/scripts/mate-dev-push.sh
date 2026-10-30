@@ -18,6 +18,9 @@
 #   EVAL_REMOTE_HOST  ssh host (default: zcp — resolves inside whichever project VPN is up)
 #   EVAL_SSH_OPTS     ssh/scp options replacing the unchecked-host-key default (build-deploy.sh)
 #   MATE_REPO           fork checkout (default: ../z3 next to this repo)
+#   MATE_DEV_BASE_VERSION  optional canonical MAJOR.MINOR.PATCH of an official
+#                     fetched release whose validated source is an ancestor of HEAD;
+#                     needed when static package version is below zcp's runtime floor
 #   MATE_PREFIX         npm prefix on the container mate lives under. Each version
 #                     gets its own dir under $MATE_PREFIX/versions/; a dev push
 #                     lands at versions/dev and repoints $MATE_PREFIX/current at
@@ -119,6 +122,8 @@ push_mate() {
   echo "### mate server (fork) → $REMOTE_HOST:$MATE_PREFIX"
   [ -d "$MATE_REPO/apps/server" ] || { echo "fork not found at $MATE_REPO (set MATE_REPO)"; exit 1; }
 
+  local version="$1" tarball prebuild
+
   # vp is the fork's toolchain CLI; a shell without it on PATH uses the
   # fork's own copy from its dependencies.
   local vp
@@ -128,35 +133,49 @@ push_mate() {
     [ -x "$vp" ] || { echo "vp not found: not on PATH, nor at $vp (install the fork's dependencies once, or put vp on PATH)"; exit 1; }
   fi
 
-  local sha version tarball
-  sha="$(git -C "$MATE_REPO" rev-parse --short HEAD)"
-  # A unique prerelease version per build: npm reinstalls only when the version
-  # moves, and `mate --version` on the container then names the commit it runs.
-  version="$(node -p "require('$MATE_REPO/apps/server/package.json').version")-dev.$sha"
-
-  (
-    cd "$MATE_REPO"
-    # Upstream moves daily and brings new dependencies; a rebase without a
-    # reinstall fails the web build on an unresolved import. Fast when current.
-    echo "==> Syncing dependencies (vp install --frozen-lockfile)..."
-    "$vp" install --frozen-lockfile
-    prebuild="$(node_pty_prebuild)"
-    if [ "${MATE_SKIP_WEB:-0}" != "1" ]; then
-      echo "==> Building web client (base path: ${MATE_BASE_PATH-/mate})..."
-      # No VITE_HOSTED_APP_CHANNEL: the container bundle is NOT the hosted app. It used to claim it
-      # was, because otherwise the client booted in local-server mode and /mate/ redirected to /pair
-      # (S7-3, 2026-08-29) — the lie also mislabelled the stage "Latest" and emptied the connection
-      # source. W4-F6-DOOR removed the need: a requires-auth gate advertising zerops-identity is a
-      # Zerops door, so /mate/ renders the Zerops sign-in, and the honest hosted-static answer (false)
-      # is what lets the container register its own primary environment.
-      VITE_BASE_PATH="${MATE_BASE_PATH-/mate}" "$vp" run --filter @t3tools/web build
-    fi
-    echo "==> Building server bundle + client copy..."
-    node apps/server/scripts/cli.ts build
-    echo "==> Packing zerops-mate@$version..."
-    rm -rf builds/mate && mkdir -p builds/mate
-    node apps/server/scripts/cli.ts pack --out builds/mate --app-version "$version" --node-pty-prebuild "$prebuild"
-  )
+  local original_dir="$PWD"
+  cd "$MATE_REPO"
+  # Upstream moves daily and brings new dependencies; a rebase without a
+  # reinstall fails the web build on an unresolved import. Fast when current.
+  echo "==> Syncing dependencies (vp install --frozen-lockfile)..."
+  "$vp" install --frozen-lockfile
+  prebuild="$(node_pty_prebuild)"
+  if [ "${MATE_SKIP_WEB:-0}" != "1" ]; then
+    echo "==> Building web client (base path: ${MATE_BASE_PATH-/mate})..."
+    # No VITE_HOSTED_APP_CHANNEL: the container bundle is NOT the hosted app. It used to claim it
+    # was, because otherwise the client booted in local-server mode and /mate/ redirected to /pair
+    # (S7-3, 2026-08-29) — the lie also mislabelled the stage "Latest" and emptied the connection
+    # source. W4-F6-DOOR removed the need: a requires-auth gate advertising zerops-identity is a
+    # Zerops door, so /mate/ renders the Zerops sign-in, and the honest hosted-static answer (false)
+    # is what lets the container register its own primary environment.
+    VITE_BASE_PATH="${MATE_BASE_PATH-/mate}" "$vp" run --filter @t3tools/web build
+  fi
+  # The server embeds its package version at build time, as in a release.
+  # Keep the validated artifact version scoped to build + pack, restoring bytes
+  # on normal completion, failures, and signals sent to this script or its group.
+  local manifest="$PWD/apps/server/package.json" manifest_backup
+  manifest_backup="$(mktemp)"
+  cp "$manifest" "$manifest_backup"
+  trap "$(printf 'cp %q %q && rm -f %q' "$manifest_backup" "$manifest" "$manifest_backup")" EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  node - "$manifest" "$version" <<'NODE'
+const fs = require("node:fs");
+const manifest = process.argv[2];
+const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+pkg.version = process.argv[3];
+fs.writeFileSync(manifest, JSON.stringify(pkg, null, 2) + "\n");
+NODE
+  echo "==> Building server bundle + client copy..."
+  node apps/server/scripts/cli.ts build
+  echo "==> Packing zerops-mate@$version..."
+  rm -rf builds/mate && mkdir -p builds/mate
+  node apps/server/scripts/cli.ts pack --out builds/mate --app-version "$version" --node-pty-prebuild "$prebuild"
+  cp "$manifest_backup" "$manifest"
+  rm -f "$manifest_backup"
+  trap - EXIT HUP INT TERM
+  cd "$original_dir"
   tarball="$(ls "$MATE_REPO"/builds/mate/*.tgz | head -n 1)"
   echo "==> Tarball: $tarball ($(du -h "$tarball" | cut -f1))"
 
@@ -173,11 +192,10 @@ push_mate() {
   # Activate: repoint $MATE_PREFIX/current at versions/dev, the same relative
   # symlink mate.EnsureInstalled's own activation produces. `zcp mate update` (or
   # the next `zcp init`) sees this dev build through the normal path and, with
-  # no --force, keeps it — the "-dev." tag is what mate.IsDevVersion reads.
+  # no --force, keeps it if its base meets MinimumMateVersion.
   remote "cd '$MATE_PREFIX' && ln -sfn versions/dev current"
 
-  # `mate --version` prints the version baked into the bundle, not the dev tag;
-  # npm's view of the installed package is what names the commit.
+  # Both the CLI bundle and npm package must report the validated dev version.
   echo "==> Installed: $(remote "cd '$version_dir' && npm ls zerops-mate --depth=0 2>/dev/null | grep -o 'zerops-mate@[^ ]*'") — $(remote "'$MATE_PREFIX/current/node_modules/.bin/mate' --version 2>&1 | tail -n 1")"
 
   restart_mate_unit
@@ -185,8 +203,12 @@ push_mate() {
 
 case "$WHAT" in
   zcp) push_zcp ;;
-  mate) push_mate ;;
-  all) push_zcp; push_mate ;;
+  mate|all)
+    # Reject an unsupported base before even the zcp half of an all push.
+    version="$(node "$SCRIPT_DIR/mate-dev-version.mjs" "$MATE_REPO")"
+    if [ "$WHAT" = "all" ]; then push_zcp; fi
+    push_mate "$version"
+    ;;
   *) echo "usage: $0 [zcp|mate|all]"; exit 2 ;;
 esac
 

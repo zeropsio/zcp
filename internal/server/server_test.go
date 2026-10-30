@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -930,5 +931,82 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 				t.Errorf("zerops_propose_ask_chief registered = %v, want %v", found, tt.want)
 			}
 		})
+	}
+}
+
+func TestServer_ObserveStandalone_ConfiguredProfileStillRequiresCredential(t *testing.T) {
+	// non-parallel: standalone HQ config and fixed profile HOME are process state.
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	const credential = "zobs.org.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	requests := 0
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.String() != "/api/mate/observe" || r.Header.Get("Authorization") != "Observe "+credential {
+			t.Error("standalone did not use strict Observe authority")
+		}
+		_, _ = w.Write([]byte(`{"action":"status","appId":"a1","projectId":"target","coverage":{"source":"zerops","observedAt":"2026-10-29T12:00:00Z","freshness":"fresh","scope":"current services","truncated":false},"services":[]}`))
+	}))
+	defer fake.Close()
+	hqtest.Link(t, fake.URL, "p1", "")
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil).WithProcess(&platform.Process{ID: "native-process", Status: "RUNNING", ActionName: "stack.start"})
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "native-project-key", APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{}, nil)
+	t.Cleanup(srv.Stop)
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.MCPServer().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, tool := range listed.Tools {
+		found[tool.Name] = true
+	}
+	if !found["zerops_observe"] || !found["zerops_process"] || found["zerops_origin"] {
+		t.Fatalf("standalone observe/native/origin availability = %v/%v/%v, want true/true/false", found["zerops_observe"], found["zerops_process"], found["zerops_origin"])
+	}
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_observe", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || !strings.Contains(text, "observe authorization required") || strings.Contains(text, "native-project-key") {
+		t.Fatalf("standalone must fail closed without credential: %q", text)
+	}
+	if requests != 0 {
+		t.Fatal("missing credential reached HQ")
+	}
+	native, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_process", Arguments: map[string]any{"processId": "native-process"}})
+	if err != nil || native.IsError {
+		t.Fatalf("native project read failed without observe authorization: %v", err)
+	}
+	hqtest.GitCredential(t, hq.ObserveCredentialPath(), credential)
+	observed, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_observe", Arguments: map[string]any{"action": "status", "projectId": "target"}})
+	if err != nil || observed.IsError || observed.StructuredContent != nil || requests != 1 {
+		t.Fatalf("configured standalone could not observe: %v requests=%d", err, requests)
+	}
+	if err := os.Remove(hq.ObserveCredentialPath()); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_observe", Arguments: map[string]any{}})
+	if err != nil || !revoked.IsError || requests != 1 {
+		t.Fatalf("removed standalone credential did not fail closed: %v requests=%d", err, requests)
+	}
+	native, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_process", Arguments: map[string]any{"processId": "native-process"}})
+	if err != nil || native.IsError {
+		t.Fatalf("native project read changed after observe removal: %v", err)
 	}
 }

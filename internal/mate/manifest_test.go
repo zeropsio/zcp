@@ -84,6 +84,41 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	}
 }
 
+func TestDesiredRelease_SemanticVersions_PreserveTheReleaseFloor(t *testing.T) {
+	for _, tt := range []struct {
+		version string
+		allowed bool
+	}{
+		{"0.16.38-dev.1e84132e76", true},
+		{"0.16.1-alpha.1+build.42", true},
+		{"0.16.0+build.42", true},
+		{"0.16.0-rc.1", false},
+		{"0.15.999-dev.1", false},
+		{"0.16.38-dev..sha", false},
+		{"0.16.38-dev.01", false},
+		{"0.16.38-", false},
+		{"0.16.38+", false},
+		{"00.16.38", false},
+		{"v0.16.38", false},
+		{"0.16", false},
+		{"0.16.38-dev/escape", false},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(validManifestJSON(t, map[string]any{"version": tt.version}))
+			})
+			got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+			if (err == nil) != tt.allowed {
+				t.Fatalf("DesiredRelease(%q) error = %v, allowed = %v", tt.version, err, tt.allowed)
+			}
+			if tt.allowed && got.Version != tt.version {
+				t.Fatalf("manifest version = %q, want exact %q", got.Version, tt.version)
+			}
+		})
+	}
+}
+
 func TestDesiredRelease_Refresh_BypassesCache(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var requests int
@@ -329,6 +364,12 @@ func TestVersionOlder(t *testing.T) {
 		{"0.9.0", "0.9.0", false},
 		{"0.9.0", "0.8.1", false},
 		{"0.9.0", "0.9.1", true},
+		{"0.16.38-dev.2", "0.16.38-dev.10", true},
+		{"0.16.38-dev.10", "0.16.38-dev.2", false},
+		{"0.16.38-alpha", "0.16.38-alpha.1", true},
+		{"0.16.38-rc.1", "0.16.38", true},
+		{"0.16.38", "0.16.38-rc.1", false},
+		{"0.16.38+build.1", "0.16.38+build.2", false},
 		{"not-a-version", "0.9.0", false},
 		{"0.9.0", "not-a-version", false},
 	}

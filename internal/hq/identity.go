@@ -1,8 +1,7 @@
-// Package hq is zcp's side of a Mate's HQ: the key the project's Mate
-// presents on every call, the Mate API those calls speak, git against HQ, and
-// the Git credential HQ sends the Mate's server for the dev service
-// (docs/spec-mate.md §3.3, §3.6). Nothing here enrolls: the key is the
-// proof, and HQ recognises it by its hash.
+// Package hq is zcp's side of HQ: the project's Mate API and git, the Git
+// credential Mate holds for its dev services, and the independently authorized
+// profile's Observe reads (docs/spec-mate.md §3.3, §3.6). Project calls present
+// the project key; Observe reads use only the profile's narrow credential.
 package hq
 
 import (
