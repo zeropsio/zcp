@@ -178,7 +178,7 @@ func TestGitPush_PoolDevHalf_RefusedBeforeSSH(t *testing.T) {
 			stateDir := poolDeliveryPair(t)
 			ssh := &hostLogSSH{}
 
-			result, _, _ := handleGitPush(context.Background(), platform.NewMock().WithServices(poolPairServices()), nil, "proj-1",
+			result, _, _ := handleGitPush(context.Background(), platform.NewMock().WithServices(poolPairServices()), "proj-1",
 				ssh, nil, nil, DeploySSHInput{TargetService: target, Strategy: deployStrategyGitPush}, stateDir, runtime.Info{InContainer: true})
 
 			text := extractText(result)

@@ -4492,10 +4492,9 @@ what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 
 **A Mate's side** (the project key in a header, §3.6, §6.6): its own state (`GET /api/mate/self`: its record,
 the application HQ holds it in and that application's name, its changes there, its repositories
-with each one's origin address, `repos`, and whether that application has a production of any
-target, released or not, `production` — both of which an older HQ omits; zcp reads no Git
-environment's pushes (`gitPushes`, which HQ still serves to released zcp); the closing note of a session that hands over a change names Put it live only while
-`production` is not true); a repository of
+with each one's origin address, `repos`, which an older HQ omits; `production` and `gitPushes`
+are not carried. The closing note handing over a change points to Review without another HQ
+read; production setup belongs to the project's card, whose available actions Mate owns); a repository of
 its application, made or joined (`POST /api/mate/repos`); its changes in a repository, one open per
 branch it names beside its one change opened naming none — an HQ that keeps them so says
 `openPerBranch: true` in the Mate's state and lists every open change there — or, from an older HQ,

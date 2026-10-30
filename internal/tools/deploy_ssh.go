@@ -323,7 +323,7 @@ func RegisterDeploySSH(
 				}
 				return jsonResult(deploySSHResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
+					WorkSessionState: sessionAnnotations(stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 				}), nil, nil
 			}
@@ -333,7 +333,7 @@ func RegisterDeploySSH(
 			}
 			return jsonResult(deploySSHResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
+				WorkSessionState: sessionAnnotations(stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 			}), nil, nil
 		}
@@ -449,7 +449,7 @@ func RegisterDeploySSH(
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
+			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
 		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, listedServices(), input)
@@ -590,7 +590,7 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
+		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
 }

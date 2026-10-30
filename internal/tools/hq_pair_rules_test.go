@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -252,11 +253,11 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-			got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
+			got := sessionAnnotations(dir)
 			if got == nil || got.Status != "auto-closed" {
 				t.Fatalf("annotations = %+v, want auto-closed", got)
 			}
-			if gotHandoff := strings.Contains(got.Note, hqHandoffNote(false)); gotHandoff != tt.wantHandoff {
+			if gotHandoff := strings.Contains(got.Note, hqHandoffNote()); gotHandoff != tt.wantHandoff {
 				t.Errorf("handoff in the closing note = %v, want %v: %q", gotHandoff, tt.wantHandoff, got.Note)
 			}
 		})
@@ -279,6 +280,9 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
+	if !strings.Contains(text, "Put it live on the project's card") || strings.Contains(text, "both offered in this conversation") {
+		t.Fatalf("production setup belongs to the project, not the change review: %s", text)
+	}
 }
 
 // An unavailable authority is unknown, never evidence that no work landed.
@@ -293,65 +297,48 @@ func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
 	}
 }
 
-// The closing message names Put it live only while the application has no
-// production: Mate offers it for none, and an agent told otherwise repeats
-// it right after production was added. An HQ that cannot say keeps the
-// conditional words.
-//
+// The handoff points to the change's Review, so its text needs no HQ read.
 // Not parallel: HOME and the identity are redirected (t.Setenv).
-func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testing.T) {
-	tests := []struct {
-		name       string
-		production string
-		wantPutIt  bool
-	}{
-		{name: "the application has a production", production: `,"production":true`},
-		{name: "the application has none", production: `,"production":false`, wantPutIt: true},
-		{name: "an HQ older than the answer", production: "", wantPutIt: true},
+func TestSessionAnnotations_HandoffUsesReviewWithoutReadingHQ(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var reads atomic.Int64
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		_, _ = w.Write([]byte(`{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"` + labApp + `","changes":[]}`))
+	}))
+	t.Cleanup(fake.Close)
+	hqtest.Link(t, fake.URL, "P_MATE", "good")
+	dir := t.TempDir()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
+		CloseDeployMode: topology.CloseModeAuto, BootstrappedAt: now,
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 1},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Project good" {
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				_, _ = w.Write([]byte(`{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"` + labApp + `","changes":[]` + tt.production + `}`))
-			}))
-			t.Cleanup(fake.Close)
-			hqtest.Link(t, fake.URL, "P_MATE", "good")
-			dir := t.TempDir()
-			now := time.Now().UTC().Format(time.RFC3339)
-			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-				Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
-				CloseDeployMode: topology.CloseModeAuto, BootstrappedAt: now,
-				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 1},
-			}); err != nil {
-				t.Fatalf("WriteServiceMeta: %v", err)
-			}
-			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "Add a login page.", []string{"appdev", "appstage"})
-			ws.Deploys = map[string][]workflow.DeployAttempt{}
-			ws.Verifies = map[string][]workflow.VerifyAttempt{}
-			for _, h := range []string{"appdev", "appstage"} {
-				ws.Deploys[h] = []workflow.DeployAttempt{{AttemptedAt: now, SucceededAt: now}}
-				ws.Verifies[h] = []workflow.VerifyAttempt{{AttemptedAt: now, PassedAt: now, Passed: true}}
-			}
-			ws.ClosedAt = now
-			ws.CloseReason = workflow.CloseReasonAutoComplete
-			if err := workflow.SaveWorkSession(dir, ws); err != nil {
-				t.Fatalf("SaveWorkSession: %v", err)
-			}
-			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
-
-			got := sessionAnnotations(t.Context(), fake.Client(), runtime.Info{}, dir)
-			if got == nil || !strings.Contains(got.Note, "press Review") {
-				t.Fatalf("want the handoff in the closing note, got %+v", got)
-			}
-			if gotPutIt := strings.Contains(got.Note, "Put it live"); gotPutIt != tt.wantPutIt {
-				t.Errorf("Put it live in the closing note = %v, want %v: %q", gotPutIt, tt.wantPutIt, got.Note)
-			}
-		})
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "Add a login page.", []string{"appdev", "appstage"})
+	ws.Deploys = map[string][]workflow.DeployAttempt{}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{}
+	for _, h := range []string{"appdev", "appstage"} {
+		ws.Deploys[h] = []workflow.DeployAttempt{{AttemptedAt: now, SucceededAt: now}}
+		ws.Verifies[h] = []workflow.VerifyAttempt{{AttemptedAt: now, PassedAt: now, Passed: true}}
+	}
+	ws.ClosedAt = now
+	ws.CloseReason = workflow.CloseReasonAutoComplete
+	if err := workflow.SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+	got := sessionAnnotations(dir)
+	if got == nil || !strings.Contains(got.Note, "press Review") {
+		t.Fatalf("want the change's Review in the closing note, got %+v", got)
+	}
+	if strings.Contains(got.Note, "Put it live") {
+		t.Errorf("a change handoff offers Review, not production setup: %s", got.Note)
+	}
+	if got := reads.Load(); got != 0 {
+		t.Errorf("handoff text read HQ %d times; its Review needs no production fact", got)
 	}
 }
 
@@ -359,14 +346,14 @@ func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testin
 // through other pages the person would have to find.
 func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Review", "Put it live"} {
-		if !strings.Contains(hqHandoffNote(false), want) {
-			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote(false))
+	for _, want := range []string{"Review"} {
+		if !strings.Contains(hqHandoffNote(), want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote())
 		}
 	}
-	for _, never := range []string{"projects page", "stage"} {
-		if strings.Contains(hqHandoffNote(false), never) {
-			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote(false))
+	for _, never := range []string{"Put it live", "projects page", "stage"} {
+		if strings.Contains(hqHandoffNote(), never) {
+			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote())
 		}
 	}
 }
@@ -375,9 +362,9 @@ func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 // address as the app and the Mate's own as the person's preview.
 func TestHQHandoffNote_NamesProductionOnceItRunsARelease(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"while the application has no production", "production runs a release", "that address is the app", "preview"} {
-		if !strings.Contains(hqHandoffNote(false), want) {
-			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote(false))
+	for _, want := range []string{"production runs a release", "that address is the app", "preview"} {
+		if !strings.Contains(hqHandoffNote(), want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote())
 		}
 	}
 }

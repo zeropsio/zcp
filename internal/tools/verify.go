@@ -109,7 +109,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			return jsonResult(verifyAllResponse{
 				VerifyAllResult:  result,
 				Note:             strings.Join(notes, " "),
-				WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
+				WorkSessionState: sessionAnnotations(stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
@@ -122,7 +122,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
-			return verifyLease(ctx, client, httpClient, probeHTTP, ssh, projectID, stateDir, rt, lease), nil, nil
+			return verifyLease(ctx, client, probeHTTP, ssh, projectID, stateDir, rt, lease), nil, nil
 		}
 		// Phase 4: if the input hostname is a push source whose builds land
 		// on a different runtime (dev half of a standard pair under
@@ -149,7 +149,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,
-			WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
+			WorkSessionState: sessionAnnotations(stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
 		if redirectedFrom != "" {
@@ -181,7 +181,7 @@ const leaseProbeTimeout = 20 * time.Second
 // answers over SSH, the dev servers its supervisor reports, and each preview
 // URL asked from outside through previewHTTP. Nothing is recorded to the work
 // session — a lease is no service of the part.
-func verifyLease(ctx context.Context, client platform.Client, httpClient, previewHTTP ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
+func verifyLease(ctx context.Context, client platform.Client, previewHTTP ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
 	if ssh == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -203,7 +203,7 @@ func verifyLease(ctx context.Context, client platform.Client, httpClient, previe
 	result := ops.VerifyLeaseWithPreview(ctx, ssh, lease, unreachable, ops.LeasePreviewProbe{Client: client, ProjectID: projectID, HTTP: previewHTTP})
 	return jsonResult(verifyResponse{
 		VerifyResult:     result,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
+		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	})
 }

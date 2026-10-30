@@ -547,7 +547,7 @@ func handleEngineFreeAction(ctx context.Context, projectID string, client platfo
 	// less — runs without an active session because external deployers may
 	// have happened before any develop session existed.
 	if input.Action == "record-deploy" {
-		return handleRecordDeploy(ctx, client, httpClient, rt, projectID, stateDir, input)
+		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input)
 	}
 	// mac-pair is stateless: every call re-reads the Mate's `mac status`
 	// (workflow_mac_pair.go), so it needs no engine.

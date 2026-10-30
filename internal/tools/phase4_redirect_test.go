@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -160,7 +159,7 @@ func TestHandleRecordDeploy_RedirectsDevToStage(t *testing.T) {
 	}
 
 	// nil client skips the build-status gate (test runs without platform).
-	result, _, err := handleRecordDeploy(context.Background(), nil, nil, runtime.Info{}, "", dir, WorkflowInput{TargetService: "appdev"})
+	result, _, err := handleRecordDeploy(context.Background(), nil, nil, "", dir, WorkflowInput{TargetService: "appdev"})
 	if err != nil {
 		t.Fatalf("handleRecordDeploy: %v", err)
 	}
@@ -192,7 +191,7 @@ func TestHandleRecordDeploy_SimpleNoRedirect(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	result, _, err := handleRecordDeploy(context.Background(), nil, nil, runtime.Info{}, "", dir, WorkflowInput{TargetService: "api"})
+	result, _, err := handleRecordDeploy(context.Background(), nil, nil, "", dir, WorkflowInput{TargetService: "api"})
 	if err != nil {
 		t.Fatalf("handleRecordDeploy: %v", err)
 	}

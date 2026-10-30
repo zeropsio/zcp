@@ -381,7 +381,6 @@ already own continues unchanged. After setup completes, retry the push.`
 func handleGitPush(
 	ctx context.Context,
 	client platform.Client,
-	httpClient ops.HTTPDoer,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	logFetcher platform.LogFetcher,
@@ -715,7 +714,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
+		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }

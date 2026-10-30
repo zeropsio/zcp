@@ -77,26 +77,27 @@ func TestClient_Self_Repos_DecodesOriginsAndOlderHQ(t *testing.T) {
 	}
 }
 
-// HQ says whether the Mate's application has a production; an older HQ says
-// nothing, which decodes as nil, never as none.
-func TestClient_Self_Production_DecodesAndOlderHQ(t *testing.T) {
+// Retired response fields remain acceptable JSON but do not become current facts.
+func TestClient_Self_IgnoresRetiredProductionField(t *testing.T) {
 	t.Parallel()
-	client, _ := answering(t, `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],"production":true}`)
-	state, err := client.Self(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Production == nil || !*state.Production {
-		t.Errorf("production = %v, want true", state.Production)
-	}
-
-	older, _ := answering(t, selfSample)
-	state, err = older.Self(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Production != nil {
-		t.Errorf("production from an HQ that omits it = %v, want nil", *state.Production)
+	appID := "a1"
+	want := MateState{ProjectID: "p-mate", Name: "Ada", Face: "face-1", AppID: &appID, Changes: []MateChange{}}
+	for _, row := range []struct{ name, extra string }{
+		{"obsolete true", `,"production":true`},
+		{"obsolete false", `,"production":false`},
+		{"omitted", ""},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			client, _ := answering(t, `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[]`+row.extra+`}`)
+			state, err := client.Self(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(state, want) {
+				t.Errorf("state = %+v, want current facts %+v", state, want)
+			}
+		})
 	}
 }
 
