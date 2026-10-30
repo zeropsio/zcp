@@ -1,11 +1,14 @@
 """Delivery contract tests: mock external effects; never build or contact a container."""
 
 import json
+from itertools import product
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -28,10 +31,17 @@ class MateDevPushTests(unittest.TestCase):
         (server / "scripts").mkdir(parents=True)
         (server / "package.json").write_text(json.dumps({"version": "0.15.101"}))
         (server / "scripts/cli.ts").write_text(
-            'import {writeFileSync} from "node:fs";\n'
-            'if (process.argv[2] === "pack") {writeFileSync(process.env.PACK_ARGS, JSON.stringify(process.argv.slice(3))); process.exit(7);}\n')
+            'import {appendFileSync, existsSync, readFileSync, writeFileSync} from "node:fs";\n'
+            'const op = process.argv[2];\n'
+            'if (op === "pack") writeFileSync(process.env.PACK_ARGS, JSON.stringify(process.argv.slice(3)));\n'
+            'appendFileSync(process.env.CLI_VERSIONS, JSON.stringify([op, JSON.parse(readFileSync("apps/server/package.json", "utf8")).version]) + "\\n");\n'
+            'if (process.env.PAUSE_AT === op) {setInterval(() => {if (existsSync(process.env.RESUME_FILE)) process.exit(0);}, 10);} else {\n'
+            ' const code = Number(process.env[op === "build" ? "BUILD_EXIT" : "PACK_EXIT"] ?? (op === "pack" ? 7 : 0));\n'
+            ' if (op === "pack" && code === 0) writeFileSync("builds/mate/fixture.tgz", "fixture");\n'
+            ' process.exit(code);\n'
+            '}\n')
         # Mate owns release-source validation. Stub its Effect boundary here;
-        # these tests own official-tag binding, ancestry and the pack consumer.
+        # these tests own official-tag binding, ancestry and build/pack consumers.
         shared = self.repo / "packages/shared"
         (shared / "src").mkdir(parents=True)
         (shared / "package.json").write_text('{"type":"module"}')
@@ -61,11 +71,20 @@ class MateDevPushTests(unittest.TestCase):
             ' print(os.environ["OFFICIAL_TAG"] + "\\trefs/tags/v0.16.39")\n'
             'else: os.execv(os.environ["REAL_GIT"], [os.environ["REAL_GIT"], *sys.argv[1:]])\n')
         (bin_dir / "git").chmod(0o755)
+        self.delivery_file = self.root / "delivery.jsonl"
+        for name in ("ssh", "scp"):
+            command = bin_dir / name
+            command.write_text(
+                '#!/usr/bin/env python3\nimport json,os,sys\n'
+                'with open(os.environ["DELIVERY_COMMANDS"], "a") as log: log.write(json.dumps(sys.argv) + "\\n")\n')
+            command.chmod(0o755)
         self.args_file = self.root / "pack-args.json"
+        self.versions_file = self.root / "cli-versions.jsonl"
         self.env.update(PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                         MATE_REPO=str(self.repo), MATE_DEV_BASE_VERSION="0.16.39",
                         MATE_SKIP_WEB="1", MATE_NODE_PTY_PREBUILD=str(self.root),
-                        PACK_ARGS=str(self.args_file), REAL_GIT=self.real_git,
+                        PACK_ARGS=str(self.args_file), CLI_VERSIONS=str(self.versions_file),
+                        DELIVERY_COMMANDS=str(self.delivery_file), REAL_GIT=self.real_git,
                         OFFICIAL_TAG=self.release)
 
     def git(self, *args):
@@ -74,7 +93,72 @@ class MateDevPushTests(unittest.TestCase):
 
     def run_push(self):
         return subprocess.run(["bash", str(ENTRY), "mate"], env=self.env,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, timeout=20)
+
+    def test_build_and_pack_read_the_validated_artifact_version(self):
+        result = self.run_push()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        args = json.loads(self.args_file.read_text())
+        packed = args[args.index("--app-version") + 1]
+        versions = [json.loads(line) for line in self.versions_file.read_text().splitlines()]
+        self.assertEqual(versions[0][1], packed, "build version must equal packed artifact version")
+        self.assertEqual(versions, [["build", packed], ["pack", packed]])
+        self.assertEqual(packed, "0.16.39-dev." + self.git("rev-parse", "--short", "HEAD"))
+
+    def test_original_manifest_bytes_are_restored_after_success_or_build_or_pack_failure(self):
+        manifest = self.repo / "apps/server/package.json"
+        original = b'{\r\n  "version" : "0.15.101", "other": {"kept": true}\r\n}\r\n\n'
+        for build_exit, pack_exit in [(0, 0), (9, 7), (0, 7)]:
+            with self.subTest(build_exit=build_exit, pack_exit=pack_exit):
+                manifest.write_bytes(original)
+                self.delivery_file.unlink(missing_ok=True)
+                self.env.update(BUILD_EXIT=str(build_exit), PACK_EXIT=str(pack_exit))
+                result = self.run_push()
+                self.assertEqual(result.returncode, build_exit or pack_exit, result.stderr)
+                self.assertEqual(manifest.read_bytes(), original)
+                self.assertEqual(self.delivery_file.exists(), build_exit == pack_exit == 0)
+
+    def test_original_manifest_bytes_are_restored_after_build_or_pack_signals(self):
+        manifest = self.repo / "apps/server/package.json"
+        original = manifest.read_bytes()
+        expected = "0.16.39-dev." + self.git("rev-parse", "--short", "HEAD")
+        for op, sig, target in product(("build", "pack"),
+                                       (signal.SIGHUP, signal.SIGINT, signal.SIGTERM),
+                                       ("group", "script")):
+            with self.subTest(op=op, signal=sig, target=target):
+                self.versions_file.unlink(missing_ok=True)
+                resume_file = self.root / "resume"
+                resume_file.unlink(missing_ok=True)
+                self.env.update(PAUSE_AT=op, RESUME_FILE=str(resume_file))
+                process = subprocess.Popen(["bash", str(ENTRY), "mate"], env=self.env,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True, start_new_session=True)
+                try:
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        if self.versions_file.exists():
+                            versions = [json.loads(line) for line in self.versions_file.read_text().splitlines()]
+                            if versions[-1][0] == op:
+                                break
+                        if process.poll() is not None:
+                            self.fail("helper exited before the signal checkpoint")
+                        time.sleep(0.01)
+                    else:
+                        self.fail("helper did not reach the signal checkpoint")
+                    self.assertEqual(versions[-1], [op, expected])
+                    if target == "group":
+                        os.killpg(process.pid, sig)
+                    else:
+                        os.kill(process.pid, sig)
+                        resume_file.touch()
+                    _, stderr = process.communicate(timeout=10)
+                    self.assertEqual(process.returncode, 128 + sig, stderr)
+                    self.assertEqual(manifest.read_bytes(), original)
+                    self.assertFalse(self.delivery_file.exists())
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.communicate()
 
     def test_verified_release_source_base_reaches_the_packed_artifact(self):
         result = self.run_push()
@@ -100,6 +184,8 @@ class MateDevPushTests(unittest.TestCase):
                 result = self.run_push()
                 self.assertNotEqual(result.returncode, 7, "invalid base reached packing")
                 self.assertFalse(self.args_file.exists())
+                self.assertFalse(self.versions_file.exists(), "invalid base reached building")
+                self.assertFalse(self.delivery_file.exists())
                 self.assertIn("canonical MAJOR.MINOR.PATCH", result.stderr)
         result = subprocess.run(["bash", str(ENTRY), "all"], env=self.env,
                                 capture_output=True, text=True)
@@ -111,12 +197,16 @@ class MateDevPushTests(unittest.TestCase):
         result = self.run_push()
         self.assertIn("official release tag", result.stderr)
         self.assertFalse(self.args_file.exists())
+        self.assertFalse(self.versions_file.exists())
+        self.assertFalse(self.delivery_file.exists())
         self.env["OFFICIAL_TAG"] = self.release
         self.git("checkout", "-q", "--orphan", "unrelated")
         self.git("commit", "-qm", "unrelated source")
         result = self.run_push()
         self.assertIn("release source is not an ancestor", result.stderr)
         self.assertFalse(self.args_file.exists())
+        self.assertFalse(self.versions_file.exists())
+        self.assertFalse(self.delivery_file.exists())
 
 
 class BuildDeployTests(unittest.TestCase):
