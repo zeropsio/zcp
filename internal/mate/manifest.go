@@ -34,9 +34,10 @@ const (
 	// zerops_origin's ask and tells the agent how it ended: an older one
 	// shows a plain call, and the agent waits on a card it never draws.
 	// 0.16.0 is the first contract-2 release: it links with the project key
-	// and its package declares the HQ origin. 0.16.40 adds the Observe
-	// credential frame receiver and file writer required by strict HQ reads.
-	MinimumMateVersion = "0.16.40"
+	// and its package declares the HQ origin. 0.16.40 still lacks Observe
+	// credential delivery; 0.16.41 is required for the frame receiver and
+	// file writer used by strict HQ reads.
+	MinimumMateVersion = "0.16.41"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order

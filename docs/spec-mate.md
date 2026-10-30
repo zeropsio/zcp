@@ -468,7 +468,7 @@ installed it degrades like any other install failure (MD-1).
 | Check | Rule |
 |---|---|
 | `contract` | must equal `mate.SupportedContract` (today `2` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
-| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.40, which receives Observe credential frames and writes the fixed credential file for strict HQ reads, §3.3). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.41, which receives Observe credential frames and writes the fixed credential file for strict HQ reads, §3.3). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
 **There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub
@@ -490,9 +490,10 @@ release target and the release workflow fetch the published stable manifest and 
 publish unless its version reaches the floor and its contract equals `SupportedContract`.
 The release check uses the canonical stable channel, never a container's manifest override
 or cache. An older zcp ignores additive manifest metadata; no new `serve` flag is passed.
-For strict Observe reads, the floor is 0.16.40: contract-2 Mate 0.16.39 lacks the credential
-frame receiver and file writer. A 0.16.40 prerelease sorts below the stable floor and cannot
-authorize publication. The supporting stable manifest must be published before zcp releases.
+For strict Observe reads, the floor is 0.16.41: published contract-2 Mate 0.16.39 and
+0.16.40 lack the credential frame receiver and file writer. A 0.16.41 prerelease sorts
+below the stable floor and cannot authorize publication. The supporting stable manifest must
+be published before zcp releases.
 Auto-update protocol 1 is probed before it is used.
 
 ### 2.1d Automatic updates — protocol 1
@@ -2512,7 +2513,7 @@ To verify live before building on them:
 ### 3.17 Contract-2 delivery
 
 Mate 0.16.0 declares contract 2 and the shared HQ origin in its installed package. zcp's
-`SupportedContract` remains 2; `MinimumMateVersion` is 0.16.40 so strict Observe reads
+`SupportedContract` remains 2; `MinimumMateVersion` is 0.16.41 so strict Observe reads
 require the credential frame receiver and file writer. The server links with its
 project key and writes HQ's Git credential to the file zcp reads (§3.3); zcp presents the
 project key in its HQ request headers (§3.6). The hosted client is `https://mate.zerops.io`.
