@@ -132,6 +132,15 @@ func (s *Server) Stop() {
 // tel is the telemetry emitter (spec-telemetry.md §5.3); nil is a legal
 // no-op — callers that haven't wired telemetry yet (most tests) pass nil.
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+	return newServer(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel, false)
+}
+
+// NewManaged accepts only invocation metadata from an engine-owned STDIO bridge.
+func NewManaged(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+	return newServer(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel, true)
+}
+
+func newServer(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info, tel telemetry.Emitter, managed bool) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 
 	// stateDir resolution mirrors registerTools(); kept local here so the
@@ -161,6 +170,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		&mcp.ServerOptions{
 			Instructions: BuildInstructions(rc),
 			Logger:       logger,
+			Capabilities: invocationCapabilities(managed),
 		},
 	)
 
@@ -193,7 +203,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), s.followRepos(), receive)
+	srv.AddReceivingMiddleware(invocationIngress(managed), s.observe(), s.followRecipe(), s.followRepos(), receive)
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
@@ -338,14 +348,23 @@ func (s *Server) followRepos() mcp.Middleware {
 // subdomain, dev server, stand-up, and the browser that looks at a service
 // of this project — acts on the Chief's own empty project and is not
 // registered; no write-capable client exists in org mode.
-func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+func NewOrg(ctx context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+	return newOrg(ctx, org, store, rtInfo, tel, false)
+}
+
+// NewManagedOrg is the read-only Chief surface on the same owned STDIO boundary.
+func NewManagedOrg(ctx context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+	return newOrg(ctx, org, store, rtInfo, tel, true)
+}
+
+func newOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter, managed bool) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 	stateDir := stateDirFromCwd()
 	refreshAgentContext(stateDir, rtInfo, logger)
 
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Logger: logger},
+		&mcp.ServerOptions{Logger: logger, Capabilities: invocationCapabilities(managed)},
 	)
 	s := &Server{
 		server:    srv,
@@ -356,7 +375,7 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 		telemetry: tel,
 	}
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), receive)
+	srv.AddReceivingMiddleware(invocationIngress(managed), s.observe(), receive)
 	srv.AddSendingMiddleware(send)
 
 	tools.RegisterOrg(srv, org, uuid.NewString)

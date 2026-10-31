@@ -220,11 +220,18 @@ type OpenedChange struct {
 // open in the repository (409, reason "too_many_open").
 func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (OpenedChange, error) {
 	var opened OpenedChange
-	body := map[string]string{"repo": repo, "title": title}
+	origin, hasOrigin, err := originatingTask(ctx)
+	if err != nil {
+		return opened, err
+	}
+	body := map[string]any{"repo": repo, "title": title}
+	if hasOrigin {
+		body["originatingTask"] = origin
+	}
 	if branch != "" {
 		body["branch"] = branch
 	}
-	err := c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
+	err = c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
 		body, &opened)
 	return opened, err
 }
@@ -239,7 +246,19 @@ type ChangeEdit struct {
 // EditChange retitles or describes the Mate's open change number in repo.
 func (c Client) EditChange(ctx context.Context, repo string, number int, edit ChangeEdit) (Change, error) {
 	var change Change
-	err := c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change)
+	origin, hasOrigin, err := originatingTask(ctx)
+	if err != nil {
+		return change, err
+	}
+	var task *taskOrigin
+	if hasOrigin {
+		task = &origin
+	}
+	body := struct {
+		ChangeEdit
+		Origin *taskOrigin `json:"originatingTask,omitempty"`
+	}{edit, task}
+	err = c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), body, &change)
 	return change, err
 }
 

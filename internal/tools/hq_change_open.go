@@ -53,6 +53,10 @@ func handleOpenChange(
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
+	invocation, invocationErr := hq.InvocationFromContext(ctx)
+	if invocationErr != nil {
+		return convertError(invocationErr, WithRecoveryStatus()), nil, nil
+	}
 	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return convertError(platform.NewPlatformError(
@@ -113,6 +117,10 @@ func handleOpenChange(
 		}
 		handed = handedChangesIn(state, target.AppID, target.Repo)
 		for _, h := range handed {
+			// Existing branch state cannot acknowledge this originating grant.
+			if invocation.Scope.Kind == "task" {
+				break
+			}
 			held := hqc.BranchOf(h.Number, h.Branch)
 			// On an HQ that keeps one open change per repository the handed
 			// change is the Mate's one, whatever branch is named.
@@ -225,6 +233,12 @@ func openUnanswered(ctx context.Context, hqc hq.Client, target changeTarget, bra
 		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
 			fmt.Sprintf("Nothing was opened: HQ did not open a change in %q (%v).", target.Repo, openErr),
 			`Call zerops_workflow action="open-change" again; the branch you pushed stays as it is.`)
+	}
+	invocation, err := hq.InvocationFromContext(ctx)
+	if err != nil || invocation.Scope.Kind == "task" {
+		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
+			"Whether the originating task was bound to this change is unknown: HQ did not acknowledge this open. Existing branch state cannot acknowledge the originating assignment.",
+			`Retry this original invocation through its owning Mate bridge; never substitute another task or a manual call.`)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	after, err := hqc.Once().Self(callCtx)

@@ -65,7 +65,12 @@ func run(args []string) int {
 			return runCLI(args, dispatch)
 		}
 	}
-	return runServe()
+	managed, err := serveMode(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return runServe(managed)
 }
 
 // cliDispatch is the single source of truth for first-level CLI verbs: a
@@ -321,7 +326,7 @@ func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.S
 // arguments or an unrecognized first argument (preserves the original
 // behavior). Telemetry: session_start after consent resolve, session_end
 // inside logShutdown, final Shutdown(750ms) flush before returning.
-func runServe() int {
+func runServe(managed bool) int {
 	// Ignore SIGPIPE: when Claude Code closes the stdio pipe, Go's default
 	// behavior kills the process on writes to fd 1/2. Converting SIGPIPE to
 	// EPIPE errors lets the MCP SDK shut down gracefully instead.
@@ -345,7 +350,7 @@ func runServe() int {
 	tc := telemetry.New(cfg)
 	tc.Emit(wire.Event{EventType: wire.EventSessionStart})
 
-	srv, err := runServer(mcpStdout, tc)
+	srv, err := runServer(mcpStdout, tc, managed)
 	logShutdown(crashLog, err, startedAt, srv, tc, tc.DroppedCount())
 
 	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
@@ -359,7 +364,7 @@ func runServe() int {
 	return 0
 }
 
-func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
+func runServer(mcpStdout io.Writer, tel telemetry.Emitter, managed bool) (*server.Server, error) {
 	// Org mode (docs/spec-mate.md §2.11, §3.11): the Chief HQ says this Mate answers to names the
 	// project this serve belongs to. The identity is read through the
 	// container's live env store, so an agent whose MCP launcher strips the
@@ -368,7 +373,7 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
 		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, mate.HQIdentity(getenv), os.Stderr); ok {
 			rt.Chief = true
-			return runOrgServer(mcpStdout, tel, access, rt)
+			return runOrgServer(mcpStdout, tel, access, rt, managed)
 		}
 	}
 
@@ -430,7 +435,11 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	}
 
 	// Create and run MCP server on STDIO.
-	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel)
+	newServer := server.New
+	if managed {
+		newServer = server.NewManaged
+	}
+	srv := newServer(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel)
 
 	// Silent background update — completely invisible to LLM.
 	// Checks GitHub (24h cache), downloads if newer. Binary is replaced on disk
@@ -471,7 +480,7 @@ func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, stderr
 
 // runOrgServer serves org mode: the organization read through HQ's overview
 // with the project's key. It never builds a client that could write.
-func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.OrgAccess, rtInfo runtime.Info) (*server.Server, error) {
+func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.OrgAccess, rtInfo runtime.Info, managed bool) (*server.Server, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -488,7 +497,11 @@ func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.Or
 	}
 	fmt.Fprintln(os.Stderr, "zcp: org mode: this project is the Chief")
 
-	srv := server.NewOrg(ctx, org, store, rtInfo, tel)
+	newServer := server.NewOrg
+	if managed {
+		newServer = server.NewManagedOrg
+	}
+	srv := newServer(ctx, org, store, rtInfo, tel)
 	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
 		go update.Once(ctx, server.Version, os.Stderr)
 	}

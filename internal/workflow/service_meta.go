@@ -232,6 +232,9 @@ const HQOriginNone = "none"
 // ChangeDescription is a Mate's description of its change, kept until HQ
 // takes it.
 type ChangeDescription struct {
+	// Invocation is the original call scope, not the context of a later retry.
+	// Nil marks historical unknown provenance; it must never become manual.
+	Invocation *topology.Invocation `json:"invocation,omitempty"`
 	// Text is the description, in markdown.
 	Text string `json:"text"`
 	// Title is the change's title the Mate gave with it, "" for none.
