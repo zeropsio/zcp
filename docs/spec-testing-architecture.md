@@ -189,10 +189,21 @@ knowledge trees as one immutable archive identified by source commit, run,
 attempt, and SHA-256. Test and lint restore that archive only after checking its
 digest; replacing the trees prevents checkout-only files from changing the input.
 
+A push to `main` looks for a pull request of its commit in this repository whose
+CI run attempt passed test and lint and whose archive names a checked-out commit
+(the pull request's merge commit) with the same tree as `main`. It verifies that
+archive's digest, republishes it as its own, and skips test and lint. Any other
+case — no pull request, a red, unfinished or forked run, another tree, a commit
+GitHub no longer returns, a missing archive — runs the full suite.
+Decision: A push to main whose tree already passed CI on its pull request reuses that verdict instead of running the suite again.
+
+Decision: A tree without a green verdict is always tested in full; a release still requires a green verdict for its exact commit.
+
 A release can reuse a retained archive only from successful CI on the exact
 checked-out source commit in this repository, triggered by a push or manual
 dispatch on `main` or `wt/keys`, with both test and lint successful in that run
-attempt. It verifies the digest before reusing acceptance and before each build.
+attempt, or with that attempt's preparation having verified a reused verdict.
+It verifies the digest before reusing acceptance and before each build.
 Decision: Releasing a commit whose CI already passed does not rerun its tests; releasing a commit whose CI is still running waits for that run's verdict instead of starting another.
 
 Decision: A commit without a green CI verdict is never released.

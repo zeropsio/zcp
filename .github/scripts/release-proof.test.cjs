@@ -18,7 +18,19 @@ const run = { id: 12, run_attempt: 2, head_sha: sha, head_branch: 'main',
 const artifact = { name: `knowledge-v1-${sha}-12-2-${digest}`, expired: false,
   workflow_run: { id: 12, head_sha: sha } };
 
-async function release({ runs = [run], updates = [], artifacts = [artifact], lint = 'success', apiError } = {}) {
+const tree = 'd'.repeat(40);
+const merged = 'e'.repeat(40);
+const head = 'f'.repeat(40);
+const prRun = { id: 30, run_attempt: 1, head_sha: head, head_branch: 'fix/card',
+  head_repository: { full_name: 'zeropsio/zcp' }, event: 'pull_request',
+  status: 'completed', conclusion: 'success' };
+const prArtifact = { name: `knowledge-v1-${merged}-30-1-${digest}`, expired: false,
+  workflow_run: { id: 30, head_sha: head } };
+const tested = [{ name: 'test', conclusion: 'success' }, { name: 'lint', conclusion: 'success' }];
+
+// mode 'commit' is the release (reuse-ci); mode 'tree' is a push to main (reuse-tree).
+async function consumeProof({ mode = 'commit', runs = [run], updates = [], artifacts = [artifact],
+  lint = 'success', jobs, pulls = [{ head: { sha: head } }], trees = { [merged]: tree }, apiError } = {}) {
   const outputs = {};
   const waits = [];
   const reads = [];
@@ -31,27 +43,41 @@ async function release({ runs = [run], updates = [], artifacts = [artifact], lin
       reads.push(data.status);
       return { data };
     } };
-  const github = { rest: { actions }, paginate: async (method, params) => {
+  const git = { getCommit: async params => {
+    if (!trees[params.commit_sha]) throw Object.assign(new Error('Not Found'), { status: 404 });
+    return { data: { sha: params.commit_sha, tree: { sha: trees[params.commit_sha] } } };
+  } };
+  const repos = { listPullRequestsAssociatedWithCommit: 'pulls' };
+  const github = { rest: { actions, git, repos }, paginate: async (method, params) => {
     if (apiError) throw new Error(apiError);
+    if (method === 'pulls') {
+      assert.equal(params.commit_sha, sha);
+      return pulls;
+    }
     if (method === 'runs') {
       assert.equal(params.workflow_id, 'ci.yml');
-      assert.equal(params.head_sha, sha);
-      return runs.filter(item => params.status !== 'success' || item.conclusion === 'success');
+      if (mode === 'tree') assert.equal(params.event, 'pull_request');
+      return runs.filter(item => item.head_sha === params.head_sha &&
+        (params.status !== 'success' || item.conclusion === 'success'));
     }
-    assert.equal(params.run_id, 12);
+    const owner = runs.find(item => item.id === params.run_id);
+    assert.ok(owner, 'artifacts and jobs are read only from a listed run');
     if (method === 'jobs') {
-      assert.equal(params.attempt_number, 2);
-      return [{ name: 'test', conclusion: 'success' }, { name: 'lint', conclusion: lint }];
+      assert.equal(params.attempt_number, owner.run_attempt);
+      return jobs ?? [tested[0], { name: 'lint', conclusion: lint }];
     }
     return artifacts;
   } };
   const wait = async ms => { assert.ok(ms > 0); waits.push(ms); };
   await consume(github, { repo: { owner: 'zeropsio', repo: 'zcp' } },
     { setOutput: (key, value) => { outputs[key] = value; }, warning() {}, info() {} },
-    { env: { SOURCE_SHA: sha } }, () => ({ ...selector,
+    { env: { SOURCE_SHA: sha, SOURCE_TREE: tree, REUSE_MODE: mode } }, () => ({ ...selector,
       requireCorpus: (...args) => selector.requireCorpus(...args, wait) }));
   return { outputs, waits, reads };
 }
+
+const release = options => consumeProof(options);
+const mainPush = options => consumeProof({ mode: 'tree', runs: [prRun], artifacts: [prArtifact], ...options });
 
 test('Release reuses finished green CI without waiting or starting tests', async () => {
   assert.deepEqual(await release(), { outputs: {
@@ -110,3 +136,56 @@ test('Release corpus download and digest verification fail closed', () => {
   }
   assert.match(workflow, /reused: \$\{\{ steps\.verify\.outcome == 'success' \}\}/);
 });
+
+const reusedMain = [
+  { name: 'knowledge / prepare', conclusion: 'success',
+    steps: [{ name: 'Verify proven corpus', conclusion: 'success' }] },
+  { name: 'test', conclusion: 'skipped' }, { name: 'lint', conclusion: 'skipped' },
+];
+
+test('A main push whose tree passed CI on its pull request reuses that verdict', async () => {
+  assert.deepEqual(await mainPush(), { outputs: {
+    'run-id': 30, artifact: prArtifact.name, digest,
+  }, waits: [], reads: [] });
+});
+
+for (const [scenario, options] of Object.entries({
+  'red pull request CI': { runs: [{ ...prRun, conclusion: 'failure' }] },
+  'unfinished pull request CI': { runs: [{ ...prRun, status: 'in_progress', conclusion: null }] },
+  'no pull request': { pulls: [] },
+  'a pull request CI of another tree': { trees: { [merged]: 'c'.repeat(40) } },
+  'an unknown tested commit': { trees: {} },
+  'a forked pull request CI': { runs: [{ ...prRun, head_repository: { full_name: 'fork/zcp' } }] },
+  'a pull request CI with skipped lint': { lint: 'skipped' },
+  'a pull request CI that itself reused a verdict': { jobs: reusedMain },
+  'a pull request CI without its corpus': { artifacts: [] },
+  'a pull request CI corpus from another attempt': { artifacts: [{ ...prArtifact, name: prArtifact.name.replace('-30-1-', '-30-2-') }] },
+})) {
+  test(`A main push with ${scenario} is tested in full`, async () => {
+    assert.deepEqual(await mainPush(options), { outputs: {}, waits: [], reads: [] });
+  });
+}
+
+test('A main push whose verdict lookup fails does not claim a verdict', async () => {
+  await assert.rejects(mainPush({ apiError: 'API unavailable' }), /API unavailable/);
+});
+
+test('Release accepts its exact commit\'s green main run that reused a pull request verdict', async () => {
+  assert.deepEqual(await release({ jobs: reusedMain }), { outputs: {
+    'run-id': 12, artifact: artifact.name, digest,
+  }, waits: [], reads: [] });
+});
+
+test('Release blocks a main run that skipped tests without a verified verdict', async () => {
+  const unverified = [{ ...reusedMain[0], steps: [{ name: 'Verify proven corpus', conclusion: 'skipped' }] },
+    ...reusedMain.slice(1)];
+  await assert.rejects(release({ jobs: unverified }), /No green full CI proof/);
+});
+
+test('Only a push to main looks up a same-tree verdict', () => {
+  const ci = readFileSync(join(__dirname, '../workflows/ci.yml'), 'utf8');
+  assert.match(ci, /reuse-ci: \$\{\{ inputs\.reuse-ci \|\| false \}\}\n\s+reuse-tree: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.match(workflow, /if: inputs\.reuse-ci \|\| inputs\.reuse-tree\n/);
+  assert.match(workflow, /REUSE_MODE: \$\{\{ inputs\.reuse-ci && 'commit' \|\| 'tree' \}\}/);
+});
+
