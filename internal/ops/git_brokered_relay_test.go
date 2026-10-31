@@ -2625,12 +2625,14 @@ func TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
+			cancelledAt := make(chan time.Time, 1)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			go func() {
 				deadline := time.Now().Add(60 * time.Second)
 				for time.Now().Before(deadline) {
 					if b, err := os.ReadFile(marker); err == nil && len(b) > 0 {
+						cancelledAt <- time.Now()
 						cancel()
 						return
 					}
@@ -2638,7 +2640,6 @@ func TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext(t *testin
 				}
 			}()
 			var stdout, stderr bytes.Buffer
-			start := time.Now()
 			_, err = RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), nil, &stdout, &stderr)
 			if ctx.Err() == nil {
 				t.Fatalf("the call ended before it was stopped: %v\n%s", err, stderr.String())
@@ -2646,7 +2647,15 @@ func TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext(t *testin
 			if err == nil {
 				t.Error("a stopped call answered no error")
 			}
-			if took := time.Since(start); took > 14*time.Second {
+			// Lazy fetch and token minting precede the stop request. The bound
+			// measures shutdown from that request, not unrelated setup work.
+			var stoppedAt time.Time
+			select {
+			case stoppedAt = <-cancelledAt:
+			default:
+				t.Fatal("the call ended without the fixture's cancellation receipt")
+			}
+			if took := time.Since(stoppedAt); took > 14*time.Second {
 				t.Errorf("the stopped call took %s, want it to end once stopped", took)
 			}
 			if got, want := l.revokes(), l.mintedTokens(); len(want) != 1 || !slices.Equal(got, want) {
