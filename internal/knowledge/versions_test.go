@@ -174,7 +174,7 @@ func TestFormatStackList_Groups(t *testing.T) {
 		t.Error("missing Managed category")
 	}
 	// Active concrete versions, newest marked (latest), no rolling tag.
-	if !strings.Contains(result, "nodejs@24 (latest) · 22") {
+	if !strings.Contains(result, "nodejs@26 (latest) · 24 · 22") {
 		t.Errorf("expected concrete-leaf notation for nodejs, got: %s", result)
 	}
 	if strings.Contains(result, "nodejs@latest") || strings.Contains(result, "@{") {
