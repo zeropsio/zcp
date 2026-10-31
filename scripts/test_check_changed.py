@@ -19,7 +19,7 @@ class CheckChangedTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         # Git exports repository-local variables to hooks. A fixture must never
         # inherit GIT_DIR/GIT_INDEX_FILE (or the hook's -c configuration).
         self.env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -171,26 +171,26 @@ class CheckChangedTests(unittest.TestCase):
             '#!/bin/sh\nif [ "$1" = list ]; then cat "$GRAPH"; '
             'else if [ -n "${GIT_DIR:-}${GIT_INDEX_FILE:-}" ]; then '
             'echo "Git hook environment leaked into checks" >&2; exit 19; fi; '
-            'echo "go $*" >> "$CALLS"; exit "${TEST_EXIT:-0}"; fi\n')
+            'echo "go ${GOTOOLCHAIN:-unset} $*" >> "$CALLS"; exit "${TEST_EXIT:-0}"; fi\n')
         lint = self.bin / "golangci-lint"
-        lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\n')
+        lint.write_text('#!/bin/sh\necho "lint ${GOTOOLCHAIN:-unset} $*" >> "$CALLS"\n')
         lint.chmod(0o755)
         calls = self.root / "calls"
         env = dict(self.env, CALLS=str(calls), GIT_DIR=str(self.root / ".git"),
-                   GIT_INDEX_FILE=str(self.root / ".git/index"))
+                   GIT_INDEX_FILE=str(self.root / ".git/index"), GOTOOLCHAIN="go1.27.3")
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-commit")],
                                 cwd=self.root, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short -json ./internal/content ./internal/unrelated",
-            "lint run ./internal/content ./internal/unrelated --timeout=120s"])
+            "go go1.27.3 test -short -json ./internal/content ./internal/unrelated",
+            "lint go1.25.12 run ./internal/content ./internal/unrelated --timeout=120s"])
         calls.unlink()
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-commit")],
                                 cwd=self.root, env=dict(env, TEST_EXIT="7"),
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short -json ./internal/content ./internal/unrelated"])
+            "go go1.27.3 test -short -json ./internal/content ./internal/unrelated"])
 
     def test_prepush_does_not_repeat_checks(self):
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-push")],

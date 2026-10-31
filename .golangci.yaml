@@ -1,5 +1,8 @@
 version: "2"
 run:
+  # Static analysis checks the declared language floor; tests and release builds
+  # use the secure toolchain pinned in go.mod.
+  go: "1.25.0"
   concurrency: 16
   issues-exit-code: 1
   tests: true

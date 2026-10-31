@@ -240,7 +240,10 @@ def main():
     if not lint:
         raise RuntimeError("golangci-lint not found; run make setup")
     run_tests(selected, check_env)
-    subprocess.run([lint, "run", *selected, "--timeout=120s"], env=check_env, check=True)
+    # Only static analysis uses the declared language floor. Keep tests and the
+    # parent environment on the secure build toolchain selected by go.mod.
+    lint_env = dict(check_env, GOTOOLCHAIN="go1.25.12")
+    subprocess.run([lint, "run", *selected, "--timeout=120s"], env=lint_env, check=True)
 
 
 if __name__ == "__main__":

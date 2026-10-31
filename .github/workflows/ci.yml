@@ -99,6 +99,10 @@ jobs:
           digest: ${{ needs.knowledge.outputs.digest }}
 
       - uses: golangci/golangci-lint-action@v9
+        # Scope minimum-language analysis to this step; test/build jobs keep the
+        # secure compiler selected from go.mod's toolchain directive.
+        env:
+          GOTOOLCHAIN: go1.25.12
         with:
           version: v2.8.0
           # Skip the action's online `config verify` step: it fetches the

@@ -2,7 +2,7 @@ module github.com/zeropsio/zcp
 
 go 1.25.0
 
-toolchain go1.25.12
+toolchain go1.27.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -23,10 +23,10 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/zeropsio/zParser/v2 v2.1.2
 	github.com/zeropsio/zerops-go v1.0.20
-	golang.org/x/image v0.40.0
+	golang.org/x/image v0.45.0
 	golang.org/x/mod v0.39.0
-	golang.org/x/sys v0.46.0
-	golang.org/x/text v0.38.0
+	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -67,6 +67,6 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )

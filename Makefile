@@ -42,12 +42,13 @@ test-short: ## Manually run all packages in short mode
 test-race: ## Manually run all packages with race detection
 	go test -race ./... -count=1
 
+# Static analysis uses the declared floor; build/test/release use go.mod's toolchain.
 lint: ## Manually lint all packages for all target platforms
-	GOOS=darwin GOARCH=arm64 $(LINT) run ./...
-	GOOS=linux GOARCH=amd64 $(LINT) run ./...
+	GOTOOLCHAIN=go1.25.12 GOOS=darwin GOARCH=arm64 $(LINT) run ./...
+	GOTOOLCHAIN=go1.25.12 GOOS=linux GOARCH=amd64 $(LINT) run ./...
 
 lint-fast: ## Manually lint all packages with native fast linters
-	$(LINT) run ./... --fast-only
+	GOTOOLCHAIN=go1.25.12 $(LINT) run ./... --fast-only
 
 sync: build-nocorpuscheck ## Pull all knowledge from external sources
 	./bin/zcp sync pull
@@ -64,7 +65,7 @@ schema-sync: build ## Refresh embedded schemas + version catalog from the public
 catalog-sync: schema-sync ## Alias for schema-sync (kept for backward compatibility)
 
 lint-local: ## Manually lint all packages (native only, offline)
-	$(LINT) run ./...
+	GOTOOLCHAIN=go1.25.12 $(LINT) run ./...
 
 vet: ## Run go vet
 	go vet ./...
