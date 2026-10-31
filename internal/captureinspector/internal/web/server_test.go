@@ -25,7 +25,7 @@ func TestServer_RequiresCapabilityAndPlaintextReveal(t *testing.T) {
 	t.Parallel()
 
 	server, client, _ := newTestServer(t)
-	unauthorized := testGET(t, http.DefaultClient, server.URL()+"/api/v1/captures")
+	unauthorized := testGET(t, client, server.URL()+"/api/v1/captures")
 	_ = unauthorized.Body.Close()
 	if unauthorized.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.StatusCode)
@@ -302,15 +302,17 @@ func newTestServer(t *testing.T) (*Server, *http.Client, string) {
 		cancel()
 		t.Fatalf("cookiejar.New() error = %v", err)
 	}
+	client := &http.Client{Jar: jar, Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	t.Cleanup(func() {
-		cancel()
+		defer cancel()
+		client.CloseIdleConnections()
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
 		defer closeCancel()
 		if err := server.Close(closeCtx); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	return server, &http.Client{Jar: jar}, sessionDir
+	return server, client, sessionDir
 }
 
 func authorizeTestClient(t *testing.T, server *Server, client *http.Client) {
