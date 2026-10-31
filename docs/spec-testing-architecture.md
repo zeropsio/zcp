@@ -210,8 +210,11 @@ Decision: A commit without a green CI verdict is never released.
 
 Missing proof, a failed/cancelled CI verdict, expired/unavailable artifacts, and
 digest mismatches block release. Normal CI prepares and validates its own archive;
-release binaries use the archive from the successful CI run. The daily/manual live
-Schema Drift workflow remains separate.
+release binaries use the archive from the successful CI run. Release jobs set up Go
+without its cache.
+Decision: A release build that cannot restore its Go cache builds without it rather than waiting.
+
+The daily/manual live Schema Drift workflow remains separate.
 Offline proof selection and restoration witnesses live in `.github/scripts/*.test.cjs`.
 
 ---

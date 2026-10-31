@@ -189,3 +189,11 @@ test('Only a push to main looks up a same-tree verdict', () => {
   assert.match(workflow, /REUSE_MODE: \$\{\{ inputs\.reuse-ci && 'commit' \|\| 'tree' \}\}/);
 });
 
+test('Release builds never wait on a Go cache restore', () => {
+  const releaseWorkflow = readFileSync(join(__dirname, '../workflows/release.yml'), 'utf8');
+  const setups = releaseWorkflow.split('- uses: actions/setup-go@').slice(1);
+  assert.ok(setups.length >= 2, 'the build and release jobs set up Go');
+  for (const setup of setups) {
+    assert.match(setup.split('\n      - ')[0], /\n\s+cache: false\n/, 'setup-go restores no cache in a release');
+  }
+});

@@ -57,9 +57,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # A stalled cache restore must not hold a release; build cold instead.
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
+          cache: false
 
       - uses: ./.github/actions/restore-knowledge
         with:
@@ -112,9 +114,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # A stalled cache restore must not hold a release; build cold instead.
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
+          cache: false
 
       - uses: actions/download-artifact@v7
         with:
