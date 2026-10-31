@@ -131,7 +131,7 @@ func addFresh(ctx context.Context, root *os.Root, pack Pack, res Result) (Result
 		return finishResult(res, err)
 	}
 
-	candidates, err := discoverSkills(tmpDir)
+	candidates, err := discoverSkills(tmpDir, packScope(pack))
 	if err != nil {
 		return finishResult(res, err)
 	}

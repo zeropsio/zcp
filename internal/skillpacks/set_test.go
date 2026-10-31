@@ -1230,3 +1230,89 @@ func TestMattDetach_WholeRepoInstallThenSubset_MigratesCleanly(t *testing.T) {
 		t.Errorf("manifest skills = %v, want [tdd] (scratch must never be silently carried forward as selected)", selectedSkillNames(m))
 	}
 }
+
+// writeUnparseableSkillMD writes a SKILL.md whose frontmatter strict YAML
+// rejects: an unquoted description containing ": ", the exact shape
+// mattpocock/skills shipped at skills/in-progress/software-factory.
+func writeUnparseableSkillMD(t *testing.T, path, name string) {
+	t.Helper()
+	writeFile(t, path, "---\nname: "+name+"\n"+
+		"description: Shared language for designing a factory: the tasks it runs.\n"+
+		"disable-model-invocation: true\n---\n\n# "+name+"\n")
+}
+
+// TestPackSet_InvalidSkillOutsideSelection_DoesNotFailPack proves an
+// upstream SKILL.md the operation does not install is never validated
+// (spec-skill-packs.md §4.1): the fixture catalog nests its skills under
+// skills/<group>/<name>, and an uncatalogued skills/in-progress/<name> with
+// unparseable frontmatter must not turn a fresh pack-set of a catalogued
+// skill into invalid-source.
+func TestPackSet_InvalidSkillOutsideSelection_DoesNotFailPack(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "engineering", "alpha", "SKILL.md"), "alpha", "alpha")
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "engineering", "beta", "SKILL.md"), "beta", "beta")
+	writeUnparseableSkillMD(t, filepath.Join(repoDir, "skills", "in-progress", "factory", "SKILL.md"), "factory")
+	newFixtureRepo(t, repoDir)
+	pack := testPack("nested-invalid-fixture-pack", repoDir)
+	pack.Review = ReviewSkillLevel
+	pack.Skills = []CatalogSkill{
+		{Name: "alpha", SourcePath: "skills/engineering/alpha", Category: "Engineering", Description: "alpha"},
+		{Name: "beta", SourcePath: "skills/engineering/beta", Category: "Engineering", Description: "beta"},
+	}
+
+	cwd := t.TempDir()
+	result, err := packSetForPack(context.Background(), cwd, pack, []string{"alpha"}, computeRevision(pack.ID, "", nil))
+	if err != nil {
+		t.Fatalf("packSetForPack: %v", err)
+	}
+	if !result.OK() || result.State != StateInstalled || !equalStrings(result.Selected, []string{"alpha"}) {
+		t.Fatalf("result = %+v, want OK installed with Selected=[alpha]", result)
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("Warnings = %v, want none: content outside the selection is not the user's concern", result.Warnings)
+	}
+	for _, tg := range targets {
+		if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "alpha"), "SKILL.md")); statErr != nil {
+			t.Errorf("expected %s copy of alpha: %v", tg, statErr)
+		}
+		for _, name := range []string{"beta", "factory"} {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, name))); !os.IsNotExist(statErr) {
+				t.Errorf("%s must not be installed under %s, stat err = %v", name, tg, statErr)
+			}
+		}
+	}
+}
+
+// TestPackSet_InvalidSelectedSkill_InvalidSource proves the scope cuts one
+// way only: a selected skill whose SKILL.md is unparseable still refuses the
+// whole apply with invalid-source and zero writes.
+func TestPackSet_InvalidSelectedSkill_InvalidSource(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "engineering", "alpha", "SKILL.md"), "alpha", "alpha")
+	writeUnparseableSkillMD(t, filepath.Join(repoDir, "skills", "engineering", "beta", "SKILL.md"), "beta")
+	newFixtureRepo(t, repoDir)
+	pack := testPack("selected-invalid-fixture-pack", repoDir)
+	pack.Review = ReviewSkillLevel
+	pack.Skills = []CatalogSkill{
+		{Name: "alpha", SourcePath: "skills/engineering/alpha", Category: "Engineering", Description: "alpha"},
+		{Name: "beta", SourcePath: "skills/engineering/beta", Category: "Engineering", Description: "beta"},
+	}
+
+	cwd := t.TempDir()
+	// The lock's parent directories are a concurrency-control side effect,
+	// exactly like the lock file snapshotWorkspace already excludes.
+	if err := os.MkdirAll(filepath.Join(cwd, filepath.Dir(lockRelPath)), 0o755); err != nil {
+		t.Fatalf("create lock parent: %v", err)
+	}
+	before := snapshotWorkspace(t, cwd)
+	_, err := packSetForPack(context.Background(), cwd, pack, []string{"alpha", "beta"}, computeRevision(pack.ID, "", nil))
+	if err == nil {
+		t.Fatal("expected invalid-source for a selected skill with unparseable frontmatter")
+	}
+	if code := codeOf(t, err); code != CodeInvalidSource {
+		t.Errorf("code = %q, want %q", code, CodeInvalidSource)
+	}
+	assertWorkspaceUnchanged(t, before, snapshotWorkspace(t, cwd))
+}

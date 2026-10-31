@@ -583,7 +583,7 @@ func preflightAdditions(ctx context.Context, pack Pack, mstate manifestState, pi
 		}
 	}
 
-	discovered, err := discoverSkills(tmpDir)
+	discovered, err := discoverSkills(tmpDir, scopeOf(wanted))
 	if err != nil {
 		return fail(err)
 	}

@@ -37,7 +37,7 @@ func TestDiscoverSkills_NestedCategoryLayout(t *testing.T) {
 	writeSkillMD(t, filepath.Join(repo, "skills", "typescript", "foo", "SKILL.md"), "foo", "does foo")
 	writeSkillMD(t, filepath.Join(repo, "skills", "ai-sdk", "bar", "SKILL.md"), "bar", "does bar")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestDiscoverSkills_RootSkillDominance(t *testing.T) {
 	writeSkillMD(t, filepath.Join(repo, "SKILL.md"), "whole-repo", "the whole repo is one skill")
 	writeSkillMD(t, filepath.Join(repo, "skills", "foo", "SKILL.md"), "foo", "does foo")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDiscoverSkills_DotDirectory(t *testing.T) {
 	repo := t.TempDir()
 	writeSkillMD(t, filepath.Join(repo, ".claude", "skills", "nested", "SKILL.md"), "nested", "lives under a dot dir")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestDiscoverSkills_PersonalAndInProgressIncluded(t *testing.T) {
 	writeSkillMD(t, filepath.Join(repo, "skills", "personal", "x", "SKILL.md"), "x", "personal skill")
 	writeSkillMD(t, filepath.Join(repo, "skills", "in-progress", "y", "SKILL.md"), "y", "wip skill")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestDiscoverSkills_VCSAndStateDirsSkipped(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".git", "SKILL.md"), "---\nname: git\ndescription: x\n---\n")
 	writeFile(t, filepath.Join(repo, ".zcp", "SKILL.md"), "---\nname: zcp\ndescription: x\n---\n")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDiscoverSkills_NoSkillMDAnywhere_NoSkillsCode(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "README.md"), "just a readme\n")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected an error when no SKILL.md exists anywhere")
 	}
@@ -149,7 +149,7 @@ func TestDiscoverSkills_InvalidFrontmatter_MissingName_Errors(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "skills", "foo", "SKILL.md"), "---\ndescription: no name here\n---\n")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected an error for missing frontmatter name")
 	}
@@ -169,7 +169,7 @@ func TestDiscoverSkills_DuplicateNames_Rejected(t *testing.T) {
 	writeSkillMD(t, filepath.Join(repo, "skills", "cat-a", "shared", "SKILL.md"), "shared", "first")
 	writeSkillMD(t, filepath.Join(repo, "skills", "cat-b", "shared", "SKILL.md"), "shared", "second")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected an error for duplicate destination names")
 	}
@@ -183,7 +183,7 @@ func TestDiscoverSkills_NameNotEqualToDirectory_Rejected(t *testing.T) {
 	repo := t.TempDir()
 	writeSkillMD(t, filepath.Join(repo, "skills", "foo", "SKILL.md"), "not-foo", "declares a different name")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected an error when declared name != directory name")
 	}
@@ -197,7 +197,7 @@ func TestDiscoverSkills_ReservedGuidedName_Rejected(t *testing.T) {
 	repo := t.TempDir()
 	writeSkillMD(t, filepath.Join(repo, "skills", "guided", "SKILL.md"), "guided", "tries to shadow the reserved name")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal(`expected an error for the reserved "guided" name`)
 	}
@@ -217,7 +217,7 @@ func TestDiscoverSkills_SymlinkedSkillMD_HardError(t *testing.T) {
 	}
 	writeSymlinkOrSkip(t, realSkillMD, linkPath)
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected a hard error for a symlinked SKILL.md, not a silent skip")
 	}
@@ -238,7 +238,7 @@ func TestDiscoverSkills_SymlinkInsideSelectedTree_HardError(t *testing.T) {
 	writeFile(t, outside, "must never be reachable\n")
 	writeSymlinkOrSkip(t, outside, filepath.Join(repo, "skills", "foo", "escape-link"))
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected a hard error for a symlink inside a selected skill tree")
 	}
@@ -260,7 +260,7 @@ func TestDiscoverSkills_DepthCapExceeded(t *testing.T) {
 	}
 	writeSkillMD(t, filepath.Join(deep, "SKILL.md"), "too-deep", "buried past the depth cap")
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected no-skills: a SKILL.md past the depth cap must never be found")
 	}
@@ -279,7 +279,7 @@ func TestDiscoverSkills_WithinDepthCap_Found(t *testing.T) {
 	shallow = filepath.Join(shallow, "just-shallow-enough")
 	writeSkillMD(t, filepath.Join(shallow, "SKILL.md"), "just-shallow-enough", "at exactly the depth cap")
 
-	got, err := discoverSkills(repo)
+	got, err := discoverSkills(repo, nil)
 	if err != nil {
 		t.Fatalf("discoverSkills: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestDiscoverSkills_TooManySkills_Errors(t *testing.T) {
 		writeSkillMD(t, filepath.Join(repo, "skills", name, "SKILL.md"), name, "one of many")
 	}
 
-	_, err := discoverSkills(repo)
+	_, err := discoverSkills(repo, nil)
 	if err == nil {
 		t.Fatal("expected an error exceeding the skill-count cap")
 	}

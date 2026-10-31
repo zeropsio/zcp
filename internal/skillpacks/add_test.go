@@ -536,3 +536,39 @@ func loadManifestOrFatal(t *testing.T, cwd, id string) *Manifest {
 	}
 	return m
 }
+
+// TestAdd_SkillLevelPack_InvalidUncataloguedSkill_StillInstalls proves a
+// whole-pack install validates only the reviewed catalog
+// (spec-skill-packs.md §4.1): an uncatalogued skills/in-progress/<name>
+// with unparseable frontmatter must not fail the install of the catalogued
+// skills nested beside it.
+func TestAdd_SkillLevelPack_InvalidUncataloguedSkill_StillInstalls(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "engineering", "foo", "SKILL.md"), "foo", "catalogued")
+	writeUnparseableSkillMD(t, filepath.Join(repoDir, "skills", "in-progress", "factory", "SKILL.md"), "factory")
+	newFixtureRepo(t, repoDir)
+
+	cwd := t.TempDir()
+	pack := testPack("skill-level-invalid-extra-pack", repoDir)
+	pack.Review = ReviewSkillLevel
+	pack.Skills = []CatalogSkill{
+		{Name: "foo", SourcePath: "skills/engineering/foo", Category: "Engineering", Description: "does foo"},
+	}
+
+	result, err := addPackForTest(t, cwd, pack)
+	if err != nil {
+		t.Fatalf("addPackForTest: %v", err)
+	}
+	if result.SkillCount != 1 || len(result.Warnings) != 0 {
+		t.Fatalf("SkillCount = %d, Warnings = %v; want 1 and none", result.SkillCount, result.Warnings)
+	}
+	for _, tg := range targets {
+		if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "foo"), "SKILL.md")); statErr != nil {
+			t.Errorf("expected catalogued skill foo under %s: %v", tg, statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "factory"))); !os.IsNotExist(statErr) {
+			t.Errorf("uncatalogued skill factory must not be installed under %s, stat err = %v", tg, statErr)
+		}
+	}
+}

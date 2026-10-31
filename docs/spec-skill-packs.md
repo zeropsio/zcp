@@ -180,7 +180,10 @@ and, selected without `grilling`, installs a broken skill. `grilling` itself
 is both model- and user-invocable upstream, so nothing of substance is lost.
 
 This explicit catalog is the boundary. A newly added upstream skill requires a
-reviewed ZCP catalog change before it becomes selectable.
+reviewed ZCP catalog change before it becomes selectable. The boundary holds for
+validation too: ZCP validates only the skills an operation installs, so an
+upstream `SKILL.md` outside them (malformed frontmatter, a symlink, any other
+defect) never fails an install or a selection change, and is not reported.
 
 ### 4.2 Selection experience
 
@@ -346,6 +349,9 @@ The implementation and task breakdown are incomplete until tests prove:
     installed selection, via the same (missing, required-by) pair rendering `pack-set`'s
     own auto-close report uses (one shared closure implementation, two prefixes), and
     reports no such warning for a closed selection.
+17. An invalid upstream `SKILL.md` outside the skills an install or selection change
+    installs leaves that operation successful with no warning; an invalid selected
+    skill still refuses it with `invalid-source` and zero writes.
 
 ## 8. Non-goals
 

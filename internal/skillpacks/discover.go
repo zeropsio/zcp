@@ -42,12 +42,44 @@ type rawCandidate struct {
 	sourceDir  string
 }
 
+// installScope is the set of slash-relative source paths one operation
+// installs. A nil scope means every discovered skill root: a
+// repository-level pack installs its complete discovered set.
+type installScope map[string]bool
+
+// scopeOf is the install scope of exactly skills.
+func scopeOf(skills []CatalogSkill) installScope {
+	scope := make(installScope, len(skills))
+	for _, sk := range skills {
+		scope[sk.SourcePath] = true
+	}
+	return scope
+}
+
+// packScope is the install scope of a whole-pack install: nil for a
+// repository-level pack, the reviewed catalog for a skill-level pack.
+func packScope(pack Pack) installScope {
+	if pack.Review != ReviewSkillLevel {
+		return nil
+	}
+	return scopeOf(pack.Skills)
+}
+
+func (s installScope) includes(rel string) bool {
+	return s == nil || s[filepath.ToSlash(rel)]
+}
+
 // discoverSkills walks repoRoot for skill roots exactly per
 // spec-welcome-mode's discovery pseudocode, validates every rule, enforces
 // every resource cap, and returns the resulting candidates sorted by
 // sourcePath. repoRoot is a freshly cloned, untrusted source tree — nothing
 // here touches the workspace.
-func discoverSkills(repoRoot string) ([]Candidate, error) {
+//
+// Only skill roots inside scope are validated and returned. A skill root
+// outside it is never installed (spec-skill-packs.md §4.1), so its content —
+// frontmatter, names, symlinks, size — can never fail the operation; the walk
+// still does not descend into it, because a skill owns its subtree.
+func discoverSkills(repoRoot string, scope installScope) ([]Candidate, error) {
 	repoBytes, err := repoSizeExcludingVCS(repoRoot)
 	if err != nil {
 		return nil, wrapCoded(CodeFilesystem, err, "measure repository size")
@@ -57,10 +89,10 @@ func discoverSkills(repoRoot string) ([]Candidate, error) {
 	}
 
 	var raw []rawCandidate
-	if err := walkForSkillRoots(repoRoot, ".", 0, &raw); err != nil {
+	if err := walkForSkillRoots(repoRoot, ".", 0, scope, &raw); err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 {
+	if len(raw) == 0 && scope == nil {
 		return nil, codedErrorf(CodeNoSkills, "no SKILL.md found anywhere in the repository")
 	}
 	sort.Slice(raw, func(i, j int) bool { return raw[i].sourcePath < raw[j].sourcePath })
@@ -97,7 +129,7 @@ func discoverSkills(repoRoot string) ([]Candidate, error) {
 // whose exact entry "SKILL.md" exists becomes one skill root and is never
 // descended into further (a skill owns its subtree; a root SKILL.md
 // therefore dominates the whole repository).
-func walkForSkillRoots(dir, rel string, depth int, out *[]rawCandidate) error {
+func walkForSkillRoots(dir, rel string, depth int, scope installScope, out *[]rawCandidate) error {
 	if depth > maxWalkDepth {
 		return nil
 	}
@@ -109,6 +141,9 @@ func walkForSkillRoots(dir, rel string, depth int, out *[]rawCandidate) error {
 	for _, e := range entries {
 		if e.Name() != "SKILL.md" {
 			continue
+		}
+		if !scope.includes(rel) {
+			return nil // a skill root this operation does not install
 		}
 		return handleSkillRoot(dir, rel, e, out)
 	}
@@ -129,7 +164,7 @@ func walkForSkillRoots(dir, rel string, depth int, out *[]rawCandidate) error {
 		if rel != "." {
 			childRel = filepath.Join(rel, name)
 		}
-		if err := walkForSkillRoots(filepath.Join(dir, name), childRel, depth+1, out); err != nil {
+		if err := walkForSkillRoots(filepath.Join(dir, name), childRel, depth+1, scope, out); err != nil {
 			return err
 		}
 	}
@@ -233,19 +268,15 @@ func scanAndCapSkillTree(dir string) (entries int, contentBytes int64, err error
 }
 
 // filterDiscoveredToCatalog applies pack's review granularity as an
-// intersection over discoverSkills's raw output — spec-skill-packs.md §1/
-// §3. The walker itself never learns about packs or catalogs: it always
-// discovers everything a repository contains (structural rules, resource
-// caps, symlink refusals, and name validation apply unconditionally,
-// first). This function is the one place a pack's catalog actually
-// constrains what gets installed:
+// intersection over discoverSkills's output (run with packScope(pack)) —
+// spec-skill-packs.md §1/§3:
 //
 //   - ReviewRepositoryLevel: no filtering. The complete discovered set
 //     passes through unchanged — this is the pre-catalog behavior, and
 //     remains it for andrej-karpathy-skills.
 //   - ReviewSkillLevel: only candidates matching a catalogued (name,
-//     sourcePath) pair are kept. Discovered content outside the catalog is
-//     simply not a candidate — never an error, never a warning. A
+//     sourcePath) pair are kept. Upstream content outside the catalog is
+//     never discovered as a candidate — never an error, never a warning. A
 //     catalogued skill with no matching discovered candidate IS an error:
 //     the catalog promises the skill exists at that location, so a silent
 //     partial install would violate "installation succeeds only when the
