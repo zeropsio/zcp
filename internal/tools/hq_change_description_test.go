@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -174,7 +175,10 @@ func TestDescribeChange(t *testing.T) {
 			if len(ledger) == 1 {
 				got = ledger[0].Description
 			}
-			if (got == nil) != (tt.wantKept == nil) || got != nil && *got != *tt.wantKept {
+			if tt.wantKept != nil {
+				tt.wantKept.Invocation = &topology.Invocation{Scope: topology.InvocationScope{Kind: "manual"}}
+			}
+			if !reflect.DeepEqual(got, tt.wantKept) {
 				t.Errorf("kept = %+v, want %+v", got, tt.wantKept)
 			}
 			switch {

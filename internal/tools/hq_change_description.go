@@ -181,13 +181,13 @@ func handleDescribeChange(
 		}
 	}
 	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
-	keepErr := keepChangeDescription(stateDir, ref, pick, text, title)
+	keepErr := keepChangeDescription(ctx, stateDir, ref, pick, text, title)
 
 	url := hqc.ChangeURL(target.AppID, target.Repo, number)
 	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title); err != nil {
 		var gone *picturesGoneError
 		if errors.As(err, &gone) {
-			forgetChangeDescription(stateDir, ref, text)
+			forgetChangeDescription(ctx, stateDir, ref, text, title)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, ref.pictureTarget())),
@@ -195,7 +195,7 @@ func handleDescribeChange(
 			), WithRecoveryStatus()), nil, nil
 		}
 		if errors.Is(err, errCannotAttach) {
-			forgetChangeDescription(stateDir, ref, text)
+			forgetChangeDescription(ctx, stateDir, ref, text, title)
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("Nothing was written onto change #%d: %v. HQ will not take that picture, so the description is dropped: words that show it could never go on.",
@@ -377,8 +377,12 @@ const noRepositoryYet = `A pair gets its repository once this Mate is in an appl
 // keepChangeDescription keeps the words — and the title given with them —
 // with the change they were written for in the ledger, recording the change
 // on its branch when the ledger did not keep it yet.
-func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text, title string) error {
-	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: ref.Number}
+func keepChangeDescription(ctx context.Context, stateDir string, ref changeRef, pick changePick, text, title string) error {
+	invocation, err := hq.InvocationFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: ref.Number, Invocation: &invocation}
 	if err := workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
 		if !existed {
 			c.Branch, c.Title, c.Source = pick.Branch, pick.Title, workflow.HQChangeFromState
@@ -412,7 +416,7 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, r
 	if _, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit); err != nil {
 		return err
 	}
-	forgetChangeDescription(stateDir, ref, text)
+	forgetChangeDescription(ctx, stateDir, ref, text, title)
 	return nil
 }
 
@@ -534,11 +538,15 @@ func missingPictures(stateDir, text, target string) ([]string, error) {
 }
 
 // forgetChangeDescription drops the words the ledger keeps for the change —
-// only while they are still text: a describe that kept newer words after
-// these were read keeps them.
-func forgetChangeDescription(stateDir string, ref changeRef, text string) {
+// only for this exact accepted call, text and title. Historical unknown
+// provenance and a successor with identical words are never relabelled.
+func forgetChangeDescription(ctx context.Context, stateDir string, ref changeRef, text, title string) {
+	invocation, err := hq.InvocationFromContext(ctx)
+	if err != nil {
+		return
+	}
 	_ = workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
-		if !existed || c.Description == nil || c.Description.Text != text {
+		if !existed || c.Description == nil || c.Description.Text != text || c.Description.Title != title || c.Description.Invocation == nil || *c.Description.Invocation != invocation {
 			return workflow.ErrSkipWrite
 		}
 		c.Description = nil

@@ -46,10 +46,12 @@ by the ownership table below.
    flag write (§8.1) and presents it only to HQ, in its link's first frame (§3.5).
 2. **Mate's clients reach the container only through the mate server.** Threads, the agent, git,
    the browser viewport. code-server and SSH are the platform's own doors and stay outside mate.
-3. **zcp does not distinguish its caller.** Two entry points, stdio MCP and CLI. No layer exists for
-   mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2),
-   as a reader of the envelope it already emits (§1), and as two CLI subcommands mate spawns. `zcp
-   studio watch` is the Zerops Studio extension's transport; mate does not consume it.
+3. **Zerops credentials authorize the operation; invocation provenance identifies its work.**
+   The ordinary stdio MCP and CLI paths remain manual. Mate's private STDIO child
+   (`zcp serve --mate-invocation`) requires the engine-owned per-call scope described in §10.10;
+   it never derives a task from model arguments or the current holder. This scope adds no Zerops
+   role or credential. `zcp studio watch` is the Zerops Studio extension's transport; mate does not
+   consume it.
 4. **Recover automatically; never let a clock or a hidden fix stand in for an owner's answer**
    (the owner, 2026-10-05: "problém mám s automatickými opakováními jako třeba to, že se na FE
    nastavilo a čekalo, že něco proběhne do 30 min, nebo že se magicky dělo něco v Gitee — ne to, že
@@ -4724,6 +4726,23 @@ Gitea sign-in: what the client reads of a Mate's changes — the rows, the revie
 comments, the pictures — is HQ's, as the person (§5.4, §10.11).
 
 ### 10.10 zcp inside a Mate
+
+
+- **Originating calls.** The owned bridge verifies MCP initialize capability
+  `experimental["io.zerops.mate/invocation"] = 1` before running a tool and supplies
+  `_meta["io.zerops.mate/invocation"] = {v:1,id,scope}`. `id` is the engine's stable lowercase
+  SHA256 invocation identity; `scope` is exactly `{kind:"manual"}` or
+  `{kind:"task",taskId,assignment}`, with the assignment a canonical positive int64 decimal
+  string. The private mode requires this metadata on every tool call; ordinary mode rejects it.
+  Missing or unknown required scope never becomes manual. The bridge owns the child's stdin and
+  scrubs model metadata: this is a process ownership boundary, not protection against a compromised
+  container already holding the project key.
+- **Change provenance.** Only Open and Describe forward task scope to HQ as
+  `originatingTask:{taskId,assignment}`. Manual scope omits it. A task-scoped Open requires an HQ
+  acknowledgment: an existing handed branch or Self state after a lost reply cannot prove that
+  assignment was accepted. Kept description words retain their original invocation ID and scope;
+  completion clears only the same invocation, text and title. Historical missing scope is unknown,
+  never relabelled from a retry's context. There is no automatic description replay.
 
 As soon as a dev pair exists, zcp gives it a repository in the application HQ holds the Mate in and
 puts the pair's checkout on a `main` that descends from that repository's `main` (a fresh history
