@@ -26,37 +26,37 @@ func TestProposeOrgAction_Shape(t *testing.T) {
 		{
 			name: "service.restart",
 			in:   OrgActionInput{Kind: ProposalServiceRestart, Project: "Contoso - production", Service: "medusa", Reason: "it leaks memory"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.restart","summary":"Restart medusa in Contoso - production","reason":"it leaks memory","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.restart","summary":"Restart medusa in Contoso - production","reason":"it leaks memory","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "service.start of a stopped service",
 			in:   OrgActionInput{Kind: ProposalServiceStart, Project: "pHQ", Service: "runnerzit", Reason: "ZIT needs its runner"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.start","summary":"Start runnerzit in Headquarters","reason":"ZIT needs its runner","projectId":"pHQ","projectName":"Headquarters","serviceId":"sRunner","serviceName":"runnerzit","params":{}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.start","summary":"Start runnerzit in Headquarters","reason":"ZIT needs its runner","projectId":"pHQ","projectName":"Headquarters","serviceId":"sRunner","serviceName":"runnerzit","params":{}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "service.stop",
 			in:   OrgActionInput{Kind: ProposalServiceStop, Project: "ZIT - stage", Service: "app", Reason: "unused"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.stop","summary":"Stop app in ZIT - stage","reason":"unused","projectId":"pStage","projectName":"ZIT - stage","serviceId":"sStage","serviceName":"app","params":{}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.stop","summary":"Stop app in ZIT - stage","reason":"unused","projectId":"pStage","projectName":"ZIT - stage","serviceId":"sStage","serviceName":"app","params":{}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "env.set on a service, secret",
 			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "pProd", Service: "medusa", Scope: "service", Key: "STRIPE_KEY", Value: "sk_test_x", Secret: true, Reason: "rotate"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set STRIPE_KEY (secret) on medusa in Contoso - production","reason":"rotate","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"scope":"service","key":"STRIPE_KEY","value":"sk_test_x","secret":true}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set STRIPE_KEY (secret) on medusa in Contoso - production","reason":"rotate","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"scope":"service","key":"STRIPE_KEY","value":"sk_test_x","secret":true}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "env.set on a project",
 			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "pProd", Scope: "project", Key: "APP_URL", Value: "https://shop.example.com", Reason: "new domain"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set APP_URL in Contoso - production","reason":"new domain","projectId":"pProd","projectName":"Contoso - production","params":{"scope":"project","key":"APP_URL","value":"https://shop.example.com","secret":false}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set APP_URL in Contoso - production","reason":"new domain","projectId":"pProd","projectName":"Contoso - production","params":{"scope":"project","key":"APP_URL","value":"https://shop.example.com","secret":false}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "mate.message by the Mate's name, with an attachment",
 			in:   OrgActionInput{Kind: ProposalMateMessage, To: "Rossy", Words: "Prod logs show a panic; please debug.", AttachmentTitle: "medusa errors", AttachmentText: "panic: nil map", Reason: "the fix belongs to Rossy's code"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"mate.message","summary":"Message Rossy in Northwind Shop - Rossy","reason":"the fix belongs to Rossy's code","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"to":{"projectId":"pRossy","mateName":"Rossy"},"words":"Prod logs show a panic; please debug.","attachment":{"title":"medusa errors","text":"panic: nil map"}}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"mate.message","summary":"Message Rossy in Northwind Shop - Rossy","reason":"the fix belongs to Rossy's code","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"to":{"projectId":"pRossy","mateName":"Rossy"},"words":"Prod logs show a panic; please debug.","attachment":{"title":"medusa errors","text":"panic: nil map"}}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "mate.message by project id, no attachment",
 			in:   OrgActionInput{Kind: ProposalMateMessage, To: "pRossy", Words: "Ship the fix.", Reason: "asked"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"mate.message","summary":"Message Rossy in Northwind Shop - Rossy","reason":"asked","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"to":{"projectId":"pRossy","mateName":"Rossy"},"words":"Ship the fix."}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"mate.message","summary":"Message Rossy in Northwind Shop - Rossy","reason":"asked","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"to":{"projectId":"pRossy","mateName":"Rossy"},"words":"Ship the fix."}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 	}
 	for _, tt := range tests {
@@ -145,17 +145,17 @@ func TestProposeOrgAction_DomainAdd_Shape(t *testing.T) {
 		{
 			name: "a domain and its www, on the service's web port",
 			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "Contoso - production", Service: "medusa", Domains: []string{"contoso.com", "www.contoso.com"}, Port: 9000, Reason: "the shop is ready for its own name"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and www.contoso.com","reason":"the shop is ready for its own name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","www.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and www.contoso.com","reason":"the shop is ready for its own name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","www.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "a domain written as people write it, on a port the platform routes",
 			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Domains: []string{" API.Contoso.com. "}, Port: 8080, Reason: "an API name"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on api.contoso.com","reason":"an API name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["api.contoso.com"],"port":8080}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on api.contoso.com","reason":"an API name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["api.contoso.com"],"port":8080}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "a domain and every subdomain of it, a wildcard",
 			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Domains: []string{"contoso.com", "*.contoso.com"}, Port: 9000, Reason: "every shop on its own subdomain"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and *.contoso.com","reason":"every shop on its own subdomain","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","*.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and *.contoso.com","reason":"every shop on its own subdomain","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","*.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 	}
 	for _, tt := range tests {

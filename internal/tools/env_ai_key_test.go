@@ -169,7 +169,7 @@ func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
 		{
 			name:   "the organization keeps no key",
 			status: http.StatusNotFound, body: `{"code":"no_key"}`, enrolledAs: "proj-1",
-			wantWords: []string{"has no AI key yet", "Owner or Admin", "Settings › Zerops › HQ"},
+			wantWords: []string{"has no AI key yet", "Owner or Admin", "the organization's Model key"},
 		},
 		{
 			name:   "the Mate holds no key for HQ",

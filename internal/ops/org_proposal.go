@@ -23,7 +23,7 @@ const (
 )
 
 // ProposalNote is what every proposal result says about itself.
-const ProposalNote = "Nothing has run. The person approves or declines it on the card."
+const ProposalNote = "Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."
 
 // The scopes a variable lives at.
 const (
@@ -150,43 +150,17 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		if s, err = p.ownService(in.Service); err != nil {
 			return nil, err
 		}
-		if err := serviceActionFits(in.Kind, s, p.Name); err != nil {
+		if summary, err = serviceProposal(in.Kind, p, s); err != nil {
 			return nil, err
 		}
-		verb := map[string]string{ProposalServiceRestart: "Restart", ProposalServiceStart: "Start", ProposalServiceStop: "Stop"}[in.Kind]
-		summary = fmt.Sprintf("%s %s in %s", verb, s.Name, p.Name)
 
 	case ProposalEnvSet:
 		if p, err = snap.resolve(in.Project); err != nil {
 			return nil, err
 		}
-		key := strings.TrimSpace(in.Key)
-		if !envKeyPattern.MatchString(key) {
-			return nil, invalid(fmt.Sprintf("%q is not a variable name", key), "Letters, digits and underscores, not starting with a digit")
+		if summary, s, params, err = envProposal(p, in, p.ownService); err != nil {
+			return nil, err
 		}
-		scope := strings.TrimSpace(in.Scope)
-		hasService := strings.TrimSpace(in.Service) != ""
-		switch {
-		case scope == OrgScopeService && !hasService:
-			return nil, invalid("env.set on a service needs the service", "Pass service, or scope project")
-		case scope == OrgScopeProject && hasService:
-			return nil, invalid("env.set with scope project names no service", "Drop service, or scope service")
-		case scope != OrgScopeService && scope != OrgScopeProject:
-			return nil, invalid(fmt.Sprintf("unknown scope %q", scope), "scope is project or service")
-		}
-		secretWord := ""
-		if in.Secret {
-			secretWord = " (secret)"
-		}
-		if scope == OrgScopeService {
-			if s, err = p.ownService(in.Service); err != nil {
-				return nil, err
-			}
-			summary = fmt.Sprintf("Set %s%s on %s in %s", key, secretWord, s.Name, p.Name)
-		} else {
-			summary = fmt.Sprintf("Set %s%s in %s", key, secretWord, p.Name)
-		}
-		params = OrgEnvSetParams{Scope: scope, Key: key, Value: in.Value, Secret: in.Secret}
 
 	case ProposalMateMessage:
 		if p, err = snap.resolve(in.To); err != nil {
@@ -235,14 +209,65 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		p, summary, params, placeName = access.first, access.summary, access.params, access.name
 	}
 
+	result, err := proposalResult(newID, in.Kind, reason, p, s, summary, params)
+	if err != nil {
+		return nil, err
+	}
+	if placeName != "" {
+		result.Proposal.ProjectName = placeName
+	}
+	return result, nil
+}
+
+// serviceProposal names a service action on p's service s, refusing one its
+// state makes pointless.
+func serviceProposal(kind string, p *orgProject, s *platform.ServiceStack) (string, error) {
+	if err := serviceActionFits(kind, s, p.Name); err != nil {
+		return "", err
+	}
+	verb := map[string]string{ProposalServiceRestart: "Restart", ProposalServiceStart: "Start", ProposalServiceStop: "Stop"}[kind]
+	return fmt.Sprintf("%s %s in %s", verb, s.Name, p.Name), nil
+}
+
+// envProposal checks an env.set on p — the key, the scope and, for a service
+// variable, the service found by service — and names it.
+func envProposal(p *orgProject, in OrgActionInput, service func(string) (*platform.ServiceStack, error)) (string, *platform.ServiceStack, OrgEnvSetParams, error) {
+	key := strings.TrimSpace(in.Key)
+	if !envKeyPattern.MatchString(key) {
+		return "", nil, OrgEnvSetParams{}, invalid(fmt.Sprintf("%q is not a variable name", key), "Letters, digits and underscores, not starting with a digit")
+	}
+	scope := strings.TrimSpace(in.Scope)
+	hasService := strings.TrimSpace(in.Service) != ""
+	switch {
+	case scope == OrgScopeService && !hasService:
+		return "", nil, OrgEnvSetParams{}, invalid("env.set on a service needs the service", "Pass service, or scope project")
+	case scope == OrgScopeProject && hasService:
+		return "", nil, OrgEnvSetParams{}, invalid("env.set with scope project names no service", "Drop service, or scope service")
+	case scope != OrgScopeService && scope != OrgScopeProject:
+		return "", nil, OrgEnvSetParams{}, invalid(fmt.Sprintf("unknown scope %q", scope), "scope is project or service")
+	}
+	secretWord := ""
+	if in.Secret {
+		secretWord = " (secret)"
+	}
+	params := OrgEnvSetParams{Scope: scope, Key: key, Value: in.Value, Secret: in.Secret}
+	if scope == OrgScopeProject {
+		return fmt.Sprintf("Set %s%s in %s", key, secretWord, p.Name), nil, params, nil
+	}
+	s, err := service(in.Service)
+	if err != nil {
+		return "", nil, OrgEnvSetParams{}, err
+	}
+	return fmt.Sprintf("Set %s%s on %s in %s", key, secretWord, s.Name, p.Name), s, params, nil
+}
+
+// proposalResult is the document a card is drawn from.
+func proposalResult(newID func() string, kind, reason string, p *orgProject, s *platform.ServiceStack, summary string, params any) (*OrgProposalResult, error) {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("encode proposal params: %w", err)
 	}
-	proposal := OrgProposal{ID: newID(), Kind: in.Kind, Summary: summary, Reason: reason, ProjectID: p.ID, ProjectName: p.Name, Params: raw}
-	if placeName != "" {
-		proposal.ProjectName = placeName
-	}
+	proposal := OrgProposal{ID: newID(), Kind: kind, Summary: summary, Reason: reason, ProjectID: p.ID, ProjectName: p.Name, Params: raw}
 	if s != nil {
 		proposal.ServiceID, proposal.ServiceName = s.ID, s.Name
 	}

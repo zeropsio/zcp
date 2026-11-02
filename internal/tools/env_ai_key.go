@@ -89,7 +89,7 @@ func setOrgAIKey(ctx context.Context, client platform.Client, projectID, selfHos
 	case errors.Is(err, hq.ErrNoAIKey):
 		return nothingSet(platform.ErrPrerequisiteMissing,
 			"The organization has no AI key yet",
-			"An org Owner or Admin sets it in Mate under Settings › Zerops › HQ. Tell the person that in one sentence; once it is set, call zerops_env action=\"ai-key\" again.")
+			"An Owner or Admin sets it in Mate's settings as the organization's Model key. Tell the person that in one sentence; once it is set, call zerops_env action=\"ai-key\" again.")
 	case hq.IsUnavailable(err):
 		return nothingSet(platform.ErrNetworkError,
 			"HQ is not answering now, so the organization's AI key could not be fetched",

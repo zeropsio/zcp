@@ -934,6 +934,61 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 	}
 }
 
+// TestServer_AppProposeToolGating: a Mate's proposals for its application's
+// stage and production are registered in a Mate's container only, where a
+// client draws the card — never in a standalone zcp that observes through a
+// configured HQ, which no client draws cards for.
+func TestServer_AppProposeToolGating(t *testing.T) {
+	// Non-parallel: t.Chdir rebases the state dir server.New derives.
+	t.Chdir(t.TempDir())
+	tests := []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate's container", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, want: true},
+		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceID: "s1"}},
+		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
+		{name: "local", rt: runtime.Info{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
+			store, err := knowledge.GetEmbeddedStore()
+			if err != nil {
+				t.Fatalf("knowledge store: %v", err)
+			}
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
+			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
+			ctx := context.Background()
+			st, ct := mcp.NewInMemoryTransports()
+			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+				t.Fatalf("server connect: %v", err)
+			}
+			session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+			if err != nil {
+				t.Fatalf("client connect: %v", err)
+			}
+			defer session.Close()
+			result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatalf("list tools: %v", err)
+			}
+			for _, name := range []string{"zerops_propose_service", "zerops_propose_env"} {
+				found := false
+				for _, tool := range result.Tools {
+					found = found || tool.Name == name
+				}
+				if found != tt.want {
+					t.Errorf("%s registered = %v, want %v", name, found, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestServer_ObserveStandalone_ConfiguredProfileStillRequiresCredential(t *testing.T) {
 	// non-parallel: standalone HQ config and fixed profile HOME are process state.
 	t.Chdir(t.TempDir())

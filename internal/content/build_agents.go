@@ -52,6 +52,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read agents_shared.md: %w", err)
 	}
+	shared = mateLines(shared, rt.InContainer && rt.MateEnabled)
 
 	var preamble string
 	if rt.InContainer {
@@ -101,6 +102,11 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			}
 			if block.name == "agents_preview.md" {
 				tmpl = renderPreviewFrameOrigins(tmpl, rt)
+			}
+			if block.name == "agents_application.md" {
+				if who := mateIdentity(rt.ProjectName); who != "" {
+					tmpl = who + " " + strings.TrimSpace(tmpl)
+				}
 			}
 			preamble += "\n\n" + strings.TrimSpace(tmpl)
 		}
@@ -271,4 +277,48 @@ func notImportPathRune(r rune) bool {
 		return false
 	}
 	return true
+}
+
+// The shared body's lines that read differently in a Mate carry one of
+// these markers: a Mate's application owns its production, which the
+// person makes and releases in Mate, so a Mate keeps its own line and drops
+// the other.
+const (
+	inMateMarker      = "@in-mate "
+	outsideMateMarker = "@outside-mate "
+)
+
+// mateLines keeps the shared body's lines for a Mate (mate) or for
+// everything else, without their markers.
+func mateLines(body string, mate bool) string {
+	lines := strings.Split(body, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, inMateMarker):
+			if mate {
+				kept = append(kept, strings.TrimPrefix(line, inMateMarker))
+			}
+		case strings.HasPrefix(line, outsideMateMarker):
+			if !mate {
+				kept = append(kept, strings.TrimPrefix(line, outsideMateMarker))
+			}
+		default:
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// mateIdentity names the Mate and its application from the project's
+// "<application> - <Mate>" name, or nothing where the name has no
+// application.
+func mateIdentity(projectName string) string {
+	name := strings.TrimSpace(projectName)
+	i := strings.LastIndex(name, " - ")
+	if i <= 0 || i+len(" - ") >= len(name) {
+		return ""
+	}
+	app, own := strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+len(" - "):])
+	return fmt.Sprintf("You are **%s**, a Mate of **%s**.", own, app)
 }
