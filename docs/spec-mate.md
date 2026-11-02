@@ -1949,7 +1949,7 @@ draws it as a card the person approves or declines, and executes an approved one
     "serviceId": "…", "serviceName": "…",
     "params": {}
   },
-  "note": "Nothing has run. The person approves or declines it on the card."
+  "note": "Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."
 }
 ```
 
@@ -2009,12 +2009,28 @@ holds at most 64 Ki characters — the same checks as `mate.message`. On approva
 to its owner's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
 proposing a `mate.message` back.
 
+**A Mate proposes in its application's environments.** In project mode, in a Mate's container
+(`ZCP_MATE_ENABLED`), `zerops_propose_service {action, project, service, reason}` (`restart` |
+`start` | `stop`) and `zerops_propose_env {project, scope, service?, key, value, reason}` propose
+the Chief's `service.*` and `env.set` kinds for the Mate's application's stage or production, which
+its token does not reach. Each checks the target against HQ's observation (§10.8) under the
+Mate's observe credential, one request at a time: `environments` names the stage and production
+(by project id, name, kind or title), then `status` of that one environment its services. The
+proposal is the shape above, its `projectName` the environment's title as Mate's menu shows it
+("Production"; a stage by its own name, or "Stage" where HQ made the name). `env.set` carries a
+plain value only, `secret: false`: a secret stays the person's, in Mate's Vault; its note adds that a
+running service reads the value after a restart. A refused or unavailable observation answers in
+`zerops_observe`'s words; nothing is minted at HQ, and the decision is HQ's as for any card.
+A standalone zcp that observes through a configured HQ never registers them: no client draws its
+cards.
+
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
 Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
 and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
-names `zerops_propose_ask_chief` for what neither its project nor `zerops_observe` shows.
+names its two proposal tools for stage and production, and `zerops_propose_ask_chief` for what
+neither its project nor `zerops_observe` shows.
 
 | ID | Invariant |
 |---|---|
@@ -2025,6 +2041,7 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 
 ## 3. Trust and credentials
 
@@ -3358,8 +3375,8 @@ the values those entries reference.
   sets it in the Shared vault: the key sensitive under the variable HQ names (`NEBIUS_API_KEY`),
   its base URL plain beside it (`NEBIUS_BASE_URL`), restarting their readers unless `skipRestart`.
   It answers the provider and the names only; the key never enters the answer, an error, a log or
-  the agent's context. HQ's `404 no_key` answers that an org Owner or Admin sets it in Mate under
-  Settings › Zerops › HQ; HQ not answering or refusing the key sets nothing and says so.
+  the agent's context. HQ's `404 no_key` answers that an Owner or Admin sets it in Mate's settings
+  as the organization's Model key; HQ not answering or refusing the key sets nothing and says so.
   Outside a Mate the action does not exist. A Mate's AGENTS.md has an AI feature read the two as
   `OPENAI_API_KEY: ${NEBIUS_API_KEY}` and `OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`.
 

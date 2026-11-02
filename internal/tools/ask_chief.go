@@ -37,7 +37,7 @@ func RegisterAskChief(ctx context.Context, srv *mcp.Server, httpClient hq.Doer, 
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_propose_ask_chief",
-		Description: "Propose asking the person's Chief — their Mate for the whole organization — for something outside this project: another project's logs, a production error, the organization's state. Sends nothing: the person approves or declines it on a card, and the Chief's answer comes back to this conversation.",
+		Description: "Propose asking the person's Chief — their Mate for the whole organization — for something outside this project: another project's logs, another application's production error, the organization's state. Sends nothing: the person approves or declines it on a card, and the Chief's answer comes back to this conversation.",
 		Annotations: orgPropose("Ask your Chief"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AskChiefInput) (*mcp.CallToolResult, any, error) {
 		proposal, err := ops.ProposeAskChief(projectID, projectName, func() string { return "" }, ops.AskChiefInput{

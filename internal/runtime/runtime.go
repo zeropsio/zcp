@@ -59,6 +59,13 @@ type Info struct {
 	// addresses built from it then report hq.ErrNoOrganisation.
 	OrgID string
 
+	// ProjectName is this project's name as the platform holds it — a
+	// Mate's is "<application> - <Mate>". The container's environment does
+	// not carry it, so `zcp serve` sets it from the API key
+	// (auth.Info.ProjectName) before rendering the agent context, and Detect
+	// never does. "" where none is known; AGENTS.md then names no Mate.
+	ProjectName string
+
 	// HQ, when set, is this container's identity toward HQ in place of the
 	// one read from its live env store at each use: a test's container,
 	// linked to a fake HQ of its own, so such tests run side by side. Detect

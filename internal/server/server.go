@@ -148,6 +148,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
 	}
 
+	rtInfo.ProjectName = authInfo.ProjectName
 	refreshAgentContext(stateDir, rtInfo, logger)
 	rtInfo.OrgID = authInfo.ClientID
 
@@ -368,6 +369,21 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 	return s
 }
 
+// registerMateCards registers the tools whose answers a Mate's client draws
+// as cards, so they are Mate-gated like every mate-shaped effect
+// (docs/spec-mate.md §2.0). A Mate's agent asks where the code of the
+// repository it came from is kept (§5.10), and proposes changes to its
+// application's stage and production, checked against HQ's observation
+// (§2.11). Asking the person's Chief registers in New, once HQ names one;
+// org mode is the Chief and registers none of these.
+func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir string) {
+	if !s.rtInfo.InContainer || !s.rtInfo.MateEnabled {
+		return
+	}
+	tools.RegisterOrigin(s.server, httpClient, projectID, s.rtInfo.OrgID, stateDir)
+	tools.RegisterAppPropose(s.server, httpClient, projectID, s.rtInfo)
+}
+
 func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
 	// Host-derive the schema fetch from the resolved ZCP_API_HOST (authInfo is
@@ -508,16 +524,7 @@ func (s *Server) registerTools() {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
 	tools.RegisterObserve(s.server, httpClient, projectID, stateDir, s.rtInfo)
-	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-		// A Mate's agent asks where the code of the repository it came from
-		// is kept (docs/spec-mate.md §5.10); a Mate's client
-		// draws the card, so it is Mate-gated like every mate-shaped effect.
-		tools.RegisterOrigin(s.server, httpClient, projectID, s.rtInfo.OrgID, stateDir)
-		// A Mate asks its person's Chief for what lies outside its project
-		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
-		// Mate's client, so the tool is Mate-gated like every mate-shaped
-		// effect (§2.0). Org mode is the Chief and never registers it.
-	}
+	s.registerMateCards(httpClient, projectID, stateDir)
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir, schemaCache)

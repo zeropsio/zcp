@@ -771,6 +771,67 @@ func TestAnnotations_AskChiefTool(t *testing.T) {
 	}
 }
 
+// TestAnnotations_AppProposeTools: a proposal changes nothing on the
+// platform, so it reads as read-only; each call is a new card, so it is not
+// idempotent. A plain variable leaves no way to mark a secret.
+func TestAnnotations_AppProposeTools(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	tools := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})
+	for name, title := range map[string]string{
+		"zerops_propose_service": "Propose a service action",
+		"zerops_propose_env":     "Propose a variable",
+	} {
+		tool := tools[name]
+		if tool == nil {
+			t.Fatalf("%s should be registered in a Mate", name)
+		}
+		ann := tool.Annotations
+		if ann == nil || ann.Title != title || !ann.ReadOnlyHint || ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
+			t.Errorf("%s annotations = %+v, want %q, read-only, not idempotent, not destructive", name, ann, title)
+		}
+		if words := len(strings.Fields(tool.Description)); words > 60 {
+			t.Errorf("%s description has %d words (max 60)", name, words)
+		}
+	}
+	schema, err := json.Marshal(tools["zerops_propose_env"].InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(schema), `"secret"`) {
+		t.Errorf("zerops_propose_env offers a secret: %s", schema)
+	}
+}
+
+// In a Mate, "go live" is the person's release in Mate and launch-production
+// refuses, so zerops_workflow's description routes the triggers to the
+// release handoff there; elsewhere they still route to launch-production.
+func TestAnnotations_WorkflowRoutesGoLiveByMate(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		mate bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, MateEnabled: true}, mate: true},
+		{name: "a container", rt: runtime.Info{InContainer: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := listAllTools(t, tc.rt)["zerops_workflow"]
+			if tool == nil {
+				t.Fatal("zerops_workflow should be registered")
+			}
+			if got := strings.Contains(tool.Description, `"go live", "release" and "deploy to prod" are action="release"`); got != tc.mate {
+				t.Errorf("routes go live to the release handoff = %v, want %v", got, tc.mate)
+			}
+			if got := strings.Contains(tool.Description, "nasaď to na prod"); got == tc.mate {
+				t.Errorf("lists launch-production's triggers = %v, want %v", got, !tc.mate)
+			}
+		})
+	}
+}
+
 // A 3-part repo promoted its stages one cross-deploy after another while the
 // batch description spoke only of "3-deploy clusters". It says that the
 // stages fed from one dev service build in parallel in one batch.

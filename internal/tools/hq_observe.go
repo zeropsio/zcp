@@ -14,6 +14,12 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
+// The observations zcp reads itself as well as relaying them.
+const (
+	observeEnvironments = "environments"
+	observeStatus       = "status"
+)
+
 // ObserveInput is HQ's fixed read contract; credentials never enter model input.
 type ObserveInput = hq.ObservationRequest
 
@@ -57,7 +63,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 		if err != nil {
 			return readFailure(err, failure), nil, nil
 		}
-		if in.Action == "environments" {
+		if in.Action == observeEnvironments {
 			// Existing own-project change metadata retains its native authority.
 			// This runs only AFTER Observe succeeds; it can never authorize an
 			// observation or substitute for the profile credential.

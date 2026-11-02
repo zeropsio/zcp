@@ -592,9 +592,13 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp git <host>",
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
-				"addresses sheet", "··· → Addresses", "DNS records", "AAAA", "Full (strict)",
+				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
+				"act on this Mate's own project only", "another application's production error",
+				"Mate's Addresses", "DNS records", "AAAA", "Full (strict)",
 			},
-			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential"},
+			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential",
+				// Mate's UI paths live in Mate's own instructions, not here.
+				"··· → Addresses", "menu's globe", "the Chief can propose a domain", "read only, by the IDs"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1066,7 +1070,7 @@ func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing
 			}
 			for _, want := range []string{
 				`zerops_env action="ai-key"`, "`OPENAI_API_KEY: ${NEBIUS_API_KEY}`", "`OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`",
-				"OpenAI-compatible", "/models", "Never print, log or commit the key", "Settings › Zerops › HQ",
+				"OpenAI-compatible", "/models", "Never print, log or commit the key", "the organization's Model key",
 			} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
@@ -1238,5 +1242,72 @@ func TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand(t *testing.T) {
 	}
 	if strings.Contains(plain, "never sync GitHub by hand") {
 		t.Error("a plain container's AGENTS.md speaks of HQ's GitHub mirror")
+	}
+}
+
+// TestBuildAgentsMD_MateReleasesInMate: in a Mate, "go live" and "release"
+// are the person's in Mate, so the routing sends them to the release
+// handoff, never to launch-production, which a Mate refuses; elsewhere
+// launch-production stays the route. No line marker reaches the file.
+func TestBuildAgentsMD_MateReleasesInMate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		mate bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, mate: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "local", rt: runtime.Info{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			if got := strings.Contains(out, `workflow="launch-production"`); got == tc.mate {
+				t.Errorf("routes to launch-production = %v, want %v", got, !tc.mate)
+			}
+			if got := strings.Contains(out, "| Release, "); got != tc.mate {
+				t.Errorf("routes a release to the handoff = %v, want %v", got, tc.mate)
+			}
+			if strings.Contains(out, "@in-mate") || strings.Contains(out, "@outside-mate") {
+				t.Error("a line marker reached AGENTS.md")
+			}
+		})
+	}
+}
+
+// TestBuildAgentsMD_MateNamesItself: a Mate's AGENTS.md names the Mate and
+// its application, from the project's "<application> - <Mate>" name, so the
+// agent answers to its own name; with no name read yet it says neither.
+func TestBuildAgentsMD_MateNamesItself(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want string
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true, ProjectName: "Shop - Rhea"}, want: "You are **Rhea**, a Mate of **Shop**."},
+		{name: "a Mate whose name is not read yet", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", ProjectName: "Shop - Rhea"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			if tc.want == "" {
+				if strings.Contains(out, "You are **") {
+					t.Errorf("AGENTS.md names a Mate it does not know:\n%s", out)
+				}
+				return
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("AGENTS.md lacks %q", tc.want)
+			}
+		})
 	}
 }

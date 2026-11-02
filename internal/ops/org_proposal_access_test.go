@@ -43,19 +43,19 @@ func TestProposeOrgAction_AccessSet_Shape(t *testing.T) {
 			name: "an application by its name reaches every one of its projects at once",
 			org:  accessOrg,
 			in:   access("contoso", OrgAccessPerson{Person: "Dana", Level: "full"}, OrgAccessPerson{Person: "greta@example.com", Level: "read"}),
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Contoso: Dana full access, greta@example.com read only","reason":"asked","projectId":"pProd","projectName":"Contoso","params":{"projects":[{"id":"pProd","name":"Contoso - production"},{"id":"pCStage","name":"Contoso - stage"},{"id":"pAlba","name":"Contoso - Alba"}],"people":[{"person":"Dana","level":"full"},{"person":"greta@example.com","level":"read"}]}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Contoso: Dana full access, greta@example.com read only","reason":"asked","projectId":"pProd","projectName":"Contoso","params":{"projects":[{"id":"pProd","name":"Contoso - production"},{"id":"pCStage","name":"Contoso - stage"},{"id":"pAlba","name":"Contoso - Alba"}],"people":[{"person":"Dana","level":"full"},{"person":"greta@example.com","level":"read"}]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "one project by its full name reaches that project alone",
 			org:  accessOrg,
 			in:   access("Contoso - stage", OrgAccessPerson{Person: " Dana ", Level: "none"}, OrgAccessPerson{Person: "Greta", Level: "remove"}),
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Contoso - stage: Dana hidden, Greta back to their organization role","reason":"asked","projectId":"pCStage","projectName":"Contoso - stage","params":{"projects":[{"id":"pCStage","name":"Contoso - stage"}],"people":[{"person":"Dana","level":"none"},{"person":"Greta","level":"remove"}]}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Contoso - stage: Dana hidden, Greta back to their organization role","reason":"asked","projectId":"pCStage","projectName":"Contoso - stage","params":{"projects":[{"id":"pCStage","name":"Contoso - stage"}],"people":[{"person":"Dana","level":"none"},{"person":"Greta","level":"remove"}]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "a person is not checked against the organization: Zerops decides on Approve",
 			org:  accessOrg,
 			in:   access("Northwind Shop - Rossy", OrgAccessPerson{Person: "Dana", Level: "read"}),
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Northwind Shop - Rossy: Dana read only","reason":"asked","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"projects":[{"id":"pRossy","name":"Northwind Shop - Rossy"}],"people":[{"person":"Dana","level":"read"}]}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Northwind Shop - Rossy: Dana read only","reason":"asked","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"projects":[{"id":"pRossy","name":"Northwind Shop - Rossy"}],"people":[{"person":"Dana","level":"read"}]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 	}
 	for _, tt := range tests {
