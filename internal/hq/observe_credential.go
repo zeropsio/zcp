@@ -19,8 +19,8 @@ func ObserveCredentialPath() string {
 }
 
 var (
-	ErrNoObserveCredential      = errors.New("observe authorization required: check normal ZCP authorization and the Mate connection")
-	ErrInvalidObserveCredential = errors.New("observe authorization required: the profile credential is malformed; check normal ZCP authorization and the Mate connection")
+	ErrNoObserveCredential      = errors.New("observe authorization required: this Mate is not yet authorized to read stage and production; the person authorizes it in Mate")
+	ErrInvalidObserveCredential = errors.New("observe authorization required: the profile credential is malformed; the person authorizes this Mate again in Mate")
 	ErrReadObserveCredential    = errors.New("observe authorization required: the profile credential could not be read")
 )
 
