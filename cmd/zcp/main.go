@@ -83,7 +83,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"version":   func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
 		"--version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
 		"-v":        func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
-		"help":      func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
+		helpVerb:    func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
 		"--help":    func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
 		"-h":        func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
 		"update":    func(rest []string, _ telemetry.Config) int { return runUpdate(rest) },
@@ -211,12 +211,15 @@ func runServiceCmd(args []string) int {
 	return 0
 }
 
+// helpVerb asks zcp for its commands.
+const helpVerb = "help"
+
 // printUsage names serve and every first-level verb, so `zcp help` answers
 // instead of starting serve mode.
 func printUsage(w io.Writer) {
 	verbs := make([]string, 0, len(cliDispatch()))
 	for verb := range cliDispatch() {
-		if !strings.HasPrefix(verb, "-") && verb != "help" {
+		if !strings.HasPrefix(verb, "-") && verb != helpVerb {
 			verbs = append(verbs, verb)
 		}
 	}

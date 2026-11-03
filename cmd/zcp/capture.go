@@ -58,7 +58,7 @@ func runCapture(args []string) int {
 }
 
 func isCaptureHelp(arg string) bool {
-	return arg == "help" || arg == "--help" || arg == "-h"
+	return arg == helpVerb || arg == "--help" || arg == "-h"
 }
 
 func printCaptureUsage() {
