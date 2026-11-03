@@ -221,7 +221,7 @@ func printPushResults(results []sync.PushResult) {
 // the minimum fix to let them discover usage without treating it as an
 // error.
 func isHelpArg(s string) bool {
-	return s == "--help" || s == "-h" || s == "help"
+	return s == "--help" || s == "-h" || s == helpVerb
 }
 
 // argsContainHelp returns true if any element of args is a help flag.

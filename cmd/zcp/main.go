@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,13 +78,18 @@ func run(args []string) int {
 // after construction either way.
 func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 	return map[string]func(rest []string, cfg telemetry.Config) int{
-		"init":    func(rest []string, _ telemetry.Config) int { return runInitCmd(rest) },
-		"service": func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
-		"version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
-		"update":  func(rest []string, _ telemetry.Config) int { return runUpdate(rest) },
-		"mate":    func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
-		"hq":      func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
-		"lease":   func(rest []string, _ telemetry.Config) int { return runLeaseCmd(rest, os.Stdout, resolveLiveLeaseDeps) },
+		"init":      func(rest []string, _ telemetry.Config) int { return runInitCmd(rest) },
+		"service":   func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
+		"version":   func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
+		"--version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
+		"-v":        func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
+		helpVerb:    func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
+		"--help":    func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
+		"-h":        func(_ []string, _ telemetry.Config) int { printUsage(os.Stdout); return 0 },
+		"update":    func(rest []string, _ telemetry.Config) int { return runUpdate(rest) },
+		"mate":      func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
+		"hq":        func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
+		"lease":     func(rest []string, _ telemetry.Config) int { return runLeaseCmd(rest, os.Stdout, resolveLiveLeaseDeps) },
 		"self": func(rest []string, _ telemetry.Config) int {
 			return runSelfCmd(rest, os.Stdout, mate.LiveLookup(mate.LiveEnvStorePath), newSelfRestartClient)
 		},
@@ -202,6 +209,28 @@ func runServiceCmd(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// helpVerb asks zcp for its commands.
+const helpVerb = "help"
+
+// printUsage names serve and every first-level verb, so `zcp help` answers
+// instead of starting serve mode.
+func printUsage(w io.Writer) {
+	verbs := make([]string, 0, len(cliDispatch()))
+	for verb := range cliDispatch() {
+		if !strings.HasPrefix(verb, "-") && verb != helpVerb {
+			verbs = append(verbs, verb)
+		}
+	}
+	sort.Strings(verbs)
+	fmt.Fprintln(w, "usage: zcp <command> [args]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  serve")
+	fmt.Fprintln(w, "    the MCP server on stdio, which an agent starts; also what any other word starts")
+	for _, verb := range verbs {
+		fmt.Fprintf(w, "  %s\n", verb)
+	}
 }
 
 func printVersion() {
