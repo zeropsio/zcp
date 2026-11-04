@@ -189,7 +189,7 @@ type fakeAccount struct {
 	// failScopedMint, when true, makes exactly the project-scoped run-token
 	// mint (a POST /integration-token body carrying a non-empty
 	// "projects" array — MintProjectScopedToken's own shape, distinct from
-	// MintDelegatedLaunchToken's) answer 500 instead of minting — used to
+	// MintLaunchKey's) answer 500 instead of minting — used to
 	// simulate a non-403 mint failure that still leaves a rollback to
 	// attempt (TestFarmRun_RollbackFailure_KeepsProjectIDAndError). Never
 	// interferes with mintForbiddenCode's own 403 simulation, which is
@@ -400,7 +400,7 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleIntegrationTokenMint serves POST .../integration-token for both
-// MintDelegatedLaunchToken (an empty "projects" array) and
+// MintLaunchKey (an empty "projects" array) and
 // MintProjectScopedToken (a non-empty one) — split out of handle to keep
 // its cyclomatic complexity (maintidx) within budget.
 func (f *fakeAccount) handleIntegrationTokenMint(w http.ResponseWriter, r *http.Request) {
@@ -633,8 +633,8 @@ func (p panicClient) DeleteProject(context.Context, string) (*platform.Process, 
 	return nil, errUnexpectedPlatformCall
 }
 
-func (p panicClient) MintDelegatedLaunchToken(context.Context, string, string) (platform.MintedToken, error) {
-	p.t.Fatal("unexpected MintDelegatedLaunchToken call")
+func (p panicClient) MintLaunchKey(context.Context, string, string) (platform.MintedToken, error) {
+	p.t.Fatal("unexpected MintLaunchKey call")
 	return platform.MintedToken{}, errUnexpectedPlatformCall
 }
 
@@ -1199,7 +1199,7 @@ func TestFarmRun_GitHubAdminPAT_NotInjectedWhenScenarioDoesNotRequireIt(t *testi
 // is an integration token, not a personal access token), RunBatch rolls
 // back the shell project it just created for that run, aborts the whole
 // batch (no further scenarios are scheduled), and returns an error whose
-// chain carries platform.ErrDelegationUnavailable so cmd/zcp can print the
+// chain carries platform.ErrTokenCannotMint so cmd/zcp can print the
 // one-line fix.
 func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 	t.Parallel()
@@ -1207,7 +1207,7 @@ func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 	const clientID = "client-forbidden"
 	f := newControllerFixture(t, clientID)
 	account, client, fake, sink := f.account, f.client, f.s3, f.sink
-	// Mirrors platform.apiCodeDelegationUnavailableLegacy — the fake can't
+	// Mirrors platform.apiCodeTokenCannotMintLegacy — the fake can't
 	// import the unexported platform const, so the literal is pinned here
 	// against the same live-verified apiCode the brief names.
 	account.mintForbiddenCode = "notAllowedForIntegrationToken"
@@ -1232,7 +1232,7 @@ func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 		t.Fatal("RunBatch: want error on mint-forbidden, got nil")
 	}
 	if !isScopedMintForbidden(err) {
-		t.Errorf("RunBatch error does not carry platform.ErrDelegationUnavailable: %v", err)
+		t.Errorf("RunBatch error does not carry platform.ErrTokenCannotMint: %v", err)
 	}
 
 	account.mu.Lock()
@@ -2407,7 +2407,7 @@ type failSecondRunTokenMint struct {
 func (c *failSecondRunTokenMint) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
 	c.calls++
 	if c.calls == 2 {
-		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated later mint failure"}
+		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrTokenCannotMint, Message: "simulated later mint failure"}
 	}
 	return c.PlatformClient.MintProjectScopedToken(ctx, clientID, projectID, name)
 }
@@ -2433,7 +2433,7 @@ func TestRunBatch_LaterMintFailure_FinalizesEarlierRuns(t *testing.T) {
 type failLaunchRevokeClient struct{ PlatformClient }
 
 func (c failLaunchRevokeClient) MintProjectScopedToken(context.Context, string, string, string) (platform.MintedToken, error) {
-	return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated forbidden mint"}
+	return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrTokenCannotMint, Message: "simulated forbidden mint"}
 }
 
 func (c failLaunchRevokeClient) RevokeIntegrationToken(context.Context, string, string) error {
@@ -2899,7 +2899,7 @@ type failNthRunTokenMint struct {
 func (c *failNthRunTokenMint) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
 	c.calls++
 	if c.calls == c.n {
-		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated scoped mint forbidden"}
+		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrTokenCannotMint, Message: "simulated scoped mint forbidden"}
 	}
 	return c.PlatformClient.MintProjectScopedToken(ctx, clientID, projectID, name)
 }

@@ -61,8 +61,7 @@ type userDataPostBody struct {
 }
 
 // userDataErrorResponse decodes the platform's {"error": {...}} envelope on
-// a non-2xx service userData write. Hand-decoded (mirrors
-// zerops_delegation.go's ListOwnTokenDelegations) so a malformed/absent
+// a non-2xx service userData write. Hand-decoded so a malformed/absent
 // error body maps to a generic PlatformError WITHOUT ever surfacing the raw
 // response bytes — a submitted credential could be echoed back verbatim by
 // a broken/proxied error response.

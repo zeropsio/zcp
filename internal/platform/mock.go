@@ -88,14 +88,6 @@ type Mock struct {
 	// tests can assert the (appVersionID, zeropsYaml, setup) tuple sent.
 	CapturedRedeployAppVersion []CapturedRedeployAppVersion
 
-	// tokenDelegations / mintedToken back ListOwnTokenDelegations /
-	// MintDelegatedLaunchToken. Seed via WithTokenDelegations /
-	// WithMintedToken. Unseeded (nil) means a pre-delegation / consumed
-	// platform: empty list, mint errors ErrDelegationUnavailable. A
-	// successful mint clears tokenDelegations — F4's one-shot semantics.
-	tokenDelegations []TokenDelegation
-	mintedToken      *MintedToken
-
 	// boxAccess backs MintBoxAccess per Box service ID. Seed via
 	// WithBoxAccess; an unseeded ID answers the platform's refusal for a
 	// service that is not there.
@@ -415,27 +407,6 @@ func (m *Mock) WithDeleteRemovesService(b bool) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteRemovesService = b
-	return m
-}
-
-// WithTokenDelegations sets the delegations returned by
-// ListOwnTokenDelegations. A successful MintDelegatedLaunchToken call
-// clears this (F4: mint consumes the one-time delegation).
-func (m *Mock) WithTokenDelegations(delegations ...TokenDelegation) *Mock {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.tokenDelegations = delegations
-	return m
-}
-
-// WithMintedToken seeds the exact MintedToken value MintDelegatedLaunchToken
-// returns on success (verbatim — the caller-supplied name is NOT merged in,
-// so tests fully control the returned shape). Unseeded, a mint against a
-// non-empty delegation list returns a generated placeholder value.
-func (m *Mock) WithMintedToken(token MintedToken) *Mock {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.mintedToken = &token
 	return m
 }
 

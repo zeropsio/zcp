@@ -41,17 +41,14 @@ userPersona: |
   guides/production-checklist.mdx). You expect ZCP to prepare the
   bundle, source-control changes (setup: prod block in zerops.yaml),
   and verification steps — but you will NOT hand it a standing
-  production-scoped API key. When ZCP reaches ready-to-launch, it may
-  offer to mint the launch token itself from a one-time platform
-  delegation — no token value crosses the conversation; if so, confirm
-  explicitly that it should go ahead. If instead ZCP falls back to
-  asking you for a launch token (no delegation available), you do not
+  production-scoped API key. When ZCP reaches ready-to-launch and asks
+  you for a launch token, you do not
   generate one yourself — your temporary account-wide Zerops API token is
   already in the env var `$ZCP_E2E_LAUNCH_KEY`. Reply that it is there and
   tell the agent to read it itself via Bash (`echo $ZCP_E2E_LAUNCH_KEY`),
   never paste the value or invent one; it is for the launch window only,
   and you expect ZCP to tell you to delete it once it reports launched.
-  Either way, push back if ZCP tries to persist a key anywhere or asks
+  Push back if ZCP tries to persist a key anywhere or asks
   for ongoing prod access.
   When the agent shows the production bundle and asks you to approve it
   before it uses the launch token, approve it ("yes, go ahead") and, if
@@ -60,9 +57,8 @@ userPersona: |
 notableFriction:
   - id: trust-boundary-clarity
     description: |
-      ZCP must explicitly tell the user which token-acquisition path
-      is available (delegated mint vs manual key) and, on the manual
-      fallback, explicitly tell them to delete the key after launch.
+      ZCP must explicitly tell the user how to generate the launch
+      key and explicitly tell them to delete it after launch.
       Surfaces whether the launched response embeds the delete-key
       step OR buries it in checklist content the agent doesn't
       surface.

@@ -20,7 +20,7 @@ import (
 // so running them graded the agent against an interaction the shipped handler
 // cannot produce (2026-06-16 finalization-audit finding B2). The shipped flow
 // starts at scope-prompt, selects new vs existing by INPUT PRESENCE (launchKey
-// or confirmLaunch vs ExistingProjectID+ExistingProdToken), and DERIVES the
+// vs ExistingProjectID+ExistingProdToken), and DERIVES the
 // delivery family from the source BuildIntegration — there is no mode/method
 // prompt.
 var neverShippedLaunchVocab = []struct {

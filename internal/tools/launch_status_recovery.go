@@ -25,13 +25,6 @@ type launchActiveEnvelope struct {
 	TargetProjectID       string                          `json:"targetProjectId,omitempty"`
 	TargetServiceHostname string                          `json:"targetServiceHostname,omitempty"`
 	LastUpdate            string                          `json:"lastUpdate,omitempty"`
-	// TokenAcquisition + MintedTokenName are the NON-SECRET delegated-
-	// launch forensics (D-7): after a delegated mint the user's dashboard
-	// carries a standing token under MintedTokenName even when the launch
-	// later failed — a post-compaction status must still be able to name
-	// it. Mode + name only; the token VALUE never enters state (P-LP-1).
-	TokenAcquisition string `json:"tokenAcquisition,omitempty"`
-	MintedTokenName  string `json:"mintedTokenName,omitempty"`
 	// AmbiguousChoices is populated when MORE than one active launch
 	// state matches the source project. Each entry carries the minimum
 	// info the agent needs to disambiguate.
@@ -64,7 +57,7 @@ func renderLaunchActiveRecovery(corpus []workflow.KnowledgeAtom, active *launchS
 		// with accumulated inputs. Older atoms / NextCall strings that
 		// omitted action="start" led agents to guess action="classify"
 		// (FIX 1 from eval root-cause review 2026-05-19).
-		guidance = `Launch-production workflow is mid-flight. Re-call zerops_workflow action="start" workflow="launch-production" with the same productionProjectName to advance. At ready-to-launch follow delegatedLaunch.available: confirmLaunch=true when a delegation is available, launchKey as the fallback.`
+		guidance = `Launch-production workflow is mid-flight. Re-call zerops_workflow action="start" workflow="launch-production" with the same productionProjectName to advance. At ready-to-launch, publish with launchKey.`
 	}
 
 	env := launchActiveEnvelope{
@@ -77,15 +70,8 @@ func renderLaunchActiveRecovery(corpus []workflow.KnowledgeAtom, active *launchS
 		TargetProjectID:       active.TargetProjectID,
 		TargetServiceHostname: active.TargetServiceHostname,
 		LastUpdate:            formatLaunchStateTimestamp(active),
-		// Delegated forensics matter on the NON-terminal path too: a
-		// crash between the pre-mint state write and the abort leaves a
-		// `launching` state whose TokenAcquisition/MintedTokenName are
-		// the only surviving record that a standing dashboard token may
-		// exist (D-7). Names/modes only — never values.
-		TokenAcquisition: active.TokenAcquisition,
-		MintedTokenName:  active.MintedTokenName,
-		Guidance:         guidance,
-		NextCall:         `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + active.TargetProjectName + `"`,
+		Guidance:              guidance,
+		NextCall:              `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + active.TargetProjectName + `"`,
 	}
 
 	if len(all) > 1 {
@@ -146,19 +132,9 @@ func launchOverlayAddendum(stateDir, sourceProjectID string) string {
 			// Mirror renderLaunchTerminalRecovery's retryability split:
 			// only a failed launch WITH a target project needs the
 			// destructive reset; a no-target failure retries directly.
-			// The staged-token-reuse claim requires the prior attempt to
-			// have REACHED staging (hostname persisted) — a pre-staging
-			// delegated abort gets the plain retry line.
-			switch {
-			case recent.TargetProjectID != "":
+			if recent.TargetProjectID != "" {
 				s += "Use `zerops_workflow action=\"reset\"` to clear state before retrying.\n"
-			case recent.TokenAcquisition == tokenAcquisitionDelegated && recent.tokenHost() != "":
-				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
-					recent.TargetProjectName + "\" confirmLaunch=true` (the staged token from the prior attempt is reused).\n"
-			case recent.TokenAcquisition == tokenAcquisitionDelegated:
-				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
-					recent.TargetProjectName + "\" confirmLaunch=true` (no token was staged; ZCP re-checks delegation availability and otherwise falls back to the manual path).\n"
-			default:
+			} else {
 				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
 					recent.TargetProjectName + "\"`\n"
 			}
@@ -175,9 +151,8 @@ func launchOverlayAddendum(stateDir, sourceProjectID string) string {
 // Failed state splits on retryability: with a target project the next
 // action is `action="reset"` (blind retry would hit
 // projectEnvDuplicateKey); with NO target the state is directly
-// retryable and the guidance directs the retry (delegated path:
-// confirmLaunch=true; staged-token reuse promised only when staging was
-// reached) — reset there is abandonment and deletes any staged token.
+// retryable and the guidance directs the retry — reset there is
+// abandonment and deletes any staged token.
 //
 // Launched state: provides the launchID + targetProjectID + brief
 // "launch complete" envelope. Agent learns the launch already finished
@@ -215,48 +190,19 @@ func renderLaunchTerminalRecovery(corpus []workflow.KnowledgeAtom, terminal *lau
 		TargetProjectID:       terminal.TargetProjectID,
 		TargetServiceHostname: terminal.TargetServiceHostname,
 		LastUpdate:            formatLaunchStateTimestamp(terminal),
-		TokenAcquisition:      terminal.TokenAcquisition,
-		MintedTokenName:       terminal.MintedTokenName,
 		Guidance:              guidance,
 	}
 	if terminal.Status == topology.LaunchStatusFailed {
 		// Failed splits on retryability (the resume-gate branches): with a
 		// target project a direct retry is refused (partial project
 		// exists) — reset is required; with NO target the state is
-		// directly retryable, and steering a retryable DELEGATED failure
-		// into reset would delete the staged token while the one-time
-		// delegation is already consumed (2026-07-12 audit #1).
-		retryable := terminal.TargetProjectID == ""
-		delegated := terminal.TokenAcquisition == tokenAcquisitionDelegated
-		// staged: the prior attempt REACHED staging (P1 persists the push
-		// hostname exactly then) — only that state may promise staged-
-		// token reuse. A pre-staging abort (race/indeterminate/empty-
-		// token/admin-factory) has no staged token; claiming one would
-		// be the lie-class (Codex review, 2026-07-12).
-		staged := terminal.tokenHost() != ""
-		switch {
-		case retryable && delegated && staged:
-			env.NextCall = `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `" confirmLaunch=true`
-			env.Guidance += "\n\nThis failed delegated launch is directly retryable: re-call per nextCall — the launch token staged by the prior attempt is reused (no delegation is consumed; none remains on this token). " +
-				`Use action="reset" only to ABANDON the launch: reset deletes the staged token, and the manual dashboard walkthrough becomes the only remaining path.`
-			if terminal.MintedTokenName != "" {
-				env.Guidance += " A standing token named \"" + terminal.MintedTokenName + "\" exists in the Zerops dashboard (tokens outlive the launch; remove it there if you abandon)."
-			}
-		case retryable && delegated:
-			env.NextCall = `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `" confirmLaunch=true`
-			env.Guidance += "\n\nThis failed delegated launch is directly retryable: re-call per nextCall — ZCP first probes for a token staged by a prior attempt, then re-checks delegation availability; when neither resolves, the response falls back to the manual launchKey path."
-			if terminal.MintedTokenName != "" {
-				env.Guidance += " The mint attempt may have created a standing token named \"" + terminal.MintedTokenName + "\" in the Zerops dashboard — if it exists there, ask the user to regenerate it and re-call with launchKey."
-			}
-		case retryable:
+		// directly retryable.
+		if terminal.TargetProjectID == "" {
 			env.NextCall = `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `"`
-			env.Guidance += "\n\nThis failed launch is directly retryable: re-call per nextCall and follow the ready-to-launch response (confirmLaunch=true when it advertises an available delegation, launchKey otherwise). " +
+			env.Guidance += "\n\nThis failed launch is directly retryable: re-call per nextCall and follow the ready-to-launch response (publish with launchKey). " +
 				`action="reset" abandons the launch instead.`
-		default:
+		} else {
 			env.NextCall = `zerops_workflow action="reset" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `"`
-			if delegated && terminal.MintedTokenName != "" {
-				env.Guidance += "\n\nNote: the launch token was delegated-minted; a standing token named \"" + terminal.MintedTokenName + "\" remains in the Zerops dashboard (reset cannot delete tokens — remove it there when abandoning)."
-			}
 		}
 	}
 	return jsonResult(env)

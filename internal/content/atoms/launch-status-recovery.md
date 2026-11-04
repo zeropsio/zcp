@@ -17,7 +17,7 @@ A non-terminal launch is in progress. Resume via `action="start"` with the same 
 | Field | Use |
 |---|---|
 | `targetProjectName` | Pass back as `productionProjectName` on the resume call. |
-| `status` | Phase to expect next response (`ready-to-launch` advertises `delegatedLaunch.available` — advance with `confirmLaunch=true` when `true`, `launchKey` as the fallback; `launching` / `configuring-pipeline` are polling). |
+| `status` | Phase to expect next response (`ready-to-launch` advances with `launchKey`; `launching` / `configuring-pipeline` are polling). |
 | `lastUpdate` | Sanity-check freshness — minutes old = active; days old = user may have abandoned (ask before resuming). |
 | `ambiguousChoices` | Multiple non-terminal launches exist; pick a `productionProjectName` before resume. |
 
@@ -29,13 +29,13 @@ zerops_workflow action="start" workflow="launch-production" productionProjectNam
 
 `action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no classify action, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
 
-The `launchKey` is NOT required at the status step. When the workflow re-enters `ready-to-launch` and you intend to advance to `launching`, check `delegatedLaunch.available` first — if a platform delegation is available, re-call with `confirmLaunch=true` instead. The fallback when no delegation is available: ask the user to generate a launch token in the dashboard and pass it as `launchKey` — never create or guess a token value yourself. Status is read-only; ZCP never constructs a project-admin client on this path.
+The `launchKey` is NOT required at the status step. When the workflow re-enters `ready-to-launch` and you intend to advance to `launching`, ask the user to generate a launch token in the dashboard and pass it as `launchKey` — never create or guess a token value yourself. Status is read-only; ZCP never constructs a project-admin client on this path.
 
 #### `kind: "launch-failed"` — terminal failure; recovery depends on `targetProjectId`
 
 The most-recent launch for this source project ended in `failed` (e.g. schema validation rejected the import, mutation API error). The envelope's `nextCall` carries the correct recovery — the split:
 
-- **`targetProjectId` EMPTY — retry directly.** No production project was created; re-call `action="start"` with the same `productionProjectName`. When `tokenAcquisition` is `"delegated"`, retry with `confirmLaunch=true`: with `targetServiceHostname` present the prior attempt staged the token and the retry reuses it (no new delegation needed or consumed); without it the retry re-checks delegation availability and otherwise falls back to the manual path. Do NOT reset here unless you intend to ABANDON the launch: reset deletes any staged token, the one-time delegation is already spent, and the manual dashboard walkthrough becomes the only remaining path. `mintedTokenName` names the standing token visible in the dashboard.
+- **`targetProjectId` EMPTY — retry directly.** No production project was created; re-call `action="start"` with the same `productionProjectName`.
 - **`targetProjectId` PRESENT — reset required.** A partial production project exists; a blind retry would duplicate services or collide on project envs. Clear it first:
 
 ```

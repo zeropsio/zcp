@@ -80,18 +80,6 @@ type launchState struct {
 	// nothing and reported "configured"). Persisted so a resume call can
 	// re-run the per-runtime check without re-reading the source project.
 	RuntimeProds []launchRuntimeProd `json:"runtimeProds,omitempty"`
-	// TokenAcquisition records how the launch-window token was acquired:
-	// "delegated" (platform-minted via a one-time token delegation) or
-	// empty (explicit launchKey, the default/legacy path). Non-secret —
-	// observation only, honest-status display (token-delegation spec D-1:
-	// availability is ALWAYS a fresh platform read; nothing branches on
-	// this field).
-	TokenAcquisition string `json:"tokenAcquisition,omitempty"`
-	// MintedTokenName is the locally-retained REQUESTED name passed to
-	// MintDelegatedLaunchToken on the delegated path — recovery text
-	// (D-7) uses THIS, never the platform's returned DTO. Non-secret
-	// (dashboard-visible name only, never the token value).
-	MintedTokenName string `json:"mintedTokenName,omitempty"`
 	// CreateSent is written the moment before CreateAndImportProject goes
 	// out: a launch whose call ended with it set may have created its
 	// production project, even where the project search does not show it yet.

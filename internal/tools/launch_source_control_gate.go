@@ -846,8 +846,8 @@ type publishSidePublishGateResult struct {
 // source-control-required BEFORE the launch token is acquired —
 // LAUNCH-3: the read-side previously validated only input.TargetService,
 // so a 2-runtime launch where runtime B was unconfigured passed read-side,
-// advanced to ready-to-launch, acquired the token (burning the one-time
-// delegation on the delegated path), then failed at the publish-side gate.
+// advanced to ready-to-launch, took the launch token, then failed at the
+// publish-side gate.
 func runReadSideSourceControlGate(
 	ctx context.Context,
 	client platform.Client,

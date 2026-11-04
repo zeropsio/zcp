@@ -263,8 +263,7 @@ func SecretClassificationValues() []string {
 // through read-side states (scope-prompt → source-control-required →
 // classify-prompt → ready-to-launch; no mutation, no launch key needed)
 // into the mutation pipeline (launching → configuring-pipeline → launched,
-// or failed; token acquisition required — a delegated platform mint on the
-// user's confirmLaunch, or a user-supplied launchKey). The existing-project
+// or failed; the user-supplied launchKey required). The existing-project
 // path adds existing-project-conflict-prompt (hostname collisions awaiting a
 // merge decision). Atoms filter via `launchStatus:` axis when ready.
 //
@@ -311,14 +310,12 @@ const (
 	LaunchStatusClassifyPrompt LaunchProductionStatus = "classify-prompt"
 	// LaunchStatusReadyToLaunch fires when scope + classifications are
 	// complete, bundle composed, source-control changes pushed, schema
-	// clean. Response is preview-only — no mutation yet. Awaits token
-	// acquisition to advance to LaunchStatusLaunching: confirmLaunch=true
-	// when the response advertises an available platform delegation
-	// (ZCP mints the token itself), or the manual launchKey fallback.
+	// clean. Response is preview-only — no mutation yet. Awaits the
+	// user's launchKey to advance to LaunchStatusLaunching.
 	LaunchStatusReadyToLaunch LaunchProductionStatus = "ready-to-launch"
 	// LaunchStatusLaunching is the mutation pipeline in flight: the
 	// handler holds a ProjectAdminClient backed by the resolved launch
-	// token (delegated-minted or user-supplied) and is calling
+	// token and is calling
 	// CreateAndImportProject + polling first deploy + verifying secret
 	// presence.
 	LaunchStatusLaunching LaunchProductionStatus = "launching"
@@ -335,8 +332,7 @@ const (
 	LaunchStatusConfiguringPipeline LaunchProductionStatus = "configuring-pipeline"
 	// LaunchStatusFailed indicates a mutation step failed. Structured
 	// blockers[] describes recovery; the agent reads them and either
-	// retries (delegated path: confirmLaunch=true reuses the staged
-	// token; manual path: a fresh launchKey) or abandons via reset.
+	// retries with a fresh launchKey or abandons via reset.
 	// Pipeline-config issues
 	// never resolve to this state (P-LP-8) — they live as blockers on
 	// LaunchStatusLaunched.

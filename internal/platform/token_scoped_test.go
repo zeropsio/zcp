@@ -121,13 +121,11 @@ func TestMintProjectScopedToken_SendsNoAccessWithProjectBasicUser(t *testing.T) 
 
 // TestMintProjectScopedToken_IntegrationToken403_TypedError pins both 403
 // apiCodes (current + legacy) the platform returns when the minting
-// credential is itself an integration token without delegation — mapped to
-// ErrDelegationUnavailable, the same typed code MintDelegatedLaunchToken
-// already uses for the identical platform-level restriction.
+// credential is itself an integration token — mapped to ErrTokenCannotMint.
 func TestMintProjectScopedToken_IntegrationToken403_TypedError(t *testing.T) {
 	t.Parallel()
 
-	for _, code := range []string{apiCodeDelegationUnavailable, apiCodeDelegationUnavailableLegacy} {
+	for _, code := range []string{apiCodeTokenCannotMint, apiCodeTokenCannotMintLegacy} {
 		t.Run(code, func(t *testing.T) {
 			t.Parallel()
 			z := newScopedMintTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -144,8 +142,8 @@ func TestMintProjectScopedToken_IntegrationToken403_TypedError(t *testing.T) {
 			if !errors.As(err, &pe) {
 				t.Fatalf("expected PlatformError, got %T: %v", err, err)
 			}
-			if pe.Code != ErrDelegationUnavailable {
-				t.Errorf("Code = %q, want %q", pe.Code, ErrDelegationUnavailable)
+			if pe.Code != ErrTokenCannotMint {
+				t.Errorf("Code = %q, want %q", pe.Code, ErrTokenCannotMint)
 			}
 		})
 	}

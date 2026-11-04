@@ -60,11 +60,6 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// emitted workflow when the standard-pair stage-receives default isn't
 		// what the user asked for. Optional + backward-compatible (omit → today's
 		// convention).
-		// Raised +378 (17450→17828) for confirmLaunch (token-delegation spec
-		// §4.1): the delegated-mint publish trigger, oneOf[boolean,string] via
-		// patchFlexBoolProperty like force/skipPipelineSetup. Deliberate new
-		// field — optional, backward-compatible (omit → today's launchKey-only
-		// publish path, D-5).
 		// Raised +6 (17828→17834) for RuntimeTarget.publicAccess (§8 O3
 		// PA-6): the plan's per-runtime public-access intent
 		// ("" | auto | subdomain | none). Deliberate new field — optional,
@@ -156,7 +151,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// proposal of zcp's makes (docs/spec-mate.md §10.10): `branch` names
 		// it among its users; no new field — where to push and what zcp leaves
 		// alone live in the handler's answer.
-		"zerops_workflow":    21299,
+		// Lowered -412 (21299→20887): the launch publishes only with the
+		// launchKey of the person who presses launch; the delegated-mint
+		// trigger confirmLaunch is gone (docs/spec-workflows.md §10 P-LP-15).
+		"zerops_workflow":    20887,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

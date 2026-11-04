@@ -78,7 +78,7 @@ Read the home before new call sites:
 - Searches lag writes; absence is not truth. Freshen by-ID/direct reads; HasDeployedCode requires active appVersion source from direct reads (`docs/spec-workflows.md` §3.5).
 - Never gate corrective zerops_deploy; import override and DM-2 are hard gates (`TestDeployLocal_*Proceeds`, `TestImport_OverrideOnFailedRequiresAck`).
 - Only ops.ProjectActivity/ops.IsProcessLive owns busy truth: live cancelable process, never appVersion phase/build presence; adopt freshens GetProcess (`TestProjectActivity`, `TestAdoptGate_*`).
-- Never fabricate user credentials; surface missing/invalid contracts; only platform mints delegated launch tokens, never expose in response/state/audit (`TestConvertError_CredentialContract`).
+- Never fabricate user credentials; surface missing/invalid contracts; zcp mints no delegated launch token; never expose a token in response/state/audit (`TestConvertError_CredentialContract`, `TestNoDelegatedLaunchToken`).
 - ensurePublicAccess owns access; DTO fields are not import intent; strip in prod (`docs/spec-workflows.md` §8 O3/E9, `TestEnsurePublicAccess_*`, `TestServiceEligible_*`, `TestBuildLaunchBundle_StripsSubdomainAccess`).
 - Ingest clientIP uses authoritative X-Real-IP, never client XFF (`docs/spec-telemetry.md` §6, `TestClientIP_SpoofedXFF_Ignored`).
 - Use workflow.IsOpen/DeriveCloseState, never raw ClosedAt emptiness (`TestNoRawClosedAtReads`).

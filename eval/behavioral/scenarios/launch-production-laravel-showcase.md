@@ -37,21 +37,17 @@ userPersona: |
   shape.
 
   You will NOT hand ZCP a standing production-scoped API key. When ZCP
-  reaches ready-to-launch, it may offer to mint the launch token
-  itself from a one-time platform delegation — no token value crosses
-  the conversation; if so, confirm explicitly that it should go
-  ahead. If instead ZCP falls back to asking you to generate one
-  manually (no delegation available), you generate a temporary
+  reaches ready-to-launch and asks you to generate a launch token, you
+  generate a temporary
   account-wide Zerops API token, use it for the launch window only,
-  and DELETE it as soon as ZCP reports launched. Either way, push
+  and DELETE it as soon as ZCP reports launched. Push
   back if ZCP tries to persist a key anywhere or asks for ongoing
   prod access.
 notableFriction:
   - id: trust-boundary-clarity
     description: |
-      ZCP must explicitly tell the user which token-acquisition path
-      is available (delegated mint vs manual key) and, on the manual
-      fallback, explicitly tell them to delete the key after launch.
+      ZCP must explicitly tell the user how to generate the launch
+      key and explicitly tell them to delete it after launch.
       Surfaces whether the launched response embeds the delete-key
       step OR buries it in checklist content the agent doesn't
       surface.

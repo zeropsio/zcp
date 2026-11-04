@@ -166,18 +166,6 @@ type Client interface {
 	// the platform does not reuse the stored yaml.
 	RedeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error)
 
-	// ListOwnTokenDelegations returns the delegations attached to the token
-	// this client authenticates with. Fresh read every call — the platform
-	// is the sole source of delegation truth (D-1); ZCP never persists or
-	// infers availability locally. See zerops_delegation.go / P-LP-15.
-	ListOwnTokenDelegations(ctx context.Context) ([]TokenDelegation, error)
-
-	// MintDelegatedLaunchToken consumes the one-time delegation to mint a
-	// NO_ACCESS + canCreateProjects integration token named name. The
-	// returned Token value is shown by the platform exactly once — the
-	// caller owns the P-LP-14 staging discipline (never persisted here).
-	MintDelegatedLaunchToken(ctx context.Context, name string) (MintedToken, error)
-
 	// MintBoxAccess mints a zproxy access to a Zerops Box's workspace API
 	// (POST /service-stack/{id}/ui-access, hand-rolled: not in the SDK) with
 	// this client's own Zerops token. The access token is a bearer to the

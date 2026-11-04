@@ -19,19 +19,18 @@ import (
 // instead of relying on the platform's (nonexistent, for a REST-created
 // service) first-class injection.
 //
-// A 403 with either delegation-unavailable apiCode (current or legacy) maps
-// to ErrDelegationUnavailable: the minting credential must be a personal
-// access token, not an integration token.
+// A 403 saying the minting credential is an integration token maps to
+// ErrTokenCannotMint: only a person's own token mints.
 func (z *ZeropsClient) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (MintedToken, error) {
 	reqBody := projectKeyBody(name, projectID)
 
 	resp, err := z.handler.PostClientIntegrationToken(ctx, path.ClientId{Id: uuid.ClientId(clientID)}, reqBody)
 	if err != nil {
-		return MintedToken{}, translateDelegationUnavailable(fmt.Errorf("mint project scoped token: %w", mapSDKError(err, "client")))
+		return MintedToken{}, translateMintRefused(fmt.Errorf("mint project scoped token: %w", mapSDKError(err, "client")))
 	}
 	out, err := resp.Output()
 	if err != nil {
-		return MintedToken{}, translateDelegationUnavailable(fmt.Errorf("mint project scoped token output: %w", mapSDKError(err, "client")))
+		return MintedToken{}, translateMintRefused(fmt.Errorf("mint project scoped token output: %w", mapSDKError(err, "client")))
 	}
 
 	return MintedToken{

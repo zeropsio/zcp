@@ -15,11 +15,7 @@
 // the token in the dashboard — regeneration preserves settings,
 // invalidates the old value everywhere (including every copy the
 // conversation ever saw), and the user then refreshes the repo secret
-// with the new value in their own terminal. What WAS one-time is the
-// platform delegation that may have minted this token in the first
-// place (plans/archive/token-delegation-implementation-spec-2026-07-10.md) —
-// once spent, minting another token needs a fresh delegation or the
-// manual dashboard path; the token itself has no expiry.
+// with the new value in their own terminal. The token itself has no expiry.
 package tools
 
 import (

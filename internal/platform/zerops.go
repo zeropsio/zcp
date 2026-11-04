@@ -29,16 +29,15 @@ type ZeropsClient struct {
 	handler sdk.Handler
 	// env is an authorized sdkBase.Environment mirroring what the SDK
 	// builds internally (sdk.New + sdk.AuthorizeSdk), kept alongside the
-	// handler for hand-rolled calls the SDK doesn't cover yet (the
-	// delegation list — see zerops_delegation.go). handler.environment is
+	// handler for hand-rolled calls the SDK doesn't cover yet.
+	// handler.environment is
 	// unexported, so this is the only way to reuse the same host
 	// normalization + bearer auth without opening a parallel raw
 	// net/http path.
 	env sdkBase.Environment
 
-	mu            sync.Mutex // guards cachedID/cachedTokenID lazy init with retry on error
-	cachedID      string
-	cachedTokenID string
+	mu       sync.Mutex // guards cachedID lazy init with retry on error
+	cachedID string
 
 	// keyRefused hears Zerops refusing the key (OnKeyRefused).
 	keyRefused keyRefusalHook
@@ -109,7 +108,7 @@ func resolveEndpoint(apiHost string) string {
 
 // BindOrg makes clientID — the org owning the project this client works
 // on — the org every clientId-filtered call targets (service, env,
-// process and appVersion searches, delegations). auth.Resolve binds it
+// process and appVersion searches). auth.Resolve binds it
 // from the resolved project, so every entry point targets the project's
 // org without a step of its own.
 func (z *ZeropsClient) BindOrg(clientID string) {
@@ -158,30 +157,6 @@ func (z *ZeropsClient) OrgID(ctx context.Context) (string, error) {
 	return orgID, nil
 }
 
-// getTokenID returns the cached own-token id, fetching it once on the first
-// cold-cache call. Sibling of OrgID — same mutex/retry-on-error
-// pattern, same "never hold the lock across I/O" discipline (CLAUDE.md).
-// F1: for an integration token, /user/info's id IS the {tokenId} used in
-// delegation paths.
-func (z *ZeropsClient) getTokenID(ctx context.Context) (string, error) {
-	z.mu.Lock()
-	cached := z.cachedTokenID
-	z.mu.Unlock()
-	if cached != "" {
-		return cached, nil
-	}
-
-	info, err := z.GetUserInfo(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	z.mu.Lock()
-	z.cachedTokenID = info.UserID
-	z.mu.Unlock()
-	return info.UserID, nil
-}
-
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
@@ -206,7 +181,6 @@ func (z *ZeropsClient) GetUserInfo(ctx context.Context) (*UserInfo, error) {
 
 	return &UserInfo{
 		Memberships: memberships,
-		UserID:      out.Id.TypedString().String(),
 		Email:       out.Email.Native(),
 		FullName:    out.FullName.String(),
 	}, nil

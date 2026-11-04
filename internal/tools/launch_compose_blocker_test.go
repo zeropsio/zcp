@@ -53,7 +53,7 @@ func TestReadyToLaunch_ComposeRefusal_BlocksBeforeTheKeyIsAsked(t *testing.T) {
 	stateDir := t.TempDir()
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client, ssh := boxReadingSource()
-	input := pLP3CompleteInput() // no launchKey, no confirmLaunch: the manual-key path's ask
+	input := pLP3CompleteInput() // no launchKey: the launch-key ask
 	input.Region = "us-east-1"
 
 	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, nil,
@@ -83,7 +83,7 @@ func TestReadyToLaunch_ComposeRefusal_BlocksBeforeTheKeyIsAsked(t *testing.T) {
 			t.Errorf("blocker message does not say %s: %q", want, blocker.Message)
 		}
 	}
-	assertNoKeyAsked(t, client, text, resp)
+	assertNoKeyAsked(t, text)
 	if _, err := readLaunchState(stateDir, generateLaunchID("source-project-id", input.ProductionProjectName)); !errors.Is(err, ErrLaunchStateMissing) {
 		t.Errorf("a blocked launch must write no ready-to-launch baseline; readLaunchState err = %v", err)
 	}
@@ -140,48 +140,14 @@ func TestReadyToLaunch_ClosureGap_WarnsAndLeavesTheExistingProjectPath(t *testin
 			t.Errorf("guidance does not point at the existing-project path (%s):\n%s", want, resp.Guidance)
 		}
 	}
-	assertNoKeyAsked(t, client, text, resp)
+	assertNoKeyAsked(t, text)
 }
 
 // assertNoKeyAsked fails when a launch-production response asks the person
-// for a new project's launch key or offers a delegated launch.
-func assertNoKeyAsked(t *testing.T, client *platform.Mock, text string, resp launchProductionResponse) {
+// for a new project's launch key.
+func assertNoKeyAsked(t *testing.T, text string) {
 	t.Helper()
-	if strings.Contains(text, "launchKey") || resp.DelegatedLaunch != nil {
-		t.Errorf("the response asks for a new project's key or offers a delegation:\n%s", text)
-	}
-	if got := client.CallCounts["ListOwnTokenDelegations"]; got != 0 {
-		t.Errorf("ListOwnTokenDelegations called %d times; no new-project token path may be offered", got)
-	}
-}
-
-// The delegated path is a new-project launch, which the bundle's gap refuses
-// for certain: it is refused before a token is minted, so the one-time
-// delegation is never spent on it (P-LP-15 D-3).
-func TestExecuteLaunchMutation_Delegated_ComposeRefusal_SkipsMint(t *testing.T) {
-	stateDir := withTempState(t)
-	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
-	client, ssh := mailpitReadingSource()
-	client.WithTokenDelegations(usableDelegation()).
-		WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"})
-	mockAdmin := happyMockAdmin()
-	defer installMockAdminFactory(t, mockAdmin)()
-
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, nil,
-		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), ssh, "")
-	if err != nil {
-		t.Fatalf("handleLaunchProduction: %v", err)
-	}
-	text := extractText(result)
-	if got := client.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
-		t.Errorf("mint ran %d times; a bundle that does not compose must refuse before it", got)
-	}
-	if mockAdmin.CapturedImportYAML != "" {
-		t.Error("CreateAndImportProject ran for a bundle that does not compose")
-	}
-	for _, want := range []string{"bundle-compose-failed", "run.envVariables.MAIL_URL", `\"mailpit\"`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("refusal does not say %s:\n%s", want, text)
-		}
+	if strings.Contains(text, "launchKey") {
+		t.Errorf("the response asks for a new project's key:\n%s", text)
 	}
 }

@@ -70,9 +70,9 @@ type PlatformClient interface {
 	ImportServiceStack(ctx context.Context, projectID, yaml string) (*platform.ImportResult, error)
 	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 	DeleteProject(ctx context.Context, projectID string) (*platform.Process, error)
-	// MintDelegatedLaunchToken mints the run's launch token in clientID —
+	// MintLaunchKey mints the run's launch key in clientID —
 	// the org RevokeIntegrationToken later revokes it in (§3.4 FM-23).
-	MintDelegatedLaunchToken(ctx context.Context, clientID, name string) (platform.MintedToken, error)
+	MintLaunchKey(ctx context.Context, clientID, name string) (platform.MintedToken, error)
 	// MintProjectScopedToken mints the run's own project-scoped ZCP_API_KEY
 	// (§2.1 step 2, platform.MintProjectScopedToken) — a REST-created
 	// zcp@1 service gets no first-class injected key the way the GUI's
@@ -89,7 +89,7 @@ type PlatformClient interface {
 
 // accountClient adapts platform.ProjectAdminClient (CreateAndImportProject/
 // GetProject/DeleteProject) and *platform.ZeropsClient (ListProjects/
-// ImportServices/MintDelegatedLaunchToken/MintProjectScopedToken/
+// ImportServices/MintLaunchKey/MintProjectScopedToken/
 // RevokeIntegrationToken) — both constructed from the same account-wide
 // token — to PlatformClient.
 type accountClient struct {
@@ -117,8 +117,8 @@ func (a *accountClient) DeleteProject(ctx context.Context, projectID string) (*p
 	return a.admin.DeleteProject(ctx, projectID)
 }
 
-func (a *accountClient) MintDelegatedLaunchToken(ctx context.Context, clientID, name string) (platform.MintedToken, error) {
-	return a.z.MintDelegatedLaunchTokenIn(ctx, clientID, name)
+func (a *accountClient) MintLaunchKey(ctx context.Context, clientID, name string) (platform.MintedToken, error) {
+	return a.z.MintLaunchKey(ctx, clientID, name)
 }
 
 func (a *accountClient) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
@@ -406,7 +406,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 
 	var launchTokenID, launchKeyValue string
 	if r.Launch {
-		minted, err := client.MintDelegatedLaunchToken(ctx, opts.ClientID, "farm-"+r.RunID)
+		minted, err := client.MintLaunchKey(ctx, opts.ClientID, "farm-"+r.RunID)
 		if err != nil {
 			// No project was created for this run — §5.1: "a run whose
 			// project was never created is not reported at all" (in the
@@ -933,14 +933,12 @@ func recordBlocked(runID, scenario, productionName string, err error) RunResult 
 
 // isScopedMintForbidden reports whether err is the typed platform error
 // MintProjectScopedToken returns when the minting credential is an
-// integration token without delegation (platform.ErrDelegationUnavailable —
-// the same code MintDelegatedLaunchToken uses for the identical platform
-// restriction). Brief: "on a 403 with either code the controller ... exits
+// integration token (platform.ErrTokenCannotMint). Brief: "on a 403 with either code the controller ... exits
 // nonzero BEFORE creating any project" — the cmd/zcp layer turns this into
 // the one-line fix message.
 func isScopedMintForbidden(err error) bool {
 	var pe *platform.PlatformError
-	return errors.As(err, &pe) && pe.Code == platform.ErrDelegationUnavailable
+	return errors.As(err, &pe) && pe.Code == platform.ErrTokenCannotMint
 }
 
 // findProjectByName looks up a project by exact name in the account's live

@@ -7,18 +7,17 @@ import (
 )
 
 // TestWorkflowInputSchema_FlexBoolPublished pins B4: the zerops_workflow
-// InputSchema must publish force/skipPipelineSetup/confirmLaunch as
+// InputSchema must publish force/skipPipelineSetup as
 // oneOf[boolean,string] (not the inferred type:boolean), so an agent
 // sending force="true" is not rejected at the schema layer before
-// FlexBool's UnmarshalJSON runs. confirmLaunch joins this pin per the
-// token-delegation spec §4.1 (plans/archive/token-delegation-implementation-spec-2026-07-10.md).
+// FlexBool's UnmarshalJSON runs.
 func TestWorkflowInputSchema_FlexBoolPublished(t *testing.T) {
 	t.Parallel()
 	s := workflowInputSchema()
 	if s == nil {
 		t.Fatal("workflowInputSchema returned nil — jsonschema.For[WorkflowInput] failed")
 	}
-	for _, key := range []string{"force", "skipPipelineSetup", "confirmLaunch"} {
+	for _, key := range []string{"force", "skipPipelineSetup"} {
 		prop, ok := s.Properties[key]
 		if !ok || prop == nil {
 			t.Fatalf("property %q missing from schema", key)

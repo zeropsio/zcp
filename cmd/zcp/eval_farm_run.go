@@ -266,16 +266,15 @@ func parseFarmRunFlags(args []string) (farmRunFlags, error) {
 }
 
 // isIntegrationTokenMintForbidden reports whether err's chain carries
-// platform.ErrDelegationUnavailable — the typed code
+// platform.ErrTokenCannotMint — the typed code
 // platform.MintProjectScopedToken returns when ZCP_FARM_ACCOUNT_TOKEN is
-// itself an integration token without delegation (either the current or
-// the legacy apiCode; docs/spec-eval-farm.md §2.4 FM-15). RunBatch aborts
+// itself an integration token (either the current or the legacy apiCode; docs/spec-eval-farm.md §2.4 FM-15). RunBatch aborts
 // the whole batch on this error (rolling back the one shell project it
 // created), so the preflight message here is the caller's one line naming
 // the fix.
 func isIntegrationTokenMintForbidden(err error) bool {
 	var pe *platform.PlatformError
-	return errors.As(err, &pe) && pe.Code == platform.ErrDelegationUnavailable
+	return errors.As(err, &pe) && pe.Code == platform.ErrTokenCannotMint
 }
 
 // resolveOAuthToken reads the run's sole model-request credential. The

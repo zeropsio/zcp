@@ -154,13 +154,10 @@ func deleteOrphanProjectConfirmed(ctx context.Context, client platform.Client, l
 // the source push service (single-token lifecycle T2) — AND the failed
 // launch recorded a TargetProjectID, reset ALSO deletes that orphan
 // production project via the token (which stays valid until the user
-// revokes it, regardless of whether it was hand-generated or delegated-
-// minted — a token itself never expires; only the one-time platform
-// delegation that may have minted it is spent on use). Without a
-// resolvable token, reset stays state-file-only and the billable orphan
-// is left for manual dashboard deletion. There is NO re-mint logic in
-// reset: a consumed delegation has nothing left to grant, so orphan
-// cleanup here only ever resolves an ALREADY-acquired token.
+// revokes it — a token itself never expires). Without a resolvable
+// token, reset stays state-file-only and the billable orphan is left for
+// manual dashboard deletion. Reset mints nothing: orphan cleanup only
+// ever resolves an ALREADY-acquired token.
 //
 // Parameters:
 //   - ctx: for the cross-project DeleteProject call (orphan cleanup path).
@@ -269,9 +266,9 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	// rule (launch_confirm.go): a failed delete leaves the window
 	// honestly trackable (state preserved, completion refused) rather
 	// than silently orphaning the secret. Runs regardless of whether a
-	// target project was ever created — a no-target reset (e.g. a
-	// delegated mint that staged successfully but CreateAndImportProject
-	// never ran or failed) must not leave the staged secret behind
+	// target project was ever created — a no-target reset (a launch that
+	// staged successfully but CreateAndImportProject never ran or failed)
+	// must not leave the staged secret behind
 	// either; the pre-fix code only resolved/deleted staged credentials
 	// on the orphan-delete path.
 	var stagedSecretDeleted bool

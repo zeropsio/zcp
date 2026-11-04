@@ -50,39 +50,6 @@ func TestSelectForAll_NoExclusions_PassesAllThrough(t *testing.T) {
 	}
 }
 
-// TestSelectForAll_RealScenarios_ExcludesLaunchDelegated is the wiring
-// proof against the ACTUAL scenario directory: launch-production-delegated
-// consumes a live one-time platform delegation on a real run, so it must
-// never be selectable by `behavioral all` — loadBehavioralScenarios must
-// still find it (list / direct-run stay unaffected), but selectForAll must
-// drop it.
-func TestSelectForAll_RealScenarios_ExcludesLaunchDelegated(t *testing.T) {
-	t.Parallel()
-	scenarios, err := loadBehavioralScenarios("../../eval/behavioral/scenarios")
-	if err != nil {
-		t.Fatalf("loadBehavioralScenarios: %v", err)
-	}
-	foundLoaded := false
-	for _, sc := range scenarios {
-		if sc.ID == "launch-production-delegated" {
-			foundLoaded = true
-			if !sc.ExcludeFromAll {
-				t.Fatalf("launch-production-delegated: ExcludeFromAll = false, want true")
-			}
-		}
-	}
-	if !foundLoaded {
-		t.Fatal("launch-production-delegated not found by loadBehavioralScenarios — list/direct-run would break too")
-	}
-
-	selected := selectForAll(scenarios)
-	for _, sc := range selected {
-		if sc.ID == "launch-production-delegated" {
-			t.Fatal("launch-production-delegated must be excluded from selectForAll, but it was selected")
-		}
-	}
-}
-
 // TestExecutionBinding_ParseFlags_AllOrNothing pins
 // docs/spec-testing-architecture.md §10.4 "Binding": the four core binding
 // flags are all-or-nothing, `behavioral all` refuses any binding flag, and

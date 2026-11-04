@@ -13,7 +13,7 @@ import (
 // (SDK DeleteClientIntegrationToken), docs/spec-eval-farm.md §3.4 FM-23. The
 // farm controller calls this once a launch scenario's run and prod projects
 // are both deleted, storing only the token id returned by
-// MintDelegatedLaunchToken — the token value itself never crosses this call.
+// MintLaunchKey — the token value itself never crosses this call.
 func (z *ZeropsClient) RevokeIntegrationToken(ctx context.Context, clientID, tokenID string) error {
 	pathParam := path.IntegrationTokenId{
 		Id:      uuid.ClientId(clientID),

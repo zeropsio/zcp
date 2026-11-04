@@ -319,7 +319,7 @@ func executeExistingProjectMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
-			launchTokenStageFailedMessage(stageErr, stageHost, ""))
+			launchTokenStageFailedMessage(stageErr, stageHost))
 	}
 
 	// Pre-mutation state persistence — same shape as new-project path

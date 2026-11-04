@@ -613,8 +613,8 @@ creating that run's project, injects it as a sensitive env (§2.2), and
 revokes it after that run's projects (the run project and its
 explicitly recorded production target) are deleted. A launch token is never reused
 across runs and never survives past its run's project deletion. Mint is
-`POST /client/{clientId}/integration-token` (the body `MintDelegatedLaunchToken`
-already sends); revoke is `DELETE /client/{clientId}/integration-token/{tokenId}`
+`POST /client/{clientId}/integration-token` (the body `MintLaunchKey`
+sends); revoke is `DELETE /client/{clientId}/integration-token/{tokenId}`
 (SDK `DeleteClientIntegrationToken`), after which the token answers 401 within
 seconds (verified live). The controller stores the token id, never the token,
 for the revoke step.

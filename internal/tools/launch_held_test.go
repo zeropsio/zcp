@@ -75,52 +75,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 			"may have created", "", topology.LaunchStatusLaunching, false},
 		{"its create sent, only a project of the name not its own", false, true, true,
 			[]platform.Project{unmarked}, "someone-elses-id", "", topology.LaunchStatusLaunching, false},
-		{"its call ended, nothing staged", false, false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
 	}
-	// The pre-mint state names no stage service: a call that ended with it on disk ended
-	// before the full state write, so before the create — it launches again, with the token
-	// a prior attempt staged, minting nothing.
-	t.Run("its call ended before the full state write", func(t *testing.T) {
-		stateDir := withTempState(t)
-		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
-		sourceClient := pLP3MockClient()
-		svc, err := ops.LookupService(context.Background(), sourceClient, "source-project-id", "app")
-		if err != nil {
-			t.Fatalf("lookup app service: %v", err)
-		}
-		if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
-			t.Fatalf("pre-stage token: %v", err)
-		}
-		if err := writeLaunchState(stateDir, &launchState{
-			LaunchID:          launchID,
-			SourceProjectID:   "source-project-id",
-			TargetProjectName: "myapp-prod",
-			Status:            topology.LaunchStatusLaunching,
-			TokenAcquisition:  "delegated",
-			MintedTokenName:   "zcp-launch-myapp-prod",
-		}); err != nil {
-			t.Fatalf("seed state: %v", err)
-		}
-		mockAdmin := happyMockAdmin().WithProjects([]platform.Project{{ID: "unrelated-id", Name: "other"}})
-		defer setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
-			return keptOpen{mockAdmin}, nil
-		})()
-
-		if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
-			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
-			t.Fatalf("handleLaunchProduction: %v", err)
-		}
-		state, err := readLaunchState(stateDir, launchID)
-		if err != nil {
-			t.Fatalf("read state: %v", err)
-		}
-		if state.Status != topology.LaunchStatusLaunched || state.TargetProjectID != "new-prod-id" {
-			t.Errorf("state = %s / %q, want launched / new-prod-id", state.Status, state.TargetProjectID)
-		}
-		if got := sourceClient.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
-			t.Errorf("minted %d launch tokens, want none", got)
-		}
-	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := withTempState(t)
@@ -141,8 +96,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 				TargetProjectName:     "myapp-prod",
 				TargetServiceHostname: "app",
 				Status:                topology.LaunchStatusLaunching,
-				TokenAcquisition:      "delegated",
-				MintedTokenName:       "zcp-launch-myapp-prod",
 				CreateSent:            tt.createSent,
 			}
 			if err := writeLaunchState(stateDir, seed); err != nil {
@@ -162,7 +115,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 			})()
 
 			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
-				delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+				launchKeyPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 			if err != nil {
 				t.Fatalf("handleLaunchProduction: %v", err)
 			}
@@ -179,9 +132,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 			}
 			if state.TargetProjectID != tt.wantTarget || state.Status != tt.wantStatus {
 				t.Errorf("state = %s / %q, want %s / %q", state.Status, state.TargetProjectID, tt.wantStatus, tt.wantTarget)
-			}
-			if got := sourceClient.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
-				t.Errorf("minted %d launch tokens, want none", got)
 			}
 		})
 	}
@@ -211,9 +161,7 @@ func TestExecuteLaunchMutation_RecordsTheProjectBeforeAnythingElse(t *testing.T)
 		}
 	}
 	defer installMockAdminFactory(t, mockAdmin)()
-	input := delegatedPublishInput()
-	input.ConfirmLaunch = false
-	input.LaunchKey = sentinelMintedToken
+	input := launchKeyPublishInput()
 
 	if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
@@ -261,9 +209,7 @@ func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T)
 			restore := setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 				return keptOpen{failing}, nil
 			})
-			input := delegatedPublishInput()
-			input.ConfirmLaunch = false
-			input.LaunchKey = sentinelMintedToken
+			input := launchKeyPublishInput()
 
 			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 				input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
@@ -327,9 +273,7 @@ func TestExecuteLaunchMutation_CreateNotSentUnrecorded(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(launchProdDir, 0o755) })
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
-	input := delegatedPublishInput()
-	input.ConfirmLaunch = false
-	input.LaunchKey = sentinelMintedToken
+	input := launchKeyPublishInput()
 
 	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", pLP3MockClient(), nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")

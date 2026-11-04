@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -29,23 +28,17 @@ import (
 // narrowing via per-request WorkflowInput fields:
 //   - ProductionProjectName / Region / KeepNonHA — scope
 //   - EnvClassifications — classify-prompt outputs
-//   - ConfirmLaunch — delegated-mint publish trigger (mutation pipeline,
-//     token-delegation-implementation-spec-2026-07-10.md §4): on the
-//     user's explicit confirmation, ZCP mints the launch-window token
-//     itself from a one-time platform delegation — no value crosses
-//     the conversation. This is the PRIMARY acquisition path.
-//   - LaunchKey — explicit launch-window token with project-creation
-//     permission (mutation pipeline, Phase D.2). Takes precedence over
-//     ConfirmLaunch when supplied, and is the FALLBACK when no
-//     delegation is available.
+//   - LaunchKey — the launch-window token with project-creation
+//     permission (mutation pipeline, Phase D.2), the one way a new
+//     production project is published.
 //
 // Top-level statuses (read-side narrowing → mutation pipeline):
 //
 //	scope-prompt              → ProductionProjectName / region / scope missing
 //	source-control-required   → scope complete; a promoted runtime fails the git gate
 //	classify-prompt           → source envs present, classifications incomplete
-//	ready-to-launch           → scope + classifications complete, awaiting token acquisition (delegatedLaunch.available advertises the delegated path; LaunchKey is the fallback)
-//	launching                 → token acquired (delegated mint or LaunchKey); mutation pipeline in flight
+//	ready-to-launch           → scope + classifications complete, awaiting the launchKey
+//	launching                 → LaunchKey supplied; mutation pipeline in flight
 //	configuring-pipeline      → transient; per-runtime integration-status read
 //	failed                    → mutation step failed (blockers[] describe recovery)
 //	launched                  → terminal success; the app arrives with the first release
@@ -330,9 +323,8 @@ func handleLaunchProduction(
 	//      Its handle is read first — the project by its name
 	//      (readEndedLaunch).
 	//
-	//   2. failed + TargetProjectID=="" — safe to retry (delegated:
-	//      confirmLaunch reuses the staged token when staging was
-	//      reached; manual: a fresh user-supplied launchKey). No prod
+	//   2. failed + TargetProjectID=="" — safe to retry with a
+	//      user-supplied launchKey. No prod
 	//      project exists; re-enter mutation phase after wiping the
 	//      failed state-file entry by ALLOWING fall-through to the
 	//      normal mutation gate. Stale-token protection: handled by ZP
@@ -478,13 +470,11 @@ func handleLaunchProduction(
 	}
 
 	// hasAnyExistingInput accepts a partial pair (one of the two fields
-	// set) so the incomplete-pair refusal below can fire BEFORE any
-	// delegation call — a confirmLaunch=true request carrying only one
-	// existing-project field would otherwise silently fall through to
-	// new-project delegated creation (token-delegation spec §4.2).
+	// set) so the incomplete-pair refusal below fires before a lone
+	// existing-project field silently falls through to the new-project path.
 	hasAnyExistingInput := input.ExistingProjectID != "" || input.ExistingProdToken != ""
 	hasExistingPair := input.ExistingProjectID != "" && input.ExistingProdToken != ""
-	publishing := input.LaunchKey != "" || input.ConfirmLaunch.Bool() || hasExistingPair
+	publishing := input.LaunchKey != "" || hasExistingPair
 
 	// Reject an incomplete existing-project pair: both fields are
 	// required together, so a lone existingProjectId or existingProdToken
@@ -494,19 +484,19 @@ func handleLaunchProduction(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Incomplete existing-project credentials: existingProjectId and existingProdToken must both be supplied together",
-			"Pass BOTH existingProjectId and existingProdToken to target an existing production project, or omit both to use the new-project path (launchKey or confirmLaunch).",
+			"Pass BOTH existingProjectId and existingProdToken to target an existing production project, or omit both to use the new-project path (launchKey).",
 		), WithRecoveryStatus()), nil, nil
 	}
 
 	// Reject ambiguous publish input: caller MUST pick one mutation
-	// path (new-project via LaunchKey/ConfirmLaunch, or existing-project
+	// path (new-project via LaunchKey, or existing-project
 	// via ExistingProjectID+ExistingProdToken). Both supplied means the
 	// agent is misclassifying the user's intent — fail closed.
-	if (input.LaunchKey != "" || input.ConfirmLaunch.Bool()) && hasAnyExistingInput {
+	if input.LaunchKey != "" && hasAnyExistingInput {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			"Mutually exclusive credentials: launchKey/confirmLaunch (new-project path) AND existingProjectId+existingProdToken (existing-project path) cannot both be supplied",
-			"Pick one path: either launchKey/confirmLaunch for a fresh production project, or existingProjectId+existingProdToken to import services into a pre-existing project.",
+			"Mutually exclusive credentials: launchKey (new-project path) AND existingProjectId+existingProdToken (existing-project path) cannot both be supplied",
+			"Pick one path: either launchKey for a fresh production project, or existingProjectId+existingProdToken to import services into a pre-existing project.",
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -527,7 +517,7 @@ func handleLaunchProduction(
 		// existingProdToken, which publish straight away — so a read of a
 		// service the bundle does not carry refuses a new project for
 		// certain but not an existing project that runs it: warnings, the
-		// existing-project path, and no new-project key or delegation.
+		// existing-project path, and no new-project key.
 		var closure *bundle.LaunchClosureError
 		if errors.As(readyComposeErr, &closure) {
 			return launchClosureGapResponse(input, sourceContext, closure), nil, nil
@@ -572,25 +562,9 @@ func handleLaunchProduction(
 				SetupName:    r.SetupName,
 			})
 		}
-		payload := buildLaunchReadyToLaunchPayload(corpus, input, sourceEnvs, sourceContext,
+		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext,
 			runReadinessRubric(readyBundle, readyBundleInputs, readinessEvidenceInput{StateDir: stateDir, Sources: evidenceSources}),
-			launchBundlePreviewFrom(readyBundle, readyBundleInputs))
-
-		// Delegated-launch availability (token-delegation spec §4.3): a
-		// fresh platform read at decision time (D-1), new-project
-		// ready-to-launch only. A list-read error fails OPEN to the
-		// manual path (D-6) — never surfaces as a launch blocker, stderr
-		// log only.
-		delegations, delegationListErr := client.ListOwnTokenDelegations(ctx)
-		if delegationListErr != nil {
-			fmt.Fprintf(os.Stderr, "zcp: list own token delegations: %v\n", delegationListErr)
-		}
-		available := delegationListErr == nil && delegationsUsable(delegations)
-		payload.DelegatedLaunch = &delegatedLaunchAvailability{Available: available}
-		if available {
-			payload.Guidance = delegatedLaunchGuidance
-		}
-		return jsonResult(payload), nil, nil
+			launchBundlePreviewFrom(readyBundle, readyBundleInputs)), nil, nil
 	}
 
 	// Existing-project mutation path takes priority — the user has
@@ -599,8 +573,7 @@ func handleLaunchProduction(
 		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost), nil, nil
 	}
 
-	// Mutation pipeline (new-project path) — LaunchKey or ConfirmLaunch
-	// supplied, no existing target, baseline matches current.
+	// Mutation pipeline (new-project path) — LaunchKey supplied, no existing target, baseline matches current.
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 }
 
@@ -841,29 +814,14 @@ func executeLaunchMutation(
 	launchID string,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	// Admin-client construction per D-3/D-5: the explicit-launchKey path
-	// constructs it here at the function head, UNCHANGED — the value is
-	// already the user's consented credential, so there is nothing to
-	// protect by deferring. The delegated path (ConfirmLaunch, no
-	// LaunchKey) defers construction until AFTER every refusal gate
-	// below (see the block immediately before stageLaunchToken): a
-	// successful mint burns the one-time delegation even if the flow
-	// fails later, so mundane refusals (missing zerops.yaml, source
-	// drift, schema errors) must never cost the user their delegation
-	// (token-delegation spec D-3). admin is provably unused between head
-	// construction and CreateAndImportProject on the explicit-key path
-	// (only defer admin.Close() sits in between), so this asymmetry is
-	// safe.
-	var admin platform.ProjectAdminClient
-	if input.LaunchKey != "" {
-		var adminErr error
-		admin, adminErr = newLaunchAdmin(ctx, client, nil, input.LaunchKey, apiHost)
-		if adminErr != nil {
-			// Don't leak the key value in the error — wrap via the typed error.
-			return launchFailedAuthResponse(corpus, adminErr), nil, nil
-		}
-		defer admin.Close()
+	// The launch admin client is built from the user's launchKey first:
+	// a key Zerops refuses ends the call before anything is read or written.
+	admin, adminErr := newLaunchAdmin(ctx, client, nil, input.LaunchKey, apiHost)
+	if adminErr != nil {
+		// Don't leak the key value in the error — wrap via the typed error.
+		return launchFailedAuthResponse(corpus, adminErr), nil, nil
 	}
+	defer admin.Close()
 
 	// Source-state validation + read. Returns a blocker response when
 	// any check fails (target service missing, zerops.yaml missing,
@@ -879,10 +837,6 @@ func executeLaunchMutation(
 	_ = source // kept for the legacy single-runtime readAndValidate flow's auditFail side-effects; per-runtime sources are read inside composeLaunchBundleInputs.
 
 	resolved := resolveLaunchRuntimes(stateDir, input)
-	// primaryRuntime is resolved here (not at its historical position
-	// just before staging) because the delegated-path token-acquisition
-	// block, positioned immediately before staging, needs it to probe
-	// for an already-staged token from a prior attempt (§4.5 retry).
 	primaryRuntime := firstResolvedRuntime(resolved)
 
 	// Publish-side source-control gate (P-LP-10 hard re-check). Shared
@@ -955,94 +909,18 @@ func executeLaunchMutation(
 			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors)), nil, nil
 	}
 
-	// Delegated-path token acquisition (token-delegation spec §4.4): runs
-	// ONLY when no explicit launchKey was supplied — D-5 keeps the
-	// explicit-launchKey path (admin already constructed at the function
-	// head) at zero delegation API calls. Positioned immediately before
-	// staging, AFTER every refusal gate above (D-3): a successful mint
-	// burns the one-time delegation even on a later failure, so it must
-	// be the LAST thing that can still legitimately refuse the launch.
-	launchToken := input.LaunchKey
-	mintedName := ""
-	if launchToken == "" {
-		resolvedToken, resolvedMintedName, delegatedResp := resolveDelegatedLaunchToken(
-			ctx, client, sourceProjectID, corpus, input, stateDir, launchID, primaryRuntime,
-			sourceEnvs, launchBundle, bundleInputs, resolved, rt,
-		)
-		if delegatedResp != nil {
-			return delegatedResp, nil, nil
-		}
-		launchToken = resolvedToken
-		mintedName = resolvedMintedName
-
-		var adminErr error
-		admin, adminErr = newLaunchAdmin(ctx, client, nil, launchToken, apiHost)
-		if adminErr != nil {
-			if mintedName == "" {
-				// Staged-retry path: launchToken came from a PRIOR
-				// attempt's already-staged secret (the staged-token-first
-				// branch of resolveDelegatedLaunchToken), not a mint THIS
-				// call performed — nothing was consumed here, so the D-7
-				// consumed-delegation narrative (which names a just-minted
-				// token) would misrepresent what happened. Likely cause:
-				// the staged token was revoked or regenerated in the
-				// dashboard since the prior attempt staged it. No state
-				// write needed — the existing state (failed / stale
-				// launching, both already retry-eligible per the resume
-				// gate) is untouched by this call.
-				_ = appendAuditLog(stateDir, launchAuditEntry{
-					LaunchID:          launchID,
-					Action:            "publish-rejected",
-					SourceProjectID:   sourceProjectID,
-					TargetProjectName: input.ProductionProjectName,
-					Result:            "failure",
-					ErrorMessage:      "staged launch token rejected constructing launch-window client",
-				})
-				return launchFailedResponse(corpus, topology.BlockerCategoryAuth, "staged-token-rejected",
-					fmt.Sprintf(
-						"The staged launch token from a prior attempt was rejected while constructing the launch-window client: %v. "+
-							"It was likely revoked or regenerated in the Zerops dashboard since it was staged. "+
-							"If a token named %q still exists there, regenerate it and re-call this workflow with launchKey=<the regenerated value>; "+
-							"or run action=\"reset\" workflow=\"launch-production\" to clear the stale staged secret and start over.",
-						adminErr, delegatedTokenName(input.ProductionProjectName)),
-				), nil, nil
-			}
-			// Minted path: the platform accepted the mint but the admin
-			// client rejects the value — D-7 consumed-delegation narrative
-			// applies (NOT the generic launchFailedAuthResponse, which
-			// assumes a user-held token the user can just fix).
-			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"delegated admin client construction failed", mintedName, stagedToken{})
-			_ = appendAuditLog(stateDir, launchAuditEntry{
-				LaunchID:          launchID,
-				Action:            "publish-rejected",
-				SourceProjectID:   sourceProjectID,
-				TargetProjectName: input.ProductionProjectName,
-				Result:            "failure",
-				ErrorMessage:      "delegated admin client construction failed",
-			})
-			return launchFailedResponse(corpus, topology.BlockerCategoryAuth, "delegation-consumed",
-				delegationConsumedNarrative(mintedName, fmt.Sprintf("constructing the launch-window client from the minted token failed: %v", adminErr))), nil, nil
-		}
-		defer admin.Close()
-	}
-
 	// Stage the launch token as the single working copy BEFORE the
 	// irreversible create (single-token lifecycle T1): every later
 	// launch-window operation reads the staged secret instead of
 	// re-asking for the value, and the prodCD conveyance reads it over
-	// ssh. A staging failure aborts here. On the explicit-key path
-	// (mintedName == "") nothing was created — the same launchKey can be
-	// re-supplied. On the delegated path (mintedName != "") the
-	// delegation was ALREADY consumed by the mint above — the message
-	// carries the D-7 consumed-delegation narrative instead (see
-	// launchTokenStageFailedMessage). The token is staged on the runtime the
+	// ssh. A staging failure aborts here: nothing was created — the same
+	// launchKey can be re-supplied. The token is staged on the runtime the
 	// launch promotes — for a part keyed by its dev pool on zcp's own
 	// service, never the pool or the stage, which run code a lease deploys
 	// (§10 P-LP-17).
 	runtimeHost := launchRuntimeHost(primaryRuntime)
 	stagedOn := launchTokenHost(primaryRuntime, rt)
-	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, launchToken); stageErr != nil {
+	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, input.LaunchKey); stageErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",
@@ -1051,13 +929,9 @@ func executeLaunchMutation(
 			Result:            "failure",
 			ErrorMessage:      "stage launch token: " + stageErr.Error(),
 		})
-		if mintedName != "" {
-			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
-				"staging the delegated token was not confirmed", mintedName, stagedToken{runtime: runtimeHost, on: stagedOn})
-		}
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
-			launchTokenStageFailedMessage(stageErr, stagedOn, mintedName)), nil, nil
+			launchTokenStageFailedMessage(stageErr, stagedOn)), nil, nil
 	}
 
 	// Persist initial state pre-mutation — if CreateAndImport panics or
@@ -1080,8 +954,6 @@ func executeLaunchMutation(
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
-		TokenAcquisition:      stringIf(mintedName != "", tokenAcquisitionDelegated),
-		MintedTokenName:       mintedName,
 		CreateSent:            true,
 		// Persist the prod-side runtime identities (one per promoted
 		// runtime) so the pipeline check matches imported services by
@@ -1576,22 +1448,14 @@ type launchProductionResponse struct {
 	// Carried from launchState.Warnings so the success/resume responses
 	// don't silently drop them.
 	Warnings []string `json:"warnings,omitempty"`
-	// DelegatedLaunch advertises whether the token's platform delegation
-	// (token-delegation spec §4.3) is available to mint a launch token
-	// without asking the user for one. Attached on the new-project
-	// ready-to-launch response only — a fresh ListOwnTokenDelegations
-	// read at decision time (D-1); never persisted, never inferred.
-	DelegatedLaunch *delegatedLaunchAvailability `json:"delegatedLaunch,omitempty"`
 }
 
 // launchInputsEcho echoes the scope inputs the workflow saw on the call,
-// for agent forensics. Excludes LaunchKey unconditionally. ConfirmLaunch
-// is not a secret (see echoInputs) so it echoes alongside the rest.
+// for agent forensics. Excludes LaunchKey unconditionally.
 type launchInputsEcho struct {
 	ProductionProjectName string   `json:"productionProjectName,omitempty"`
 	Region                string   `json:"region,omitempty"`
 	KeepNonHA             []string `json:"keepNonHa,omitempty"`
-	ConfirmLaunch         bool     `json:"confirmLaunch,omitempty"`
 }
 
 // launchClassifyRow is one row of the classify-prompt review table.
@@ -1846,21 +1710,9 @@ func launchSourceControlRequiredResponse(
 // the value comes FROM THE USER, never from the model.
 const credentialUserOwnedAskContract = "This value is user-owned: ask the user (" + credentialAskMechanism + ") and WAIT for their answer — NEVER invent, guess, or reuse a value from another repo."
 
-// launchReadyToLaunchResponse builds the ready-to-launch preview. Phase D.1
-// emits a minimal preview that echoes inputs + classified-env summary +
-// directs the agent to obtain the one-shot launch key. Phase D.2 extended
-// this with the LaunchBundle preview, source-snapshot hashes, and cost
-// estimate. Thin compatibility wrapper over buildLaunchReadyToLaunchPayload
-// (token-delegation spec §4.3) — kept so the 4 existing call sites in
-// launch_ready_consent_test.go stay untouched; handleLaunchProduction's
-// own ready-to-launch branch calls the payload builder directly so it can
-// decorate DelegatedLaunch before marshaling exactly once. Every
-// production call site is gone (moved to buildLaunchReadyToLaunchPayload),
-// so unparam sees "always nil/zero-value" from the surviving test call
-// sites — expected, not a signal to prune the params of a function tests
-// still call with varying args.
-//
-//nolint:unparam // production call sites moved to buildLaunchReadyToLaunchPayload; wrapper is intentionally test-only now
+// launchReadyToLaunchResponse builds the ready-to-launch preview: the
+// echoed inputs, the readiness checks and the LaunchBundle preview, with
+// guidance directing the agent to obtain the one-shot launch key.
 func launchReadyToLaunchResponse(
 	corpus []workflow.KnowledgeAtom,
 	input WorkflowInput,
@@ -1869,30 +1721,13 @@ func launchReadyToLaunchResponse(
 	checks []readinessCheck,
 	preview *launchBundlePreview,
 ) *mcp.CallToolResult {
-	return jsonResult(buildLaunchReadyToLaunchPayload(corpus, input, sourceEnvs, sourceCtx, checks, preview))
-}
-
-// buildLaunchReadyToLaunchPayload constructs the typed ready-to-launch
-// response body. Extracted from launchReadyToLaunchResponse (token-
-// delegation spec §4.3) so handleLaunchProduction can attach the
-// DelegatedLaunch availability block before the single jsonResult
-// marshal — decode-and-rewrite of the already-marshaled TextContent is
-// not an option (there is no typed object left after marshaling).
-func buildLaunchReadyToLaunchPayload(
-	corpus []workflow.KnowledgeAtom,
-	input WorkflowInput,
-	sourceEnvs []platform.ProjectEnvVar,
-	sourceCtx *launchSourceContext,
-	checks []readinessCheck,
-	preview *launchBundlePreview,
-) launchProductionResponse {
 	guidance := atomBody(corpus, "launch-mutation-key-required")
 	if guidance == "" {
 		guidance = "Scope and classifications complete. Have the user generate the launch integration token (Custom access per project + 'Allow creating projects' toggle ON) and re-call with launchKey set to advance to publish — the value is passed ONCE; later launch-window calls read the staged secret."
 	}
 	_ = sourceEnvs // env summary folded into BundlePreview
 
-	return launchProductionResponse{
+	return jsonResult(launchProductionResponse{
 		Workflow:        workflowLaunchProduction,
 		Status:          topology.LaunchStatusReadyToLaunch,
 		Phase:           workflow.PhaseLaunchProductionActive,
@@ -1901,36 +1736,8 @@ func buildLaunchReadyToLaunchPayload(
 		SourceContext:   sourceCtx,
 		ReadinessChecks: checks,
 		BundlePreview:   preview,
-	}
+	})
 }
-
-// delegatedLaunchAvailability advertises whether a fresh platform read
-// found a usable token delegation. Available=true means the agent may
-// advance the delegated path (confirmLaunch=true) instead of asking the
-// user for a launchKey.
-type delegatedLaunchAvailability struct {
-	Available bool `json:"available"`
-}
-
-// delegationsUsable reports whether any delegation in the list grants
-// project-creation — the shape ZCP requests via MintDelegatedLaunchToken.
-// Mirrors the mock's F4 one-shot semantics: an empty list (never
-// granted / already consumed / revoked) is unavailable.
-func delegationsUsable(delegations []platform.TokenDelegation) bool {
-	for _, d := range delegations {
-		if d.CanCreateProjects {
-			return true
-		}
-	}
-	return false
-}
-
-// delegatedLaunchGuidance is the ready-to-launch guidance line when a
-// usable delegation is available — makes the delegated path PRIMARY
-// (token-delegation spec §4.3): on explicit confirmation ZCP mints the
-// launch token itself, no value crosses the conversation. The manual
-// launchKey path is mentioned as the fallback alternative.
-const delegatedLaunchGuidance = "A one-time delegation from the token owner is available — on your explicit confirmation ZCP mints the launch token itself; no token value will cross the conversation. Confirm with the user, then re-call with confirmLaunch=true to publish. (Alternative: supply launchKey from a manually-generated dashboard token.)"
 
 // launchBundlePreview is the compact informed-consent summary attached to
 // ready-to-launch: WHAT will be created when the launchKey is spent.
@@ -2180,7 +1987,7 @@ func bundleComposeBlocker(err error) topology.Blocker {
 // launchClosureGapResponse is ready-to-launch for a bundle whose launched
 // runtime reads a service it does not carry, while the production project
 // is not chosen yet (spec-workflows.md §10.3 P-LP-19). A new project is
-// certain to be refused, so it offers no key, no delegation and no preview
+// certain to be refused, so it offers no key and no preview
 // of one; an existing project that runs each service under that name is
 // not, so each service is a warning — the reads that name it, and that
 // production must run it — and the guidance points at the existing-project
@@ -2213,7 +2020,7 @@ func launchClosureGapResponse(input WorkflowInput, sourceCtx *launchSourceContex
 		Workflow:      workflowLaunchProduction,
 		Status:        topology.LaunchStatusReadyToLaunch,
 		Phase:         workflow.PhaseLaunchProductionActive,
-		Guidance:      "A launched runtime reads a service this launch does not carry — each warning names the runtime, the variable and the service production must run under that name. A new production project would be refused for certain, so do NOT ask the person for a launch token and do NOT confirm a delegated launch. The launch can go ahead into an existing production project that already runs every named service: re-call with existingProjectId and existingProdToken — that path reads the project's services first and refuses before anything is imported if one is missing. Otherwise carry the service (include the managed dependency, launch the runtime that serves it) or stop the setup reading it, then re-call.",
+		Guidance:      "A launched runtime reads a service this launch does not carry — each warning names the runtime, the variable and the service production must run under that name. A new production project would be refused for certain, so do NOT ask the person for a launch token. The launch can go ahead into an existing production project that already runs every named service: re-call with existingProjectId and existingProdToken — that path reads the project's services first and refuses before anything is imported if one is missing. Otherwise carry the service (include the managed dependency, launch the runtime that serves it) or stop the setup reading it, then re-call.",
 		Blockers:      blockers,
 		Inputs:        echoInputs(input),
 		SourceContext: sourceCtx,
@@ -2594,14 +2401,11 @@ func pickPipelineAtomID(state *launchState, family topology.BuildIntegration) st
 }
 
 // echoInputs returns a sanitized snapshot of scope inputs — never
-// includes LaunchKey. ConfirmLaunch is NOT a secret (it carries no
-// credential value, just the user's go-ahead) so it echoes like every
-// other non-secret field.
+// includes LaunchKey.
 func echoInputs(input WorkflowInput) *launchInputsEcho {
 	echo := &launchInputsEcho{
 		ProductionProjectName: input.ProductionProjectName,
 		Region:                input.Region,
-		ConfirmLaunch:         input.ConfirmLaunch.Bool(),
 	}
 	if len(input.KeepNonHA) > 0 {
 		echo.KeepNonHA = append(echo.KeepNonHA, input.KeepNonHA...)

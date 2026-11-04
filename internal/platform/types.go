@@ -15,12 +15,8 @@ const DefaultAPITimeout = 30 * time.Second
 // every org (client) it belongs to. No entry is "the" org — a token can
 // belong to several, and the org a project-scoped call targets is the one
 // owning that project (Project.ClientID), never Memberships[0].
-// UserID is the top-level response id — for an integration token this IS
-// the token's own id (F1: integration tokens are user-shaped), used as
-// {tokenId} in delegation paths.
 type UserInfo struct {
 	Memberships []ClientMembership `json:"memberships,omitempty"`
-	UserID      string             `json:"userId,omitempty"`
 	FullName    string             `json:"fullName"`
 	Email       string             `json:"email"`
 }

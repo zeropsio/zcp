@@ -70,3 +70,45 @@ func TestNoOrgMemberListRead(t *testing.T) {
 		}
 	})
 }
+
+// integrationTokenBodyOwners are the only functions that may build an
+// integration-token mint body (body.ClientIntegrationToken): projectKeyBody,
+// the one shape of every project key zcp mints (organisation NO_ACCESS,
+// BASIC_USER on exactly one project), and MintLaunchKey, the eval farm's
+// stand-in for the token of the person who presses launch, minted with the
+// farm operator's own token and revoked after the run.
+var integrationTokenBodyOwners = map[string]bool{
+	"projectKeyBody": true,
+	"MintLaunchKey":  true,
+}
+
+// TestNoDelegatedLaunchToken: zcp mints no delegated launch token. A new
+// production project is created with the token of the person who presses
+// launch, used for that one call; zcp reads no token delegation and builds an
+// integration-token mint body only where integrationTokenBodyOwners says.
+func TestNoDelegatedLaunchToken(t *testing.T) {
+	t.Parallel()
+	scanProductionGo(t, func(path string, fset *token.FileSet, f *ast.File) {
+		for _, at := range stringLiterals(fset, f, "/delegation") {
+			t.Errorf("%s:%d reads a token delegation; zcp mints no delegated launch token", path, at.Line)
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				sel, ok := lit.Type.(*ast.SelectorExpr)
+				if ok && sel.Sel.Name == "ClientIntegrationToken" && !integrationTokenBodyOwners[fn.Name.Name] {
+					t.Errorf("%s:%d %s builds an integration-token mint body; a project key comes from projectKeyBody (BASIC_USER on one project)",
+						path, fset.Position(lit.Pos()).Line, fn.Name.Name)
+				}
+				return true
+			})
+		}
+	})
+}
