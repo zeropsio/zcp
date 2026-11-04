@@ -44,11 +44,11 @@ func newScopedMintTestServer(t *testing.T, handler func(w http.ResponseWriter, r
 	return z
 }
 
-// TestMintProjectScopedToken_SendsNoAccessWithProjectAdmin pins the exact
-// outbound POST body (brief §"Token mint body"): NO_ACCESS account role,
-// finance flags off, canCreateProjects false, and a single projects entry
-// scoping ADMIN to the given project. Response id+token map onto MintedToken.
-func TestMintProjectScopedToken_SendsNoAccessWithProjectAdmin(t *testing.T) {
+// TestMintProjectScopedToken_SendsNoAccessWithProjectBasicUser pins the exact
+// outbound POST body: NO_ACCESS account role, finance flags off,
+// canCreateProjects false, and a single projects entry scoping BASIC_USER
+// (never ADMIN) to the given project. Response id+token map onto MintedToken.
+func TestMintProjectScopedToken_SendsNoAccessWithProjectBasicUser(t *testing.T) {
 	t.Parallel()
 
 	var rawBody []byte
@@ -114,8 +114,8 @@ func TestMintProjectScopedToken_SendsNoAccessWithProjectAdmin(t *testing.T) {
 	if got := strings.TrimSpace(string(projects[0]["projectId"])); got != `"`+scopedMintTestProjectID+`"` {
 		t.Errorf("projects[0].projectId = %s, want %q", got, scopedMintTestProjectID)
 	}
-	if got := strings.TrimSpace(string(projects[0]["roleCode"])); got != `"ADMIN"` {
-		t.Errorf("projects[0].roleCode = %s, want \"ADMIN\"", got)
+	if got := strings.TrimSpace(string(projects[0]["roleCode"])); got != `"BASIC_USER"` {
+		t.Errorf("projects[0].roleCode = %s, want \"BASIC_USER\"", got)
 	}
 }
 

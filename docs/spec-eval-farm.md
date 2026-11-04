@@ -223,7 +223,7 @@ that only exists after step 1 (live-verified 2026-09-10):
    else exists in the project yet.
 2. `MintProjectScopedToken` (`POST /client/{clientId}/integration-token`,
    SDK `PostClientIntegrationToken`) mints a `NO_ACCESS` account-level token
-   scoped `ADMIN` on exactly the new project id — the run's own
+   scoped `BASIC_USER` (never `ADMIN`) on exactly the new project id — the run's own
    `ZCP_API_KEY` (§2.4). Foreign-project calls with this token 403, project
    creation 403s, service import 200s — verified live. Deleting the project
    deletes the token automatically (a `GET` by id afterward answers
