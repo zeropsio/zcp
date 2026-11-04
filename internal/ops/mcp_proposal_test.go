@@ -113,6 +113,7 @@ func TestProposeMcp_RefusesSecretsAndWhatCannotConnect(t *testing.T) {
 		wantMsg string
 	}{
 		{"no reason", remote(func(in *McpProposalInput) { in.Why = " " }), "needs a reason"},
+		{"a reason that holds a token", remote(func(in *McpProposalInput) { in.Why = "Use " + fakeGitHubToken + " for it" }), "secret"},
 		{"a name no agent's config takes", remote(func(in *McpProposalInput) { in.Name = "my server" }), "letters, digits"},
 		{"Zerops' own name", remote(func(in *McpProposalInput) { in.Name = "Zerops" }), "Zerops' own"},
 		{"an unknown transport", remote(func(in *McpProposalInput) { in.Transport = "ws" }), "transport"},

@@ -134,6 +134,10 @@ func ProposeMcp(projectID, projectName string, newID func() string, in McpPropos
 	if why == "" {
 		return nil, invalid("a proposal needs a reason", "Say in one sentence what it is and why, for the person deciding")
 	}
+	// The card shows the reason and the conversation keeps it: a key never rides along.
+	if err := refuseSecret("the reason", why); err != nil {
+		return nil, err
+	}
 	params, err := mcpParams(in)
 	if err != nil {
 		return nil, err
