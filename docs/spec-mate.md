@@ -1914,14 +1914,15 @@ it when the `chief` of its link's `state` frame changes (§3.11), so org mode fo
 both ways; HQ refuses the overview at once to a project that no usable Chief registration names. No service variable switches it and no
 credential of its own exists.
 
-**No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only, its
-method set pinned name by name, every request through a transport that refuses anything but a GET
-or a search POST before the network. No write-capable client exists in org mode. Every read goes to
-HQ's Chief overview with the project key in the header, and HQ answers it with the allowlist of
-§3.11, without an organization-wide credential, cut to what the Chief's person can reach — projects, services and their
-state, members with their roles — and nothing else: never a variable, a log, a token list, a cost or any other read a Zerops credential
-could make. `platform.OrgReads()` is exactly that set. Every change is the person's: their client
-makes it with their own Zerops token after their click.
+**No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only,
+its method set pinned name by name, every request through a transport that refuses anything but a
+GET or a search POST before the network. No write-capable client exists in org mode. Every read goes
+to HQ's Chief overview with the project key in the header, and HQ answers it with the allowlist of
+§3.11, from its member and override reader (until H1 lands the organization's key is that reader's
+fallback, §3.3), cut to what the Chief's person can reach — projects, services and their state,
+members with their roles — and nothing else: never a variable, a log, a token list, a cost or any
+other read a Zerops credential could make. `platform.OrgReads()` is exactly that set. Every change
+is the person's: their client makes it with their own Zerops token after their click.
 
 **Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `production`,
 `stage`, `other`, `chief`, and the members with their roles), `zerops_org_services` (each project's
@@ -2050,15 +2051,16 @@ credential, a sign-in or a Mate's reach to HQ follows this one and points here. 
 name the tests that hold them; a row whose test is not written yet says so.
 
 The model in one paragraph: Zerops answers who may do what, from a person's own token or from a
-credential bound to one project; HQ holds no credential that spans an organisation and polls no
-organisation. A Mate proves itself to HQ with the Zerops key its project already gave it, on a
-connection it dials out; the connection is the proof, and nothing HQ mints is the Mate's proof. The
-same key lets the Mate's server read whom its project opens for and keep its own access list. A
-person proves themselves to HQ with their own Zerops access token at sign-in and at each renewal;
-HQ reads the person's identity and reach with it and keeps the token nowhere. A person reaches a
-Mate directly, at the Mate's container origin, with a single-use ticket HQ hands to both sides; the
-Mate admits it only against its own list, and the open connection is the person's session there.
-HQ's access frames to a Mate are advisory.
+credential bound to one project; HQ needs no credential that spans an organisation for a sign-in or
+a ticket (until H1 lands it keeps one only as a fallback reader, §3.3). A Mate proves itself to HQ
+with the Zerops key its project already gave it, on a connection it dials out; the connection is the
+proof, and nothing HQ mints is the Mate's proof. The same key lets the Mate's server read whom its
+project opens for and keep its own access list. A person proves themselves to HQ with their own
+Zerops access token at sign-in and at each renewal; HQ reads the person's identity and reach with it
+and keeps the token nowhere. A person reaches a Mate directly, at the Mate's container origin, with
+a single-use ticket HQ hands to both sides; the Mate admits it only against its own list, and the
+open connection is the person's session there. HQ's access frames to a Mate decide only while the
+Mate has no own list to trust (§3.9).
 
 ### 3.1 The environment rule
 
@@ -2086,11 +2088,20 @@ A Mate reads Zerops only with its own project key, for zcp's work and for its ow
 Each credential below is the only one of its kind. None is written to a log, a URL, an error body or
 a span attribute.
 
-- **No organisation-wide credential.** HQ holds no credential that spans an organisation: no
-  organisation key, no delegated token. What HQ knows of who may do what comes from three narrower
-  sources: a present person's reach, read with their own access token at sign-in and at each
-  renewal (§3.7); each linked Mate's access report, computed in its container with its project key
-  (§3.9); each environment's deploy token, reading its own project.
+- **No organisation-wide credential for a sign-in or a ticket.** HQ needs no credential that spans
+  an organisation and holds no delegated token. What decides who may do what comes from three
+  narrower sources: a present person's reach, read with their own access token at sign-in and at
+  each renewal (§3.7); each linked Mate's access list and report, computed in its container with its
+  project key (§3.9); each environment's deploy token, reading its own project.
+- **The organisation's key, until H1 lands** — optional: a Zerops integration token, organisation
+  role `READ_ONLY`, no project grant, no flag, which an `OWNER`'s or `ADMIN`'s client mints and sends
+  as a sign-in's `orgKey` (§3.7); HQ keeps it sealed at rest. HQ uses it only as the fallback of its
+  one member and override reader, which reads a held project's members with its linked Mate's key
+  first (the second Zerops ask, §3.16, removes the need). Those reads feed only HQ's advisory access
+  frames (§3.9) and the Chief overview (§3.11); no sign-in, ticket or Git decision rests on them. It
+  also reads every non-sensitive variable of the organisation in clear, one more reason a project
+  key must be a sensitive variable. It lasts until Zerops refuses it (§3.10) or a later sign-in's
+  `orgKey` replaces a refused one.
 - **The project key, `ZCP_API_KEY`** — Zerops' own integration token on the project's `zcp` service,
   a sensitive service variable (`envIsolation: service`, §10.7). Held by Zerops and the `zcp`
   container; zcp and the Mate's server read it there. Lives as the platform keeps it; a regenerate
@@ -2136,9 +2147,9 @@ a span attribute.
   `POST /api/mate/key-recheck` with the key in its usual header. HQ does not trust the caller; it runs one `/user/info` with that key at once
   through the gate (at most one recheck per key per minute) and on a definite refusal acts as for
   `key-refused`. A `403` does not trigger a recheck; a 403-only refusal waits for the hourly check.
-  The hourly recheck stays as the backstop because HQ holds no credential that lists the
-  organisation's tokens and cannot see the project key's revocation (§3.16), and the natural signal comes only
-  from an honest holder: a leaked key held by someone else, or a compromised Mate, never reports
+  The hourly recheck stays as the backstop because no credential HQ holds lists the
+  organisation's tokens and HQ cannot see the project key's revocation (§3.16), and the natural
+  signal comes only from an honest holder: a leaked key held by someone else, or a compromised Mate, never reports
   itself.
   Disconnecting the Mate in HQ is the immediate way to cut it off. The entry also goes
   when HQ learns the project is gone (§3.10), or when a person disconnects the Mate in
@@ -2162,16 +2173,18 @@ a span attribute.
   access token alone, never the refresh token, goes to HQ: once at sign-in and at each HQ session
   renewal, in a request body over TLS, never a URL or a header.
 - **The HQ session** — HQ's bearer for one person in one organisation, held by the browser, hash
-  stored at HQ. It expires no later than the Zerops access token it was opened or last renewed with.
-  It carries the person's reach, read with that token (§3.7): for every project of the
-  organisation's applications the person's effective role there (`unreachable`, `READ_ONLY`,
-  `BASIC_USER`, `ADMIN` or `OWNER`), their organisation role and `canCreateProjects`. HQ persists
-  the reach with the session, so an HQ redeploy keeps tickets flowing, and replaces it at every
-  renewal. Reaches HQ's person API (the structure, changes, releases, tickets). Its id is
-  stable for its whole life: a renewal extends the same session to a new expiry and never mints a
-  new id, so the id every ticket carried names each Mate connection opened through it. Ends at its
-  expiry, at sign-out, or on a Mate's report that the person is missing (§3.9). Its expiry
-  only stops new tickets; open Mate connections do not end with it (§3.8).
+  stored at HQ. It ends 6 h after the read made at its sign-in or last renewal: HQ is given the
+  token alone, so it bounds the token's life from its own read; the token's own expiry will bound it
+  once the client sends it (follow-up W1/H3). It carries the person's reach, read with that token
+  (§3.7): for every project of the organisation's applications the person's effective role there
+  (`unreachable`, `READ_ONLY`, `BASIC_USER`, `ADMIN` or `OWNER`), their organisation role and
+  `canCreateProjects`. HQ persists the reach with the session, so an HQ redeploy keeps tickets
+  flowing, and replaces it at every renewal. Reaches HQ's person API (the structure, changes,
+  releases, tickets). Its id is stable for its whole life: a renewal extends the same session to a
+  new expiry and never mints a new id, so the id every ticket carried names each Mate connection
+  opened through it. Ends at its expiry, at sign-out, or on a Mate's report that the person is
+  missing (§3.9). Its expiry only stops new tickets; open Mate connections do not end with it
+  (§3.8).
 - **The ticket** — `{ticket, person, HQ session id}`, issued by HQ for one Mate, single use, 60 s and
   never past its HQ session's expiry, sent to the Mate down its link and to the browser only after
   the Mate acknowledged it. The Mate trusts it because HQ sent it over the authenticated link; there
@@ -2181,8 +2194,10 @@ a span attribute.
   frame. It is the person's session on that Mate; one per tab. The Mate tags it with the person, the
   HQ session id and the role its own access list gives the person now.
 - **A person's Git password** — HQ-issued, one application, for a person's own git client (HQ
-  `spec/protocol.md`). It lives as the HQ session it was issued under and ends with it; every fetch
-  and push is decided on that session's reach.
+  `spec/protocol.md`). It ends at the earlier of 12 h after issue and the end the HQ session it was
+  issued under had at that moment; a later renewal of the session does not extend it. HQ ends it
+  sooner with the person's sessions on a Mate's report (§3.9). Every fetch and push is decided on
+  the issuing session's reach.
 - **An environment's deploy token** — `NO_ACCESS` in the organisation, `BASIC_USER` on one stage or
   production project, minted by the attaching person's client and kept by HQ (§10.8). Unchanged.
 - **The organisation's AI keys** reach every Mate of the organisation by design for now (Settings);
@@ -2193,9 +2208,12 @@ a span attribute.
 Every call HQ makes to Zerops goes through one named gate with a rate and concurrency budget:
 Zerops does not answer `429`, it queues, and an unbounded storm turns into "Zerops unavailable" for
 every organisation. Key resolutions for new hashes, background verifications of cached entries,
-reads with an environment's deploy token and the sign-in and renewal reads with a person's token
-all queue there. HQ reads no organisation on a timer: a removal made in Zerops reaches each Mate
-through its own access list (§3.9), and HQ through that Mate's report or the person's next renewal.
+reads with an environment's deploy token, the sign-in and renewal reads with a person's token and
+the member and override reader's reads all queue there. No decision waits on an organisation read:
+a removal made in Zerops reaches each Mate through its own access list (§3.9), and HQ through that
+Mate's report or the person's next renewal. Until H1 lands, while any Mate of an organisation is
+linked, HQ reads the organisation's members and overrides afresh at least every
+`HQ_ORG_VIEW_REFRESH_MS` through the one reader of §3.3, for its advisory access frames.
 
 ### 3.5 A Mate starts and links
 
@@ -2290,11 +2308,11 @@ sequenceDiagram
   participant H as HQ
   participant Z as Zerops
   B->>Z: Zerops sign-in (device login) → access + refresh token, kept in the browser
-  B->>H: POST sign-in {access token, organisation} (body, TLS)
+  B->>H: POST sign-in {access token, organisation, orgKey?} (body, TLS)
   H->>Z: /user/info as the person → id, organisation role, canCreateProjects
   H->>Z: /client-user/{self}/roles, /project/search {clientId, id in HQ's projects}, /project/{id} per reachable one → reach
   Note over H: token dropped; integration-token identities refused
-  H-->>B: HQ session for the organisation the request names, expiring with the token
+  H-->>B: HQ session for the organisation the request names, ending 6 h after the read
   Note over B,H: renewal: the same request with a current access token and the session, same id, reach read again
 ```
 
@@ -2304,17 +2322,25 @@ sequenceDiagram
   applications the person reaches, and each reachable one's overrides — keeps nothing of the token
   (memory only, never logged, dropped after the reads) and issues its own session carrying the reach
   (§3.3). The person's reach comes from these reads, never from the token's own claim and never from
-  an organisation-wide view: HQ holds no credential that could read one (§3.3).
+  the organisation key's view (§3.3).
 - The door refuses an integration token's identity: a token is not a person. HQ tells them apart by
   the synthetic address Zerops gives an integration token in place of a person's e-mail (unverified
   for `/user/info`, §3.16).
 - No organisation needs starting: every person signs in on their own token, whatever anyone else in
   the organisation did. An outage is `503 zerops_unavailable`.
+- Until H1 lands, an `OWNER`'s or `ADMIN`'s sign-in may carry the organisation's key as `orgKey`
+  (§3.3). HQ checks, as the key, that it is of the organisation the request names, `READ_ONLY` with
+  no grant or flag, and that the signing-in person is an `ACTIVE` `OWNER` or `ADMIN` there; any
+  failure is `403 forbidden` `org_key_rejected` and HQ keeps nothing. An `orgKey` sent while HQ's
+  kept key is live is neither kept nor checked: the sign-in succeeds with `orgKeyKept: false` and
+  that client deletes the token it minted. One sent while Zerops refuses the kept key (`401`/`403`)
+  replaces it after the same checks. A sign-in without `orgKey` is admitted whatever Zerops answers
+  the kept key.
 - One request names one organisation; a person in several signs in to each separately.
 - Renewal is silent: the browser renews the HQ session from its current Zerops access token,
   refreshing that with Zerops first when it has expired. Renewal reads the reach again, replaces the
-  session's reach, extends the session it presents to the new token's expiry and keeps its id
-  (§3.3).
+  session's reach, extends the session it presents to 6 h after this read, forgets the Mates'
+  refusals recorded on it (§3.8) and keeps its id (§3.3).
 - Sign-out ends the HQ session and every Mate connection carrying its session id, those opened
   before any renewal included (§3.9).
 
@@ -2326,7 +2352,7 @@ sequenceDiagram
   participant H as HQ (leader)
   participant M as Mate server
   B->>H: ticket for project P (HQ session)
-  H->>H: person's reach on P from the HQ session (open?)
+  H->>H: person's reach on P from the HQ session (open? refused before? known?)
   H->>M: ticket {T, person, HQ session id} (link)
   M->>M: person in its own access list? (unknown → one recomputation, §3.9)
   alt the list opens for the person
@@ -2337,23 +2363,37 @@ sequenceDiagram
     M-->>B: connection open = the person's session on this Mate
   else listed only, absent, or the list stale
     M-->>H: ticket_refused {T, reason}
-    H-->>B: refusal, definitive
+    H->>H: refusal kept on the HQ session until its renewal
+    H-->>B: 403 not_in_list or zerops_read_only, definitive
   end
 ```
 
 - HQ issues a ticket only to a person whose session reach opens the Mate's project (`BASIC_USER` or
   above there, effective role, overrides included); a person the project only lists (`READ_ONLY`)
-  sees the Mate and opens none (D5). No link, no ticket: `409 mate_not_connected`, reason `no-link`.
+  sees the Mate and opens none (D5): `403 forbidden` `not_mate_opener`. A project the person does not
+  reach is `404 mate_not_found`. No link, no ticket: `409 mate_not_connected`, reason `no-link`.
+- **A Chief opens only for its registered person** (§3.11), Owners and Admins included. HQ enforces
+  it at ticket issue: anyone else is `403 forbidden` `not_mate_opener`. The Mate's own list does not
+  apply it; it holds every person the project opens for.
+- **A project the reach does not know yet.** A project HQ comes to hold at the present person's own
+  request with that session (a Mate they birth, a project they attach, an environment launched for
+  them) enters the session's reach at once with their organisation role, without a Zerops read. Any
+  other project HQ came to hold after the session's reach was read is `409 conflict` `reach_stale`:
+  the client renews the HQ session once (§3.7) and asks again.
 - **The Mate checks every ticket against its own access list** (§3.9) before it answers. A person
   the list does not know triggers one recomputation first. A person the list opens for is
   acknowledged (`ticket-ack`); a person it only lists is refused `ticket_refused {ticket, reason:
   "read_only"}`; anyone else, and everyone while the list is stale (§3.10), is refused
   `ticket_refused {ticket, reason: "not_in_list"}`. HQ treats a refusal as definitive: it answers
-  the browser as for a person whose reach does not open the Mate, and the browser does not
-  reconnect on its own (below).
+  the browser `403 not_in_list` or `403 zerops_read_only` and records the refusal on the HQ session,
+  so every later ticket of that session for the Mate gets the same answer without asking the Mate
+  again until the session's next renewal reads the reach afresh (§3.7). The browser does not
+  reconnect on its own (below), and _Try again_ before a renewal meets the recorded refusal.
 - HQ answers the browser only after the Mate acknowledged the ticket on the link, so the browser
   never arrives first. No acknowledgement within a bounded wait (HQ's launch environment, 5 s) is
-  `409 mate_not_connected`, reason `no-ack`. HQ matches the acknowledgement by the
+  `409 mate_not_connected`, reason `no-ack`. The Mate's recomputation for an unknown person may
+  take up to its 15 s read budget (§3.9), so a ticket waiting on it can outlast HQ's wait and end in
+  `no-ack`; the person's next try finds the recomputed list. HQ matches the acknowledgement by the
   project and the ticket, not by the link it sent the ticket on, so a ticket sent just before the
   Mate's rotation (§3.5) is acknowledged on the successor.
 - The ticket travels only in the first WebSocket frame above. While that socket lives, the same ticket is the Bearer handle for the client's HTTP reads to the Mate; when the socket ends the handle ends, and a reconnect needs a new ticket.
@@ -2381,31 +2421,41 @@ sequenceDiagram
   not persons. Per `ACTIVE` person the effective role is the override, else the organisation role
   (the role function's rule, §10.3): `BASIC_USER` or above opens the Mate, `READ_ONLY` lists it,
   anything else leaves the person out. The server recomputes every 5 min ± 60 s (jittered per Mate)
-  and once when a ticket names a person the list does not know (§3.8). A failed read keeps the last
-  list (§3.10). Nothing in the list comes from HQ.
+  and once when a ticket names a person the list does not know (§3.8); a computation waits on Zerops
+  at most 15 s, then counts as failed. A failed read keeps the last list (§3.10). A read Zerops
+  refuses for good — `401`, or `400 userNotFound`/`projectNotFound` — keeps the list but marks it
+  stale at once: HQ's relayed list, when the Mate has one, decides in its place (below). Nothing in
+  the list comes from HQ.
 - **The access report.** After every successful computation the server sends HQ `access_report {at,
   openers, listed, missing}` on the link: `at` the time of the reads, `openers` and `listed` the
-  persons of the list, `missing` those the previous computation opened for and this one does not
-  (removed, or dropped below `BASIC_USER`). HQ issues this Mate's tickets only to persons among
-  `openers`. A report narrows only its own Mate's tickets and never ends a session on its word
-  alone: HQ ends a `missing` person's HQ session in the Mate's organisation, with the Git passwords
-  issued under it, when the session's next request carrying a Zerops token does not restore the
-  person.
-- **HQ's access frames are advisory.** HQ may still send `access` frames — a full snapshot on every
-  link, then deltas each carrying a version; a full snapshot resets the Mate's baseline whatever its
-  version (a redeployed HQ numbers afresh), and a delta not above the last is discarded. The Mate
-  never admits a person, keeps a connection open or signs an agent out on them; its own list
-  decides.
-- **Role change and removal.** After every computation the Mate re-evaluates every connection: a
-  person whose role narrowed and who still opens keeps the connection at the new role; a person no
-  longer open is disconnected and their agents signed out (§10.5). A removal made in Zerops
+  persons of the list, `missing` those the previous report named as openers or listed and this list
+  names in neither (removed from the organisation or the project, or left without access there). A
+  demotion to `READ_ONLY` moves a person from `openers` to `listed` and is not reported missing: the
+  Mate closes that person's connections and refuses their next ticket `read_only` (§3.8). The
+  previous report lives in the server's memory, so the first report after a Mate restart has no
+  `missing`. On the report HQ at once ends every HQ session and Git password of each `missing`
+  person in the Mate's organisation (§3.3); a report not later than the last one HQ applied for the
+  Mate changes nothing. HQ reads no other field of the report to decide anything.
+- **HQ's access frames.** HQ sends `access` frames — a full snapshot on every link, then deltas
+  each carrying a version; a full snapshot resets the Mate's baseline whatever its version (a
+  redeployed HQ numbers afresh), and a delta not above the last is discarded. Until H1 lands their
+  members come from HQ's member and override reader (§3.3). The relayed list decides only while
+  the Mate has no own list to trust: before its first own computation succeeds, and after a read
+  Zerops refused for good (`401`, `400 userNotFound`/`projectNotFound`) marked the own list stale,
+  until the next own computation succeeds. A frame marked `refused` (the organisation's key was
+  refused, §3.10) admits nobody while it decides. Otherwise the Mate's own list decides, and HQ's
+  frames admit nobody, keep no connection open and sign no agent out.
+- **Role change and removal.** Whenever the deciding list changes whom it opens for or lists, the
+  Mate re-evaluates every connection: a person whose role narrowed and who still opens keeps the
+  connection at the new role; a person no longer open is disconnected and their agents signed out
+  (§10.5). A removal made in Zerops
   therefore ends that person's connections within one recompute interval, whether or not the Mate's
   link to HQ is up; HQ learns it from the report.
 - **Sign-out.** HQ revokes the HQ session and tells every Mate to close each connection carrying
   that session id: all tabs of that browser, whenever they opened, since the id survives renewals;
   the person's other devices stay.
 - **HQ session expiry** stops new tickets only. Open connections end only on sign-out or when the
-  Mate's own list no longer opens for the person.
+  Mate's deciding list no longer opens for the person.
 
 ### 3.10 When something fails
 
@@ -2415,6 +2465,13 @@ sequenceDiagram
   `ticket_refused` `not_in_list` and keeps every open connection; nothing closes for age. The next
   successful computation admits again. HQ's link plays no part in it: a Mate whose link is down
   keeps computing, so a removal made in Zerops still disconnects the person.
+- **Organisation key refused** (until H1 lands; Zerops answers `401`/`403` on the reader's read with
+  the kept key, §3.3) acts at once. HQ sends every linked Mate of the organisation a full `access`
+  frame marked `refused`, with no members. A Mate whose relayed list decides (§3.9) then closes
+  every person connection and admits nobody, while work already running in its container goes on; a
+  Mate deciding on its own list is unaffected. Sign-ins and tickets do not depend on the key and go
+  on. The next sign-in carrying an `orgKey` that passes the checks replaces the key (§3.7), and HQ's
+  next full frame without `refused` lets the relay admit again.
 - **HQ deploy or restart.** Every HQ process serves requests and may hold links. A rolling deploy
   drains the departing process's Mate links with `1012` and person scopes with `4410`; clients
   reconnect with backoff to a process that stays. Known keys link from the hash cache without a
@@ -2459,14 +2516,15 @@ sequenceDiagram
   rotation is lost. Its reads go to HQ like zcp's other calls (key in the header), and HQ answers each
   only while the registration is live, its person is an active member with Basic user or higher on the
   Chief's project, and the project is still tagged `chief`.
-- HQ answers without an organisation-wide credential (§3.3) — from the Chief's person's own reads
-  while they are present, otherwise from HQ's own structure and each linked Mate's access report
-  (§3.9) — cut by **kind of data** and by **person**: the allowlist is the organisation overview —
-  projects, services and their state, members with their roles — and its items are cut to what the
-  Chief's person can reach. Never environment variables, token lists or anything else a Zerops read
-  could carry (non-sensitive variables read in clear, other Mates' keys among them). A read joins
-  the allowlist only by the owner's decision written here.
-- Only the Chief's own person opens it or sees it in navigation, Owners and Admins included. Nobody
+- HQ answers from its own structure and its member and override reader (§3.3; until H1 lands the
+  organisation's key is that reader's fallback), cut by **kind of data** and by **person**: the
+  allowlist is the organisation overview — projects, services and their state, members with their
+  roles — and its items are cut to what the Chief's person can reach. Never environment variables,
+  token lists or anything else a Zerops read could carry (non-sensitive variables read in clear,
+  other Mates' keys among them). A read joins the allowlist only by the owner's decision written
+  here.
+- Only the Chief's own person opens it or sees it in navigation, Owners and Admins included; HQ
+  enforces the opening at ticket issue, not the Mate's own list (§3.8). Nobody
   else takes over a Chief whose person left or lost access, and no Owner or Admin removes another
   person's Chief: it ends when its person leaves the organisation or loses the project, or when the
   project is deleted.
@@ -2513,8 +2571,9 @@ sequenceDiagram
   though a Mate admits only a person its own list opens for (§3.9) — and **can act as each
   signing-in person, with their full write in every organisation they belong to — organisations
   without Mate included — for the life of the access token they sent (up to 6 h), at each sign-in
-  and each renewal.** It holds nothing that spans an organisation (§3.3). The signed assertion asked
-  of Zerops (§3.16) removes the last part.
+  and each renewal.** Until H1 lands it also holds each organisation's key that was kept
+  (`READ_ONLY`, every non-sensitive variable in clear, §3.3). The signed assertion asked of Zerops
+  (§3.16) removes the bold part.
 - **A project member who reads the key** (SSH, a deploy) already holds `BASIC_USER` on the project;
   the link adds the Mate's HQ identity, and the organisation's AI keys reach every Mate by design.
 - **`zcli push` on the dev service**: the key is in zcli's environment, readable by the same user,
@@ -2522,8 +2581,10 @@ sequenceDiagram
 - **A stale access list**: while the Mate cannot read Zerops, a member removed there keeps open
   connections until the Mate's next successful computation (§3.10); new tickets stop 15 min after
   the last one.
-- **A person HQ hears of from no Mate**: in an organisation with no linked Mate, a removed person's
-  HQ session and Git password last until the Zerops token they came with expires (up to 6 h).
+- **A person HQ hears of from no Mate**: in an organisation with no linked Mate, or removed while
+  the only Mate that would report them restarted (§3.9), a removed person's HQ session lasts until
+  6 h after its last sign-in or renewal read, and their Git password until the end that session had
+  when the password was issued (§3.3).
 - **An HQ deploy** blocks opening Mates for its duration.
 
 ### 3.15 Removed
@@ -2540,10 +2601,10 @@ sequenceDiagram
 - The plain-zcp project credential and its challenge: plain zcp presents its key in the header too.
 - `ZCP_ORG_TOKEN`, `ZCP_ORG_ID`, `ZCP_ORG_API`, the Chief credential, its Zerops proxy and
   `chief/person`.
-- The organisation's key and every organisation-wide read: its hand-over at the first sign-in,
-  `org_not_started`, `org_key_refused`, HQ's 5 min organisation view, the access list HQ computed
-  for a Mate, the refused-organisation access frame and the close of every connection at a
-  15 min cap.
+- The organisation's key as a precondition: its required hand-over at the first sign-in, the
+  door's `org_not_started` and `org_key_refused`, the person's role read from HQ's organisation
+  view, the access list HQ computed as the one that decides for a Mate, and the close of every
+  connection at a 15 min cap.
 
 ### 3.16 Zerops facts, asks and unverified points
 
@@ -2622,35 +2683,36 @@ compatibility declaration (§2.1d).
 
 ### Invariants
 
-| ID    | Invariant                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MS1-1 | `T3CODE_ZEROPS_PROJECT_ID` set and non-empty is the only signal for Zerops mode; nothing else votes. `ZeropsEnvironment.test.ts`.                                                                                                                                                                                                                                                                                                                       |
-| MS1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating".                                                                                                                                                                                                                                                             |
-| MS1-6 | In Zerops mode no browser-session cookie is ever issued. `server.test.ts` — "refuses to open a cookie session inside a Zerops project".                                                                                                                                                                                                                                                                                                                 |
-| MS1-7 | `exec:operate` is granted only to a connection the access list opens for, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring.                                                                                                                                                                                                                                                                               |
-| MS1-8 | Outside a Zerops project every seam above is inert. `server.test.ts` — "leaves the websocket upgrade alone outside a Zerops project"; `ExecService.test.ts` — "is not offered outside a Zerops project".                                                                                                                                                                                                                                                |
-| TC-1  | HQ links only a key of exactly one project (`NO_ACCESS` in the organisation, one grant at `BASIC_USER` or `ADMIN`, `sudo` false), learns project and organisation from Zerops and never from the Mate's claim, and persists only the key's hash (link memory: §3.3). Test to be written (HQ link).                                                                                                                                                      |
-| TC-2  | A cached key entry admits at once and is verified in the background; only a definite refusal of the key drops it, never a timeout, a `5xx` or another resource's not-found. Test to be written (HQ link).                                                                                                                                                                                                                                               |
-| TC-3  | The key travels only in the link's first frame or zcp's header, never in a URL, and no log line carries it. Test to be written (HQ link, zcp client).                                                                                                                                                                                                                                                                                                   |
-| TC-4  | One link per project: a newer link supersedes the older with `superseded`, and the Mate does not treat it as a failure. Test to be written (HQ link, `ZeropsHqLink`).                                                                                                                                                                                                                                                                                   |
-| TC-5  | Sign-in and renewal take the access token only, read the person's identity and reach with it, refuse an integration token's identity and store nothing of the token; HQ holds no organisation-wide credential. Test to be written (HQ sign-in).                                                                                                                                                                                                         |
-| TC-6  | HQ returns a ticket to the browser only after the Mate acknowledged it; a ticket opens one connection once within 60 s and carries no role. Test to be written (HQ, Mate server).                                                                                                                                                                                                                                                                       |
-| TC-7  | The Mate takes every connection's role from its own latest computed access list: a narrowed role applied and a person no longer open disconnected; HQ's `access` frames never admit a person nor keep a connection open. Test to be written (Mate server).                                                                                                                                                                                              |
-| TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                            |
-| TC-9  | A Mate whose access list is stale (TC-13) refuses every new ticket `ticket_refused` `not_in_list` and keeps every open connection; its next successful computation admits again. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                      |
-| TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git).                                                                                                                                                                                                                                         |
-| TC-11 | The Chief's reads answer only the allowlisted overview, cut to its person's reach, only while that person is an active member with access to the Chief's project. Test to be written (HQ).                                                                                                                                                                                                                                                              |
-| TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                         |
-| TC-13 | The Mate's access list is stale 15 min after its last successful computation, counted from that computation, not from the link or HQ's frames. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                        |
-| TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                             |
-| TC-15 | Starting an HQ process leaves a healthy peer's links connected; stopping or losing the owning instance retires only its links. Covered by mate-hq's multi-process link and rolling-restart conformance cases.                                                                                                                                                                                                                                           |
-| TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the key itself. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                    |
-| TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link).                                                                                                                                                                                                                                                                             |
-| TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp with the background-work loss of §3.11. Test to be written (Mate server).                                                                                                                                                                                                                                                                                          |
-| TC-20 | The Mate reads Zerops itself for its access list, every 5 min ± 60 s and once for a ticket naming a person it does not know; a failed read (timeout, `5xx`, `429`) keeps the last list and every open connection, and no connection closes at 15 min. Test to be written (Mate server, injected clock).                                                                                                                                                 |
-| TC-21 | A Mate whose key Zerops refuses is cut off from HQ at once, whether its server sends `key-refused` or zcp asks `POST /api/mate/key-recheck` (HQ's own `/user/info` decides, at most once per key per minute). Test to be written (Mate server, zcp client, HQ link).                                                                                                                                                                                    |
-| TC-22 | The Mate's access list is `GET /project/{own}` overrides ∩ `POST /client-user/search` persons: an `ACTIVE` person at effective `BASIC_USER` or above opens, `READ_ONLY` is listed, integration tokens and everyone else are absent; after each successful computation the Mate sends `access_report {at, openers, listed, missing}`, `missing` the persons the previous computation opened for and this one does not. Test to be written (Mate server). |
-| TC-23 | The Mate answers a ticket for a listed person `ticket_refused` `read_only` and for an absent one `not_in_list`, and HQ answers the browser with a definitive refusal on either. Test to be written (Mate server, HQ link).                                                                                                                                                                                                                              |
+| ID    | Invariant                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MS1-1 | `T3CODE_ZEROPS_PROJECT_ID` set and non-empty is the only signal for Zerops mode; nothing else votes. `ZeropsEnvironment.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| MS1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| MS1-6 | In Zerops mode no browser-session cookie is ever issued. `server.test.ts` — "refuses to open a cookie session inside a Zerops project".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| MS1-7 | `exec:operate` is granted only to a connection the access list opens for, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| MS1-8 | Outside a Zerops project every seam above is inert. `server.test.ts` — "leaves the websocket upgrade alone outside a Zerops project"; `ExecService.test.ts` — "is not offered outside a Zerops project".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| TC-1  | HQ links only a key of exactly one project (`NO_ACCESS` in the organisation, one grant at `BASIC_USER` or `ADMIN`, `sudo` false), learns project and organisation from Zerops and never from the Mate's claim, and persists only the key's hash (link memory: §3.3). Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| TC-2  | A cached key entry admits at once and is verified in the background; only a definite refusal of the key drops it, never a timeout, a `5xx` or another resource's not-found. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| TC-3  | The key travels only in the link's first frame or zcp's header, never in a URL, and no log line carries it. Test to be written (HQ link, zcp client).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| TC-4  | One link per project: a newer link supersedes the older with `superseded`, and the Mate does not treat it as a failure. Test to be written (HQ link, `ZeropsHqLink`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| TC-5  | Sign-in and renewal take the access token only, read the person's identity and reach with it, refuse an integration token's identity and store nothing of the token; no sign-in or ticket needs an organisation-wide credential, and an optional `orgKey` is kept, answered `orgKeyKept: false` or refused `org_key_rejected` as §3.7 says. Test to be written (HQ sign-in); `door_test.go` — `TestDoorKeepsOnlyAReadKeyOfAnOwnerOrAdmin`, `TestDoorLiveKeyIsNotReplaced`, `TestDoorRefusedKeyIsReplaced`.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| TC-6  | HQ returns a ticket to the browser only after the Mate acknowledged it; a ticket opens one connection once within 60 s and carries no role. Test to be written (HQ, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| TC-7  | The Mate takes every connection's role from its deciding access list: a narrowed role applied and a person no longer open disconnected; HQ's `access` frames decide only before the Mate's first own computation and after a refused own read marked its list stale, and otherwise never admit a person nor keep a connection open. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| TC-9  | A Mate whose access list is stale (TC-13) refuses every new ticket `ticket_refused` `not_in_list` and keeps every open connection; its next successful computation admits again. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| TC-11 | The Chief's reads answer only the allowlisted overview, cut to its person's reach, only while that person is an active member with access to the Chief's project. Test to be written (HQ).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| TC-13 | The Mate's access list is stale 15 min after its last successful computation, counted from that computation, not from the link or HQ's frames. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| TC-15 | Starting an HQ process leaves a healthy peer's links connected; stopping or losing the owning instance retires only its links. Covered by mate-hq's multi-process link and rolling-restart conformance cases.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the key itself. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp with the background-work loss of §3.11. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| TC-19 | A refused organisation key sends every linked Mate of the organisation a full `access` frame marked `refused`; a Mate whose relayed list decides then closes every person connection and admits nobody until a full frame without it. `owner_test.go` — `TestALinkHearsAFullListThenADeltaAfterEveryFreshViewAndTheRefusedEmptyListUntilAViewReturns`; `EnvironmentAuth.zerops.test.ts` — "Mate HTTP loses access at the same sign-out and refusal boundary as the socket".                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| TC-20 | The Mate reads Zerops itself for its access list, every 5 min ± 60 s and once for a ticket naming a person it does not know; a failed read (timeout, `5xx`, `429`) keeps the last list and every open connection, and no connection closes at 15 min. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| TC-21 | A Mate whose key Zerops refuses is cut off from HQ at once, whether its server sends `key-refused` or zcp asks `POST /api/mate/key-recheck` (HQ's own `/user/info` decides, at most once per key per minute). Test to be written (Mate server, zcp client, HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| TC-22 | The Mate's access list is `GET /project/{own}` overrides ∩ `POST /client-user/search` persons: an `ACTIVE` person at effective `BASIC_USER` or above opens, `READ_ONLY` is listed, integration tokens and everyone else are absent; after each successful computation the Mate sends `access_report {at, openers, listed, missing}`, `missing` the persons the previous report named as openers or listed and this list names in neither; a demotion to `READ_ONLY` is not missing, and the first report after a Mate restart has no `missing`. On the report HQ ends each `missing` person's HQ sessions and Git passwords in the organisation at once. `ZeropsMateAccessList.test.ts` — "After every recompute the report names openers and listed; missing are whom the previous report named and the list does not"; `accessreport_test.go` — `TestAMatesAccessReportRevokesWhomItMissesOnceAndRecordsItsTime`. |
+| TC-23 | The Mate answers a ticket for a listed person `ticket_refused` `read_only` and for an absent one `not_in_list`; HQ answers the browser `403 zerops_read_only` or `403 not_in_list` and gives every later ticket of that HQ session for the Mate the same answer until a renewal. `ticket_reach_test.go` — `TestAMatesTicketRefusalAnswersTheWaitAndMarksTheSessionsReachStale` (HQ); test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ---
 
