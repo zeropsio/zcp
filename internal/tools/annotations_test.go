@@ -781,6 +781,7 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 	for name, title := range map[string]string{
 		"zerops_propose_service": "Propose a service action",
 		"zerops_propose_env":     "Propose a variable",
+		"zerops_propose_mcp":     "Propose an MCP server",
 	} {
 		tool := tools[name]
 		if tool == nil {
@@ -800,6 +801,14 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 	}
 	if strings.Contains(string(schema), `"secret"`) {
 		t.Errorf("zerops_propose_env offers a secret: %s", schema)
+	}
+	// A server's fields are named and labelled; the person types their values on the card.
+	schema, err = json.Marshal(tools["zerops_propose_mcp"].InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(schema), `"value"`) {
+		t.Errorf("zerops_propose_mcp offers a value: %s", schema)
 	}
 }
 
