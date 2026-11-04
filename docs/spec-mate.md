@@ -2098,7 +2098,9 @@ a span attribute.
   as a sign-in's `orgKey` (§3.7); HQ keeps it sealed at rest. HQ uses it only as the fallback of its
   one member and override reader, which reads a held project's members with its linked Mate's key
   first (the second Zerops ask, §3.16, removes the need). Those reads feed only HQ's advisory access
-  frames (§3.9) and the Chief overview (§3.11); no sign-in, ticket or Git decision rests on them. It
+  frames (§3.9) and the Chief overview (§3.11); no sign-in or ticket decision rests on them, and
+  only the reconcile that HQ still runs through this reader (§3.10) ends sessions and Git passwords
+  with them. It
   also reads every non-sensitive variable of the organisation in clear, one more reason a project
   key must be a sensitive variable. It lasts until Zerops refuses it (§3.10) or a later sign-in's
   `orgKey` replaces a refused one.
@@ -2213,7 +2215,8 @@ the member and override reader's reads all queue there. No decision waits on an 
 a removal made in Zerops reaches each Mate through its own access list (§3.9), and HQ through that
 Mate's report or the person's next renewal. Until H1 lands, while any Mate of an organisation is
 linked, HQ reads the organisation's members and overrides afresh at least every
-`HQ_ORG_VIEW_REFRESH_MS` through the one reader of §3.3, for its advisory access frames.
+`HQ_ORG_VIEW_REFRESH_MS` through the one reader of §3.3, for its advisory access frames and its
+reconcile (§3.10).
 
 ### 3.5 A Mate starts and links
 
@@ -2484,6 +2487,15 @@ sequenceDiagram
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in and
   renewal wait for Zerops. Each Mate keeps its last list and its open connections, and refuses new
   tickets once the list is stale (above).
+- **Reconcile.** HQ polls no organisation view. It reconciles per project credential: a Mate's
+  project key over its link, and each stage or production environment's deploy token reading its
+  own project. Zerops' answer decides: `400 projectNotFound` (`/user/info`: `400 userNotFound`)
+  means the project is gone; `403` means the token's grant moved, so HQ re-reads the token's own
+  record, marks it invalid and keeps the placement; `401` means the token was revoked, and the next
+  present person re-mints it. Members and overrides reach HQ only through the Mates' `access_report`
+  (§3.9). Until H1 lands, the org-key fallback reader still runs `Roles.Reconcile`: per
+  organisation, it ends the sessions and Git passwords of holders Zerops no longer shows `ACTIVE`
+  and drops projects Zerops proves gone.
 - **Project deleted.** The container dies with it and the link drops by transport. HQ keeps no key to
   ask with, so its proof of absence is the next session of an organisation `ADMIN` or `OWNER`: HQ
   searches every project id it holds with that person's token (`POST /project/search`) and drops
