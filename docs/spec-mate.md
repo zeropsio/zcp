@@ -1917,13 +1917,15 @@ credential of its own exists.
 
 **No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only,
 its method set pinned name by name, every request through a transport that refuses anything but a
-GET or a search POST before the network. No write-capable client exists in org mode. Every read goes
-to HQ's Chief overview with the project key in the header, and HQ answers it with the allowlist of
-§3.11, from its own structure and its Mates' access reports, cut to the projects the Chief's person
-may see — projects, services and their state,
-members with their roles — and nothing else: never a variable, a log, a token list, a cost or any
-other read a Zerops credential could make. `platform.OrgReads()` is exactly that set. Every change
-is the person's: their client makes it with their own Zerops token after their click.
+GET or a search POST before the network. No write-capable client exists in org mode. HQ answers no
+organization-wide service search: a read made while the Chief's person is present goes to Zerops
+with that person's own token, and a read made with nobody present runs per project, on that
+project's own credential — a linked Mate's project key, an environment's deploy token — beside HQ's
+own structure and its Mates' access reports (§3.11). Either way org mode reads the allowlist of
+§3.11, cut to the projects the Chief's person may see — projects, services and their state, members
+with their roles — and nothing else: never a variable, a log, a token list, a cost or any other read
+a Zerops credential could make. Every change is the person's: their client makes it with their own
+Zerops token after their click.
 
 **Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `production`,
 `stage`, `other`, `chief`, and the members with their roles), `zerops_org_services` (each project's
@@ -2039,7 +2041,7 @@ neither its project nor `zerops_observe` shows.
 | OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryReadPresentsTheProjectKeyInTheHeaderOnly`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11, cut to the projects its person may see — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOrgReader_ReadsTheOverviewAsHQAnswersIt`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | HQ answers org mode no organization-wide service search: a read while the Chief's person is present goes to Zerops with that person's token, a read with nobody present runs per project on that project's own credential (a linked Mate's project key, an environment's deploy token), and either holds only the allowlist of §3.11, cut to the projects its person may see. `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; the reads' own tests to be written (zcp, HQ). |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
@@ -4815,48 +4817,32 @@ a tier, and closes one that adds nothing (§10.10, D37). The structure also list
 only the old Gitea project (`kind: gitea`), which the client places as a tool — never a plain
 project, never a Mate, never offered _Set up Mate_ — until the Gitea is retired and its record goes.
 
-**Offers** (2026-10-05). HQ answers what the reader may do in the same stream that carries the
-structure, never through a per-request endpoint: `structure.read(userId)` already decides `read_*`
-per entity, per subscriber, per tick, and decides the write verbs beside it. Each streamed entity
-carries `can: Record<verb, Decision>` — the shared `Decision`, so a refusal reads in the same words
-(`hqRefusalWords`) as the write's own — and the record is open: a verb this build does not know
-decodes as unknown and never breaks the snapshot. The organization carries `create_app`,
-`rename_app`, `delete_app`; an application the change verbs (`read_change`, `comment_change`,
-`merge_change`, `close_change`, and every other verb a change offers, a redeploy included) and
-`release`; an environment `keep_deploy_token`; a Mate's project `observe_mate`, `edit_mate_record`,
-`detach` and `moveTo: {[appId | "new"]: kinds[]}`; a readable project HQ holds nowhere
-`create_mate_record`. An offer and the write it offers are one computation — the same target
-builders, the same `can`, pinned by one table per verb and role, a person who cannot see production
-and a suspended or demoted member included — and the write's own refusal still wins. A reader HQ
-refuses an application's environments is told so, never handed an empty list. A Zerops role change
-reaches the offers at the roles view's freshness, merged into the stream (`roles.views`), not only
-at the 30 s recheck; the stream carries the time the view answered (`rolesAnsweredAt`), which the
-client shows and never compares with its own clock. Nothing extra is read per subscriber: the
-offers reuse the rows already read, `moveTo` is computed once per Mate, and keyed diffs keep an
-unchanged offer off the wire. A verb is drawn in one of four states: **allowed**; **refused**, with
-HQ's reason; **unknown** — no snapshot yet, the entity absent, or the verb unknown to this build;
-**unavailable** since a time, while HQ's socket is down — an HQ-enforced verb is then off, saying
-"HQ unavailable since …", while a Zerops-enforced control keeps working. On the wire the snapshot
-carries every entity's `can` and `rolesAnsweredAt`; an `org` message moves the organization's
-offers when they change, an application's and its environments' move with the application, and a
-`roles` message moves `rolesAnsweredAt` with every view. Unknown never takes a Zerops-executed verb
-away: against a Core from before its offers, or before HQ answered, a Mate's _Open_, _Start_,
-_Restart_ and _Remove_ stay — HQ's ticket's and Zerops' to refuse, in their own words — and are hidden
-only where HQ refuses following the Mate; HQ's own verbs (a Mate's face, move and leave, renaming and
-deleting a project, an application's change verbs and release) are drawn not pressable, "HQ has not
-said yet", until it does. A held verb holds through the stream reconnecting, and HQ's offers stand
-while it is only being read again.
+**Offers** (2026-11-04). HQ's stream carries the structure and nothing about what its reader may
+do. The client decides its offers and what it shows from live Zerops data — its own `project`,
+`client-user` and `service-stack` streams, read with the person's token (§3.3) — through the one
+effective-role function (§10.3), and every verb carries the person's token for HQ's one fresh read:
+this replaces the `can` per entity, the roles view behind it and the time that view answered, which
+HQ no longer streams. The verbs offered: the organization's `create_app`, `rename_app`,
+`delete_app`; an application's change verbs (`read_change`, `comment_change`, `merge_change`,
+`close_change`, and every other verb a change offers, a redeploy included) and `release`; an
+environment's `keep_deploy_token`; a Mate's project's `observe_mate`, `edit_mate_record`, `detach`
+and move to another application; a readable project HQ holds nowhere, `create_mate_record`. The
+write's own refusal still wins, in HQ's words (`hqRefusalWords`). A reader HQ refuses an
+application's environments is told so, never handed an empty list. A verb is drawn in one of four
+states: **allowed**; **refused**, with the reason; **unknown** — the client's Zerops data not yet
+read, or the entity absent; **unavailable** since a time, while HQ's socket is down — an
+HQ-enforced verb is then off, saying "HQ unavailable since …", while a Zerops-enforced control
+keeps working. Unknown never takes a Zerops-executed verb away: a Mate's _Open_, _Start_, _Restart_
+and _Remove_ stay — HQ's ticket's and Zerops' to refuse, in their own words.
 
-**A write that cannot be taken back is decided over roles read for it (2026-10-05).** HQ keeps its
-view of Zerops' members and projects at most 30 s old; a read and a write that can be undone are
-decided over it, a refusal confirmed once more over a fresh read, and while Zerops does not answer
-the last good view serves them for five minutes. A write that cannot be taken back is decided only
-over roles Zerops answers for it, read after it was asked (`decidedFresh`, `roles.ts`): a merge and
-a close of a change, a release and a roll back, a redeploy (_Run again_) and an added service, a
-deploy key kept, an environment attached as a stage or a production, a project moved out of an
-application, a project's deletion (both halves) and an application's. Zerops leaving that read
-unanswered within its 35 s budget refuses the write before anything is written: `503
-zerops_unanswered`, never a write that may have landed, and the client says Zerops did not answer.
+**Every verb is decided over a fresh read.** HQ keeps no view of Zerops' members and projects: a
+verb that decides on a role is decided over the one fresh read its own token makes (§3.3), a read
+and a write that can be undone as much as one that cannot — a merge and a close of a change, a
+release and a roll back, a redeploy (_Run again_) and an added service, a deploy key kept, an
+environment attached as a stage or a production, a project moved out of an application, a project's
+deletion (both halves) and an application's. Zerops leaving that read unanswered within its 35 s
+budget refuses the write before anything is written: `503 zerops_unanswered`, never a write that
+may have landed, and the client says Zerops did not answer.
 
 **Environments** (since 2026-10-02). A stage or a production attached to an application is its
 environment, recorded with the attach — named as the attach asks or after its project, following
