@@ -214,17 +214,14 @@ func TestProjectAdminClient_LaunchKeyRejectedAtConstruction(t *testing.T) {
 // test additionally pins that GetProjectEnvKeys against a freshly
 // created project returns a usable response shape.
 //
-// A.10 fix: project.userRoles in import yaml is silently dropped by
-// PostClientProjectImport. Role assignment happens via GrantSelfRole
-// AFTER create — separate PutClientUserRoles API call. This test
-// exercises that path end-to-end.
+// The creating key reads the project's envs with the creator's access; zcp
+// grants itself no role.
 func TestProjectAdminClient_GetServiceEnvKeys_OmitsValues(t *testing.T) {
 	admin := newAdminClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Create throwaway with project-level user envs. Role assignment
-	// for env-read happens via GrantSelfRole AFTER create (A.10).
+	// Create throwaway with project-level user envs.
 	name := throwawayName(t)
 	yaml := fmt.Sprintf(`project:
   name: %s
@@ -243,23 +240,11 @@ services:
 		t.Fatalf("create throwaway: %v", err)
 	}
 
-	// A.10: grant self ADMIN on the new project.
-	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
-		t.Fatalf("GrantSelfRole: %v", err)
-	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_, _ = admin.DeleteProject(ctx, result.ProjectID)
 	})
-
-	// A.10: grant launching clientUser ADMIN on the new project. Note:
-	// the platform auto-assigns OWNER to the creating clientUser, so
-	// this is informational/audit for the launch workflow; the API call
-	// still succeeds.
-	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
-		t.Fatalf("GrantSelfRole: %v", err)
-	}
 
 	// Poll until PROBE_VAR shows up in env-read. Project creation is
 	// async — env-list is empty briefly even after the project itself
@@ -423,12 +408,8 @@ func TestProjectAdminClient_CorePackage_ReadBackMatrix(t *testing.T) {
 				}
 			})
 
-			// Read-back needs a role on the fresh project (A.10) and a
-			// standing read client; GrantSelfRole + a direct ZeropsClient
-			// under the same admin key.
-			if err := admin.GrantSelfRole(ctx20(t), result.ProjectID, "ADMIN"); err != nil {
-				t.Fatalf("GrantSelfRole: %v", err)
-			}
+			// Read-back under the creating key: a direct ZeropsClient with
+			// the creator's access to the fresh project.
 			z, err := platform.NewZeropsClient(key, apiHost())
 			if err != nil {
 				t.Fatalf("NewZeropsClient: %v", err)

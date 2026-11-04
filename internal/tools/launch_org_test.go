@@ -9,9 +9,9 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// The prod project is created in, and the per-project role granted with
-// the clientUser of, the org that owns the source project: the admin
-// client is built for that org, never the launch key's first membership.
+// The prod project is created in the org that owns the source project: the
+// admin client is built for that org, never the launch key's first
+// membership.
 func TestHandleLaunchProduction_LaunchAdminTargetsTheOrgOwningTheProject(t *testing.T) {
 	stateDir := withTempState(t)
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)

@@ -71,7 +71,7 @@ organization that owns that project, never the token's first membership
 (`TestResolve_BindsTheOrgThatOwnsTheProject`). The launch-production window
 acts in the organization that owns the launch's target project — the source
 project's for a new project, the existing project's for an existing-project
-launch — for its admin client, role grant and searches
+launch — for its admin client, deploy-key mint and searches
 (`TestLaunchWindow_ExistingProjectInAnotherOrg_ProdOpsConfirmAndResetReachTheTargetsServices`).
 
 ### Multi-Project Isolation

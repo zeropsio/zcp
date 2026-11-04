@@ -461,17 +461,9 @@ func TestE2E_LaunchSingleTokenLifecycle(t *testing.T) {
 	if strings.Contains(launchedText, env.LaunchKey) {
 		t.Error("launched response leaks the launch token value")
 	}
-	grantFailed := false
 	for _, w := range resp.Warnings {
 		t.Logf("launched warning: %s", maskSecrets(w, env))
-		if strings.Contains(w, "grant self ADMIN role") {
-			grantFailed = true
-		}
 	}
-	// Live-verified shape: integration tokens cannot manage roles (the
-	// grant warns), and creator access carries every later read — the
-	// prod-ops step below is the proof. Surface the state for the log.
-	t.Logf("GrantSelfRole failed=%v (creator access covers the window — prod-ops below must succeed)", grantFailed)
 	if resp.FirstRelease == nil {
 		t.Error("launched response missing the firstRelease block")
 	}

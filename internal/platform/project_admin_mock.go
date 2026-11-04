@@ -40,19 +40,14 @@ type MockProjectAdminClient struct {
 	// clientUserID returned by ClientUserID(); tests configure via WithClientUserID.
 	clientUserID string
 
-	// GrantSelfRole capture + error injection
-	CapturedGrantSelfRoleProject string
-	CapturedGrantSelfRoleCode    string
-	grantSelfRoleErr             error
-	// OnGrantSelfRole, when set, runs as GrantSelfRole is called: a test
-	// reads what the caller recorded before that call went out.
-	OnGrantSelfRole func()
-
 	// MintProjectKey capture + error injection. CapturedMintProjectKeyProject
 	// is empty until a key is minted.
 	CapturedMintProjectKeyProject string
 	CapturedMintProjectKeyName    string
 	mintProjectKeyErr             error
+	// OnMintProjectKey, when set, runs as MintProjectKey is called: a test
+	// reads what the caller recorded before that call went out.
+	OnMintProjectKey func()
 
 	// F7 bring-up management capture/config.
 	DeletedServiceIDs []string
@@ -86,30 +81,6 @@ func (m *MockProjectAdminClient) ClientUserID() string {
 	return m.clientUserID
 }
 
-// GrantSelfRole implements ProjectAdminClient. Mock captures the call
-// args; configurable error via WithGrantSelfRoleError.
-func (m *MockProjectAdminClient) GrantSelfRole(_ context.Context, projectID, roleCode string) error {
-	if m.OnGrantSelfRole != nil {
-		m.OnGrantSelfRole()
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Closed {
-		return ErrClientClosed
-	}
-	m.CapturedGrantSelfRoleProject = projectID
-	m.CapturedGrantSelfRoleCode = roleCode
-	return m.grantSelfRoleErr
-}
-
-// WithGrantSelfRoleError configures the error returned by GrantSelfRole.
-func (m *MockProjectAdminClient) WithGrantSelfRoleError(err error) *MockProjectAdminClient {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.grantSelfRoleErr = err
-	return m
-}
-
 // MockDeployKeyPrefix prefixes the deploy key the mock's MintProjectKey
 // returns, followed by the project id.
 const MockDeployKeyPrefix = "mock-deploy-key-"
@@ -117,6 +88,9 @@ const MockDeployKeyPrefix = "mock-deploy-key-"
 // MintProjectKey implements ProjectAdminClient: it records the project and
 // name and returns MockDeployKeyPrefix+projectID, or the configured error.
 func (m *MockProjectAdminClient) MintProjectKey(_ context.Context, projectID, name string) (MintedToken, error) {
+	if m.OnMintProjectKey != nil {
+		m.OnMintProjectKey()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Closed {

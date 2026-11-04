@@ -10,7 +10,6 @@ import (
 	"github.com/zeropsio/zerops-go/dto/input/path"
 	"github.com/zeropsio/zerops-go/dto/output"
 	zgotypes "github.com/zeropsio/zerops-go/types"
-	"github.com/zeropsio/zerops-go/types/enum"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
 
@@ -85,36 +84,15 @@ type ProjectAdminClient interface {
 	// launch stages the minted key, never the token that created the project.
 	MintProjectKey(ctx context.Context, projectID, name string) (MintedToken, error)
 
-	// ClientUserID returns the launching user's clientUserId — the link
-	// between user and client. Used by GrantSelfRole to authorize
-	// follow-up env reads against the freshly-created project. Captured
-	// at construction via the same GetUserInfo call that validates the
-	// launch key. Empty if the underlying token's clientUserList is
-	// empty (a shape ZCP refuses at startup, but the field is opt-in
-	// defensive against future SDK shape changes). A.10 spike finding.
+	// ClientUserID returns the launching user's clientUserId in the
+	// configured organisation, read by the same GetUserInfo call that
+	// proves the token is a member there.
 	ClientUserID() string
-
-	// GrantSelfRole assigns the launching user's clientUserId the
-	// given role on the target project. Required after
-	// CreateAndImportProject because `project.userRoles[]` in the
-	// import yaml is silently dropped by the platform — A.10 finding
-	// empirically verified 2026-05-11.
-	//
-	// Reads existing roles, appends the new entry, writes back the
-	// merged list — PutClientUserRoles is a full replace, so a naive
-	// write would wipe other project roles.
-	//
-	// Role values match enum.ClientUserRoleCodeEnum: OWNER, ADMIN,
-	// BASIC_USER, READ_ONLY, NO_ACCESS. Launch-production grants ADMIN
-	// so the workflow can read envs + manage the project.
-	GrantSelfRole(ctx context.Context, projectID string, roleCode string) error
 
 	// Bring-up management surface (F7): thin delegations onto the
 	// embedded launch-key transport. Available ONLY while the launch
-	// workflow holds a per-call launchKey; every method requires the
-	// post-create GrantSelfRole(ADMIN) to have succeeded (otherwise the
-	// platform answers projectNotFound — callers translate that to
-	// "role grant missing", not "project gone").
+	// workflow holds a key on the production project: the creator's own
+	// token (OWNER) or the staged BASIC_USER deploy key.
 
 	// DeleteService deletes ONE service stack in the prod project
 	// (botched bring-up recovery). Returns the async delete process.
@@ -257,8 +235,8 @@ func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error
 // sibling (D11): instead of trusting ClientUserList[0] — the wrong org for
 // a token that is OWNER in more than one — it targets the caller-supplied
 // clientID and refuses, before any write, when the token's clientUserList
-// does not contain it. Every call the client makes — the role grant's
-// clientUser, the project create, the service searches — targets that org.
+// does not contain it. Every call the client makes — the project create,
+// the deploy-key mint, the service searches — targets that org.
 // Used by launch-production (the org owning the source project) and the
 // farm controller (ZCP_FARM_CLIENT_ID).
 //
@@ -320,75 +298,6 @@ type projectAdminClient struct {
 // clientUserId from construction-time validation.
 func (p *projectAdminClient) ClientUserID() string {
 	return p.clientUserID
-}
-
-// GrantSelfRole implements ProjectAdminClient. Reads existing roles,
-// appends the new entry, writes back the merged list. PutClientUserRoles
-// is a full-replace endpoint; a naive write would wipe other project
-// roles, hence the read-merge-write pattern.
-func (p *projectAdminClient) GrantSelfRole(ctx context.Context, projectID string, roleCode string) error {
-	if p.zerops == nil {
-		return ErrClientClosed
-	}
-	if p.clientUserID == "" {
-		return errors.New("project admin: clientUserID empty; cannot grant self role")
-	}
-	if projectID == "" {
-		return errors.New("project admin: projectID empty; cannot grant self role")
-	}
-
-	pathParam := path.ClientUserId{Id: uuid.ClientUserId(p.clientUserID)}
-
-	// 1) Read existing roles to preserve them.
-	getResp, err := p.zerops.handler.GetClientUserRoles(ctx, pathParam)
-	if err != nil {
-		return fmt.Errorf("get current roles: %w", mapSDKError(err, "client-user"))
-	}
-	current, err := getResp.Output()
-	if err != nil {
-		return fmt.Errorf("get current roles output: %w", mapSDKError(err, "client-user"))
-	}
-
-	// 2) Build merged list: existing roles + (projectID, roleCode).
-	merged := make(body.ClientUserProjectRoleListProjectRoleList, 0, len(current.ProjectRoleList)+1)
-	already := false
-	for _, r := range current.ProjectRoleList {
-		if r.ProjectId.TypedString().String() == projectID {
-			already = true
-			// Replace the entry with the new role.
-			merged = append(merged, body.ClientUserProjectRole{
-				ProjectId: uuid.ProjectId(projectID),
-				RoleCode:  enum.ClientUserRoleCodeEnum(roleCode),
-			})
-			continue
-		}
-		merged = append(merged, body.ClientUserProjectRole{
-			ProjectId: r.ProjectId,
-			RoleCode:  r.RoleCode,
-		})
-	}
-	if !already {
-		merged = append(merged, body.ClientUserProjectRole{
-			ProjectId: uuid.ProjectId(projectID),
-			RoleCode:  enum.ClientUserRoleCodeEnum(roleCode),
-		})
-	}
-
-	// 3) Write back the merged list. The SDK reports API-level failures
-	// (4xx/5xx) only through the response's Output()/Err() — the function's
-	// error return covers transport failures alone. Checking both mirrors
-	// the GetClientUserRoles step above; without the Output() check a
-	// rejected role write returns nil and the caller believes ADMIN was
-	// granted.
-	bodyParam := body.ClientUserProjectRoleList{ProjectRoleList: merged}
-	putResp, err := p.zerops.handler.PutClientUserRoles(ctx, pathParam, bodyParam)
-	if err != nil {
-		return fmt.Errorf("put roles: %w", mapSDKError(err, "client-user"))
-	}
-	if _, err := putResp.Output(); err != nil {
-		return fmt.Errorf("put roles output: %w", mapSDKError(err, "client-user"))
-	}
-	return nil
 }
 
 // MintProjectKey implements ProjectAdminClient.

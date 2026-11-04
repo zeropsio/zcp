@@ -480,8 +480,8 @@ func TestBuildLaunchBundle_AdoptsSoleSetupWhenMissing(t *testing.T) {
 // TestBuildLaunchBundle_OmitsUserRolesAlways verifies project.userRoles
 // is NOT emitted in import yaml. A.10 finding (verified 2026-05-11):
 // PostClientProjectImport silently drops project.userRoles, so the
-// bundle composer no longer emits it. Role assignment happens via
-// ProjectAdminClient.GrantSelfRole AFTER create — separate API call.
+// bundle composer no longer emits it. The creator of the project holds
+// OWNER on it, and zcp writes no roles.
 func TestBuildLaunchBundle_OmitsUserRolesAlways(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -494,7 +494,7 @@ func TestBuildLaunchBundle_OmitsUserRolesAlways(t *testing.T) {
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	project, _ := doc["project"].(map[string]any)
 	if _, ok := project["userRoles"]; ok {
-		t.Error("expected project.userRoles absent (platform silently drops; use GrantSelfRole post-create)")
+		t.Error("expected project.userRoles absent (platform silently drops it)")
 	}
 }
 

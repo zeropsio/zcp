@@ -112,3 +112,22 @@ func TestNoDelegatedLaunchToken(t *testing.T) {
 		}
 	})
 }
+
+// TestNoProjectRoleWrite: zcp writes no person's project roles. The creator of
+// a production project holds OWNER on it, and that OWNER entry is the
+// project's ownership record; PUT /client-user/{id}/role replaces the whole
+// role list, so a role zcp wrote for itself would replace that OWNER. zcp
+// holds nothing on the project beyond the BASIC_USER key it mints
+// (projectKeyBody).
+func TestNoProjectRoleWrite(t *testing.T) {
+	t.Parallel()
+	scanProductionGo(t, func(path string, fset *token.FileSet, f *ast.File) {
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if ok && sel.Sel.Name == "PutClientUserRoles" {
+				t.Errorf("%s:%d writes a person's project roles; the creator's OWNER stays in place", path, fset.Position(sel.Pos()).Line)
+			}
+			return true
+		})
+	})
+}

@@ -22,9 +22,7 @@ type UserInfo struct {
 }
 
 // ClientMembership is one entry of the token's clientUserList: an org
-// (client) id plus the clientUserId — the user↔org link that
-// project.userRoles[].id names when a role is granted on a project of
-// that org (A.10 spike finding).
+// (client) id plus the clientUserId — the user↔org link.
 type ClientMembership struct {
 	ClientID     string `json:"clientId"`
 	ClientUserID string `json:"clientUserId"`

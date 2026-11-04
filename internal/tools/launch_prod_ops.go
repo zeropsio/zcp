@@ -181,9 +181,10 @@ func prodOpsResolveService(ctx context.Context, admin platform.ProjectAdminClien
 	), WithRecoveryStatus())
 }
 
-// prodOpsTranslateErr converts the A.10 projectNotFound shape into the
-// honest diagnosis: the project exists; the launching user's ADMIN role
-// grant is missing (GrantSelfRole failed at launch), so reads 404.
+// prodOpsTranslateErr converts the projectNotFound shape into the honest
+// diagnosis: the project exists, but the calling key holds no role on it.
+// Only the creator's token (OWNER) and the staged deploy key (BASIC_USER)
+// reach it; zcp grants no role.
 func prodOpsTranslateErr(err error, state *launchState) error {
 	if err == nil {
 		return nil
@@ -191,8 +192,8 @@ func prodOpsTranslateErr(err error, state *launchState) error {
 	if strings.Contains(strings.ToLower(err.Error()), "not found") {
 		return platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("the platform answered not-found for project %s — this usually means the ADMIN role grant from launch time is missing (the project exists; the calling token has no role on it)", state.TargetProjectID),
-			"Open the project in the Zerops dashboard to confirm it exists, then re-run the launch resume (the role grant retries there), or manage via dashboard.",
+			fmt.Sprintf("the platform answered not-found for project %s — this usually means the calling key holds no role on it (the project exists; only the token that created it and the project's deploy key reach it)", state.TargetProjectID),
+			"Open the project in the Zerops dashboard to confirm it exists, then pass launchKey with the token of the person who launched it, or manage it in the dashboard.",
 		)
 	}
 	return err

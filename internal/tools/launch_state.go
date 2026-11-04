@@ -67,7 +67,7 @@ type launchState struct {
 	WindowClosedAt time.Time `json:"windowClosedAt,omitzero"`
 	// Warnings carries non-fatal launch-time advisories from bundle
 	// composition (e.g. an unreferenced promoted managed dep, compose
-	// notes, grant-role fallback). Persisted so both the fresh launched
+	// notes, deploy-key fallback). Persisted so both the fresh launched
 	// response and a later resume surface them — the success path used to
 	// drop launchBundle.Warnings entirely.
 	Warnings []string `json:"warnings,omitempty"`

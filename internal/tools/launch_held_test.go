@@ -149,7 +149,7 @@ func TestExecuteLaunchMutation_RecordsTheProjectBeforeAnythingElse(t *testing.T)
 	mockAdmin := happyMockAdmin()
 	var recorded string
 	heldMidway := false
-	mockAdmin.OnGrantSelfRole = func() {
+	mockAdmin.OnMintProjectKey = func() {
 		state, err := readLaunchState(stateDir, launchID)
 		if err == nil {
 			recorded = state.TargetProjectID

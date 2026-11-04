@@ -28,7 +28,7 @@ type handlerDiscardViolation struct {
 // ONLY through the response's Output()/Err() — the function's error return
 // covers transport failures alone. Discarding the response therefore
 // swallows every API error and turns a rejected call into a silent success
-// (the P0-2 GrantSelfRole bug). The response must be captured and its
+// (the P0-2 bug: a rejected role write returned nil). The response must be captured and its
 // Output()/Err() checked.
 func scanHandlerResponseDiscards(roots []string) ([]handlerDiscardViolation, error) {
 	var violations []handlerDiscardViolation
@@ -105,7 +105,7 @@ func handlerCallMethod(e ast.Expr) (string, bool) {
 // TestNoHandlerResponseDiscards pins the single-owner rule that every
 // zerops-go handler call must capture and inspect its response (Output()/
 // Err()), never discard it with `_`. This is the class-prevention pin for
-// P0-2: the GrantSelfRole bug was the only one of 30+ call sites that
+// P0-2: the discarded role-write response was the only one of 30+ call sites that
 // dropped the response, and nothing structurally stopped the next one.
 func TestNoHandlerResponseDiscards(t *testing.T) {
 	t.Parallel()
