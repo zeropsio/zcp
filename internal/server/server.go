@@ -332,8 +332,8 @@ func (s *Server) followRepos() mcp.Middleware {
 
 // NewOrg creates the MCP server for org mode (docs/spec-mate.md §2.11): the
 // Chief, a person's Mate for the whole organization. It registers the
-// zerops_org_* look and propose tools over org (HQ's overview, platform.OrgReader
-// in production), platform knowledge, and in a
+// zerops_org_* look and propose tools over org (the Zerops API read with the
+// session's credential, platform.OrgReader in production), platform knowledge, and in a
 // Mate's container the page tool. The single-project surface — workflows,
 // deploys, discover, logs, env, manage, scale, import, delete, mount,
 // subdomain, dev server, stand-up, and the browser that looks at a service

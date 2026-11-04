@@ -11,7 +11,7 @@ import (
 )
 
 // Org mode's tools (docs/spec-mate.md §2.11): the Chief looks across the
-// whole organization through HQ's overview, and acts only by
+// whole organization through the Zerops API, and acts only by
 // proposing — a proposal runs nothing; the person approves or declines it on
 // a card and their own client makes the change.
 

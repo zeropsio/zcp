@@ -1,6 +1,6 @@
-// Tests for: integration — org mode (docs/spec-mate.md §2.11, §3.11) through
-// the full MCP server and the real org reader, against a fake HQ overview
-// that records every request.
+// Tests for: integration — org mode (docs/spec-mate.md §2.11, OM-4) through
+// the full MCP server and the real org reader, against a fake Zerops API that
+// records every request.
 
 package integration_test
 
@@ -22,9 +22,9 @@ import (
 	"github.com/zeropsio/zcp/internal/server"
 )
 
-// fakeHQOverview answers HQ's Chief overview for a two-project organization
-// and records every request it gets.
-func fakeHQOverview(t *testing.T) (*httptest.Server, func() []string) {
+// fakeZeropsOrg answers the Zerops API for a two-project organization that
+// owns the Chief's own project, and records every request it gets.
+func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var (
 		mu   sync.Mutex
@@ -48,24 +48,26 @@ func fakeHQOverview(t *testing.T) (*httptest.Server, func() []string) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		var out any
-		switch r.URL.Path {
-		case "/api/chief/zerops/project/search":
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/rest/public/project/pChief":
+			out = project("pChief", "Chief - Dana", "chief")
+		case "POST /api/rest/public/project/search":
 			out = map[string]any{"items": []any{
 				project("pProd", "Contoso - production"),
 				project("pRossy", "Northwind Shop - Rossy", "mate"),
 			}}
-		case "/api/chief/zerops/service-stack/search":
+		case "POST /api/rest/public/service-stack/search":
 			out = map[string]any{"items": []any{
 				medusa,
 				service("sZcp", "pRossy", "zcp", "zcp@1", "ACTIVE"),
 			}}
-		case "/api/chief/members":
-			out = map[string]any{"members": []any{
-				map[string]any{"userId": "u1", "fullName": "Dana", "role": "ADMIN", "status": "ACTIVE"},
+		case "GET /api/rest/public/client/org1/user/list":
+			out = map[string]any{"clientUserList": []any{
+				map[string]any{"userId": "u1", "status": "ACTIVE", "roleCode": "ADMIN", "user": map[string]any{"email": "dana@example.com", "fullName": "Dana"}},
 			}}
 		default:
 			w.WriteHeader(http.StatusForbidden)
-			out = map[string]any{"code": "forbidden", "reason": "not_chief_project"}
+			out = map[string]any{"error": map[string]any{"code": "forbidden", "message": "not an org-mode read"}}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	}))
@@ -79,15 +81,16 @@ func fakeHQOverview(t *testing.T) (*httptest.Server, func() []string) {
 
 // TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Chief's tools the
 // way the model calls them: it sees the organization, proposes a restart, a
-// message to a Mate, a domain and access, and HQ receives only the overview's
-// reads, each presenting the project's key.
+// message to a Mate, a domain and access, and Zerops receives only the
+// allowlist's reads, each presenting the token of the person driving the
+// session; nothing reaches HQ.
 func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	// Non-parallel: t.Chdir (NewOrg derives its state dir from the cwd).
 	t.Chdir(t.TempDir())
-	hqServer, seen := fakeHQOverview(t)
+	zerops, seen := fakeZeropsOrg(t)
 	ctx := context.Background()
 
-	org, err := platform.OpenOrgReader(platform.OrgAccess{Origin: hqServer.URL, Key: "project-key"})
+	org, err := platform.OpenOrgReader(platform.OrgAccess{APIHost: zerops.URL, ProjectID: "pChief", Token: "person-token"})
 	if err != nil {
 		t.Fatalf("OpenOrgReader: %v", err)
 	}
@@ -134,20 +137,21 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	if len(reqs) == 0 {
 		t.Fatal("org mode read nothing")
 	}
-	reads := platform.OrgReads()
-	allowed := make([]string, 0, len(reads))
-	for _, read := range reads {
-		allowed = append(allowed, read.Method+" "+read.Path)
+	allowed := []string{
+		"GET /api/rest/public/project/pChief",
+		"POST /api/rest/public/project/search",
+		"POST /api/rest/public/service-stack/search",
+		"GET /api/rest/public/client/org1/user/list",
 	}
 	for _, req := range reqs {
 		call, rest, _ := strings.Cut(req, " ")
 		path, rest, _ := strings.Cut(rest, " ")
 		authorization, _, _ := strings.Cut(rest, "|")
 		if !slices.Contains(allowed, call+" "+path) {
-			t.Errorf("org mode sent %s %s, outside the overview (%v)", call, path, allowed)
+			t.Errorf("org mode sent %s %s, outside the allowlist (%v)", call, path, allowed)
 		}
-		if authorization != "Project project-key" {
-			t.Errorf("%s %s carried Authorization %q, want the project's key", call, path, authorization)
+		if authorization != "Bearer person-token" {
+			t.Errorf("%s %s carried Authorization %q, want the person's token", call, path, authorization)
 		}
 	}
 }

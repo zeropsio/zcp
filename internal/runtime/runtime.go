@@ -44,7 +44,7 @@ type Info struct {
 	MateEnabled bool
 
 	// Chief is org mode: this project is the Chief's — the person's Mate for
-	// the whole organization, which reads HQ's overview instead of acting on
+	// the whole organization, which reads the organization instead of acting on
 	// this project. HQ's mark decides it (GET /api/mate/self names this
 	// project), so Detect never sets it: `zcp serve` sets it after reading
 	// the mark. It selects the org tool set in place of the single-project

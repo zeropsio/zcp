@@ -11,9 +11,9 @@ import (
 )
 
 // OrgSource is what org mode reads the organization through — the
-// read-only platform.OrgReader in production, which reads HQ's overview:
-// projects, services and their state, members with their roles
-// (docs/spec-mate.md §2.11, §3.11). Every
+// read-only platform.OrgReader in production, which reads the Zerops API
+// with the session's credential: projects, services and their state, members
+// with their roles (docs/spec-mate.md §2.11, OM-4). Every
 // project and service id an org operation acts on is resolved from these
 // org-scoped lists first, so an id from another organization is never read.
 type OrgSource interface {
