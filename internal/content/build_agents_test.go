@@ -593,6 +593,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 				"reaches none of them", "other Mates", "zcp git <host>",
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
+				"`zerops_propose_reveal`", "never print or paste a secret value",
 				"act on this Mate's own project only", "another application's production error",
 				"Mate's Addresses", "DNS records", "AAAA", "Full (strict)",
 			},
