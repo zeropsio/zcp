@@ -781,6 +781,7 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 	for name, title := range map[string]string{
 		"zerops_propose_service": "Propose a service action",
 		"zerops_propose_env":     "Propose a variable",
+		"zerops_propose_reveal":  "Propose a reveal",
 	} {
 		tool := tools[name]
 		if tool == nil {
@@ -800,6 +801,13 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 	}
 	if strings.Contains(string(schema), `"secret"`) {
 		t.Errorf("zerops_propose_env offers a secret: %s", schema)
+	}
+	// A reveal names a value and never carries one.
+	if schema, err = json.Marshal(tools["zerops_propose_reveal"].InputSchema); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(schema), `"value"`) {
+		t.Errorf("zerops_propose_reveal takes a value: %s", schema)
 	}
 }
 

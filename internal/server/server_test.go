@@ -976,7 +976,7 @@ func TestServer_AppProposeToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			for _, name := range []string{"zerops_propose_service", "zerops_propose_env"} {
+			for _, name := range []string{"zerops_propose_service", "zerops_propose_env", "zerops_propose_reveal"} {
 				found := false
 				for _, tool := range result.Tools {
 					found = found || tool.Name == name

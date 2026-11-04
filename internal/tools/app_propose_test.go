@@ -147,3 +147,50 @@ func TestAppPropose_NoObserveAuthorization_SaysSoWithoutARequest(t *testing.T) {
 		t.Errorf("refusal = %q, want it to ask for observe authorization without the key", text)
 	}
 }
+
+// TestRevealPropose_OverMCP_ProposesANameNeverAValue: zerops_propose_reveal
+// answers an env.reveal proposal naming the key and where it lives, read
+// through HQ's observation, with a note that the agent is never shown it; a
+// call that hands it a value is refused before anything is read.
+func TestRevealPropose_OverMCP_ProposesANameNeverAValue(t *testing.T) {
+	// non-parallel: the Mate's identity and profile are the process environment.
+	fake, asked := appObserveHQ(t)
+	hqtest.Link(t, fake.URL, "P_MATE", "good")
+	observeTestProfile(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterAppPropose(srv, fake.Client(), "P_MATE", runtime.Info{InContainer: true, MateEnabled: true})
+
+	result := callTool(t, srv, "zerops_propose_reveal", map[string]any{
+		"environment": "production", "service": "api", "key": "DATABASE_PASSWORD", "reason": "to connect from the laptop",
+	})
+	text := result.Content[0].(*mcp.TextContent).Text
+	if result.IsError {
+		t.Fatalf("tool error: %s", text)
+	}
+	var doc struct {
+		Proposal map[string]any `json:"proposal"`
+		Note     string         `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(text), &doc); err != nil {
+		t.Fatalf("result is not a proposal: %v\n%s", err, text)
+	}
+	for key, want := range map[string]any{"kind": "env.reveal", "summary": "Show DATABASE_PASSWORD from Production", "projectId": "P_PROD", "serviceId": "S_API"} {
+		if doc.Proposal[key] != want {
+			t.Errorf("proposal.%s = %v, want %v", key, doc.Proposal[key], want)
+		}
+	}
+	if doc.Note != ops.RevealNote || strings.Contains(text, `"value"`) {
+		t.Errorf("result %s, want the reveal's note and no value", text)
+	}
+	if got := asked(); !slices.Equal(got, []string{"environments", "status P_PROD"}) {
+		t.Errorf("observations = %v, want the environments, then production's status only", got)
+	}
+
+	secret := strings.Join([]string{"hK7q", "2mVz", "P9xR"}, "-")
+	refused := callTool(t, srv, "zerops_propose_reveal", map[string]any{
+		"environment": "production", "key": "DATABASE_PASSWORD", "value": secret, "reason": "r",
+	})
+	if !refused.IsError || len(asked()) != 2 {
+		t.Errorf("a call with a value: error=%v observations=%v, want a refusal before any read", refused.IsError, asked())
+	}
+}
