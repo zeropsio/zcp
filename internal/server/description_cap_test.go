@@ -81,7 +81,7 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 		{name: "container", build: func() *Server { return project(container, nopStandupSSH{}) },
 			lists: []string{"zerops_browser", "zerops_dev_server", "zerops_deploy_batch"}},
 		{name: "a Mate's container", build: func() *Server { return project(mate, nopStandupSSH{}) },
-			lists: []string{"zerops_browser", "zerops_publish_page", "zerops_observe", "zerops_propose_ask_chief", "zerops_propose_service", "zerops_propose_env", "zerops_propose_mcp"}},
+			lists: []string{"zerops_browser", "zerops_publish_page", "zerops_observe", "zerops_propose_ask_chief", "zerops_propose_service", "zerops_propose_env", "zerops_propose_mcp", "zerops_propose_reveal"}},
 		{name: "the Chief, local", build: func() *Server { return org(runtime.Info{Chief: true}) },
 			lists: []string{"zerops_org_overview", "zerops_knowledge"}},
 		{name: "the Chief in a Mate's container", build: func() *Server {
