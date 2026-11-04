@@ -82,15 +82,14 @@ func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
 // TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Chief's tools the
 // way the model calls them: it sees the organization, proposes a restart, a
 // message to a Mate, a domain and access, and Zerops receives only the
-// allowlist's reads, each presenting the token of the person driving the
-// session; nothing reaches HQ.
+// allowlist's reads, each presenting the project's key; nothing reaches HQ.
 func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	// Non-parallel: t.Chdir (NewOrg derives its state dir from the cwd).
 	t.Chdir(t.TempDir())
 	zerops, seen := fakeZeropsOrg(t)
 	ctx := context.Background()
 
-	org, err := platform.OpenOrgReader(platform.OrgAccess{APIHost: zerops.URL, ProjectID: "pChief", Token: "person-token"})
+	org, err := platform.OpenOrgReader(platform.OrgAccess{APIHost: zerops.URL, ProjectID: "pChief", Token: "project-key"})
 	if err != nil {
 		t.Fatalf("OpenOrgReader: %v", err)
 	}
@@ -150,8 +149,8 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 		if !slices.Contains(allowed, call+" "+path) {
 			t.Errorf("org mode sent %s %s, outside the allowlist (%v)", call, path, allowed)
 		}
-		if authorization != "Bearer person-token" {
-			t.Errorf("%s %s carried Authorization %q, want the person's token", call, path, authorization)
+		if authorization != "Bearer project-key" {
+			t.Errorf("%s %s carried Authorization %q, want the project's key", call, path, authorization)
 		}
 	}
 }

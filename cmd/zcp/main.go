@@ -395,8 +395,8 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	// environment still reaches HQ.
 	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
 	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
-		creds := orgCredentials{APIHost: mate.ResolveAPIHost(getenv("ZCP_API_HOST")), PersonToken: os.Getenv(envPersonToken)}
-		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, mate.HQIdentity(getenv), creds, os.Stderr); ok {
+		apiHost := mate.ResolveAPIHost(getenv("ZCP_API_HOST"))
+		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, mate.HQIdentity(getenv), apiHost, os.Stderr); ok {
 			rt.Chief = true
 			return runOrgServer(mcpStdout, tel, access, rt)
 		}
@@ -481,27 +481,15 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 // minutes.
 const chiefReadTimeout = 5 * time.Second
 
-// envPersonToken carries the Zerops token of the person driving this org-mode
-// session. It is read from the serve process's own environment only, never
-// from the live env store or any file: the person's credential lives as long
-// as the process that was handed it.
-const envPersonToken = "ZCP_PERSON_TOKEN"
-
-// orgCredentials is what org mode may read Zerops with: the API host and the
-// token of the person driving the session, when one does.
-type orgCredentials struct {
-	APIHost     string
-	PersonToken string
-}
-
 // chiefAccess reads from HQ the Chief this Mate answers to (GET /api/mate/self) and, when it
 // names this identity's project, returns what the org reader opens with: the
-// Zerops API with the person's token when a person drives the session, else
-// with the project's key for its own project (docs/spec-mate.md §2.11, OM-4). A
+// Zerops API at apiHost with the project's own key, which reaches the Chief's
+// own project; a person's token never enters the container (docs/spec-mate.md
+// §2.11, OM-4). A
 // Mate whose HQ cannot be reached or asked serves the single-project surface
 // and says so on stderr; a container with no identity to present is no Chief
 // and says nothing.
-func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, creds orgCredentials, stderr io.Writer) (platform.OrgAccess, bool) {
+func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, apiHost string, stderr io.Writer) (platform.OrgAccess, bool) {
 	client, err := hq.Open(httpClient, id)
 	if err != nil {
 		return platform.OrgAccess{}, false
@@ -511,15 +499,11 @@ func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, creds 
 		fmt.Fprintf(stderr, "zcp: HQ did not say whether this project is the Chief (%v); serving the single-project surface\n", err)
 		return platform.OrgAccess{}, false
 	}
-	token := strings.TrimSpace(creds.PersonToken)
-	if token == "" {
-		token = id.Key
-	}
-	return platform.OrgAccess{APIHost: creds.APIHost, ProjectID: id.ProjectID, Token: token}, chief
+	return platform.OrgAccess{APIHost: apiHost, ProjectID: id.ProjectID, Token: id.Key}, chief
 }
 
 // runOrgServer serves org mode: the organization read from the Zerops API
-// with the credential the session holds. It never builds a client that could
+// with the project's key. It never builds a client that could
 // write.
 func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.OrgAccess, rtInfo runtime.Info) (*server.Server, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

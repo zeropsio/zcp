@@ -1,6 +1,6 @@
 // Tests for: internal/platform/org_reader.go — org mode reads the
-// organization from the Zerops API with the credential its session holds,
-// never from HQ (docs/spec-mate.md §2.11, OM-4).
+// organization from the Zerops API with the project's key, never from HQ
+// (docs/spec-mate.md §2.11, OM-4).
 package platform
 
 import (
@@ -102,7 +102,7 @@ func readEverything(t *testing.T, r *OrgReader) {
 func TestOrgReader_ReadsOnlyTheAllowlistFromZerops(t *testing.T) {
 	t.Parallel()
 	srv, seen := fakeZerops(t, nil)
-	readEverything(t, openTestOrgReader(t, srv, "person-token"))
+	readEverything(t, openTestOrgReader(t, srv, "project-key"))
 
 	allowlist := []string{
 		"GET /api/rest/public/project/pChief",

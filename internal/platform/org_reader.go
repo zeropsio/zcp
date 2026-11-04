@@ -14,9 +14,8 @@ import (
 )
 
 // OrgReader is org mode's only door to the organization (docs/spec-mate.md
-// §2.11, OM-4): the Chief reads the Zerops API with the credential its
-// session holds — the person's own token while a person drives it, the
-// project's key otherwise — and never writes, and never asks HQ. Zerops cuts
+// §2.11, OM-4): the Chief reads the Zerops API with its project's key and
+// never writes, and never asks HQ. Zerops cuts
 // every answer to what that credential may see and refuses the rest; the
 // reader shows a refusal in Zerops' words and asks once. It reads the
 // allowlist and nothing else: the organization's projects and services with
@@ -44,8 +43,8 @@ type OrgAccess struct {
 	APIHost string
 	// ProjectID is the Chief's own project.
 	ProjectID string
-	// Token is the credential the session holds, sent as the bearer of every
-	// read and nowhere else.
+	// Token is the project's key, sent as the bearer of every read and
+	// nowhere else.
 	Token string
 }
 
