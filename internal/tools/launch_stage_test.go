@@ -41,13 +41,12 @@ func TestLaunchTokenEnvKey_ClassifiedInfrastructure(t *testing.T) {
 	}
 }
 
-// TestExecuteLaunchMutation_StagesTokenBeforeCreate pins the T1 staging
-// protocol on the new-project mutation path: the launch token is staged
-// as a service-scope SECRET (ZCP_LAUNCH_TOKEN) on the source push
-// service strictly BEFORE the irreversible CreateAndImportProject, and
-// a staging failure aborts the mutation with no project created and no
-// state file written.
-func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
+// TestExecuteLaunchMutation_StagesTheProjectDeployKey: the launchKey of the
+// person who presses launch creates the production project and is dropped
+// after the call; the source push service receives the new project's deploy
+// key (BASIC_USER on that project alone), never the launchKey. A deploy key
+// that is not minted or not staged leaves nothing staged and says so.
+func TestExecuteLaunchMutation_StagesTheProjectDeployKey(t *testing.T) {
 	// non-parallel: installMockAdminFactory mutates the package-global factory.
 	publishInput := func() WorkflowInput {
 		return WorkflowInput{
@@ -59,12 +58,8 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 			LaunchKey:             sentinelLaunchKey,
 		}
 	}
-
-	t.Run("staged on launched", func(t *testing.T) {
-		stateDir := withTempState(t)
-		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
-		sourceClient := pLP3MockClient()
-		mockAdmin := platform.NewMockProjectAdminClient().
+	launchedAdmin := func() *platform.MockProjectAdminClient {
+		return platform.NewMockProjectAdminClient().
 			WithImportResult(&platform.ImportResult{
 				ProjectID:   "new-prod-id",
 				ProjectName: "myapp-prod",
@@ -74,6 +69,14 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 			}).
 			WithProcess(&platform.Process{ID: "proc-1", Status: "FINISHED"}).
 			WithClientUserID("client-user-abc")
+	}
+	deployKey := platform.MockDeployKeyPrefix + "new-prod-id"
+
+	t.Run("launched stages the deploy key, never the launch key", func(t *testing.T) {
+		stateDir := withTempState(t)
+		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+		sourceClient := pLP3MockClient()
+		mockAdmin := launchedAdmin()
 		defer installMockAdminFactory(t, mockAdmin)()
 
 		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
@@ -81,21 +84,25 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
 		}
-		resp := decodeLaunchResp(t, []byte(extractText(result)))
+		text := extractText(result)
+		resp := decodeLaunchResp(t, []byte(text))
 		if resp.Status != topology.LaunchStatusLaunched {
-			t.Fatalf("status: got %q want launched\n%s", resp.Status, extractText(result))
+			t.Fatalf("status: got %q want launched\n%s", resp.Status, text)
 		}
-		if got := stagedTokenValue(t, sourceClient, "svc-app"); got != sentinelLaunchKey {
-			t.Errorf("staged token on dev service: got %q want the launch key", got)
+		if mockAdmin.CapturedMintProjectKeyProject != "new-prod-id" {
+			t.Errorf("deploy key minted on %q, want the new production project new-prod-id", mockAdmin.CapturedMintProjectKeyProject)
 		}
-		// The staged write is a server-side secret — the value must not
-		// surface in the response.
-		if strings.Contains(extractText(result), sentinelLaunchKey) {
-			t.Errorf("launched response leaks the launch key:\n%s", extractText(result))
+		if got := stagedTokenValue(t, sourceClient, "svc-app"); got != deployKey {
+			t.Errorf("staged token on dev service: got %q want the production project's deploy key", got)
+		}
+		for _, secret := range []string{sentinelLaunchKey, deployKey} {
+			if strings.Contains(text, secret) {
+				t.Errorf("launched response leaks %q:\n%s", secret, text)
+			}
 		}
 	})
 
-	t.Run("staged before failed create", func(t *testing.T) {
+	t.Run("failed create stages nothing", func(t *testing.T) {
 		stateDir := withTempState(t)
 		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 		sourceClient := pLP3MockClient()
@@ -112,19 +119,17 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 		if resp.Status != topology.LaunchStatusFailed {
 			t.Fatalf("status: got %q want failed", resp.Status)
 		}
-		// Order proof: the staged secret exists even though create failed —
-		// staging ran BEFORE the irreversible step.
-		if got := stagedTokenValue(t, sourceClient, "svc-app"); got != sentinelLaunchKey {
-			t.Errorf("token must be staged before CreateAndImportProject; staged value got %q", got)
+		if got := stagedTokenValue(t, sourceClient, "svc-app"); got != "" {
+			t.Errorf("a failed create must stage nothing; staged value got %q", got)
 		}
 	})
 
-	t.Run("stage failure aborts before create", func(t *testing.T) {
+	t.Run("a refused mint launches with nothing staged and says so", func(t *testing.T) {
 		stateDir := withTempState(t)
 		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
-		sourceClient := pLP3MockClient().
-			WithError("CreateServiceEnvVar", errors.New("simulated env write failure"))
-		mockAdmin := platform.NewMockProjectAdminClient()
+		sourceClient := pLP3MockClient()
+		mockAdmin := launchedAdmin().WithMintProjectKeyError(
+			platform.NewPlatformError(platform.ErrTokenCannotMint, "integration tokens cannot mint", ""))
 		defer installMockAdminFactory(t, mockAdmin)()
 
 		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
@@ -134,18 +139,40 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 		}
 		text := extractText(result)
 		resp := decodeLaunchResp(t, []byte(text))
-		if resp.Status != topology.LaunchStatusFailed {
-			t.Fatalf("status: got %q want failed", resp.Status)
+		if resp.Status != topology.LaunchStatusLaunched {
+			t.Fatalf("status: got %q want launched (the project exists)\n%s", resp.Status, text)
 		}
-		if !strings.Contains(text, "launch-token-stage-failed") {
-			t.Errorf("stage failure must surface the launch-token-stage-failed blocker:\n%s", text)
+		if got := stagedTokenValue(t, sourceClient, "svc-app"); got != "" {
+			t.Errorf("a refused mint must stage nothing, never the launch key; staged value got %q", got)
 		}
-		if mockAdmin.CapturedImportYAML != "" {
-			t.Error("CreateAndImportProject must NOT run when staging failed (abort before the irreversible create)")
+		if !strings.Contains(text, "deploy key was not minted") {
+			t.Errorf("a refused mint must say the deploy key was not minted:\n%s", text)
 		}
-		// No project, no state: a retry with the same launchKey starts clean.
-		if _, readErr := readLaunchState(stateDir, generateLaunchID("source-project-id", "myapp-prod")); !errors.Is(readErr, ErrLaunchStateMissing) {
-			t.Errorf("stage failure must not persist launch state; read err = %v", readErr)
+	})
+
+	t.Run("a stage failure after the create launches and says so", func(t *testing.T) {
+		stateDir := withTempState(t)
+		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+		sourceClient := pLP3MockClient().
+			WithError("CreateServiceEnvVar", errors.New("simulated env write failure"))
+		mockAdmin := launchedAdmin()
+		defer installMockAdminFactory(t, mockAdmin)()
+
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
+			publishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+		if err != nil {
+			t.Fatalf("handleLaunchProduction: %v", err)
+		}
+		text := extractText(result)
+		resp := decodeLaunchResp(t, []byte(text))
+		if resp.Status != topology.LaunchStatusLaunched {
+			t.Fatalf("status: got %q want launched (the project exists)\n%s", resp.Status, text)
+		}
+		if !strings.Contains(text, "deploy key was not staged") {
+			t.Errorf("a stage failure must say the deploy key was not staged:\n%s", text)
+		}
+		if strings.Contains(text, deployKey) {
+			t.Errorf("response leaks the deploy key:\n%s", text)
 		}
 	})
 }

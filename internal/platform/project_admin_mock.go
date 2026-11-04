@@ -48,6 +48,12 @@ type MockProjectAdminClient struct {
 	// reads what the caller recorded before that call went out.
 	OnGrantSelfRole func()
 
+	// MintProjectKey capture + error injection. CapturedMintProjectKeyProject
+	// is empty until a key is minted.
+	CapturedMintProjectKeyProject string
+	CapturedMintProjectKeyName    string
+	mintProjectKeyErr             error
+
 	// F7 bring-up management capture/config.
 	DeletedServiceIDs []string
 	DeleteServiceErr  error
@@ -101,6 +107,34 @@ func (m *MockProjectAdminClient) WithGrantSelfRoleError(err error) *MockProjectA
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.grantSelfRoleErr = err
+	return m
+}
+
+// MockDeployKeyPrefix prefixes the deploy key the mock's MintProjectKey
+// returns, followed by the project id.
+const MockDeployKeyPrefix = "mock-deploy-key-"
+
+// MintProjectKey implements ProjectAdminClient: it records the project and
+// name and returns MockDeployKeyPrefix+projectID, or the configured error.
+func (m *MockProjectAdminClient) MintProjectKey(_ context.Context, projectID, name string) (MintedToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Closed {
+		return MintedToken{}, ErrClientClosed
+	}
+	if m.mintProjectKeyErr != nil {
+		return MintedToken{}, m.mintProjectKeyErr
+	}
+	m.CapturedMintProjectKeyProject = projectID
+	m.CapturedMintProjectKeyName = name
+	return MintedToken{Token: MockDeployKeyPrefix + projectID, TokenID: "deploy-key-id-" + projectID}, nil
+}
+
+// WithMintProjectKeyError configures the error returned by MintProjectKey.
+func (m *MockProjectAdminClient) WithMintProjectKeyError(err error) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mintProjectKeyErr = err
 	return m
 }
 

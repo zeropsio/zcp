@@ -595,7 +595,7 @@ func launchOrphanResponse(state *launchState) *mcp.CallToolResult {
 			"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
 			state.TargetProjectName, state.TargetProjectID,
 		),
-		`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`" — the launch token resolves from the staged `+ops.LaunchTokenEnvKey+` secret (no launchKey re-send), and the diagnose-before-destruct refusal lists exactly what gets deleted: the orphan production project AND the state file. Then re-run start with the SAME productionProjectName. (When the staged secret is gone, pass launchKey=<the launch token> explicitly; without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion.)`,
+		`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`" — the window token resolves from the staged `+ops.LaunchTokenEnvKey+` secret, the production deploy key (no launchKey re-send), and the diagnose-before-destruct refusal lists exactly what gets deleted: the orphan production project AND the state file. Then re-run start with the SAME productionProjectName. (When the staged secret is gone, pass launchKey=<the launch token> explicitly; without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion.)`,
 	), WithRecoveryStatus())
 }
 
@@ -618,7 +618,7 @@ func createRefused(err error) bool {
 // readEndedLaunch reads the handle of a launch whose call ended between
 // writing `launching` and recording what CreateAndImportProject did, or
 // whose create Zerops did not answer (createRefused): its production project,
-// found with the staged launch token by its name AND the launch's own marker
+// found with the call's launchKey by its name AND the launch's own marker
 // (bundle.LaunchMarker, the description it creates the project with) — never
 // by name alone, for a launch key may read every project of its org. One
 // such project is recorded as the launch's orphan, the state failed, and the
@@ -909,30 +909,11 @@ func executeLaunchMutation(
 			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors)), nil, nil
 	}
 
-	// Stage the launch token as the single working copy BEFORE the
-	// irreversible create (single-token lifecycle T1): every later
-	// launch-window operation reads the staged secret instead of
-	// re-asking for the value, and the prodCD conveyance reads it over
-	// ssh. A staging failure aborts here: nothing was created — the same
-	// launchKey can be re-supplied. The token is staged on the runtime the
-	// launch promotes — for a part keyed by its dev pool on zcp's own
-	// service, never the pool or the stage, which run code a lease deploys
-	// (§10 P-LP-17).
+	// The launch window's working copy is staged on the runtime the launch
+	// promotes — for a part keyed by its dev pool on zcp's own service, never
+	// the pool or the stage, which run code a lease deploys (§10 P-LP-17).
 	runtimeHost := launchRuntimeHost(primaryRuntime)
 	stagedOn := launchTokenHost(primaryRuntime, rt)
-	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, input.LaunchKey); stageErr != nil {
-		_ = appendAuditLog(stateDir, launchAuditEntry{
-			LaunchID:          launchID,
-			Action:            "publish-rejected",
-			SourceProjectID:   sourceProjectID,
-			TargetProjectName: input.ProductionProjectName,
-			Result:            "failure",
-			ErrorMessage:      "stage launch token: " + stageErr.Error(),
-		})
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"launch-token-stage-failed",
-			launchTokenStageFailedMessage(stageErr, stagedOn)), nil, nil
-	}
 
 	// Persist initial state pre-mutation — if CreateAndImport panics or
 	// the process dies before completion, the state file shows the
@@ -974,7 +955,7 @@ func executeLaunchMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-state-write-failed",
-			fmt.Sprintf("Recording the launch before creating the production project failed: %v. Nothing was created; the launch token stays staged — re-call once the state directory is writable.", err)), nil, nil
+			fmt.Sprintf("Recording the launch before creating the production project failed: %v. Nothing was created — re-call with the launchKey once the state directory is writable.", err)), nil, nil
 	}
 
 	// Mutation: CreateAndImportProject. This is the irreversible step.
@@ -1034,6 +1015,12 @@ func executeLaunchMutation(
 	// call to Zerops, so a call that ends from here on leaves it behind.
 	state.TargetProjectID = result.ProjectID
 	_ = writeLaunchState(stateDir, state)
+
+	// The launchKey created the project and goes with this call; the source
+	// push service receives the new project's deploy key instead (P-LP-14).
+	if warning := stageProjectDeployKey(ctx, client, admin, sourceProjectID, stagedOn, result.ProjectID, input.ProductionProjectName); warning != "" {
+		launchBundle.Warnings = append(launchBundle.Warnings, warning)
+	}
 
 	// A.10: grant launching clientUser ADMIN on the new project. For the
 	// canonical INTEGRATION token this ALWAYS fails ("Insufficient
@@ -2234,11 +2221,11 @@ jobs:
 	if repoOK {
 		ownerRepo = owner + "/" + repo
 	}
-	// Single guarded builder (F9): conveys the STAGED launch token secret-to-secret
-	// AND guards both GH_TOKEN auth + the staged value for emptiness, so a launch
-	// token that didn't propagate no longer silently writes an empty repo secret.
+	// Single guarded builder (F9): conveys the STAGED deploy key secret-to-secret
+	// AND guards both GH_TOKEN auth + the staged value for emptiness, so a deploy
+	// key that didn't propagate no longer silently writes an empty repo secret.
 	// A pair keyed by its dev pool has no push source to read GIT_TOKEN from
-	// over ssh: its launch token is staged on zcp's own service, and GH_TOKEN
+	// over ssh: its deploy key is staged on zcp's own service, and GH_TOKEN
 	// is the PAT the person gives (docs/spec-workflows.md §10 P-LP-21).
 	if meta.DevIsPool() {
 		return poolPartProdCDActionsBlock(meta, state, workflowYAML, ownerRepo)
@@ -2253,7 +2240,7 @@ jobs:
 		},
 		"secret": map[string]any{
 			"name":    launchProdSecretName,
-			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the source push service. The command below conveys it secret-to-secret into the " + launchProdSecretName + " repo secret — both values are read over ssh, so neither re-enters the conversation. Do NOT ask the user to paste the token again and NEVER fabricate one. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
+			"source":  "STAGED deploy key: the production project's deploy key (BASIC_USER on that project alone, minted at launch) is staged as the " + ops.LaunchTokenEnvKey + " service secret on the source push service. The command below conveys it secret-to-secret into the " + launchProdSecretName + " repo secret — both values are read over ssh, so neither re-enters the conversation. Do NOT ask the user to paste a token and NEVER fabricate one. The key stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env).",
 			"command": secretCmd,
 		},
 		"steps": []string{
@@ -2303,7 +2290,7 @@ func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, 
 		"commitVia": fmt.Sprintf("%s — the part's dev half is the dev pool %q, which holds no checkout of its own: write %s in the lease's checkout (ssh to its alias), commit, and push %s from the lease, before the release.", poolPairLeaseAcquire(meta, branch), meta.Hostname, workflowPath, branch),
 		"secret": map[string]any{
 			"name":    launchProdSecretName,
-			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret " + stagedWhere + " so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
+			"source":  "STAGED deploy key: the production project's deploy key (BASIC_USER on that project alone, minted at launch) is staged as the " + ops.LaunchTokenEnvKey + " service secret " + stagedWhere + " so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The key stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env).",
 			"command": secretCmd,
 		},
 		"steps": []string{
@@ -2476,4 +2463,24 @@ func previewContainers(r bundle.LaunchRuntimeInput) string {
 		out += " (consented)"
 	}
 	return out
+}
+
+// stageProjectDeployKey mints the deploy key of the production project the
+// launch created and stages it as the launch window's working copy. It
+// answers the warning the launch carries when either step fails, "" when the
+// key is staged: the project exists either way, so the launch goes on with
+// nothing staged and later window calls need launchKey. Neither message
+// carries a token value.
+func stageProjectDeployKey(ctx context.Context, client platform.Client, admin platform.ProjectAdminClient, sourceProjectID, stagedOn, targetProjectID, targetProjectName string) string {
+	name := "zcp-deploy-" + targetProjectName
+	key, err := admin.MintProjectKey(ctx, targetProjectID, name)
+	if err != nil {
+		return fmt.Sprintf("The production deploy key was not minted: %v. Nothing is staged as %s on %q: every later launch-window call needs launchKey, and the GitHub repo secret needs a token you create in the dashboard with BASIC_USER on project %s alone. Only a person's own token mints a key; an integration token cannot.",
+			err, ops.LaunchTokenEnvKey, stagedOn, targetProjectID)
+	}
+	if err := stageLaunchToken(ctx, client, sourceProjectID, stagedOn, key.Token); err != nil {
+		return fmt.Sprintf("The production deploy key was not staged: %v. Nothing is staged as %s: every later launch-window call needs launchKey. The minted key %q (BASIC_USER on project %s) is unused — delete it in the dashboard.",
+			err, ops.LaunchTokenEnvKey, name, targetProjectID)
+	}
+	return ""
 }

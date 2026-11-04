@@ -47,9 +47,10 @@ func confirmInput(acked bool) WorkflowInput {
 
 // TestConfirmProduction_DeletesStageAndStamps pins the close act: with
 // the explicit confirmFunctional ack, the staged secret is DELETED
-// (delete first), WindowClosedAt is stamped, and the response carries
-// the regenerate recommendation with the dashboard pointer — without
-// ever echoing the token value.
+// (delete first), WindowClosedAt is stamped, and the response tells the
+// user to delete the launch key made for this launch, with the dashboard
+// pointer — the GitHub repo secret holds the deploy key, never the launch
+// key — without ever echoing the token value.
 func TestConfirmProduction_DeletesStageAndStamps(t *testing.T) {
 	// non-parallel: captureAdminFactory mutates the package-global factory.
 	stateDir := t.TempDir()
@@ -86,8 +87,8 @@ func TestConfirmProduction_DeletesStageAndStamps(t *testing.T) {
 	if updated.WindowClosedAt.IsZero() {
 		t.Error("WindowClosedAt must be stamped after the close")
 	}
-	// Regenerate note + dashboard pointer + matched token name.
-	for _, want := range []string{"egenerat", "token-management", "zcp-launch-myapp-prod"} {
+	// Delete-the-launch-key note + dashboard pointer + matched token name.
+	for _, want := range []string{"delete it in the Zerops dashboard", "token-management", "zcp-launch-myapp-prod"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("close response missing %q:\n%s", want, body)
 		}
@@ -98,6 +99,9 @@ func TestConfirmProduction_DeletesStageAndStamps(t *testing.T) {
 	}
 	if strings.Contains(body, sentinelLaunchKey) {
 		t.Errorf("close response leaks the token value:\n%s", body)
+	}
+	if strings.Contains(body, "regenerated token value") {
+		t.Errorf("close response must not ask for a launch key in the GitHub repo secret:\n%s", body)
 	}
 }
 

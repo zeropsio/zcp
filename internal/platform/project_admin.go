@@ -78,6 +78,13 @@ type ProjectAdminClient interface {
 	// Caller MUST `defer admin.Close()`.
 	Close()
 
+	// MintProjectKey mints the deploy key of a project the launch created:
+	// organisation NO_ACCESS, BASIC_USER on exactly projectID, never ADMIN
+	// (projectKeyBody), in the client's organisation. Only a person's own
+	// token mints; an integration token answers ErrTokenCannotMint. The
+	// launch stages the minted key, never the token that created the project.
+	MintProjectKey(ctx context.Context, projectID, name string) (MintedToken, error)
+
 	// ClientUserID returns the launching user's clientUserId — the link
 	// between user and client. Used by GrantSelfRole to authorize
 	// follow-up env reads against the freshly-created project. Captured
@@ -382,6 +389,14 @@ func (p *projectAdminClient) GrantSelfRole(ctx context.Context, projectID string
 		return fmt.Errorf("put roles output: %w", mapSDKError(err, "client-user"))
 	}
 	return nil
+}
+
+// MintProjectKey implements ProjectAdminClient.
+func (p *projectAdminClient) MintProjectKey(ctx context.Context, projectID, name string) (MintedToken, error) {
+	if p.zerops == nil {
+		return MintedToken{}, ErrClientClosed
+	}
+	return p.zerops.MintProjectScopedToken(ctx, p.clientID, projectID, name)
 }
 
 // CreateAndImportProject implements ProjectAdminClient. The import API

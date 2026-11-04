@@ -29,8 +29,9 @@ description: |
       first release tag through the prod pipeline (`git tag v0.1.0 &&
       git push --tags`). The agent must NOT treat the empty runtimes as a
       failed/stuck build.
-   4. Single-token lifecycle — the launchKey crosses the conversation ONCE
-      (on the mutation call). ZCP stages it as the prod push service's
+   4. Launch-key lifecycle — the launchKey crosses the conversation ONCE
+      (on the mutation call) and mints the prod project's deploy key. ZCP
+      stages that deploy key as the prod push service's
       `ZCP_LAUNCH_TOKEN` secret; `prodCd.secret.command` conveys it into the
       `ZEROPS_TOKEN_PROD` GitHub repo secret secret-to-secret over ssh — the
       user does NOT paste the prod token a second time.
@@ -39,7 +40,7 @@ description: |
       manage. The scenario MUST end by tearing down that prod PROJECT via
       the launch lifecycle's own reset — `zerops_workflow
       workflow=launch-production action=reset` (deletes the prod project +
-      clears launch state, using the staged launch token), or `zcli project
+      clears launch state, using the staged deploy key), or `zcli project
       delete <productionProjectId>`. NOT `zerops_delete` — that deletes a
       single SERVICE by hostname, not a project. Otherwise the org
       accumulates dead prod projects.
@@ -162,8 +163,9 @@ notableFriction:
       starting".
   - id: single-token-no-repaste
     description: |
-      The launchKey crosses the conversation once. ZCP stages it as
-      `ZCP_LAUNCH_TOKEN`; `prodCd.secret.command` conveys it into the
+      The launchKey crosses the conversation once. ZCP stages the prod
+      project's deploy key as `ZCP_LAUNCH_TOKEN`; `prodCd.secret.command`
+      conveys it into the
       `ZEROPS_TOKEN_PROD` repo secret secret-to-secret over ssh.
       Surfaces whether the agent re-asks the user to paste the token
       for the repo secret or understands the staged-secret conveyance.

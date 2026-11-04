@@ -172,7 +172,7 @@ type WorkflowInput struct {
 	// The input tag accepts the field so the mcp-go schema exposes it
 	// (without this, the agent gets "unexpected additional properties
 	// [launchKey]" on every call).
-	LaunchKey string `json:"launchKey,omitempty" jsonschema:"Launch-production publish only: the Zerops integration token with project-creation permission, passed ONCE on the mutation call (ready-to-launch → launching). The workflow stages it; later launch-window calls re-read the staged copy, so re-pass it only as fallback when that copy is gone. ZCP holds it in memory per invocation — never persisted to state, audit log, or response payloads."`
+	LaunchKey string `json:"launchKey,omitempty" jsonschema:"Launch-production publish only: the token of the person who presses launch, with project-creation permission, passed ONCE on the mutation call (ready-to-launch → launching). It creates the production project and mints its deploy key, which the workflow stages for later launch-window calls; re-pass launchKey only when that key is gone. Never staged, persisted, logged or echoed."`
 	// ExistingProjectID + ExistingProdToken together drive the launch-
 	// production existing-project mutation path (plans/workflow-family-
 	// architecture-2026-05-14.md §6.2 + §6.6). When both set, the

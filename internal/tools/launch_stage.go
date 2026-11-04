@@ -1,16 +1,17 @@
-// Package tools — launch-token staging (single-token launch lifecycle,
-// plans/archive/launch-single-token-lifecycle-2026-06-11.md).
+// Package tools — launch-window staging (single-token launch lifecycle).
 //
-// The protocol: the user's launch-window token enters the conversation
-// exactly once (the launchKey-bearing mutation call), and the mutation
-// immediately stages it as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey =
-// ZCP_LAUNCH_TOKEN) on the source push service — staged strictly BEFORE
-// the irreversible project create, so a staging failure aborts with
-// nothing to clean up. From then on every launch-window operation
-// (prod-ops, pipeline resume, reset, confirm-production) resolves the
-// token from the staged secret instead of re-asking; the GitHub Actions
-// repo-secret conveyance reads the same env over ssh. confirm-production
-// deletes the env — the window closes physically, not by policy.
+// The protocol: the launchKey of the person who presses launch enters the
+// conversation exactly once (the launchKey-bearing mutation call), creates
+// the production project and goes with that call — never staged, stored or
+// conveyed. Right after the create, the launch mints the new project's
+// deploy key with it (organisation NO_ACCESS, BASIC_USER on that project
+// alone) and stages that key as a SERVICE-scope SECRET
+// (ops.LaunchTokenEnvKey = ZCP_LAUNCH_TOKEN) on the source push service.
+// From then on every launch-window operation (prod-ops, pipeline resume,
+// reset, confirm-production) resolves the token from the staged secret
+// instead of re-asking; the GitHub Actions repo-secret conveyance reads the
+// same env over ssh. confirm-production deletes the env — the window closes
+// physically, not by policy.
 package tools
 
 import (
@@ -105,7 +106,7 @@ func resolveLaunchWindowToken(ctx context.Context, client platform.Client, proje
 	return explicit, nil
 }
 
-// launchTokenStageFailedMessage is the shared abort message when staging
+// launchTokenStageFailedMessage is the existing-project path's abort message when staging
 // fails: no project was created, no state persisted, and the same launchKey
 // can be re-supplied once the cause is fixed.
 func launchTokenStageFailedMessage(stageErr error, pushHostname string) string {

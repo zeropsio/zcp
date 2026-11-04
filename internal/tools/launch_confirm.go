@@ -10,12 +10,10 @@
 // is enforced by absence, not policy. WindowClosedAt is stamped for
 // honest status messages only.
 //
-// The integration token itself STAYS VALID: GitHub Actions keeps using
-// its repo-secret copy, and the final response recommends regenerating
-// the token in the dashboard — regeneration preserves settings,
-// invalidates the old value everywhere (including every copy the
-// conversation ever saw), and the user then refreshes the repo secret
-// with the new value in their own terminal. The token itself has no expiry.
+// The launch key went with the call that launched: zcp never staged or
+// stored it. GitHub Actions keeps delivering with the production deploy
+// key in its repo secret; the final response tells the user to delete the
+// launch key if it was made for this launch.
 package tools
 
 import (
@@ -29,7 +27,6 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // launchTokenDashboardURL is the Zerops dashboard page where access
@@ -83,7 +80,7 @@ func handleLaunchConfirmProduction(
 			"status":         "window-closed",
 			"windowClosedAt": state.WindowClosedAt.UTC().Format(time.RFC3339),
 			"note":           "The launch window was already closed — the staged " + ops.LaunchTokenEnvKey + " secret is gone. Production management belongs to the dashboard or a project-scoped token.",
-			"tokenLifecycle": launchTokenLifecycleBlock(nil, state, stateDir),
+			"tokenLifecycle": launchTokenLifecycleBlock(nil, state),
 		}), nil, nil
 	}
 
@@ -187,7 +184,7 @@ func handleLaunchConfirmProduction(
 		"stagedSecretDeleted": stagedDeleted,
 		"liveness":            liveness,
 		"warnings":            warnings,
-		"tokenLifecycle":      launchTokenLifecycleBlock(tokens, state, stateDir),
+		"tokenLifecycle":      launchTokenLifecycleBlock(tokens, state),
 		"nextStep":            "The launch lifecycle is complete. For ongoing production iteration, generate a project-scoped key for the prod project and run a separate ZCP session against it; releases keep shipping via the tag pipeline.",
 	}), nil, nil
 }
@@ -218,22 +215,19 @@ func launchConfirmLiveness(ctx context.Context, admin platform.ProjectAdminClien
 	return rows, warnings
 }
 
-// launchTokenLifecycleBlock renders the regenerate recommendation. The
-// token-id match is best-effort: integration tokens that can create
-// projects, preferring ones whose project access lists the launched
-// project; exactly one candidate → named, else the generic dashboard
-// pointer stands.
-func launchTokenLifecycleBlock(tokens []platform.IntegrationTokenInfo, state *launchState, stateDir string) map[string]any {
+// launchTokenLifecycleBlock renders what becomes of the launch key and the
+// deploy key once the window closes. The launch-key match is best-effort:
+// integration tokens that can create projects, preferring ones whose project
+// access lists the launched project; exactly one candidate → named, else the
+// generic dashboard pointer stands.
+func launchTokenLifecycleBlock(tokens []platform.IntegrationTokenInfo, state *launchState) map[string]any {
 	block := map[string]any{
-		"truth":          "The integration token itself STAYS VALID — regeneration, not expiry, is what invalidates it. The staged copy is deleted, so ZCP has nowhere left to read it from; the GitHub repo secret (actions family) remains the only working copy in the delivery chain.",
-		"recommendation": "Recommended hygiene: regenerate the token in the Zerops dashboard — regeneration keeps all settings and immediately invalidates the old value everywhere, including every copy this conversation ever saw — then update the GitHub repo secret with the new value.",
+		"truth":          "The launch key went with the call that launched: zcp never staged or stored it. The GitHub repo secret (actions family) holds the production deploy key — BASIC_USER on the production project alone — and keeps delivering releases; its staged copy is deleted, so ZCP has nowhere left to read it from.",
+		"recommendation": "If the launch key was made for this launch, delete it in the Zerops dashboard — nothing in the delivery chain uses it.",
 		"dashboard":      launchTokenDashboardURL,
 	}
 	if matched := matchLaunchToken(tokens, state.TargetProjectID); matched != nil {
 		block["token"] = map[string]any{"id": matched.ID, "name": matched.Name}
-	}
-	if cmd := launchSecretRefreshCommand(stateDir, state); cmd != "" {
-		block["refreshSecretCommand"] = cmd
 	}
 	return block
 }
@@ -260,24 +254,4 @@ func matchLaunchToken(tokens []platform.IntegrationTokenInfo, prodProjectID stri
 		return &creators[0]
 	}
 	return nil
-}
-
-// launchSecretRefreshCommand prepares the post-regenerate repo-secret
-// update for the actions family. USER-RUN by design: the regenerated
-// value must not enter the conversation, so the user pastes it into the
-// command in their OWN terminal (gh auth already present there).
-func launchSecretRefreshCommand(stateDir string, state *launchState) string {
-	if stateDir == "" || state == nil || state.TargetServiceHostname == "" {
-		return ""
-	}
-	meta, err := workflow.FindServiceMeta(stateDir, state.TargetServiceHostname)
-	if err != nil || meta == nil || meta.BuildIntegration != topology.BuildIntegrationActions {
-		return ""
-	}
-	owner, repo, ok := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
-	if !ok {
-		return ""
-	}
-	return fmt.Sprintf("gh secret set %s -b \"<the regenerated token value>\" -R %s/%s  # user-run in their own terminal — the value must not enter this conversation",
-		launchProdSecretName, owner, repo)
 }

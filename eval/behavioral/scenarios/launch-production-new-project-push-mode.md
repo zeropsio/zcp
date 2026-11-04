@@ -42,8 +42,10 @@ userPersona: |
   want a SEPARATE new Zerops project (per Zerops production policy — no zcp@1
   in prod, separate trust boundary). You mint ONE Zerops integration token with
   project-creation permission; you hand it to ZCP exactly once on the launch
-  (mutation) call, and ZCP stages it as the production push service's
-  `ZCP_LAUNCH_TOKEN` secret for the rest of the launch window. You'll close the
+  (mutation) call; it creates the project and mints the project's deploy
+  key, and ZCP stages that deploy key — never your token — as the
+  production push service's `ZCP_LAUNCH_TOKEN` secret for the rest of the
+  launch window. You'll close the
   window (which deletes the staged secret) only after production is verified
   working, via `action="confirm-production" confirmFunctional=true`.
 
