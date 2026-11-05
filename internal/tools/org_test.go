@@ -5,6 +5,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,6 +51,83 @@ func orgServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterOrg(srv, orgFake{}, func() string { return "id-1" })
 	return srv
+}
+
+func TestOrgOverview_ProjectKey(t *testing.T) {
+	t.Parallel()
+	t.Run("with a project key the overview lists the organisation's members and says it sees one project", func(t *testing.T) {
+		t.Parallel()
+		// Recorded with a KRLS Mate's project key; IDs, names and emails are
+		// anonymized, with irrelevant response fields and tags removed.
+		capture, err := os.ReadFile("testdata/org_overview_project_key.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var recorded struct {
+			OwnProject json.RawMessage `json:"ownProject"`
+			Projects   json.RawMessage `json:"projects"`
+			Members    json.RawMessage `json:"members"`
+			OldMembers json.RawMessage `json:"oldMembers"`
+		}
+		if err := json.Unmarshal(capture, &recorded); err != nil {
+			t.Fatal(err)
+		}
+		zerops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			var response string
+			switch r.Method + " " + r.URL.Path {
+			case "GET /api/rest/public/project/pChief":
+				response = string(recorded.OwnProject)
+			case "POST /api/rest/public/project/search":
+				response = string(recorded.Projects)
+			case "POST /api/rest/public/service-stack/search":
+				response = `{"items":[],"totalHits":0}`
+			case "GET /api/rest/public/client/org1/user/list":
+				response = string(recorded.OldMembers)
+			case "POST /api/rest/public/client-user/search":
+				response = string(recorded.Members)
+			default:
+				http.Error(w, "unexpected request", http.StatusForbidden)
+				return
+			}
+			_, _ = io.WriteString(w, response)
+		}))
+		defer zerops.Close()
+
+		reader, err := platform.OpenOrgReader(platform.OrgAccess{APIHost: zerops.URL, ProjectID: "pChief", Token: "project-key"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterOrg(srv, reader, func() string { return "id-1" })
+		result := callTool(t, srv, "zerops_org_overview", map[string]any{})
+		if result.IsError {
+			t.Fatalf("overview errored: %s", extractText(result))
+		}
+		var overview struct {
+			ProjectsVisibleToProjectKey *int                      `json:"projectsVisibleToProjectKey"`
+			Groups                      []ops.OrgGroup            `json:"groups"`
+			Members                     []platform.OverviewMember `json:"members"`
+		}
+		if err := json.Unmarshal([]byte(extractText(result)), &overview); err != nil {
+			t.Fatal(err)
+		}
+		if overview.ProjectsVisibleToProjectKey == nil || *overview.ProjectsVisibleToProjectKey != 1 {
+			t.Errorf("projectsVisibleToProjectKey = %v, want 1", overview.ProjectsVisibleToProjectKey)
+		}
+		if len(overview.Groups) != 1 || len(overview.Groups[0].Projects) != 1 || overview.Groups[0].Projects[0].ID != "pChief" {
+			t.Errorf("groups = %+v, want the key's own project", overview.Groups)
+		}
+		want := []platform.OverviewMember{
+			{UserID: "u1", FullName: "Person 1", Role: "OWNER", Status: "ACTIVE"},
+			{UserID: "u2", FullName: "Person 2", Role: "BASIC_USER", Status: "WAITING_AUTHORIZATION"},
+			{UserID: "u3", FullName: "Person 3", Role: "BASIC_USER", Status: "ACTIVE"},
+			{UserID: "u4", FullName: "Person 4", Role: "NO_ACCESS", Status: "ACTIVE"},
+		}
+		if !reflect.DeepEqual(overview.Members, want) {
+			t.Errorf("members = %+v, want %+v", overview.Members, want)
+		}
+	})
 }
 
 type orgWithHQNamedService struct{ orgFake }

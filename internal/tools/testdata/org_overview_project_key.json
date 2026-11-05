@@ -1,0 +1,80 @@
+{
+  "ownProject": {
+    "id": "pChief",
+    "clientId": "org1",
+    "name": "Project 1",
+    "status": "ACTIVE"
+  },
+  "projects": {
+    "limit": 200,
+    "offset": 0,
+    "totalHits": 1,
+    "items": [
+      {
+        "id": "pChief",
+        "clientId": "org1",
+        "name": "Project 1",
+        "status": "ACTIVE",
+        "tagList": [
+          "mate"
+        ]
+      }
+    ]
+  },
+  "members": {
+    "limit": 200,
+    "offset": 0,
+    "totalHits": 4,
+    "items": [
+      {
+        "id": "cu1",
+        "clientId": "org1",
+        "userId": "u1",
+        "status": "ACTIVE",
+        "roleCode": "OWNER",
+        "user": {
+          "id": "u1",
+          "email": "person1@example.com",
+          "fullName": "Person 1"
+        }
+      },
+      {
+        "id": "cu2",
+        "clientId": "org1",
+        "userId": "u2",
+        "status": "WAITING_AUTHORIZATION",
+        "roleCode": "BASIC_USER",
+        "user": {
+          "id": "u2",
+          "email": "person2@example.com",
+          "fullName": "Person 2"
+        }
+      },
+      {
+        "id": "cu3",
+        "clientId": "org1",
+        "userId": "u3",
+        "status": "ACTIVE",
+        "roleCode": "BASIC_USER",
+        "user": {
+          "id": "u3",
+          "email": "person3@example.com",
+          "fullName": "Person 3"
+        }
+      },
+      {
+        "id": "cu4",
+        "clientId": "org1",
+        "userId": "u4",
+        "status": "ACTIVE",
+        "roleCode": "NO_ACCESS",
+        "user": {
+          "id": "u4",
+          "email": "person4@example.com",
+          "fullName": "Person 4"
+        }
+      }
+    ]
+  },
+  "oldMembers": {}
+}

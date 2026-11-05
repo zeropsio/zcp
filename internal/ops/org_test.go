@@ -114,8 +114,8 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Projects != 7 {
-		t.Fatalf("projects=%d, want 7", got.Projects)
+	if got.ProjectsVisibleToProjectKey != 7 {
+		t.Fatalf("projectsVisibleToProjectKey=%d, want 7", got.ProjectsVisibleToProjectKey)
 	}
 	if len(got.Members) != 2 || got.Members[0].Role != "ADMIN" {
 		t.Errorf("members = %+v, want the organization's two people with their roles", got.Members)
@@ -151,15 +151,16 @@ func TestResolveOrgProject(t *testing.T) {
 	org := testOrg()
 	org.projects = append(org.projects, platform.Project{ID: "pHQ2", Name: "Headquarters"})
 	tests := []struct {
-		name    string
-		ref     string
-		want    string
-		wantErr string
+		name      string
+		ref       string
+		want      string
+		wantErr   string
+		wantScope bool
 	}{
 		{name: "by id", ref: "pProd", want: "pProd"},
 		{name: "by full name, any case", ref: "contoso - production", want: "pProd"},
 		{name: "by a Mate's name", ref: "rossy", want: "pRossy"},
-		{name: "a project outside the org", ref: "pElsewhere", wantErr: "no project"},
+		{name: "a project outside the org", ref: "pElsewhere", wantErr: "no project", wantScope: true},
 		{name: "a name two projects share", ref: "Headquarters", wantErr: "pHQ2"},
 		{name: "nothing", ref: " ", wantErr: "project is required"},
 	}
@@ -170,6 +171,9 @@ func TestResolveOrgProject(t *testing.T) {
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
+				}
+				if tt.wantScope && !strings.Contains(err.Error(), "visible to this project key") {
+					t.Errorf("err = %v, want the project-key scope", err)
 				}
 				return
 			}

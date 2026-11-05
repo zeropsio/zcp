@@ -2,10 +2,8 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -34,7 +32,7 @@ type OrgReader struct {
 	projectID string
 }
 
-// orgSearchPage bounds one search request; ListServices pages past it.
+// orgSearchPage bounds one search request.
 const orgSearchPage = 1000
 
 // OrgAccess is what org mode opens its reader with.
@@ -199,38 +197,42 @@ type OverviewMember struct {
 // token is no person.
 var tokenEmail = regexp.MustCompile(`(?i)^token-[^@]+@zerops\.io$`)
 
-// ListMembers is the organization's people and their roles: one read of
-// GET /client/{org}/user/list.
+// ListMembers is the organization's people and their roles, paged through
+// the client-user search the Chief's project key can read.
 func (r *OrgReader) ListMembers(ctx context.Context) ([]OverviewMember, error) {
 	orgID, err := r.orgID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := r.z.directGet(ctx, "/api/rest/public/client/"+url.PathEscape(orgID)+"/user/list", "org members")
-	if err != nil {
-		return nil, err
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{eq("clientId", orgID)},
+		Sort:   body.EsFilterSort{{Name: types.NewString("id"), Ascending: types.NewBoolNull(true)}},
+		Limit:  types.NewIntNull(orgSearchPage),
 	}
-	var out struct {
-		ClientUserList []struct {
-			UserID   string `json:"userId"`
-			Status   string `json:"status"`
-			RoleCode string `json:"roleCode"`
-			User     struct {
-				Email    string `json:"email"`
-				FullName string `json:"fullName"`
-			} `json:"user"`
-		} `json:"clientUserList"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, withCause(NewPlatformError(ErrAPIError, "org members: malformed response",
-			"Retry; if it persists the platform API changed — report it"), err)
-	}
-	members := make([]OverviewMember, 0, len(out.ClientUserList))
-	for _, m := range out.ClientUserList {
-		if tokenEmail.MatchString(m.User.Email) {
-			continue
+	members := []OverviewMember{}
+	for offset := 0; ; {
+		filter.Offset = types.NewIntNull(offset)
+		resp, err := r.z.handler.PostClientUserSearch(ctx, filter)
+		if err != nil {
+			return nil, mapSDKError(err, "org members")
 		}
-		members = append(members, OverviewMember{UserID: m.UserID, FullName: m.User.FullName, Role: m.RoleCode, Status: m.Status})
+		out, err := resp.Output()
+		if err != nil {
+			return nil, mapSDKError(err, "org members")
+		}
+		for _, m := range out.Items {
+			if tokenEmail.MatchString(m.User.Email.Native()) {
+				continue
+			}
+			members = append(members, OverviewMember{UserID: m.UserId.Native(), FullName: m.User.FullName.String(), Role: m.RoleCode.String(), Status: m.Status.String()})
+		}
+		offset += len(out.Items)
+		if offset >= out.TotalHits.Native() {
+			return members, nil
+		}
+		if len(out.Items) == 0 {
+			return nil, NewPlatformError(ErrAPIError, "org members: incomplete search response",
+				"Retry; if it persists the platform API changed — report it")
+		}
 	}
-	return members, nil
 }
