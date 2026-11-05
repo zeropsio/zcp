@@ -11,7 +11,7 @@ import (
 // selfSample is HQ's answer to GET /api/mate/self for a Mate in an
 // application, with an open change in one repository and a merged and a
 // closed one in another.
-const selfSample = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"closedOff":false,` +
+const selfSample = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,` +
 	`"appId":"0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11","changes":[` +
 	`{"repo":"apidev","number":2,"state":"open","head":"1111111111111111111111111111111111111111","mergedSha":null,"landedHead":null},` +
 	`{"repo":"appdev","number":2,"state":"merged","head":"2222222222222222222222222222222222222222",` +

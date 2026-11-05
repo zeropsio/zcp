@@ -2,6 +2,7 @@ package mate_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +16,8 @@ import (
 // TestUpdateStatus_WritesSchemaV1 pins the file the mate server reads
 // (ZCP_STATUS_FILE): every field of schema v1 present, by its wire name, with
 // empty lists as [] — a section nobody has written yet reads as nothing
-// happened (runtimes "none", stand-up "idle"), never as a missing key.
+// happened (stand-up "idle"), never as a missing key. It has no runtimes
+// section: the container imports nothing.
 func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	if err := mate.UpdateStatus(path, func(*mate.Status) {}); err != nil {
@@ -35,12 +37,14 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, doc["updatedAt"].(string)); err != nil {
 		t.Errorf("updatedAt %q is not RFC3339: %v", doc["updatedAt"], err)
 	}
+	if runtimes, ok := doc["runtimes"]; ok {
+		t.Errorf("runtimes = %v, want no such section", runtimes)
+	}
 	tests := []struct {
 		section string
 		keys    []string
 		state   string
 	}{
-		{"runtimes", []string{"endedAt", "error", "services", "startedAt", "state", "updatedAt"}, "none"},
 		{"standup", []string{"endedAt", "error", "phase", "services", "startedAt", "state"}, "idle"},
 	}
 	for _, tt := range tests {
@@ -73,8 +77,6 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	err := mate.UpdateStatus(path, func(s *mate.Status) {
-		s.Runtimes.State = mate.RuntimesImporting
-		s.Runtimes.Services = []mate.RuntimeService{{Hostname: "appdev", State: mate.ServiceCreating, ProcessID: "p1"}}
 		s.Standup.State = mate.StandupRunning
 		s.Standup.Services = []mate.StandupService{{Hostname: "appdev", Step: mate.StepBuild, State: mate.StepRunning, ProcessID: "p2", At: "2026-10-01T10:00:00Z"}}
 		s.Standup.Process = &mate.StandupProcess{PID: 42, Start: "1234"}
@@ -85,9 +87,6 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	}
 	raw, _ := os.ReadFile(path)
 	var doc struct {
-		Runtimes struct {
-			Services []map[string]any `json:"services"`
-		} `json:"runtimes"`
 		Standup struct {
 			Services      []map[string]any `json:"services"`
 			Process       map[string]any   `json:"process"`
@@ -105,7 +104,6 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 		entry map[string]any
 		want  map[string]any
 	}{
-		{"runtime service", doc.Runtimes.Services[0], map[string]any{"hostname": "appdev", "state": "creating", "processId": "p1", "error": ""}},
 		{"stand-up service", doc.Standup.Services[0], map[string]any{"hostname": "appdev", "step": "build", "state": "running", "processId": "p2", "at": "2026-10-01T10:00:00Z", "error": ""}},
 		{"stand-up process", doc.Standup.Process, map[string]any{"pid": float64(42), "start": "1234"}},
 	}
@@ -123,20 +121,16 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	}
 }
 
-// TestUpdateStatus_SectionsHaveOneWriterEach: the boot import and the
-// stand-up write the same file from two processes, each its own section; a
-// write of one never loses the other, however they interleave.
-func TestUpdateStatus_SectionsHaveOneWriterEach(t *testing.T) {
+// TestUpdateStatus_NoWriteIsLost: the launch and the stand-up write the same
+// file from two processes; a write never loses another, however they
+// interleave.
+func TestUpdateStatus_NoWriteIsLost(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() {
 			if err := mate.UpdateStatus(path, func(s *mate.Status) {
-				if i%2 == 0 {
-					s.Runtimes.Services = append(s.Runtimes.Services, mate.RuntimeService{Hostname: "r"})
-				} else {
-					s.Standup.Services = append(s.Standup.Services, mate.StandupService{Hostname: "s"})
-				}
+				s.Standup.Services = append(s.Standup.Services, mate.StandupService{Hostname: fmt.Sprint("s", i)})
 			}); err != nil {
 				t.Errorf("UpdateStatus: %v", err)
 			}
@@ -147,8 +141,8 @@ func TestUpdateStatus_SectionsHaveOneWriterEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
-	if len(got.Runtimes.Services) != 10 || len(got.Standup.Services) != 10 {
-		t.Errorf("lost writes: %d runtime entries, %d stand-up entries, want 10 and 10", len(got.Runtimes.Services), len(got.Standup.Services))
+	if len(got.Standup.Services) != 20 {
+		t.Errorf("lost writes: %d stand-up entries, want 20", len(got.Standup.Services))
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	for _, e := range entries {
@@ -170,7 +164,7 @@ func TestReadStatus(t *testing.T) {
 		wantState string
 	}{
 		{"no file", "", false, ""},
-		{"unknown fields", `{"version":1,"updatedAt":"2026-10-01T10:00:00Z","later":true,"runtimes":{"state":"done","services":[],"extra":1},"standup":{"state":"idle","services":[]}}`, true, "done"},
+		{"unknown fields", `{"version":1,"updatedAt":"2026-10-01T10:00:00Z","later":true,"runtimes":{"state":"done","services":[]},"standup":{"state":"done","services":[],"extra":1}}`, true, "done"},
 		{"not json", `{"version":1,"runt`, false, ""},
 	}
 	for _, tt := range tests {
@@ -185,8 +179,8 @@ func TestReadStatus(t *testing.T) {
 			if found := err == nil; found != tt.wantFound {
 				t.Fatalf("ReadStatus err = %v, want found=%v", err, tt.wantFound)
 			}
-			if got.Runtimes.State != tt.wantState {
-				t.Errorf("runtimes.state = %q, want %q", got.Runtimes.State, tt.wantState)
+			if got.Standup.State != tt.wantState {
+				t.Errorf("standup.state = %q, want %q", got.Standup.State, tt.wantState)
 			}
 			if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Standup.State = mate.StandupDone }); err != nil {
 				t.Fatalf("UpdateStatus over %s: %v", tt.name, err)
@@ -218,36 +212,38 @@ func TestStatusFilePath(t *testing.T) {
 	}
 }
 
-// TestUpdateSection_OnlyTheBootImportMovesItsClock: the runtimes section
-// carries the time the boot import last wrote it, and a stand-up's write
-// never moves it.
-func TestUpdateSection_OnlyTheBootImportMovesItsClock(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "status.json")
-	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+// TestMarkLaunch is the status every mate launch starts from.
+func TestMarkLaunch(t *testing.T) {
+	t0 := time.Date(2026, 10, 1, 18, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name  string
-		write func() error
-		moved bool
+		name        string
+		prior       *mate.Status
+		wantStandup string
 	}{
-		{"the boot import writes", func() error { return mate.UpdateRuntimes(path, func(*mate.RuntimesStatus) {}) }, true},
-		{"the stand-up writes", func() error {
-			return mate.UpdateStandup(path, func(s *mate.StandupStatus) { s.State = mate.StandupRunning })
-		}, false},
+		{"no status yet", nil, mate.StandupIdle},
+		{"a stand-up the restart stopped", &mate.Status{Standup: mate.StandupStatus{State: mate.StandupRunning}}, mate.StandupFailed},
+		{"a finished stand-up", &mate.Status{Standup: mate.StandupStatus{State: mate.StandupDone}}, mate.StandupDone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt = old }); err != nil {
-				t.Fatal(err)
+			path := filepath.Join(t.TempDir(), "status.json")
+			if tt.prior != nil {
+				if err := mate.UpdateStatus(path, func(s *mate.Status) { *s = *tt.prior }); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := tt.write(); err != nil {
-				t.Fatal(err)
+			if err := mate.MarkLaunch(path, t0); err != nil {
+				t.Fatalf("MarkLaunch: %v", err)
 			}
-			st, err := mate.ReadStatus(path)
+			got, err := mate.ReadStatus(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if moved := st.Runtimes.UpdatedAt != old; moved != tt.moved {
-				t.Errorf("runtimes.updatedAt moved = %v, want %v", moved, tt.moved)
+			if got.Standup.State != tt.wantStandup {
+				t.Errorf("standup=%s, want %s", got.Standup.State, tt.wantStandup)
+			}
+			if tt.wantStandup == mate.StandupFailed && (got.Standup.Error == "" || got.Standup.EndedAt != "2026-10-01T18:00:00Z") {
+				t.Errorf("a stopped stand-up must say why and when: error=%q endedAt=%q", got.Standup.Error, got.Standup.EndedAt)
 			}
 		})
 	}

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -22,8 +21,7 @@ import (
 // deploy, verify), its state, the platform process behind it and what
 // failed. The server relays that section to the run card, so whoever watches
 // the Mate sees the stand-up's processes, not only the model's words about
-// them. The runtimes section is the boot import's: the stand-up reads it to
-// wait for an import still in flight (awaitBootImport), never writes it.
+// them.
 
 // standupStatus writes the stand-up's section. A nil one, or one with no
 // path, writes nothing: a container without the file is an older shape, and
@@ -295,97 +293,3 @@ func standupBuildOp(liveOps []ops.LiveOp) (standupOp, bool) {
 	}
 	return standupOp{}, false
 }
-
-// importWaitsClosedOff reports the container's import waiting for the
-// project to be closed off (mate.RuntimesWaitingClosedOff): it waits with no
-// end of its own, so the stand-up answers the Finish-setup line at once
-// instead of waiting for an import that cannot start.
-func (d standupDeps) importWaitsClosedOff() bool {
-	if d.statusPath == "" {
-		return false
-	}
-	st, err := mate.ReadStatus(d.statusPath)
-	return err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingClosedOff
-}
-
-// bootImportResult separates terminal import failures from a stopped observation.
-// Legacy status absence permits preparation without a completion receipt.
-type bootImportResult struct {
-	failed  map[string]string
-	stopped error
-}
-
-// awaitBootImport waits while the boot import of this Mate's runtimes is in
-// flight (pending or importing in the status file), so the stand-up never
-// finds a half missing that is being imported, and never tells the model to
-// import what the container is importing — but not while it only waits for
-// the project to be closed off, which has no end of its own. The import
-// always ends its section (done or failed, its own timeout included) and
-// every launch resets one a restart cut short, so the wait ends with it;
-// bootWait bounds observation only: expiry or cancellation stops preparation
-// without taking over the import. The file is read once, then again each
-// time a process puts it in place (watchReplacedFile), never on a timer.
-// Returns what the import says failed, by hostname ("" for the import as a
-// whole), or why observation stopped.
-func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) bootImportResult {
-	if d.statusPath == "" {
-		return bootImportResult{}
-	}
-	ctx, cancel := context.WithTimeoutCause(ctx, d.bootWait, errBootWaitOver)
-	defer cancel()
-	// Watching before the first read: a change between the two wakes it.
-	changed, err := watchReplacedFile(ctx, d.statusPath)
-	if err != nil {
-		return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
-	}
-	for {
-		st, err := mate.ReadStatus(d.statusPath)
-		if err != nil {
-			// Legacy containers may have no readable boot-import section.
-			// Keep their runtime-recovery path instead of blocking preparation.
-			return bootImportResult{}
-		}
-		r := st.Runtimes
-		// A pending section that says why it is pending (it waits for the
-		// project to be closed off, or cannot read it) is not about to import.
-		startingAfterTag := d.closedOffSeen && r.Error == mate.RuntimesWaitingClosedOff
-		// Waiting for zcp's own deploy ends on its own, soon: in flight.
-		ownDeploy := r.Error == mate.RuntimesWaitingOwnDeploy
-		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag || ownDeploy)) || r.State == mate.RuntimesImporting
-		if !inFlight {
-			failed := map[string]string{}
-			for _, s := range r.Services {
-				if s.State == mate.ServiceFailed {
-					failed[s.Hostname] = s.Error
-				}
-			}
-			if len(failed) == 0 && r.State == mate.RuntimesFailed && r.Error != "" {
-				failed[""] = r.Error
-			}
-			return bootImportResult{failed: failed}
-		}
-		var waiting []string
-		for _, s := range r.Services {
-			if s.State != mate.ServiceRunning && s.State != mate.ServiceFailed {
-				waiting = append(waiting, s.Hostname)
-			}
-		}
-		what := "this Mate's runtimes"
-		if len(waiting) > 0 {
-			what = strings.Join(waiting, ", ")
-		}
-		progress.say("waiting for the container's import of " + what)
-		select {
-		case <-ctx.Done():
-			if errors.Is(context.Cause(ctx), errBootWaitOver) {
-				return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
-			}
-			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", ctx.Err())}
-		case <-changed:
-		}
-	}
-}
-
-// errBootWaitOver is awaitBootImport's bound running out, told apart from the
-// caller's own cancellation.
-var errBootWaitOver = errors.New("boot import wait over")

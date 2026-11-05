@@ -173,7 +173,7 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 				app = g.appID
 			}
 			write(http.StatusOK, map[string]any{"projectId": "p1", "name": "Wren", "face": "f", "standupRequestedBy": nil,
-				"closedOff": true, "appId": app, "changes": []any{}})
+				"appId": app, "changes": []any{}})
 		case "/api/mate/recipe/" + hq.RecipeTierMate:
 			g.tierReads++
 			if refusal := g.tierRefusal; refusal != nil {
@@ -431,7 +431,6 @@ type standupFixture struct {
 	mock     *platform.Mock
 	ssh      *standupSSH
 	mounter  *standupMounter
-	env      map[string]string
 	events   []platform.AppVersionEvent
 	services []platform.ServiceStack
 	// importing, when set, answers the service list as the browser's
@@ -443,9 +442,6 @@ type standupFixture struct {
 	// status is its writer, one for the fixture as one MCP server holds one.
 	statusPath string
 	status     *standupStatus
-	// closedOff is the Mate's project as Zerops reads it: envIsolation
-	// `service`, else `none` (ops.ProjectClosedOff).
-	closedOff bool
 	// devsup is the zcp-devsup a dev setup installs; none is published by
 	// default.
 	devsup DevsupSource
@@ -461,17 +457,12 @@ type importingClient struct {
 	reads int
 	// stages are the lists answered in turn; the last one stays.
 	stages [][]platform.ServiceStack
-	// firstRead is when the list was first read.
-	firstRead time.Time
 	// pushes carries the project's push (the fixture makes it).
 	pushes chan struct{}
 }
 
 func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	c.mu.Lock()
-	if c.firstRead.IsZero() {
-		c.firstRead = time.Now()
-	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
 	if c.reads < len(c.stages) {
@@ -500,7 +491,6 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.status = newStandupStatus(f.statusPath)
 	f.mounter = &standupMounter{}
-	f.env = map[string]string{}
 	credentialPath := filepath.Join(f.root, "git-credential")
 	if err := os.WriteFile(credentialPath, []byte(standupCredential), 0o600); err != nil {
 		t.Fatal(err)
@@ -568,11 +558,6 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 	if f.building != nil {
 		client = f.building
 	}
-	isolation := "none"
-	if f.closedOff {
-		isolation = "service"
-	}
-	f.mock.WithProjectEnv([]platform.ProjectEnvVar{{ID: "e-iso", Key: "envIsolation", Content: isolation, Type: platform.ProjectEnvSystem}})
 	return standupDeps{
 		batch: batchDeployer{
 			client:      client,
@@ -585,13 +570,11 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 			devsup:      f.devsup,
 		},
 		mounter:     f.mounter,
-		liveEnvPath: writeLiveEnvFile(t, f.env),
 		identity:    func() hq.Identity { return f.identity },
 		runtimeWait: 200 * time.Millisecond,
 		pushes:      pushes,
 		statusPath:  f.statusPath,
 		status:      f.status,
-		bootWait:    2 * time.Second,
 	}
 }
 
@@ -1643,100 +1626,6 @@ func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 	}
 }
 
-// TestStandup_WaitsForTheContainersImport: the container imports a new
-// Mate's runtimes at boot (MATE_SETUP_RUNTIMES); a stand-up that starts while
-// that import runs waits for it instead of reporting the halves missing, and
-// a halt it ended in reaches the model with the import's own reason.
-func TestStandup_WaitsForTheContainersImport(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		runtimes   mate.RuntimesStatus
-		finishWith *mate.RuntimesStatus
-		wantWaited bool
-		wantFail   string
-	}{
-		{
-			name:       "an import in flight is waited for",
-			runtimes:   mate.RuntimesStatus{State: mate.RuntimesImporting, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceCreating}}},
-			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
-			wantWaited: true,
-		},
-		{
-			name:       "an import waiting for zcp's own deploy is waited for",
-			runtimes:   mate.RuntimesStatus{State: mate.RuntimesPending, Error: mate.RuntimesWaitingOwnDeploy},
-			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
-			wantWaited: true,
-		},
-		{
-			name:     "a finished import is not waited for",
-			runtimes: mate.RuntimesStatus{State: mate.RuntimesDone},
-		},
-		{
-			name:     "an import that cannot read the project is not waited for",
-			runtimes: mate.RuntimesStatus{State: mate.RuntimesPending, Error: "could not read the project (unauthorized)"},
-		},
-		{
-			name:     "a failed import names its reason for the missing half",
-			runtimes: mate.RuntimesStatus{State: mate.RuntimesFailed, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceFailed, Error: "serviceStackTypeNotFound: no such type"}}},
-			wantFail: "serviceStackTypeNotFound: no such type",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			f := newStandupFixture(t)
-			if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = tt.runtimes }); err != nil {
-				t.Fatal(err)
-			}
-			// The project already lists every half — what the stand-up
-			// waits for is the file saying the import is over, not the list.
-			present := f.services
-			if tt.wantFail != "" {
-				present = withoutService(f.services, "nextstorestage")
-			}
-			f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{present}}
-			var finishedAt time.Time
-			finished := make(chan struct{})
-			if tt.finishWith != nil {
-				go func() {
-					defer close(finished)
-					time.Sleep(80 * time.Millisecond)
-					finishedAt = time.Now()
-					_ = mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = *tt.finishWith })
-				}()
-			} else {
-				close(finished)
-			}
-			start := time.Now()
-			result, body := f.run(t)
-			<-finished
-			if result.IsError {
-				t.Fatalf("stand-up: %s", getTextContent(t, result))
-			}
-			if tt.wantWaited {
-				f.importing.mu.Lock()
-				firstRead := f.importing.firstRead
-				f.importing.mu.Unlock()
-				if firstRead.IsZero() || firstRead.Before(finishedAt) {
-					t.Errorf("the stand-up read the project at +%s, before the import finished at +%s", firstRead.Sub(start), finishedAt.Sub(start))
-				}
-				if got := body.service(t, "nextstorestage"); got.Failed != "" {
-					t.Errorf("nextstorestage after the wait = %+v", got)
-				}
-			}
-			if tt.wantFail != "" {
-				if got := body.service(t, "nextstorestage"); !strings.Contains(got.Failed, tt.wantFail) {
-					t.Errorf("nextstorestage.failed = %q, want it to carry %q", got.Failed, tt.wantFail)
-				}
-			}
-			if !tt.wantWaited && time.Since(start) > time.Second {
-				t.Errorf("the stand-up waited %s on an import it should not wait for", time.Since(start))
-			}
-		})
-	}
-}
-
 // trackingClient is the platform while a batch deploys: medusadev's build
 // process builds, then deploys, then ends — one state a read. Each read
 // signals looked as it starts, so the tracking's writes of the read before
@@ -1853,105 +1742,5 @@ func TestStandupStatus_CarriedByItsProcess(t *testing.T) {
 				t.Errorf("the call wrote %s by %+v, want running by this process %+v", st.Standup.State, st.Standup.Process, self)
 			}
 		})
-	}
-}
-
-// TestStandup_NeverAsksForAnImportIntoAnOpenProject: a half missing from a
-// Mate whose project is not closed off yet is not handed to the model as an
-// import — the import would refuse — but as the Finish setup that closes it.
-func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		closed  bool
-		plan    bool
-		want    string
-		wantNot string
-	}{
-		{"open", false, true, "Finish setup", "zerops_import"},
-		{"closed off", true, true, "zerops_import", "Finish setup"},
-		{"open, a Mate made before the new press", false, false, "zerops_import", "Finish setup"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			f := newStandupFixture(t)
-			if tt.plan {
-				f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
-			}
-			f.closedOff = tt.closed
-			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
-			result, body := f.run(t)
-			if result.IsError {
-				t.Fatalf("stand-up: %s", getTextContent(t, result))
-			}
-			got := body.service(t, "nextstorestage")
-			if !strings.Contains(got.Next, tt.want) || strings.Contains(got.Next, tt.wantNot) {
-				t.Errorf("nextstorestage.next = %q, want it to say %q and not %q", got.Next, tt.want, tt.wantNot)
-			}
-		})
-	}
-}
-
-// TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce: the container's
-// import waits, with no end of its own, for the project to be closed off;
-// a stand-up that finds it so answers the Finish-setup line at once rather
-// than waiting out its own bounds for an import that cannot start.
-func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
-	t.Parallel()
-	f := newStandupFixture(t)
-	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
-		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
-	}); err != nil {
-		t.Fatal(err)
-	}
-	start := time.Now()
-	result, _ := f.run(t)
-	text := getTextContent(t, result)
-	if !result.IsError || !strings.Contains(text, "Finish setup") {
-		t.Errorf("want the Finish-setup refusal, got: %s", text)
-	}
-	if took := time.Since(start); took > 2*standupProgressGap {
-		t.Errorf("answered after %s, want at once", took)
-	}
-	if len(f.ssh.pushes()) != 0 || len(f.hq.asked) != 0 {
-		t.Error("nothing is touched while the project is not closed off")
-	}
-}
-
-// TestStandup_ClosedOffWhileTheImportStillSaysWaiting: the container's
-// import reads the project once a minute at most, so its last line can still
-// say it waits after the press has closed the project off. The stand-up reads
-// Zerops itself: closed off, it says the import is starting and waits for it
-// as for an import in flight, then stands the project up.
-func TestStandup_ClosedOffWhileTheImportStillSaysWaiting(t *testing.T) {
-	t.Parallel()
-	f := newStandupFixture(t)
-	f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
-	f.closedOff = true
-	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
-		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{f.services}}
-	var finishedAt time.Time
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		time.Sleep(80 * time.Millisecond)
-		finishedAt = time.Now()
-		_ = mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) { r.State, r.Error = mate.RuntimesDone, "" })
-	}()
-	result, body := f.run(t)
-	<-finished
-	if result.IsError || body.StandUp != standupDevelopment {
-		t.Fatalf("stand-up = %s", getTextContent(t, result))
-	}
-	f.importing.mu.Lock()
-	firstRead := f.importing.firstRead
-	f.importing.mu.Unlock()
-	if firstRead.Before(finishedAt) {
-		t.Error("the stand-up read the project before the import it found starting had finished")
 	}
 }

@@ -419,7 +419,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 // application it is in, newest first, with their heads as git has them.
 func (f *fakeHQ) self(ctx context.Context) map[string]any {
 	state := map[string]any{"projectId": labMate, "name": "Ada", "face": "face-1",
-		"standupRequestedBy": nil, "closedOff": false, "appId": nil, "changes": []hq.MateChange{}}
+		"standupRequestedBy": nil, "appId": nil, "changes": []hq.MateChange{}}
 	if f.appID == "" {
 		return state
 	}
