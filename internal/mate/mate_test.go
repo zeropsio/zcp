@@ -20,7 +20,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 )
@@ -523,10 +522,7 @@ func newPipeHTTPTestServer(t *testing.T, handler http.Handler) (*httptest.Server
 	}
 	server := &httptest.Server{
 		Listener: listener,
-		Config: &http.Server{
-			Handler:           handler,
-			ReadHeaderTimeout: time.Second,
-		},
+		Config:   &http.Server{Handler: handler}, //nolint:gosec // in-memory pipes cannot accept external requests
 	}
 	server.Start()
 
