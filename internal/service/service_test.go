@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/service"
@@ -355,63 +355,69 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			home := installFakeMateBundle(t)
 			service.SetMateStorePath(writeLiveEnvStore(t, tt.store))
 			t.Cleanup(service.ResetMateStorePath)
-			// The boot import runs until the server is up: one that held the
-			// launch would never let it start.
-			booted := make(chan string, 1)
-			serverUp := make(chan struct{})
-			releaseBoot := sync.OnceFunc(func() { close(serverUp) })
-			service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
-				booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
-				<-serverUp
-			})
-			t.Cleanup(service.ResetMateSetupBoot)
-			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
-			var gotEnv []string
-			var atLaunch mate.Status
-			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
-				gotEnv = extraEnv
-				atLaunch, _ = mate.ReadStatus(statusPath)
-				releaseBoot()
-				return nil
-			})
-			t.Cleanup(func() { service.ResetRunFunc() })
+			synctest.Test(t, func(t *testing.T) {
+				// Channels must belong to the bubble so Wait can observe a held boot.
+				// The boot import runs until the server is up: one that held the
+				// launch would never let it start.
+				booted := make(chan string, 1)
+				serverUp := make(chan struct{})
+				releaseBoot := sync.OnceFunc(func() { close(serverUp) })
+				service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
+					booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
+					<-serverUp
+				})
+				t.Cleanup(service.ResetMateSetupBoot)
+				statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
+				var gotEnv []string
+				var atLaunch mate.Status
+				service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+					gotEnv = extraEnv
+					atLaunch, _ = mate.ReadStatus(statusPath)
+					releaseBoot()
+					return nil
+				})
+				t.Cleanup(func() { service.ResetRunFunc() })
 
-			started := make(chan error, 1)
-			go func() { started <- service.Start("mate") }()
-			var err error
-			select {
-			case err = <-started:
-			case <-time.After(5 * time.Second):
-				// Free the boot import and wait the launch out: returning with
-				// Start still running would reset the seams it reads.
-				releaseBoot()
-				t.Error("the server never started: the launch waited on the boot import")
-				err = <-started
-			}
-			if err != nil {
-				t.Fatalf("Start(mate): %v", err)
-			}
-			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
-				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
-			}
-			if atLaunch.Runtimes.State != tt.wantRuntimes {
-				t.Errorf("runtimes at launch = %q, want %q", atLaunch.Runtimes.State, tt.wantRuntimes)
-			}
-			select {
-			case got := <-booted:
-				if !tt.wantBoot {
-					t.Errorf("boot import started without a plan: %s", got)
-				} else if got != statusPath+" "+tt.store["MATE_SETUP_RUNTIMES"] {
-					t.Errorf("boot import got %q", got)
+				defer releaseBoot()
+				started := make(chan error, 1)
+				go func() { started <- service.Start("mate") }()
+				synctest.Wait()
+				var err error
+				select {
+				case err = <-started:
+				default:
+					// The boot remains held. Release it and join Start before
+					// restoring the package-level test seams.
+					releaseBoot()
+					t.Error("the server never started: the launch waited on the boot import")
+					err = <-started
 				}
-			case <-time.After(2 * time.Second):
-				if tt.wantBoot {
-					t.Error("boot import never started")
+				if err != nil {
+					t.Fatalf("Start(mate): %v", err)
 				}
-			}
-			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
-				t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
-			}
+				if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
+					t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
+				}
+				if atLaunch.Runtimes.State != tt.wantRuntimes {
+					t.Errorf("runtimes at launch = %q, want %q", atLaunch.Runtimes.State, tt.wantRuntimes)
+				}
+				synctest.Wait() // every boot goroutine has either sent its receipt or stopped
+				select {
+				case got := <-booted:
+					if !tt.wantBoot {
+						t.Errorf("boot import started without a plan: %s", got)
+					} else if got != statusPath+" "+tt.store["MATE_SETUP_RUNTIMES"] {
+						t.Errorf("boot import got %q", got)
+					}
+				default:
+					if tt.wantBoot {
+						t.Error("boot import never started")
+					}
+				}
+				if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
+					t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
+				}
+			})
 		})
 	}
 }
@@ -632,9 +638,9 @@ func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			installFakeMateBundle(t)
-			service.SetMateLockWait(200 * time.Millisecond)
-			t.Cleanup(service.ResetMateLockWait)
 			if tt.lockedAway {
+				service.SetMateLockWait(0)
+				t.Cleanup(service.ResetMateLockWait)
 				release, err := mate.LockInstall(0)
 				if err != nil {
 					t.Fatal(err)
