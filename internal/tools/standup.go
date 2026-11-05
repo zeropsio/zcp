@@ -89,10 +89,6 @@ type standupDeps struct {
 	// bootWait bounds the wait for that import.
 	statusPath string
 	bootWait   time.Duration
-	// closedOffSeen is a call that read Zerops itself while the import's line
-	// still said it waited for the project to be closed off: that import is
-	// starting, and awaitBootImport waits for it.
-	closedOffSeen bool
 	// status writes the stand-up's section of statusPath: one per server,
 	// across its calls (registerStandup makes it when none is given).
 	status *standupStatus
@@ -180,20 +176,6 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 // stand is the stand-up's work and the report's standUp ("" for a
 // refusal); run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
-	if d.importWaitsClosedOff() {
-		// The import reads the project once a minute at most, so its line can
-		// trail the press: read Zerops itself before saying Finish setup.
-		closed, err := d.closedOff(ctx)
-		if err != nil || !closed {
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
-			}
-			return standupRefusal(platform.ErrPrerequisiteMissing, openMateRefusal,
-				"Nothing was touched. Tell the person to press Finish setup on this Mate in the app; the container then imports the runtimes, and zerops_standup stands them up."), ""
-		}
-		progress.say("the project is closed off; the container's import of the runtimes is starting")
-		d.closedOffSeen = true
-	}
 	// The Mate's server sends the stand-up only once its link to HQ is up, so
 	// HQ is opened and read once, never waited on.
 	hqc, err := hq.Open(d.batch.httpClient, d.identity())

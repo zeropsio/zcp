@@ -296,18 +296,6 @@ func standupBuildOp(liveOps []ops.LiveOp) (standupOp, bool) {
 	return standupOp{}, false
 }
 
-// importWaitsClosedOff reports the container's import waiting for the
-// project to be closed off (mate.RuntimesWaitingClosedOff): it waits with no
-// end of its own, so the stand-up answers the Finish-setup line at once
-// instead of waiting for an import that cannot start.
-func (d standupDeps) importWaitsClosedOff() bool {
-	if d.statusPath == "" {
-		return false
-	}
-	st, err := mate.ReadStatus(d.statusPath)
-	return err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingClosedOff
-}
-
 // bootImportResult separates terminal import failures from a stopped observation.
 // Legacy status absence permits preparation without a completion receipt.
 type bootImportResult struct {
@@ -318,9 +306,7 @@ type bootImportResult struct {
 // awaitBootImport waits while the boot import of this Mate's runtimes is in
 // flight (pending or importing in the status file), so the stand-up never
 // finds a half missing that is being imported, and never tells the model to
-// import what the container is importing — but not while it only waits for
-// the project to be closed off, which has no end of its own. The import
-// always ends its section (done or failed, its own timeout included) and
+// import what the container is importing. The import always ends its section (done or failed, its own timeout included) and
 // every launch resets one a restart cut short, so the wait ends with it;
 // bootWait bounds observation only: expiry or cancellation stops preparation
 // without taking over the import. The file is read once, then again each
@@ -346,12 +332,9 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 			return bootImportResult{}
 		}
 		r := st.Runtimes
-		// A pending section that says why it is pending (it waits for the
-		// project to be closed off, or cannot read it) is not about to import.
-		startingAfterTag := d.closedOffSeen && r.Error == mate.RuntimesWaitingClosedOff
 		// Waiting for zcp's own deploy ends on its own, soon: in flight.
 		ownDeploy := r.Error == mate.RuntimesWaitingOwnDeploy
-		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag || ownDeploy)) || r.State == mate.RuntimesImporting
+		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || ownDeploy)) || r.State == mate.RuntimesImporting
 		if !inFlight {
 			failed := map[string]string{}
 			for _, s := range r.Services {

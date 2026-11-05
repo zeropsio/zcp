@@ -165,12 +165,10 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 
 // refuseOpenMate refuses an import into a Mate's project that is not closed
 // off yet: its runtimes would read the zcp service's variables, the Mate's
-// own key among them, and closing it off after they exist restarts them. The
-// person's press closes it off; a press whose tab closed first leaves it to
-// Finish setup. Whether it is closed off is read from Zerops
-// (ops.ProjectClosedOff), never from HQ's mark (audit N1). Only a Mate the
-// new press made — its zcp carries MATE_SETUP_RUNTIMES in the live env
-// store; an older Mate behaves as before. A read that fails is refused too,
+// own key among them. The web births the project closed off; that it still
+// is comes from Zerops (ops.ProjectClosedOff), never from HQ (audit N1). Only
+// a Mate the new press made — its zcp carries MATE_SETUP_RUNTIMES in the live
+// env store; an older Mate behaves as before. A read that fails is refused too,
 // saying so: whether the project is closed off is not known.
 func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
 	if !newFlowMate(rt, liveEnvPath) {

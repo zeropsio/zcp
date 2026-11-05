@@ -68,19 +68,6 @@ type Importer struct {
 	// SelfServiceID is the zcp service this runs in (its serviceId). Nothing
 	// is imported until its own deploy has finished; "" skips that wait.
 	SelfServiceID string
-	// IsolationPoll is the wait before the next look at a project not yet
-	// closed off, by how long it has been waited for (default IsolationPoll).
-	IsolationPoll func(waited time.Duration) time.Duration
-}
-
-// IsolationPoll looks every 10 s for the first half hour — the press closes
-// the project off within about 90 s of the container's import — then every
-// minute, for as long as it takes: a later "Finish setup" closes it.
-func IsolationPoll(waited time.Duration) time.Duration {
-	if waited < 30*time.Minute {
-		return 10 * time.Second
-	}
-	return time.Minute
 }
 
 // Defaults for a production Importer.
@@ -258,12 +245,9 @@ func decodeBase64(s string) ([]byte, error) {
 //
 // Nothing is imported into a project that is not closed off: runtimes run
 // code, and with env isolation off they read the zcp service's variables,
-// the Mate's key among them; closing the project off after they exist
-// restarts them. The press closes it off once the container recipe's own
-// project-env write (which resets it) has landed, reads it back, and records
-// it in HQ as the Mate's birth; a press whose tab closed first leaves that
-// to "Finish setup", however much later — so the wait for it has no end of
-// its own. The import asks HQ (ClosedOff) with the Mate's credential.
+// the Mate's key among them. The web births the project closed off (its
+// import YAML sets the isolation), so the import reads that from Zerops once
+// (refuseOpen) and never waits for it.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
 	hostnames, entries, err := DecodePlan(encoded)
@@ -303,7 +287,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	}
 	missing := missingHosts(hostnames, live)
 	if len(missing) > 0 {
-		if !im.awaitOwnDeploy(ctx, pushes) || !im.awaitClosedOff(ctx) {
+		if !im.awaitOwnDeploy(ctx, pushes) || !im.refuseOpen(ctx, hostnames) {
 			return
 		}
 		if live, err = im.listWithin(ctx); err != nil {
@@ -366,9 +350,6 @@ func (im Importer) withDefaults() Importer {
 	}
 	if im.Now == nil {
 		im.Now = time.Now
-	}
-	if im.IsolationPoll == nil {
-		im.IsolationPoll = IsolationPoll
 	}
 	return im
 }
@@ -524,37 +505,24 @@ func (im Importer) retryAfter(failed int) time.Duration {
 	return im.Backoff[min(failed, len(im.Backoff))-1]
 }
 
-// awaitClosedOff waits until Zerops reads the project closed off
-// (ops.ProjectClosedOff) — never HQ's mark of it (audit N1) — with the
-// runtimes section pending and saying why; false when the context ended
-// first. A failed read is one more look, not an answer.
-func (im Importer) awaitClosedOff(ctx context.Context) bool {
-	start := time.Now()
-	said := ""
-	for {
-		closed, err := ops.ProjectClosedOff(ctx, im.api(), im.ProjectID)
-		if err == nil && closed {
-			return true
-		}
-		line := mate.RuntimesWaitingClosedOff
-		if err != nil {
-			// A look that failed says nothing about the project: never read
-			// it as "not closed off yet".
-			line = oneLine(fmt.Sprintf("could not read whether the project is closed off (%v)", err))
-		}
-		if line != said {
-			im.write(func(r *mate.RuntimesStatus) {
-				r.State, r.Error = mate.RuntimesPending, line
-			})
-			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", line)
-			said = line
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(im.IsolationPoll(time.Since(start))):
-		}
+// refuseOpen reads once from Zerops whether the project is closed off
+// (ops.ProjectClosedOff) — never HQ's mark of it (audit N1) — and, when it
+// is not or the read fails, ends the runtimes section failed saying so and
+// reports false. The refusal is not settled: the next launch reads once
+// again, and nothing waits for the project to close in between.
+func (im Importer) refuseOpen(ctx context.Context, hostnames []string) bool {
+	closed, err := ops.ProjectClosedOff(ctx, im.api(), im.ProjectID)
+	switch {
+	case err != nil:
+		// A read that failed says nothing about the project: never read it
+		// as closed off.
+		im.finish(hostnames, fmt.Sprintf("could not read whether the project is closed off (%v); runtimes not imported", err), false)
+		return false
+	case !closed:
+		im.finish(hostnames, mate.RuntimesProjectOpen, false)
+		return false
 	}
+	return true
 }
 
 // listUntil reads the project's services, retrying a failed read on the

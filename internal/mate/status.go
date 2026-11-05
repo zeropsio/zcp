@@ -45,16 +45,15 @@ const (
 	RuntimesFailed    = "failed"
 )
 
-// RuntimesWaitingClosedOff is the runtimes section's error line while it is
-// pending only because the project is not closed off yet: the import waits
-// for that with no end of its own, so a reader (the stand-up) tells it apart
-// from an import about to start.
-const RuntimesWaitingClosedOff = "waiting for the project to be closed off"
+// RuntimesProjectOpen is the runtimes section's error line when the import
+// refused a project Zerops does not read closed off: nothing was imported,
+// and nothing waits for it to close.
+const RuntimesProjectOpen = "project is open; runtimes not imported"
 
 // RuntimesWaitingOwnDeploy is the runtimes section's error line while it is
 // pending until zcp's own first deploy has finished: an import into the
 // project while that deploy still ran left zcp's app version without its
-// user data. Unlike RuntimesWaitingClosedOff it ends on its own, soon.
+// user data. It ends on its own, soon.
 const RuntimesWaitingOwnDeploy = "waiting for this Mate's own deploy to finish"
 
 // A runtime service's state: creating while its import process runs,

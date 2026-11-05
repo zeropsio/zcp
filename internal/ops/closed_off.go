@@ -15,14 +15,15 @@ type ProjectEnvReader interface {
 }
 
 // ProjectClosedOff reads from Zerops whether a Mate's project is closed off:
-// its envIsolation's first word is `service` — the container recipe's own
-// `service service@zcp` as well as a plain `service` — and no ZCP_API_KEY is
-// left project-wide, where isolation does not reach. What an import of its
-// runtimes waits for: Zerops is the authority, and HQ's mark only a receipt.
+// its envIsolation is a rule set whose default is `service` — every rule
+// `service` or `service@<hostname>`, as the web's `service@zcp` or a plain
+// `service` — and no ZCP_API_KEY is left project-wide, where isolation does
+// not reach. `none` and any rule set it does not know read open. Zerops is
+// the authority, never HQ's mark.
 //
-// An error is "not known", never "open": a read that failed, or one that has
-// not caught up with the project's birth — the platform gives every project
-// envIsolation, so a list without it trails the writes.
+// An error is "not known", never "closed off": a read that failed, or one
+// without envIsolation — the platform gives every project one by the time
+// its first services import returns.
 func ProjectClosedOff(ctx context.Context, zerops ProjectEnvReader, projectID string) (bool, error) {
 	env, err := zerops.GetProjectEnv(ctx, projectID)
 	if err != nil {
@@ -38,8 +39,20 @@ func ProjectClosedOff(ctx context.Context, zerops ProjectEnvReader, projectID st
 		}
 	}
 	if !found {
-		return false, errors.New("the project's variables read without envIsolation yet")
+		return false, errors.New("the project's variables read without envIsolation")
 	}
-	fields := strings.Fields(isolation)
-	return len(fields) > 0 && fields[0] == "service" && !keyed, nil
+	return serviceDefault(isolation) && !keyed, nil
+}
+
+// serviceDefault reports an isolation rule set whose default is `service`:
+// at least one rule, each `service` or `service@<hostname>`.
+func serviceDefault(rules string) bool {
+	fields := strings.Fields(rules)
+	for _, rule := range fields {
+		host, scoped := strings.CutPrefix(rule, "service@")
+		if rule != "service" && (!scoped || host == "") {
+			return false
+		}
+	}
+	return len(fields) > 0
 }

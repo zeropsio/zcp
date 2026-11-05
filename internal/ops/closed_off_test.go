@@ -10,11 +10,11 @@ import (
 )
 
 // TestProjectClosedOff: a project is closed off when Zerops says so — its
-// envIsolation's first word is `service` (the container recipe's own
-// `service service@zcp` too) and no ZCP_API_KEY is left project-wide, where
-// isolation does not reach. A read that fails, or one that has not caught up
-// with the project's birth (no envIsolation yet), is "not known", never
-// "open" or "closed".
+// envIsolation is a rule set whose default is `service` (the web's
+// `service@zcp`, a plain `service`, `service service@zcp`) and no
+// ZCP_API_KEY is left project-wide, where isolation does not reach. `none`
+// and any rule set it does not know read open. A read that fails, or one
+// without envIsolation, is "not known", never "open" or "closed".
 func TestProjectClosedOff(t *testing.T) {
 	t.Parallel()
 	isolation := func(content string) platform.ProjectEnvVar {
@@ -30,7 +30,12 @@ func TestProjectClosedOff(t *testing.T) {
 	}{
 		{"isolated per service", []platform.ProjectEnvVar{isolation("service")}, nil, true, false},
 		{"the container recipe's own isolation", []platform.ProjectEnvVar{isolation(" service service@zcp ")}, nil, true, false},
+		{"born closed off by the web", []platform.ProjectEnvVar{isolation("service@zcp")}, nil, true, false},
 		{"open", []platform.ProjectEnvVar{isolation("none")}, nil, false, false},
+		{"an unknown rule set", []platform.ProjectEnvVar{isolation("project")}, nil, false, false},
+		{"service with none beside it", []platform.ProjectEnvVar{isolation("service none")}, nil, false, false},
+		{"a rule naming no service", []platform.ProjectEnvVar{isolation("service@")}, nil, false, false},
+		{"an empty rule set", []platform.ProjectEnvVar{isolation(" ")}, nil, false, false},
 		{"isolated with the key still project-wide", []platform.ProjectEnvVar{isolation("service"), key}, nil, false, false},
 		{"a read that has not caught up", []platform.ProjectEnvVar{key}, nil, false, true},
 		{"a read that failed", nil, errors.New("api down"), false, true},
