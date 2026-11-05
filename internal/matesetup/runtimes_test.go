@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,6 +110,8 @@ func (f *fakeAPI) ListServicesDirect(context.Context, string) ([]platform.Servic
 	return slices.Clone(f.services), nil
 }
 
+func (f *fakeAPI) OrgID(context.Context) (string, error) { return "org", nil }
+
 func (f *fakeAPI) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -178,12 +181,19 @@ func newFake() *fakeAPI { return &fakeAPI{runFor: 2, started: map[string]int{}} 
 func importer(api *fakeAPI, path string) matesetup.Importer {
 	return matesetup.Importer{
 		API: api, ProjectID: "proj", StatusPath: path,
-		Poll: time.Millisecond, Timeout: 5 * time.Second,
+		Pushes: pushingAfterEveryLook, Timeout: 5 * time.Second,
 		Backoff:       []time.Duration{time.Millisecond, time.Millisecond},
 		IsolationPoll: func(time.Duration) time.Duration { return time.Millisecond },
-		OwnDeployPoll: time.Millisecond,
 		Now:           func() time.Time { return t0.Add(time.Second) },
 	}
+}
+
+// pushingAfterEveryLook is a project that pushes after every look: the fake
+// moves on at each look, so there is always a change to read.
+func pushingAfterEveryLook(context.Context) <-chan struct{} {
+	wakes := make(chan struct{})
+	close(wakes)
+	return wakes
 }
 
 func readStatus(t *testing.T, path string) mate.Status {
@@ -1070,25 +1080,26 @@ func TestRun_NothingIsImportedWhileZcpsOwnDeployRuns(t *testing.T) {
 			im := importer(api.fakeAPI, path)
 			im.API = api
 			im.SelfServiceID = "id-zcp"
-			var sawWaiting bool
-			stop := make(chan struct{})
-			watched := make(chan struct{})
-			go func() {
-				defer close(watched)
-				for {
-					if st, err := mate.ReadStatus(path); err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingOwnDeploy {
-						sawWaiting = true
+			// The project pushes only once the section was read: the import
+			// waits for the push, so what it says while waiting is read.
+			var sawWaiting atomic.Bool
+			im.Pushes = func(ctx context.Context) <-chan struct{} {
+				wakes := make(chan struct{})
+				go func() {
+					for {
+						if st, err := mate.ReadStatus(path); err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingOwnDeploy {
+							sawWaiting.Store(true)
+						}
+						select {
+						case wakes <- struct{}{}:
+						case <-ctx.Done():
+							return
+						}
 					}
-					select {
-					case <-stop:
-						return
-					case <-time.After(time.Millisecond):
-					}
-				}
-			}()
+				}()
+				return wakes
+			}
 			im.Run(context.Background(), plan())
-			close(stop)
-			<-watched
 			if api.overlapping != 0 {
 				t.Errorf("%d imports were sent while zcp's own deploy ran", api.overlapping)
 			}
@@ -1098,9 +1109,82 @@ func TestRun_NothingIsImportedWhileZcpsOwnDeployRuns(t *testing.T) {
 			if got := readStatus(t, path).Runtimes.State; got != mate.RuntimesDone {
 				t.Errorf("runtimes = %s, want done", got)
 			}
-			if !sawWaiting {
+			if !sawWaiting.Load() {
 				t.Error("the runtimes section never said it waits for zcp's own deploy")
 			}
 		})
+	}
+}
+
+// lookingAPI signals each read of the project's processes — a look.
+type lookingAPI struct {
+	matesetup.API
+	looked chan struct{}
+}
+
+func (l lookingAPI) GetProjectProcessesDirect(ctx context.Context, id string) ([]platform.Process, error) {
+	procs, err := l.API.GetProjectProcessesDirect(ctx, id)
+	select {
+	case l.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
+	return procs, err
+}
+
+// runLookingOnlyOnPushes runs im over api until it has looked at the
+// project's processes once and then once per push, failing when it looks
+// again with no push; the import then ends with the context.
+func runLookingOnlyOnPushes(t *testing.T, im matesetup.Importer, api matesetup.API) {
+	t.Helper()
+	looked := make(chan struct{})
+	wakes := make(chan struct{})
+	im.API = lookingAPI{API: api, looked: looked}
+	im.Pushes = func(context.Context) <-chan struct{} { return wakes }
+	ctx, cancel := context.WithCancel(t.Context())
+	ran := make(chan struct{})
+	go func() {
+		defer close(ran)
+		im.Run(ctx, plan())
+	}()
+	defer func() {
+		cancel()
+		<-ran
+	}()
+	<-looked
+	for push := range 3 {
+		select {
+		case wakes <- struct{}{}:
+		case <-looked:
+			t.Fatalf("the processes were read again with no push after %d pushes", push)
+		}
+		<-looked
+	}
+}
+
+// TestRun_ZcpsOwnDeploy_IsLookedAtAgainOnlyOnAPush: the wait for zcp's own
+// deploy reads the project again at its push — a service's or a process's
+// (ZEROPS-079, ZEROPS-078) — and never on a timer.
+func TestRun_ZcpsOwnDeploy_IsLookedAtAgainOnlyOnAPush(t *testing.T) {
+	t.Parallel()
+	api := &ownDeployAPI{fakeAPI: newFake(), status: "ACTIVE", doneAt: 1 << 30}
+	im := importer(api.fakeAPI, filepath.Join(t.TempDir(), "status.json"))
+	im.SelfServiceID = "id-zcp"
+	runLookingOnlyOnPushes(t, im, api)
+	if len(api.imports) != 0 {
+		t.Errorf("%d imports were sent while zcp's own deploy ran", len(api.imports))
+	}
+}
+
+// TestRun_TheImportIsFollowedOnlyOnAPush: the import's services and
+// processes are read again at the project's push (ZEROPS-079, ZEROPS-078),
+// never re-listed on a timer.
+func TestRun_TheImportIsFollowedOnlyOnAPush(t *testing.T) {
+	t.Parallel()
+	api := newFake()
+	api.runFor = 1 << 30
+	im := importer(api, filepath.Join(t.TempDir(), "status.json"))
+	runLookingOnlyOnPushes(t, im, api)
+	if len(api.imports) != 1 {
+		t.Errorf("imports = %d, want the one", len(api.imports))
 	}
 }
