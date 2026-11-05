@@ -40,12 +40,23 @@ type AppProposeEnvInput struct {
 	Reason  string `json:"reason"            jsonschema:"Why, in one sentence, for the person deciding."`
 }
 
+// AppProposeRevealInput is zerops_propose_reveal's input: where a hidden
+// value lives and why the person wants it, never the value.
+type AppProposeRevealInput struct {
+	Environment string `json:"environment"       jsonschema:"stage, production, or mate for this Mate's own project."`
+	Project     string `json:"project,omitempty" jsonschema:"Which stage or production, by its projectId or name from zerops_observe action=environments, when there is more than one."`
+	Service     string `json:"service,omitempty" jsonschema:"The service's hostname when the value is that service's own; omit for a project value."`
+	Key         string `json:"key"               jsonschema:"The variable's name only."`
+	Reason      string `json:"reason"            jsonschema:"Why the person wants to see it, in one sentence, for the card. Never a value."`
+}
+
 // appEnvRestartNote follows a variable's proposal: a running service keeps
 // the environment it started with.
 const appEnvRestartNote = " A running service reads the new value only after a restart."
 
 // RegisterAppPropose registers a Mate's proposal tools for its application's
-// stage and production, checked against HQ's observation. A Mate's client
+// stage and production, checked against HQ's observation, and its reveal of a
+// hidden value there or in its own project. A Mate's client
 // draws the card, so they are Mate-gated like every mate-shaped effect (§2.0).
 func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, rt runtime.Info) {
 	if !rt.InContainer || !rt.MateEnabled {
@@ -85,6 +96,16 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 			result.Note += appEnvRestartNote
 		}
 		return appAnswer(result, err)
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_propose_reveal",
+		Description: "Propose showing the person a hidden value you cannot read: a password or key in your application's stage or production, or in this Mate. Shows you nothing: the person reveals it on a card, on their own screen, and you are not told. Never print or paste a secret value.",
+		Annotations: orgPropose("Propose a reveal"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeRevealInput) (*mcp.CallToolResult, any, error) {
+		return appAnswer(ops.ProposeReveal(ctx, src, uuid.NewString, projectID, ops.RevealInput{
+			Environment: in.Environment, Project: in.Project, Service: in.Service, Key: in.Key, Reason: in.Reason,
+		}))
 	})
 }
 

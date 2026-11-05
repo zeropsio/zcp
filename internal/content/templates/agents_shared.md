@@ -18,6 +18,7 @@ Before service-scoped work: `zerops_workflow action="status"` if a session may e
 ## Connection vars & secrets
 
 Reference by name, never paste the value. `zerops_env`/`zerops_discover` read env KEYS and set STATE; a value you need in a command is `$VAR` — the shell expands it at exec time, so the value never enters your context. Pulling a credential value to paste into a command, file, or commit is the leak.
+@in-mate To connect a tool — an MCP server such as Linear, GitHub or Sentry — look up how it connects and propose it with `zerops_propose_mcp`, its keys by name only; never ask the person to paste a key in chat: they type it on the card.
 
 ## Smells — catch & re-route
 
