@@ -155,7 +155,7 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 	if stateErr != nil {
 		result.Error = stateErr.Error()
 		result.Updater.RollbackCompatible = false
-		result.Updater.Phase = mate.RuntimesFailed
+		result.Updater.Phase = mate.UpdateFailed
 		result.Updater.RunningVersion = ""
 	}
 	if err != nil {

@@ -11,15 +11,14 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// The status file is how zcp tells the mate server what a new Mate's setup is
-// doing without a browser (docs/spec-mate.md): the boot import of the tier's
-// runtimes writes its section, the stand-up writes its own, and the server
-// reads the whole file to serve `/mate/setup.json` and to relay the stand-up's
-// progress to the run card. Two processes write it — the supervisor
-// (`zcp service start mate`) and the zcp MCP server under the agent — so every
-// write is a read-modify-write of ONE section under a lock, landed by rename:
-// a reader never sees a torn file, and a writer never loses the other's
-// section.
+// The status file is how zcp tells the mate server what a new Mate's stand-up
+// is doing without a browser (docs/spec-mate.md): the stand-up writes its
+// section, and the server reads the file to serve `/mate/setup.json` and to
+// relay the stand-up's progress to the run card. Two processes write it — the
+// supervisor (`zcp service start mate`, at launch) and the zcp MCP server
+// under the agent — so every write is a read-modify-write under a lock,
+// landed by rename: a reader never sees a torn file, and a writer never loses
+// the other's write.
 //
 // Schema v1. An absent file is an older zcp; a reader ignores fields it does
 // not know. A field a reader may ignore is added within the version; one a
@@ -32,43 +31,6 @@ const EnvStatusFile = "ZCP_STATUS_FILE"
 
 // StatusVersion is the schema the file is written in.
 const StatusVersion = 1
-
-// Runtimes states: none — nothing to import (no MATE_SETUP_RUNTIMES);
-// pending — listed, not started yet; importing — the import is sent or its
-// processes run; done — every listed service is there and settled; failed —
-// the import was refused or a service's process failed.
-const (
-	RuntimesNone      = "none"
-	RuntimesPending   = "pending"
-	RuntimesImporting = "importing"
-	RuntimesDone      = "done"
-	RuntimesFailed    = "failed"
-)
-
-// RuntimesWaitingClosedOff is the runtimes section's error line while it is
-// pending only because the project is not closed off yet: the import waits
-// for that with no end of its own, so a reader (the stand-up) tells it apart
-// from an import about to start.
-const RuntimesWaitingClosedOff = "waiting for the project to be closed off"
-
-// RuntimesWaitingOwnDeploy is the runtimes section's error line while it is
-// pending until zcp's own first deploy has finished: an import into the
-// project while that deploy still ran left zcp's app version without its
-// user data. Unlike RuntimesWaitingClosedOff it ends on its own, soon.
-const RuntimesWaitingOwnDeploy = "waiting for this Mate's own deploy to finish"
-
-// A runtime service's state: creating while its import process runs,
-// building/deploying while a build it was imported with runs, running once
-// the import is done with it (a stage half imported with no build waits for
-// its first deploy), failed when a process for it failed or the import
-// refused it.
-const (
-	ServiceCreating  = "creating"
-	ServiceBuilding  = "building"
-	ServiceDeploying = "deploying"
-	ServiceRunning   = "running"
-	ServiceFailed    = "failed"
-)
 
 // Stand-up states and phases.
 const (
@@ -95,29 +57,9 @@ const (
 
 // Status is the whole file.
 type Status struct {
-	Version   int            `json:"version"`
-	UpdatedAt string         `json:"updatedAt"`
-	Runtimes  RuntimesStatus `json:"runtimes"`
-	Standup   StandupStatus  `json:"standup"`
-}
-
-// RuntimesStatus is the boot import's section.
-type RuntimesStatus struct {
-	State string `json:"state"`
-	// UpdatedAt is when the boot import last wrote this section.
-	UpdatedAt string           `json:"updatedAt"`
-	StartedAt string           `json:"startedAt"`
-	EndedAt   string           `json:"endedAt"`
-	Error     string           `json:"error"`
-	Services  []RuntimeService `json:"services"`
-}
-
-// RuntimeService is one service the boot import lists.
-type RuntimeService struct {
-	Hostname  string `json:"hostname"`
-	State     string `json:"state"`
-	ProcessID string `json:"processId"`
-	Error     string `json:"error"`
+	Version   int           `json:"version"`
+	UpdatedAt string        `json:"updatedAt"`
+	Standup   StandupStatus `json:"standup"`
 }
 
 // StandupStatus is the stand-up's section.
@@ -237,29 +179,32 @@ func UpdateStatus(path string, change func(*Status)) error {
 	return nil
 }
 
-// UpdateRuntimes changes the boot import's section, moving its clock.
-func UpdateRuntimes(path string, change func(*RuntimesStatus)) error {
-	return UpdateStatus(path, func(s *Status) {
-		change(&s.Runtimes)
-		s.Runtimes.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	})
-}
-
 // UpdateStandup changes the stand-up's section.
 func UpdateStandup(path string, change func(*StandupStatus)) error {
 	return UpdateStatus(path, func(s *Status) { change(&s.Standup) })
+}
+
+// MarkLaunch is the status a mate launch starts from. A stand-up the file
+// says is running was stopped by this restart (the server and every agent
+// under it go down with the unit), so it is marked failed: nothing else ever
+// would.
+func MarkLaunch(path string, now time.Time) error {
+	if err := UpdateStandup(path, func(s *StandupStatus) {
+		if s.State == StandupRunning {
+			s.State = StandupFailed
+			s.EndedAt = now.UTC().Format(time.RFC3339)
+			s.Error = "the stand-up was stopped by a restart of the Mate's server"
+		}
+	}); err != nil {
+		return fmt.Errorf("mark the launch in the status file: %w", err)
+	}
+	return nil
 }
 
 // normalizeStatus stamps the schema and fills what no writer has set yet.
 func normalizeStatus(s *Status) {
 	s.Version = StatusVersion
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if s.Runtimes.State == "" {
-		s.Runtimes.State = RuntimesNone
-	}
-	if s.Runtimes.Services == nil {
-		s.Runtimes.Services = []RuntimeService{}
-	}
 	if s.Standup.State == "" {
 		s.Standup.State = StandupIdle
 	}

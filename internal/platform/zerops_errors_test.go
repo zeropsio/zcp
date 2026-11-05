@@ -527,7 +527,7 @@ func TestIsTransient(t *testing.T) {
 
 // TestIsTransient_GatewayAnswers: a gateway in front of the API answers 5xx
 // with an HTML page, not the platform's JSON error. Whatever the body, every
-// 5xx through every read the boot import makes is worth sending again; a
+// 5xx is worth sending again; a
 // JSON 4xx is not.
 func TestIsTransient_GatewayAnswers(t *testing.T) {
 	t.Parallel()

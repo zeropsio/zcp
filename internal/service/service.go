@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
-	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 )
@@ -210,40 +209,29 @@ func mergeEnvLines(store, file []string) []string {
 	return append(merged, file...)
 }
 
-// mateLaunchSetupThenInstall readies a launch: the status file first, with
-// the boot import of a new Mate's runtimes started beside everything that
-// follows — it never holds the server's start — then the bundle.
+// mateLaunchSetupThenInstall readies a launch: the status file first, then
+// the bundle.
 func mateLaunchSetupThenInstall() {
 	mateLaunchSetup()
 	mateInstallBeforeStart()
 }
 
-// mateSetupBoot is the boot import (matesetup.Boot); package-level so tests
-// stand in for it.
-var mateSetupBoot = matesetup.Boot
-
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines), starts keeping the wired dev services' git on the Mate's HQ
-// (tools.KeepMateDevGit), and starts the boot import when the container
-// carries a runtimes plan. The plan, the Mate's key and its project come from the live
-// env store, as the guard's flag does: a unit's own environment carries none
-// of them. All run in this process, for as long as the server does; a restart
-// cut short finds what it left by looking.
+// mate.LaunchEnvLines) and starts keeping the wired dev services' git on the
+// Mate's HQ (tools.KeepMateDevGit). The Mate's key and project come from the
+// live env store, as the guard's flag does: a unit's own environment carries
+// neither. Keeping runs in this process for as long as the server does; a
+// restart cut short finds what it left by looking.
 func mateLaunchSetup() {
-	// The goroutines below read the store path taken here, never the var:
-	// it is the launch's, and they outlive it.
+	// The goroutine reads the store path taken here, never the var: it is the
+	// launch's, and it outlives it.
 	store := mateStorePath
-	lookup := mate.LiveLookup(store)
 	path := mate.DefaultStatusFilePath()
-	planSet := strings.TrimSpace(lookup(matesetup.EnvRuntimes)) != ""
-	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
+	if err := mate.MarkLaunch(path, time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
 	go keepMateDevGit(env)
-	if planSet {
-		go mateSetupBoot(context.Background(), path, env)
-	}
 }
 
 // keepMateDevGit runs tools.KeepMateDevGit for as long as this process
@@ -259,12 +247,6 @@ func keepMateDevGit(env func() func(string) string) {
 }
 
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }
-
-// SetMateSetupBoot / ResetMateSetupBoot stand in for the boot import; for tests.
-func SetMateSetupBoot(fn func(context.Context, string, func() func(string) string)) {
-	mateSetupBoot = fn
-}
-func ResetMateSetupBoot() { mateSetupBoot = matesetup.Boot }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
 // mateEnsure brings the installed bundle to the release; package-level so

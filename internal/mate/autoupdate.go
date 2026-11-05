@@ -16,8 +16,11 @@ const (
 	updatePostponed = "postponed"
 	updateSwitching = "switching"
 	updateUpdated   = "updated"
-	updateFailed    = "failed"
 )
+
+// UpdateFailed is the updater phase of a release that failed, and of a state
+// that could not be read.
+const UpdateFailed = "failed"
 
 // UpdateState is minimal crash recovery state. last-good is the authority for
 // rollback; this record identifies an uncommitted switch and a failed release.
@@ -217,7 +220,7 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 	}
 	s.FailedVersion = candidate
 	if h.PreventRollback {
-		s.Phase = updateFailed
+		s.Phase = UpdateFailed
 		s.RunningVersion = ""
 		s.WorkerPID = 0
 		s.WorkerStart = ""
@@ -312,7 +315,7 @@ func PrepareUpdateBoot() (bool, error) {
 		return true, nil
 	}
 	if s.PreventRollback {
-		s.Phase = updateFailed
+		s.Phase = UpdateFailed
 		s.RunningVersion = ""
 		return true, WriteUpdateState(s)
 	}
@@ -436,7 +439,7 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 		return nil
 	}
 	if s.PreventRollback {
-		s.Phase = updateFailed
+		s.Phase = UpdateFailed
 		s.RunningVersion = ""
 		return WriteUpdateState(s)
 	}
