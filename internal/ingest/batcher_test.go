@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -53,65 +54,62 @@ func testLogger() *slog.Logger {
 
 func TestBatcher_FlushesOnSizeThreshold(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{}
-	b := newBatcher(fi, testLogger(), 3, time.Hour) // interval huge: only size triggers
-	go b.run()
-	defer func() { _ = b.stop(context.Background()) }()
-
-	b.add(Row{}, Row{}, Row{})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, calls := fi.snapshot(); calls >= 1 {
-			return
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{}
+		b := newBatcher(fi, testLogger(), 3, time.Hour)
+		go b.run()
+		defer func() { _ = b.stop(context.Background()) }()
+		b.add(Row{}, Row{}, Row{})
+		synctest.Wait()
+		if _, calls := fi.snapshot(); calls != 1 {
+			t.Errorf("size threshold triggered %d flushes, want 1", calls)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("expected a flush triggered by the size threshold")
+	})
 }
 
 func TestBatcher_FlushesOnInterval(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{}
-	b := newBatcher(fi, testLogger(), 10_000, 20*time.Millisecond)
-	go b.run()
-	defer func() { _ = b.stop(context.Background()) }()
-
-	b.add(Row{})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if batches, _ := fi.snapshot(); len(batches) == 1 && len(batches[0]) == 1 {
-			return
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{}
+		b := newBatcher(fi, testLogger(), 10_000, 20*time.Millisecond)
+		go b.run()
+		b.add(Row{})
+		defer func() { _ = b.stop(context.Background()) }()
+		synctest.Wait() // run has installed its ticker and no size flush is pending
+		if batches, _ := fi.snapshot(); len(batches) != 0 {
+			t.Fatalf("flushed %d batches before the interval", len(batches))
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("expected a flush triggered by the interval ticker")
+		time.Sleep(20 * time.Millisecond) // synctest's virtual clock
+		synctest.Wait()
+		if batches, _ := fi.snapshot(); len(batches) != 1 || len(batches[0]) != 1 {
+			t.Errorf("interval flush = %v, want one batch with one row", batches)
+		}
+	})
 }
 
 func TestBatcher_StopFlushesRemainder(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{}
-	b := newBatcher(fi, testLogger(), 10_000, time.Hour)
-	go b.run()
-
-	b.add(Row{}, Row{})
-
-	if err := b.stop(context.Background()); err != nil {
-		t.Fatalf("stop: %v", err)
-	}
-
-	batches, _ := fi.snapshot()
-	total := 0
-	for _, batch := range batches {
-		total += len(batch)
-	}
-	if total != 2 {
-		t.Errorf("total rows flushed on stop = %d, want 2", total)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{}
+		b := newBatcher(fi, testLogger(), 10_000, time.Hour)
+		go b.run()
+		b.add(Row{}, Row{})
+		synctest.Wait()
+		if _, calls := fi.snapshot(); calls != 0 {
+			t.Fatalf("insert calls before stop = %d, want 0", calls)
+		}
+		if err := b.stop(context.Background()); err != nil {
+			t.Fatalf("stop: %v", err)
+		}
+		batches, _ := fi.snapshot()
+		total := 0
+		for _, batch := range batches {
+			total += len(batch)
+		}
+		if total != 2 {
+			t.Errorf("total rows flushed on stop = %d, want 2", total)
+		}
+	})
 }
 
 func TestBatcher_StopIsIdempotent(t *testing.T) {
@@ -131,22 +129,17 @@ func TestBatcher_StopIsIdempotent(t *testing.T) {
 
 func TestBatcher_InsertErrorDoesNotPanic(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{err: errors.New("connection refused")}
-	b := newBatcher(fi, testLogger(), 1, time.Hour)
-	go b.run()
-
-	b.add(Row{})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, calls := fi.snapshot(); calls >= 1 {
-			_ = b.stop(context.Background())
-			return
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{err: errors.New("connection refused")}
+		b := newBatcher(fi, testLogger(), 1, time.Hour)
+		go b.run()
+		defer func() { _ = b.stop(context.Background()) }()
+		b.add(Row{})
+		synctest.Wait()
+		if _, calls := fi.snapshot(); calls != 1 {
+			t.Errorf("insert attempts = %d, want 1 despite the error", calls)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("expected the insert attempt despite the eventual error")
+	})
 }
 
 func TestBatcher_EmptyStopDoesNotCallInsert(t *testing.T) {
@@ -168,79 +161,47 @@ func TestBatcher_EmptyStopDoesNotCallInsert(t *testing.T) {
 
 func TestBatcher_FailedInsertRetriedOnNextFlush(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{err: errors.New("connection refused")}
-	b := newBatcher(fi, testLogger(), 10_000, time.Hour) // interval huge: only flushNow triggers
-	go b.run()
-	defer func() { _ = b.stop(context.Background()) }()
-
-	b.add(Row{})
-	b.flushNow <- struct{}{}
-
-	// Wait on the counter this asserts, NOT on the fake's call count: flush()
-	// increments insertFailuresTotal only AFTER Insert returns and after a
-	// logger.Error call, so `calls >= 1` goes true inside a window where the
-	// counter is still 0. On a loaded runner the flush goroutine gets
-	// preempted in that window and the assert reads 0 (v9.161.0 release run).
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if b.Stats().InsertFailuresTotal >= 1 {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{err: errors.New("connection refused")}
+		b := newBatcher(fi, testLogger(), 10_000, time.Hour)
+		go b.run()
+		defer func() { _ = b.stop(context.Background()) }()
+		b.add(Row{})
+		b.flushNow <- struct{}{}
+		synctest.Wait() // the failed flush has returned, including its counter and retry state
+		if stats := b.Stats(); stats.InsertFailuresTotal != 1 {
+			t.Fatalf("InsertFailuresTotal = %d, want 1 after the first failed attempt", stats.InsertFailuresTotal)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if stats := b.Stats(); stats.InsertFailuresTotal != 1 {
-		t.Fatalf("InsertFailuresTotal = %d, want 1 after the first failed attempt", stats.InsertFailuresTotal)
-	}
-
-	fi.setErr(nil) // ClickHouse recovers
-	b.flushNow <- struct{}{}
-
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if batches, calls := fi.snapshot(); calls >= 2 && len(batches) == 1 && len(batches[0]) == 1 {
-			return
+		fi.setErr(nil)
+		b.flushNow <- struct{}{}
+		synctest.Wait()
+		if batches, calls := fi.snapshot(); calls != 2 || len(batches) != 1 || len(batches[0]) != 1 {
+			t.Errorf("retry = %d calls and %v batches, want two calls and one inserted row", calls, batches)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("expected the previously failed row to be retried and inserted on the next successful flush")
+	})
 }
 
 func TestBatcher_RetryBufferBoundedDropsOldestWithCounter(t *testing.T) {
 	t.Parallel()
-
-	fi := &fakeInserter{err: errors.New("connection refused")}
-	b := newBatcher(fi, testLogger(), 10_000, time.Hour)
-	go b.run()
-	defer func() { _ = b.stop(context.Background()) }()
-
-	const overflow = 500
-	rows := make([]Row, retryBufferCap+overflow)
-	b.add(rows...)
-	b.flushNow <- struct{}{}
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if b.Stats().RowsDroppedTotal == overflow {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		fi := &fakeInserter{err: errors.New("connection refused")}
+		b := newBatcher(fi, testLogger(), 10_000, time.Hour)
+		go b.run()
+		defer func() { _ = b.stop(context.Background()) }()
+		const overflow = 500
+		rows := make([]Row, retryBufferCap+overflow)
+		b.add(rows...)
+		synctest.Wait()
+		if got := b.Stats().RowsDroppedTotal; got != overflow {
+			t.Fatalf("RowsDroppedTotal = %d, want %d", got, overflow)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if got := b.Stats().RowsDroppedTotal; got != overflow {
-		t.Fatalf("RowsDroppedTotal = %d, want %d", got, overflow)
-	}
-
-	fi.setErr(nil)
-	b.flushNow <- struct{}{}
-
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if batches, _ := fi.snapshot(); len(batches) == 1 && len(batches[0]) == retryBufferCap {
-			return
+		fi.setErr(nil)
+		b.flushNow <- struct{}{}
+		synctest.Wait()
+		if batches, _ := fi.snapshot(); len(batches) != 1 || len(batches[0]) != retryBufferCap {
+			t.Errorf("expected exactly %d retried rows after the bound dropped the oldest %d", retryBufferCap, overflow)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("expected exactly %d retried rows after the bound dropped the oldest %d", retryBufferCap, overflow)
+	})
 }
 
 func TestBatcher_StatsDefaultZero(t *testing.T) {

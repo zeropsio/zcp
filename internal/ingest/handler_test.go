@@ -678,14 +678,12 @@ func TestHandler_NoIPInLoggerOutput(t *testing.T) {
 	body := mustMarshal(t, batch)
 	postJSON(t, h, body, true, map[string]string{"X-Real-IP": fakeIP})
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, calls := fi.snapshot(); calls >= 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	if err := b.stop(context.Background()); err != nil {
+		t.Fatalf("stop batcher: %v", err)
 	}
-	_ = b.stop(context.Background())
+	if _, calls := fi.snapshot(); calls == 0 || !strings.Contains(logBuf.String(), "clickhouse insert failed") {
+		t.Fatal("expected the failed insert to be logged")
+	}
 
 	if strings.Contains(logBuf.String(), fakeIP) {
 		t.Errorf("logger output leaked the client IP: %s", logBuf.String())

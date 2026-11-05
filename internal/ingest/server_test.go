@@ -23,6 +23,7 @@ func TestServe_HandlesRequestsThenShutsDownGracefully(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	var lc net.ListenConfig
 	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -37,9 +38,6 @@ func TestServe_HandlesRequestsThenShutsDownGracefully(t *testing.T) {
 	go func() { serveErrCh <- serve(ctx, listener, h.Routes(), b, testLogger()) }()
 
 	base := "http://" + listener.Addr().String()
-
-	// Wait for the listener to actually accept before issuing requests.
-	waitForServer(t, base+"/healthz")
 
 	batch := validBatch(validEvent(1))
 	body := mustMarshal(t, batch)
@@ -63,13 +61,8 @@ func TestServe_HandlesRequestsThenShutsDownGracefully(t *testing.T) {
 	_ = resp.Body.Close()
 
 	cancel()
-	select {
-	case err := <-serveErrCh:
-		if err != nil {
-			t.Errorf("serve returned %v, want nil on graceful shutdown", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not return within 5s of ctx cancellation")
+	if err := <-serveErrCh; err != nil {
+		t.Errorf("serve returned %v, want nil on graceful shutdown", err)
 	}
 
 	batches, _ := fi.snapshot()
@@ -82,23 +75,24 @@ func TestServe_HandlesRequestsThenShutsDownGracefully(t *testing.T) {
 	}
 }
 
-func waitForServer(t *testing.T, url string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-		if err != nil {
-			t.Fatalf("build readiness request: %v", err)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+// listeningHandler records the listener address once Run has bound it.
+type listeningHandler struct{ listening chan string }
+
+func (*listeningHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *listeningHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == "ingest: listening" {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "addr" {
+				h.listening <- a.Value.String()
+				return false
+			}
+			return true
+		})
 	}
-	t.Fatal("server did not become ready in time")
+	return nil
 }
+func (h *listeningHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *listeningHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestRun_ServesAndShutsDownGracefully(t *testing.T) {
 	t.Parallel()
@@ -110,25 +104,35 @@ func TestRun_ServesAndShutsDownGracefully(t *testing.T) {
 		CHDatabase: "telemetry",
 		CHUser:     "zerops",
 	}
-	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	logs := &listeningHandler{listening: make(chan string, 1)}
+	logger := slog.New(logs)
 
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- Run(ctx, cfg, logger) }()
 
-	// Run resolves its own ephemeral listener internally; there is no way
-	// to probe it externally from cfg alone, so this test only proves
-	// Run starts without error and shuts down cleanly on ctx cancellation.
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
+	var addr string
 	select {
+	case addr = <-logs.listening:
 	case err := <-runErrCh:
-		if err != nil {
-			t.Errorf("Run returned %v, want nil on graceful shutdown", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return within 5s of ctx cancellation")
+		t.Fatalf("Run returned before listening: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/statsz", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /statsz: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /statsz status = %d, want 200", resp.StatusCode)
+	}
+	cancel()
+	if err := <-runErrCh; err != nil {
+		t.Errorf("Run returned %v, want nil on graceful shutdown", err)
 	}
 }
 
