@@ -3960,7 +3960,12 @@ lease the answer lists in `released[]` (a branch release takes every lease of th
 lease holds unsaved work, or another live zcp session shares it — keeps the binding, silently; anything
 else is a failure the conversation's chip shows. zcp itself releases a branch's leases once its change
 in HQ is merged or closed (DP-34), on its HQ pass and its service's look; the unbind fan-out above
-follows from the envelope. Idleness never releases (§0 rule 4).
+follows from the envelope. The service's look asks HQ nothing: on every `state` frame of its link the
+Mate's server replaces `~/.zcp/hq/changes.json` (under the container's home) whole, in one rename,
+with exactly the frame's `MateChanges` (`packages/shared/src/hqChanges.ts`): `{ "appId": string|null,
+"appName": string|null, "changes": MateChange[], "openPerBranch"?: true }`, each change as the frame
+carries it; zcp only reads it (`hq.ReadMateChanges`), and no file, or one it cannot read, is no
+finished change. Idleness never releases (§0 rule 4).
 
 **A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
 pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases

@@ -175,7 +175,7 @@ func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), ".zcp", "hq")
 	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
-		GitCredentialPath: filepath.Join(dir, "git-credential"), MateChangesPath: filepath.Join(dir, "mate-changes.json")}
+		GitCredentialPath: filepath.Join(dir, "git-credential"), ChangesPath: filepath.Join(dir, "changes.json")}
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {

@@ -87,7 +87,7 @@ func liveHQIdentity() hq.Identity {
 func hqIdentity(rt runtime.Info) hq.Identity {
 	id := liveHQIdentity()
 	if rt.HQ != nil {
-		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, GitCredentialPath: rt.HQ.GitCredentialPath, MateChangesPath: rt.HQ.MateChangesPath}
+		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, GitCredentialPath: rt.HQ.GitCredentialPath, ChangesPath: rt.HQ.ChangesPath}
 	}
 	id.OrgID = rt.OrgID
 	return id
@@ -362,7 +362,7 @@ func reconcileHQPairs(
 			if !changesDue {
 				return report
 			}
-			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state, hqc.BranchOf, cfg.release)...)
+			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, hqc.BranchOf, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
 			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows, cfg.schemas)...)

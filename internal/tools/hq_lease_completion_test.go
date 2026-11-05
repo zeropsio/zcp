@@ -148,9 +148,9 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 			}
 			fake := &fakeBranchRelease{t: t, stateDir: stateDir}
 			app := "app-1"
-			state := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: tt.changes}
+			state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: tt.changes}
 
-			lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state, keepBranch, fake.release)
+			lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
 
 			if got := fake.called(); !slices.Equal(got, tt.want) {
 				t.Fatalf("releases = %+v, want %+v", got, tt.want)
@@ -187,12 +187,12 @@ func TestReleaseCompletedLeases_Unsaved_KeptAndSaidOncePerPass(t *testing.T) {
 	writeHQLeaseRecord(t, stateDir, "boxpool", 6, completionRepo, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: unsavedRefusalOf()}
 	app := "app-1"
-	state := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
+	state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
 		{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "fix-login"},
 	}}
 
 	for pass := 1; pass <= 2; pass++ {
-		lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state, keepBranch, fake.release)
+		lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
 		if len(lines) != 1 {
 			t.Fatalf("pass %d: lines = %q, want one", pass, lines)
 		}
@@ -222,9 +222,9 @@ func TestReleaseCompletedLeases_OtherFailure_SaidAndKept(t *testing.T) {
 	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: errors.New("the pool's orchestrator did not answer")}
 	app := "app-1"
-	state := hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeClosed, Branch: "fix-login"}}}
+	state := hq.MateChanges{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeClosed, Branch: "fix-login"}}}
 
-	lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state, keepBranch, fake.release)
+	lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
 
 	if len(lines) != 1 || !strings.Contains(lines[0], "did not answer") || !strings.Contains(lines[0], "hqpool-4") {
 		t.Errorf("lines = %q, want one naming the lease and why", lines)
@@ -260,7 +260,7 @@ func setLeaseAcquiredAt(t *testing.T, stateDir, alias, at string) {
 func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 	t.Parallel()
 	app := "app-1"
-	state := hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x"}}}
+	state := hq.MateChanges{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x"}}}
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
@@ -280,7 +280,7 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 				t.Fatalf("group acquire failed: %s", getTextContent(t, res))
 			}
 
-			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state, keepBranch, func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
+			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state.AppID, state.Changes, keepBranch, func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
 				return ReleaseLeaseBranch(ctx, deps, repo, branch)
 			})
 
@@ -420,7 +420,7 @@ func (l *hqLab) stateFrame() {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	path := l.rt.HQ.MateChangesPath
+	path := l.rt.HQ.ChangesPath
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		l.t.Fatal(err)
 	}

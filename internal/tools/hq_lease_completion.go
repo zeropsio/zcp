@@ -140,8 +140,9 @@ type leaseGroupOnHQ struct {
 }
 
 // releaseCompletedLeases releases, through release, every group of leases
-// zcp holds of a repository of the application state holds the Mate in whose
-// branch's change state reads merged or closed (settledChangeOn) — and says
+// zcp holds of a repository of the application HQ holds the Mate in (appID,
+// nil for none) whose branch's change in changes — the Mate's changes there —
+// reads merged or closed (settledChangeOn) — and says
 // what became of each in one line, "repository <name>: …", by repository and
 // branch. A group leased again after its change settled is a new start on the
 // branch and stays. Leases of another application's repository, or of a
@@ -150,13 +151,13 @@ type leaseGroupOnHQ struct {
 // and what each holds; the next pass tries again. branchOf is the branch of a
 // change by its number and the branch HQ names (hq.Client.BranchOf). Nothing
 // when release is nil.
-func releaseCompletedLeases(ctx context.Context, stateDir, address string, state hq.MateState, branchOf func(int, string) string, release leaseBranchRelease) []string {
-	if release == nil || state.AppID == nil {
+func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, branchOf func(int, string) string, release leaseBranchRelease) []string {
+	if release == nil || appID == nil {
 		return nil
 	}
 	var lines []string
-	for _, group := range leaseGroupsOnHQ(stateDir, address, *state.AppID) {
-		change, settled := settledChangeOn(state, group.repo, group.branch, branchOf)
+	for _, group := range leaseGroupsOnHQ(stateDir, address, *appID) {
+		change, settled := settledChangeOn(changes, group.repo, group.branch, branchOf)
 		if !settled || leasedAgainSince(group.leases, change.UpdatedAt) {
 			continue
 		}
@@ -189,15 +190,15 @@ func leaseGroupsOnHQ(stateDir, address, appID string) []leaseGroupOnHQ {
 	return groups
 }
 
-// settledChangeOn is the change of branch in repo as state names it once it
-// has settled: the newest change state lists on the branch, merged or closed,
+// settledChangeOn is the change of branch in repo as changes name it once it
+// has settled: the newest change listed on the branch, merged or closed,
 // while none on it is open — another change still using the branch keeps its
-// leases. false while one is open, and when state lists none on the branch:
+// leases. false while one is open, and when none is listed on the branch:
 // absence is no word that the work is finished.
-func settledChangeOn(state hq.MateState, repo, branch string, branchOf func(int, string) string) (hq.MateChange, bool) {
+func settledChangeOn(changes []hq.MateChange, repo, branch string, branchOf func(int, string) string) (hq.MateChange, bool) {
 	var newest *hq.MateChange
-	for i := range state.Changes {
-		c := &state.Changes[i]
+	for i := range changes {
+		c := &changes[i]
 		if c.Repo != repo || branchOf(c.Number, c.Branch) != branch {
 			continue
 		}
@@ -330,11 +331,11 @@ func followLeaseCompletion(ctx context.Context, d devGitDeps, at, last time.Time
 	if !linked || len(hqLeaseBranches(d.stateDir, hqc.Address())) == 0 {
 		return nil, last
 	}
-	state, err := hq.ReadMateChanges(hqIdentity(d.rt).MateChangesPath)
+	frame, err := hq.ReadMateChanges(hqIdentity(d.rt).ChangesPath)
 	if err != nil {
 		return nil, at
 	}
-	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), state, hqc.BranchOf, d.release), at
+	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, d.release), at
 }
 
 // withRecipeSchemas shares the server schema cache with recipe conflict passes.

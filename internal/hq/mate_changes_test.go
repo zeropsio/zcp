@@ -8,10 +8,14 @@ import (
 )
 
 // TestReadMateChanges_FileStates: the file holds the link's last `state`
-// frame's changes as the Mate's server encodes them; no file is no finished
-// change, and a file that is no such frame is an error, never a state.
+// frame's changes as the Mate's server encodes them, at ~/.zcp/hq/changes.json
+// beside the Git credential; no file is no finished change, and a file that is
+// no such frame is an error, never a state.
 func TestReadMateChanges_FileStates(t *testing.T) {
 	t.Parallel()
+	if want := filepath.Join(filepath.Dir(GitCredentialPath()), "changes.json"); ChangesPath() != want {
+		t.Errorf("ChangesPath() = %q, want %q", ChangesPath(), want)
+	}
 	const frame = `{"appId":"app-1","appName":"Shop","changes":[` +
 		`{"repo":"appdev","number":3,"title":"Fix the login","state":"merged","head":null,"mergedSha":null,"landedHead":null,"branch":"fix-login"},` +
 		`{"repo":"appdev","number":2,"title":null,"state":"open","head":null,"mergedSha":null,"landedHead":null,"branch":"mate/p-1/2","ready":false,"updatedAt":"2026-11-04T10:00:00.000Z"}` +
@@ -30,7 +34,7 @@ func TestReadMateChanges_FileStates(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			path := filepath.Join(t.TempDir(), "mate-changes.json")
+			path := filepath.Join(t.TempDir(), "changes.json")
 			if !tt.missing {
 				if err := os.WriteFile(path, []byte(tt.body), 0o600); err != nil {
 					t.Fatal(err)

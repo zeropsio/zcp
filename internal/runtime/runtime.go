@@ -82,7 +82,7 @@ type Info struct {
 type HQLink struct {
 	Origin, ProjectID, Key string
 	GitCredentialPath      string
-	MateChangesPath        string
+	ChangesPath            string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
