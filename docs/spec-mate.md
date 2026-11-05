@@ -5920,8 +5920,15 @@ The order:
    preview, minutes per build), then give one short line per step, the fallback's included
    (`TestBuildAgentsMD_Container_StandUpRoutesToTheTool`).
    The tool:
-   - waits, bounded, for HQ to answer the Mate's key (3 min) and for the runtimes (5 min: every dev half
-     running and answering SSH, every stage half created), and for whatever the import still has in
+   - reads HQ once under the Mate's key — the server sends the stand-up only once its link is up, so
+     the tool waits on no link and refuses at once when HQ refuses the key
+     (`TestStandup_StartsOnlyOnceLinked_AsksHQOnce`);
+   - waits, bounded, for the runtimes (5 min: every dev half
+     running and answering SSH, every stage half created; it reads the project again at each of the
+     project's pushes, a service's or a process's (ZEROPS-079, ZEROPS-078), never on a timer —
+     `TestStandup_TheRuntimesAreReadAgainOnlyOnAPush`; the container's own import waits on the same
+     pushes, `TestRun_ZcpsOwnDeploy_IsLookedAtAgainOnlyOnAPush`,
+     `TestRun_TheImportIsFollowedOnlyOnAPush`), and for whatever the import still has in
      flight on them and on the managed services;
      if the boot-import wait expires while that import remains pending or importing, or
      the wait is cancelled, the pass stops before preparation and asks only for another
@@ -6005,6 +6012,11 @@ end, and the Mate server can. A stand-up whose own turn ended while its section 
 that builds them moves the section on, its own `done` or `failed` again zcp's word.
 `TestStandup_WritesItsProgressForTheRunCard`, `TestStandup_TheRecordNeverSaysDoneBetweenItsCalls`,
 `TestStandupStatus_CarriedByItsProcess`; mate `zeropsSetupSteps.test.ts`.
+While a batch deploys, each target's step (`build`, `deploy`, then `verify` once its process has
+ended and its deploy has not returned) and the process behind it are read from the project's live
+processes when the batch starts and again at each process push (ZEROPS-078), never on a timer: one
+reader per call for every batch, on the call's one push session — the one the wait for the
+runtimes opened, or opened by the first batch. `TestStandupTrackDeploys_NamesTheStepAndItsProcess`.
 
 The model is the backup:
 

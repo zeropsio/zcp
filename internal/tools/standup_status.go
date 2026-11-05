@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -175,59 +177,106 @@ func standupStepForPhase(failedPhase string) string {
 	return mate.StepBuild
 }
 
-// trackDeploys reports, while a batch deploys, which step each target is on
-// and the process behind it, from the project's live processes (the lag-free
-// read ops.ProjectActivity owns): a build process building is the build, the
-// same process deploying is the deploy, and a target whose process has ended
-// while its deploy has not returned is being verified (its container
-// answering SSH, its public access, its supervisor's dev servers). The returned
-// stop ends the tracking and waits for it, so it never writes after the
-// batch's own results.
-func (d standupDeps) trackDeploys(ctx context.Context, hosts []string, live map[string]*platform.ServiceStack, status *standupStatus) func() {
-	if status == nil || len(hosts) == 0 {
-		return func() {}
-	}
-	idToHost := map[string]string{}
-	for _, h := range hosts {
-		if svc := live[h]; svc != nil {
-			idToHost[svc.ID] = h
-		}
-	}
-	poll := d.trackPoll
-	if poll <= 0 {
-		poll = standupTrackPoll
-	}
-	tctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		seen := map[string]bool{}
-		for {
-			if activity, err := ops.ProjectActivity(tctx, d.batch.client, d.batch.projectID, idToHost); err == nil {
-				for _, h := range hosts {
-					if op, ok := standupBuildOp(activity[h]); ok {
-						seen[h] = true
-						status.step(h, op.step, mate.StepRunning, op.processID, "")
-					} else if seen[h] {
-						status.step(h, mate.StepVerify, mate.StepRunning, "", "")
-					}
-				}
-			}
-			select {
-			case <-tctx.Done():
-				return
-			case <-time.After(poll):
-			}
-		}
-	}()
-	return func() {
-		cancel()
-		<-done
+// standupTracking reports, while the call's batches deploy, which step each
+// target is on and the process behind it, from the project's live processes
+// (the lag-free read ops.ProjectActivity owns): a build process building is
+// the build, the same process deploying is the deploy, and a target whose
+// process has ended while its deploy has not returned is being verified (its
+// container answering SSH, its public access, its supervisor's dev servers).
+// One per call, the session's one reader past the wait for the runtimes, for
+// every batch — concurrent ones among them: it reads the processes when a
+// batch starts and again at each of the project's pushes (ZEROPS-078), never
+// on a timer.
+type standupTracking struct {
+	batch   batchDeployer
+	session *standupPushes
+	status  *standupStatus
+	once    sync.Once
+	// started is a batch that started: read at once (coalesced).
+	started chan struct{}
+	// mu guards targets and seen, and is held while a look writes, so a
+	// batch's stop is never followed by a write for its targets.
+	mu      sync.Mutex
+	targets map[string]string // service id → hostname, of the batches deploying
+	seen    map[string]bool
+}
+
+func newStandupTracking(batch batchDeployer, session *standupPushes, status *standupStatus) *standupTracking {
+	return &standupTracking{
+		batch: batch, session: session, status: status,
+		started: make(chan struct{}, 1), targets: map[string]string{}, seen: map[string]bool{},
 	}
 }
 
-// standupTrackPoll is the time between two looks at a batch's processes.
-const standupTrackPoll = 3 * time.Second
+// track follows a batch's targets until the returned stop, after which
+// nothing is written for them, so never after the batch's own results. ctx is
+// the call's: the first batch's starts the reader, which ends with it.
+func (t *standupTracking) track(ctx context.Context, hosts []string, live map[string]*platform.ServiceStack) func() {
+	if t.status == nil || len(hosts) == 0 {
+		return func() {}
+	}
+	var ids []string
+	t.mu.Lock()
+	for _, h := range hosts {
+		if svc := live[h]; svc != nil {
+			t.targets[svc.ID] = h
+			ids = append(ids, svc.ID)
+		}
+	}
+	t.mu.Unlock()
+	t.once.Do(func() { go t.follow(ctx, t.session.wake(ctx)) })
+	select {
+	case t.started <- struct{}{}:
+	default:
+	}
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		for _, id := range ids {
+			delete(t.seen, t.targets[id])
+			delete(t.targets, id)
+		}
+	}
+}
+
+// follow looks at each batch's start and at each push until the call ends.
+func (t *standupTracking) follow(ctx context.Context, wakes <-chan struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.started:
+		case <-wakes:
+		}
+		t.look(ctx)
+	}
+}
+
+func (t *standupTracking) look(ctx context.Context) {
+	t.mu.Lock()
+	idToHost := maps.Clone(t.targets)
+	t.mu.Unlock()
+	if len(idToHost) == 0 {
+		return
+	}
+	activity, err := ops.ProjectActivity(ctx, t.batch.client, t.batch.projectID, idToHost)
+	if err != nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for id, h := range idToHost {
+		if t.targets[id] != h {
+			continue // its batch stopped during the read
+		}
+		if op, ok := standupBuildOp(activity[h]); ok {
+			t.seen[h] = true
+			t.status.step(h, op.step, mate.StepRunning, op.processID, "")
+		} else if t.seen[h] {
+			t.status.step(h, mate.StepVerify, mate.StepRunning, "", "")
+		}
+	}
+}
 
 type standupOp struct {
 	step      string
@@ -274,17 +323,22 @@ type bootImportResult struct {
 // always ends its section (done or failed, its own timeout included) and
 // every launch resets one a restart cut short, so the wait ends with it;
 // bootWait bounds observation only: expiry or cancellation stops preparation
-// without taking over the import. Returns what the import says failed, by
-// hostname ("" for the import as a whole), or why observation stopped.
+// without taking over the import. The file is read once, then again each
+// time a process puts it in place (watchReplacedFile), never on a timer.
+// Returns what the import says failed, by hostname ("" for the import as a
+// whole), or why observation stopped.
 func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) bootImportResult {
 	if d.statusPath == "" {
 		return bootImportResult{}
 	}
-	deadline := time.Now().Add(d.bootWait)
+	ctx, cancel := context.WithTimeoutCause(ctx, d.bootWait, errBootWaitOver)
+	defer cancel()
+	// Watching before the first read: a change between the two wakes it.
+	changed, err := watchReplacedFile(ctx, d.statusPath)
+	if err != nil {
+		return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
+	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
-		}
 		st, err := mate.ReadStatus(d.statusPath)
 		if err != nil {
 			// Legacy containers may have no readable boot-import section.
@@ -310,9 +364,6 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 			}
 			return bootImportResult{failed: failed}
 		}
-		if !time.Now().Before(deadline) {
-			return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
-		}
 		var waiting []string
 		for _, s := range r.Services {
 			if s.State != mate.ServiceRunning && s.State != mate.ServiceFailed {
@@ -326,8 +377,15 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		progress.say("waiting for the container's import of " + what)
 		select {
 		case <-ctx.Done():
+			if errors.Is(context.Cause(ctx), errBootWaitOver) {
+				return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
+			}
 			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", ctx.Err())}
-		case <-time.After(d.bootPoll):
+		case <-changed:
 		}
 	}
 }
+
+// errBootWaitOver is awaitBootImport's bound running out, told apart from the
+// caller's own cancellation.
+var errBootWaitOver = errors.New("boot import wait over")

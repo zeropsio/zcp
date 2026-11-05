@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -47,15 +48,10 @@ import (
 // are HQ's, and the tier read is the Mate's own, `0 — AI Agent`.
 
 const (
-	// standupHQWait bounds the wait for HQ to answer for the Mate's key: a
-	// new Mate's first turn can come before the link is up.
-	standupHQWait = 3 * time.Minute
-	standupHQPoll = 5 * time.Second
 	// standupRuntimeWait bounds the wait for the runtimes the browser imports
 	// right before the person signs the agent in: the first turn can arrive
 	// while they are still being created.
 	standupRuntimeWait = 5 * time.Minute
-	standupRuntimePoll = 5 * time.Second
 	// standupBatchMax is the most halves deploying at once: past five the
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
@@ -63,7 +59,6 @@ const (
 	// standupBootWait bounds the wait for the container's own import of the
 	// runtimes (MATE_SETUP_RUNTIMES) — the import's own bound.
 	standupBootWait = 20 * time.Minute
-	standupBootPoll = 5 * time.Second
 	// standupReflogIntent heads the stand-up's entry in AGENTS.md's reflog.
 	standupReflogIntent = "Stand up development from the group's recipe"
 )
@@ -74,7 +69,7 @@ type StandupInput struct{}
 
 // standupDeps is what a stand-up needs: the batch deploy it shares with
 // zerops_deploy_batch (and through it the client, SSH, auth and state), the
-// mounter, and how long to wait for HQ to answer for the Mate's key.
+// mounter, and the Mate's HQ identity.
 type standupDeps struct {
 	batch       batchDeployer
 	mounter     ops.Mounter
@@ -82,18 +77,18 @@ type standupDeps struct {
 	// identity is the Mate's HQ identity: the key it presents, the HQ it
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
-	hqWait      time.Duration
-	hqPoll      time.Duration
 	runtimeWait time.Duration
-	runtimePoll time.Duration
+	// pushes opens the project's push session (ZEROPS-079, ZEROPS-078).
+	// session is the call's one session, which the wait for the runtimes and
+	// tracking — the call's deploy tracking — read again at; run makes both.
+	pushes   watch.Pushes
+	session  *standupPushes
+	tracking *standupTracking
 	// statusPath is the setup status file the stand-up writes its section of
 	// and reads the boot import's from ("" writes and waits on nothing);
-	// bootWait/bootPoll bound the wait for that import, trackPoll the looks
-	// at a batch's processes (standup_status.go).
+	// bootWait bounds the wait for that import.
 	statusPath string
 	bootWait   time.Duration
-	bootPoll   time.Duration
-	trackPoll  time.Duration
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
@@ -127,14 +122,10 @@ func RegisterStandup(
 		mounter:     mounter,
 		liveEnvPath: mate.LiveEnvStorePath,
 		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
-		hqWait:      standupHQWait,
-		hqPoll:      standupHQPoll,
 		runtimeWait: standupRuntimeWait,
-		runtimePoll: standupRuntimePoll,
+		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
 		bootWait:    standupBootWait,
-		bootPoll:    standupBootPoll,
-		trackPoll:   standupTrackPoll,
 	})
 }
 
@@ -168,6 +159,11 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // A call that stood development up with the stages queued leaves the
 // stand-up running for the call that builds them (awaitStages).
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+	// The call's push session and tracking end with it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d.session = newStandupPushes(d.pushes)
+	d.tracking = newStandupTracking(d.batch, d.session, progress.st())
 	progress.st().begin()
 	result, standUp := d.stand(ctx, progress)
 	switch {
@@ -198,10 +194,12 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 		progress.say("the project is closed off; the container's import of the runtimes is starting")
 		d.closedOffSeen = true
 	}
-	hqc, answering := d.awaitHQ(ctx, progress)
-	if !answering {
+	// The Mate's server sends the stand-up only once its link to HQ is up, so
+	// HQ is opened and read once, never waited on.
+	hqc, err := hq.Open(d.batch.httpClient, d.identity())
+	if err != nil {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("HQ does not answer for this Mate's key after %s. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.hqWait),
+			fmt.Sprintf("HQ does not answer for this Mate's key: %v. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", err),
 			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once HQ answers for the Mate, and a first deploy follows."), ""
 	}
 	src, refusal := d.readTier(ctx, hqc, progress)
@@ -220,32 +218,6 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 	resp := buildStandupResponse(src, pairs, live)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
 	return jsonResult(resp), resp.StandUp
-}
-
-// awaitHQ opens HQ under the Mate's key and waits until HQ answers for it, or
-// the wait is over.
-func (d standupDeps) awaitHQ(ctx context.Context, progress *standupProgress) (hq.Client, bool) {
-	deadline := time.Now().Add(d.hqWait)
-	for {
-		hqc, err := hq.Open(d.batch.httpClient, d.identity())
-		if err == nil {
-			callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-			_, err = hqc.Once().Self(callCtx)
-			cancel()
-		}
-		if err == nil {
-			return hqc, true
-		}
-		if !time.Now().Before(deadline) {
-			return hq.Client{}, false
-		}
-		progress.say("waiting for HQ to answer for this Mate's key")
-		select {
-		case <-ctx.Done():
-			return hq.Client{}, false
-		case <-time.After(d.hqPoll):
-		}
-	}
 }
 
 // standupSource is the tier a stand-up works from and where it came from:
@@ -471,29 +443,58 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 }
 
 // awaitRuntimes reads the project's services until every pair's halves are
-// there — the dev half running (startWithoutCode), the stage half created —
-// or the wait is over. The browser imports the runtimes right before the
-// person signs the agent in, so the stand-up can be asked for while they are
-// still being created; what is still missing after the wait is reported by
-// presentAndRunning.
+// up, looking again at each of the project's pushes — the call's session,
+// opened at the wait's first look that finds a half missing, whose connect
+// wake covers that look — or once more when the wait is up, and answers the
+// last look.
 func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, progress *standupProgress) (map[string]*platform.ServiceStack, error) {
-	deadline := time.Now().Add(d.runtimeWait)
+	waitCtx, stop := context.WithTimeout(ctx, d.runtimeWait)
+	defer stop()
+	var wakes <-chan struct{}
 	for {
 		live, err := d.liveServices(ctx)
 		if err != nil {
 			return nil, err
 		}
 		pending := runtimesNotUp(tier, live)
-		if len(pending) == 0 || !time.Now().Before(deadline) {
+		if len(pending) == 0 {
 			return live, nil
 		}
 		progress.say("waiting for the import to create " + strings.Join(pending, ", "))
+		if wakes == nil {
+			wakes = d.session.wake(ctx)
+		}
 		select {
-		case <-ctx.Done():
-			return live, nil
-		case <-time.After(d.runtimePoll):
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return live, nil
+			}
+			return d.liveServices(ctx)
+		case <-wakes:
 		}
 	}
+}
+
+// standupPushes is one stand-up call's push session (watch.Pushes): opened
+// at the call's first wait on the project and held until the call's context
+// ends (run cancels it as the call returns). Its readers take turns — the
+// wait for the runtimes, then the call's deploy tracking — so a wake is never
+// split between two.
+type standupPushes struct {
+	open  watch.Pushes
+	once  sync.Once
+	wakes <-chan struct{}
+}
+
+func newStandupPushes(open watch.Pushes) *standupPushes {
+	return &standupPushes{open: open}
+}
+
+// wake answers the session's wakes, opening it at the call's first wait for
+// as long as the call's ctx lives.
+func (p *standupPushes) wake(ctx context.Context) <-chan struct{} {
+	p.once.Do(func() { p.wakes = p.open(ctx) })
+	return p.wakes
 }
 
 // runtimesNotUp names every half the stand-up still waits for: a dev half not

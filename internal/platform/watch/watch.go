@@ -1,13 +1,13 @@
-// Package watch is the Zerops Studio websocket watcher: it rides the
-// platform's (undocumented) realtime channel and turns ServiceStack changes
-// into a small event stream the Studio cockpit consumes, so the cockpit updates
-// on push instead of polling.
+// Package watch is the Zerops websocket watcher: it rides the platform's
+// (undocumented) realtime channel and turns changes of the project's services
+// and processes into a small event stream — the Studio cockpit's topology
+// signal and the Mate's waits — so they follow on push instead of polling.
 //
 // The protocol below was reverse-engineered from the legacy web frontend
 // (frontend-legacy/libs/zef/src/websocket) and VERIFIED LIVE against
-// api.app-prg1.zerops.io (see the captured frames in the commit that introduced
-// this file). It is NOT a public/documented API — treat the legacy frontend as
-// the source of truth if it ever drifts.
+// api.app-prg1.zerops.io, under a Mate's project-scoped key as well
+// (ZEROPS-078, ZEROPS-079). It is NOT a public/documented API — treat the
+// legacy frontend as the source of truth if it ever drifts.
 //
 // Flow:
 //  1. Auth exchange:  POST https://<host>/api/rest/public/web-socket/login
@@ -15,19 +15,21 @@
 //     -> {"webSocketToken": "..."}   (short-lived)
 //  2. Connect:        wss://<host>/api/rest/public/web-socket/<receiverId>/<webSocketToken>
 //     server greets with {"type":"SocketSuccess"}
-//  3. Subscribe:      POST https://<host>/api/rest/public/service-stack/search
-//     + Bearer, body = the service-stack search filter PLUS
-//     {"subscriptionName":"ServiceStack__list-subscription",
-//     "receiverId":<uuid>, "wsOutputType":"listStream"}
-//  4. Push:           {"type":"search","subscriptionName":"ServiceStack__list-subscription",
-//     "data":{"add":[ids],"delete":[ids]}}  on membership change
+//  3. Subscribe:      per stream, POST https://<host>/api/rest/public/<entity>/search
+//     + Bearer, body = the search filtered by the org (clientId; a projectId
+//     filter answers 400 for every key, ZEROPS-079 — the key's own scope keeps
+//     the stream to its project) PLUS {"subscriptionName":<stream>,
+//     "receiverId":<uuid>, "wsOutputType":"listStream"|"updateStream",
+//     "disableOutput":true}
+//  4. Push:           {"type":"search","subscriptionName":<stream>,
+//     "data":{"add":[...],"update":[...],"delete":[...]}}  on a change
 //  5. Heartbeat:      send {"type":"ping"} -> receive {"type":"pong"}
 //
-// The watcher is a "change SIGNAL" — it does NOT carry topology. On any relevant
-// push it emits a topology-changed event; the cockpit re-reads the authoritative
-// state via the existing `zcp studio topology` REST transport (single mapping
-// owner). On disconnect it self-heals (re-auth -> reconnect -> re-subscribe) and
-// emits disconnected so the consumer can fall back to polling meanwhile.
+// The watcher is a "change SIGNAL" — it does NOT carry state. On a push it
+// emits its stream's event; the consumer re-reads the authoritative state over
+// REST. On disconnect it self-heals (re-auth -> reconnect -> re-subscribe) and
+// emits disconnected; the next connected event tells the consumer to read
+// again for whatever changed in between.
 package watch
 
 import (
@@ -43,9 +45,41 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// subscriptionName is the platform's name for a ServiceStack list subscription
-// (frontend getSubscriptionNameForFeature(ServiceStack,'list')). Pushes carry it.
-const subscriptionName = "ServiceStack__list-subscription"
+// Stream is one subscription a watcher holds, by the name its pushes carry
+// (frontend getSubscriptionNameForFeature).
+type Stream string
+
+const (
+	// ServiceList is the project's services coming and going (ZEROPS-079).
+	ServiceList Stream = "ServiceStack__list-subscription"
+	// ServiceUpdate is a change of a service's row, its status among them
+	// (ZEROPS-079).
+	ServiceUpdate Stream = "ServiceStack__update-subscription"
+	// ProcessUpdate is a process changing state (ZEROPS-078).
+	ProcessUpdate Stream = "Process__update-subscription"
+)
+
+// ProjectStreams are the streams a wait on the project's services and their
+// processes holds.
+func ProjectStreams() []Stream { return []Stream{ServiceList, ServiceUpdate, ProcessUpdate} }
+
+// subscription is how stream is subscribed: its search entity, output mode,
+// the terms beside the org's, and the event its push emits.
+func (s Stream) subscription() (entity, mode string, terms []searchTerm, event EventType) {
+	switch s {
+	case ServiceUpdate:
+		return "service-stack", "updateStream", nil, EventServiceChanged
+	case ProcessUpdate:
+		// The frontend's process filter, with the failed and cancelled ends
+		// added so a process's every end is pushed.
+		return "process", "updateStream", []searchTerm{
+			{Name: "status", Operator: "in", Value: []string{"PENDING", "RUNNING", "FINISHED", "FAILED", "CANCELLED"}},
+			{Name: "executorTag", Operator: "ne", Value: "L7_MASTER"},
+		}, EventProcessChanged
+	case ServiceList:
+	}
+	return "service-stack", "listStream", nil, EventTopologyChanged
+}
 
 // EventType is the kind of event the watcher emits to its consumer.
 type EventType string
@@ -53,9 +87,13 @@ type EventType string
 const (
 	// EventConnected fires when the socket is up + subscribed (SocketSuccess).
 	EventConnected EventType = "connected"
-	// EventTopologyChanged fires on a ServiceStack push — the cockpit should
+	// EventTopologyChanged fires on a ServiceList push — the cockpit should
 	// re-read topology. It is a signal, not the data.
 	EventTopologyChanged EventType = "topology-changed"
+	// EventServiceChanged fires on a ServiceUpdate push.
+	EventServiceChanged EventType = "service-changed"
+	// EventProcessChanged fires on a ProcessUpdate push.
+	EventProcessChanged EventType = "process-changed"
 	// EventDisconnected fires when the socket drops (before a reconnect attempt)
 	// so the consumer can fall back to polling in the meantime.
 	EventDisconnected EventType = "disconnected"
@@ -66,12 +104,14 @@ type Event struct {
 	Type EventType `json:"type"`
 }
 
-// Config is what the watcher needs to authenticate + scope the subscription.
+// Config is what the watcher needs to authenticate + scope the subscriptions.
 type Config struct {
-	APIHost   string // e.g. api.app-prg1.zerops.io (ZCP_API_HOST)
-	Token     string // the API access token (zcp resolves it; never logged)
-	ClientID  string // account/client id (search scope)
-	ProjectID string // project id (search scope)
+	APIHost string // e.g. api.app-prg1.zerops.io (ZCP_API_HOST)
+	// Token is the API access token, read at each (re)connect so a rotated
+	// key is the one used (never logged).
+	Token    func() string
+	ClientID string   // the org owning the project (search scope)
+	Streams  []Stream // the subscriptions held
 
 	// PingInterval / reconnect backoff are overridable for tests; zero => defaults.
 	PingInterval   time.Duration
@@ -141,7 +181,8 @@ func withDefaults(cfg Config) Config {
 // connection ends (error, close, or ctx cancel). A successful connect resets the
 // caller's backoff via the EventConnected path.
 func (cfg Config) streamOnce(ctx context.Context, emit func(Event)) error {
-	wsToken, err := cfg.authExchange(ctx)
+	token := cfg.Token()
+	wsToken, err := cfg.authExchange(ctx, token)
 	if err != nil {
 		return fmt.Errorf("auth exchange: %w", err)
 	}
@@ -154,8 +195,13 @@ func (cfg Config) streamOnce(ctx context.Context, emit func(Event)) error {
 	defer conn.Close()
 
 	// Subscribe AFTER connect so pushes route to our live receiverId.
-	if err := cfg.subscribe(ctx, receiverID); err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+	events := make(map[Stream]EventType, len(cfg.Streams))
+	for _, stream := range cfg.Streams {
+		event, err := cfg.subscribe(ctx, token, receiverID, stream)
+		if err != nil {
+			return fmt.Errorf("subscribe %s: %w", stream, err)
+		}
+		events[stream] = event
 	}
 
 	// Heartbeat writer (the only writer on this conn — gorilla allows one
@@ -202,8 +248,8 @@ func (cfg Config) streamOnce(ctx context.Context, emit func(Event)) error {
 		case "SocketSuccess":
 			emit(Event{Type: EventConnected})
 		case "search":
-			if msg.SubscriptionName == subscriptionName {
-				emit(Event{Type: EventTopologyChanged})
+			if event, ok := events[Stream(msg.SubscriptionName)]; ok {
+				emit(Event{Type: event})
 			}
 		case "pong":
 			// heartbeat ack — read deadline already refreshed above
@@ -213,10 +259,10 @@ func (cfg Config) streamOnce(ctx context.Context, emit func(Event)) error {
 
 // authExchange swaps the API access token for a short-lived webSocketToken.
 // VERIFIED: the body field is "token" AND the Bearer header is required.
-func (cfg Config) authExchange(ctx context.Context) (string, error) {
+func (cfg Config) authExchange(ctx context.Context, token string) (string, error) {
 	body, err := json.Marshal(struct {
 		Token string `json:"token"`
-	}{Token: cfg.Token})
+	}{Token: token})
 	if err != nil {
 		return "", err
 	}
@@ -225,7 +271,7 @@ func (cfg Config) authExchange(ctx context.Context) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := cfg.httpClient.Do(req)
 	if err != nil {
 		return "", err
@@ -244,41 +290,43 @@ func (cfg Config) authExchange(ctx context.Context) (string, error) {
 	return out.WebSocketToken, nil
 }
 
-// subscribe registers a ServiceStack list subscription against our receiverId by
-// POSTing the service-stack search (the same endpoint zcp's ListServices uses)
-// augmented with the three ws fields. The platform returns the current list AND
-// starts pushing membership deltas to the socket.
-func (cfg Config) subscribe(ctx context.Context, receiverID string) error {
+// subscribe registers stream against our receiverId by POSTing its entity's
+// search, filtered by the org, augmented with the ws fields; it answers the
+// event the stream's pushes emit.
+func (cfg Config) subscribe(ctx context.Context, token, receiverID string, stream Stream) (EventType, error) {
+	entity, mode, terms, event := stream.subscription()
 	body, err := json.Marshal(subscribeBody{
-		Search: []searchTerm{
-			{Name: "clientId", Operator: "eq", Value: cfg.ClientID},
-			{Name: "projectId", Operator: "eq", Value: cfg.ProjectID},
-		},
+		Search:           append([]searchTerm{{Name: "clientId", Operator: "eq", Value: cfg.ClientID}}, terms...),
 		Sort:             []string{},
-		SubscriptionName: subscriptionName,
+		Limit:            subscribeLimit,
+		SubscriptionName: string(stream),
 		ReceiverID:       receiverID,
-		WSOutputType:     "listStream",
+		WSOutputType:     mode,
+		DisableOutput:    true,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.scheme("https")+"://"+cfg.APIHost+"/api/rest/public/service-stack/search", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.scheme("https")+"://"+cfg.APIHost+"/api/rest/public/"+entity+"/search", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := cfg.httpClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("subscribe status %d", resp.StatusCode)
+		return "", fmt.Errorf("subscribe status %d", resp.StatusCode)
 	}
-	return nil
+	return event, nil
 }
+
+// subscribeLimit is the frontend's page size for a subscribed search.
+const subscribeLimit = 200
 
 func (cfg Config) dial(ctx context.Context, receiverID, wsToken string) (wsConn, error) {
 	url := cfg.scheme("wss") + "://" + cfg.APIHost + "/api/rest/public/web-socket/" + receiverID + "/" + wsToken
@@ -295,20 +343,54 @@ func (cfg Config) dial(ctx context.Context, receiverID, wsToken string) (wsConn,
 	return conn, nil
 }
 
-// subscribeBody is the service-stack search payload + the three ws-subscription
-// fields. Typed (no map[string]any) so marshaling is provably error-free.
+// subscribeBody is an entity's search payload + the ws-subscription fields
+// (the frontend's updateSubscribe/listSubscribe shape, ZEROPS-078/079).
 type subscribeBody struct {
 	Search           []searchTerm `json:"search"`
 	Sort             []string     `json:"sort"`
+	Limit            int          `json:"limit"`
 	SubscriptionName string       `json:"subscriptionName"`
 	ReceiverID       string       `json:"receiverId"`
 	WSOutputType     string       `json:"wsOutputType"`
+	DisableOutput    bool         `json:"disableOutput"`
 }
 
+// searchTerm is one filter of a search; Value is a string, or a list for "in".
 type searchTerm struct {
 	Name     string `json:"name"`
 	Operator string `json:"operator"`
-	Value    string `json:"value"`
+	Value    any    `json:"value"`
+}
+
+// Pushes opens a push session for as long as ctx lives and answers its wakes
+// (Wakes): the seam a wait on the project holds.
+type Pushes func(ctx context.Context) <-chan struct{}
+
+// ProjectPushes is Pushes over the project's streams (ProjectStreams) for the
+// org clientID, under the key token answers at each connect.
+func ProjectPushes(apiHost string, token func() string, clientID string) Pushes {
+	return func(ctx context.Context) <-chan struct{} {
+		return Wakes(ctx, Config{APIHost: apiHost, Token: token, ClientID: clientID, Streams: ProjectStreams()})
+	}
+}
+
+// Wakes watches cfg's streams until ctx ends and answers one wake after each
+// connection — a read then covers whatever changed while there was none —
+// and after each push, coalesced: a reader away for several finds one.
+func Wakes(ctx context.Context, cfg Config) <-chan struct{} {
+	wakes := make(chan struct{}, 1)
+	go func() {
+		_ = Watch(ctx, cfg, func(e Event) {
+			if e.Type == EventDisconnected {
+				return
+			}
+			select {
+			case wakes <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	return wakes
 }
 
 // scheme returns the secure scheme normally, or its insecure variant in tests.

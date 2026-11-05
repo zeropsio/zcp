@@ -12,6 +12,51 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// TestStandup_BootImportFollowsTheStatusFile: the wait for the container's
+// import reads its progress when the importing process puts the status file
+// in place, and at no other time: with no time left to a re-read, each change
+// reaches the model and the import's end ends the wait.
+func TestStandup_BootImportFollowsTheStatusFile(t *testing.T) {
+	t.Parallel()
+	t.Run("Boot-import progress is read at the status file's change; no 5 s re-read.", func(t *testing.T) {
+		t.Parallel()
+		f := newStandupFixture(t)
+		if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) {
+			s.Runtimes = mate.RuntimesStatus{State: mate.RuntimesImporting, Services: []mate.RuntimeService{
+				{Hostname: "medusastage", State: mate.ServiceCreating},
+				{Hostname: "nextstorestage", State: mate.ServiceCreating},
+			}}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		d := f.deps(t)
+		d.bootWait = time.Hour
+		said := make(chan string, 16)
+		progress := newStandupProgress(func(message string, _, _ float64) { said <- message })
+		ended := make(chan bootImportResult, 1)
+		go func() { ended <- d.awaitBootImport(t.Context(), progress) }()
+
+		if got, want := <-said, "waiting for the container's import of medusastage, nextstorestage"; got != want {
+			t.Fatalf("first look said %q, want %q", got, want)
+		}
+		if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes.Services[0].State = mate.ServiceRunning }); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := <-said, "waiting for the container's import of nextstorestage"; got != want {
+			t.Fatalf("the look at the file's change said %q, want %q", got, want)
+		}
+		if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) {
+			s.Runtimes.State = mate.RuntimesDone
+			s.Runtimes.Services[1].State = mate.ServiceRunning
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if res := <-ended; res.stopped != nil || len(res.failed) != 0 {
+			t.Fatalf("the import's end ended the wait with %+v", res)
+		}
+	})
+}
+
 func TestStandup_BootImportDecisions(t *testing.T) {
 	t.Parallel()
 	for _, decision := range []struct {

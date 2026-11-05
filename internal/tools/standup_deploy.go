@@ -518,7 +518,7 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 		for _, name := range names {
 			progress.st().step(name, mate.StepBuild, mate.StepRunning, "", "")
 		}
-		stopTracking := d.trackDeploys(ctx, names, live, progress.st())
+		stopTracking := d.tracking.track(ctx, names, live)
 		result := d.batch.deploy(ctx, progress.callback(), batch, nil)
 		stopTracking()
 		for _, entry := range result.Entries {

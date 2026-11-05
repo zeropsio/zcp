@@ -23,6 +23,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -124,6 +125,10 @@ type standupHQ struct {
 	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
 	// code and reason.
 	tierRefusal *hq.RefusedError
+	// selfReads counts reads of the Mate's state; refuseSelf answers them
+	// 401, an HQ that refuses the Mate's key.
+	selfReads  int
+	refuseSelf bool
 }
 
 func (g *standupHQ) start(t *testing.T) *httptest.Server {
@@ -158,6 +163,11 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 		}
 		switch path {
 		case "/api/mate/self":
+			g.selfReads++
+			if g.refuseSelf {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			var app any
 			if g.appID != "" {
 				app = g.appID
@@ -444,6 +454,7 @@ type standupFixture struct {
 // importingClient is the platform while the browser's runtime import is still
 // running: its first lists hold no runtime yet, the next a dev half still
 // starting and a stage half not created, and only then the whole project.
+// The project pushes after a list a later one differs from.
 type importingClient struct {
 	*platform.Mock
 	mu    sync.Mutex
@@ -452,6 +463,8 @@ type importingClient struct {
 	stages [][]platform.ServiceStack
 	// firstRead is when the list was first read.
 	firstRead time.Time
+	// pushes carries the project's push (the fixture makes it).
+	pushes chan struct{}
 }
 
 func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
@@ -461,6 +474,12 @@ func (c *importingClient) ListServicesDirect(ctx context.Context, projectID stri
 	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
+	if c.reads < len(c.stages) {
+		select {
+		case c.pushes <- struct{}{}:
+		default:
+		}
+	}
 	c.mu.Unlock()
 	if stage == nil {
 		return c.Mock.ListServicesDirect(ctx, projectID)
@@ -540,7 +559,10 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 func (f *standupFixture) deps(t *testing.T) standupDeps {
 	t.Helper()
 	var client platform.Client = f.mock
+	pushes := watch.Pushes(func(context.Context) <-chan struct{} { return nil })
 	if f.importing != nil {
+		f.importing.pushes = make(chan struct{}, 1)
+		pushes = func(context.Context) <-chan struct{} { return f.importing.pushes }
 		client = f.importing
 	}
 	if f.building != nil {
@@ -565,15 +587,11 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 		mounter:     f.mounter,
 		liveEnvPath: writeLiveEnvFile(t, f.env),
 		identity:    func() hq.Identity { return f.identity },
-		hqWait:      50 * time.Millisecond,
-		hqPoll:      10 * time.Millisecond,
 		runtimeWait: 200 * time.Millisecond,
-		runtimePoll: 5 * time.Millisecond,
+		pushes:      pushes,
 		statusPath:  f.statusPath,
 		status:      f.status,
 		bootWait:    2 * time.Second,
-		bootPoll:    5 * time.Millisecond,
-		trackPoll:   5 * time.Millisecond,
 	}
 }
 
@@ -893,6 +911,29 @@ func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
 	}
 }
 
+// TestStandup_StartsOnlyOnceLinked_AsksHQOnce: the Mate's server sends the
+// stand-up only once its link to HQ is up, so the stand-up waits on no link:
+// an HQ that refuses the Mate's key is read once and the call refused at once,
+// never asked again on a timer.
+func TestStandup_StartsOnlyOnceLinked_AsksHQOnce(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.hq.refuseSelf = true
+	result, _ := f.run(t)
+	if !result.IsError {
+		t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
+	}
+	f.hq.mu.Lock()
+	reads := f.hq.selfReads
+	f.hq.mu.Unlock()
+	if reads != 1 {
+		t.Errorf("HQ's /api/mate/self was read %d times; want once", reads)
+	}
+	if metas, _ := workflow.ListServiceMetas(f.stateDir); len(metas) != 0 {
+		t.Errorf("a refusal touches nothing, but %d services were adopted", len(metas))
+	}
+}
+
 // TestStandup_TheModelIsTheBackup is every way the stand-up can stop: it
 // says exactly what failed, does nothing past it for that pair, and hands
 // the model the next step.
@@ -1190,6 +1231,61 @@ func TestStandup_WaitsForTheRuntimesTheBrowserIsImporting(t *testing.T) {
 	if len(f.ssh.pushes()) != 2 {
 		t.Errorf("deploys = %v, want both dev halves deployed", f.ssh.pushes())
 	}
+}
+
+// TestStandup_TheRuntimesAreReadAgainOnlyOnAPush: the wait for the runtimes
+// the browser imports reads the project again at its push (ZEROPS-079,
+// ZEROPS-078), never on a timer.
+func TestStandup_TheRuntimesAreReadAgainOnlyOnAPush(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	noRuntimes := withoutService(withoutService(withoutService(withoutService(f.services,
+		"medusadev"), "medusastage"), "nextstoredev"), "nextstorestage")
+	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{noRuntimes, noRuntimes, noRuntimes, nil}}
+	deps := f.deps(t)
+	looked := make(chan struct{})
+	wakes := make(chan struct{})
+	deps.pushes = func(context.Context) <-chan struct{} { return wakes }
+	deps.batch.client = lookingClient{Client: deps.batch.client, looked: looked}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	registerStandup(srv, deps)
+	ran := make(chan *mcp.CallToolResult)
+	go func() { ran <- callTool(t, srv, "zerops_standup", map[string]any{}) }()
+
+	<-looked
+	for push := range 3 {
+		select {
+		case wakes <- struct{}{}:
+		case <-looked:
+			t.Fatalf("the services were read again with no push after %d pushes", push)
+		}
+		<-looked
+	}
+	for {
+		select {
+		case <-looked: // the stand-up's reads past the wait
+		case result := <-ran:
+			if result.IsError {
+				t.Fatalf("stand-up after the import: %s", getTextContent(t, result))
+			}
+			return
+		}
+	}
+}
+
+// lookingClient signals each read of the project's services — a look.
+type lookingClient struct {
+	platform.Client
+	looked chan struct{}
+}
+
+func (c lookingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	services, err := c.Client.ListServicesDirect(ctx, projectID)
+	select {
+	case c.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
+	return services, err
 }
 
 // buildingClient is the platform while an earlier call's build of a stage is
@@ -1642,22 +1738,29 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 }
 
 // trackingClient is the platform while a batch deploys: medusadev's build
-// process builds, then deploys, then ends.
+// process builds, then deploys, then ends — one state a read. Each read
+// signals looked as it starts, so the tracking's writes of the read before
+// it are done.
 type trackingClient struct {
 	*platform.Mock
-	mu    sync.Mutex
-	reads int
+	mu     sync.Mutex
+	reads  int
+	looked chan struct{}
 }
 
-func (c *trackingClient) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
+func (c *trackingClient) GetProjectProcessesDirect(ctx context.Context, _ string) ([]platform.Process, error) {
+	select {
+	case c.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reads++
 	ref := []platform.ServiceStackRef{{ID: "svc-medusadev"}}
-	switch {
-	case c.reads <= 2:
+	switch c.reads {
+	case 1:
 		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "BUILDING"}}}, nil
-	case c.reads <= 4:
+	case 2:
 		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "DEPLOYING"}}}, nil
 	}
 	return nil, nil
@@ -1665,29 +1768,36 @@ func (c *trackingClient) GetProjectProcessesDirect(context.Context, string) ([]p
 
 // TestStandupTrackDeploys_NamesTheStepAndItsProcess: while a half deploys,
 // the status names its step and the process behind it — build, then deploy,
-// then verify once the process has ended and the deploy has not returned.
+// then verify once the process has ended and the deploy has not returned. The
+// processes are read once at the start and again only at a process push
+// (ZEROPS-078), never on a timer.
 func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "status.json")
-	client := &trackingClient{Mock: platform.NewMock()}
-	d := standupDeps{batch: batchDeployer{client: client, projectID: "p1"}, trackPoll: 5 * time.Millisecond}
-	status := newStandupStatus(path)
-	var seen []string
-	stop := d.trackDeploys(context.Background(), []string{"medusadev"},
-		map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}}, status)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if st, err := mate.ReadStatus(path); err == nil && len(st.Standup.Services) == 1 {
-			e := st.Standup.Services[0]
-			row := e.Step + "/" + e.State + "/" + e.ProcessID
-			if len(seen) == 0 || seen[len(seen)-1] != row {
-				seen = append(seen, row)
-			}
-			if e.Step == mate.StepVerify {
-				break
-			}
+	client := &trackingClient{Mock: platform.NewMock(), looked: make(chan struct{})}
+	frames := make(chan struct{})
+	session := newStandupPushes(func(context.Context) <-chan struct{} { return frames })
+	tracking := newStandupTracking(batchDeployer{client: client, projectID: "p1"}, session, newStandupStatus(path))
+	row := func() string {
+		st, err := mate.ReadStatus(path)
+		if err != nil || len(st.Standup.Services) != 1 {
+			return fmt.Sprintf("no row (%v)", err)
 		}
-		time.Sleep(time.Millisecond)
+		e := st.Standup.Services[0]
+		return e.Step + "/" + e.State + "/" + e.ProcessID
+	}
+	stop := tracking.track(t.Context(), []string{"medusadev"}, map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}})
+	<-client.looked
+	// Each frame's read starts once the read before it has written.
+	seen := make([]string, 0, 3)
+	for frame := range 3 {
+		select {
+		case frames <- struct{}{}:
+		case <-client.looked:
+			t.Fatalf("the processes were read again with no push after %d process frames", frame)
+		}
+		<-client.looked
+		seen = append(seen, row())
 	}
 	stop()
 	want := []string{"build/running/proc-build", "deploy/running/proc-build", "verify/running/proc-build"}

@@ -462,7 +462,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		return d, ok
 	}
 	const selfRead = "GET /api/mate/self"
-	changed, err := watchMateChanges(t.Context(), lab.rt.HQ.ChangesPath)
+	changed, err := watchReplacedFile(t.Context(), lab.rt.HQ.ChangesPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 )
 
 // EnvRuntimes is the service env the press sets on the Mate's zcp service:
@@ -32,8 +33,10 @@ const EnvRuntimes = "MATE_SETUP_RUNTIMES"
 
 // API is the part of the platform client the boot import uses: the lag-free
 // project reads, the project's variables it reads closed off from
-// (ops.ProjectClosedOff), and the import itself.
+// (ops.ProjectClosedOff), the import itself, and the org its pushes are
+// subscribed by.
 type API interface {
+	OrgID(ctx context.Context) (string, error)
 	ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error)
 	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
@@ -46,9 +49,11 @@ type Importer struct {
 	API        API
 	ProjectID  string
 	StatusPath string
-	// Poll is the time between two looks at the project while the import's
-	// processes run; Timeout bounds the whole run.
-	Poll    time.Duration
+	// Pushes is the project's pushes: the waits for zcp's own deploy and for
+	// the import's services look again at a push, never on a timer. One
+	// session serves a run, opened at its first wait.
+	Pushes watch.Pushes
+	// Timeout bounds the whole run.
 	Timeout time.Duration
 	// Backoff is the wait before each retry of a failed import call; its
 	// length is the number of retries.
@@ -63,9 +68,6 @@ type Importer struct {
 	// SelfServiceID is the zcp service this runs in (its serviceId). Nothing
 	// is imported until its own deploy has finished; "" skips that wait.
 	SelfServiceID string
-	// OwnDeployPoll is the time between two looks at zcp's own deploy
-	// (default DefaultOwnDeployPoll).
-	OwnDeployPoll time.Duration
 	// IsolationPoll is the wait before the next look at a project not yet
 	// closed off, by how long it has been waited for (default IsolationPoll).
 	IsolationPoll func(waited time.Duration) time.Duration
@@ -82,13 +84,10 @@ func IsolationPoll(waited time.Duration) time.Duration {
 }
 
 // Defaults for a production Importer.
-const (
-	DefaultOwnDeployPoll = 5 * time.Second
-	DefaultPoll          = 3 * time.Second
-	DefaultTimeout       = 20 * time.Minute
-)
+const DefaultTimeout = 20 * time.Minute
 
-// DefaultBackoff is three retries of a failed import call over a minute.
+// DefaultBackoff is three retries of a failed import call over a minute; a
+// failed read is retried on the same steps, the last one repeating.
 var DefaultBackoff = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second}
 
 // heartbeat is the longest the status goes unwritten while the import runs,
@@ -285,6 +284,18 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	}
 	prev, _ := mate.ReadStatus(im.StatusPath)
 
+	// One push session for the run, opened at its first wait and closed
+	// with it.
+	runCtx, endRun := context.WithCancel(ctx)
+	defer endRun()
+	var wakes <-chan struct{}
+	pushes := func() <-chan struct{} {
+		if wakes == nil {
+			wakes = im.Pushes(runCtx)
+		}
+		return wakes
+	}
+
 	live, err := im.listWithin(ctx)
 	if err != nil {
 		im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err), false)
@@ -292,7 +303,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	}
 	missing := missingHosts(hostnames, live)
 	if len(missing) > 0 {
-		if !im.awaitOwnDeploy(ctx) || !im.awaitClosedOff(ctx) {
+		if !im.awaitOwnDeploy(ctx, pushes) || !im.awaitClosedOff(ctx) {
 			return
 		}
 		if live, err = im.listWithin(ctx); err != nil {
@@ -343,13 +354,10 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 			}
 		}
 	}
-	im.follow(ctx, hostnames, since, importErrs, expected)
+	im.follow(ctx, pushes(), hostnames, since, importErrs, expected)
 }
 
 func (im Importer) withDefaults() Importer {
-	if im.Poll <= 0 {
-		im.Poll = DefaultPoll
-	}
 	if im.Timeout <= 0 {
 		im.Timeout = DefaultTimeout
 	}
@@ -361,9 +369,6 @@ func (im Importer) withDefaults() Importer {
 	}
 	if im.IsolationPoll == nil {
 		im.IsolationPoll = IsolationPoll
-	}
-	if im.OwnDeployPoll <= 0 {
-		im.OwnDeployPoll = DefaultOwnDeployPoll
 	}
 	return im
 }
@@ -417,16 +422,20 @@ func (im Importer) listWithin(ctx context.Context) ([]platform.ServiceStack, err
 // the runtimes section pending and saying why. A services import sent into
 // the project while that deploy still ran left zcp's app version without its
 // user data, so the next restart ran no init and refused to start mate.
-// False when the context ended first; a look that fails is one more look.
-func (im Importer) awaitOwnDeploy(ctx context.Context) bool {
+// It looks again at the project's next push (pushes opens the run's
+// session); a look that fails is retried on Backoff too. False when the
+// context ended first.
+func (im Importer) awaitOwnDeploy(ctx context.Context, pushes func() <-chan struct{}) bool {
 	if im.SelfServiceID == "" {
 		return true
 	}
 	said := false
-	for {
-		if im.ownDeployDone(ctx) {
+	for failed := 0; ; {
+		done, err := im.ownDeployDone(ctx)
+		if done {
 			return true
 		}
+		failed = nextFailed(failed, err)
 		if !said {
 			im.write(func(r *mate.RuntimesStatus) {
 				r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingOwnDeploy
@@ -434,21 +443,20 @@ func (im Importer) awaitOwnDeploy(ctx context.Context) bool {
 			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", mate.RuntimesWaitingOwnDeploy)
 			said = true
 		}
-		select {
-		case <-ctx.Done():
+		if im.next(ctx, pushes(), failed, nil) == waitEnded {
 			return false
-		case <-time.After(im.OwnDeployPoll):
 		}
 	}
 }
 
-// ownDeployDone reads zcp's own service: ACTIVE, with nothing live on it.
-func (im Importer) ownDeployDone(ctx context.Context) bool {
+// ownDeployDone reads zcp's own service: ACTIVE, with nothing live on it; a
+// read that failed is its error.
+func (im Importer) ownDeployDone(ctx context.Context) (bool, error) {
 	api := im.api()
 	services, err := api.ListServicesDirect(ctx, im.ProjectID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: read the project's services: %v\n", err)
-		return false
+		return false, err
 	}
 	active := false
 	for _, s := range services {
@@ -457,14 +465,63 @@ func (im Importer) ownDeployDone(ctx context.Context) bool {
 		}
 	}
 	if !active {
-		return false
+		return false, nil
 	}
 	activity, err := ops.ProjectActivity(ctx, api, im.ProjectID, map[string]string{im.SelfServiceID: "zcp"})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: read the project's processes: %v\n", err)
-		return false
+		return false, err
 	}
-	return len(activity) == 0
+	return len(activity) == 0, nil
+}
+
+// nextFailed is how many looks in a row have failed, err being the last.
+func nextFailed(failed int, err error) int {
+	if err != nil {
+		return failed + 1
+	}
+	return 0
+}
+
+// waitEnd is how a wait between two looks ended.
+type waitEnd int
+
+const (
+	// lookAgain: the project pushed, or the retry step after a failed look
+	// is up.
+	lookAgain waitEnd = iota
+	// beatDue: the heartbeat is due before either.
+	beatDue
+	// waitEnded: the context ended.
+	waitEnded
+)
+
+// next waits for the project's next push or, after failed looks in a row,
+// for the retry step (retryAfter), or for beat, whichever comes first.
+func (im Importer) next(ctx context.Context, wakes <-chan struct{}, failed int, beat <-chan time.Time) waitEnd {
+	var retry <-chan time.Time
+	if failed > 0 {
+		retry = time.After(im.retryAfter(failed))
+	}
+	select {
+	case <-ctx.Done():
+		return waitEnded
+	case <-wakes:
+		return lookAgain
+	case <-retry:
+		return lookAgain
+	case <-beat:
+		return beatDue
+	}
+}
+
+// retryAfter is the wait before the next try after failed tries in a row:
+// the Backoff steps, the last one repeating.
+func (im Importer) retryAfter(failed int) time.Duration {
+	if len(im.Backoff) == 0 {
+		return DefaultBackoff[min(failed, len(DefaultBackoff))-1]
+	}
+	return im.Backoff[min(failed, len(im.Backoff))-1]
 }
 
 // awaitClosedOff waits until Zerops reads the project closed off
@@ -500,10 +557,10 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	}
 }
 
-// listUntil reads the project's services, retrying a failed read each poll
-// until the context ends.
+// listUntil reads the project's services, retrying a failed read on the
+// retry steps (retryAfter) until the context ends.
 func (im Importer) listUntil(ctx context.Context) ([]platform.ServiceStack, error) {
-	for {
+	for failed := 1; ; failed++ {
 		live, err := im.api().ListServicesDirect(ctx, im.ProjectID)
 		if err == nil {
 			return live, nil
@@ -511,7 +568,7 @@ func (im Importer) listUntil(ctx context.Context) ([]platform.ServiceStack, erro
 		select {
 		case <-ctx.Done():
 			return nil, err
-		case <-time.After(im.Poll):
+		case <-time.After(im.retryAfter(failed)):
 		}
 	}
 }
@@ -579,15 +636,22 @@ func refused(err error) bool {
 	return pe.Code == platform.ErrAPIError && pe.APICode != ""
 }
 
-// follow looks at the project every Poll until the listed services settle
-// or the time is up, writing each change.
-func (im Importer) follow(ctx context.Context, hostnames []string, since time.Time, importErrs map[string]string, expected map[string]bool) {
+// follow looks at the project, and again at each of its pushes (wakes),
+// until the listed services settle or the time is up, writing each change
+// and, with nothing new, at least every heartbeat; a look that fails is
+// retried on Backoff too.
+func (im Importer) follow(ctx context.Context, wakes <-chan struct{}, hostnames []string, since time.Time, importErrs map[string]string, expected map[string]bool) {
 	var last []mate.RuntimeService
 	lastWrite := im.Now()
-	for {
+	for failed := 0; ; {
 		live, liveErr := im.api().ListServicesDirect(ctx, im.ProjectID)
-		procs, procErr := im.api().GetProjectProcessesDirect(ctx, im.ProjectID)
-		if liveErr == nil && procErr == nil {
+		var procs []platform.Process
+		procErr := liveErr
+		if liveErr == nil {
+			procs, procErr = im.api().GetProjectProcessesDirect(ctx, im.ProjectID)
+		}
+		failed = nextFailed(failed, procErr)
+		if procErr == nil {
 			procs = im.withExpected(ctx, procs, expected)
 			services, settled := ServiceStates(hostnames, live, procs, importErrs, since.Add(-sinceSlack))
 			if settled {
@@ -599,15 +663,24 @@ func (im Importer) follow(ctx context.Context, hostnames []string, since time.Ti
 				last, lastWrite = services, im.Now()
 			}
 		}
-		select {
-		case <-ctx.Done():
-			im.write(func(r *mate.RuntimesStatus) {
-				r.State = mate.RuntimesFailed
-				r.EndedAt = stamp(im.Now())
-				r.Error = fmt.Sprintf("the runtimes' import was still in flight after %s", im.Timeout)
-			})
-			return
-		case <-time.After(im.Poll):
+		for end := beatDue; end != lookAgain; {
+			beat := time.NewTimer(max(heartbeat-im.Now().Sub(lastWrite), 0))
+			end = im.next(ctx, wakes, failed, beat.C)
+			beat.Stop()
+			switch end {
+			case waitEnded:
+				im.write(func(r *mate.RuntimesStatus) {
+					r.State = mate.RuntimesFailed
+					r.EndedAt = stamp(im.Now())
+					r.Error = fmt.Sprintf("the runtimes' import was still in flight after %s", im.Timeout)
+				})
+				return
+			case beatDue:
+				// Nothing new: the section's clock still moves.
+				im.write(func(*mate.RuntimesStatus) {})
+				lastWrite = im.Now()
+			case lookAgain:
+			}
 		}
 	}
 }
@@ -844,7 +917,8 @@ func parseStamp(s string) time.Time {
 // Boot is the boot import as the mate launch runs it, beside the server: the
 // plan, the Mate's key and its project from the container's environment —
 // env reads the live env store as it is at each call, so a rotated key is
-// picked up at the next look (FreshAPI) — then Run. No plan, nothing to do.
+// picked up at the next look (FreshAPI) and the next push connection — then
+// Run, its waits woken by the project's pushes (ZEROPS-078, ZEROPS-079). No plan, nothing to do.
 // A plan without the key or the project to act on is a failed import that
 // says which is missing.
 func Boot(ctx context.Context, statusPath string, env func() func(string) string) {
@@ -876,5 +950,12 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 		im.finish(nil, "could not build the API client", false)
 		return
 	}
+	org, err := im.API.OrgID(ctx)
+	if err != nil {
+		im.finish(nil, fmt.Sprintf("could not read the project's organization: %v", err), false)
+		return
+	}
+	im.Pushes = watch.ProjectPushes(mate.ResolveAPIHost(lookup("ZCP_API_HOST")),
+		func() string { return env()("ZCP_API_KEY") }, org)
 	im.Run(ctx, encoded)
 }

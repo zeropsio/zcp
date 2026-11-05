@@ -15,9 +15,9 @@ import (
 	"syscall"
 
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/dataconsole/watch"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -289,7 +289,7 @@ func runStudioSyncEnv(args []string) {
 }
 
 // runStudioWatch streams live topology-change events over the platform
-// websocket (internal/dataconsole/watch) as newline-delimited JSON on stdout, so the
+// websocket (internal/platform/watch) as newline-delimited JSON on stdout, so the
 // cockpit updates on push instead of polling. Long-lived: runs until the parent
 // closes stdin or a signal arrives. Token-blind seam: zcp owns the credentials
 // + the socket; the extension only consumes the event stream.
@@ -317,10 +317,10 @@ func runStudioWatch(_ []string) {
 	}
 
 	err := watch.Watch(ctx, watch.Config{
-		APIHost:   authInfo.APIHost,
-		Token:     authInfo.Token,
-		ClientID:  authInfo.ClientID,
-		ProjectID: authInfo.ProjectID,
+		APIHost:  authInfo.APIHost,
+		Token:    func() string { return authInfo.Token },
+		ClientID: authInfo.ClientID,
+		Streams:  []watch.Stream{watch.ServiceList},
 	}, emit)
 	cancel()
 	if err != nil && !errors.Is(err, context.Canceled) {

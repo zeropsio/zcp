@@ -56,7 +56,7 @@ const devGitLookEvery = 10 * time.Second
 // (keepMateDevGit) for as long as ctx lasts, and releases the leases of every
 // branch whose change in HQ is merged or closed (followLeaseCompletion,
 // docs/spec-workflows.md §8 DP-34) each time the Mate's server puts a `state`
-// frame's changes in place (watchMateChanges): the Mate's own service runs it
+// frame's changes in place (watchReplacedFile): the Mate's own service runs it
 // beside the server it supervises. env is the container's live env store as
 // it is at each call — the unit's own environment carries neither the key nor
 // the project — and a container that is no Mate returns at once. Each line
@@ -66,7 +66,7 @@ func KeepMateDevGit(ctx context.Context, env func() func(string) string, log fun
 	if !rt.InContainer || !rt.MateEnabled {
 		return
 	}
-	changed, err := watchMateChanges(ctx, hqIdentity(rt).ChangesPath)
+	changed, err := watchReplacedFile(ctx, hqIdentity(rt).ChangesPath)
 	if err != nil {
 		log(fmt.Sprintf("finished changes are looked for only at the service's start: %v", err))
 	}
