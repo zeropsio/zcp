@@ -8,8 +8,12 @@ const test = require('node:test');
 test('CI runs delegated JS files once with dependencies required', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'), 'utf8');
   const runs = workflow.split(/\n      - /).filter(step => /go test\b/.test(step.replace(/^\s*#.*$/gm, '')));
-  assert.equal(runs.length, 1, 'one Go test invocation owns the delegated JS files');
-  assert.match(runs[0], /ZCP_JS_REQUIRED: ['"]?1['"]?/, 'the first invocation requires node and jsdom');
-  assert.match(runs[0], /go test -race \.\/\.\.\. -count=1/);
+  const liveGitCommand = "go test -race -tags livegit ./internal/ops -run '^(TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound|TestHQGit_ATransferIsBoundedByItsStallNotItsLength|TestReadOriginTip_StallingOrigin_EndsWithinItsBound)$'";
+  const liveGit = runs.filter(step => step.includes(liveGitCommand));
+  assert.equal(liveGit.length, 1, 'the separate live Git invocation runs only its transport witnesses');
+  const delegated = runs.filter(step => !liveGit.includes(step));
+  assert.equal(delegated.length, 1, 'one Go test invocation owns the delegated JS files');
+  assert.match(delegated[0], /ZCP_JS_REQUIRED: ['"]?1['"]?/, 'the first invocation requires node and jsdom');
+  assert.match(delegated[0], /go test -race \.\/\.\.\. -count=1/);
   assert.ok(workflow.indexOf('npm ci --prefix internal/dataconsole/console/webui') < workflow.indexOf('go test -race'), 'dependencies precede tests');
 });
