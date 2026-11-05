@@ -8,6 +8,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,80 @@ func testBudget(bound time.Duration) uploadBudget {
 	return uploadBudget{base: 300 * time.Second, perMiB: time.Second, cap: time.Hour, measureBound: bound, unmeasured: 7 * time.Second}
 }
 
+// runUnmeasuredPush holds the measurement watchdog until awk has answered,
+// and wakes the upload poll only after zcli has written its deploying line.
+func runUnmeasuredPush(t *testing.T, shell, awk string) (string, int) {
+	t.Helper()
+	r := newPushRig(t, "echo 'Deploying service'\nprintf 'ready\\n' > \"$UPLOAD_READY\"\n")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	ready, gate := filepath.Join(dir, "watchdog-ready"), filepath.Join(dir, "watchdog-gate")
+	upload := filepath.Join(dir, "upload-ready")
+	if out, err := exec.CommandContext(ctx, "mkfifo", ready, gate, upload).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo: %v: %s", err, out)
+	}
+	heldReady, err := os.OpenFile(ready, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heldReady.Close()
+	heldGate, err := os.OpenFile(gate, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heldGate.Close()
+	heldUpload, err := os.OpenFile(upload, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heldUpload.Close()
+	r.shell = shell
+	rigTool(t, r, "awk", "IFS= read -r _ < \"$WATCHDOG_READY\"\n"+awk)
+	rigTool(t, r, "date", "echo 1000\n")
+	rigTool(t, r, "sleep", "if [ \"$1\" = 1 ]; then IFS= read -r _ < \"$UPLOAD_READY\"; exit 0; fi\n"+
+		"exec 4<\"$WATCHDOG_GATE\"\nprintf 'ready\\n' > \"$WATCHDOG_READY\"\ncat <&4 >/dev/null\n")
+	r.env = append(r.env, "WATCHDOG_READY="+ready, "WATCHDOG_GATE="+gate, "UPLOAD_READY="+upload)
+	readDone, writeDone, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readDone.Close()
+	defer writeDone.Close()
+	cmd := exec.CommandContext(ctx, shell, "-c", buildSSHCommandWithin("svc-1", r.dir, "", false, "", r.pushDir, testBudget(20*time.Second))) //nolint:gosec // G204: the command under test uses temporary fixture paths
+	cmd.Env, cmd.Stdin, cmd.ExtraFiles = r.env, strings.NewReader(r.stdin), []*os.File{writeDone}
+	out, runErr := cmd.CombinedOutput()
+	if err := writeDone.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := heldGate.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Release either held reader even when the command under test stopped early.
+	_, _ = heldReady.WriteString("stop\n")
+	_, _ = heldUpload.WriteString("stop\n")
+	joined := make(chan error, 1)
+	go func() { _, err := io.Copy(io.Discard, readDone); joined <- err }()
+	select {
+	case err := <-joined:
+		if err != nil {
+			t.Fatalf("push descendants: %v", err)
+		}
+	case <-ctx.Done():
+		_ = readDone.Close()
+		<-joined
+		t.Fatalf("push descendants did not exit: %v", ctx.Err())
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		return string(out), exitErr.ExitCode()
+	}
+	if runErr != nil {
+		t.Fatalf("run: %v", runErr)
+	}
+	return string(out), 0
+}
+
 // TestBuildSSHCommand_MeasurementFails_PushGoesOnUnmeasured: a measurement
 // that fails (its awk exits 1) never fails the push: zcli runs, the upload is
 // waited for by the unmeasured default, and the report says why.
@@ -54,12 +129,7 @@ func TestBuildSSHCommand_MeasurementFails_PushGoesOnUnmeasured(t *testing.T) {
 	for _, shell := range rigShells() {
 		t.Run(shell, func(t *testing.T) {
 			t.Parallel()
-			r := newPushRig(t, "echo 'Deploying service'\n")
-			r.shell = shell
-			rigTool(t, r, "awk", "echo 'awk: cannot open program' >&2\nexit 1\n")
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", false, "", r.pushDir, testBudget(20*time.Second)))
+			out, code := runUnmeasuredPush(t, shell, "echo 'awk: cannot open program' >&2\nexit 1\n")
 			if code != 0 || !isSSHBuildTriggered(out) {
 				t.Fatalf("push = exit %d, want zcli run to its upload: %s", code, out)
 			}
@@ -175,12 +245,7 @@ func TestBuildSSHCommand_MeasurementPrintsGarbage_PushGoesOnUnmeasured(t *testin
 		for _, shell := range rigShells() {
 			t.Run(tt.name+"/"+shell, func(t *testing.T) {
 				t.Parallel()
-				r := newPushRig(t, "echo 'Deploying service'\n")
-				r.shell = shell
-				rigTool(t, r, "awk", "cat > /dev/null\n"+tt.awk)
-				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-				defer cancel()
-				out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", false, "", r.pushDir, testBudget(20*time.Second)))
+				out, code := runUnmeasuredPush(t, shell, "cat > /dev/null\n"+tt.awk)
 				if code != 0 || !isSSHBuildTriggered(out) {
 					t.Fatalf("push = exit %d, want zcli run to its upload: %s", code, out)
 				}

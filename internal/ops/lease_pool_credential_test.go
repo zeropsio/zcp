@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -261,44 +262,46 @@ func TestLeaseAcquire_HQRepo_WaitsUntilASessionSeesTheWrittenCredential(t *testi
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			fx := newLeaseFixture(t)
-			inAMate(fx)
-			if tt.recorded {
-				writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolMateCredential))
-			}
-			probes := 0
-			ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
-				if !strings.Contains(command, "sha256sum") {
-					return nil, nil
+			synctest.Test(t, func(t *testing.T) {
+				fx := newLeaseFixture(t)
+				inAMate(fx)
+				if tt.recorded {
+					writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolMateCredential))
 				}
-				probes++
-				if probes < 3 {
-					return sessionFingerprint(""), nil // the session has no GIT_TOKEN yet
-				}
-				return sessionFingerprint(poolMateCredential), nil
-			}}
-			fx.deps.SSH = ssh
-			fx.swarm.acquired = acquiredAs(3)
+				probes := 0
+				ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
+					if !strings.Contains(command, "sha256sum") {
+						return nil, nil
+					}
+					probes++
+					if probes < 3 {
+						return sessionFingerprint(""), nil // the session has no GIT_TOKEN yet
+					}
+					return sessionFingerprint(poolMateCredential), nil
+				}}
+				fx.deps.SSH = ssh
+				fx.swarm.acquired = acquiredAs(3)
 
-			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
-				t.Fatalf("acquire: %v", err)
-			}
-			if probes != tt.wantProbes {
-				t.Errorf("fingerprint reads = %d, want %d", probes, tt.wantProbes)
-			}
-			cmds := ssh.commands()
-			fetch := -1
-			for i, c := range cmds {
-				if strings.Contains(c, poolMateCredential) {
-					t.Errorf("a session command carries the credential: %s", c)
+				if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
+					t.Fatalf("acquire: %v", err)
 				}
-				if strings.Contains(c, "fetch -q --prune origin") && fetch < 0 {
-					fetch = i
+				if probes != tt.wantProbes {
+					t.Errorf("fingerprint reads = %d, want %d", probes, tt.wantProbes)
 				}
-			}
-			if fetch != tt.wantProbes {
-				t.Errorf("the checkout ran at command %d of %v, want right after %d fingerprint read(s)", fetch, cmds, tt.wantProbes)
-			}
+				cmds := ssh.commands()
+				fetch := -1
+				for i, c := range cmds {
+					if strings.Contains(c, poolMateCredential) {
+						t.Errorf("a session command carries the credential: %s", c)
+					}
+					if strings.Contains(c, "fetch -q --prune origin") && fetch < 0 {
+						fetch = i
+					}
+				}
+				if fetch != tt.wantProbes {
+					t.Errorf("the checkout ran at command %d of %v, want right after %d fingerprint read(s)", fetch, cmds, tt.wantProbes)
+				}
+			})
 		})
 	}
 }
