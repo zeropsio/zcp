@@ -5985,6 +5985,11 @@ end, and the Mate server can. A stand-up whose own turn ended while its section 
 that builds them moves the section on, its own `done` or `failed` again zcp's word.
 `TestStandup_WritesItsProgressForTheRunCard`, `TestStandup_TheRecordNeverSaysDoneBetweenItsCalls`,
 `TestStandupStatus_CarriedByItsProcess`; mate `zeropsSetupSteps.test.ts`.
+While a batch deploys, each target's step (`build`, `deploy`, then `verify` once its process has
+ended and its deploy has not returned) and the process behind it are read from the project's live
+processes when the batch starts and again at each process push (ZEROPS-078), never on a timer: one
+reader per call for every batch, on the call's one push session — the one the wait for the
+runtimes opened, or opened by the first batch. `TestStandupTrackDeploys_NamesTheStepAndItsProcess`.
 
 The model is the backup:
 

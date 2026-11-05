@@ -78,16 +78,17 @@ type standupDeps struct {
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
 	runtimeWait time.Duration
-	// pushes is the project's pushes the wait for the runtimes reads again
-	// at (ZEROPS-079, ZEROPS-078).
-	pushes watch.Pushes
+	// pushes opens the project's push session (ZEROPS-079, ZEROPS-078).
+	// session is the call's one session, which the wait for the runtimes and
+	// tracking — the call's deploy tracking — read again at; run makes both.
+	pushes   watch.Pushes
+	session  *standupPushes
+	tracking *standupTracking
 	// statusPath is the setup status file the stand-up writes its section of
 	// and reads the boot import's from ("" writes and waits on nothing);
-	// bootWait bounds the wait for that import, trackPoll the looks at a
-	// batch's processes (standup_status.go).
+	// bootWait bounds the wait for that import.
 	statusPath string
 	bootWait   time.Duration
-	trackPoll  time.Duration
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
@@ -125,7 +126,6 @@ func RegisterStandup(
 		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
 		bootWait:    standupBootWait,
-		trackPoll:   standupTrackPoll,
 	})
 }
 
@@ -159,6 +159,11 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // A call that stood development up with the stages queued leaves the
 // stand-up running for the call that builds them (awaitStages).
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+	// The call's push session and tracking end with it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d.session = newStandupPushes(d.pushes)
+	d.tracking = newStandupTracking(d.batch, d.session, progress.st())
 	progress.st().begin()
 	result, standUp := d.stand(ctx, progress)
 	switch {
@@ -438,9 +443,10 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 }
 
 // awaitRuntimes reads the project's services until every pair's halves are
-// up, looking again at each of the project's pushes — one session for the
-// wait, opened at its first look that finds a half missing — or once more
-// when the wait is up, and answers the last look.
+// up, looking again at each of the project's pushes — the call's session,
+// opened at the wait's first look that finds a half missing, whose connect
+// wake covers that look — or once more when the wait is up, and answers the
+// last look.
 func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, progress *standupProgress) (map[string]*platform.ServiceStack, error) {
 	waitCtx, stop := context.WithTimeout(ctx, d.runtimeWait)
 	defer stop()
@@ -456,7 +462,7 @@ func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, 
 		}
 		progress.say("waiting for the import to create " + strings.Join(pending, ", "))
 		if wakes == nil {
-			wakes = d.pushes(waitCtx)
+			wakes = d.session.wake(ctx)
 		}
 		select {
 		case <-waitCtx.Done():
@@ -467,6 +473,28 @@ func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, 
 		case <-wakes:
 		}
 	}
+}
+
+// standupPushes is one stand-up call's push session (watch.Pushes): opened
+// at the call's first wait on the project and held until the call's context
+// ends (run cancels it as the call returns). Its readers take turns — the
+// wait for the runtimes, then the call's deploy tracking — so a wake is never
+// split between two.
+type standupPushes struct {
+	open  watch.Pushes
+	once  sync.Once
+	wakes <-chan struct{}
+}
+
+func newStandupPushes(open watch.Pushes) *standupPushes {
+	return &standupPushes{open: open}
+}
+
+// wake answers the session's wakes, opening it at the call's first wait for
+// as long as the call's ctx lives.
+func (p *standupPushes) wake(ctx context.Context) <-chan struct{} {
+	p.once.Do(func() { p.wakes = p.open(ctx) })
+	return p.wakes
 }
 
 // runtimesNotUp names every half the stand-up still waits for: a dev half not

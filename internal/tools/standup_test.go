@@ -592,7 +592,6 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 		statusPath:  f.statusPath,
 		status:      f.status,
 		bootWait:    2 * time.Second,
-		trackPoll:   5 * time.Millisecond,
 	}
 }
 
@@ -1739,22 +1738,29 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 }
 
 // trackingClient is the platform while a batch deploys: medusadev's build
-// process builds, then deploys, then ends.
+// process builds, then deploys, then ends — one state a read. Each read
+// signals looked as it starts, so the tracking's writes of the read before
+// it are done.
 type trackingClient struct {
 	*platform.Mock
-	mu    sync.Mutex
-	reads int
+	mu     sync.Mutex
+	reads  int
+	looked chan struct{}
 }
 
-func (c *trackingClient) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
+func (c *trackingClient) GetProjectProcessesDirect(ctx context.Context, _ string) ([]platform.Process, error) {
+	select {
+	case c.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reads++
 	ref := []platform.ServiceStackRef{{ID: "svc-medusadev"}}
-	switch {
-	case c.reads <= 2:
+	switch c.reads {
+	case 1:
 		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "BUILDING"}}}, nil
-	case c.reads <= 4:
+	case 2:
 		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "DEPLOYING"}}}, nil
 	}
 	return nil, nil
@@ -1762,29 +1768,36 @@ func (c *trackingClient) GetProjectProcessesDirect(context.Context, string) ([]p
 
 // TestStandupTrackDeploys_NamesTheStepAndItsProcess: while a half deploys,
 // the status names its step and the process behind it — build, then deploy,
-// then verify once the process has ended and the deploy has not returned.
+// then verify once the process has ended and the deploy has not returned. The
+// processes are read once at the start and again only at a process push
+// (ZEROPS-078), never on a timer.
 func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "status.json")
-	client := &trackingClient{Mock: platform.NewMock()}
-	d := standupDeps{batch: batchDeployer{client: client, projectID: "p1"}, trackPoll: 5 * time.Millisecond}
-	status := newStandupStatus(path)
-	var seen []string
-	stop := d.trackDeploys(context.Background(), []string{"medusadev"},
-		map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}}, status)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if st, err := mate.ReadStatus(path); err == nil && len(st.Standup.Services) == 1 {
-			e := st.Standup.Services[0]
-			row := e.Step + "/" + e.State + "/" + e.ProcessID
-			if len(seen) == 0 || seen[len(seen)-1] != row {
-				seen = append(seen, row)
-			}
-			if e.Step == mate.StepVerify {
-				break
-			}
+	client := &trackingClient{Mock: platform.NewMock(), looked: make(chan struct{})}
+	frames := make(chan struct{})
+	session := newStandupPushes(func(context.Context) <-chan struct{} { return frames })
+	tracking := newStandupTracking(batchDeployer{client: client, projectID: "p1"}, session, newStandupStatus(path))
+	row := func() string {
+		st, err := mate.ReadStatus(path)
+		if err != nil || len(st.Standup.Services) != 1 {
+			return fmt.Sprintf("no row (%v)", err)
 		}
-		time.Sleep(time.Millisecond)
+		e := st.Standup.Services[0]
+		return e.Step + "/" + e.State + "/" + e.ProcessID
+	}
+	stop := tracking.track(t.Context(), []string{"medusadev"}, map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}})
+	<-client.looked
+	// Each frame's read starts once the read before it has written.
+	seen := make([]string, 0, 3)
+	for frame := range 3 {
+		select {
+		case frames <- struct{}{}:
+		case <-client.looked:
+			t.Fatalf("the processes were read again with no push after %d process frames", frame)
+		}
+		<-client.looked
+		seen = append(seen, row())
 	}
 	stop()
 	want := []string{"build/running/proc-build", "deploy/running/proc-build", "verify/running/proc-build"}
