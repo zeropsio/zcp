@@ -5,12 +5,16 @@
 package tools
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,10 +74,55 @@ func (f *fakeHQ) recipeFiles(ref string) map[string]string {
 	f.t.Helper()
 	dir := f.repoDir(labApp, hq.RecipeRepo)
 	files := map[string]string{}
-	for path := range strings.SplitSeq(f.git(f.t.Context(), dir, "ls-tree", "-r", "-z", "--name-only", ref), "\x00") {
-		if path != "" {
-			files[path] = f.git(f.t.Context(), dir, "show", ref+":"+path) + "\n"
+	type blob struct{ path, object string }
+	var blobs []blob
+	var objects strings.Builder
+	for entry := range strings.SplitSeq(f.git(f.t.Context(), dir, "ls-tree", "-r", "-z", ref), "\x00") {
+		if entry == "" {
+			continue
 		}
+		header, path, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 3 {
+			f.t.Fatalf("invalid git tree entry %q", entry)
+		}
+		if fields[1] != "blob" {
+			files[path] = f.git(f.t.Context(), dir, "show", ref+":"+path) + "\n"
+			continue
+		}
+		blobs = append(blobs, blob{path: path, object: fields[2]})
+		objects.WriteString(fields[2] + "\n")
+	}
+	if len(blobs) == 0 {
+		return files
+	}
+	cmd := exec.CommandContext(f.t.Context(), "git", "cat-file", "--batch")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Stdin = strings.NewReader(objects.String())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("git cat-file --batch: %v\n%s", err, out)
+	}
+	reader := bufio.NewReader(bytes.NewReader(out))
+	for _, b := range blobs {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			f.t.Fatalf("read git batch header: %v", err)
+		}
+		fields := strings.Fields(header)
+		if len(fields) != 3 || fields[0] != b.object || fields[1] != "blob" {
+			f.t.Fatalf("invalid git batch header %q", header)
+		}
+		size, err := strconv.Atoi(fields[2])
+		if err != nil || size < 0 {
+			f.t.Fatalf("invalid git blob size in %q", header)
+		}
+		body := make([]byte, size+1)
+		if _, err := io.ReadFull(reader, body); err != nil || body[size] != '\n' {
+			f.t.Fatalf("read git blob %s: %v", b.object, err)
+		}
+		files[b.path] = strings.TrimSpace(string(body[:size])) + "\n"
 	}
 	return files
 }

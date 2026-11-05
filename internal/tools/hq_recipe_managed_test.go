@@ -143,9 +143,10 @@ func TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn(t *testing.T) {
 	t.Parallel()
 	lab, _ := newPartsLab(t)
 	runtimeOnly := map[string]string{}
+	main := lab.hq.recipeFiles("main")
 	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierStage, hq.RecipeTierProduction} {
 		path := hq.RecipeTierPaths[tier]
-		body, err := bundle.RemoveTierService(lab.hq.recipeFiles("main")[path], "db")
+		body, err := bundle.RemoveTierService(main[path], "db")
 		if err != nil {
 			t.Fatal(err)
 		}

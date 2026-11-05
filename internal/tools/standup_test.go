@@ -457,6 +457,8 @@ type importingClient struct {
 	stages [][]platform.ServiceStack
 	// onFirstRead reports the first list to tests checking import ordering.
 	onFirstRead func()
+	// onLastRead expires discovery once the scripted import stops changing.
+	onLastRead func()
 	// pushes carries the project's push (the fixture makes it).
 	pushes chan struct{}
 }
@@ -468,6 +470,9 @@ func (c *importingClient) ListServicesDirect(ctx context.Context, projectID stri
 	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
+	if c.reads >= len(c.stages) && c.onLastRead != nil {
+		c.onLastRead()
+	}
 	if c.reads < len(c.stages) {
 		select {
 		case c.pushes <- struct{}{}:
@@ -562,6 +567,17 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 	if f.building != nil {
 		client = f.building
 	}
+	runtimeDeadline := func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+		wait, stop := context.WithCancel(ctx)
+		if f.importing == nil || f.building != nil {
+			stop()
+		} else {
+			f.importing.mu.Lock()
+			f.importing.onLastRead = stop
+			f.importing.mu.Unlock()
+		}
+		return wait, stop
+	}
 	isolation := "none"
 	if f.closedOff {
 		isolation = "service"
@@ -578,14 +594,15 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 			stateDir:    f.stateDir,
 			devsup:      f.devsup,
 		},
-		mounter:     f.mounter,
-		liveEnvPath: writeLiveEnvFile(t, f.env),
-		identity:    func() hq.Identity { return f.identity },
-		runtimeWait: 200 * time.Millisecond,
-		pushes:      pushes,
-		statusPath:  f.statusPath,
-		status:      f.status,
-		bootWait:    2 * time.Second,
+		mounter:        f.mounter,
+		liveEnvPath:    writeLiveEnvFile(t, f.env),
+		identity:       func() hq.Identity { return f.identity },
+		runtimeWait:    200 * time.Millisecond,
+		runtimeContext: runtimeDeadline,
+		pushes:         pushes,
+		statusPath:     f.statusPath,
+		status:         f.status,
+		bootWait:       2 * time.Second,
 	}
 }
 
@@ -1267,6 +1284,32 @@ func TestStandup_TheRuntimesAreReadAgainOnlyOnAPush(t *testing.T) {
 			return
 		}
 	}
+}
+
+// The final look after the wait expires observes a runtime created without a
+// push, as awaitRuntimes promises.
+func TestStandup_TheRuntimesAreReadAgainWhenTheWaitEnds(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		client := &importingClient{
+			Mock: platform.NewMock(),
+			stages: [][]platform.ServiceStack{
+				{},
+				{{Name: "appdev", Status: "ACTIVE"}},
+			},
+			pushes: make(chan struct{}, 1),
+		}
+		d := standupDeps{
+			batch:       batchDeployer{client: client, projectID: "p1"},
+			runtimeWait: 200 * time.Millisecond,
+			session:     newStandupPushes(func(context.Context) <-chan struct{} { return nil }),
+		}
+		tier := workflow.MateTier{Pairs: []workflow.MateTierPair{{Dev: workflow.MateTierRuntime{Hostname: "appdev"}}}}
+		live, err := d.awaitRuntimes(t.Context(), tier, nil)
+		if err != nil || live["appdev"] == nil || client.reads != 2 {
+			t.Fatalf("last look = %+v, reads = %d, err = %v; want appdev on the second look", live, client.reads, err)
+		}
+	})
 }
 
 // lookingClient signals each read of the project's services — a look.

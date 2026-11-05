@@ -33,7 +33,8 @@ func newPartsLab(t *testing.T) (*hqLab, map[string]string) {
 	}
 	lab.hq.mergeChange(hq.RecipeRepo, 1)
 	stagePath := hq.RecipeTierPaths[hq.RecipeTierStage]
-	stage := lab.hq.recipeFiles("main")[stagePath]
+	main := lab.hq.recipeFiles("main")
+	stage := main[stagePath]
 	edited := strings.Replace(stage, "  - hostname: app\n", "  # the storefront, renamed by hand\n  - hostname: shop\n", 1)
 	edited = strings.Replace(edited, "project:\n  name: ", "project:\n  # edited by the group\n  name: ", 1)
 	if edited == stage || !strings.Contains(edited, "hostname: shop") {
@@ -42,7 +43,7 @@ func newPartsLab(t *testing.T) (*hqLab, map[string]string) {
 	edits := map[string]string{stagePath: edited}
 	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierProduction} {
 		path := hq.RecipeTierPaths[tier]
-		edits[path] = strings.Replace(lab.hq.recipeFiles("main")[path], "project:\n  name: ", "project:\n  # edited by the group\n  name: ", 1)
+		edits[path] = strings.Replace(main[path], "project:\n  name: ", "project:\n  # edited by the group\n  name: ", 1)
 	}
 	lab.hq.landOnMain(hq.RecipeRepo, edits)
 	return lab, lab.hq.recipeFiles("main")

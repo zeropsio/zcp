@@ -78,6 +78,8 @@ type standupDeps struct {
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
 	runtimeWait time.Duration
+	// runtimeContext lets tests expire discovery after a fixture observation.
+	runtimeContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	// pushes opens the project's push session (ZEROPS-079, ZEROPS-078).
 	// session is the call's one session, which the wait for the runtimes and
 	// tracking — the call's deploy tracking — read again at; run makes both.
@@ -452,7 +454,11 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 // wake covers that look — or once more when the wait is up, and answers the
 // last look.
 func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, progress *standupProgress) (map[string]*platform.ServiceStack, error) {
-	waitCtx, stop := context.WithTimeout(ctx, d.runtimeWait)
+	deadline := d.runtimeContext
+	if deadline == nil {
+		deadline = context.WithTimeout
+	}
+	waitCtx, stop := deadline(ctx, d.runtimeWait)
 	defer stop()
 	var wakes <-chan struct{}
 	for {
