@@ -411,13 +411,35 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 // MinimumMateVersion.
 func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
 
-// belowFloor reports whether v, a release or a dev build, is older than
+// BelowFloor reports whether v, a release or a dev build, is older than
 // MinimumMateVersion. A dev build is judged by the release it was cut from
 // (its version without the prerelease suffix), so one cut at or above the floor
 // stays and one cut below it is no longer a build this zcp drives.
-func belowFloor(v string) bool {
+func BelowFloor(v string) bool {
 	core, _, _ := strings.Cut(v, "-")
 	return VersionOlder(core, MinimumMateVersion)
+}
+
+// BelowFloorError reports an installed bundle older than MinimumMateVersion.
+type BelowFloorError struct {
+	Installed string
+	Minimum   string
+}
+
+func (e *BelowFloorError) Error() string {
+	return fmt.Sprintf("installed mate %s is below the minimum %s this zcp drives", e.Installed, e.Minimum)
+}
+
+// CheckInstalledFloor is the single refusal for the version floor, read by
+// every path that runs or links the Mate (service start, init) and mirrored
+// by `zcp mate status`: nil unless the installed bundle is readable and below
+// MinimumMateVersion. An unreadable version is not a refusal — a missing
+// bundle fails on its own where it is needed.
+func CheckInstalledFloor() error {
+	if installed, err := InstalledVersion(); err == nil && BelowFloor(installed) {
+		return &BelowFloorError{Installed: installed, Minimum: MinimumMateVersion}
+	}
+	return nil
 }
 
 // InstalledVersion reads the version CurrentLink() resolves to, from npm's
@@ -582,7 +604,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	}
 
 	if opts.KeepInstalled {
-		if installed, err := InstalledVersion(); err == nil && !belowFloor(installed) {
+		if installed, err := InstalledVersion(); err == nil && !BelowFloor(installed) {
 			return Result{Action: ActionNone, From: installed, To: installed}, nil
 		}
 	}
@@ -613,7 +635,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	if instErr == nil && installed == desired.Version {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
-	if instErr == nil && IsDevVersion(installed) && !opts.Force && !belowFloor(installed) {
+	if instErr == nil && IsDevVersion(installed) && !opts.Force && !BelowFloor(installed) {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 

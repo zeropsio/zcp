@@ -625,3 +625,39 @@ func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
 		})
 	}
 }
+
+// TestStart_Mate_InstalledBelowFloor_RefusesToRun: whatever the install step
+// reported (here an unreachable manifest keeping the installed bundle), a
+// bundle below MinimumMateVersion is not started — the server is the one that
+// links to HQ, and this zcp does not drive a release that old.
+func TestStart_Mate_InstalledBelowFloor_RefusesToRun(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and the ensure seam.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	home := installFakeMateBundle(t)
+	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", "0.1.0", "node_modules", mate.PackageName)
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"0.16.40"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service.SetMateEnsureFunc(func(mate.EnsureOptions) (mate.Result, error) {
+		return mate.Result{Action: mate.ActionNone, From: "0.16.40", To: "0.16.40", Warning: "mate release manifest unreachable"}, nil
+	})
+	ran := false
+	service.SetRunFunc(func(string, []string, []string) error {
+		ran = true
+		return nil
+	})
+	t.Cleanup(service.ResetRunFunc)
+
+	err := service.Start("mate")
+
+	var below *mate.BelowFloorError
+	if !errors.As(err, &below) || below.Installed != "0.16.40" {
+		t.Fatalf("Start(mate) = %v, want a below-floor refusal naming 0.16.40", err)
+	}
+	if ran {
+		t.Error("the server must not start from a bundle below the floor")
+	}
+}

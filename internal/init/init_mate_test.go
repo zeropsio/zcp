@@ -990,3 +990,40 @@ func TestRun_Mate_UpdateRoutes_LastGoodAdvancesOnlyOnceTheRunningVersionIsHealth
 		})
 	}
 }
+
+// TestRun_Mate_InstalledBelowFloor_DegradesWithoutLinking: an install step that
+// leaves a bundle below MinimumMateVersion (an unreachable manifest keeping
+// it) registers no unit and writes no env contract — the project key that
+// links the Mate to HQ is not delivered to a release this zcp does not drive.
+func TestRun_Mate_InstalledBelowFloor_DegradesWithoutLinking(t *testing.T) {
+	rig := newMateRig(t)
+	rig.writeBundleFiles(t)
+	pkgDir := filepath.Join(rig.home, ".zcp", "mate", "versions", pinnedTestVersion, "node_modules", mate.PackageName)
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"0.16.40"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+		return mate.Result{Action: mate.ActionNone, From: "0.16.40", To: "0.16.40", Warning: "mate release manifest unreachable"}, nil
+	})
+
+	stderr := captureStderr(t, func() {
+		if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+			t.Fatalf("a refused mate must not fail the container start: %v", err)
+		}
+	})
+
+	if calls := rig.unitCreateCalls(); len(calls) != 0 {
+		t.Errorf("a bundle below the floor gets no unit, got %v", calls)
+	}
+	if _, err := os.Stat(mate.EnvFilePath()); !os.IsNotExist(err) {
+		t.Errorf("a bundle below the floor gets no env contract, stat err = %v", err)
+	}
+	for _, want := range []string{"0.16.40", mate.MinimumMateVersion, "Init complete"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("degraded init output must contain %q, got:\n%s", want, stderr)
+		}
+	}
+}

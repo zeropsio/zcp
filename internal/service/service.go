@@ -46,8 +46,8 @@ type execConfig struct {
 	// nginx and vscode always launch.
 	guard func() error
 	// prepare runs after guard and before the binary is resolved: what the
-	// service needs on disk before it starts.
-	prepare func()
+	// service needs on disk before it starts. A non-nil error aborts Start.
+	prepare func() error
 }
 
 // services returns the exec configuration of every supervised service.
@@ -211,9 +211,9 @@ func mergeEnvLines(store, file []string) []string {
 
 // mateLaunchSetupThenInstall readies a launch: the status file first, then
 // the bundle.
-func mateLaunchSetupThenInstall() {
+func mateLaunchSetupThenInstall() error {
 	mateLaunchSetup()
-	mateInstallBeforeStart()
+	return mateInstallBeforeStart()
 }
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
@@ -264,7 +264,16 @@ var mateLockWait = defaultMateLockWait
 // installed release at or above MinimumMateVersion before launch. Supported
 // installed releases keep drain, organization hold and incompatible-release
 // confirmation. A missing or below-floor bundle refreshes the release manifest.
-func mateInstallBeforeStart() {
+// Whatever the install did, a bundle still below the floor is refused: the
+// start fails with mate.BelowFloorError rather than running it.
+func mateInstallBeforeStart() error {
+	ensureMateBeforeStart()
+	return mate.CheckInstalledFloor()
+}
+
+// ensureMateBeforeStart is the install pass of a start; its failures are
+// logged, never fatal — the floor check after it decides.
+func ensureMateBeforeStart() {
 	release, err := mate.LockInstall(mateLockWait)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v — starting what is installed\n", err)
@@ -333,7 +342,9 @@ func Start(name string) error {
 	}
 
 	if cfg.prepare != nil {
-		cfg.prepare()
+		if err := cfg.prepare(); err != nil {
+			return err
+		}
 	}
 
 	// Raise the systemd unit's TasksMax before launching. `zcp service start

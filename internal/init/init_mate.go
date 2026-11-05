@@ -171,6 +171,11 @@ func enableMate(rt runtime.Info) error {
 		return fmt.Errorf("ensure mate bundle: %w", err)
 	}
 	logMateEnsureResult(os.Stderr, result)
+	// Whatever the install did, a bundle still below the floor is neither
+	// registered nor given the env contract that links it to HQ.
+	if err := mate.CheckInstalledFloor(); err != nil {
+		return err
+	}
 
 	bin := mate.BinPath()
 	if _, err := os.Stat(bin); err != nil {

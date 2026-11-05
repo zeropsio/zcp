@@ -494,3 +494,41 @@ func TestRunMateStatus_AfterAManualUpdate_ReportsNoOlderAttempt(t *testing.T) {
 		t.Fatalf("updater=%+v, want idle on %s with no failed version", got.Updater, manifestVersion)
 	}
 }
+
+// TestRunMateStatus_JSON_ReportsTheFloor: the receipt for the version floor —
+// the minimum this zcp drives, and whether the installed bundle is below it.
+func TestRunMateStatus_JSON_ReportsTheFloor(t *testing.T) {
+	tests := []struct {
+		name      string
+		installed string
+		wantBelow bool
+	}{
+		{name: "below", installed: "0.16.40", wantBelow: true},
+		{name: "at", installed: mate.MinimumMateVersion},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			seedInstalledBundle(t, home, tt.installed)
+			manifestAndTarballServer(t)
+
+			stdout := captureStdout(t, func() {
+				if got := runMateCmd([]string{"status", "--json"}); got != 0 {
+					t.Fatalf("runMateCmd(status --json) = %d, want 0", got)
+				}
+			})
+
+			var got struct {
+				Minimum    string `json:"minimum"`
+				BelowFloor bool   `json:"belowFloor"`
+			}
+			if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
+				t.Fatalf("unmarshal status JSON %q: %v", stdout, err)
+			}
+			if got.Minimum != mate.MinimumMateVersion || got.BelowFloor != tt.wantBelow {
+				t.Errorf("status = %+v, want minimum %s belowFloor %v", got, mate.MinimumMateVersion, tt.wantBelow)
+			}
+		})
+	}
+}

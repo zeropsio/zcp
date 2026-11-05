@@ -620,3 +620,42 @@ func TestEnsureInstalled_CustomActivation_StagesBeforeSwitch(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckInstalledFloor: an installed bundle whose release (a dev build: the
+// release it was cut from) is below MinimumMateVersion is refused with the
+// version and the floor named; one at the floor, or one whose version cannot
+// be read, is not this check's to refuse.
+func TestCheckInstalledFloor(t *testing.T) {
+	tests := []struct {
+		name      string
+		installed string // empty: nothing installed
+		wantBelow bool
+	}{
+		{name: "a release below the floor", installed: "0.16.40", wantBelow: true},
+		{name: "a dev build cut below the floor", installed: "0.16.40-dev.a1b2c3", wantBelow: true},
+		{name: "the floor itself", installed: mate.MinimumMateVersion},
+		{name: "a dev build cut at the floor", installed: mate.MinimumMateVersion + "-dev.a1b2c3"},
+		{name: "nothing installed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newEnsureRig(t)
+			if tt.installed != "" {
+				seedInstalledVersion(t, tt.installed)
+			}
+
+			err := mate.CheckInstalledFloor()
+
+			var below *mate.BelowFloorError
+			if got := errors.As(err, &below); got != tt.wantBelow {
+				t.Fatalf("CheckInstalledFloor() = %v, want below-floor refusal = %v", err, tt.wantBelow)
+			}
+			if tt.wantBelow && (below.Installed != tt.installed || below.Minimum != mate.MinimumMateVersion) {
+				t.Errorf("refusal = %+v, want installed %s and minimum %s", below, tt.installed, mate.MinimumMateVersion)
+			}
+			if !tt.wantBelow && err != nil {
+				t.Errorf("CheckInstalledFloor() = %v, want nil", err)
+			}
+		})
+	}
+}

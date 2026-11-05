@@ -85,6 +85,8 @@ const mateVerbStatus = "status"
 // whether a container restart would change either (§2.9).
 type mateStatusResult struct {
 	Installed       string             `json:"installed"`
+	Minimum         string             `json:"minimum"`
+	BelowFloor      bool               `json:"belowFloor"`
 	Latest          string             `json:"latest"`
 	Contract        int                `json:"contract"`
 	UpdateAvailable bool               `json:"updateAvailable"`
@@ -123,10 +125,12 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
+		Minimum:   mate.MinimumMateVersion,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if installed, err := mate.InstalledVersion(); err == nil {
 		result.Installed = installed
+		result.BelowFloor = mate.BelowFloor(installed)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)

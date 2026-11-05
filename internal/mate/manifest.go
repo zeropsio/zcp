@@ -37,7 +37,7 @@ const (
 	// and its package declares the HQ origin. 0.16.40 still lacks Observe
 	// credential delivery; 0.16.41 is required for the frame receiver and
 	// file writer used by strict HQ reads.
-	MinimumMateVersion = "0.16.41"
+	MinimumMateVersion = "0.16.41" // release: set to the rev 7 Mate tag
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order
