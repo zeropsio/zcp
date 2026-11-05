@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -388,9 +389,11 @@ func TestSubdomainTool_Enable_PollFailure_SurfacedAsWarning(t *testing.T) {
 // races the L7 balancer and can get a false fail on http_root.
 type sequencingHTTPFor500 struct {
 	remaining5xx int
+	calls        int
 }
 
 func (s *sequencingHTTPFor500) Do(*http.Request) (*http.Response, error) {
+	s.calls++
 	if s.remaining5xx > 0 {
 		s.remaining5xx--
 		return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader(""))}, nil
@@ -399,109 +402,116 @@ func (s *sequencingHTTPFor500) Do(*http.Request) (*http.Response, error) {
 }
 
 func TestSubdomainTool_Enable_WaitsForHTTPReady(t *testing.T) {
-	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
-	// package-level config; see deploy_subdomain_test.go for rationale.
-	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 500*time.Millisecond)
-	defer restore()
+	synctest.Test(t, func(t *testing.T) {
+		// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+		// package-level config; see deploy_subdomain_test.go for rationale.
+		restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 500*time.Millisecond)
+		defer restore()
 
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app",
-				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
-		}).
-		WithService(&platform.ServiceStack{
-			ID: "svc-1", Name: "app", SubdomainAccess: false,
-			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
-		}).
-		WithProject(&platform.Project{
-			ID: "proj-1", Name: "myproject", Status: statusActive,
-			SubdomainHost: "abc1.prg1.zerops.app",
-		}).
-		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-svc-1",
-			Status: statusFinished,
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "app",
+					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+			}).
+			WithService(&platform.ServiceStack{
+				ID: "svc-1", Name: "app", SubdomainAccess: false,
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+			}).
+			WithProject(&platform.Project{
+				ID: "proj-1", Name: "myproject", Status: statusActive,
+				SubdomainHost: "abc1.prg1.zerops.app",
+			}).
+			WithProcess(&platform.Process{
+				ID:     "proc-subdomain-enable-svc-1",
+				Status: statusFinished,
+			})
+
+		// Stub HTTP returns 502 twice (L7 warming), then 200. WaitHTTPReady
+		// must retry and eventually succeed without any warning.
+		stub := &sequencingHTTPFor500{remaining5xx: 2}
+
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterSubdomain(srv, mock, stub, "proj-1", "")
+
+		result := callTool(t, srv, "zerops_subdomain", map[string]any{
+			"serviceHostname": "app", "action": "enable",
 		})
-
-	// Stub HTTP returns 502 twice (L7 warming), then 200. WaitHTTPReady
-	// must retry and eventually succeed without any warning.
-	stub := &sequencingHTTPFor500{remaining5xx: 2}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1", "")
-
-	result := callTool(t, srv, "zerops_subdomain", map[string]any{
-		"serviceHostname": "app", "action": "enable",
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %s", getTextContent(t, result))
-	}
-
-	var sr ops.SubdomainResult
-	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
-		t.Fatalf("parse result: %v", err)
-	}
-	// No warnings when WaitHTTPReady eventually succeeds.
-	for _, w := range sr.Warnings {
-		if strings.Contains(w, "not HTTP-ready") {
-			t.Errorf("should not warn when retry succeeded, got: %s", w)
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", getTextContent(t, result))
 		}
-	}
+
+		var sr ops.SubdomainResult
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+			t.Fatalf("parse result: %v", err)
+		}
+		if stub.calls != 3 {
+			t.Errorf("readiness probes = %d, want 3 through the first successful response", stub.calls)
+		}
+		// No warnings when WaitHTTPReady eventually succeeds.
+		for _, w := range sr.Warnings {
+			if strings.Contains(w, "not HTTP-ready") {
+				t.Errorf("should not warn when retry succeeded, got: %s", w)
+			}
+		}
+	})
 }
 
 // If HTTP readiness times out, the tool must NOT fail the call — appends
 // warning and returns. Verify still has a chance to reach the URL on its
 // own probe.
 func TestSubdomainTool_Enable_HTTPReadyTimeout_WarningNotFatal(t *testing.T) {
-	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
-	// package-level config; see deploy_subdomain_test.go for rationale.
-	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
-	defer restore()
+	synctest.Test(t, func(t *testing.T) {
+		// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+		// package-level config; see deploy_subdomain_test.go for rationale.
+		restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
+		defer restore()
 
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app",
-				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
-		}).
-		WithService(&platform.ServiceStack{
-			ID: "svc-1", Name: "app", SubdomainAccess: false,
-			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
-		}).
-		WithProject(&platform.Project{
-			ID: "proj-1", Name: "myproject", Status: statusActive,
-			SubdomainHost: "abc1.prg1.zerops.app",
-		}).
-		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-svc-1",
-			Status: statusFinished,
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "app",
+					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+			}).
+			WithService(&platform.ServiceStack{
+				ID: "svc-1", Name: "app", SubdomainAccess: false,
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+			}).
+			WithProject(&platform.Project{
+				ID: "proj-1", Name: "myproject", Status: statusActive,
+				SubdomainHost: "abc1.prg1.zerops.app",
+			}).
+			WithProcess(&platform.Process{
+				ID:     "proc-subdomain-enable-svc-1",
+				Status: statusFinished,
+			})
+
+		// Stub HTTP always returns 503 — WaitHTTPReady will time out.
+		stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterSubdomain(srv, mock, stub, "proj-1", "")
+
+		result := callTool(t, srv, "zerops_subdomain", map[string]any{
+			"serviceHostname": "app", "action": "enable",
 		})
-
-	// Stub HTTP always returns 503 — WaitHTTPReady will time out.
-	stub := &sequencingHTTPFor500{remaining5xx: 999}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1", "")
-
-	result := callTool(t, srv, "zerops_subdomain", map[string]any{
-		"serviceHostname": "app", "action": "enable",
-	})
-	if result.IsError {
-		t.Fatalf("HTTP timeout must NOT fail the tool call: %s", getTextContent(t, result))
-	}
-
-	var sr ops.SubdomainResult
-	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
-		t.Fatalf("parse result: %v", err)
-	}
-	found := false
-	for _, w := range sr.Warnings {
-		if strings.Contains(w, "not HTTP-ready") {
-			found = true
-			break
+		if result.IsError {
+			t.Fatalf("HTTP timeout must NOT fail the tool call: %s", getTextContent(t, result))
 		}
-	}
-	if !found {
-		t.Errorf("expected Warnings to mention HTTP readiness timeout; got %v", sr.Warnings)
-	}
+
+		var sr ops.SubdomainResult
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+			t.Fatalf("parse result: %v", err)
+		}
+		found := false
+		for _, w := range sr.Warnings {
+			if strings.Contains(w, "not HTTP-ready") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected Warnings to mention HTTP readiness timeout; got %v", sr.Warnings)
+		}
+	})
 }
 
 func TestSubdomainTool_EmptyAction(t *testing.T) {
@@ -592,70 +602,72 @@ func TestSubdomainTool_Enable_DeferredStart_SkipsProbe(t *testing.T) {
 // dev-mode + static runtime (nginx) auto-serves; 502 there IS a real problem.
 // Probe must run, warning fires on persistent 502.
 func TestSubdomainTool_Enable_DeferredStart_StaticStillProbes(t *testing.T) {
-	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package state.
-	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
-	defer restore()
+	synctest.Test(t, func(t *testing.T) {
+		// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package state.
+		restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
+		defer restore()
 
-	dir := t.TempDir()
-	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname:         "app",
-		Mode:             topology.PlanModeDev,
-		BootstrapSession: "sess1",
-		BootstrappedAt:   "2026-04-22",
-	}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
+		dir := t.TempDir()
+		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+			Hostname:         "app",
+			Mode:             topology.PlanModeDev,
+			BootstrapSession: "sess1",
+			BootstrappedAt:   "2026-04-22",
+		}); err != nil {
+			t.Fatalf("WriteServiceMeta: %v", err)
+		}
 
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app",
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "app",
+					Ports: []platform.Port{{Port: 80, Protocol: "tcp"}},
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: "nginx@1.22",
+					}},
+			}).
+			WithService(&platform.ServiceStack{
+				ID: "svc-1", Name: "app",
 				Ports: []platform.Port{{Port: 80, Protocol: "tcp"}},
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{
 					ServiceStackTypeVersionName: "nginx@1.22",
-				}},
-		}).
-		WithService(&platform.ServiceStack{
-			ID: "svc-1", Name: "app",
-			Ports: []platform.Port{{Port: 80, Protocol: "tcp"}},
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName: "nginx@1.22",
-			},
-		}).
-		WithProject(&platform.Project{
-			ID: "proj-1", Name: "myproject", Status: statusActive,
-			SubdomainHost: "abc1.prg1.zerops.app",
-		}).
-		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-svc-1",
-			Status: statusFinished,
+				},
+			}).
+			WithProject(&platform.Project{
+				ID: "proj-1", Name: "myproject", Status: statusActive,
+				SubdomainHost: "abc1.prg1.zerops.app",
+			}).
+			WithProcess(&platform.Process{
+				ID:     "proc-subdomain-enable-svc-1",
+				Status: statusFinished,
+			})
+
+		stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterSubdomain(srv, mock, stub, "proj-1", dir)
+
+		result := callTool(t, srv, "zerops_subdomain", map[string]any{
+			"serviceHostname": "app", "action": "enable",
 		})
-
-	stub := &sequencingHTTPFor500{remaining5xx: 999}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1", dir)
-
-	result := callTool(t, srv, "zerops_subdomain", map[string]any{
-		"serviceHostname": "app", "action": "enable",
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %s", getTextContent(t, result))
-	}
-
-	var sr ops.SubdomainResult
-	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
-		t.Fatalf("parse result: %v", err)
-	}
-	found := false
-	for _, w := range sr.Warnings {
-		if strings.Contains(w, "not HTTP-ready") {
-			found = true
-			break
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", getTextContent(t, result))
 		}
-	}
-	if !found {
-		t.Errorf("static runtime in dev mode must still probe and warn on persistent 502; got %v", sr.Warnings)
-	}
+
+		var sr ops.SubdomainResult
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+			t.Fatalf("parse result: %v", err)
+		}
+		found := false
+		for _, w := range sr.Warnings {
+			if strings.Contains(w, "not HTTP-ready") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("static runtime in dev mode must still probe and warn on persistent 502; got %v", sr.Warnings)
+		}
+	})
 }
 
 // TestSubdomainTool_Enable_StandardPairStageHalf_StillProbes pins the
@@ -668,72 +680,74 @@ func TestSubdomainTool_Enable_DeferredStart_StaticStillProbes(t *testing.T) {
 // runs as expected. Persistent 502 on stage IS a real problem (stage
 // runs run.start; 502 means the app crashed or never started).
 func TestSubdomainTool_Enable_StandardPairStageHalf_StillProbes(t *testing.T) {
-	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package state.
-	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
-	defer restore()
+	synctest.Test(t, func(t *testing.T) {
+		// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package state.
+		restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
+		defer restore()
 
-	dir := t.TempDir()
-	// Pair-keyed meta: dev-keyed entry covers both halves (per E8 invariant).
-	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname:         "appdev",
-		Stages:           []topology.StageRef{{Hostname: "appstage"}},
-		Mode:             topology.PlanModeStandard,
-		BootstrapSession: "sess1",
-		BootstrappedAt:   "2026-04-22",
-	}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
+		dir := t.TempDir()
+		// Pair-keyed meta: dev-keyed entry covers both halves (per E8 invariant).
+		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+			Hostname:         "appdev",
+			Stages:           []topology.StageRef{{Hostname: "appstage"}},
+			Mode:             topology.PlanModeStandard,
+			BootstrapSession: "sess1",
+			BootstrappedAt:   "2026-04-22",
+		}); err != nil {
+			t.Fatalf("WriteServiceMeta: %v", err)
+		}
 
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-stage", Name: "appstage",
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-stage", Name: "appstage",
+					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: "nodejs@22",
+					}},
+			}).
+			WithService(&platform.ServiceStack{
+				ID: "svc-stage", Name: "appstage",
 				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{
 					ServiceStackTypeVersionName: "nodejs@22",
-				}},
-		}).
-		WithService(&platform.ServiceStack{
-			ID: "svc-stage", Name: "appstage",
-			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName: "nodejs@22",
-			},
-		}).
-		WithProject(&platform.Project{
-			ID: "proj-1", Name: "myproject", Status: statusActive,
-			SubdomainHost: "abc1.prg1.zerops.app",
-		}).
-		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-svc-stage",
-			Status: statusFinished,
+				},
+			}).
+			WithProject(&platform.Project{
+				ID: "proj-1", Name: "myproject", Status: statusActive,
+				SubdomainHost: "abc1.prg1.zerops.app",
+			}).
+			WithProcess(&platform.Process{
+				ID:     "proc-subdomain-enable-svc-stage",
+				Status: statusFinished,
+			})
+
+		stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterSubdomain(srv, mock, stub, "proj-1", dir)
+
+		result := callTool(t, srv, "zerops_subdomain", map[string]any{
+			"serviceHostname": "appstage", "action": "enable",
 		})
-
-	stub := &sequencingHTTPFor500{remaining5xx: 999}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1", dir)
-
-	result := callTool(t, srv, "zerops_subdomain", map[string]any{
-		"serviceHostname": "appstage", "action": "enable",
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %s", getTextContent(t, result))
-	}
-
-	var sr ops.SubdomainResult
-	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
-		t.Fatalf("parse result: %v", err)
-	}
-	found := false
-	for _, w := range sr.Warnings {
-		if strings.Contains(w, "not HTTP-ready") {
-			found = true
-			break
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", getTextContent(t, result))
 		}
-	}
-	if !found {
-		t.Errorf("standard-pair stage half must still probe and warn on persistent 502 (stage runs run.start, not zsc-noop); got %v", sr.Warnings)
-	}
+
+		var sr ops.SubdomainResult
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+			t.Fatalf("parse result: %v", err)
+		}
+		found := false
+		for _, w := range sr.Warnings {
+			if strings.Contains(w, "not HTTP-ready") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("standard-pair stage half must still probe and warn on persistent 502 (stage runs run.start, not zsc-noop); got %v", sr.Warnings)
+		}
+	})
 }
 
 // TestSubdomainTool_EnableDisable_RecordsIntent_Table pins E9's explicit-tool

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -23,12 +24,18 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// waitAtMost waits for done, or for d to pass.
-func waitAtMost(done <-chan struct{}, d time.Duration) {
-	select {
-	case <-done:
-	case <-time.After(d):
-	}
+type recipePassTestContext struct {
+	context.Context //nolint:containedctx // test context reports lock contention
+	waited          chan struct{}
+	once            sync.Once
+}
+
+func (c *recipePassTestContext) recipePassDeadline(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithCancel(ctx)
+}
+
+func (c *recipePassTestContext) recipePassBlocked() {
+	c.once.Do(func() { close(c.waited) })
 }
 
 // TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange: two recipe
@@ -44,12 +51,11 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 	t.Parallel()
 	lab := newRecipeLab(t)
 	lab.hq.unbornRecipe()
-	// HQ lets the passes overlap as far as they can: the first change opens
-	// once a second pass asks to open one too — or after a second, when none
-	// does — and Core lands it, adding only, on its push; the second open is
-	// answered once that landed.
+	// Hold the first open until the other pass either reaches the held lock
+	// or also tries to open a change. Then Core lands the first on its push.
 	var opens atomic.Int32
-	secondOpen, landed := make(chan struct{}), make(chan struct{})
+	firstOpen, secondOpen, landed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	passCtx := &recipePassTestContext{Context: t.Context(), waited: make(chan struct{})}
 	var landOnce sync.Once
 	recipePush := "/git/" + labOrg + "/" + labApp + "/" + hq.RecipeRepo + ".git/git-receive-pack"
 	lab.hq.around(func(r *http.Request) {
@@ -58,10 +64,14 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 		}
 		switch opens.Add(1) {
 		case 1:
-			waitAtMost(secondOpen, time.Second)
+			close(firstOpen)
+			select {
+			case <-passCtx.waited:
+			case <-secondOpen:
+			}
 		case 2:
 			close(secondOpen)
-			waitAtMost(landed, 10*time.Second)
+			<-landed
 		}
 	}, func(r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == recipePush {
@@ -74,11 +84,13 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 
 	outcomes := make([]recipeOutcome, 2)
 	var wg sync.WaitGroup
-	for i := range outcomes {
-		wg.Go(func() {
-			outcomes[i] = groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
-		})
-	}
+	wg.Go(func() {
+		outcomes[0] = groupRecipeOutcome(passCtx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
+	})
+	<-firstOpen
+	wg.Go(func() {
+		outcomes[1] = groupRecipeOutcome(passCtx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
+	})
 	wg.Wait()
 
 	if c := lab.hq.changeIn(hq.RecipeRepo, 2); c != nil {
@@ -117,12 +129,15 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	if held, err := tryLockFile(lock); err != nil || !held {
 		t.Fatalf("hold the recipe: held %v, %v", held, err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-	defer cancel()
 	asked := func() int { return lab.hq.callCount("POST /api/mate/repos") + lab.hq.callCount("GET /api/mate/self") }
 	askedBefore := asked()
 
-	outcome := groupRecipeOutcome(ctx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
+	var outcome recipeOutcome
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		outcome = groupRecipeOutcome(ctx, lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
+	})
 
 	if lab.hq.changeIn(hq.RecipeRepo, 1) != nil || outcome.Created || outcome.Committed {
 		t.Fatalf("a pass while another runs = %+v, change %+v; want nothing changed", outcome, lab.hq.changeIn(hq.RecipeRepo, 1))

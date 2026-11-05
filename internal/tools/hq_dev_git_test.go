@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -404,7 +405,13 @@ func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
 		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
+	client := lab.hq.srv.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	client.Transport = transport
+	synctest.Test(t, func(t *testing.T) {
+		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
+	})
 
 	if len(ssh.within) == 0 {
 		t.Fatal("the start ran no command on the dev service")

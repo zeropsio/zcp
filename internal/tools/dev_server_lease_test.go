@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -260,7 +261,10 @@ func TestDevServer_LeaseStart_ProbesItsOwnPreviewPort(t *testing.T) {
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: doer, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 
-			result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
+			var result *mcp.CallToolResult
+			synctest.Test(t, func(t *testing.T) {
+				result = callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
+			})
 			if result.IsError {
 				t.Fatalf("unexpected error: %s", getTextContent(t, result))
 			}

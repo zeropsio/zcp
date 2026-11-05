@@ -1014,7 +1014,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				fmt.Sprintf("Bootstrap discovery failed: %v", listErr),
 				"Check project access and try again"), WithRecoveryStatus()), nil, nil
 		}
-		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing, rt) //nolint:contextcheck // BootstrapDiscover is synchronous, no I/O to cancel
+		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing, rt) //nolint:contextcheck,nolintlint // synchronous discovery; nolintlint intermittently misattributes this suppression
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,

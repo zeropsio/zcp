@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -166,6 +167,13 @@ func (s *leaseStubSSH) sawCommand(sub string) bool {
 // leaseToolServerSSH is leaseToolServer with ssh into the leased containers.
 func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (srv *mcp.Server, stateDir string) {
 	t.Helper()
+	srv, stateDir, _ = leaseToolServerSSHWithWait(t, orch, ssh)
+	return srv, stateDir
+}
+
+// leaseToolServerSSHWithWait also exposes the background-work completion receipt.
+func leaseToolServerSSHWithWait(t *testing.T, orch http.Handler, ssh ops.SSHDeployer, onWait ...func()) (srv *mcp.Server, stateDir string, wait func()) {
+	t.Helper()
 	hs := httptest.NewServer(orch)
 	t.Cleanup(hs.Close)
 	stateDir = t.TempDir()
@@ -177,8 +185,8 @@ func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (s
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
-	return srv, stateDir
+	wait = registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{}, onWait...)
+	return srv, stateDir, wait
 }
 
 // registerLeaseTool registers zerops_lease as RegisterLease does, its warm
@@ -191,13 +199,19 @@ func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (s
 // removal. The product bounds each piece of that work by its own deadline.
 // Every test registers zerops_lease through here
 // (TestNoRegisterLeaseInTests).
-func registerLeaseTool(t *testing.T, srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
+func registerLeaseTool(t *testing.T, srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, onWait ...func()) func() {
 	t.Helper()
 	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
 	var background sync.WaitGroup
 	deps.Warm.Go = background.Go
-	t.Cleanup(background.Wait)
+	t.Cleanup(func() {
+		if len(onWait) != 0 {
+			onWait[0]()
+		}
+		background.Wait()
+	})
 	registerLease(srv, deps, rt, nil)
+	return background.Wait
 }
 
 func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
@@ -721,6 +735,14 @@ func TestLeaseTool_EnvelopeCarriesActivityOnStatus(t *testing.T) {
 	}
 }
 
+type leaseHandlerTransport struct{ handler http.Handler }
+
+func (tr leaseHandlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	tr.handler.ServeHTTP(w, r)
+	return w.Result(), nil
+}
+
 // TestLeaseReader_NeverReadsActivity: the lease reader that fills every
 // envelope's leases[] (leaseReaderWith — the lease tool's and, through
 // freshEnvelope, every other tool's) asks only the pool orchestrators. It runs
@@ -729,26 +751,29 @@ func TestLeaseTool_EnvelopeCarriesActivityOnStatus(t *testing.T) {
 // call that read them (workflow.WithLeaseActivity).
 func TestLeaseReader_NeverReadsActivity(t *testing.T) {
 	t.Parallel()
-	hs := httptest.NewServer(&fakeOrchestrator{reserved: true})
-	t.Cleanup(hs.Close)
 	stateDir := t.TempDir()
 	writeLeaseRecordFile(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feature-x")
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "proj"}).
 		WithServices([]platform.ServiceStack{swarmPoolService("svc-pool", "devpool", "ACTIVE")}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
-	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
+	client := &http.Client{Transport: leaseHandlerTransport{handler: &fakeOrchestrator{reserved: true}}}
+	factory := func(_, token string) ops.SwarmAPI {
+		return platform.NewSwarmClient("http://orchestrator", token, client)
+	}
 
-	snaps, err := leaseReaderWith(mock, "proj-1", stateDir, factory, ops.LeaseHost{}, leaseStatusTimeout)(context.Background())
-	if err != nil {
-		t.Fatalf("reader: %v", err)
-	}
-	if len(snaps) != 1 || snaps[0].Alias != "devpool-3" || snaps[0].State != ops.LeaseStateHeld || snaps[0].Unverified {
-		t.Fatalf("snapshots = %+v, want devpool-3 held, confirmed by its orchestrator", snaps)
-	}
-	if snaps[0].Activity != nil || snaps[0].Unsaved != nil {
-		t.Errorf("the reader read the checkout: activity %+v unsaved %+v", snaps[0].Activity, snaps[0].Unsaved)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		snaps, err := leaseReaderWith(mock, "proj-1", stateDir, factory, ops.LeaseHost{}, leaseStatusTimeout)(context.Background())
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if len(snaps) != 1 || snaps[0].Alias != "devpool-3" || snaps[0].State != ops.LeaseStateHeld || snaps[0].Unverified {
+			t.Fatalf("snapshots = %+v, want devpool-3 held, confirmed by its orchestrator", snaps)
+		}
+		if snaps[0].Activity != nil || snaps[0].Unsaved != nil {
+			t.Errorf("the reader read the checkout: activity %+v unsaved %+v", snaps[0].Activity, snaps[0].Unsaved)
+		}
+	})
 }
 
 // TestEnvelope_OtherToolsCarryNoLeaseActivity: a tool other than zerops_lease

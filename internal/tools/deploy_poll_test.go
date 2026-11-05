@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -257,23 +258,25 @@ func TestPollDeployBuild_NamesTheBuildItFollowed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client := platform.NewMock().WithAppVersionEvents([]platform.AppVersionEvent{{
-				ID: "av-ours", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: tt.status, Sequence: 1,
-			}})
-			ctx := t.Context()
-			if tt.giveUp {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
-				defer cancel()
-			}
-			result := &ops.DeployResult{Status: "BUILD_TRIGGERED", TargetService: "app", TargetServiceID: "svc-1"}
-			pollDeployBuild(ctx, client, "proj-1", result, nil, nil, nil, "", "")
-			if result.AppVersionID != "av-ours" {
-				t.Errorf("AppVersionID = %q, want av-ours", result.AppVersionID)
-			}
-			if result.Status != tt.wantStatus || result.TimedOut != tt.wantTimedOut {
-				t.Errorf("status = %s timedOut = %v, want %s %v", result.Status, result.TimedOut, tt.wantStatus, tt.wantTimedOut)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				client := platform.NewMock().WithAppVersionEvents([]platform.AppVersionEvent{{
+					ID: "av-ours", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: tt.status, Sequence: 1,
+				}})
+				ctx := t.Context()
+				if tt.giveUp {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
+					defer cancel()
+				}
+				result := &ops.DeployResult{Status: "BUILD_TRIGGERED", TargetService: "app", TargetServiceID: "svc-1"}
+				pollDeployBuild(ctx, client, "proj-1", result, nil, nil, nil, "", "")
+				if result.AppVersionID != "av-ours" {
+					t.Errorf("AppVersionID = %q, want av-ours", result.AppVersionID)
+				}
+				if result.Status != tt.wantStatus || result.TimedOut != tt.wantTimedOut {
+					t.Errorf("status = %s timedOut = %v, want %s %v", result.Status, result.TimedOut, tt.wantStatus, tt.wantTimedOut)
+				}
+			})
 		})
 	}
 }

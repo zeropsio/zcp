@@ -5,10 +5,12 @@ package tools
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -986,7 +988,6 @@ type deadlineSSH struct {
 	mu      sync.Mutex
 	bound   time.Duration
 	bounded bool
-	waited  bool
 }
 
 func (s *deadlineSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
@@ -997,13 +998,7 @@ func (s *deadlineSSH) ExecSSH(ctx context.Context, hostname, command string) ([]
 		s.mu.Unlock()
 		s.once.Do(func() { close(s.started) })
 	} else {
-		select {
-		case <-s.started:
-		case <-time.After(3 * time.Second):
-			s.mu.Lock()
-			s.waited = true
-			s.mu.Unlock()
-		}
+		<-s.started
 	}
 	return s.labSSH.ExecSSH(ctx, hostname, command)
 }
@@ -1029,7 +1024,15 @@ func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T)
 	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
 		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, ssh, lab.rt, "")
 
-	text := getTextContent(t, callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"}))
+	client := lab.hq.srv.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	client.Transport = transport
+	var result *mcp.CallToolResult
+	synctest.Test(t, func(t *testing.T) {
+		result = callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"})
+	})
+	text := getTextContent(t, result)
 
 	if !strings.Contains(text, "checkoutOrigin=") {
 		t.Fatalf("status names no checkout origin:\n%s", text)
@@ -1038,9 +1041,6 @@ func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T)
 	defer ssh.mu.Unlock()
 	if !ssh.bounded || ssh.bound > 10*time.Second {
 		t.Errorf("the origin read is bounded=%v by %s, want at most 10s", ssh.bounded, ssh.bound)
-	}
-	if ssh.waited {
-		t.Error("the repository's read waited out the origin read: they run one after the other")
 	}
 }
 

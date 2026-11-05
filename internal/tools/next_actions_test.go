@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -428,10 +429,12 @@ func TestDeployNextActions_AServerStillStartingWhenTheWaitEndsIsNamedWithWhenToC
 	c := devservertest.NewSupervised(decl)
 	c.Settle = map[string]int{"customers": 1000}
 	c.Redeploy()
-	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond) // the wait ends before customers settles
-	defer cancel()
-
-	got := deployNextActionsFor(ctx, c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	var got string
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond) // the wait ends before customers settles
+		defer cancel()
+		got = deployNextActionsFor(ctx, c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	})
 
 	for _, want := range []string{
 		"gateway running",

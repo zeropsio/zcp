@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -211,11 +212,10 @@ type standupSSH struct {
 	// collide names dev halves whose checkout already holds files main carries.
 	collide map[string]bool
 	// together names the service ids whose pushes must be in flight at
-	// once: each waits for the others, and one that waits in vain is apart.
+	// once: each waits for the others to enter.
 	together map[string]bool
 	arrived  map[string]bool
 	allIn    chan struct{}
-	apart    []string
 	// volumeFilled is a variant-B code volume that holds the repository.
 	volumeFilled bool
 	// zeropsYAML is, by dev half, the zerops.yaml its commits carry when it
@@ -299,7 +299,7 @@ func (s *standupSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Du
 }
 
 // meet holds a push to one of the together ids until every one of them is in
-// flight, or records it as apart once that does not happen within a second.
+// flight. A serial deployment cannot pass this barrier.
 func (s *standupSSH) meet(id string) {
 	s.mu.Lock()
 	if !s.together[id] {
@@ -312,13 +312,7 @@ func (s *standupSSH) meet(id string) {
 	}
 	allIn := s.allIn
 	s.mu.Unlock()
-	select {
-	case <-allIn:
-	case <-time.After(time.Second):
-		s.mu.Lock()
-		s.apart = append(s.apart, id)
-		s.mu.Unlock()
-	}
+	<-allIn
 }
 
 // expectTogether makes the pushes to ids meet (meet).
@@ -461,16 +455,16 @@ type importingClient struct {
 	reads int
 	// stages are the lists answered in turn; the last one stays.
 	stages [][]platform.ServiceStack
-	// firstRead is when the list was first read.
-	firstRead time.Time
+	// onFirstRead reports the first list to tests checking import ordering.
+	onFirstRead func()
 	// pushes carries the project's push (the fixture makes it).
 	pushes chan struct{}
 }
 
 func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	c.mu.Lock()
-	if c.firstRead.IsZero() {
-		c.firstRead = time.Now()
+	if c.reads == 0 && c.onFirstRead != nil {
+		c.onFirstRead()
 	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
@@ -1183,24 +1177,26 @@ func withoutService(services []platform.ServiceStack, hostname string) []platfor
 // wait at all when none was sent.
 func TestStandupProgress_TheAnswerNeverFollowsANotificationAtOnce(t *testing.T) {
 	t.Parallel()
-	silent := newStandupProgress(func(string, float64, float64) {})
-	start := time.Now()
-	silent.quiesce(context.Background())
-	if time.Since(start) > 100*time.Millisecond {
-		t.Error("a stand-up that sent no notification must not wait")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		silent := newStandupProgress(func(string, float64, float64) {})
+		start := time.Now()
+		silent.quiesce(context.Background())
+		if elapsed := time.Since(start); elapsed != 0 {
+			t.Errorf("a stand-up that sent no notification waited %s", elapsed)
+		}
 
-	var got []float64
-	spoken := newStandupProgress(func(_ string, progress, _ float64) { got = append(got, progress) })
-	spoken.say("one")
-	spoken.callback()("a build poll's own percentage", 97, 100)
-	spoken.quiesce(context.Background())
-	if since := time.Since(spoken.last); since < standupProgressGap {
-		t.Errorf("answered %s after the last notification, want at least %s", since, standupProgressGap)
-	}
-	if !slices.Equal(got, []float64{1, 2}) {
-		t.Errorf("progress = %v, want it to grow by one per notification", got)
-	}
+		var got []float64
+		spoken := newStandupProgress(func(_ string, progress, _ float64) { got = append(got, progress) })
+		spoken.say("one")
+		spoken.callback()("a build poll's own percentage", 97, 100)
+		spoken.quiesce(context.Background())
+		if since := time.Since(spoken.last); since != standupProgressGap {
+			t.Errorf("answered %s after the last notification, want %s", since, standupProgressGap)
+		}
+		if !slices.Equal(got, []float64{1, 2}) {
+			t.Errorf("progress = %v, want it to grow by one per notification", got)
+		}
+	})
 }
 
 // TestStandup_WaitsForTheRuntimesTheBrowserIsImporting: the browser imports
@@ -1468,9 +1464,6 @@ func TestStandup_ReturnsOnceDevelopmentIsUp(t *testing.T) {
 			if !slices.Equal(sorted(got), tt.wantPushes) {
 				t.Errorf("deploys = %v, want %v", got, tt.wantPushes)
 			}
-			if len(f.ssh.apart) > 0 {
-				t.Errorf("the dev halves did not build at once: %v waited alone", f.ssh.apart)
-			}
 			for _, edge := range tt.wantBefore {
 				if slices.Index(got, edge[0]) > slices.Index(got, edge[1]) {
 					t.Errorf("%q deployed before %q: %v", edge[1], edge[0], got)
@@ -1597,9 +1590,9 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 	}
 }
 
-// TestStandup_TheRecordNeverSaysDoneBetweenItsCalls samples the section from
-// the first call's start until the second call has returned: it says running
-// throughout, never done between the development and the stages.
+// TestStandup_TheRecordNeverSaysDoneBetweenItsCalls records every committed
+// section: it says running throughout, never done between the development
+// and the stages.
 func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
@@ -1607,35 +1600,24 @@ func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 		mu     sync.Mutex
 		states []string
 	)
-	sample := func() {
-		if st, err := mate.ReadStatus(f.statusPath); err == nil {
+	f.status.write = func(path string, change func(*mate.StandupStatus)) error {
+		var state string
+		err := mate.UpdateStandup(path, func(st *mate.StandupStatus) {
+			change(st)
+			state = st.State
+		})
+		if err == nil {
 			mu.Lock()
-			if n := len(states); n == 0 || states[n-1] != st.Standup.State {
-				states = append(states, st.Standup.State)
+			if n := len(states); n == 0 || states[n-1] != state {
+				states = append(states, state)
 			}
 			mu.Unlock()
 		}
+		return err
 	}
-	stop := make(chan struct{})
-	sampled := make(chan struct{})
-	go func() {
-		defer close(sampled)
-		for {
-			sample()
-			select {
-			case <-stop:
-				return
-			case <-time.After(time.Millisecond):
-			}
-		}
-	}()
 	f.run(t)
 	f.devsDeployed()
-	time.Sleep(50 * time.Millisecond) // the model starts the dev servers
 	f.run(t)
-	close(stop)
-	<-sampled
-	sample()
 	mu.Lock()
 	defer mu.Unlock()
 	if !slices.Equal(states, []string{mate.StandupRunning, mate.StandupDone}) {
@@ -1696,31 +1678,19 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 				present = withoutService(f.services, "nextstorestage")
 			}
 			f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{present}}
-			var finishedAt time.Time
-			finished := make(chan struct{})
+			var result *mcp.CallToolResult
+			var body standupResponse
 			if tt.finishWith != nil {
-				go func() {
-					defer close(finished)
-					time.Sleep(80 * time.Millisecond)
-					finishedAt = time.Now()
-					_ = mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = *tt.finishWith })
-				}()
+				result, body = runStandupAfterImport(t, f, func() error {
+					return mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = *tt.finishWith })
+				})
 			} else {
-				close(finished)
+				result, body = runStandupWithoutImportWait(t, f)
 			}
-			start := time.Now()
-			result, body := f.run(t)
-			<-finished
 			if result.IsError {
 				t.Fatalf("stand-up: %s", getTextContent(t, result))
 			}
 			if tt.wantWaited {
-				f.importing.mu.Lock()
-				firstRead := f.importing.firstRead
-				f.importing.mu.Unlock()
-				if firstRead.IsZero() || firstRead.Before(finishedAt) {
-					t.Errorf("the stand-up read the project at +%s, before the import finished at +%s", firstRead.Sub(start), finishedAt.Sub(start))
-				}
 				if got := body.service(t, "nextstorestage"); got.Failed != "" {
 					t.Errorf("nextstorestage after the wait = %+v", got)
 				}
@@ -1729,9 +1699,6 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 				if got := body.service(t, "nextstorestage"); !strings.Contains(got.Failed, tt.wantFail) {
 					t.Errorf("nextstorestage.failed = %q, want it to carry %q", got.Failed, tt.wantFail)
 				}
-			}
-			if !tt.wantWaited && time.Since(start) > time.Second {
-				t.Errorf("the stand-up waited %s on an import it should not wait for", time.Since(start))
 			}
 		})
 	}
@@ -1914,14 +1881,10 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	result, _ := f.run(t)
+	result, _ := runStandupWithoutImportWait(t, f)
 	text := getTextContent(t, result)
 	if !result.IsError || !strings.Contains(text, "Finish setup") {
 		t.Errorf("want the Finish-setup refusal, got: %s", text)
-	}
-	if took := time.Since(start); took > 2*standupProgressGap {
-		t.Errorf("answered after %s, want at once", took)
 	}
 	if len(f.ssh.pushes()) != 0 || len(f.hq.asked) != 0 {
 		t.Error("nothing is touched while the project is not closed off")
@@ -1944,23 +1907,10 @@ func TestStandup_ClosedOffWhileTheImportStillSaysWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{f.services}}
-	var finishedAt time.Time
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		time.Sleep(80 * time.Millisecond)
-		finishedAt = time.Now()
-		_ = mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) { r.State, r.Error = mate.RuntimesDone, "" })
-	}()
-	result, body := f.run(t)
-	<-finished
+	result, body := runStandupAfterImport(t, f, func() error {
+		return mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) { r.State, r.Error = mate.RuntimesDone, "" })
+	})
 	if result.IsError || body.StandUp != standupDevelopment {
 		t.Fatalf("stand-up = %s", getTextContent(t, result))
-	}
-	f.importing.mu.Lock()
-	firstRead := f.importing.firstRead
-	f.importing.mu.Unlock()
-	if firstRead.Before(finishedAt) {
-		t.Error("the stand-up read the project before the import it found starting had finished")
 	}
 }

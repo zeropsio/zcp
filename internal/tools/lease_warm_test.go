@@ -245,7 +245,7 @@ func TestLeaseTool_Acquire_TakesTheWarmOne_PreparesAnother(t *testing.T) {
 	t.Parallel()
 	orch := &warmPoolOrchestrator{max: 3}
 	orch.add(1)
-	srv, _ := leaseToolServer(t, orch)
+	srv, _, wait := leaseToolServerSSHWithWait(t, orch, nil)
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-a"})
 	text := getTextContent(t, res)
@@ -256,20 +256,13 @@ func TestLeaseTool_Acquire_TakesTheWarmOne_PreparesAnother(t *testing.T) {
 		t.Errorf("acquire = %+v, want devpool-1 with a warm container being prepared", got.Leases)
 	}
 
-	var warm ops.LeasePoolWarm
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		status := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
-		got := warmLeaseResultOf(t, getTextContent(t, status))
-		if len(got.Warm) == 1 && got.Warm[0].Last != nil && got.Warm[0].Last.Outcome == ops.LeaseWarmCreated {
-			warm = got.Warm[0]
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the background create never reported: warm = %+v", got.Warm)
-		}
-		time.Sleep(20 * time.Millisecond)
+	wait()
+	status := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
+	got := warmLeaseResultOf(t, getTextContent(t, status))
+	if len(got.Warm) != 1 || got.Warm[0].Last == nil || got.Warm[0].Last.Outcome != ops.LeaseWarmCreated {
+		t.Fatalf("the background create was not reported: warm = %+v", got.Warm)
 	}
+	warm := got.Warm[0]
 	if warm.Ready == nil || *warm.Ready != 1 || warm.Last.Count != 1 {
 		t.Errorf("warm = %+v (last %+v), want 1 ready, last created 1", warm, warm.Last)
 	}
@@ -319,30 +312,23 @@ func TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository(t *testing.T) {
 	orch := &warmPoolOrchestrator{max: 3}
 	orch.add(1)
 	ssh := &warmCloneHostSSH{}
-	srv, _ := leaseToolServerSSH(t, orch, ssh)
+	srv, _, wait := leaseToolServerSSHWithWait(t, orch, ssh)
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-a"})
 	if text := getTextContent(t, res); res.IsError {
 		t.Fatalf("acquire: %s", text)
 	}
 
-	var warm ops.LeasePoolWarm
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		text := getTextContent(t, callTool(t, srv, "zerops_lease", map[string]any{"action": "status"}))
-		if strings.Contains(text, leaseTestToken) {
-			t.Fatalf("status carries the pool's bearer:\n%s", text)
-		}
-		got := warmLeaseResultOf(t, text)
-		if len(got.Warm) == 1 && got.Warm[0].Clone != nil {
-			warm = got.Warm[0]
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("status never reported the warm clone: %+v", got.Warm)
-		}
-		time.Sleep(20 * time.Millisecond)
+	wait()
+	text := getTextContent(t, callTool(t, srv, "zerops_lease", map[string]any{"action": "status"}))
+	if strings.Contains(text, leaseTestToken) {
+		t.Fatalf("status carries the pool's bearer:\n%s", text)
 	}
+	got := warmLeaseResultOf(t, text)
+	if len(got.Warm) != 1 || got.Warm[0].Clone == nil {
+		t.Fatalf("status did not report the warm clone: %+v", got.Warm)
+	}
+	warm := got.Warm[0]
 	if warm.Clone.Outcome != ops.LeaseWarmCloneStarted || warm.Clone.Container != "node-id-2.runtime.devpool.zerops" {
 		t.Errorf("clone = %+v, want started in the created node-id-2", warm.Clone)
 	}
@@ -363,30 +349,43 @@ func TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository(t *testing.T) {
 // launch here answers only once the test's body has ended.
 func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *testing.T) {
 	t.Parallel()
-	var started, answered atomic.Bool
+	var answered atomic.Bool
+	started, allowClone := make(chan struct{}), make(chan struct{})
+	waitStarted, afterRemoval := make(chan struct{}), make(chan struct{})
+	var wait func()
 	// Registered before the server's cleanups, so it runs after them: after
 	// the wait, the state directory's removal and the orchestrator's close.
 	t.Cleanup(func() {
-		switch {
-		case !started.Load():
-			t.Error("the forced release started no warm clone, so this test no longer covers background work")
-		case !answered.Load():
-			t.Error("the release's background warm clone was still running when the test's state directory was removed")
+		close(afterRemoval)
+		if wait != nil {
+			wait() // Also join the clone if a broken cleanup never waited.
+		}
+		select {
+		case <-waitStarted:
+		default:
+			t.Error("the registered cleanup did not wait for the background warm clone before removing the state directory")
+		}
+		if !answered.Load() {
+			t.Error("the forced release started no warm clone")
 		}
 	})
-	bodyEnded := make(chan struct{})
 	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
 		if strings.Contains(command, "@@zcp-warm started") {
-			started.Store(true)
-			<-bodyEnded
-			time.Sleep(100 * time.Millisecond)
+			close(started)
+			<-allowClone
 			answered.Store(true)
 		}
 		return nil, nil
 	}}
-	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
-	// Registered after the server's cleanups, so it runs first.
-	t.Cleanup(func() { close(bodyEnded) })
+	srv, _, complete := leaseToolServerSSHWithWait(t, &fakeOrchestrator{}, ssh, func() { close(waitStarted) })
+	wait = complete
+	go func() {
+		select {
+		case <-waitStarted:
+		case <-afterRemoval:
+		}
+		close(allowClone)
+	}()
 
 	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
 		t.Fatalf("acquire: %s", getTextContent(t, res))
@@ -396,6 +395,7 @@ func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *test
 	if res.IsError || !strings.Contains(text, "kept as the pool's warm container") {
 		t.Fatalf("release = (error %v) %s, want the container kept as the pool's warm one", res.IsError, text)
 	}
+	<-started
 }
 
 // TestNoRegisterLeaseInTests: no test of this package registers zerops_lease

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -25,14 +26,16 @@ import (
 // for hold to close when hold is set, and records whether its context was
 // still alive.
 type followedPasses struct {
-	t      *testing.T
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	passes int
-	lines  []string
-	hold   chan struct{}
-	dead   []bool
-	said   []string
+	t         *testing.T
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	passes    int
+	lines     []string
+	hold      chan struct{}
+	started   chan struct{}
+	startOnce sync.Once
+	dead      []bool
+	said      []string
 }
 
 func newFollowedPasses(t *testing.T, stateDir string, quiet time.Duration) (*RecipeFollower, *followedPasses) {
@@ -56,6 +59,9 @@ func (p *followedPasses) pass(ctx context.Context) string {
 		line = p.lines[min(n, len(p.lines)-1)]
 	}
 	p.mu.Unlock()
+	if p.started != nil {
+		p.startOnce.Do(func() { close(p.started) })
+	}
 	if hold != nil {
 		<-hold
 	}
@@ -75,16 +81,7 @@ func (p *followedPasses) say(line string) {
 // did.
 func (p *followedPasses) settle() int {
 	p.t.Helper()
-	done := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		p.t.Fatal("the follower's passes did not end")
-	}
+	p.wg.Wait()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.passes
@@ -179,7 +176,7 @@ func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			stateDir := pairStateDir(t)
-			f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
+			f, passes := newFollowedPasses(t, stateDir, 0)
 			var during func()
 			if host, setup := tt.recorded[0], tt.recorded[1]; host != "" {
 				during = func() {
@@ -205,19 +202,21 @@ func TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads(t *testing.T) {
 func TestRecipeFollower_ABurst_IsOnePass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, stateDir, 50*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		f, passes := newFollowedPasses(t, stateDir, 50*time.Millisecond)
 
-	for _, tool := range []string{"zerops_import", "zerops_import", "zerops_delete", "zerops_import"} {
-		call(t, f, tool, nil, nil, false)
-	}
-	call(t, f, "zerops_env", map[string]any{"action": "set", "project": true, "variables": []string{"A=b"}}, nil, false)
+		for _, tool := range []string{"zerops_import", "zerops_import", "zerops_delete", "zerops_import"} {
+			call(t, f, tool, nil, nil, false)
+		}
+		call(t, f, "zerops_env", map[string]any{"action": "set", "project": true, "variables": []string{"A=b"}}, nil, false)
 
-	if got := passes.settle(); got != 1 {
-		t.Errorf("a burst of five calls ran %d passes, want 1", got)
-	}
-	if slices.Contains(passes.dead, true) {
-		t.Error("a pass ran with its context already ended")
-	}
+		if got := passes.settle(); got != 1 {
+			t.Errorf("a burst of five calls ran %d passes, want 1", got)
+		}
+		if slices.Contains(passes.dead, true) {
+			t.Error("a pass ran with its context already ended")
+		}
+	})
 }
 
 // TestRecipeFollower_ACallDuringAPass_IsOneMorePass: a call that lands while
@@ -226,31 +225,22 @@ func TestRecipeFollower_ABurst_IsOnePass(t *testing.T) {
 func TestRecipeFollower_ACallDuringAPass_IsOneMorePass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
-	passes.hold = make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
+		passes.hold = make(chan struct{})
+		passes.started = make(chan struct{})
 
-	call(t, f, "zerops_import", nil, nil, false)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		passes.mu.Lock()
-		started := passes.passes
-		passes.mu.Unlock()
-		if started == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the first pass never started")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	for range 3 {
 		call(t, f, "zerops_import", nil, nil, false)
-	}
-	close(passes.hold)
+		<-passes.started
+		for range 3 {
+			call(t, f, "zerops_import", nil, nil, false)
+		}
+		close(passes.hold)
 
-	if got := passes.settle(); got != 2 {
-		t.Errorf("three calls during a pass made %d passes in all, want 2", got)
-	}
+		if got := passes.settle(); got != 2 {
+			t.Errorf("three calls during a pass made %d passes in all, want 2", got)
+		}
+	})
 }
 
 // TestRecipeFollower_ServerStopped_RunsNoPass: a pass still waiting for the
@@ -259,17 +249,19 @@ func TestRecipeFollower_ACallDuringAPass_IsOneMorePass(t *testing.T) {
 func TestRecipeFollower_ServerStopped_RunsNoPass(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	ctx, stop := context.WithCancel(t.Context())
-	passes := &followedPasses{t: t}
-	f := passes.follower(ctx, stateDir, time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, stop := context.WithCancel(t.Context())
+		passes := &followedPasses{t: t}
+		f := passes.follower(ctx, stateDir, time.Hour)
 
-	call(t, f, "zerops_import", nil, nil, false)
-	stop()
-	call(t, f, "zerops_import", nil, nil, false)
+		call(t, f, "zerops_import", nil, nil, false)
+		stop()
+		call(t, f, "zerops_import", nil, nil, false)
 
-	if got := passes.settle(); got != 0 {
-		t.Errorf("a stopped server ran %d passes, want none", got)
-	}
+		if got := passes.settle(); got != 0 {
+			t.Errorf("a stopped server ran %d passes, want none", got)
+		}
+	})
 }
 
 // TestRecipeFollower_AnOutcome_SaidOnce: what a pass says goes to the log
@@ -279,7 +271,7 @@ func TestRecipeFollower_ServerStopped_RunsNoPass(t *testing.T) {
 func TestRecipeFollower_AnOutcome_SaidOnce(t *testing.T) {
 	t.Parallel()
 	stateDir := pairStateDir(t)
-	f, passes := newFollowedPasses(t, stateDir, time.Millisecond)
+	f, passes := newFollowedPasses(t, stateDir, 0)
 	passes.lines = []string{"the recipe waits for appdev", "the recipe waits for appdev", "", "the recipe waits for appdev", "change #1 carries the update"}
 
 	for range passes.lines {
@@ -334,7 +326,7 @@ func (l *hqLab) followRecipe(client platform.Client, tool string) []string {
 		mu.Lock()
 		defer mu.Unlock()
 		said = append(said, line)
-	}, time.Millisecond, time.Second)
+	}, 0, time.Second)
 	f.Watch(tool, nil)(false)
 	wg.Wait()
 	mu.Lock()

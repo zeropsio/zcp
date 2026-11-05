@@ -2,15 +2,136 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// heldBootDeadline lets the test decide when the import observation expires.
+func heldBootDeadline(d *standupDeps) func() {
+	var expire func()
+	d.bootContext = func(ctx context.Context, _ time.Duration, cause error) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		expire = func() { cancel(cause) }
+		return ctx, func() { cancel(context.Canceled) }
+	}
+	return func() { expire() }
+}
+
+func standupBody(t *testing.T, result *mcp.CallToolResult) standupResponse {
+	t.Helper()
+	var body standupResponse
+	if !result.IsError {
+		if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
+			t.Fatalf("parse stand-up result: %v", err)
+		}
+	}
+	return body
+}
+
+// runStandupAfterImport holds the consumer at two successive observations of
+// the in-flight import. The status is finished only after both observations,
+// so a project read before the import finishes is an observable violation.
+func runStandupAfterImport(t *testing.T, f *standupFixture, finish func() error) (*mcp.CallToolResult, standupResponse) {
+	t.Helper()
+	d := f.deps(t)
+	heldBootDeadline(&d)
+	wake := make(chan struct{})
+	d.bootWatch = func(context.Context, string) (<-chan struct{}, error) { return wake, nil }
+	read := make(chan struct{}, 1)
+	f.importing.onFirstRead = func() { read <- struct{}{} }
+	waiting, resume := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	defer func() { cancel(); <-done }()
+	progress := newStandupProgress(func(message string, _, _ float64) {
+		if strings.HasPrefix(message, "waiting for the container's import") {
+			select {
+			case waiting <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case <-resume:
+			case <-ctx.Done():
+			}
+		}
+	})
+	progress.status = f.status
+	result := make(chan *mcp.CallToolResult, 1)
+	go func() { defer close(done); result <- d.run(ctx, progress) }()
+	for i := range 2 {
+		select {
+		case <-waiting:
+		case got := <-result:
+			t.Fatalf("stand-up returned before waiting for the import: %s", getTextContent(t, got))
+		}
+		select {
+		case <-read:
+			t.Error("the stand-up read the project before the import finished")
+		default:
+		}
+		if i == 0 {
+			resume <- struct{}{}
+			select {
+			case wake <- struct{}{}:
+			case got := <-result:
+				t.Fatalf("stand-up stopped while the import was still running: %s", getTextContent(t, got))
+			}
+		}
+	}
+	if err := finish(); err != nil {
+		t.Fatal(err)
+	}
+	resume <- struct{}{}
+	select {
+	case wake <- struct{}{}:
+	case got := <-result:
+		t.Fatalf("stand-up stopped before observing the finished import: %s", getTextContent(t, got))
+	}
+	got := <-result
+	select {
+	case <-read:
+	default:
+		t.Error("the stand-up never read the project after the import finished")
+	}
+	return got, standupBody(t, got)
+}
+
+// A status that cannot start importing must return without entering the wait.
+func runStandupWithoutImportWait(t *testing.T, f *standupFixture) (*mcp.CallToolResult, standupResponse) {
+	t.Helper()
+	d := f.deps(t)
+	heldBootDeadline(&d)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	defer func() { cancel(); <-done }()
+	waiting := make(chan struct{}, 1)
+	progress := newStandupProgress(func(message string, _, _ float64) {
+		if strings.HasPrefix(message, "waiting for the container's import") {
+			waiting <- struct{}{}
+		}
+	})
+	progress.status = f.status
+	result := make(chan *mcp.CallToolResult, 1)
+	go func() { defer close(done); result <- d.run(ctx, progress) }()
+	var got *mcp.CallToolResult
+	select {
+	case got = <-result:
+	case <-waiting:
+		cancel()
+		got = <-result
+		t.Error("the stand-up waited for an import that was not in flight")
+	}
+	return got, standupBody(t, got)
+}
 
 // TestStandup_BootImportFollowsTheStatusFile: the wait for the container's
 // import reads its progress when the importing process puts the status file
@@ -30,7 +151,7 @@ func TestStandup_BootImportFollowsTheStatusFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		d := f.deps(t)
-		d.bootWait = time.Hour
+		heldBootDeadline(&d)
 		said := make(chan string, 16)
 		progress := newStandupProgress(func(message string, _, _ float64) { said <- message })
 		ended := make(chan bootImportResult, 1)
@@ -88,9 +209,7 @@ func TestStandup_BootImportDecisions(t *testing.T) {
 					}
 					f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{present}}
 					d := f.deps(t)
-					if !decision.cancel {
-						d.bootWait = 10 * time.Millisecond
-					}
+					expire := heldBootDeadline(&d)
 					ctx, cancel := context.WithCancel(context.Background())
 					defer cancel()
 					waited := false
@@ -99,6 +218,8 @@ func TestStandup_BootImportDecisions(t *testing.T) {
 							waited = true
 							if decision.cancel {
 								cancel()
+							} else {
+								expire()
 							}
 						}
 					})

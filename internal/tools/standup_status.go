@@ -33,6 +33,8 @@ type standupStatus struct {
 	path string
 	mu   sync.Mutex
 	now  func() time.Time
+	// write supplies a status-write receipt to tests; nil uses the real writer.
+	write func(string, func(*mate.StandupStatus)) error
 }
 
 func newStandupStatus(path string) *standupStatus {
@@ -48,7 +50,11 @@ func (s *standupStatus) update(change func(*mate.StandupStatus)) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := mate.UpdateStandup(s.path, change); err != nil {
+	write := s.write
+	if write == nil {
+		write = mate.UpdateStandup
+	}
+	if err := write(s.path, change); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up status: %v\n", err)
 	}
 }
@@ -331,10 +337,18 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 	if d.statusPath == "" {
 		return bootImportResult{}
 	}
-	ctx, cancel := context.WithTimeoutCause(ctx, d.bootWait, errBootWaitOver)
+	deadline := d.bootContext
+	if deadline == nil {
+		deadline = context.WithTimeoutCause
+	}
+	ctx, cancel := deadline(ctx, d.bootWait, errBootWaitOver)
 	defer cancel()
 	// Watching before the first read: a change between the two wakes it.
-	changed, err := watchReplacedFile(ctx, d.statusPath)
+	watch := d.bootWatch
+	if watch == nil {
+		watch = watchReplacedFile
+	}
+	changed, err := watch(ctx, d.statusPath)
 	if err != nil {
 		return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
 	}

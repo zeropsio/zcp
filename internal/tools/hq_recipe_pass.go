@@ -38,6 +38,13 @@ const recipePassPoll = 100 * time.Millisecond
 // errRecipePassRunning is another pass holding the recipe past the wait.
 var errRecipePassRunning = errors.New("another group recipe pass is running on this Mate")
 
+// recipePassWaitControl lets tests observe lock contention and drive the
+// wait deadline without a wall-clock race.
+type recipePassWaitControl interface {
+	recipePassDeadline(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	recipePassBlocked()
+}
+
 // holdRecipePass takes the Mate's one recipe pass, waiting for another to
 // finish until ctx ends or recipePassWait passes — errRecipePassRunning
 // then. release lets go. A holder never takes it again while it has it: a
@@ -53,7 +60,12 @@ func holdRecipePass(ctx context.Context, stateDir string) (release func(), err e
 	if err != nil {
 		return nil, fmt.Errorf("recipe pass lock: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, recipePassWait)
+	control, controlled := ctx.(recipePassWaitControl)
+	deadline := context.WithTimeout
+	if controlled {
+		deadline = control.recipePassDeadline
+	}
+	ctx, cancel := deadline(ctx, recipePassWait)
 	defer cancel()
 	for {
 		held, err := tryLockFile(f)
@@ -66,6 +78,9 @@ func holdRecipePass(ctx context.Context, stateDir string) (release func(), err e
 				_ = unlockFile(f)
 				_ = f.Close()
 			}, nil
+		}
+		if controlled {
+			control.recipePassBlocked()
 		}
 		select {
 		case <-ctx.Done():

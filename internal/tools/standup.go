@@ -89,6 +89,10 @@ type standupDeps struct {
 	// bootWait bounds the wait for that import.
 	statusPath string
 	bootWait   time.Duration
+	// bootContext and bootWatch let tests drive the import deadline and file
+	// change receipts without racing the machine's clock or filesystem.
+	bootContext func(context.Context, time.Duration, error) (context.Context, context.CancelFunc)
+	bootWatch   func(context.Context, string) (<-chan struct{}, error)
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.

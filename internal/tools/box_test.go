@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -167,6 +168,14 @@ func boxToolDeps(mock *platform.Mock, box ops.BoxFactory) ops.BoxDeps {
 	}
 }
 
+// The setup budgets advance virtually while these in-memory tool calls run.
+func callBoxTool(t *testing.T, srv *mcp.Server, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	var result *mcp.CallToolResult
+	synctest.Test(t, func(t *testing.T) { result = callTool(t, srv, name, args) })
+	return result
+}
+
 type boxToolResponse struct {
 	Action    string               `json:"action"`
 	BoxSetup  *ops.BoxSetupResult  `json:"boxSetup"`
@@ -179,7 +188,7 @@ func TestBoxTool_Setup_FinishesAFreshWorkspace(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	registerBox(srv, boxToolDeps(boxToolMock("https://proxy.example/service-api"), fake.factory()))
 
-	res := callTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})
+	res := callBoxTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})
 	text := getTextContent(t, res)
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", text)
@@ -201,7 +210,7 @@ func TestBoxTool_Setup_FinishesAFreshWorkspace(t *testing.T) {
 	}
 
 	// A second setup finds everything in place and changes nothing.
-	again := callTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})
+	again := callBoxTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})
 	if again.IsError {
 		t.Fatalf("second setup: %s", getTextContent(t, again))
 	}
@@ -314,7 +323,7 @@ func TestImportTool_BoxSetup_OnlyForFinishedBoxes(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{}, withBoxSetupDeps(boxToolDeps(mock, fake.factory())))
 
-	res := callTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})
+	res := callBoxTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})
 	text := getTextContent(t, res)
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", text)
@@ -347,7 +356,7 @@ func TestImportTool_BoxSetupFailure_ImportStillSucceeds(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{}, withBoxSetupDeps(boxToolDeps(mock, fake.factory())))
 
-	res := callTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})
+	res := callBoxTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})
 	text := getTextContent(t, res)
 	if res.IsError {
 		t.Fatalf("a failed Box setup failed the import: %s", text)
@@ -414,15 +423,17 @@ func TestImportTool_BoxSetup_ResultNeverCarriesToken(t *testing.T) {
 	defer api.Close()
 
 	mock := boxImportMock(api.URL + "/service-api")
-	deps := boxToolDeps(mock, ops.NewBoxFactory(api.Client()))
+	client := api.Client()
+	client.Transport.(*http.Transport).DisableKeepAlives = true
+	deps := boxToolDeps(mock, ops.NewBoxFactory(client))
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{}, withBoxSetupDeps(deps))
 	registerBox(srv, deps)
 
 	printed := captureStdio(t, func() {
 		texts := []string{
-			getTextContent(t, callTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})),
-			getTextContent(t, callTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})),
+			getTextContent(t, callBoxTool(t, srv, "zerops_import", map[string]any{"content": boxImportYAML})),
+			getTextContent(t, callBoxTool(t, srv, "zerops_box", map[string]any{"action": "setup", "serviceHostname": boxToolHost})),
 			getTextContent(t, callTool(t, srv, "zerops_box", map[string]any{"action": "status", "serviceHostname": boxToolHost})),
 		}
 		for i, text := range texts {

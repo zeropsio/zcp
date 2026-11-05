@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -743,8 +744,9 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
 
-	result := callTool(t, srv, "zerops_deploy", map[string]any{
-		"targetService": "app",
+	var result *mcp.CallToolResult
+	synctest.Test(t, func(t *testing.T) {
+		result = callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "app"})
 	})
 
 	if result.IsError {

@@ -6,13 +6,18 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -40,7 +45,7 @@ const macFixtureHostNoNode = `{"name":"Ales's Mac mini","user":"ales","address":
 // stubMac puts an executable `mac` on PATH that prints stdout, writes stderr
 // and exits with code when called as `mac status --json`. It touches ran so a
 // test can tell whether zcp called it at all.
-func stubMac(t *testing.T, stdout, stderr string, code int, sleep bool) (ran string) {
+func stubMac(t *testing.T, stdout, stderr string, code int, hold bool) (ran, ready string) {
 	t.Helper()
 	dir := t.TempDir()
 	ran = filepath.Join(dir, "ran")
@@ -55,15 +60,41 @@ func stubMac(t *testing.T, stdout, stderr string, code int, sleep bool) (ran str
 	script := "#!/bin/sh\n" +
 		"touch '" + ran + "'\n" +
 		`[ "$*" = "status --json" ] || { echo "unexpected arguments: $*" >&2; exit 64; }` + "\n"
-	if sleep {
-		script += "exec sleep 10\n"
+	if hold {
+		ready = filepath.Join(dir, "ready")
+		gate := filepath.Join(dir, "hold")
+		if out, err := exec.CommandContext(t.Context(), "mkfifo", ready, gate).CombinedOutput(); err != nil {
+			t.Fatalf("make held mac pipes: %v\n%s", err, out)
+		}
+		script += "printf x > \"$(dirname \"$0\")/ready\"\nexec cat \"$(dirname \"$0\")/hold\"\n"
 	}
 	script += "cat '" + out + "'\ncat '" + errOut + "' >&2\nexit " + strconv.Itoa(code) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "mac"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":/usr/bin:/bin")
-	return ran
+	return ran, ready
+}
+
+// macDeadline expires only when the test has observed the child running. Its
+// earlier deadline makes the production WithTimeout inherit this context.
+type macDeadline struct {
+	context.Context //nolint:containedctx // test context supplies a controlled deadline
+	done            chan struct{}
+	expired         atomic.Bool
+	once            sync.Once
+}
+
+func (c *macDeadline) Deadline() (time.Time, bool) { return time.Time{}, true }
+func (c *macDeadline) Done() <-chan struct{}       { return c.done }
+func (c *macDeadline) Err() error {
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+func (c *macDeadline) expire() {
+	c.once.Do(func() { c.expired.Store(true); close(c.done) })
 }
 
 type macPairCase struct {
@@ -71,7 +102,7 @@ type macPairCase struct {
 	stdout  string
 	stderr  string
 	code    int
-	sleep   bool
+	hold    bool
 	noMac   bool
 	rt      runtime.Info
 	timeout time.Duration
@@ -154,31 +185,49 @@ func TestMacPair_GuidesEachStage_FromMateStatus(t *testing.T) {
 			want: []string{"Mate"},
 		},
 		{
-			name:  "mac hangs: bounded, reported as not answering",
-			sleep: true,
-			rt:    mate, timeout: 300 * time.Millisecond, isError: true,
+			name: "mac hangs: bounded, reported as not answering",
+			hold: true,
+			rt:   mate, timeout: 300 * time.Millisecond, isError: true,
 			want: []string{"did not answer"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var ran string
+			var ran, ready string
 			if tc.noMac {
 				t.Setenv("PATH", t.TempDir())
 			} else {
-				ran = stubMac(t, tc.stdout, tc.stderr, tc.code, tc.sleep)
+				ran, ready = stubMac(t, tc.stdout, tc.stderr, tc.code, tc.hold)
 			}
 			timeout := tc.timeout
 			if timeout == 0 {
 				timeout = 10 * time.Second
 			}
-			start := time.Now()
-			res, typed, err := macPair(context.Background(), tc.rt, timeout)
+			ctx := &macDeadline{Context: context.Background(), done: make(chan struct{})}
+			defer ctx.expire()
+			var res *mcp.CallToolResult
+			var typed any
+			var err error
+			if tc.hold {
+				done := make(chan struct{})
+				go func() { res, typed, err = macPair(ctx, tc.rt, timeout); close(done) }()
+				defer func() { ctx.expire(); <-done }()
+				f, openErr := os.Open(ready)
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				_, readErr := io.ReadAll(f)
+				_ = f.Close()
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				ctx.expire()
+				<-done
+			} else {
+				res, typed, err = macPair(ctx, tc.rt, timeout)
+			}
 			if err != nil || typed != nil {
 				t.Fatalf("want (result, nil, nil), got typed=%v err=%v", typed, err)
-			}
-			if tc.sleep && time.Since(start) > 5*time.Second {
-				t.Errorf("a hanging mac held the call for %s", time.Since(start))
 			}
 			text := getTextContent(t, res)
 			if res.IsError != tc.isError {

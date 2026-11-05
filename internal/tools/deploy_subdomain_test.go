@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -661,7 +662,9 @@ func TestEnsurePublicAccess_DevModeStatic_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	synctest.Test(t, func(t *testing.T) {
+		ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	})
 
 	if doer.calls == 0 {
 		t.Error("static runtime must still probe — nginx auto-serves; 502 in dev mode is a real problem there")
@@ -679,7 +682,9 @@ func TestEnsurePublicAccess_DevModePHPNginx_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	synctest.Test(t, func(t *testing.T) {
+		ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	})
 
 	if doer.calls == 0 {
 		t.Error("implicit-webserver must still probe — php-nginx auto-starts; 502 means the deploy is broken")
@@ -713,7 +718,9 @@ func TestEnsurePublicAccess_StageDynamic_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: autoEnableTestHostname, TargetServiceID: "svc-1"}
 
-	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, autoEnableTestHostname, result)
+	synctest.Test(t, func(t *testing.T) {
+		ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, autoEnableTestHostname, result)
+	})
 
 	if doer.calls == 0 {
 		t.Error("stage half of a standard pair must still probe — run.start runs the real app; 502 means the deploy is broken")
@@ -732,7 +739,9 @@ func TestEnsurePublicAccess_NoMeta_DynamicType_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	synctest.Test(t, func(t *testing.T) {
+		ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	})
 
 	if doer.calls == 0 {
 		t.Error("no-meta path must still probe (fail closed) — recipe-authoring / manual import has no mode info")

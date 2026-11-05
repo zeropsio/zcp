@@ -3,8 +3,10 @@
 package tools
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -30,7 +32,14 @@ func TestDescribeChange_WaitsWhileItsChangeIsHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, _ := lab.describeTitled("", "A footer on every page", describedWords)
+	client := lab.hq.srv.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	client.Transport = transport
+	var text string
+	synctest.Test(t, func(t *testing.T) {
+		text, _ = lab.describeTitled("", "A footer on every page", describedWords)
+	})
 	for _, want := range []string{"Nothing was written", "#1", "held", "describe-change"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the answer misses %q:\n%s", want, text)
