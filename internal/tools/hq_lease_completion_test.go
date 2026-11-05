@@ -104,6 +104,161 @@ func unsavedRefusalOf() error {
 	}
 }
 
+func TestFollowLeaseCompletion_Decisions_KeepLease(t *testing.T) {
+	// non-parallel: subtests reset one HQ server and the same lease records.
+	app := "app-1"
+	merged := hq.MateChange{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "fix-login", UpdatedAt: "2026-10-26T10:00:00Z"}
+	var mu sync.Mutex
+	var current hq.MateState
+	var responseStatus int
+	reads := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		reads++
+		if responseStatus != 0 {
+			http.Error(w, "HQ unavailable", responseStatus)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(current); err != nil {
+			t.Errorf("encode HQ state: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	stateDir := t.TempDir()
+	framePath := filepath.Join(stateDir, "changes.json")
+	repo := srv.URL + "/git/org-1/" + app + "/appdev"
+	fake := &fakeBranchRelease{t: t, stateDir: stateDir}
+	d := devGitDeps{
+		httpClient: srv.Client(), stateDir: stateDir, release: fake.release,
+		rt: runtime.Info{InContainer: true, MateEnabled: true, OrgID: "org-1", HQ: &runtime.HQLink{
+			Origin: srv.URL, ProjectID: "mate-1", Key: "test-key", ChangesPath: framePath,
+		}},
+	}
+	checkKept := func(t *testing.T, frame hq.MateChange, fresh hq.MateState, status int, wantRead bool) {
+		t.Helper()
+		writeHQLeaseRecord(t, stateDir, "hqpool", 4, repo, "fix-login")
+		fake.mu.Lock()
+		fake.calls = nil
+		fake.mu.Unlock()
+		mu.Lock()
+		current = fresh
+		responseStatus = status
+		reads = 0
+		mu.Unlock()
+		raw, err := json.Marshal(hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{frame}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(framePath, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		lines := followLeaseCompletion(t.Context(), d)
+
+		if got := fake.called(); len(got) != 0 {
+			t.Errorf("releases = %+v, want the branch kept", got)
+		}
+		if left := leaseRecordsLeft(t, stateDir); !slices.Equal(left, []string{"hqpool-4"}) {
+			t.Errorf("leases left = %v, want hqpool-4", left)
+		}
+		if len(lines) != 0 {
+			t.Errorf("lines = %q, want no release reported", lines)
+		}
+		mu.Lock()
+		gotReads := reads
+		mu.Unlock()
+		if wantRead && gotReads != 1 {
+			t.Errorf("HQ state reads = %d, want one", gotReads)
+		}
+	}
+
+	t.Run("a lease is kept when HQ names no settle time for its branch's change", func(t *testing.T) {
+		for _, tc := range []struct{ name, updatedAt string }{{"missing", ""}, {"unparseable", "not-a-time"}} {
+			t.Run(tc.name, func(t *testing.T) {
+				change := merged
+				change.UpdatedAt = tc.updatedAt
+				fresh := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{change}}
+				t.Run("file has no time", func(t *testing.T) { checkKept(t, change, fresh, 0, false) })
+				t.Run("file has a time", func(t *testing.T) { checkKept(t, merged, fresh, 0, true) })
+			})
+		}
+	})
+	t.Run("a lease is kept when HQ now lists an open change on its branch, whatever the changes file says", func(t *testing.T) {
+		for _, number := range []int{3, 5} {
+			t.Run(fmt.Sprintf("open change #%d", number), func(t *testing.T) {
+				open := merged
+				open.Number, open.State = number, hq.ChangeOpen
+				fresh := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{open, merged}}
+				checkKept(t, merged, fresh, 0, true)
+			})
+		}
+	})
+	t.Run("no current evidence keeps the lease", func(t *testing.T) {
+		otherApp := "app-2"
+		for _, tc := range []struct {
+			name   string
+			fresh  hq.MateState
+			status int
+		}{
+			{name: "HQ unavailable", status: http.StatusServiceUnavailable},
+			{name: "Mate moved to another application", fresh: hq.MateState{AppID: &otherApp, Changes: []hq.MateChange{merged}}},
+			{name: "HQ no longer lists the change", fresh: hq.MateState{AppID: &app}},
+			{name: "HQ does not list every open change", fresh: hq.MateState{AppID: &app, Changes: []hq.MateChange{merged}}},
+		} {
+			t.Run(tc.name, func(t *testing.T) { checkKept(t, merged, tc.fresh, tc.status, true) })
+		}
+	})
+	t.Run("each group is checked after the previous release", func(t *testing.T) {
+		other := merged
+		other.Number, other.Branch = 7, "other-work"
+		writeHQLeaseRecord(t, stateDir, "hqpool", 4, repo, "fix-login")
+		writeHQLeaseRecord(t, stateDir, "boxpool", 6, repo, "other-work")
+		fake.mu.Lock()
+		fake.calls = nil
+		fake.mu.Unlock()
+		mu.Lock()
+		current = hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{merged, other}}
+		responseStatus, reads = 0, 0
+		mu.Unlock()
+		raw, err := json.Marshal(hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{merged, other}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(framePath, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		d.release = func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
+			result, err := fake.release(ctx, repo, branch)
+			mu.Lock()
+			open := other
+			open.Number, open.State = 8, hq.ChangeOpen
+			current.Changes = append(current.Changes, open)
+			mu.Unlock()
+			return result, err
+		}
+
+		followLeaseCompletion(t.Context(), d)
+
+		if got := fake.called(); !slices.Equal(got, []releaseCall{{repo, "fix-login"}}) {
+			t.Errorf("releases = %+v, want only fix-login", got)
+		}
+		if left := leaseRecordsLeft(t, stateDir); !slices.Equal(left, []string{"boxpool-6"}) {
+			t.Errorf("leases left = %v, want boxpool-6", left)
+		}
+		mu.Lock()
+		gotReads := reads
+		mu.Unlock()
+		if gotReads != 2 {
+			t.Errorf("HQ state reads = %d, want one before each group", gotReads)
+		}
+	})
+}
+
 // TestReleaseCompletedLeases_ByTheBranchsChange: a branch's leases are
 // released once its change in HQ reads merged or closed — one release of the
 // branch's group, of its repository — and kept while it is open, while
@@ -150,7 +305,7 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 			app := "app-1"
 			state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: tt.changes}
 
-			lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
+			lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), fake.release)
 
 			if got := fake.called(); !slices.Equal(got, tt.want) {
 				t.Fatalf("releases = %+v, want %+v", got, tt.want)
@@ -188,11 +343,11 @@ func TestReleaseCompletedLeases_Unsaved_KeptAndSaidOncePerPass(t *testing.T) {
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: unsavedRefusalOf()}
 	app := "app-1"
 	state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
-		{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "fix-login"},
+		{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "fix-login", UpdatedAt: "2026-10-26T10:00:00Z"},
 	}}
 
 	for pass := 1; pass <= 2; pass++ {
-		lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
+		lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), fake.release)
 		if len(lines) != 1 {
 			t.Fatalf("pass %d: lines = %q, want one", pass, lines)
 		}
@@ -222,9 +377,9 @@ func TestReleaseCompletedLeases_OtherFailure_SaidAndKept(t *testing.T) {
 	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: errors.New("the pool's orchestrator did not answer")}
 	app := "app-1"
-	state := hq.MateChanges{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeClosed, Branch: "fix-login"}}}
+	state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeClosed, Branch: "fix-login", UpdatedAt: "2026-10-26T10:00:00Z"}}}
 
-	lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, fake.release)
+	lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), fake.release)
 
 	if len(lines) != 1 || !strings.Contains(lines[0], "did not answer") || !strings.Contains(lines[0], "hqpool-4") {
 		t.Errorf("lines = %q, want one naming the lease and why", lines)
@@ -237,6 +392,13 @@ func TestReleaseCompletedLeases_OtherFailure_SaidAndKept(t *testing.T) {
 // keepBranch is a change's branch as HQ named it (hq.Client.BranchOf for an
 // HQ that names every branch).
 func keepBranch(_ int, branch string) string { return branch }
+
+// completionState returns the state HQ names when the completion pass asks.
+func completionState(state hq.MateChanges) func(context.Context) (hq.MateState, error) {
+	return func(context.Context) (hq.MateState, error) {
+		return hq.MateState{AppID: state.AppID, Changes: state.Changes, OpenPerBranch: state.OpenPerBranch}, nil
+	}
+}
 
 // setLeaseAcquiredAt rewrites alias's record with another acquire time.
 func setLeaseAcquiredAt(t *testing.T, stateDir, alias, at string) {
@@ -260,7 +422,7 @@ func setLeaseAcquiredAt(t *testing.T, stateDir, alias, at string) {
 func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 	t.Parallel()
 	app := "app-1"
-	state := hq.MateChanges{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x"}}}
+	state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x", UpdatedAt: "2099-10-26T10:00:00Z"}}}
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
@@ -280,7 +442,7 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 				t.Fatalf("group acquire failed: %s", getTextContent(t, res))
 			}
 
-			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state.AppID, state.Changes, keepBranch, func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
+			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
 				return ReleaseLeaseBranch(ctx, deps, repo, branch)
 			})
 
@@ -438,8 +600,9 @@ func (l *hqLab) stateFrame() {
 // change a person merges while no agent runs a pass gets its leases released
 // all the same — at once when the server renames a frame's file into place,
 // with no tick of the service's loop between, and never by reading the file
-// on a timer. It never asks HQ for the Mate's state: a merge no frame has
-// brought yet releases nothing, and no file is no finished change.
+// on a timer. The service confirms the frame's completed change with HQ:
+// a merge no frame has brought yet releases nothing, and no file is no
+// finished change.
 func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	requireGitForLab(t)
 	t.Parallel()
@@ -501,7 +664,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	if left := leaseRecordsLeft(t, lab.stateDir); len(left) != 0 {
 		t.Errorf("leases left = %v, want none", left)
 	}
-	if n := lab.hq.callCount(selfRead); n != selfReads {
-		t.Errorf("the service's looks asked HQ for the Mate's state %d times, want none", n-selfReads)
+	if n := lab.hq.callCount(selfRead); n != selfReads+1 {
+		t.Errorf("the service's looks asked HQ for the Mate's state %d times, want one", n-selfReads)
 	}
 }

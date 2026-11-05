@@ -362,7 +362,7 @@ func reconcileHQPairs(
 			if !changesDue {
 				return report
 			}
-			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, hqc.BranchOf, cfg.release)...)
+			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, hqc.BranchOf, hqc.Once().Self, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
 			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows, cfg.schemas)...)

@@ -142,7 +142,8 @@ type leaseGroupOnHQ struct {
 // releaseCompletedLeases releases, through release, every group of leases
 // zcp holds of a repository of the application HQ holds the Mate in (appID,
 // nil for none) whose branch's change in changes — the Mate's changes there —
-// reads merged or closed (settledChangeOn) — and says
+// reads merged or closed (settledChangeOn), and still does in a fresh read of
+// the Mate's state in HQ — and says
 // what became of each in one line, "repository <name>: …", by repository and
 // branch. A group leased again after its change settled is a new start on the
 // branch and stays. Leases of another application's repository, or of a
@@ -150,14 +151,25 @@ type leaseGroupOnHQ struct {
 // unsaved work keeps every lease of the group, and the line names the leases
 // and what each holds; the next pass tries again. branchOf is the branch of a
 // change by its number and the branch HQ names (hq.Client.BranchOf). Nothing
-// when release is nil.
-func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, branchOf func(int, string) string, release leaseBranchRelease) []string {
-	if release == nil || appID == nil {
+// when release or readState is nil.
+func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, branchOf func(int, string) string, readState func(context.Context) (hq.MateState, error), release leaseBranchRelease) []string {
+	if release == nil || readState == nil || appID == nil {
 		return nil
 	}
 	var lines []string
 	for _, group := range leaseGroupsOnHQ(stateDir, address, *appID) {
-		change, settled := settledChangeOn(changes, group.repo, group.branch, branchOf)
+		if _, settled := settledChangeOn(changes, group.repo, group.branch, branchOf); !settled {
+			continue
+		}
+		readCtx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
+		state, err := readState(readCtx)
+		cancel()
+		// An older HQ's limited history may omit an open change, so only a
+		// state that lists every open change can establish it is settled.
+		if err != nil || state.AppID == nil || *state.AppID != *appID || !state.OpenPerBranch {
+			continue
+		}
+		change, settled := settledChangeOn(state.Changes, group.repo, group.branch, branchOf)
 		if !settled || leasedAgainSince(group.leases, change.UpdatedAt) {
 			continue
 		}
@@ -218,11 +230,12 @@ func settledChangeOn(changes []hq.MateChange, repo, branch string, branchOf func
 // leasedAgainSince reports whether any of leases was acquired after settled,
 // when HQ last changed its record of the settled change: the branch was
 // leased again for new work, which that change's end does not finish. A time
-// either side does not name, or that does not parse, reads as before.
+// HQ does not name, or that does not parse, keeps the group; an acquire time
+// the record does not name, or that does not parse, reads as before.
 func leasedAgainSince(leases []ops.LeaseTargetInfo, settled string) bool {
 	at, err := time.Parse(time.RFC3339, settled)
 	if err != nil {
-		return false
+		return true
 	}
 	return slices.ContainsFunc(leases, func(l ops.LeaseTargetInfo) bool {
 		acquired, err := time.Parse(time.RFC3339, l.AcquiredAt)
@@ -313,8 +326,8 @@ func releaseOutcomeWords(outcome string) string {
 // place (keepMateDevGit): only while zcp holds a lease of a repository on
 // this Mate's HQ, it reads the changes the link's last `state` frame brought
 // (hq.ReadMateChanges, the file the Mate's server writes) and releases what
-// releaseCompletedLeases releases. HQ is asked nothing: no file, or one that
-// cannot be read, is no finished change.
+// releaseCompletedLeases confirms with HQ. No file, or one that cannot be
+// read, is no finished change.
 func followLeaseCompletion(ctx context.Context, d devGitDeps) []string {
 	if d.release == nil {
 		return nil
@@ -327,7 +340,7 @@ func followLeaseCompletion(ctx context.Context, d devGitDeps) []string {
 	if err != nil {
 		return nil
 	}
-	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, d.release)
+	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, hqc.Once().Self, d.release)
 }
 
 // withRecipeSchemas shares the server schema cache with recipe conflict passes.
