@@ -23,6 +23,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -453,6 +454,7 @@ type standupFixture struct {
 // importingClient is the platform while the browser's runtime import is still
 // running: its first lists hold no runtime yet, the next a dev half still
 // starting and a stage half not created, and only then the whole project.
+// The project pushes after a list a later one differs from.
 type importingClient struct {
 	*platform.Mock
 	mu    sync.Mutex
@@ -461,6 +463,8 @@ type importingClient struct {
 	stages [][]platform.ServiceStack
 	// firstRead is when the list was first read.
 	firstRead time.Time
+	// pushes carries the project's push (the fixture makes it).
+	pushes chan struct{}
 }
 
 func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
@@ -470,6 +474,12 @@ func (c *importingClient) ListServicesDirect(ctx context.Context, projectID stri
 	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
+	if c.reads < len(c.stages) {
+		select {
+		case c.pushes <- struct{}{}:
+		default:
+		}
+	}
 	c.mu.Unlock()
 	if stage == nil {
 		return c.Mock.ListServicesDirect(ctx, projectID)
@@ -549,7 +559,10 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 func (f *standupFixture) deps(t *testing.T) standupDeps {
 	t.Helper()
 	var client platform.Client = f.mock
+	pushes := watch.Pushes(func(context.Context) <-chan struct{} { return nil })
 	if f.importing != nil {
+		f.importing.pushes = make(chan struct{}, 1)
+		pushes = func(context.Context) <-chan struct{} { return f.importing.pushes }
 		client = f.importing
 	}
 	if f.building != nil {
@@ -575,7 +588,7 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 		liveEnvPath: writeLiveEnvFile(t, f.env),
 		identity:    func() hq.Identity { return f.identity },
 		runtimeWait: 200 * time.Millisecond,
-		runtimePoll: 5 * time.Millisecond,
+		pushes:      pushes,
 		statusPath:  f.statusPath,
 		status:      f.status,
 		bootWait:    2 * time.Second,
@@ -1219,6 +1232,61 @@ func TestStandup_WaitsForTheRuntimesTheBrowserIsImporting(t *testing.T) {
 	if len(f.ssh.pushes()) != 2 {
 		t.Errorf("deploys = %v, want both dev halves deployed", f.ssh.pushes())
 	}
+}
+
+// TestStandup_TheRuntimesAreReadAgainOnlyOnAPush: the wait for the runtimes
+// the browser imports reads the project again at its push (ZEROPS-079,
+// ZEROPS-078), never on a timer.
+func TestStandup_TheRuntimesAreReadAgainOnlyOnAPush(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	noRuntimes := withoutService(withoutService(withoutService(withoutService(f.services,
+		"medusadev"), "medusastage"), "nextstoredev"), "nextstorestage")
+	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{noRuntimes, noRuntimes, noRuntimes, nil}}
+	deps := f.deps(t)
+	looked := make(chan struct{})
+	wakes := make(chan struct{})
+	deps.pushes = func(context.Context) <-chan struct{} { return wakes }
+	deps.batch.client = lookingClient{Client: deps.batch.client, looked: looked}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	registerStandup(srv, deps)
+	ran := make(chan *mcp.CallToolResult)
+	go func() { ran <- callTool(t, srv, "zerops_standup", map[string]any{}) }()
+
+	<-looked
+	for push := range 3 {
+		select {
+		case wakes <- struct{}{}:
+		case <-looked:
+			t.Fatalf("the services were read again with no push after %d pushes", push)
+		}
+		<-looked
+	}
+	for {
+		select {
+		case <-looked: // the stand-up's reads past the wait
+		case result := <-ran:
+			if result.IsError {
+				t.Fatalf("stand-up after the import: %s", getTextContent(t, result))
+			}
+			return
+		}
+	}
+}
+
+// lookingClient signals each read of the project's services — a look.
+type lookingClient struct {
+	platform.Client
+	looked chan struct{}
+}
+
+func (c lookingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	services, err := c.Client.ListServicesDirect(ctx, projectID)
+	select {
+	case c.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
+	return services, err
 }
 
 // buildingClient is the platform while an earlier call's build of a stage is

@@ -5897,7 +5897,11 @@ The order:
      the tool waits on no link and refuses at once when HQ refuses the key
      (`TestStandup_StartsOnlyOnceLinked_AsksHQOnce`);
    - waits, bounded, for the runtimes (5 min: every dev half
-     running and answering SSH, every stage half created), and for whatever the import still has in
+     running and answering SSH, every stage half created; it reads the project again at each of the
+     project's pushes, a service's or a process's (ZEROPS-079, ZEROPS-078), never on a timer —
+     `TestStandup_TheRuntimesAreReadAgainOnlyOnAPush`; the container's own import waits on the same
+     pushes, `TestRun_ZcpsOwnDeploy_IsLookedAtAgainOnlyOnAPush`,
+     `TestRun_TheImportIsFollowedOnlyOnAPush`), and for whatever the import still has in
      flight on them and on the managed services;
      if the boot-import wait expires while that import remains pending or importing, or
      the wait is cancelled, the pass stops before preparation and asks only for another

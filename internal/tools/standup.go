@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -51,7 +52,6 @@ const (
 	// right before the person signs the agent in: the first turn can arrive
 	// while they are still being created.
 	standupRuntimeWait = 5 * time.Minute
-	standupRuntimePoll = 5 * time.Second
 	// standupBatchMax is the most halves deploying at once: past five the
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
@@ -78,7 +78,9 @@ type standupDeps struct {
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
 	runtimeWait time.Duration
-	runtimePoll time.Duration
+	// pushes is the project's pushes the wait for the runtimes reads again
+	// at (ZEROPS-079, ZEROPS-078).
+	pushes watch.Pushes
 	// statusPath is the setup status file the stand-up writes its section of
 	// and reads the boot import's from ("" writes and waits on nothing);
 	// bootWait bounds the wait for that import, trackPoll the looks at a
@@ -120,7 +122,7 @@ func RegisterStandup(
 		liveEnvPath: mate.LiveEnvStorePath,
 		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
 		runtimeWait: standupRuntimeWait,
-		runtimePoll: standupRuntimePoll,
+		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
 		bootWait:    standupBootWait,
 		trackPoll:   standupTrackPoll,
@@ -436,27 +438,33 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 }
 
 // awaitRuntimes reads the project's services until every pair's halves are
-// there — the dev half running (startWithoutCode), the stage half created —
-// or the wait is over. The browser imports the runtimes right before the
-// person signs the agent in, so the stand-up can be asked for while they are
-// still being created; what is still missing after the wait is reported by
-// presentAndRunning.
+// up, looking again at each of the project's pushes — one session for the
+// wait, opened at its first look that finds a half missing — or once more
+// when the wait is up, and answers the last look.
 func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, progress *standupProgress) (map[string]*platform.ServiceStack, error) {
-	deadline := time.Now().Add(d.runtimeWait)
+	waitCtx, stop := context.WithTimeout(ctx, d.runtimeWait)
+	defer stop()
+	var wakes <-chan struct{}
 	for {
 		live, err := d.liveServices(ctx)
 		if err != nil {
 			return nil, err
 		}
 		pending := runtimesNotUp(tier, live)
-		if len(pending) == 0 || !time.Now().Before(deadline) {
+		if len(pending) == 0 {
 			return live, nil
 		}
 		progress.say("waiting for the import to create " + strings.Join(pending, ", "))
+		if wakes == nil {
+			wakes = d.pushes(waitCtx)
+		}
 		select {
-		case <-ctx.Done():
-			return live, nil
-		case <-time.After(d.runtimePoll):
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return live, nil
+			}
+			return d.liveServices(ctx)
+		case <-wakes:
 		}
 	}
 }
