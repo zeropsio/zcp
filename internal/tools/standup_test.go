@@ -1629,17 +1629,23 @@ func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 // trackingClient is the platform while a batch deploys: medusadev's build
 // process builds, then deploys, then ends — one state a read. Each read
 // signals looked as it starts, so the tracking's writes of the read before
-// it are done.
+// it are done, and goes on only once resumed, so nothing it writes lands
+// before the reader of looked has seen the row.
 type trackingClient struct {
 	*platform.Mock
 	mu     sync.Mutex
 	reads  int
 	looked chan struct{}
+	resume chan struct{}
 }
 
 func (c *trackingClient) GetProjectProcessesDirect(ctx context.Context, _ string) ([]platform.Process, error) {
 	select {
 	case c.looked <- struct{}{}:
+	case <-ctx.Done():
+	}
+	select {
+	case <-c.resume:
 	case <-ctx.Done():
 	}
 	c.mu.Lock()
@@ -1663,7 +1669,7 @@ func (c *trackingClient) GetProjectProcessesDirect(ctx context.Context, _ string
 func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "status.json")
-	client := &trackingClient{Mock: platform.NewMock(), looked: make(chan struct{})}
+	client := &trackingClient{Mock: platform.NewMock(), looked: make(chan struct{}), resume: make(chan struct{})}
 	frames := make(chan struct{})
 	session := newStandupPushes(func(context.Context) <-chan struct{} { return frames })
 	tracking := newStandupTracking(batchDeployer{client: client, projectID: "p1"}, session, newStandupStatus(path))
@@ -1677,7 +1683,9 @@ func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 	}
 	stop := tracking.track(t.Context(), []string{"medusadev"}, map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}})
 	<-client.looked
-	// Each frame's read starts once the read before it has written.
+	client.resume <- struct{}{}
+	// Each frame's read starts once the read before it has written, and is
+	// held until its row is seen.
 	seen := make([]string, 0, 3)
 	for frame := range 3 {
 		select {
@@ -1687,6 +1695,7 @@ func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 		}
 		<-client.looked
 		seen = append(seen, row())
+		client.resume <- struct{}{}
 	}
 	stop()
 	want := []string{"build/running/proc-build", "deploy/running/proc-build", "verify/running/proc-build"}
