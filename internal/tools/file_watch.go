@@ -10,22 +10,24 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// watchMateChanges wakes the Mate's service whenever the Mate's server puts a
-// new `state` frame's changes in place at path (hq.ChangesPath): the returned
-// channel receives once each time path is created or renamed into place,
-// wakes coming while one waits folding into it. The server replaces the file
-// by rename, so its directory is watched, never the file. While the
+// watchReplacedFile wakes its caller whenever a writer puts a new version of
+// the file at path in place: the Mate's server its `state` frame's changes
+// (hq.ChangesPath), a zcp process its section of the setup status file
+// (mate.StatusFilePath). The returned channel receives once each time path is
+// created or renamed into place, wakes coming while one waits folding into
+// it. Both writers replace the file by rename, so its directory is watched,
+// never the file. While the
 // directory does not exist yet, its nearest existing ancestor is watched and
 // the watch moves down as each directory on the way is created; a directory
 // removed moves it up again. Nothing is read on a timer: a watch that loses
 // events (the kernel's queue overflowed) wakes once, so the look reads what
 // is there. The watch ends with ctx.
-func watchMateChanges(ctx context.Context, path string) (<-chan struct{}, error) {
+func watchReplacedFile(ctx context.Context, path string) (<-chan struct{}, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("watch %s: %w", filepath.Dir(path), err)
 	}
-	cw := &changesWatch{w: w, path: path, dir: filepath.Dir(path)}
+	cw := &fileWatch{w: w, path: path, dir: filepath.Dir(path)}
 	if _, err := cw.settle(); err != nil {
 		_ = w.Close()
 		return nil, err
@@ -35,15 +37,15 @@ func watchMateChanges(ctx context.Context, path string) (<-chan struct{}, error)
 	return wake, nil
 }
 
-// changesWatch is watchMateChanges' watch: watched is the directory it
+// fileWatch is watchReplacedFile's watch: watched is the directory it
 // watches now, dir itself or its nearest existing ancestor.
-type changesWatch struct {
+type fileWatch struct {
 	w         *fsnotify.Watcher
 	path, dir string
 	watched   string
 }
 
-func (cw *changesWatch) run(ctx context.Context, wake chan<- struct{}) {
+func (cw *fileWatch) run(ctx context.Context, wake chan<- struct{}) {
 	defer cw.w.Close()
 	signal := func() {
 		select {
@@ -62,7 +64,7 @@ func (cw *changesWatch) run(ctx context.Context, wake chan<- struct{}) {
 			if cw.watched == cw.dir && ev.Name == cw.path {
 				// kqueue may say a replaced file went without saying the new
 				// one came: one standing there after it is the new one.
-				if ev.Has(fsnotify.Create) || (gone(ev) && changesInPlace(cw.path)) {
+				if ev.Has(fsnotify.Create) || (gone(ev) && fileInPlace(cw.path)) {
 					signal()
 				}
 				continue
@@ -75,7 +77,7 @@ func (cw *changesWatch) run(ctx context.Context, wake chan<- struct{}) {
 			if err != nil {
 				return
 			}
-			if reached && changesInPlace(cw.path) {
+			if reached && fileInPlace(cw.path) {
 				signal()
 			}
 		case err, open := <-cw.w.Errors:
@@ -93,7 +95,7 @@ func (cw *changesWatch) run(ctx context.Context, wake chan<- struct{}) {
 // until what it watches still exists and nothing nearer dir does; reached is
 // whether the watch arrived at dir in this call. A directory created between
 // looking and watching is found by the look after the watch is in place.
-func (cw *changesWatch) settle() (reached bool, err error) {
+func (cw *fileWatch) settle() (reached bool, err error) {
 	for {
 		target, err := nearestExistingDir(cw.dir)
 		if err != nil {
@@ -118,8 +120,8 @@ func gone(ev fsnotify.Event) bool {
 	return ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename)
 }
 
-// changesInPlace reports whether a file stands at path.
-func changesInPlace(path string) bool {
+// fileInPlace reports whether a file stands at path.
+func fileInPlace(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
