@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -62,12 +63,14 @@ func TestMateUpdate_ReadinessProof_Result(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			if err := mate.WaitReady("0.15.111", "old", time.Now().Add(time.Second)); err != nil {
-				t.Fatal(err)
-			}
-			if transport.readinessCalls != 2 {
-				t.Fatalf("accepted incomplete readiness proof, requests=%d", transport.readinessCalls)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				if err := mate.WaitReady("0.15.111", "old", time.Now().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				if transport.readinessCalls != 2 {
+					t.Fatalf("accepted incomplete readiness proof, requests=%d", transport.readinessCalls)
+				}
+			})
 		})
 	}
 }
@@ -104,14 +107,19 @@ func TestMateUpdate_ReadinessDuringStartup(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			start := time.Now()
-			err := mate.WaitReady("0.15.111", "old", start.Add(tc.budget))
-			if (err == nil) != tc.wantReady {
-				t.Fatalf("ready=%v, error=%v", err == nil, err)
-			}
-			if elapsed := time.Since(start); elapsed > tc.budget+time.Second {
-				t.Fatalf("readiness exceeded its explicit budget: %s", elapsed)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				err := mate.WaitReady("0.15.111", "old", start.Add(tc.budget))
+				if (err == nil) != tc.wantReady {
+					t.Fatalf("ready=%v, error=%v", err == nil, err)
+				}
+				if elapsed := time.Since(start); elapsed > tc.budget {
+					t.Fatalf("readiness exceeded its explicit budget: %s", elapsed)
+				}
+				if tc.wantReady && transport.calls.Load() != 2 {
+					t.Errorf("readiness calls = %d, want a stalled probe followed by a healthy one", transport.calls.Load())
+				}
+			})
 		})
 	}
 }
