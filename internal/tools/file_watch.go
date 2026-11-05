@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -95,6 +96,11 @@ func (cw *fileWatch) run(ctx context.Context, wake chan<- struct{}) {
 // until what it watches still exists and nothing nearer dir does; reached is
 // whether the watch arrived at dir in this call. A directory created between
 // looking and watching is found by the look after the watch is in place.
+// Something gone while the watch is placed sends settle to look again rather
+// than ending the watch: the directory itself, or an entry of it (kqueue
+// registers the directory, then follows each entry it lists, so a writer's
+// temporary file renamed away fails the Add with the directory already
+// watched; the next Add of it lists nothing again).
 func (cw *fileWatch) settle() (reached bool, err error) {
 	for {
 		target, err := nearestExistingDir(cw.dir)
@@ -106,8 +112,12 @@ func (cw *fileWatch) settle() (reached bool, err error) {
 		}
 		if cw.watched != "" {
 			_ = cw.w.Remove(cw.watched)
+			cw.watched = ""
 		}
 		if err := cw.w.Add(target); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			return false, fmt.Errorf("watch %s: %w", target, err)
 		}
 		cw.watched = target
