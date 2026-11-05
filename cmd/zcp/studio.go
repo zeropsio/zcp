@@ -317,10 +317,10 @@ func runStudioWatch(_ []string) {
 	}
 
 	err := watch.Watch(ctx, watch.Config{
-		APIHost:   authInfo.APIHost,
-		Token:     authInfo.Token,
-		ClientID:  authInfo.ClientID,
-		ProjectID: authInfo.ProjectID,
+		APIHost:  authInfo.APIHost,
+		Token:    func() string { return authInfo.Token },
+		ClientID: authInfo.ClientID,
+		Streams:  []watch.Stream{watch.ServiceList},
 	}, emit)
 	cancel()
 	if err != nil && !errors.Is(err, context.Canceled) {
