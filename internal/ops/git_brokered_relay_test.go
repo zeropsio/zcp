@@ -2555,6 +2555,56 @@ func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
 	}
 }
 
+// holderOutput observes the end mark and the holder's later write before
+// forwarding the done frame; this lets the test control their order.
+type holderOutput struct {
+	dst        io.Writer
+	seen       bytes.Buffer
+	mark, late chan struct{}
+	markOnce   sync.Once
+	lateOnce   sync.Once
+}
+
+func (w *holderOutput) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	_, _ = w.seen.Write(p[:n])
+	if strings.Contains(w.seen.String(), "ZCPEND-") {
+		w.markOnce.Do(func() { close(w.mark) })
+	}
+	if strings.Contains(w.seen.String(), "late-from-the-holder\n") {
+		w.lateOnce.Do(func() { close(w.late) })
+	}
+	return n, err
+}
+
+// holderStderr holds the done frame until the holder's late stdout has
+// reached the relay. This call uses a local alias and has no credential frames.
+type holderStderr struct {
+	dst  io.Writer
+	late <-chan struct{}
+	done <-chan struct{}
+}
+
+func (w *holderStderr) Write(p []byte) (int, error) {
+	select {
+	case <-w.late:
+		return w.dst.Write(p)
+	case <-w.done:
+		return 0, context.Canceled
+	}
+}
+
+type holderRunner struct {
+	session    *shellRunner
+	mark, late chan struct{}
+}
+
+func (r *holderRunner) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return r.session.ExecSSHStdio(ctx, host, command, stdin,
+		&holderOutput{dst: stdout, mark: r.mark, late: r.late},
+		&holderStderr{dst: stderr, late: r.late, done: ctx.Done()})
+}
+
 // TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace: a process
 // git started that keeps the session's stdout open too — a shell alias of the
 // checkout's config leaving one in the background — holds the call no longer
@@ -2568,14 +2618,58 @@ func TestBrokeredGit_Relay_DoneMarker_StdoutHolderBoundedByTheGrace(t *testing.T
 			l := newRelayLab(t)
 			url, _ := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
-			l.git(t, checkout, "config", "alias.hold", "!(sleep 1; echo late-from-the-holder; sleep 20) 2>/dev/null </dev/null & echo own-output")
-			start := time.Now()
-			run := l.run(t, sh, checkout, l.relay(), "", "hold").mustSucceed(t, "hold")
-			if took := time.Since(start); took > 10*time.Second {
-				t.Errorf("the call took %s, held by the background process", took)
+			dir := t.TempDir()
+			releasePath, holdPath := filepath.Join(dir, "release"), filepath.Join(dir, "hold")
+			for _, path := range []string{releasePath, holdPath} {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if run.stdout != "own-output\n" {
-				t.Errorf("stdout = %q, want git's own output alone", run.stdout)
+			release, err := os.OpenFile(releasePath, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release.Close()
+			hold, err := os.OpenFile(holdPath, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer hold.Close()
+			l.git(t, checkout, "config", "alias.hold", "!(read -r ignored < "+ShellQuote(releasePath)+"; printf 'late-from-the-holder\\n'; read -r ignored < "+ShellQuote(holdPath)+") 2>/dev/null </dev/null & printf 'own-output\\n'")
+			parsed, err := ParseBrokeredGitArgs([]string{"hold"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &holderRunner{session: &shellRunner{sh: sh, env: l.env()}, mark: make(chan struct{}), late: make(chan struct{})}
+			type result struct {
+				code int
+				err  error
+			}
+			ended := make(chan result, 1)
+			var stdout, stderr bytes.Buffer
+			go func() {
+				code, err := RunBrokeredGitRelayed(t.Context(), runner, "appdev", checkout, parsed, l.relay(), nil, &stdout, &stderr)
+				ended <- result{code, err}
+			}()
+			select {
+			case <-runner.mark:
+			case got := <-ended:
+				t.Fatalf("the call ended before its stdout mark: exit %d, err %v\n%s", got.code, got.err, stderr.String())
+			}
+			if _, err := fmt.Fprintln(release, "go"); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-runner.late:
+			case got := <-ended:
+				t.Fatalf("the call ended before the held process wrote: exit %d, err %v\n%s", got.code, got.err, stderr.String())
+			}
+			got := <-ended // the holder cannot exit on its own until hold is released
+			if got.err != nil || got.code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", got.code, got.err, stderr.String())
+			}
+			if stdout.String() != "own-output\n" {
+				t.Errorf("stdout = %q, want git's own output alone", stdout.String())
 			}
 		})
 	}
