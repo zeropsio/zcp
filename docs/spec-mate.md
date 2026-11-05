@@ -1960,7 +1960,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add | access.set",
+    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | mate.message | chief.message | domain.add | access.set | mcp.add",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -2042,13 +2042,73 @@ running service reads the value after a restart. A refused or unavailable observ
 A standalone zcp that observes through a configured HQ never registers them: no client draws its
 cards.
 
+**A Mate proposes an MCP server for its agents.** In project mode, in a Mate's container
+(`ZCP_MATE_ENABLED`), `zerops_propose_mcp {name, title?, why, transport, url? | command + args?, auth,
+fields?, scopes?, docsUrl?, scope?}` proposes `mcp.add`: connecting a server for every agent the
+Mate runs. The agent never handles a key: a field is named and labelled, and the person types its
+value on the card. It reads nothing and runs nothing; the result is the shape above from this
+project, its definition apart from its credential fields, since they may later live at different
+scopes (a server the organization defines, each Mate signing in itself):
+
+```json
+{
+  "proposal": {
+    "id": "<uuid>", "kind": "mcp.add", "summary": "Set up Linear", "reason": "<the agent's why>",
+    "projectId": "<this project's id>", "projectName": "<this project's name>",
+    "params": {
+      "scope": "mate | project | org",
+      "server": {
+        "name": "linear", "title": "Linear",
+        "transport": {"type": "http | sse", "url": "…"} | {"type": "stdio", "command": "npx", "args": ["…"]},
+        "auth": {"kind": "none | header | oauth | oauth-app", "scopes": ["…"]},
+        "docsUrl": "…"
+      },
+      "credentials": [{"key": "LINEAR_API_KEY", "label": "Linear API key", "placement": "env | header", "headerName": "Authorization", "prefix": "Bearer "}]
+    }
+  },
+  "note": "Nothing is set up yet. The person adds it on the card and types any key there: …"
+}
+```
+
+`name` is a key every agent's config takes (letters, digits, `-`, `_`, at most 64), never `zerops`;
+`title` defaults to it. `scope` defaults to `mate`; only `mate` is set up so far, and for `project`
+or `org` the note and the card say only this Mate is set up for now. `oauth`, `oauth-app` and
+`header` are a remote server's; `header` needs a header field; scopes are OAuth's. An `env` field is
+a command's environment variable named `key`; a `header` field is a remote server's header
+(`headerName`, else `key`), its value after `prefix`. Anything that looks like a secret value — a
+provider's token prefix, a long run of letters and digits that is not a UUID, a password or a
+key-named query value in an address, a key-named flag with a literal value — is refused with a
+plain error saying to declare a field instead. The client adds an approved server for all the
+Mate's agents as the person (`mcp.servers.add`), signs in where it needs to, draws the card's state
+from the server list, and tells the agent with the person's next message which agents have it.
+
+**A Mate proposes a reveal.** Agents never read a secret's value: zcp answers names, and masks a
+secret even on an explicit read. In a Mate's container (`ZCP_MATE_ENABLED`, project mode),
+`zerops_propose_reveal {environment, project?, service?, key, reason}` proposes `env.reveal`: the
+person sees the value on the card, on their own screen, read with their own access. `environment`
+is `stage` or `production` (checked against HQ's observation as above: `environments`, then that
+environment's `status` only when a `service` is named; `project` picks one by id or name) or `mate`,
+this Mate's own project, read nowhere (`projectName` "This Mate", `serviceName` the hostname, no
+`serviceId`: the card finds the service in its own vault). `params` → `{"scope": "project" |
+"service", "key"}`, summarised "Show <key> from <environment title | this Mate>". It never carries
+a value: a key that is not a variable name (`KEY=value`) is refused without repeating it, as are a
+name Mate's vault never lists, a reason over one line or 280 characters, and a reason holding the
+key followed by `=` or `:` and something, or a token-like run (twenty or more token characters with
+letters and digits); each before anything is read. Its note says nothing is shown to the agent,
+now or later, and that it is not told the person revealed it; the client tells the agent nothing
+of a reveal. The person's client reveals through Zerops' own reveal (sudo step-up included), shows
+the value only in the card for 30 seconds or until the person leaves, never stores it, and records
+the reveal at HQ (who, which key, when) before showing it.
+
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
 Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
 and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
-names its two proposal tools for stage and production, and `zerops_propose_ask_chief` for what
-neither its project nor `zerops_observe` shows.
+names its two proposal tools for stage and production, `zerops_propose_reveal` to show the person a
+secret (never printing or pasting one), and `zerops_propose_ask_chief` for what neither its project
+nor `zerops_observe` shows. The shared section tells a Mate to connect a tool with
+`zerops_propose_mcp` and never to ask the person to paste a key in chat.
 
 | ID | Invariant |
 |---|---|
@@ -2060,6 +2120,8 @@ neither its project nor `zerops_observe` shows.
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
+| OM-9 | A Mate's `zerops_propose_mcp` returns an `mcp.add` proposal of the shape above from its own project, never carrying a secret value, and runs nothing; only a Mate's project mode registers it. `TestProposeMcp_Shape`, `TestProposeMcp_RefusesSecretsAndWhatCannotConnect`, `TestMcpPropose_OverMCP_ProposesAndRunsNothing`, `TestServer_AppProposeToolGating`. |
+| OM-10 | A Mate's `zerops_propose_reveal` returns an `env.reveal` proposal of the shape above naming a key in its application's stage or production or its own project, never a value: a key or reason holding one is refused before anything is read; only a Mate's project mode registers it. `TestProposeReveal_Shape`, `TestProposeReveal_RefusesAValue`, `TestProposeReveal_RefusesWhatIsNotThere`, `TestRevealPropose_OverMCP_ProposesANameNeverAValue`, `TestServer_AppProposeToolGating`. |
 
 ## 3. Trust and credentials
 

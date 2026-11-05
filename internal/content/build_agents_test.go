@@ -583,7 +583,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet", "zerops_propose_mcp"},
 		},
 		{
 			name: "a Mate",
@@ -593,8 +593,10 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 				"reaches none of them", "other Mates", "zcp git <host>",
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
+				"`zerops_propose_reveal`", "never print or paste a secret value",
 				"act on this Mate's own project only", "another application's production error",
 				"Mate's Addresses", "DNS records", "AAAA", "Full (strict)",
+				"`zerops_propose_mcp`", "never ask the person to paste a key in chat",
 			},
 			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential",
 				// Mate's UI paths live in Mate's own instructions, not here.
