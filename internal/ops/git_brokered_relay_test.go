@@ -758,6 +758,7 @@ type relayLab struct {
 	revokedAt    []time.Time   // when each revoke arrived
 	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
 	revokeDelay  time.Duration // how long a revoke waits before answering
+	revokeDone   chan struct{} // optional receipt after a token is removed
 	mintDelay    time.Duration // how long HQ takes to mint a token
 }
 
@@ -785,7 +786,11 @@ func (l *relayLab) serveRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.Lock()
 	delete(l.tokens, token)
+	done := l.revokeDone
 	l.mu.Unlock()
+	if done != nil {
+		done <- struct{}{}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2619,35 +2624,62 @@ func TestBrokeredGit_Relay_CancelledCall_StillRevokesOnDetachedContext(t *testin
 			l := newRelayLab(t)
 			url, h := l.repo(t, true, "acme/shop")
 			checkout := l.checkout(t, url)
-			marker := filepath.Join(t.TempDir(), "fetched")
-			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt > "+ShellQuote(marker)+"\nsleep 15\n")
+			hold := filepath.Join(t.TempDir(), "hold")
+			if err := syscall.Mkfifo(hold, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const fetched = "zcp-test-fetched"
+			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt >/dev/null || exit $?\nprintf '"+fetched+"\\n' >&2\nread -r ignored < "+ShellQuote(hold)+"\n")
 			parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-m", "x"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			go func() {
-				deadline := time.Now().Add(60 * time.Second)
-				for time.Now().Before(deadline) {
-					if b, err := os.ReadFile(marker); err == nil && len(b) > 0 {
-						cancel()
-						return
-					}
-					time.Sleep(20 * time.Millisecond)
-				}
-			}()
+			l.revokeDone = make(chan struct{}, 1)
+			stderrReader, stderrWriter := io.Pipe()
 			var stdout, stderr bytes.Buffer
-			start := time.Now()
-			_, err = RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), nil, &stdout, &stderr)
+			scanned := make(chan error, 1)
+			go func() {
+				scanner := bufio.NewScanner(stderrReader)
+				for scanner.Scan() {
+					line := scanner.Text()
+					fmt.Fprintln(&stderr, line)
+					if line == fetched {
+						cancel()
+					}
+				}
+				scanned <- scanner.Err()
+			}()
+			ended := make(chan error, 1)
+			go func() {
+				_, runErr := RunBrokeredGitRelayed(ctx, &shellRunner{sh: sh, env: l.env()}, "appdev", checkout, parsed, l.relay(url), nil, &stdout, stderrWriter)
+				_ = stderrWriter.Close()
+				ended <- runErr
+			}()
+			revoked := false
+			select {
+			case <-l.revokeDone:
+				revoked = true
+				err = <-ended
+			case err = <-ended:
+				select {
+				case <-l.revokeDone:
+					revoked = true
+				default:
+				}
+			}
+			if scanErr := <-scanned; scanErr != nil {
+				t.Fatalf("read stderr: %v", scanErr)
+			}
 			if ctx.Err() == nil {
 				t.Fatalf("the call ended before it was stopped: %v\n%s", err, stderr.String())
 			}
 			if err == nil {
 				t.Error("a stopped call answered no error")
 			}
-			if took := time.Since(start); took > 14*time.Second {
-				t.Errorf("the stopped call took %s, want it to end once stopped", took)
+			if !revoked {
+				t.Error("the minted token was not revoked")
 			}
 			if got, want := l.revokes(), l.mintedTokens(); len(want) != 1 || !slices.Equal(got, want) {
 				t.Errorf("revoked %q after the call was stopped, want the minted %q", got, want)
