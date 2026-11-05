@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -291,6 +292,23 @@ func TestBrokeredGitDone_MarkerEndsAnsweringAndCarriesTheCode(t *testing.T) {
 	}
 }
 
+// relayReceiptBuffer reports when a sentry following the input reached the
+// caller. The test reads the buffer only after the copy has finished.
+type relayReceiptBuffer struct {
+	bytes.Buffer
+	sentry   string
+	received chan struct{}
+	once     sync.Once
+}
+
+func (b *relayReceiptBuffer) Write(p []byte) (int, error) {
+	n, err := b.Buffer.Write(p)
+	if strings.Contains(b.String(), b.sentry) {
+		b.once.Do(func() { close(b.received) })
+	}
+	return n, err
+}
+
 // TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt: the script's end mark
 // is taken out of stdout however reads split it, ended closes once every
 // byte before it was passed on, and what follows it is dropped; another
@@ -309,31 +327,69 @@ func TestRelayStdout_EndMark_TakenOutWhereverReadsSplitIt(t *testing.T) {
 		{"mark alone", mark, "", true},
 	} {
 		for split := 1; split < len(tc.input); split++ {
+			const sentry = "!zcp-test-receipt!\n"
+			dst := &relayReceiptBuffer{sentry: sentry, received: make(chan struct{})}
+			s, err := newRelayStdout(dst, frameTestNonce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			go s.copy()
+			if _, err := s.w.WriteString(tc.input[:split]); err != nil {
+				t.Fatal(err)
+			}
+			// Do not write the second part until the pipe has given the first
+			// to copy; two writes alone can be combined in a single read.
+			for s.read.Load() == 0 {
+				runtime.Gosched()
+			}
+			rest := tc.input[split:]
+			if !tc.ended {
+				rest += sentry
+			}
+			if _, err := s.w.WriteString(rest); err != nil {
+				t.Fatal(err)
+			}
+			ended := false
+			if tc.ended {
+				<-s.ended
+				ended = true
+			} else {
+				// Either the sentry reached the caller or the stream ended
+				// prematurely; both are observable while the pipe stays open.
+				select {
+				case <-s.ended:
+					ended = true
+				case <-dst.received:
+				}
+			}
+			_ = s.w.Close()
+			<-s.done
+			want := tc.want
+			if !tc.ended {
+				want += sentry
+			}
+			if dst.String() != want || ended != tc.ended {
+				t.Errorf("%s, split at %d: passed %q, ended before EOF %v; want %q, %v", tc.name, split, dst.String(), ended, want, tc.ended)
+			}
+			if _, err := s.r.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+				t.Errorf("%s, split at %d: a read of the pipe once the copy ended = %v, want it closed (no descriptor left open per call)", tc.name, split, err)
+			}
+		}
+		if !tc.ended {
+			// Without a sentry, EOF itself must pass a held partial mark.
 			var dst bytes.Buffer
 			s, err := newRelayStdout(&dst, frameTestNonce)
 			if err != nil {
 				t.Fatal(err)
 			}
 			go s.copy()
-			for _, part := range []string{tc.input[:split], tc.input[split:]} {
-				if _, err := s.w.WriteString(part); err != nil {
-					t.Fatal(err)
-				}
-				time.Sleep(time.Millisecond)
-			}
-			ended := false
-			select {
-			case <-s.ended:
-				ended = true
-			case <-time.After(20 * time.Millisecond):
+			if _, err := s.w.WriteString(tc.input); err != nil {
+				t.Fatal(err)
 			}
 			_ = s.w.Close()
 			<-s.done
-			if dst.String() != tc.want || ended != tc.ended {
-				t.Errorf("%s, split at %d: passed %q, ended before EOF %v; want %q, %v", tc.name, split, dst.String(), ended, tc.want, tc.ended)
-			}
-			if _, err := s.r.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
-				t.Errorf("%s, split at %d: a read of the pipe once the copy ended = %v, want it closed (no descriptor left open per call)", tc.name, split, err)
+			if dst.String() != tc.want {
+				t.Errorf("%s at EOF: passed %q, want %q", tc.name, dst.String(), tc.want)
 			}
 		}
 	}
