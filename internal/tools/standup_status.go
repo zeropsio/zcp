@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -274,17 +275,22 @@ type bootImportResult struct {
 // always ends its section (done or failed, its own timeout included) and
 // every launch resets one a restart cut short, so the wait ends with it;
 // bootWait bounds observation only: expiry or cancellation stops preparation
-// without taking over the import. Returns what the import says failed, by
-// hostname ("" for the import as a whole), or why observation stopped.
+// without taking over the import. The file is read once, then again each
+// time a process puts it in place (watchReplacedFile), never on a timer.
+// Returns what the import says failed, by hostname ("" for the import as a
+// whole), or why observation stopped.
 func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) bootImportResult {
 	if d.statusPath == "" {
 		return bootImportResult{}
 	}
-	deadline := time.Now().Add(d.bootWait)
+	ctx, cancel := context.WithTimeoutCause(ctx, d.bootWait, errBootWaitOver)
+	defer cancel()
+	// Watching before the first read: a change between the two wakes it.
+	changed, err := watchReplacedFile(ctx, d.statusPath)
+	if err != nil {
+		return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
+	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", err)}
-		}
 		st, err := mate.ReadStatus(d.statusPath)
 		if err != nil {
 			// Legacy containers may have no readable boot-import section.
@@ -310,9 +316,6 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 			}
 			return bootImportResult{failed: failed}
 		}
-		if !time.Now().Before(deadline) {
-			return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
-		}
 		var waiting []string
 		for _, s := range r.Services {
 			if s.State != mate.ServiceRunning && s.State != mate.ServiceFailed {
@@ -326,8 +329,15 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		progress.say("waiting for the container's import of " + what)
 		select {
 		case <-ctx.Done():
+			if errors.Is(context.Cause(ctx), errBootWaitOver) {
+				return bootImportResult{stopped: fmt.Errorf("the container's boot import is still %s after waiting %s", r.State, d.bootWait)}
+			}
 			return bootImportResult{stopped: fmt.Errorf("wait for the container's boot import: %w", ctx.Err())}
-		case <-time.After(d.bootPoll):
+		case <-changed:
 		}
 	}
 }
+
+// errBootWaitOver is awaitBootImport's bound running out, told apart from the
+// caller's own cancellation.
+var errBootWaitOver = errors.New("boot import wait over")

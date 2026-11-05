@@ -572,7 +572,6 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 		statusPath:  f.statusPath,
 		status:      f.status,
 		bootWait:    2 * time.Second,
-		bootPoll:    5 * time.Millisecond,
 		trackPoll:   5 * time.Millisecond,
 	}
 }

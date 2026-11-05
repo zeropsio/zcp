@@ -63,7 +63,6 @@ const (
 	// standupBootWait bounds the wait for the container's own import of the
 	// runtimes (MATE_SETUP_RUNTIMES) — the import's own bound.
 	standupBootWait = 20 * time.Minute
-	standupBootPoll = 5 * time.Second
 	// standupReflogIntent heads the stand-up's entry in AGENTS.md's reflog.
 	standupReflogIntent = "Stand up development from the group's recipe"
 )
@@ -88,11 +87,10 @@ type standupDeps struct {
 	runtimePoll time.Duration
 	// statusPath is the setup status file the stand-up writes its section of
 	// and reads the boot import's from ("" writes and waits on nothing);
-	// bootWait/bootPoll bound the wait for that import, trackPoll the looks
-	// at a batch's processes (standup_status.go).
+	// bootWait bounds the wait for that import, trackPoll the looks at a
+	// batch's processes (standup_status.go).
 	statusPath string
 	bootWait   time.Duration
-	bootPoll   time.Duration
 	trackPoll  time.Duration
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
@@ -133,7 +131,6 @@ func RegisterStandup(
 		runtimePoll: standupRuntimePoll,
 		statusPath:  mate.StatusFilePath(),
 		bootWait:    standupBootWait,
-		bootPoll:    standupBootPoll,
 		trackPoll:   standupTrackPoll,
 	})
 }
