@@ -704,7 +704,10 @@ code alone, since a mis-proxied prefix can reach something else that answers `20
 subrequest, so folding both fields into the readiness route would need the sidecar process this
 design removes. A client must also read a `404` on `{BasePath}/healthz` as its own third state —
 *mate is not enabled on this container* — distinct from "still starting". Budget (measured, see the ledger): a restart is ~17 s to `/healthz`, ~19 s to `mateUp`,
-~14 s of L7 `502` in between — poll `mateUp`, render `502` as "restarting", cap at 30 s.
+~14 s of L7 `502` in between, which a client renders as "restarting". The hosted client reads
+`mateUp` on demand for a Mate HQ has presence for — once when HQ newly says that Mate is online, and
+at the person's _Try now_ — and on a backing-off ladder, 2, 4, 8, 15, 30 and then 60 s, only for one
+HQ has no presence for (`containerMachine.ts`, `probe.ts`).
 
 ### 2.6 What survives what
 
@@ -861,6 +864,15 @@ HQ binds ordinary ZCP credential establishment to the verified person and exact 
 child issue, renewal and acknowledged delivery belong to HQ/Mate. No separate Observe consent
 is required. Opening a page, starting a turn and provider login never establish this context
 (§3.3, §3.6).
+
+The Mate's changes reach zcp the same way, through a file, never a call: on every `state` frame of
+its link the Mate's server replaces `~/.zcp/hq/changes.json` (under the container's home) whole, in
+one rename, with exactly the frame's `MateChanges` (`packages/shared/src/hqChanges.ts`): `{ "appId":
+string|null, "appName": string|null, "changes": MateChange[], "openPerBranch"?: true }`, each change
+as the frame carries it, never a credential (`ZeropsChangesFile.ts`). zcp only reads it
+(`hq.ReadMateChanges`) — at its service's start and each time the file is created or renamed into
+place, watching its directory, never on a timer; no file, or one it cannot read, is no finished
+change. What zcp does with it: §6.3, *Release on archive and on completion*.
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -2495,18 +2507,25 @@ sequenceDiagram
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in,
   renewal and the verbs that decide on a role wait for Zerops. Each Mate keeps its last list and its
   open connections, and refuses new tickets once the list is stale (above).
-- **Reconcile and liveness.** HQ polls no organisation view and holds no credential that could
-  read one. It reconciles per project credential: a Mate's project key over its link, and each stage
-  or production environment's deploy token reading its own project. Zerops' answer decides: `400
-  projectNotFound` (`/user/info`: `400 userNotFound`) means the project is gone; `403` means the
-  token's grant moved, so HQ re-reads the token's own record, marks it invalid and keeps the
-  placement; `401` means the token was revoked, and the next present person re-mints it. Members and
-  overrides arrive at HQ only in the Mates' `access_report` (§3.9).
+- **Liveness.** HQ polls no organisation view, holds no credential that could read one and runs no
+  reconcile sweep over its Mates or environments: it reads Zerops with a project credential only
+  when that credential is used — a Mate's project key as it links or calls (§3.3), an environment's
+  deploy token at that environment's deploy. Before a deploy HQ reads the token's own record: a
+  token Zerops refuses, or one that reaches more than its project, is marked invalid (`keyInvalid`)
+  and deploys nothing until a person keeps a new one; one Zerops no longer finds (`/user/info`: `400
+  userNotFound`) may have gone with its project, and HQ drops the environment's project once a read
+  with the project's own credential answers `400 projectNotFound`; a read Zerops does not answer
+  marks nothing and keeps the project for its next deploy. Members and overrides arrive at HQ only
+  in the Mates' `access_report` (§3.9).
 - **Project deleted.** The container dies with it and the link drops by transport; a deleted Mate
-  project leaves no live key to ask with. The next present organisation `ADMIN` or `OWNER`'s
-  browser sees the project go on its own `project` stream (§3.16) and tells HQ in one verb carrying
-  the token; HQ confirms it with one fresh read and drops what is missing, the key entry and the
-  Mate's Git credential with it. A key asked after its project went answers `400 projectNotFound`
+  project leaves no live key to ask with. A person's client whose own `project` stream drops a
+  project HQ still places (§3.16), and whose own read of it answers `400 projectNotFound`, tells HQ
+  once with that person's token: the person who prepared the Mate's deletion finishes it with their
+  own receipt (complete-mate-deletion, `POST /api/lifecycle/{id}`); anyone else only as an
+  organisation `OWNER` or `ADMIN`, with `POST /api/projects/{id}/deleted`. HQ confirms it with the
+  person's own fresh reads (`GET /user/info`, `GET /project/{id}`) and drops what is missing, the key
+  entry and the Mate's Git credential with it; a project Zerops still answers is `409
+  project_present`. A key asked after its project went answers `400 projectNotFound`
   (`/user/info`: `400 userNotFound`), a definite refusal (§3.3). Until then the Mate reads "not
   connected since T".
 - **Key regenerated or deleted.** A regenerated key is a new hash: the Mate presents it at its next
@@ -3966,13 +3985,10 @@ lease the answer lists in `released[]` (a branch release takes every lease of th
 lease holds unsaved work, or another live zcp session shares it — keeps the binding, silently; anything
 else is a failure the conversation's chip shows. zcp itself releases a branch's leases once its change
 in HQ is merged or closed (DP-34), on its HQ pass and its service's look; the unbind fan-out above
-follows from the envelope. The service's look asks HQ nothing: on every `state` frame of its link the
-Mate's server replaces `~/.zcp/hq/changes.json` (under the container's home) whole, in one rename,
-with exactly the frame's `MateChanges` (`packages/shared/src/hqChanges.ts`): `{ "appId": string|null,
-"appName": string|null, "changes": MateChange[], "openPerBranch"?: true }`, each change as the frame
-carries it; zcp only reads it (`hq.ReadMateChanges`) — at its service's start and each time the
-file is created or renamed into place, watching its directory, never on a timer — and no file, or
-one it cannot read, is no finished change. Idleness never releases (§0 rule 4).
+follows from the envelope. The service's look asks HQ nothing: it reads the Mate's changes from
+the file the Mate's server keeps from its link's `state` frames (`~/.zcp/hq/changes.json`, §2.8),
+at its service's start and each time the file is replaced, never on a timer. Idleness never
+releases (§0 rule 4).
 
 **A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
 pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
@@ -4861,8 +4877,13 @@ environment, recorded with the attach — named as the attach asks or after its 
 **deploy token** — `NO_ACCESS` in the org, `BASIC_USER` on the environment's project alone — is
 minted by the client of whoever attaches it (a token cannot mint a token) and handed over with `PUT
 /api/apps/:appId/environments/:name/deploy-token`; HQ keeps it only once Zerops says it reaches
-exactly that project, never answers it back, and the structure says only `keyHeld`, and `keyInvalid`
-once a deploy finds it no longer answers or reaches more. **A stage's deploys** are Core's: when
+exactly that project, never answers it back, and the structure says only `keyHeld`, `keyId` (the
+kept token's own Zerops id, never the token) and `keyInvalid` once a deploy finds it no longer
+answers or reaches more; a deploy whose token Zerops no longer finds drops the environment once its
+project is proven gone (§3.10). A token HQ no longer keeps is deleted on Zerops by the client of the
+person whose write let it go, with their token, once HQ confirmed the write: the previous one after
+a new one is kept, and the environment's own after a production removal or a move out of the
+environments; a failed delete is said once and never retried. **A stage's deploys** are Core's: when
 `main` moves, every stage following it gets the services its stage tier builds from the repository
 whose `main` moved — the exact commit's archive, its zerops.yaml, the tier's setup, a version named
 `main <7 hex>`, deployed with the environment's own token; a deploy is live only once the service
