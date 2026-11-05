@@ -2867,11 +2867,10 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts:250-287`), in order:
 - `import-container` — the zcp container, holding the key the person mints for it — a key that
   holds only its own project; the agent sees the application's stage and production through HQ
   (`zerops_observe`, §10.8), never through a key on a sibling — and the tier's runtimes for zcp to
-  import on boot (`MATE_SETUP_RUNTIMES`).
-- `close-off` — `envIsolation` written `service` wherever a read says anything else, then the
-  project marked closed off at HQ once two reads two seconds apart say `service`
-  (`runEnvironmentCreation.ts`). Where HQ is not open in the tab the mark is not written, and
-  _Finish setup_ writes it (`matePress.ts`).
+  import on boot (`MATE_SETUP_RUNTIMES`). The project is born closed off: the import YAML states
+  `project: envIsolation: service@zcp` — only the Mate's zcp reads the other services' variables,
+  and `ZCP_API_KEY` stays the container's (`newProject.ts`, `recipeTier.ts`). No step writes the
+  isolation afterwards; zcp verifies it once, at its import (below).
 - `await-ready` — for a Mate, the hand-off: the press returns; for a stage or a production, the wait
   for every service `ACTIVE`, at most 600 s, read every 5 s (`runEnvironmentCreation.ts:222-224`,
   `:441-462`).
@@ -2882,7 +2881,7 @@ which any browser's _Finish setup_ completes; a registration HQ refuses stops th
 a Mate and a stage or a production alike, with HQ's refusal on the step.
 _Finish setup_ — on a half-made Mate's ⋯ menu, by an owner or an admin, in any browser — runs the
 same steps: `register` where HQ holds no record of it, `import-container` where the project has
-none, `close-off`, `await-ready`; a Mate made before the
+none, `await-ready`; a Mate made before the
 press first has its key lowered from `ADMIN` and moved off the project's variables (`hardenMate`)
 (`matePress.ts:828-858`, `:912-959`). A pool project a registration claimed goes the same way once
 the inventory lists it — hardened, closed off, nothing registered; a registration that answers
@@ -2898,7 +2897,7 @@ hidden tab's throttled timers survive several times over. Holding a press takes 
 above on the project (`hold_press`) — a reader alone may not, for a held press keeps another's
 _Finish setup_ away. A second press of the same project, in another browser or tab, is refused
 before it writes anything (`press_held`) while the first's hold runs; a hold that ran out is taken
-over. A press runs until Zerops accepted the container's import and the project is closed off; the
+over. A press runs until Zerops accepted the container's import; the
 minutes the container then takes to come up are the platform's, and another browser reads them from
 the container itself ("Coming up"), never from a hold. A press that finishes deletes its record, and a stage's or a production's registration ends
 it in the same write; one that stops ends its hold and keeps the record. HQ streams each press to
@@ -2912,8 +2911,8 @@ press's record, never offered a Mate's _Finish setup_. A hold HQ refuses this pe
 project. The tab keeps its presses in memory only for its screens; a reload forgets them, and HQ's
 records and the listing draw the rest. Within one browser one press or _Finish setup_ runs per
 project across its tabs, under the Web Lock `mate:press:<projectId>` (`mateLocks.ts`); one that finds
-it held says "Its setup is already running in another tab." The close-off's mark and the registration are each tried up to four times,
-two seconds apart. A press that stopped at `import-container`, `close-off` or `register` resumes
+it held says "Its setup is already running in another tab." The registration is tried up to four times,
+two seconds apart. A press that stopped at `import-container` or `register` resumes
 there with _Try again_, on the same project; one that stopped at its
 project or at a services import is not resumed — a second import is refused for the hostnames the
 first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
@@ -2921,27 +2920,23 @@ first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
 
 **After the press the container does the rest**, with a browser open or none: the Mate's server
 links to HQ with the project key from its boot on, which brings the dev service its Git credential
-(§3.5); zcp imports the tier's runtimes only once Zerops reads the project
-closed off — HQ's mark is a receipt (`internal/ops/closed_off.go`, `internal/matesetup/runtimes.go`
-`awaitClosedOff`), and the Mate's server starts the stand-up once HQ's record names who asked, or
+(§3.5); before it imports the tier's runtimes zcp reads the project's `envIsolation` from Zerops
+once: a rule set whose default is `service` (`service@zcp`, `service`) with no `ZCP_API_KEY`
+project-wide imports; `none`, any other rule set or a read that fails imports nothing and ends the
+runtimes section failed — "project is open; runtimes not imported", or why it could not read — with
+no retry until the next launch (`internal/ops/closed_off.go` `ProjectClosedOff`,
+`internal/matesetup/runtimes.go` `refuseOpen`); and the Mate's server starts the stand-up once HQ's record names who asked, or
 settles it as none at once where it names nobody (`ZeropsSetup.ts`). Any browser reads where that
 stands off `GET /mate/setup.json` — `container`, `git`, `runtimes`, `signin`, `standup` — and an
-older Mate's off `/mate/healthz` (`mateSetup.ts:1-26`). **Nothing connects to a Mate before its
-project is closed off**: auto-connect wants a Mate only once its health reads `ready`, and holds
-one whose container carries the press's marker while HQ does not hold its project closed off
-(`autoConnect.ts:44-49`, `:71-80`, `closeOffGate` `:103-121`); _Finish setup_ is what clears it
-(`interruptedPresses`, `matePress.ts:991-1009`).
-`runEnvironmentCreation.test.ts` — "registers a Mate before its container, and closes it off after",
-"stops a Mate before its container when its registration is refused", "stops a stage's press at a refused registration: it
-has no close-off to keep", "reads no process, and closes off in two reads two seconds apart",
-"resumes at the step that stopped, on the project the first press made"; `matePress.test.ts` —
-"settles a press that stopped with Try again, which resumes it at the step that stopped", "runs none
-where another tab is pressing the project, and says so", "hardens, then marks it closed off without
-reading the isolation again"; `hqMateBirth.test.ts` — "leaves a close-off to the registration where
-HQ holds no record yet", "keeps a record HQ holds already"; `createEnvironment.test.ts` — "creates a
-production with no tag of ours: where it stands is HQ's to say"; `autoConnect.test.ts` — "the Mate
-on screen still waits for its health and its close-off"; zcp
-`TestRun_ImportsOnlyIntoAProjectClosedOff`, `TestRun_WaitingToBeClosedOff_SaysSo`.
+older Mate's off `/mate/healthz` (`mateSetup.ts:1-26`). Auto-connect wants a Mate only once its
+health reads `ready` (`autoConnect.ts:44-49`).
+`runEnvironmentCreation.test.ts` — "stops a Mate before its container when its registration is
+refused", "resumes at the step that stopped, on the project the first press made";
+`matePress.test.ts` — "settles a press that stopped with Try again, which resumes it at the step
+that stopped", "runs none where another tab is pressing the project, and says so";
+`hqMateBirth.test.ts` — "keeps a record HQ holds already"; `createEnvironment.test.ts` — "creates a
+production with no tag of ours: where it stands is HQ's to say"; zcp `TestProjectClosedOff`,
+`TestRun_ImportsOnlyIntoAProjectClosedOff`, `TestRun_AnUnreadableProjectSaysSo`.
 
 ### 4.5 The readiness probe
 
@@ -3004,19 +2999,18 @@ sees HQ's gate in place of the product (`ZeropsHqGate.tsx:1-5`):
   makes none, so the key is absent and the container offers every agent (MC-11 keeps the document's
   rule). `VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled)
   and sent once; a second container in the same project is named `zcp1`.
-- **Then the press** (§4.4), from the moment the platform takes the project: `close-off`,
-  `register` — the Mate attached to the application with the face the dialog asked, its
-  birth recorded closed off and no stand-up asked, since a new project has no code to stand up —
+- **Then the press** (§4.4), from the moment the platform takes the project — born closed off by
+  its import YAML (§4.4): `register` — the Mate attached to the application with the face the
+  dialog asked, no stand-up asked, since a new project has no code to stand up —
   `await-ready` (`ZeropsNewProjectHost.tsx:20-26`, `:276-313`). Superseded
   2026-10-02: main's birth carried the Mate's membership and the broker's grant as its `tags` and
   `registry` steps, and its `harden` closed the project off.
-- **The dialog stays on the press** until the project is marked closed off and its registration
-  has gone through or been refused, then lands on the first Mate's own view — `/mate/new/$birthId`,
+- **The dialog stays on the press** until its registration has gone through or been refused, then lands on the first Mate's own view — `/mate/new/$birthId`,
   which hands the route to `/mate/$projectId` (`pressThrough`,
   `ZeropsEnvironmentCreationDialog.logic.ts:525-534`; `newProjectBirth.ts:12-14`). A step that
   stops says why there, with _Try again_, which resumes from that step — except a creation the
   platform may have taken anyway, which a second try could make twice (`newProjectBirth.ts:16-20`).
-  A tab closed before the close-off leaves a Mate the ⋯ menu's _Finish setup_ completes, in any
+  A tab closed before the registration leaves a Mate the ⋯ menu's _Finish setup_ completes, in any
   browser (`ZeropsNewProjectHost.tsx:31-39`). The platform's verdict on the creation is
   `project.create`'s, read from `POST /process/search`; one it failed after answering `200` reads
   "Could not be created." with the projects page's _Remove_ (`candidates.ts:160-188`,
@@ -3029,8 +3023,7 @@ password", "matches the platform's own numbering", "emits the platform's own imp
 for byte, plus the mate flag", "emits an empty agent list as exactly the no-agent document";
 `newProjectBirth.test.ts` — "registers the project in the organization's HQ, then creates its
 Mate", "resumes from the step that stopped it, with the same project, on Try again", "never tries
-again a creation the platform may have taken", "is through once its Mate is marked closed off and
-registered, and not before"; `projectCreation.test.ts` — "takes the newest project.create of that
+again a creation the platform may have taken"; `projectCreation.test.ts` — "takes the newest project.create of that
 project, whatever the order", "recognises the platform's empty internal error and nothing else";
 `ZeropsProjectsPage.test.ts`.
 
@@ -4723,9 +4716,9 @@ Mate's membership at birth; registering a Mate then widens the broker's token in
 `BASIC_USER` on the Mate's project (`brokerGrant.ts`; a failed grant after the registry write is
 reported and has no retry yet). Group reach on a Mate's own token is gone since 2026-10-05: a Mate's
 key holds only its own project, and its agent sees stage and production through HQ (§10.8). Per-project tags (`mate`,
-`mate:g:`, `mate:role:`, `mate:name:`, `mate:bot:`) stay display hints. Who signed an agent in,
-who asked for a Mate's stand-up and whether its project is closed off are no tags — any member can
-write a tag by API: the first is the Mate's own record (§10.5), the other two the Mate's record at
+`mate:g:`, `mate:role:`, `mate:name:`, `mate:bot:`) stay display hints. Who signed an agent in and
+who asked for a Mate's stand-up are no tags — any member can
+write a tag by API: the first is the Mate's own record (§10.5), the second the Mate's record at
 its HQ (§10.10). The budget is measured:
 65 534 bytes of tag JSON per project, about 2 500 entries.
 
@@ -5881,9 +5874,9 @@ Who holds what:
 - **The person's browser, as the person**, reads the recipe and builds the project: it imports the
   `project:` block and the managed services, adds the `zcp` container, lowers the container's
   token (`BASIC_USER` on its project, and on nothing else), drops
-  the one-time delegation, grants the broker, registers the Mate, closes the project off once
-  `zcp` answers (per-service env isolation, `ZCP_API_KEY` a sensitive variable on `zcp`), and
-  imports the runtimes.
+  the one-time delegation, grants the broker and registers the Mate. The `project:` block it
+  imports births the project closed off (`envIsolation: service@zcp`, `ZCP_API_KEY` a sensitive
+  variable on `zcp`); zcp verifies that once before it imports the runtimes.
 - **HQ** keeps the recipe on `main` of the recipe repository and gives each pair its repository;
   the Mate reaches both with its project key (§6.6).
 - **zcp**, with its lowered key, stands the Mate's development up in its own
@@ -5897,12 +5890,11 @@ The order:
 2. It imports the project with the recipe's `project:` block and the managed services only.
 3. It adds the `zcp` container through the platform's development-container recipe.
 4. It lowers the container's token, drops the delegation, grants the broker and registers the Mate.
-5. When `zcp` answers, it closes the project off and records that at the Mate's HQ
-   (`POST /api/mates/{projectId}/closed-off`, once the Mate's record exists there), and the sign-in
-   is offered. HQ's mark is a receipt: zcp's runtime import, `zerops_import` and `zerops_standup`
-   read closed-off from Zerops with the Mate's own key — `envIsolation`'s first word `service` and
-   no `ZCP_API_KEY` left project-wide (`ops.ProjectClosedOff`); a read that fails, or one without
-   `envIsolation` yet, holds the import, never opens it.
+5. When `zcp` answers, the sign-in is offered. The project was born closed off (step 2's
+   `project:` block says `envIsolation: service@zcp`); zcp's runtime import, `zerops_import` and
+   `zerops_standup` verify it from Zerops with the Mate's own key — a rule set whose default is
+   `service` and no `ZCP_API_KEY` left project-wide (`ops.ProjectClosedOff`); `none`, any other
+   rule set, or a read that fails or lacks `envIsolation`, refuses the import, never opens it.
 6. It imports the runtimes in one wave: dev halves `startWithoutCode: true` (running and empty, the
    checkout target), stage halves with no build (`READY_TO_DEPLOY`), public-build utilities with
    their build, which the platform runs.
