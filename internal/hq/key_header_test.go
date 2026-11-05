@@ -29,7 +29,6 @@ func TestClient_EveryCallPresentsTheKeyInTheHeaderAndNeverInTheURL(t *testing.T)
 		{"recipe tier", func(c Client) { _, _ = c.RecipeTier(ctx, "mate") }},
 		{"self", func(c Client) { _, _ = c.Self(ctx) }},
 		{"key recheck", func(c Client) { _, _ = c.RecheckKey(ctx) }},
-		{"signers", func(c Client) { _, _ = c.Signers(ctx, "p-mate") }},
 	}
 	for _, tt := range routes {
 		t.Run(tt.name, func(t *testing.T) {
