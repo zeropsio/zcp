@@ -31,6 +31,39 @@ const (
 	groupBase = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432"
 )
 
+func TestLeaseReleaseGroupConfirmed_ReacquiredAliasIsKept(t *testing.T) {
+	t.Parallel()
+	rf := newRewireFixture(t)
+	rf.acquire(t, groupHQPool)
+	gf := rf.groupFixture
+	old, err := loadLeaseRecord(gf.stateDir, "hqpool-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = LeaseReleaseGroupConfirmed(t.Context(), gf.deps, testRepo, "feat", func(targets []LeaseTargetInfo) bool {
+		if len(targets) != 1 || targets[0].AcquiredAt != old.AcquiredAt {
+			t.Fatalf("captured targets = %+v, want the original acquisition", targets)
+		}
+		gf.hq.takeOver(old.ContainerID)
+		replacement := old
+		replacement.Lease = ownOtherLease
+		if err := writeLeaseRecord(gf.stateDir, replacement); err != nil {
+			t.Fatalf("record the replacement: %v", err)
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatalf("release original: %v", err)
+	}
+	current, err := loadLeaseRecord(gf.stateDir, "hqpool-3")
+	if err != nil || current.Lease != ownOtherLease || current.AcquiredAt != old.AcquiredAt {
+		t.Errorf("replacement record was not kept with the same acquisition timestamp: %v", err)
+	}
+	if releases := gf.hq.releaseLog(); len(releases) != 0 {
+		t.Errorf("orchestrator received %d releases, want none for the replacement", len(releases))
+	}
+}
+
 // poolOrch is a pool orchestrator the group tests control: every acquire
 // reserves a fresh container, a release frees it. It is safe for concurrent
 // use, and gate (when set) holds every acquire until it is closed.
