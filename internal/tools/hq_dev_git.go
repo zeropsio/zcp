@@ -55,18 +55,24 @@ const devGitLookEvery = 10 * time.Second
 // KeepMateDevGit keeps every wired pair's dev service on this Mate's HQ
 // (keepMateDevGit) for as long as ctx lasts, and releases the leases of every
 // branch whose change in HQ is merged or closed (followLeaseCompletion,
-// docs/spec-workflows.md §8 DP-34): the Mate's own service runs it
+// docs/spec-workflows.md §8 DP-34) each time the Mate's server puts a `state`
+// frame's changes in place (watchMateChanges): the Mate's own service runs it
 // beside the server it supervises. env is the container's live env store as
 // it is at each call — the unit's own environment carries neither the key nor
 // the project — and a container that is no Mate returns at once. Each line
 // said goes to log.
 func KeepMateDevGit(ctx context.Context, env func() func(string) string, log func(string)) {
-	if rt := runtime.DetectFrom(env()); !rt.InContainer || !rt.MateEnabled {
+	rt := runtime.DetectFrom(env())
+	if !rt.InContainer || !rt.MateEnabled {
 		return
+	}
+	changed, err := watchMateChanges(ctx, hqIdentity(rt).ChangesPath)
+	if err != nil {
+		log(fmt.Sprintf("finished changes are looked for only at the service's start: %v", err))
 	}
 	ticker := time.NewTicker(devGitLookEvery)
 	defer ticker.Stop()
-	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, log)
+	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, changed, log)
 }
 
 // liveDevGitDeps is devGitDeps from the container's live env store: the
@@ -121,26 +127,30 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 // tick after it lands. A start that did not settle — a dev service stopped,
 // HQ not answering — is taken again on hqAttemptDue's backoff, counted in
 // the ticks' own times, while every tick between still follows the
-// credential. deps is asked for at each look; false skips the look. A line
-// goes to log when the look before did not say it.
-func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, log func(string)) {
+// credential. Finished changes are looked for (followLeaseCompletion) at the
+// start — the file may already hold one — and at each wake changed sends,
+// never at a tick. deps is asked for at each look; false skips the look. A
+// line goes to log when the look of its kind before did not say it.
+func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, changed <-chan struct{}, log func(string)) {
 	var (
 		settled bool
 		retry   hqPairState
-		said    map[string]bool
 		// renewals are the pairs whose last renewal failed, with its record:
 		// each is tried again on hqAttemptDue's backoff.
 		renewals = map[string]hqPairState{}
-		// completed is when the look for finished changes last read HQ
-		// (followLeaseCompletion).
-		completed time.Time
 	)
-	look := func(at time.Time) {
-		d, ok := deps(ctx)
-		if !ok {
-			return
+	sayNew := func(said map[string]bool, lines []string) map[string]bool {
+		saying := make(map[string]bool, len(lines))
+		for _, line := range lines {
+			if !said[line] {
+				log(line)
+			}
+			saying[line] = true
 		}
-		d.ssh = boundedSSH{SSHDeployer: d.ssh}
+		return saying
+	}
+	var saidCredentials, saidCompletion map[string]bool
+	credentials := func(d devGitDeps, at time.Time) {
 		var lines []string
 		if settled || !hqAttemptDue(retry, at) {
 			lines = followMateCredential(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir, at, renewals)
@@ -149,19 +159,23 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			retry = nextHQAttempt(retry, at, "", false)
 		}
 		lines = append(lines, followPoolCredentials(ctx, d.client, d.rt, d.stateDir, at, renewals)...)
-		var released []string
-		released, completed = followLeaseCompletion(ctx, d, at, completed)
-		lines = append(lines, released...)
-		saying := make(map[string]bool, len(lines))
-		for _, line := range lines {
-			if !said[line] {
-				log(line)
-			}
-			saying[line] = true
-		}
-		said = saying
+		saidCredentials = sayNew(saidCredentials, lines)
 	}
-	look(started)
+	complete := func(d devGitDeps) {
+		saidCompletion = sayNew(saidCompletion, followLeaseCompletion(ctx, d))
+	}
+	look := func(turn func(devGitDeps)) {
+		d, ok := deps(ctx)
+		if !ok {
+			return
+		}
+		d.ssh = boundedSSH{SSHDeployer: d.ssh}
+		turn(d)
+	}
+	look(func(d devGitDeps) {
+		credentials(d, started)
+		complete(d)
+	})
 	for {
 		select {
 		case <-ctx.Done():
@@ -170,7 +184,9 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			if !open {
 				return
 			}
-			look(at)
+			look(func(d devGitDeps) { credentials(d, at) })
+		case <-changed:
+			look(complete)
 		}
 	}
 }

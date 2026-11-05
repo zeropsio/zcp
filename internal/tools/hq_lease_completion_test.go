@@ -436,9 +436,10 @@ func (l *hqLab) stateFrame() {
 // service reads finished changes from the link's last `state` frame, the file
 // the Mate's server writes, while zcp holds leases of its repositories, so a
 // change a person merges while no agent runs a pass gets its leases released
-// all the same, at a look no sooner than leaseCompletionEvery after the one
-// before. It never asks HQ for the Mate's state: a merge no frame has brought
-// yet releases nothing, and no file is no finished change.
+// all the same — at once when the server renames a frame's file into place,
+// with no tick of the service's loop between, and never by reading the file
+// on a timer. It never asks HQ for the Mate's state: a merge no frame has
+// brought yet releases nothing, and no file is no finished change.
 func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	requireGitForLab(t)
 	t.Parallel()
@@ -451,38 +452,46 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	}
 	lab.leaseOf("hqpool", 4, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: lab.stateDir}
+	released := make(chan struct{}, 4)
 	deps := func(ctx context.Context) (devGitDeps, bool) {
 		d, ok := lab.devGitDeps(ctx)
-		d.release = fake.release
+		d.release = func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
+			defer func() { released <- struct{}{} }()
+			return fake.release(ctx, repo, branch)
+		}
 		return d, ok
 	}
 	const selfRead = "GET /api/mate/self"
+	changed, err := watchMateChanges(t.Context(), lab.rt.HQ.ChangesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	start := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	ticks := make(chan time.Time)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		keepMateDevGit(t.Context(), deps, start, ticks, func(string) {})
+		keepMateDevGit(t.Context(), deps, start, ticks, changed, func(string) {})
 	}()
 
-	// Each send returns once the look before it is over; the look it starts
-	// may still run, so a check follows only a tick within
-	// leaseCompletionEvery of the last read, whose look releases nothing.
+	// Each send returns once the look before it is over, while the look it
+	// starts may still run: the last send only waits for the ticks' looks
+	// after the merge to be over before the frame comes.
 	ticks <- start.Add(10 * time.Second)
 	selfReads := lab.hq.callCount(selfRead)
 	lab.hq.mergeChange("appdev", 1)
-	ticks <- start.Add(leaseCompletionEvery + 10*time.Second) // reads: no file yet
-	ticks <- start.Add(leaseCompletionEvery + 20*time.Second)
+	ticks <- start.Add(20 * time.Minute)
+	ticks <- start.Add(40 * time.Minute)
+	ticks <- start.Add(40*time.Minute + 10*time.Second)
 	if got := fake.called(); len(got) != 0 {
 		t.Fatalf("releases = %+v before any frame said the change is merged, want none", got)
 	}
 	lab.stateFrame()
-	ticks <- start.Add(leaseCompletionEvery + 30*time.Second)
-	ticks <- start.Add(2 * leaseCompletionEvery)
-	if got := fake.called(); len(got) != 0 {
-		t.Fatalf("releases = %+v within leaseCompletionEvery of the look before, want none", got)
+	select {
+	case <-released:
+	case <-done:
+		t.Fatal("the service ended before the frame's file woke it")
 	}
-	ticks <- start.Add(2*leaseCompletionEvery + 10*time.Second) // reads the frame
 	close(ticks)
 	<-done
 

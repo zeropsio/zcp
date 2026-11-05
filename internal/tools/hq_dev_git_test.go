@@ -141,7 +141,7 @@ func TestMateService_EveryCredentialHQSendsReachesTheDevService(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		keepMateDevGit(t.Context(), lab.devGitDeps, time.Time{}, ticks, func(string) {})
+		keepMateDevGit(t.Context(), lab.devGitDeps, time.Time{}, ticks, nil, func(string) {})
 	}()
 	// look lets the service take one look and waits until it took it: the
 	// second send is taken only once the first look is over.
@@ -204,7 +204,7 @@ func TestMateService_ACredentialTheServerHasNotYetReceivedIsHandedOnOnceItLands(
 		return lab.devGitDeps(ctx)
 	}
 
-	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, func(string) {})
+	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
 
 	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != linked {
 		t.Errorf("the dev service holds %q, want the credential the link brought", held)
@@ -239,7 +239,7 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 		return lab.devGitDeps(ctx)
 	}
 
-	keepMateDevGit(t.Context(), deps, started, ticks, func(string) {})
+	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
 
 	if sessions[2] != sessions[1] {
 		t.Errorf("a look within the wait reached the dev service %d time(s)", sessions[2]-sessions[1])
@@ -355,7 +355,7 @@ func TestMateService_ARenewalThatKeepsFailingIsTriedAgainOnlyOnceItsWaitIsOver(t
 		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, started, ticks, func(string) {})
+	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
 	lists = append(lists, client.count())
 
 	if within := lists[3] - lists[2]; within != 0 {
@@ -404,7 +404,7 @@ func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
 		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, func(string) {})
+	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
 
 	if len(ssh.within) == 0 {
 		t.Fatal("the start ran no command on the dev service")

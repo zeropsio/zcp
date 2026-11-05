@@ -308,34 +308,26 @@ func releaseOutcomeWords(outcome string) string {
 	return ""
 }
 
-// leaseCompletionEvery is how often the Mate's service looks for a finished
-// change while zcp holds leases of its repositories: a merge a person made
-// while no agent runs a pass frees its leases within it once a frame brought
-// it. It bounds how often a release refused for unsaved work runs its guard
-// over ssh again.
-const leaseCompletionEvery = time.Minute
-
 // followLeaseCompletion is the Mate's service's look for finished changes
-// (DP-34), at most every leaseCompletionEvery after the look before (last):
-// only while zcp holds a lease of a repository on this Mate's HQ, it reads
-// the changes the link's last `state` frame brought (hq.ReadMateChanges, the
-// file the Mate's server writes) and releases what releaseCompletedLeases
-// releases. HQ is asked nothing: no file, or one that cannot be read, is no
-// finished change. It answers the time of this look, or last when it took
-// none.
-func followLeaseCompletion(ctx context.Context, d devGitDeps, at, last time.Time) ([]string, time.Time) {
-	if d.release == nil || (!last.IsZero() && at.Sub(last) < leaseCompletionEvery) {
-		return nil, last
+// (DP-34), run when the Mate's server put a new `state` frame's changes in
+// place (keepMateDevGit): only while zcp holds a lease of a repository on
+// this Mate's HQ, it reads the changes the link's last `state` frame brought
+// (hq.ReadMateChanges, the file the Mate's server writes) and releases what
+// releaseCompletedLeases releases. HQ is asked nothing: no file, or one that
+// cannot be read, is no finished change.
+func followLeaseCompletion(ctx context.Context, d devGitDeps) []string {
+	if d.release == nil {
+		return nil
 	}
 	hqc, linked := openHQ(d.httpClient, d.rt)
 	if !linked || len(hqLeaseBranches(d.stateDir, hqc.Address())) == 0 {
-		return nil, last
+		return nil
 	}
 	frame, err := hq.ReadMateChanges(hqIdentity(d.rt).ChangesPath)
 	if err != nil {
-		return nil, at
+		return nil
 	}
-	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, d.release), at
+	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, d.release)
 }
 
 // withRecipeSchemas shares the server schema cache with recipe conflict passes.

@@ -117,7 +117,7 @@ func TestMateService_ACredentialHQSendsReachesEveryPool(t *testing.T) {
 				return lab.devGitDeps(ctx)
 			}
 
-			keepMateDevGit(t.Context(), deps, time.Time{}, ticks, func(string) {})
+			keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
 
 			if token, held := poolHQCredential(t, lab.mock, tc.pool); !held || token.Content != rotated || !token.Sensitive {
 				t.Errorf("the pool's %s = %+v (held %v), want the credential HQ sent, as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)

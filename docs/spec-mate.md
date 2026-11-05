@@ -3964,8 +3964,9 @@ follows from the envelope. The service's look asks HQ nothing: on every `state` 
 Mate's server replaces `~/.zcp/hq/changes.json` (under the container's home) whole, in one rename,
 with exactly the frame's `MateChanges` (`packages/shared/src/hqChanges.ts`): `{ "appId": string|null,
 "appName": string|null, "changes": MateChange[], "openPerBranch"?: true }`, each change as the frame
-carries it; zcp only reads it (`hq.ReadMateChanges`), and no file, or one it cannot read, is no
-finished change. Idleness never releases (§0 rule 4).
+carries it; zcp only reads it (`hq.ReadMateChanges`) — at its service's start and each time the
+file is created or renamed into place, watching its directory, never on a timer — and no file, or
+one it cannot read, is no finished change. Idleness never releases (§0 rule 4).
 
 **A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
 pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
