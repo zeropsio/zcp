@@ -6,63 +6,109 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 )
+
+// heldRecordFile makes the writer wait until the test releases its first write.
+type heldRecordFile struct {
+	*os.File
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (f *heldRecordFile) Write(p []byte) (int, error) {
+	f.once.Do(func() {
+		close(f.entered)
+		<-f.release
+	})
+	return f.File.Write(p)
+}
 
 func TestRecorder_OverflowProducesVisibleGapWithoutBlocking(t *testing.T) {
 	t.Parallel()
-
-	recorder, err := NewRecorder(RecorderConfig{
-		RootDir:       t.TempDir(),
-		SessionID:     "session-overflow",
-		Label:         "overflow",
-		QueueCapacity: 1,
-		writerDelay:   100 * time.Millisecond,
-	})
+	dir := t.TempDir()
+	path := filepath.Join(dir, recordsFilename)
+	file, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("NewRecorder() error = %v", err)
+		t.Fatal(err)
 	}
-
-	started := time.Now()
-	var gapErrors int
-	for range 20 {
-		err := recorder.Record(Record{Kind: RecordProviderResponseBody, BodyBase64: "eA==", BodyBytes: 32 * 1024})
-		if errors.Is(err, ErrCaptureGap) {
-			gapErrors++
-		} else if err != nil {
-			t.Fatalf("Record() error = %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		held := &heldRecordFile{File: file, entered: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(held.release) })
+		recorder := newRecorder(held, dir, path, "session-overflow", "overflow", 1)
+		defer func() { release(); _ = recorder.Close(CaptureComplete, 0) }()
+		if err := recorder.Record(Record{Kind: RecordSessionStart, Label: "overflow"}); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
-		t.Fatalf("overflowing Record calls blocked for %v; recorder must not backpressure protocol traffic", elapsed)
-	}
-	if gapErrors == 0 {
-		t.Fatal("overflow produced no ErrCaptureGap")
-	}
-	if err := recorder.Close(CaptureComplete, 0); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-
-	records, err := ReadRecords(recorder.Path())
-	if err != nil {
-		t.Fatalf("ReadRecords() error = %v", err)
-	}
-	gap := firstRecord(t, records, RecordCaptureGap)
-	if gap.DroppedRecords == 0 || gap.DroppedBytes == 0 || gap.GapStartSeq == 0 || gap.GapEndSeq < gap.GapStartSeq {
-		t.Fatalf("gap record = %+v, want explicit lost range and counts", gap)
-	}
-	end := records[len(records)-1]
-	if end.Kind != RecordSessionEnd || end.CaptureStatus != CapturePartial {
-		t.Fatalf("session end = %+v, want gap to force partial status", end)
-	}
+		synctest.Wait() // the small start record has left the queue
+		large := Record{Kind: RecordProviderResponseBody, BodyBase64: strings.Repeat("eA==", 20_000), BodyBytes: 32 * 1024}
+		if err := recorder.Record(large); err != nil {
+			t.Fatal(err)
+		}
+		<-held.entered // the large record forces the buffered writer into held.Write
+		if err := recorder.Record(Record{Kind: RecordProviderResponseBody, BodyBase64: "eA==", BodyBytes: 32 * 1024}); err != nil {
+			t.Fatal(err)
+		}
+		type result struct {
+			gaps int
+			err  error
+		}
+		done := make(chan result, 1)
+		go func() {
+			var got result
+			for range 20 {
+				err := recorder.Record(Record{Kind: RecordProviderResponseBody, BodyBase64: "eA==", BodyBytes: 32 * 1024})
+				if errors.Is(err, ErrCaptureGap) {
+					got.gaps++
+				} else if err != nil {
+					got.err = err
+					break
+				}
+			}
+			done <- got
+		}()
+		synctest.Wait()
+		var got result
+		select {
+		case got = <-done:
+		default:
+			release()
+			t.Error("overflowing Record calls blocked while the writer was held")
+			got = <-done
+		}
+		if got.err != nil {
+			t.Fatalf("Record() error = %v", got.err)
+		}
+		if got.gaps == 0 {
+			t.Error("overflow produced no ErrCaptureGap")
+		}
+		release()
+		if err := recorder.Close(CaptureComplete, 0); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		records, err := ReadRecords(recorder.Path())
+		if err != nil {
+			t.Fatalf("ReadRecords() error = %v", err)
+		}
+		gap := firstRecord(t, records, RecordCaptureGap)
+		if gap.DroppedRecords == 0 || gap.DroppedBytes == 0 || gap.GapStartSeq == 0 || gap.GapEndSeq < gap.GapStartSeq {
+			t.Fatalf("gap record = %+v, want explicit lost range and counts", gap)
+		}
+		end := records[len(records)-1]
+		if end.Kind != RecordSessionEnd || end.CaptureStatus != CapturePartial {
+			t.Fatalf("session end = %+v, want gap to force partial status", end)
+		}
+	})
 }
 
 func TestRecorder_WriteFailureIsReturnedOnClose(t *testing.T) {
 	t.Parallel()
 
 	writer := &failingRecordFile{writeErr: errors.New("disk full")}
-	recorder := newRecorder(writer, t.TempDir(), "provider.jsonl", "session-write-failure", "failure", 8, 0)
+	recorder := newRecorder(writer, t.TempDir(), "provider.jsonl", "session-write-failure", "failure", 8)
 	if err := recorder.Record(Record{Kind: RecordSessionStart}); err != nil {
 		t.Fatalf("Record() error = %v", err)
 	}

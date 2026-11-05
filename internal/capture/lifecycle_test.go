@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestLifecycleRecorder_RecordsEvalBindingAndTerminalStatus(t *testing.T) {
@@ -124,11 +123,7 @@ func TestControlServer_MarkerStatusAndShutdownRoundTrip(t *testing.T) {
 	if err := client.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
-	select {
-	case <-shutdown:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown callback was not invoked")
-	}
+	<-shutdown
 }
 
 func TestControlServer_RejectsWrongToken(t *testing.T) {

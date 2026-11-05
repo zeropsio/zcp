@@ -12,13 +12,22 @@ import (
 
 func TestManager_ReadinessFailureDoesNotOrphanDaemon(t *testing.T) {
 	root := t.TempDir()
-	process := exec.CommandContext(t.Context(), "/bin/sleep", "30")
-	if err := process.Start(); err != nil {
+	input, hold, err := os.Pipe()
+	if err != nil {
 		t.Fatal(err)
 	}
+	process := exec.CommandContext(t.Context(), "/bin/cat")
+	process.Stdin = input
+	if err := process.Start(); err != nil {
+		_ = input.Close()
+		_ = hold.Close()
+		t.Fatal(err)
+	}
+	_ = input.Close()
 	t.Cleanup(func() {
+		_ = hold.Close()
 		_ = process.Process.Kill()
-		_, _ = process.Process.Wait()
+		_ = process.Wait()
 	})
 
 	terminated := false

@@ -95,7 +95,7 @@ func NewMCPRecorder(cfg MCPRecorderConfig) (*MCPRecorder, error) {
 	}
 
 	m := &MCPRecorder{
-		recorder:      newRecorder(file, cfg.SessionDir, path, cfg.SessionID, "", defaultQueueCapacity, 0),
+		recorder:      newRecorder(file, cfg.SessionDir, path, cfg.SessionID, "", defaultQueueCapacity),
 		processID:     cfg.ProcessID,
 		evalRunID:     cfg.EvalRunID,
 		scenarioRunID: cfg.ScenarioRunID,

@@ -101,9 +101,6 @@ type RecorderConfig struct {
 	SessionID     string
 	Label         string
 	QueueCapacity int
-
-	// writerDelay exists only to make overflow behavior deterministic in tests.
-	writerDelay time.Duration
 }
 
 type recordFile interface {
@@ -171,7 +168,7 @@ func NewRecorder(cfg RecorderConfig) (*Recorder, error) {
 		return nil, fmt.Errorf("create capture record file: %w", err)
 	}
 
-	r := newRecorder(file, sessionDir, path, cfg.SessionID, cfg.Label, cfg.QueueCapacity, cfg.writerDelay)
+	r := newRecorder(file, sessionDir, path, cfg.SessionID, cfg.Label, cfg.QueueCapacity)
 	if err := r.Record(Record{Kind: RecordSessionStart, Label: cfg.Label}); err != nil {
 		_ = r.closeWriter()
 		return nil, fmt.Errorf("queue capture session start: %w", err)
@@ -179,7 +176,7 @@ func NewRecorder(cfg RecorderConfig) (*Recorder, error) {
 	return r, nil
 }
 
-func newRecorder(file recordFile, sessionDir, path, sessionID, label string, queueCapacity int, writerDelay time.Duration) *Recorder {
+func newRecorder(file recordFile, sessionDir, path, sessionID, label string, queueCapacity int) *Recorder {
 	r := &Recorder{
 		sessionID:  sessionID,
 		label:      label,
@@ -187,11 +184,11 @@ func newRecorder(file recordFile, sessionDir, path, sessionID, label string, que
 		path:       path,
 		queue:      make(chan writeRequest, queueCapacity),
 	}
-	go runRecordWriter(file, r.queue, writerDelay)
+	go runRecordWriter(file, r.queue)
 	return r
 }
 
-func runRecordWriter(file recordFile, queue <-chan writeRequest, writerDelay time.Duration) {
+func runRecordWriter(file recordFile, queue <-chan writeRequest) {
 	writer := bufio.NewWriterSize(file, 64*1024)
 	encoder := json.NewEncoder(writer)
 	var writeErr error
@@ -203,9 +200,6 @@ func runRecordWriter(file recordFile, queue <-chan writeRequest, writerDelay tim
 			request.ack <- errors.Join(writeErr, flushErr, syncErr, closeErr)
 			close(request.ack)
 			return
-		}
-		if writerDelay > 0 {
-			time.Sleep(writerDelay)
 		}
 		if err := encoder.Encode(request.record); err != nil {
 			writeErr = errors.Join(writeErr, fmt.Errorf("encode seq %d: %w", request.record.Seq, err))

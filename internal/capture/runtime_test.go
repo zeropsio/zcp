@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRuntime_ProviderControlLifecycleAndManifestCloseAsOneWindow(t *testing.T) {
@@ -64,11 +63,7 @@ func TestRuntime_ProviderControlLifecycleAndManifestCloseAsOneWindow(t *testing.
 	if err := client.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
-	select {
-	case <-runtime.ShutdownRequested():
-	case <-time.After(time.Second):
-		t.Fatal("runtime did not surface control shutdown")
-	}
+	<-runtime.ShutdownRequested()
 	if status, err := runtime.Close(t.Context(), CaptureComplete); err != nil || status != CaptureComplete {
 		t.Fatalf("Close() = status %q, err %v", status, err)
 	}
@@ -145,17 +140,7 @@ func TestRuntime_Close_DrainCaptureFailureDowngradesTerminalStatus(t *testing.T)
 		closed <- closeResult{status: status, err: closeErr}
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, statErr := os.Lstat(runtime.ControlSocket()); errors.Is(statErr, os.ErrNotExist) {
-			break
-		}
-		if time.Now().After(deadline) {
-			close(release)
-			t.Fatal("runtime did not enter provider drain")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	<-runtime.control.done // Close has begun; the held request keeps provider drain open
 	runtime.proxy.setCaptureError(errors.New("late capture failure"))
 	close(release)
 

@@ -6,12 +6,13 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestProxy_ExactBodiesRecordedAndAuthorizationExcluded(t *testing.T) {
@@ -150,6 +151,8 @@ func TestProxy_SSEForwardedBeforeUpstreamEOFAndRecordedExactly(t *testing.T) {
 		w.(http.Flusher).Flush()
 	}))
 	defer upstream.Close()
+	releaseUpstream := sync.OnceFunc(func() { close(release) })
+	defer releaseUpstream()
 
 	recorder, err := NewRecorder(RecorderConfig{RootDir: t.TempDir(), SessionID: "session-stream", Label: "stream"})
 	if err != nil {
@@ -184,15 +187,11 @@ func TestProxy_SSEForwardedBeforeUpstreamEOFAndRecordedExactly(t *testing.T) {
 		firstRead <- b.String()
 	}()
 
-	select {
-	case got := <-firstRead:
-		if got != first {
-			t.Fatalf("first streamed bytes = %q, want %q", got, first)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first SSE event did not reach client before upstream EOF")
+	gotFirst := <-firstRead // the upstream is still held before EOF
+	releaseUpstream()
+	if gotFirst != first {
+		t.Fatalf("first streamed bytes = %q, want %q", gotFirst, first)
 	}
-	close(release)
 	rest, err := io.ReadAll(reader)
 	_ = resp.Body.Close()
 	if err != nil {
@@ -284,28 +283,21 @@ func TestProxy_ContextCancellationClosesListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProxy() error = %v", err)
 	}
-	proxyURL := proxy.URL()
+	shutdown := make(chan struct{})
+	proxy.httpServer.RegisterOnShutdown(sync.OnceFunc(func() { close(shutdown) }))
 	cancel()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		requestCtx, requestCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		request, requestErr := http.NewRequestWithContext(requestCtx, http.MethodGet, proxyURL, nil)
-		if requestErr != nil {
-			requestCancel()
-			t.Fatalf("NewRequestWithContext() error = %v", requestErr)
-		}
-		response, requestErr := http.DefaultClient.Do(request)
-		requestCancel()
-		if requestErr != nil {
-			if err := recorder.Close(CaptureComplete, 0); err != nil {
-				t.Fatalf("Recorder.Close() error = %v", err)
-			}
-			return
-		}
-		_ = response.Body.Close()
-		time.Sleep(10 * time.Millisecond)
+	<-shutdown // net/http closes its listeners before invoking this callback
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", proxy.listener.Addr().String())
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("proxy listener still accepted connections after context cancellation")
 	}
-	t.Fatal("proxy listener still accepted connections after context cancellation")
+	if err := proxy.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if err := recorder.Close(CaptureComplete, 0); err != nil {
+		t.Fatalf("Recorder.Close() error = %v", err)
+	}
 }
 
 func TestProxy_RemovesConnectionNominatedResponseHeaders(t *testing.T) {
