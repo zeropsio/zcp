@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,6 +289,121 @@ func TestLeaseRelease_RewiresSiblingsBeforeRelease(t *testing.T) {
 				t.Errorf("hqpool-3 was sent %d ctl env, want only its acquire's: the lease leaving is reset, never rewired", n)
 			}
 		})
+	}
+}
+
+func TestLeaseReleaseGroup_MemberJoiningAfterSnapshot_RewiredBeforeRelease(t *testing.T) {
+	t.Parallel()
+	rf := newRewireFixture(t)
+	rf.acquire(t, groupHQPool)
+	entered, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	var atRelease map[string]string
+	hq := hookOrch{poolOrch: rf.groupFixture.hq, before: func(call string) {
+		if call == "renew" && first.CompareAndSwap(false, true) {
+			close(entered)
+			<-resume
+		}
+		if call == "release" {
+			atRelease = rf.web.Overlay()
+		}
+	}}
+	funcs := map[string]SwarmAPI{orchestratorURL(groupHQPool): hq, orchestratorURL(groupWebPool): rf.groupFixture.web}
+	rf.deps.Swarm = func(baseURL, _ string) SwarmAPI { return funcs[baseURL] }
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(resume) }) }
+	defer func() { unblock(); <-done }()
+	var change LeaseChange
+	var releaseErr error
+	go func() {
+		defer close(done)
+		change, releaseErr = LeaseReleaseGroupChange(t.Context(), rf.deps, testRepo, "feat", false)
+	}()
+	<-entered
+	rf.acquire(t, groupWebPool)
+	unblock()
+	<-done
+	if releaseErr != nil {
+		t.Fatalf("release branch: %v", releaseErr)
+	}
+	if want := map[string]string{"WEB_HOST": rewireWebHost}; !maps.Equal(atRelease, want) {
+		t.Errorf("joining lease's overlay at release = %v, want %v", atRelease, want)
+	}
+	if len(change.Leases) != 1 || change.Leases[0].Alias != "hqpool-3" || change.Leases[0].State != LeaseStateReleased {
+		t.Errorf("leases = %+v, want only the original lease released", change.Leases)
+	}
+	if r := rewireOf(t, change.Rewired, "webpool-7"); !slices.Equal(r.Restarted, []string{"web"}) {
+		t.Errorf("rewire = %+v, want the joining lease's server restarted", r)
+	}
+}
+
+func TestLeaseReleaseGroup_JoiningMember_ReleaseFailureRestoresOverlay(t *testing.T) {
+	t.Parallel()
+	rf := newRewireFixture(t)
+	rf.acquire(t, groupHQPool)
+	rf.groupFixture.hq.releaseErr = &platform.SwarmError{Status: 409, Code: "containerAction", Reason: "container-busy", Retryable: true, Message: "work in progress"}
+	var atRelease map[string]string
+	rf.onHQRelease(func() { atRelease = rf.web.Overlay() })
+
+	change, err := LeaseReleaseGroupConfirmed(t.Context(), rf.deps, testRepo, "feat", func([]LeaseTargetInfo) bool {
+		rf.acquire(t, groupWebPool)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("release branch: %v", err)
+	}
+	if want := map[string]string{"WEB_HOST": rewireWebHost}; !maps.Equal(atRelease, want) {
+		t.Errorf("joining lease's overlay at release = %v, want %v", atRelease, want)
+	}
+	if want := map[string]string{"HQ_HOST": rewireHQHost, "WEB_HOST": rewireWebHost}; !maps.Equal(rf.web.Overlay(), want) {
+		t.Errorf("joining lease's overlay after refusal = %v, want %v", rf.web.Overlay(), want)
+	}
+	if len(change.Leases) != 1 || change.Leases[0].State != LeaseStateHeld || !strings.Contains(change.Leases[0].Error, "handed it back") {
+		t.Errorf("leases = %+v, want the old lease held and the restoration reported", change.Leases)
+	}
+}
+
+func TestLeaseReleaseGroup_PartialFailure_DoesNotRestoreReleasedSibling(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs a user whose writes a directory's mode can refuse")
+	}
+	t.Parallel()
+	rf := newRewireFixture(t)
+	late := newPoolOrch("latepool", "svc-late", 9)
+	lateSupervisor := devservertest.NewSupervised(rewireDeclaration("worker", "4242"))
+	rf.ssh.containers["latepool-9"] = lateSupervisor
+	rf.deps.Client = platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{poolService("svc-hq", groupHQPool), poolService("svc-web", groupWebPool), poolService("svc-late", "latepool")}).
+		WithServiceEnv("svc-hq", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "hq-token", Sensitive: true}}).
+		WithServiceEnv("svc-web", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "web-token", Sensitive: true}}).
+		WithServiceEnv("svc-late", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "late-token", Sensitive: true}})
+	leases := filepath.Join(rf.stateDir, "leases")
+	t.Cleanup(func() { _ = os.Chmod(leases, 0o700) })
+	web := releaseHook{SwarmAPI: rf.groupFixture.web, before: func() {
+		if err := os.Chmod(leases, 0o500); err != nil {
+			t.Errorf("protect records directory: %v", err)
+		}
+	}}
+	orchs := map[string]SwarmAPI{
+		orchestratorURL(groupHQPool): rf.groupFixture.hq, orchestratorURL(groupWebPool): web, orchestratorURL("latepool"): late,
+	}
+	rf.deps.Swarm = func(baseURL, _ string) SwarmAPI { return orchs[baseURL] }
+	rf.acquire(t, groupHQPool, groupWebPool)
+	rf.groupFixture.hq.releaseErr = &platform.SwarmError{Status: 409, Code: "containerAction", Reason: "container-busy", Retryable: true, Message: "work in progress"}
+
+	_, err := LeaseReleaseGroupConfirmed(t.Context(), rf.deps, testRepo, "feat", func([]LeaseTargetInfo) bool {
+		rf.acquire(t, "latepool")
+		return true
+	})
+	if err != nil {
+		t.Fatalf("release branch: %v", err)
+	}
+	if err := os.Chmod(leases, 0o700); err != nil {
+		t.Fatalf("restore records directory: %v", err)
+	}
+	if want := map[string]string{"HQ_HOST": rewireHQHost}; !maps.Equal(lateSupervisor.Overlay(), want) {
+		t.Errorf("joining lease's overlay after partial failure = %v, want %v: webpool's container was released", lateSupervisor.Overlay(), want)
 	}
 }
 

@@ -862,17 +862,40 @@ func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, fo
 	return change.Leases, err
 }
 
-// LeaseReleaseGroupChange is LeaseReleaseGroup with the rewire it did: the
-// release takes every lease of the branch, so no other lease is left to
-// rewire before it; a lease the orchestrator would not release stays held,
-// and it is handed the overlay without the leases that went (DP-26).
+// LeaseReleaseGroupChange is LeaseReleaseGroup with the rewire it did. A
+// lease joining after the group was read is rewired before the captured
+// members leave; one the orchestrator would not release is rewired after
+// those that went (DP-26).
 func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch string, force bool) (LeaseChange, error) {
+	return leaseReleaseGroupChange(ctx, d, repo, branch, force, nil)
+}
+
+// LeaseReleaseGroupConfirmed captures the branch's records before confirm
+// reads the evidence for releasing them. A lease joining during that read is
+// not among the records released. A declined confirmation changes nothing.
+func LeaseReleaseGroupConfirmed(ctx context.Context, d LeaseDeps, repo, branch string, confirm func([]LeaseTargetInfo) bool) (LeaseChange, error) {
+	if confirm == nil {
+		return LeaseChange{}, errors.New("confirm branch release: confirmation is required")
+	}
+	return leaseReleaseGroupChange(ctx, d, repo, branch, false, confirm)
+}
+
+func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch string, force bool, confirm func([]LeaseTargetInfo) bool) (LeaseChange, error) {
 	if err := validateLeaseBranch(branch); err != nil {
 		return LeaseChange{}, err
 	}
 	group, err := branchLeaseRecords(d.StateDir, repo, branch)
 	if err != nil {
 		return LeaseChange{}, err
+	}
+	if confirm != nil {
+		targets := make([]LeaseTargetInfo, 0, len(group))
+		for _, r := range group {
+			targets = append(targets, r.targetInfo())
+		}
+		if !confirm(targets) {
+			return LeaseChange{}, nil
+		}
 	}
 	members := make([]*releaseMember, 0, len(group))
 	for _, r := range group {
@@ -928,6 +951,12 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 	}
 	defer unlock()
+	// A lease can join after the group was read. It is not being released,
+	// so remove the departing members from its overlay before they go.
+	siblings, rewired, err := rewireGroupSurvivors(ctx, d, members)
+	if err != nil {
+		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+	}
 	if !force {
 		// The guards read the containers before the wait for the lock, which
 		// can outlast work landing in one (a conversation sharing a lease):
@@ -942,7 +971,10 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return LeaseChange{}, unsavedRefusal(ctx, d, members, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err)))
+			err = dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+			after, note := rewireGroupAfterFailure(ctx, d, members, siblings, rewired, false)
+			err = withNote(err, note)
+			return LeaseChange{Rewired: mergeGroupRewires(rewired, after)}, unsavedRefusal(ctx, d, members, err)
 		}
 	}
 	runMembers(members, func(m *releaseMember) {
@@ -971,11 +1003,66 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 		}
 		m.view = view
 	})
+	failed := false
+	for _, m := range members {
+		failed = failed || m.view.Error != ""
+	}
+	if failed {
+		after, note := rewireGroupAfterFailure(ctx, d, members, siblings, rewired, true)
+		rewired = mergeGroupRewires(rewired, after)
+		if note != "" {
+			for _, m := range members {
+				if m.view.Error != "" {
+					m.view.Error += "; " + note
+					break
+				}
+			}
+		}
+	}
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {
 		views = append(views, m.view)
 	}
-	return LeaseChange{Leases: views, Rewired: rewireLeftHeld(ctx, d, members)}, nil
+	return LeaseChange{Leases: views, Rewired: rewired}, nil
+}
+
+// rewireGroupSurvivors updates leases that joined after the release read the
+// group. Both the record's lease and container must match before its alias is
+// treated as leaving: an alias reused by another lease stays in the overlay.
+// The caller holds the group lock through the rewire and release.
+func rewireGroupSurvivors(ctx context.Context, d LeaseDeps, members []*releaseMember) ([]leaseRecord, []LeaseRewire, error) {
+	if d.SSH == nil || len(members) == 0 {
+		return nil, nil, nil
+	}
+	first := members[0].rec
+	group, err := leaseGroupRecords(d.StateDir, recordRepo(d.StateDir, first), recordBranch(first))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read branch leases for rewire: %w", err)
+	}
+	candidates := make(map[string]leaseRecord, len(members))
+	for _, m := range members {
+		candidates[m.rec.alias()] = m.rec
+	}
+	leaving := make(map[string]bool, len(members))
+	var siblings []leaseRecord
+	for _, r := range group {
+		candidate, ok := candidates[r.alias()]
+		if ok && candidate.ContainerID == r.ContainerID && candidate.Lease == r.Lease {
+			leaving[r.alias()] = true
+		} else {
+			siblings = append(siblings, r)
+		}
+	}
+	if len(siblings) == 0 || len(leaving) == 0 {
+		return nil, nil, nil
+	}
+	names := make([]string, 0, len(leaving))
+	for _, m := range members {
+		if leaving[m.rec.alias()] {
+			names = append(names, m.rec.alias())
+		}
+	}
+	return siblings, rewireLeases(ctx, d, siblings, leaving, "without "+strings.Join(names, ", ")), nil
 }
 
 // dropEndedOnCall drops, with its alias and mount, the record of every member
@@ -1004,24 +1091,102 @@ func dropEndedOnCall(ctx context.Context, d LeaseDeps, members []*releaseMember,
 	return withNote(cause, strings.Join(notes, "; "))
 }
 
-// rewireLeftHeld hands every lease a branch's release could not release the
-// overlay without the leases that went (their records are gone); nil when
-// every lease went or none did. The caller's context may be what failed the
-// releases; the leases left held are rewired all the same.
-func rewireLeftHeld(ctx context.Context, d LeaseDeps, members []*releaseMember) []LeaseRewire {
-	var held []leaseRecord
-	var gone []string
-	for _, m := range members {
-		if m.view.Error != "" {
-			held = append(held, m.rec)
+// rewireGroupAfterFailure reconciles the survivors after a refused or partial
+// group release. A retained record is included in an overlay only when its
+// captured lease is still confirmed: a release can succeed while its record
+// remains, and its container may already belong to somebody else.
+func rewireGroupAfterFailure(ctx context.Context, d LeaseDeps, members []*releaseMember, siblings []leaseRecord, before []LeaseRewire, afterRelease bool) ([]LeaseRewire, string) {
+	if d.SSH == nil || len(members) == 0 {
+		return nil, ""
+	}
+	ctx = context.WithoutCancel(ctx)
+	first := members[0].rec
+	group, err := leaseGroupRecords(d.StateDir, recordRepo(d.StateDir, first), recordBranch(first))
+	if err != nil {
+		note := fmt.Sprintf("zcp could not read branch leases to restore sibling wiring (%v)", err)
+		for _, r := range siblings {
+			note += "; " + resendCall(r.alias(), nil) + " sends it again"
+		}
+		if len(siblings) > 0 {
+			return []LeaseRewire{{Alias: siblings[0].alias(), Note: note}}, note
+		}
+		return nil, note
+	}
+	current := make(map[string]leaseRecord, len(group))
+	for _, r := range group {
+		current[r.alias()] = r
+	}
+	verdicts := make([]leaseVerdict, len(members))
+	indexes := make([]int, len(members))
+	for i := range indexes {
+		indexes[i] = i
+	}
+	runMembers(indexes, func(i int) {
+		r := members[i].rec
+		if now, ok := current[r.alias()]; ok && now.ContainerID == r.ContainerID && now.Lease == r.Lease {
+			verdicts[i] = readLeaseOwnership(ctx, d, r)
+		}
+	})
+	leaving := map[string]bool{}
+	ours := map[string]bool{}
+	changedMembership := false
+	for i, m := range members {
+		r := m.rec
+		now, ok := current[r.alias()]
+		if !ok || now.ContainerID != r.ContainerID || now.Lease != r.Lease {
+			changedMembership = true
+			continue
+		}
+		if verdicts[i].own == leaseOurs {
+			ours[r.alias()] = true
 		} else {
-			gone = append(gone, m.rec.alias())
+			leaving[r.alias()] = true
+			changedMembership = true
 		}
 	}
-	if d.SSH == nil || len(held) == 0 || len(gone) == 0 {
-		return nil
+	changed := map[string]bool{}
+	for _, r := range before {
+		if r.changed {
+			changed[r.Alias] = true
+		}
 	}
-	return rewireLeases(context.WithoutCancel(ctx), d, held, nil, "without "+strings.Join(gone, ", "))
+	var targets []leaseRecord
+	for _, r := range group {
+		if changed[r.alias()] || (afterRelease && changedMembership && ours[r.alias()]) {
+			targets = append(targets, r)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, ""
+	}
+	after := rewireLeases(ctx, d, targets, leaving, "with verified held leases")
+	var problems []string
+	for _, r := range after {
+		if r.Note != "" {
+			problems = append(problems, r.Note)
+		}
+	}
+	note := "zcp handed it back to " + strings.Join(aliasesOf(targets), ", ") + " with verified held leases"
+	if len(problems) > 0 {
+		note = "zcp could not hand it back to every sibling: " + strings.Join(problems, "; ")
+	}
+	return after, note
+}
+
+// mergeGroupRewires reports each sibling's final overlay and retains notes
+// from both the pre-release rewire and its reconciliation.
+func mergeGroupRewires(before, after []LeaseRewire) []LeaseRewire {
+	for _, r := range after {
+		i := slices.IndexFunc(before, func(v LeaseRewire) bool { return v.Alias == r.Alias })
+		if i < 0 {
+			before = append(before, r)
+			continue
+		}
+		r.Note = joinNotes(before[i].Note, r.Note)
+		r.Millis += before[i].Millis
+		before[i] = r
+	}
+	return before
 }
 
 // branchLeaseRecords is what a release of branch releases: zcp's records of

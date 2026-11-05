@@ -51,16 +51,16 @@ type fakeBranchRelease struct {
 	calls []releaseCall
 }
 
-func (f *fakeBranchRelease) release(_ context.Context, repo, branch string) (ops.LeaseChange, error) {
+func (f *fakeBranchRelease) release(_ context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+	group, err := ops.LeaseBranchGroup(f.stateDir, repo, branch)
+	if err != nil || !confirm(group) {
+		return ops.LeaseChange{}, err
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, releaseCall{repo, branch})
 	f.mu.Unlock()
 	if f.refuse != nil {
 		return ops.LeaseChange{}, f.refuse
-	}
-	group, err := ops.LeaseBranchGroup(f.stateDir, repo, branch)
-	if err != nil {
-		return ops.LeaseChange{}, err
 	}
 	var change ops.LeaseChange
 	for _, l := range group {
@@ -232,8 +232,8 @@ func TestFollowLeaseCompletion_Decisions_KeepLease(t *testing.T) {
 		if err := os.WriteFile(framePath, raw, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		d.release = func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
-			result, err := fake.release(ctx, repo, branch)
+		d.release = func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+			result, err := fake.release(ctx, repo, branch, confirm)
 			mu.Lock()
 			open := other
 			open.Number, open.State = 8, hq.ChangeOpen
@@ -442,8 +442,8 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 				t.Fatalf("group acquire failed: %s", getTextContent(t, res))
 			}
 
-			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
-				return ReleaseLeaseBranch(ctx, deps, repo, branch)
+			lines := releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, state.AppID, state.Changes, keepBranch, completionState(state), func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+				return ops.LeaseReleaseGroupConfirmed(ctx, deps, repo, branch, confirm)
 			})
 
 			if len(lines) != 1 {
@@ -465,6 +465,130 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 				t.Errorf("orchestrator releases = %v, want %d per pool", n, wantReleases)
 			}
 		})
+	}
+}
+
+func TestReleaseCompletedLeases_LeaseJoiningDuringHQReadIsKept(t *testing.T) {
+	t.Parallel()
+	ssh := &guardSSH{}
+	srv, orchs, deps := completionLeaseServer(t, ssh)
+	acquire := func(pool string) {
+		t.Helper()
+		res := callTool(t, srv, "zerops_lease", map[string]any{
+			"action": "acquire", "pools": []string{pool}, "repo": completionRepo, "branch": "feat-x",
+		})
+		if res.IsError {
+			t.Fatalf("acquire %s: %s", pool, getTextContent(t, res))
+		}
+	}
+	acquire("hqpool")
+	app := "app-1"
+	change := hq.MateChange{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x", UpdatedAt: "2099-10-26T10:00:00Z"}
+	readStarted, resumeRead, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var resume sync.Once
+	unblock := func() { resume.Do(func() { close(resumeRead) }) }
+	defer func() { unblock(); <-finished }()
+	read := func(ctx context.Context) (hq.MateState, error) {
+		close(readStarted)
+		select {
+		case <-resumeRead:
+			return hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{change}}, nil
+		case <-ctx.Done():
+			return hq.MateState{}, ctx.Err()
+		}
+	}
+	go func() {
+		defer close(finished)
+		releaseCompletedLeases(t.Context(), deps.StateDir, completionHQ, &app, []hq.MateChange{change}, keepBranch, read,
+			func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+				return ops.LeaseReleaseGroupConfirmed(ctx, deps, repo, branch, confirm)
+			})
+	}()
+	<-readStarted
+	acquire("webpool")
+	unblock()
+	<-finished
+
+	if left := leaseRecordsLeft(t, deps.StateDir); !slices.Equal(left, []string{"webpool-7"}) {
+		t.Errorf("leases left = %v, want the lease acquired during the read kept", left)
+	}
+	if counts := releaseCounts(orchs); counts["hqpool"] != 1 || counts["webpool"] != 0 {
+		t.Errorf("orchestrator releases = %v, want only the pre-read lease released", counts)
+	}
+}
+
+func TestReleaseCompletedLeases_AcquisitionNotProvenBeforeSettlement_IsKept(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, acquired, settled string
+	}{
+		{name: "same second", acquired: "2026-10-26T10:00:00Z", settled: "2026-10-26T10:00:00Z"},
+		{name: "fractional settlement in acquisition second", acquired: "2026-10-26T10:00:00Z", settled: "2026-10-26T10:00:00.5Z"},
+		{name: "acquisition time missing", settled: "2026-10-26T10:00:00Z"},
+		{name: "acquisition time invalid", acquired: "not-a-time", settled: "2026-10-26T10:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "feat-x")
+			setLeaseAcquiredAt(t, stateDir, "hqpool-4", tc.acquired)
+			app := "app-1"
+			state := hq.MateChanges{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
+				{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x", UpdatedAt: tc.settled},
+			}}
+			fake := &fakeBranchRelease{t: t, stateDir: stateDir}
+			releaseCompletedLeases(t.Context(), stateDir, completionHQ, &app, state.Changes, keepBranch, completionState(state), fake.release)
+			if got := fake.called(); len(got) != 0 {
+				t.Errorf("releases = %+v, want the lease kept", got)
+			}
+			if left := leaseRecordsLeft(t, stateDir); !slices.Equal(left, []string{"hqpool-4"}) {
+				t.Errorf("leases left = %v, want hqpool-4", left)
+			}
+		})
+	}
+}
+
+func TestCompletionWords_RewireFailureNamesRecovery(t *testing.T) {
+	t.Parallel()
+	change := hq.MateChange{Number: 4, State: hq.ChangeMerged}
+	group := leaseGroupOnHQ{branch: "feat-x", leases: []ops.LeaseTargetInfo{{Alias: "hqpool-3"}}}
+	released := ops.LeaseChange{
+		Leases:  []ops.LeaseView{{Alias: "hqpool-3", State: ops.LeaseStateReleased}},
+		Rewired: []ops.LeaseRewire{{Alias: "webpool-7", Note: "webpool-7 could not be rewired; zerops_dev_server action=restart hostname=webpool-7 sends it again"}},
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "release succeeded"},
+		{name: "unsaved work refused release", err: unsavedRefusalOf()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			line := completionWords(change, group, released, tc.err)
+			if !strings.Contains(line, "webpool-7 could not be rewired") || !strings.Contains(line, "zerops_dev_server action=restart") {
+				t.Errorf("completion line %q omitted the sibling's recovery", line)
+			}
+		})
+	}
+}
+
+func TestReleaseCompletedLeases_InspectionFailureIsReported(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "feat-x")
+	app := "app-1"
+	change := hq.MateChange{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "feat-x", UpdatedAt: "2026-10-26T10:00:00Z"}
+	lines := releaseCompletedLeases(t.Context(), stateDir, completionHQ, &app, []hq.MateChange{change}, keepBranch,
+		func(context.Context) (hq.MateState, error) {
+			t.Error("HQ read after failed lease inspection")
+			return hq.MateState{}, nil
+		},
+		func(context.Context, string, string, func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+			return ops.LeaseChange{}, errors.New("lease records could not be read")
+		})
+	if len(lines) != 1 || !strings.Contains(lines[0], "feat-x") || !strings.Contains(lines[0], "lease records could not be read") || strings.Contains(lines[0], "is merged") {
+		t.Errorf("lines = %q, want the inspection failure without claiming fresh HQ confirmation", lines)
 	}
 }
 
@@ -618,9 +742,16 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	released := make(chan struct{}, 4)
 	deps := func(ctx context.Context) (devGitDeps, bool) {
 		d, ok := lab.devGitDeps(ctx)
-		d.release = func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
-			defer func() { released <- struct{}{} }()
-			return fake.release(ctx, repo, branch)
+		d.release = func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+			accepted := false
+			result, err := fake.release(ctx, repo, branch, func(leases []ops.LeaseTargetInfo) bool {
+				accepted = confirm(leases)
+				return accepted
+			})
+			if accepted {
+				released <- struct{}{}
+			}
+			return result, err
 		}
 		return d, ok
 	}

@@ -22,16 +22,15 @@ import (
 // or closed that work is finished, and nobody should have to release them by
 // hand. A Mate's HQ pass — the repository reconcile bootstrap, adopt and
 // develop's start run, and the Mate service's look — releases them itself
-// (DP-34): exactly the tool's branch release, never forced, so the release's
-// own guard (DP-4) keeps any lease holding uncommitted or untracked files or
-// commits on no remote branch, and the pass says so in one line. It is
+// (DP-34): the tool's branch guard and release, never forced, so the guard
+// (DP-4) keeps leases holding uncommitted or untracked files or commits on
+// no remote branch, and the pass says so in one line. It is
 // completion that releases, never idleness (docs/spec-mate.md §0 rule 4,
 // DP-25).
 
-// leaseBranchRelease releases every lease zcp holds, by its records, of
-// branch of repo — the tool's `zerops_lease action=release branch=<branch>
-// repo=<repo>`, unforced (ReleaseLeaseBranch over the deps the tool runs on).
-type leaseBranchRelease func(ctx context.Context, repo, branch string) (ops.LeaseChange, error)
+// leaseBranchRelease confirms and releases the branch's captured records,
+// unforced, through the same guard and release as zerops_lease.
+type leaseBranchRelease func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error)
 
 // LeaseDepsFor is what zerops_lease runs its operations on in the container
 // rt describes, and so what every release beside the tool runs on — the HQ
@@ -64,8 +63,8 @@ func leaseDepsIn(deps ops.LeaseDeps, rt runtime.Info) ops.LeaseDeps {
 // ReleaseLeaseBranch is the tool's release of a branch, unforced: every lease
 // zcp holds of branch of repo (repo empty: the one repository zcp leases the
 // branch for), all or none, refused while any holds work a release would lose
-// (ops.LeaseUnsavedError) — the one code path the tool, the HQ pass and
-// `zcp lease release` share.
+// (ops.LeaseUnsavedError) — the path the tool and `zcp lease release` share;
+// the HQ pass uses the same guard and release on its captured group.
 func ReleaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch string) (ops.LeaseChange, error) {
 	return releaseLeaseBranch(ctx, deps, repo, branch, false)
 }
@@ -76,23 +75,28 @@ func ReleaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch st
 // work kept as it is so its typed reader still finds it.
 func releaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch string, force bool) (ops.LeaseChange, error) {
 	change, err := ops.LeaseReleaseGroupChange(ctx, deps, repo, branch, force)
+	return change, leaseBranchReleaseError(err)
+}
+
+func leaseBranchReleaseError(err error) error {
 	var unsaved *ops.LeaseUnsavedError
 	if err != nil && !errors.As(err, &unsaved) {
-		err = withLeaseSSHStderr(err)
+		return withLeaseSSHStderr(err)
 	}
-	return change, err
+	return err
 }
 
 // leaseBranchReleaseFor is the HQ pass's release in the container rt
-// describes: ReleaseLeaseBranch over the deps zerops_lease runs on, the pools'
-// orchestrators reached as the tool reaches them.
+// describes, over the deps zerops_lease runs on: it confirms the captured
+// group before the shared guard and release reach the pools' orchestrators.
 func leaseBranchReleaseFor(client platform.Client, projectID, stateDir string, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) leaseBranchRelease {
 	if client == nil || stateDir == "" || !rt.InContainer || !rt.MateEnabled {
 		return nil
 	}
 	deps := LeaseDepsFor(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), mounter, ssh, rt)
-	return func(ctx context.Context, repo, branch string) (ops.LeaseChange, error) {
-		return ReleaseLeaseBranch(ctx, deps, repo, branch)
+	return func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
+		change, err := ops.LeaseReleaseGroupConfirmed(ctx, deps, repo, branch, confirm)
+		return change, leaseBranchReleaseError(err)
 	}
 }
 
@@ -150,8 +154,9 @@ type leaseGroupOnHQ struct {
 // repository outside HQ (address), are never touched. release refusing for
 // unsaved work keeps every lease of the group, and the line names the leases
 // and what each holds; the next pass tries again. branchOf is the branch of a
-// change by its number and the branch HQ names (hq.Client.BranchOf). Nothing
-// when release or readState is nil.
+// change by its number and the branch HQ names (hq.Client.BranchOf). A lease
+// joining after the release captured the group is kept. Nothing when release
+// or readState is nil.
 func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, branchOf func(int, string) string, readState func(context.Context) (hq.MateState, error), release leaseBranchRelease) []string {
 	if release == nil || readState == nil || appID == nil {
 		return nil
@@ -161,19 +166,30 @@ func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID
 		if _, settled := settledChangeOn(changes, group.repo, group.branch, branchOf); !settled {
 			continue
 		}
-		readCtx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
-		state, err := readState(readCtx)
-		cancel()
-		// An older HQ's limited history may omit an open change, so only a
-		// state that lists every open change can establish it is settled.
-		if err != nil || state.AppID == nil || *state.AppID != *appID || !state.OpenPerBranch {
+		var change hq.MateChange
+		checked := false
+		confirmed := false
+		released, err := release(ctx, group.repoURL, group.branch, func(leases []ops.LeaseTargetInfo) bool {
+			checked = true
+			group.leases = leases
+			readCtx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
+			state, err := readState(readCtx)
+			cancel()
+			// An older HQ's limited history may omit an open change.
+			if err != nil || state.AppID == nil || *state.AppID != *appID || !state.OpenPerBranch {
+				return false
+			}
+			var settled bool
+			change, settled = settledChangeOn(state.Changes, group.repo, group.branch, branchOf)
+			confirmed = settled && !settlementUnprovenFor(leases, change.UpdatedAt)
+			return confirmed
+		})
+		if !confirmed {
+			if !checked && err != nil && !errors.Is(err, ops.ErrNoLeaseOfBranch) {
+				lines = append(lines, fmt.Sprintf("repository %q: could not inspect leases on %q (%s); the next pass tries again", group.repo, group.branch, err))
+			}
 			continue
 		}
-		change, settled := settledChangeOn(state.Changes, group.repo, group.branch, branchOf)
-		if !settled || leasedAgainSince(group.leases, change.UpdatedAt) {
-			continue
-		}
-		released, err := release(ctx, group.repoURL, group.branch)
 		lines = append(lines, fmt.Sprintf("repository %q: %s", group.repo, completionWords(change, group, released, err)))
 	}
 	return lines
@@ -227,19 +243,17 @@ func settledChangeOn(changes []hq.MateChange, repo, branch string, branchOf func
 	return *newest, true
 }
 
-// leasedAgainSince reports whether any of leases was acquired after settled,
-// when HQ last changed its record of the settled change: the branch was
-// leased again for new work, which that change's end does not finish. A time
-// HQ does not name, or that does not parse, keeps the group; an acquire time
-// the record does not name, or that does not parse, reads as before.
-func leasedAgainSince(leases []ops.LeaseTargetInfo, settled string) bool {
+// settlementUnprovenFor reports whether the change's time fails to establish
+// that every lease was acquired first. Acquisition records have whole-second
+// precision, so settlement within that second cannot establish the order.
+func settlementUnprovenFor(leases []ops.LeaseTargetInfo, settled string) bool {
 	at, err := time.Parse(time.RFC3339, settled)
 	if err != nil {
 		return true
 	}
 	return slices.ContainsFunc(leases, func(l ops.LeaseTargetInfo) bool {
 		acquired, err := time.Parse(time.RFC3339, l.AcquiredAt)
-		return err == nil && acquired.After(at)
+		return err != nil || at.Before(acquired.Add(time.Second))
 	})
 }
 
@@ -259,26 +273,28 @@ func completionWords(change hq.MateChange, group leaseGroupOnHQ, released ops.Le
 	}
 	held := strings.Join(aliases, ", ")
 	var refusal *ops.LeaseUnsavedError
+	var words string
 	switch {
 	case errors.As(err, &refusal):
-		return fmt.Sprintf("%s, but its leases %s were not released: %s — commit it on a branch of your own and push it from the lease, and the next pass releases them; nothing unsaved is discarded unasked",
+		words = fmt.Sprintf("%s, but its leases %s were not released: %s — commit it on a branch of your own and push it from the lease, and the next pass releases them; nothing unsaved is discarded unasked",
 			head, held, unsavedWorkWords(refusal))
 	case err != nil:
-		return fmt.Sprintf("%s, but its leases %s were not released (%s); the next pass tries again", head, held, err.Error())
-	}
-	var went, stayed []string
-	for _, v := range released.Leases {
-		if v.Error != "" {
-			stayed = append(stayed, fmt.Sprintf("%s (%s)", v.Alias, v.Error))
-			continue
+		words = fmt.Sprintf("%s, but its leases %s were not released (%s); the next pass tries again", head, held, err.Error())
+	default:
+		var went, stayed []string
+		for _, v := range released.Leases {
+			if v.Error != "" {
+				stayed = append(stayed, fmt.Sprintf("%s (%s)", v.Alias, v.Error))
+				continue
+			}
+			went = append(went, v.Alias+releaseOutcomeWords(v.ReleaseOutcome()))
 		}
-		went = append(went, v.Alias+releaseOutcomeWords(v.ReleaseOutcome()))
+		words = fmt.Sprintf("%s, so zcp released its leases: %s", head, strings.Join(went, ", "))
+		if len(stayed) > 0 {
+			words += fmt.Sprintf("; the orchestrator would not release %s, which stays held — the next pass tries again", strings.Join(stayed, ", "))
+		}
 	}
-	words := fmt.Sprintf("%s, so zcp released its leases: %s", head, strings.Join(went, ", "))
-	if len(stayed) > 0 {
-		words += fmt.Sprintf("; the orchestrator would not release %s, which stays held — the next pass tries again", strings.Join(stayed, ", "))
-	}
-	return words
+	return joinNext(words, leaseRewireNext(released.Rewired))
 }
 
 // unsavedWorkWords names what each lease a refused release read holds: its
