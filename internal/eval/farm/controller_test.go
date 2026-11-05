@@ -2164,6 +2164,22 @@ func TestFarmRun_PerRunDeadline_FromCreation(t *testing.T) {
 	}
 }
 
+// holdDoneRequest holds the run's first done.json read until it is cancelled.
+type holdDoneRequest struct {
+	base    http.RoundTripper
+	path    string
+	entered chan struct{}
+}
+
+func (h holdDoneRequest) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet && req.URL.Path == h.path {
+		close(h.entered)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	return h.base.RoundTrip(req)
+}
+
 // TestFarmRun_Interrupt_WritesSummaryKeepsProjects pins R3: cancelling
 // RunBatch's context while a run is still being waited on stops the wait,
 // writes batches/<batch>/summary.json with endedBy "interrupt", records the
@@ -2182,9 +2198,18 @@ func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
 	// the ctx is cancelled.
 
 	ctx, cancel := context.WithCancel(context.Background())
+	waiting := make(chan struct{})
+	sink.client.Transport = holdDoneRequest{
+		base: sink.client.Transport, path: "/" + fakeS3Bucket + "/runs/" + runID + "/done.json", entered: waiting,
+	}
+	cancelled := make(chan struct{})
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
+		defer close(cancelled)
+		select {
+		case <-waiting:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	opts := RunOptions{
@@ -2192,19 +2217,15 @@ func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
 		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
-		// A generous budget the interrupt must pre-empt long before it
-		// would elapse on its own.
-		RunBudget: time.Hour, PollInterval: 20 * time.Millisecond,
+		// The held read is interrupted before either timer can settle the run.
+		RunBudget: time.Hour, PollInterval: time.Hour,
 	}
 
-	start := time.Now()
 	results, err := RunBatch(ctx, client, sink, opts)
-	elapsed := time.Since(start)
+	cancel()
+	<-cancelled
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
-	}
-	if elapsed > 5*time.Second {
-		t.Fatalf("RunBatch took %s, want it to stop promptly once ctx is cancelled, not run out the hour-long budget", elapsed)
 	}
 	if len(results) != 1 {
 		t.Fatalf("results = %+v, want 1 entry", results)

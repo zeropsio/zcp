@@ -5,6 +5,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,81 @@ type recordedRequest struct {
 	Method, Path, Auth, Query, Body string
 }
 
+func TestOrgReader_ListMembers_PagesTheOrganisationSearch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		secondPage string
+		wantIDs    []string
+		wantError  bool
+	}{
+		{name: "all pages", secondPage: `{"items":[{"userId":"u3","status":"ACTIVE","roleCode":"OWNER","user":{"fullName":"Three"}}],"totalHits":3}`, wantIDs: []string{"u1", "u2", "u3"}},
+		{name: "incomplete search", secondPage: `{"items":[],"totalHits":3}`, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/rest/public/project/pChief":
+					_, _ = io.WriteString(w, `{"id":"pChief","clientId":"org1","name":"Chief","status":"ACTIVE"}`)
+				case "GET /api/rest/public/client/org1/user/list":
+					_, _ = io.WriteString(w, `{"clientUserList":[]}`)
+				case "POST /api/rest/public/client-user/search":
+					var query struct {
+						Search []struct {
+							Name     string `json:"name"`
+							Operator string `json:"operator"`
+							Value    string `json:"value"`
+						} `json:"search"`
+						Sort []struct {
+							Name string `json:"name"`
+						} `json:"sort"`
+						Offset int `json:"offset"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+						t.Errorf("decode search: %v", err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					if len(query.Search) != 1 || query.Search[0].Name != "clientId" || query.Search[0].Operator != "eq" || query.Search[0].Value != "org1" || len(query.Sort) != 1 || query.Sort[0].Name != "id" {
+						t.Errorf("member search = %+v, want the organisation filter and id sort", query)
+					}
+					switch query.Offset {
+					case 0:
+						_, _ = io.WriteString(w, `{"items":[{"userId":"u1","status":"ACTIVE","roleCode":"ADMIN","user":{"fullName":"One"}},{"userId":"u2","status":"ACTIVE","roleCode":"BASIC_USER","user":{"fullName":"Two"}}],"totalHits":3}`)
+					case 2:
+						_, _ = io.WriteString(w, tc.secondPage)
+					default:
+						t.Errorf("unexpected search offset %d", query.Offset)
+						w.WriteHeader(http.StatusBadRequest)
+					}
+				default:
+					w.WriteHeader(http.StatusForbidden)
+				}
+			}))
+			defer srv.Close()
+			members, err := openTestOrgReader(t, srv, "project-key").ListMembers(context.Background())
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("incomplete member search succeeded")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]string, len(members))
+			for i, member := range members {
+				ids[i] = member.UserID
+			}
+			if !slices.Equal(ids, tc.wantIDs) {
+				t.Errorf("member IDs = %v, want %v", ids, tc.wantIDs)
+			}
+		})
+	}
+}
+
 type fakeAnswer struct {
 	Status int
 	Body   string
@@ -31,7 +107,8 @@ type fakeAnswer struct {
 const chiefProject = "pChief"
 
 // fakeZerops answers the public API the way Zerops does for org mode's reads:
-// the Chief's own project (owned by org1), the two searches, the member list,
+// the Chief's own project (owned by org1), the searches for projects,
+// services, and members,
 // recording each request. answers maps "METHOD path" to a ready response; the
 // others answer an empty page.
 func fakeZerops(t *testing.T, answers map[string]fakeAnswer) (*httptest.Server, func() []recordedRequest) {
@@ -51,8 +128,6 @@ func fakeZerops(t *testing.T, answers map[string]fakeAnswer) (*httptest.Server, 
 		case ok:
 		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+chiefProject:
 			answer = fakeAnswer{Status: http.StatusOK, Body: `{"id":"pChief","clientId":"org1","name":"Chief - Ada","status":"ACTIVE"}`}
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/user/list"):
-			answer = fakeAnswer{Status: http.StatusOK, Body: `{"clientUserList":[]}`}
 		default:
 			answer = fakeAnswer{Status: http.StatusOK, Body: `{"items":[],"totalHits":0}`}
 		}
@@ -108,7 +183,7 @@ func TestOrgReader_ReadsOnlyTheAllowlistFromZerops(t *testing.T) {
 		"GET /api/rest/public/project/pChief",
 		"POST /api/rest/public/project/search",
 		"POST /api/rest/public/service-stack/search",
-		"GET /api/rest/public/client/org1/user/list",
+		"POST /api/rest/public/client-user/search",
 	}
 	hit := map[string]bool{}
 	for _, req := range seen() {
@@ -157,10 +232,10 @@ func TestOrgReader_ReadsTheOverviewAsZeropsAnswersIt(t *testing.T) {
 		"POST /api/rest/public/project/search": {Status: http.StatusOK, Body: `{"items":[` +
 			`{"id":"p1","clientId":"org1","name":"Shop - Ada","status":"ACTIVE","tagList":["mate"],"description":"","envList":[]},` +
 			`{"id":"p2","clientId":"org1","name":"Shop - production","status":"ACTIVE","tagList":[],"description":"","envList":[]}],"totalHits":2}`},
-		"GET /api/rest/public/client/org1/user/list": {Status: http.StatusOK, Body: `{"clientUserList":[` +
+		"POST /api/rest/public/client-user/search": {Status: http.StatusOK, Body: `{"items":[` +
 			`{"id":"cu1","clientId":"org1","userId":"u1","status":"ACTIVE","roleCode":"ADMIN","user":{"email":"dana@example.com","fullName":"Dana"}},` +
 			`{"id":"cu2","clientId":"org1","userId":"u2","status":"INVITED","roleCode":"READ_ONLY","user":{"email":"eli@example.com","fullName":"Eli"}},` +
-			`{"id":"cu3","clientId":"org1","userId":"u3","status":"ACTIVE","roleCode":"BASIC_USER","user":{"email":"token-abc@zerops.io","fullName":"Shop - Ada key"}}]}`},
+			`{"id":"cu3","clientId":"org1","userId":"u3","status":"ACTIVE","roleCode":"BASIC_USER","user":{"email":"token-abc@zerops.io","fullName":"Shop - Ada key"}}],"totalHits":3}`},
 	})
 	r := openTestOrgReader(t, srv, "t")
 	ctx := context.Background()
@@ -197,7 +272,7 @@ func TestOrgReader_ReadsTheOverviewAsZeropsAnswersIt(t *testing.T) {
 		switch req.Path {
 		case "/api/rest/public/project/pChief":
 			ownReads++
-		case "/api/rest/public/project/search", "/api/rest/public/service-stack/search":
+		case "/api/rest/public/project/search", "/api/rest/public/service-stack/search", "/api/rest/public/client-user/search":
 			if !strings.Contains(req.Body, `"name":"clientId","operator":"eq","value":"org1"`) {
 				t.Errorf("%s searched %s, want it pinned to clientId org1", req.Path, req.Body)
 			}
@@ -223,9 +298,9 @@ func TestOrgReader_AZeropsRefusalIsShownOnceInItsOwnWords(t *testing.T) {
 		code   string
 		call   func(*OrgReader) error
 	}{
-		{name: "members refused 403", read: "GET /api/rest/public/client/org1/user/list", status: http.StatusForbidden, code: "insufficientPermissions",
+		{name: "members refused 403", read: "POST /api/rest/public/client-user/search", status: http.StatusForbidden, code: "insufficientPermissions",
 			call: func(r *OrgReader) error { _, err := r.ListMembers(context.Background()); return err }},
-		{name: "members refused 400", read: "GET /api/rest/public/client/org1/user/list", status: http.StatusBadRequest, code: "userNotFound",
+		{name: "members refused 400", read: "POST /api/rest/public/client-user/search", status: http.StatusBadRequest, code: "userNotFound",
 			call: func(r *OrgReader) error { _, err := r.ListMembers(context.Background()); return err }},
 		{name: "projects refused 403", read: "POST /api/rest/public/project/search", status: http.StatusForbidden, code: "insufficientPermissions",
 			call: func(r *OrgReader) error { _, err := r.ListProjects(context.Background()); return err }},

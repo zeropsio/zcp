@@ -117,12 +117,12 @@ type OrgGroup struct {
 	Projects []OrgProjectSummary `json:"projects"`
 }
 
-// OrgOverviewResult is every project of the organization, grouped by kind,
-// and the organization's members with their roles.
+// OrgOverviewResult is the projects the key can see, grouped by kind, and
+// the organization's members with their roles.
 type OrgOverviewResult struct {
-	Projects int                       `json:"projects"`
-	Groups   []OrgGroup                `json:"groups"`
-	Members  []platform.OverviewMember `json:"members"`
+	ProjectsVisibleToProjectKey int                       `json:"projectsVisibleToProjectKey"`
+	Groups                      []OrgGroup                `json:"groups"`
+	Members                     []platform.OverviewMember `json:"members"`
 }
 
 // orgSnapshot is the organization's projects and services, read once.
@@ -151,7 +151,7 @@ func readOrgSnapshot(ctx context.Context, src OrgSource) (*orgSnapshot, error) {
 	return snap, nil
 }
 
-// OrgOverview lists every project of the organization, grouped by kind.
+// OrgOverview lists the projects the key can see, grouped by kind.
 func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error) {
 	snap, err := readOrgSnapshot(ctx, src)
 	if err != nil {
@@ -177,7 +177,7 @@ func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error)
 	if err != nil {
 		return nil, fmt.Errorf("list the org's members: %w", err)
 	}
-	result := &OrgOverviewResult{Projects: len(snap.projects), Members: members}
+	result := &OrgOverviewResult{ProjectsVisibleToProjectKey: len(snap.projects), Members: members}
 	for _, kind := range orgKindOrder {
 		projects := grouped[kind]
 		if len(projects) == 0 {
@@ -240,8 +240,8 @@ func (snap *orgSnapshot) resolve(ref string) (*orgProject, error) {
 		return matches[0], nil
 	case 0:
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("no project %q in this organization", ref),
-			"zerops_org_overview lists the organization's projects")
+			fmt.Sprintf("no project %q visible to this project key", ref),
+			"zerops_org_overview lists the projects this key can see")
 	default:
 		ids := make([]string, 0, len(matches))
 		for _, m := range matches {

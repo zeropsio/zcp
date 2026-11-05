@@ -61,8 +61,8 @@ func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
 				medusa,
 				service("sZcp", "pRossy", "zcp", "zcp@1", "ACTIVE"),
 			}}
-		case "GET /api/rest/public/client/org1/user/list":
-			out = map[string]any{"clientUserList": []any{
+		case "POST /api/rest/public/client-user/search":
+			out = map[string]any{"totalHits": 1, "items": []any{
 				map[string]any{"userId": "u1", "status": "ACTIVE", "roleCode": "ADMIN", "user": map[string]any{"email": "dana@example.com", "fullName": "Dana"}},
 			}}
 		default:
@@ -140,7 +140,7 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 		"GET /api/rest/public/project/pChief",
 		"POST /api/rest/public/project/search",
 		"POST /api/rest/public/service-stack/search",
-		"GET /api/rest/public/client/org1/user/list",
+		"POST /api/rest/public/client-user/search",
 	}
 	for _, req := range reqs {
 		call, rest, _ := strings.Cut(req, " ")

@@ -1971,14 +1971,18 @@ browser's, read with their own token. Zerops cuts every answer to what the proje
 refuses the rest (403, 400); org mode shows a refusal in Zerops' words and asks once, never with
 another credential. It reads the allowlist of §3.11 — the organization of its own project
 (`GET /project/{own}`), its projects and services with their state (the two searches, pinned to
-that organization), its members with their roles (`GET /client/{org}/user/list`, integration
-tokens left out) — and nothing else: never a variable, a log, a token list, a cost or any other
-read a Zerops credential could make. Every change is the person's: their client makes it with their own
-Zerops token after their click.
+that organization), its members with their roles (`POST /client-user/search` filtered to that
+organization, integration tokens left out) — and nothing else: never a variable, a log, a token
+list, a cost or any other read a Zerops credential could make. Every change is the person's: their
+client makes it with their own Zerops token after their click.
 
-**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `production`,
-`stage`, `other`, `chief`, and the members with their roles), `zerops_org_services` (each project's
-services and their state). Act: `zerops_org_propose_service` (`restart` |
+**Tool surface.** Look: `zerops_org_overview` (the projects the key can see, grouped as `mate`, `production`,
+`stage`, `other`, `chief`, and the members with their roles). Its `projectsVisibleToProjectKey` count
+names that scope; a project key sees its own one project, not the organization's total
+(`TestOrgOverview_ProjectKey`). Member search reads every page and rejects an incomplete response
+(`TestOrgReader_ListMembers_PagesTheOrganisationSearch`).
+`zerops_org_services` reads each visible project's services and their state. Act:
+`zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
 container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
