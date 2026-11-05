@@ -1,14 +1,12 @@
 package service_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -335,84 +333,36 @@ func TestStart_Mate_BasePathRidesTheEnv(t *testing.T) {
 }
 
 // TestStart_Mate_LaunchStartsTheSetup: every launch names the status file to
-// the server and writes it before the server starts, and a launch whose
-// container carries a runtimes plan starts the boot import beside the server
-// — never before it.
+// the server and writes it before the server starts.
 func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME, the store path and the boot seam.
+	// Not parallel — mutates runFunc, HOME and the store path.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	tests := []struct {
-		name         string
-		store        map[string]string
-		wantRuntimes string
-		wantBoot     bool
-	}{
-		{"no runtimes plan", map[string]string{"PATH": "/usr/bin"}, mate.RuntimesNone, false},
-		{"a runtimes plan", map[string]string{"PATH": "/usr/bin", "MATE_SETUP_RUNTIMES": "c2VydmljZXM6IFtd"}, mate.RuntimesPending, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := installFakeMateBundle(t)
-			service.SetMateStorePath(writeLiveEnvStore(t, tt.store))
-			t.Cleanup(service.ResetMateStorePath)
-			// The boot import runs until the server is up: one that held the
-			// launch would never let it start.
-			booted := make(chan string, 1)
-			serverUp := make(chan struct{})
-			releaseBoot := sync.OnceFunc(func() { close(serverUp) })
-			service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
-				booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
-				<-serverUp
-			})
-			t.Cleanup(service.ResetMateSetupBoot)
-			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
-			var gotEnv []string
-			var atLaunch mate.Status
-			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
-				gotEnv = extraEnv
-				atLaunch, _ = mate.ReadStatus(statusPath)
-				releaseBoot()
-				return nil
-			})
-			t.Cleanup(func() { service.ResetRunFunc() })
+	store := map[string]string{"PATH": "/usr/bin"}
+	home := installFakeMateBundle(t)
+	service.SetMateStorePath(writeLiveEnvStore(t, store))
+	t.Cleanup(service.ResetMateStorePath)
+	statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
+	var gotEnv []string
+	var atLaunch mate.Status
+	var statusErr error
+	service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+		gotEnv = extraEnv
+		atLaunch, statusErr = mate.ReadStatus(statusPath)
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
 
-			started := make(chan error, 1)
-			go func() { started <- service.Start("mate") }()
-			var err error
-			select {
-			case err = <-started:
-			case <-time.After(5 * time.Second):
-				// Free the boot import and wait the launch out: returning with
-				// Start still running would reset the seams it reads.
-				releaseBoot()
-				t.Error("the server never started: the launch waited on the boot import")
-				err = <-started
-			}
-			if err != nil {
-				t.Fatalf("Start(mate): %v", err)
-			}
-			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
-				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
-			}
-			if atLaunch.Runtimes.State != tt.wantRuntimes {
-				t.Errorf("runtimes at launch = %q, want %q", atLaunch.Runtimes.State, tt.wantRuntimes)
-			}
-			select {
-			case got := <-booted:
-				if !tt.wantBoot {
-					t.Errorf("boot import started without a plan: %s", got)
-				} else if got != statusPath+" "+tt.store["MATE_SETUP_RUNTIMES"] {
-					t.Errorf("boot import got %q", got)
-				}
-			case <-time.After(2 * time.Second):
-				if tt.wantBoot {
-					t.Error("boot import never started")
-				}
-			}
-			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
-				t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
-			}
-		})
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate): %v", err)
+	}
+	if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
+		t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
+	}
+	if statusErr != nil || atLaunch.Standup.State != mate.StandupIdle {
+		t.Errorf("status at launch = %+v (%v), want the stand-up idle", atLaunch.Standup, statusErr)
+	}
+	if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
+		t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
 	}
 }
 

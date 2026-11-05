@@ -56,9 +56,6 @@ const (
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
 	standupBatchMax = 5
-	// standupBootWait bounds the wait for the container's own import of the
-	// runtimes (MATE_SETUP_RUNTIMES) — the import's own bound.
-	standupBootWait = 20 * time.Minute
 	// standupReflogIntent heads the stand-up's entry in AGENTS.md's reflog.
 	standupReflogIntent = "Stand up development from the group's recipe"
 )
@@ -71,9 +68,8 @@ type StandupInput struct{}
 // zerops_deploy_batch (and through it the client, SSH, auth and state), the
 // mounter, and the Mate's HQ identity.
 type standupDeps struct {
-	batch       batchDeployer
-	mounter     ops.Mounter
-	liveEnvPath string
+	batch   batchDeployer
+	mounter ops.Mounter
 	// identity is the Mate's HQ identity: the key it presents, the HQ it
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
@@ -85,14 +81,8 @@ type standupDeps struct {
 	session  *standupPushes
 	tracking *standupTracking
 	// statusPath is the setup status file the stand-up writes its section of
-	// and reads the boot import's from ("" writes and waits on nothing);
-	// bootWait bounds the wait for that import.
+	// ("" writes nothing).
 	statusPath string
-	bootWait   time.Duration
-	// closedOffSeen is a call that read Zerops itself while the import's line
-	// still said it waited for the project to be closed off: that import is
-	// starting, and awaitBootImport waits for it.
-	closedOffSeen bool
 	// status writes the stand-up's section of statusPath: one per server,
 	// across its calls (registerStandup makes it when none is given).
 	status *standupStatus
@@ -120,12 +110,10 @@ func RegisterStandup(
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, devsup: devsup,
 		},
 		mounter:     mounter,
-		liveEnvPath: mate.LiveEnvStorePath,
 		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
 		runtimeWait: standupRuntimeWait,
 		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
-		bootWait:    standupBootWait,
 	})
 }
 
@@ -180,20 +168,6 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 // stand is the stand-up's work and the report's standUp ("" for a
 // refusal); run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
-	if d.importWaitsClosedOff() {
-		// The import reads the project once a minute at most, so its line can
-		// trail the press: read Zerops itself before saying Finish setup.
-		closed, err := d.closedOff(ctx)
-		if err != nil || !closed {
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
-			}
-			return standupRefusal(platform.ErrPrerequisiteMissing, openMateRefusal,
-				"Nothing was touched. Tell the person to press Finish setup on this Mate in the app; the container then imports the runtimes, and zerops_standup stands them up."), ""
-		}
-		progress.say("the project is closed off; the container's import of the runtimes is starting")
-		d.closedOffSeen = true
-	}
 	// The Mate's server sends the stand-up only once its link to HQ is up, so
 	// HQ is opened and read once, never waited on.
 	hqc, err := hq.Open(d.batch.httpClient, d.identity())
@@ -207,11 +181,7 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 		return refusal, ""
 	}
 
-	pairs, live, err := d.preparePairs(ctx, hqc, src, progress)
-	if err != nil {
-		return standupRefusal(platform.ErrPrerequisiteMissing, err.Error(),
-			"Nothing was touched. Call zerops_standup again to observe the container's import before preparing the runtimes."), ""
-	}
+	pairs, live := d.preparePairs(ctx, hqc, src, progress)
 	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
 	d.observeDevServers(ctx, pairs)
 
@@ -373,23 +343,18 @@ func (p *standupPair) fail(what, next string) {
 // preparePairs takes every pair of the tier to the point it can deploy: its
 // services settled and present, adopted, its dev half mounted, its
 // repository's `main` checked out. A pair that cannot get there
-// is stopped with what failed; the others go on. An unresolved boot import
-// stops the whole pass before preparation can mutate anything.
-func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack, error) {
+// is stopped with what failed; the others go on.
+func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
 	pairs := make([]*standupPair, 0, len(src.tier.Pairs))
 	for _, p := range src.tier.Pairs {
 		pairs = append(pairs, newStandupPair(p, src.appID))
-	}
-	boot := d.awaitBootImport(ctx, progress)
-	if boot.stopped != nil {
-		return nil, nil, fmt.Errorf("prepare runtimes: %w", boot.stopped)
 	}
 	live, err := d.awaitRuntimes(ctx, src.tier, progress)
 	if err != nil {
 		for _, sp := range pairs {
 			sp.fail(fmt.Sprintf("could not list this project's services: %v", err), "Retry zerops_standup; if it persists, check the API with zerops_discover.")
 		}
-		return pairs, live, nil
+		return pairs, live
 	}
 	if d.settle(ctx, src.tier, live, progress) {
 		if fresh, err := d.liveServices(ctx); err == nil {
@@ -397,11 +362,10 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		}
 	}
 
-	open := d.projectOpen(ctx, src.tier, live)
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
 		sp.dev = live[sp.pair.Dev.Hostname]
-		if !d.presentAndRunning(sp, src, live, boot.failed, open) {
+		if !d.presentAndRunning(sp, src, live) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -439,7 +403,7 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		}
 		progress.st().step(host, mate.StepBuild, mate.StepFailed, "", sp.failed)
 	}
-	return pairs, live, nil
+	return pairs, live
 }
 
 // awaitRuntimes reads the project's services until every pair's halves are
@@ -580,40 +544,13 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 	return true
 }
 
-// closedOff reads from Zerops whether the Mate's project is closed off
-// (ops.ProjectClosedOff), as the import gate does (refuseOpenMate).
-func (d standupDeps) closedOff(ctx context.Context) (bool, error) {
-	return ops.ProjectClosedOff(ctx, d.batch.client, d.batch.projectID)
-}
-
 // presentAndRunning stops a pair whose halves the import did not create
 // within the wait, or whose dev half is not running: the repository is
 // checked out INTO the dev half, so it must be up, and a runtime imported
 // without startWithoutCode is not. A missing half is the browser's import
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
-// projectOpen reports, when a half is missing in a Mate the new press made,
-// a project Zerops does not read closed off yet: nothing may be imported into it
-// (refuseOpenMate), so the stand-up never asks the model to.
-func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
-	missing := false
-	for _, p := range tier.Pairs {
-		for _, host := range pairHosts(p) {
-			missing = missing || live[host] == nil
-		}
-	}
-	if !missing || !newFlowMate(d.batch.rtInfo, d.liveEnvPath) {
-		return false
-	}
-	closed, err := d.closedOff(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
-		return false
-	}
-	return !closed
-}
-
-func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, live map[string]*platform.ServiceStack, bootFailed map[string]string, open bool) bool {
+func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, live map[string]*platform.ServiceStack) bool {
 	p := sp.pair
 	type half struct {
 		rt  workflow.MateTierRuntime
@@ -638,18 +575,7 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, live 
 			entry = fmt.Sprintf("services: [{hostname: %s, type: %s, startWithoutCode: true}]", half.rt.Hostname, half.rt.Type)
 		}
 		sp.failedHost = half.rt.Hostname
-		why := "the runtimes are imported when the Mate is made, and this one's import was refused or has not finished"
-		if reason := bootFailed[half.rt.Hostname]; reason != "" {
-			why = "the container's import of the runtimes failed on it: " + reason
-		} else if reason := bootFailed[""]; reason != "" {
-			why = "the container's import of the runtimes failed: " + reason
-		}
-		if open {
-			sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
-				openMateRefusal+" Then call zerops_standup again.")
-			return false
-		}
-		sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
+		sp.fail(fmt.Sprintf("%s is not in this project after %s: the runtimes are imported when the Mate is made, and this one's import was refused or has not finished", half.rt.Hostname, d.runtimeWait),
 			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its vault and scaling from %s's %s entry), then call zerops_standup again.",
 				entry, shape, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate]))
 		return false

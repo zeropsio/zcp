@@ -267,8 +267,8 @@ func TestCodex_MCPEntry_PassesEveryVariableRuntimeDetectionReads(t *testing.T) {
 // Codex's MCP client ignores progress notifications: tool_timeout_sec is a
 // hard wall, and a call it cuts reads to the agent as a failure while zcp
 // works on. The slowest single call, zerops_standup, waits for enrollment
-// (3 min), the browser's runtimes (5 min) and the container's import
-// (20 min), then deploys: a zcli push (5 min) and a build poll (15 min).
+// (3 min) and the runtimes (5 min), then deploys: a zcli push (5 min) and a
+// build poll (15 min).
 func TestCodex_MCPEntry_ToolTimeoutOutlastsZcpsLongestCall(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -277,7 +277,7 @@ func TestCodex_MCPEntry_ToolTimeoutOutlastsZcpsLongestCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	zerops := loadCodexTOML(t, home)["mcp_servers"].(map[string]any)["zerops"].(map[string]any)
-	const longestCallSec = (3 + 5 + 20 + 5 + 15) * 60
+	const longestCallSec = (3 + 5 + 5 + 15) * 60
 	got, ok := zerops["tool_timeout_sec"].(int64)
 	if !ok {
 		t.Fatalf("tool_timeout_sec = %#v, want an integer", zerops["tool_timeout_sec"])

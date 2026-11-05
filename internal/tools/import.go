@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/mate"
-	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -84,19 +82,19 @@ func importInputSchema() *jsonschema.Schema {
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, opts ...ImportOption) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, nil, opts...)
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, nil, opts...)
 }
 
 // RegisterImportSteered is RegisterImport for a Mate: steer is asked, for
 // each service an override replaced, once the import landed — an override
 // writes the scale its YAML names (GroupRecipeSteer).
 func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer, opts ...ImportOption) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, steer, opts...)
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, steer, opts...)
 }
 
-// registerImport is RegisterImport reading the container's live env store
-// at liveEnvPath (refuseOpenMate).
-func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, steer GroupRecipeSteer, opts ...ImportOption) {
+// registerImport is RegisterImport with the steer of RegisterImportSteered
+// (nil for none).
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer, opts ...ImportOption) {
 	var cfg importConfig
 	for _, opt := range opts {
 		opt(&cfg)
@@ -122,9 +120,6 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
 		if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
-			return blocked, nil, nil
-		}
-		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
 		if blocked := refuseSecondMate(rt, input); blocked != nil {
@@ -163,33 +158,6 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 	})
 }
 
-// refuseOpenMate refuses an import into a Mate's project that is not closed
-// off yet: its runtimes would read the zcp service's variables, the Mate's
-// own key among them, and closing it off after they exist restarts them. The
-// person's press closes it off; a press whose tab closed first leaves it to
-// Finish setup. Whether it is closed off is read from Zerops
-// (ops.ProjectClosedOff), never from HQ's mark (audit N1). Only a Mate the
-// new press made — its zcp carries MATE_SETUP_RUNTIMES in the live env
-// store; an older Mate behaves as before. A read that fails is refused too,
-// saying so: whether the project is closed off is not known.
-func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
-	if !newFlowMate(rt, liveEnvPath) {
-		return nil
-	}
-	closed, err := ops.ProjectClosedOff(ctx, client, projectID)
-	switch {
-	case err != nil:
-		return convertError(platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Could not read whether the project is closed off (%v); nothing was imported.", err),
-			"Retry the import."))
-	case closed:
-		return nil
-	}
-	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-		openMateRefusal,
-		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
-}
-
 // refuseSecondMate refuses an import into a Mate's project that declares a
 // zcp service: the project holds one, this container, and a second would be
 // a second Mate HQ refuses to link (spec-mate §6.6). A document that does
@@ -206,17 +174,6 @@ func refuseSecondMate(rt runtime.Info, input ImportInput) *mcp.CallToolResult {
 		fmt.Sprintf("This import declares a zcp service (%s); a project holds one Mate, and this project's is this container. Nothing was imported.", strings.Join(hostnames, ", ")),
 		"Remove the zcp service from the import, then import again."))
 }
-
-// newFlowMate is a Mate the new press made: its zcp carries the runtimes
-// plan (matesetup.EnvRuntimes) in the live env store. Every setup interlock
-// applies to these only.
-func newFlowMate(rt runtime.Info, liveEnvPath string) bool {
-	return rt.MateEnabled && strings.TrimSpace(mate.LiveLookup(liveEnvPath)(matesetup.EnvRuntimes)) != ""
-}
-
-// openMateRefusal is what an import into an open Mate is told, and what the
-// stand-up tells the model in place of an import.
-const openMateRefusal = "The project is not closed off yet; Finish setup in the app closes it. Until then nothing is imported into it: its runtimes would read this Mate's key, and closing it off once they exist restarts them."
 
 // gateOverrideOnFailedHistory enforces docs/spec-workflows.md §8 "Recovery
 // classification" R1/R2: when override=true would REPLACE a service whose

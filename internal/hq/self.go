@@ -8,9 +8,7 @@ import (
 
 // MateState is the Mate as HQ holds it (GET /api/mate/self): its record, its
 // birth, written by the client that set it up, and the application HQ holds
-// it in with its changes there. Whether its project is closed off is read
-// from Zerops (ops.ProjectClosedOff): HQ's closedOff is the press's receipt,
-// which zcp never reads (audit N1).
+// it in with its changes there.
 type MateState struct {
 	ProjectID string `json:"projectId"`
 	Name      string `json:"name"`
