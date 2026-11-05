@@ -124,6 +124,10 @@ type standupHQ struct {
 	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
 	// code and reason.
 	tierRefusal *hq.RefusedError
+	// selfReads counts reads of the Mate's state; refuseSelf answers them
+	// 401, an HQ that refuses the Mate's key.
+	selfReads  int
+	refuseSelf bool
 }
 
 func (g *standupHQ) start(t *testing.T) *httptest.Server {
@@ -158,6 +162,11 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 		}
 		switch path {
 		case "/api/mate/self":
+			g.selfReads++
+			if g.refuseSelf {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			var app any
 			if g.appID != "" {
 				app = g.appID
@@ -565,8 +574,6 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 		mounter:     f.mounter,
 		liveEnvPath: writeLiveEnvFile(t, f.env),
 		identity:    func() hq.Identity { return f.identity },
-		hqWait:      50 * time.Millisecond,
-		hqPoll:      10 * time.Millisecond,
 		runtimeWait: 200 * time.Millisecond,
 		runtimePoll: 5 * time.Millisecond,
 		statusPath:  f.statusPath,
@@ -889,6 +896,29 @@ func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
 		return strings.Contains(w, "dev-server supervisor:") && strings.Contains(w, "nextstoredev")
 	}) {
 		t.Errorf("nextstoredev's deploy in the report = %+v; want the failed supervisor edit as a warning", next.Deploy)
+	}
+}
+
+// TestStandup_StartsOnlyOnceLinked_AsksHQOnce: the Mate's server sends the
+// stand-up only once its link to HQ is up, so the stand-up waits on no link:
+// an HQ that refuses the Mate's key is read once and the call refused at once,
+// never asked again on a timer.
+func TestStandup_StartsOnlyOnceLinked_AsksHQOnce(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.hq.refuseSelf = true
+	result, _ := f.run(t)
+	if !result.IsError {
+		t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
+	}
+	f.hq.mu.Lock()
+	reads := f.hq.selfReads
+	f.hq.mu.Unlock()
+	if reads != 1 {
+		t.Errorf("HQ's /api/mate/self was read %d times; want once", reads)
+	}
+	if metas, _ := workflow.ListServiceMetas(f.stateDir); len(metas) != 0 {
+		t.Errorf("a refusal touches nothing, but %d services were adopted", len(metas))
 	}
 }
 

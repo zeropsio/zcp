@@ -5893,7 +5893,10 @@ The order:
    preview, minutes per build), then give one short line per step, the fallback's included
    (`TestBuildAgentsMD_Container_StandUpRoutesToTheTool`).
    The tool:
-   - waits, bounded, for HQ to answer the Mate's key (3 min) and for the runtimes (5 min: every dev half
+   - reads HQ once under the Mate's key — the server sends the stand-up only once its link is up, so
+     the tool waits on no link and refuses at once when HQ refuses the key
+     (`TestStandup_StartsOnlyOnceLinked_AsksHQOnce`);
+   - waits, bounded, for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;
      if the boot-import wait expires while that import remains pending or importing, or

@@ -47,10 +47,6 @@ import (
 // are HQ's, and the tier read is the Mate's own, `0 — AI Agent`.
 
 const (
-	// standupHQWait bounds the wait for HQ to answer for the Mate's key: a
-	// new Mate's first turn can come before the link is up.
-	standupHQWait = 3 * time.Minute
-	standupHQPoll = 5 * time.Second
 	// standupRuntimeWait bounds the wait for the runtimes the browser imports
 	// right before the person signs the agent in: the first turn can arrive
 	// while they are still being created.
@@ -73,7 +69,7 @@ type StandupInput struct{}
 
 // standupDeps is what a stand-up needs: the batch deploy it shares with
 // zerops_deploy_batch (and through it the client, SSH, auth and state), the
-// mounter, and how long to wait for HQ to answer for the Mate's key.
+// mounter, and the Mate's HQ identity.
 type standupDeps struct {
 	batch       batchDeployer
 	mounter     ops.Mounter
@@ -81,8 +77,6 @@ type standupDeps struct {
 	// identity is the Mate's HQ identity: the key it presents, the HQ it
 	// addresses and the file its Git credential is read from.
 	identity    func() hq.Identity
-	hqWait      time.Duration
-	hqPoll      time.Duration
 	runtimeWait time.Duration
 	runtimePoll time.Duration
 	// statusPath is the setup status file the stand-up writes its section of
@@ -125,8 +119,6 @@ func RegisterStandup(
 		mounter:     mounter,
 		liveEnvPath: mate.LiveEnvStorePath,
 		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
-		hqWait:      standupHQWait,
-		hqPoll:      standupHQPoll,
 		runtimeWait: standupRuntimeWait,
 		runtimePoll: standupRuntimePoll,
 		statusPath:  mate.StatusFilePath(),
@@ -195,10 +187,12 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 		progress.say("the project is closed off; the container's import of the runtimes is starting")
 		d.closedOffSeen = true
 	}
-	hqc, answering := d.awaitHQ(ctx, progress)
-	if !answering {
+	// The Mate's server sends the stand-up only once its link to HQ is up, so
+	// HQ is opened and read once, never waited on.
+	hqc, err := hq.Open(d.batch.httpClient, d.identity())
+	if err != nil {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("HQ does not answer for this Mate's key after %s. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.hqWait),
+			fmt.Sprintf("HQ does not answer for this Mate's key: %v. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", err),
 			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once HQ answers for the Mate, and a first deploy follows."), ""
 	}
 	src, refusal := d.readTier(ctx, hqc, progress)
@@ -217,32 +211,6 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 	resp := buildStandupResponse(src, pairs, live)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
 	return jsonResult(resp), resp.StandUp
-}
-
-// awaitHQ opens HQ under the Mate's key and waits until HQ answers for it, or
-// the wait is over.
-func (d standupDeps) awaitHQ(ctx context.Context, progress *standupProgress) (hq.Client, bool) {
-	deadline := time.Now().Add(d.hqWait)
-	for {
-		hqc, err := hq.Open(d.batch.httpClient, d.identity())
-		if err == nil {
-			callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-			_, err = hqc.Once().Self(callCtx)
-			cancel()
-		}
-		if err == nil {
-			return hqc, true
-		}
-		if !time.Now().Before(deadline) {
-			return hq.Client{}, false
-		}
-		progress.say("waiting for HQ to answer for this Mate's key")
-		select {
-		case <-ctx.Done():
-			return hq.Client{}, false
-		case <-time.After(d.hqPoll):
-		}
-	}
 }
 
 // standupSource is the tier a stand-up works from and where it came from:
