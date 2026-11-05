@@ -307,17 +307,21 @@ func releaseOutcomeWords(outcome string) string {
 	return ""
 }
 
-// leaseCompletionEvery is how often the Mate's service looks at HQ for a
-// finished change while zcp holds leases of its repositories: a merge a
-// person made while no agent runs a pass frees its leases within it.
+// leaseCompletionEvery is how often the Mate's service looks for a finished
+// change while zcp holds leases of its repositories: a merge a person made
+// while no agent runs a pass frees its leases within it once a frame brought
+// it. It bounds how often a release refused for unsaved work runs its guard
+// over ssh again.
 const leaseCompletionEvery = time.Minute
 
 // followLeaseCompletion is the Mate's service's look for finished changes
 // (DP-34), at most every leaseCompletionEvery after the look before (last):
-// only while zcp holds a lease of a repository on this Mate's HQ — otherwise
-// HQ is asked nothing for it — it reads the Mate's state once and releases
-// what releaseCompletedLeases releases. It answers the time of this look, or
-// last when it took none.
+// only while zcp holds a lease of a repository on this Mate's HQ, it reads
+// the changes the link's last `state` frame brought (hq.ReadMateChanges, the
+// file the Mate's server writes) and releases what releaseCompletedLeases
+// releases. HQ is asked nothing: no file, or one that cannot be read, is no
+// finished change. It answers the time of this look, or last when it took
+// none.
 func followLeaseCompletion(ctx context.Context, d devGitDeps, at, last time.Time) ([]string, time.Time) {
 	if d.release == nil || (!last.IsZero() && at.Sub(last) < leaseCompletionEvery) {
 		return nil, last
@@ -326,9 +330,7 @@ func followLeaseCompletion(ctx context.Context, d devGitDeps, at, last time.Time
 	if !linked || len(hqLeaseBranches(d.stateDir, hqc.Address())) == 0 {
 		return nil, last
 	}
-	readCtx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
-	state, err := hqc.Once().Self(readCtx)
-	cancel()
+	state, err := hq.ReadMateChanges(hqIdentity(d.rt).MateChangesPath)
 	if err != nil {
 		return nil, at
 	}

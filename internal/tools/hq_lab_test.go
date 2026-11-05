@@ -169,12 +169,13 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 }
 
 // link is a container of the lab's Mate linked to this HQ: its identity, and
-// a file of its own for the Git credential the Mate's server keeps, which
-// nothing has written yet.
+// files of its own for the Git credential and the last `state` frame's
+// changes the Mate's server keeps, which nothing has written yet.
 func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 	t.Helper()
+	dir := filepath.Join(t.TempDir(), ".zcp", "hq")
 	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
-		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
+		GitCredentialPath: filepath.Join(dir, "git-credential"), MateChangesPath: filepath.Join(dir, "mate-changes.json")}
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {

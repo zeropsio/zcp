@@ -75,12 +75,14 @@ type Info struct {
 }
 
 // HQLink is the identity a test's container presents to HQ (Info.HQ): HQ's
-// origin, the project and its key, and the file the Mate's server keeps its
-// Git credential in. A pointer on Info, so a test relinking its container
-// mid-way reaches every copy of the Info it handed out.
+// origin, the project and its key, and the files the Mate's server keeps its
+// Git credential and the link's last `state` frame's changes in. A pointer on
+// Info, so a test relinking its container mid-way reaches every copy of the
+// Info it handed out.
 type HQLink struct {
 	Origin, ProjectID, Key string
 	GitCredentialPath      string
+	MateChangesPath        string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.

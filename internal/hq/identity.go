@@ -50,6 +50,9 @@ type Identity struct {
 	// credential in (GitCredentialPath): not part of what is presented, but
 	// of where this Mate's HQ lives on its disk.
 	GitCredentialPath string
+	// MateChangesPath is the file the Mate's server keeps the link's last
+	// `state` frame's changes in (MateChangesPath), on the same disk.
+	MateChangesPath string
 }
 
 // IdentityFrom reads the identity from getenv — in a container the live env
@@ -61,6 +64,7 @@ func IdentityFrom(getenv func(string) string) Identity {
 		ProjectID: strings.TrimSpace(getenv(EnvProjectID)),
 
 		GitCredentialPath: GitCredentialPath(),
+		MateChangesPath:   MateChangesPath(),
 	}
 }
 

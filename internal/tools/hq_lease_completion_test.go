@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -402,11 +403,42 @@ func TestHQPass_MergedChangesLeasesReleasedByThePass(t *testing.T) {
 	}
 }
 
+// stateFrame is the Mate's server taking a `state` frame from HQ over its
+// link: it writes the frame's changes — the MateChanges fields of the
+// Mate's state as HQ has it now — to the file the container's link names, in
+// one rename, as the server does on every frame.
+func (l *hqLab) stateFrame() {
+	l.t.Helper()
+	l.hq.mu.Lock()
+	state := l.hq.self(l.t.Context())
+	l.hq.mu.Unlock()
+	frame := map[string]any{"appId": state["appId"], "appName": state["appName"], "changes": state["changes"]}
+	if perBranch, ok := state["openPerBranch"]; ok {
+		frame["openPerBranch"] = perBranch
+	}
+	raw, err := json.Marshal(frame)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	path := l.rt.HQ.MateChangesPath
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".tmp", raw, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
 // TestMateService_MergedChangesLeasesReleasedWithNoAgentPass: the Mate's
-// service looks at HQ for finished changes while zcp holds leases of its
-// repositories, so a change a person merges while no agent runs a pass gets
-// its leases released all the same, at a look no sooner than
-// leaseCompletionEvery after the one before.
+// service reads finished changes from the link's last `state` frame, the file
+// the Mate's server writes, while zcp holds leases of its repositories, so a
+// change a person merges while no agent runs a pass gets its leases released
+// all the same, at a look no sooner than leaseCompletionEvery after the one
+// before. It never asks HQ for the Mate's state: a merge no frame has brought
+// yet releases nothing, and no file is no finished change.
 func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	requireGitForLab(t)
 	t.Parallel()
@@ -424,6 +456,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		d.release = fake.release
 		return d, ok
 	}
+	const selfRead = "GET /api/mate/self"
 	start := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	ticks := make(chan time.Time)
 	done := make(chan struct{})
@@ -432,11 +465,24 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		keepMateDevGit(t.Context(), deps, start, ticks, func(string) {})
 	}()
 
+	// Each send returns once the look before it is over; the look it starts
+	// may still run, so a check follows only a tick within
+	// leaseCompletionEvery of the last read, whose look releases nothing.
 	ticks <- start.Add(10 * time.Second)
+	selfReads := lab.hq.callCount(selfRead)
 	lab.hq.mergeChange("appdev", 1)
-	ticks <- start.Add(20 * time.Second) // within leaseCompletionEvery of the start's look
+	ticks <- start.Add(leaseCompletionEvery + 10*time.Second) // reads: no file yet
+	ticks <- start.Add(leaseCompletionEvery + 20*time.Second)
+	if got := fake.called(); len(got) != 0 {
+		t.Fatalf("releases = %+v before any frame said the change is merged, want none", got)
+	}
+	lab.stateFrame()
 	ticks <- start.Add(leaseCompletionEvery + 30*time.Second)
-	ticks <- start.Add(leaseCompletionEvery + 40*time.Second) // the look before is over
+	ticks <- start.Add(2 * leaseCompletionEvery)
+	if got := fake.called(); len(got) != 0 {
+		t.Fatalf("releases = %+v within leaseCompletionEvery of the look before, want none", got)
+	}
+	ticks <- start.Add(2*leaseCompletionEvery + 10*time.Second) // reads the frame
 	close(ticks)
 	<-done
 
@@ -445,5 +491,8 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	}
 	if left := leaseRecordsLeft(t, lab.stateDir); len(left) != 0 {
 		t.Errorf("leases left = %v, want none", left)
+	}
+	if n := lab.hq.callCount(selfRead); n != selfReads {
+		t.Errorf("the service's looks asked HQ for the Mate's state %d times, want none", n-selfReads)
 	}
 }

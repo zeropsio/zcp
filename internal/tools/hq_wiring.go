@@ -87,7 +87,7 @@ func liveHQIdentity() hq.Identity {
 func hqIdentity(rt runtime.Info) hq.Identity {
 	id := liveHQIdentity()
 	if rt.HQ != nil {
-		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, GitCredentialPath: rt.HQ.GitCredentialPath}
+		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, GitCredentialPath: rt.HQ.GitCredentialPath, MateChangesPath: rt.HQ.MateChangesPath}
 	}
 	id.OrgID = rt.OrgID
 	return id
