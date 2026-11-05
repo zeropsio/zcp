@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -785,47 +786,49 @@ func TestEnsureWarm_CreateRefused_RecordedAndStatusReportsIt(t *testing.T) {
 // reset and says so.
 func TestEnsureWarm_InTheBackground_UnderThePoolLock(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4)
-	orch.add(3, "", true, false, 1)
-	wf := newWarmFixture(t, orch)
-	wf.deps.Warm.LockWait = 50 * time.Millisecond
-	wf.collect = true
+	synctest.Test(t, func(t *testing.T) {
+		orch := newWarmOrch(4)
+		orch.add(3, "", true, false, 1)
+		wf := newWarmFixture(t, orch)
+		wf.deps.Warm.LockWait = 50 * time.Millisecond
+		wf.collect = true
 
-	acq := wf.acquire(t, "feat-a")
-	if _, _, creates := orch.log(); len(creates) != 0 {
-		t.Fatalf("creates = %v before the background ran: the create must not run on the caller", creates)
-	}
-	if !strings.Contains(acq.Note, "being prepared") {
-		t.Errorf("acquire note %q: want a warm container being prepared", acq.Note)
-	}
-	status, err := LeaseStatus(context.Background(), wf.deps, testPoolHost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w := poolWarmOf(t, status); w.Preparing != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreating {
-		t.Errorf("warm = %+v (last %+v) while the create runs, want 1 preparing, last creating", w, w.Last)
-	}
+		acq := wf.acquire(t, "feat-a")
+		if _, _, creates := orch.log(); len(creates) != 0 {
+			t.Fatalf("creates = %v before the background ran: the create must not run on the caller", creates)
+		}
+		if !strings.Contains(acq.Note, "being prepared") {
+			t.Errorf("acquire note %q: want a warm container being prepared", acq.Note)
+		}
+		status, err := LeaseStatus(context.Background(), wf.deps, testPoolHost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w := poolWarmOf(t, status); w.Preparing != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreating {
+			t.Errorf("warm = %+v (last %+v) while the create runs, want 1 preparing, last creating", w, w.Last)
+		}
 
-	view := wf.release(t, "devpool-3") // the create still holds the lock
-	releases, deletes, _ := orch.log()
-	if len(deletes) != 0 || len(releases) != 1 || !releases[0].reset {
-		t.Errorf("releases %+v, deletes %+v: want a reset release, no delete, while the lock is held", releases, deletes)
-	}
-	if !strings.Contains(view.Note, "kept") {
-		t.Errorf("note %q: want the container kept with a reset", view.Note)
-	}
+		view := wf.release(t, "devpool-3") // the create still holds the lock
+		releases, deletes, _ := orch.log()
+		if len(deletes) != 0 || len(releases) != 1 || !releases[0].reset {
+			t.Errorf("releases %+v, deletes %+v: want a reset release, no delete, while the lock is held", releases, deletes)
+		}
+		if !strings.Contains(view.Note, "kept") {
+			t.Errorf("note %q: want the container kept with a reset", view.Note)
+		}
 
-	if n := wf.runSpawned(); n != 1 {
-		t.Fatalf("background steps = %d, want the one create", n)
-	}
-	if _, _, creates := orch.log(); len(creates) != 1 {
-		t.Errorf("creates = %v, want the background create", creates)
-	}
-	unlock, err := lockPoolWarm(context.Background(), wf.stateDir, testPoolHost, 0)
-	if err != nil {
-		t.Fatalf("the pool lock is still held after the create answered: %v", err)
-	}
-	unlock()
+		if n := wf.runSpawned(); n != 1 {
+			t.Fatalf("background steps = %d, want the one create", n)
+		}
+		if _, _, creates := orch.log(); len(creates) != 1 {
+			t.Errorf("creates = %v, want the background create", creates)
+		}
+		unlock, err := lockPoolWarm(context.Background(), wf.stateDir, testPoolHost, 0)
+		if err != nil {
+			t.Fatalf("the pool lock is still held after the create answered: %v", err)
+		}
+		unlock()
+	})
 }
 
 // TestEnsureWarm_ContainerItCreated_IsNotItsOwn: a racing acquire can take the
@@ -917,48 +920,50 @@ func TestLeaseAcquire_ContainersPreparing_RetriesWithinDeadline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4)
-			for range tt.refusals {
-				orch.acquireErrs = append(orch.acquireErrs, preparing)
-			}
-			wf := newWarmFixture(t, orch)
-			wf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{
-				{ID: "svc-pool", Name: testPoolHost, Status: platform.SwarmContainerActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.poolType, ServiceStackTypeCategoryName: "USER"}},
+			synctest.Test(t, func(t *testing.T) {
+				orch := newWarmOrch(4)
+				for range tt.refusals {
+					orch.acquireErrs = append(orch.acquireErrs, preparing)
+				}
+				wf := newWarmFixture(t, orch)
+				wf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{
+					{ID: "svc-pool", Name: testPoolHost, Status: platform.SwarmContainerActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.poolType, ServiceStackTypeCategoryName: "USER"}},
+				})
+				var mu sync.Mutex
+				clock := time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)
+				wf.deps.Now = func() time.Time { // two seconds per look
+					mu.Lock()
+					defer mu.Unlock()
+					clock = clock.Add(2 * time.Second)
+					return clock
+				}
+				wf.deps.PreparingRetry = time.Millisecond
+
+				view, err := LeaseAcquire(context.Background(), wf.deps, testPoolHost, testRepo, "feat-a")
+
+				orch.mu.Lock()
+				tries := orch.acquires
+				orch.mu.Unlock()
+				if tries != tt.wantTries {
+					t.Errorf("acquire attempts = %d, want %d", tries, tt.wantTries)
+				}
+				if !tt.wantOK {
+					var pe *platform.PlatformError
+					if !errors.As(err, &pe) {
+						t.Fatalf("err = %v, want the containers-preparing refusal", err)
+					}
+					if !strings.Contains(pe.Message+pe.Suggestion, "warm container") || !strings.Contains(pe.Suggestion, "zcp retried") {
+						t.Errorf("refusal %q / %q should name the warm create and the retry", pe.Message, pe.Suggestion)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("acquire: %v", err)
+				}
+				if !strings.Contains(view.Note, "still preparing") || !strings.Contains(view.Note, "warm container") {
+					t.Errorf("note %q should say the acquire waited for a container being prepared", view.Note)
+				}
 			})
-			var mu sync.Mutex
-			clock := time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)
-			wf.deps.Now = func() time.Time { // two seconds per look
-				mu.Lock()
-				defer mu.Unlock()
-				clock = clock.Add(2 * time.Second)
-				return clock
-			}
-			wf.deps.PreparingRetry = time.Millisecond
-
-			view, err := LeaseAcquire(context.Background(), wf.deps, testPoolHost, testRepo, "feat-a")
-
-			orch.mu.Lock()
-			tries := orch.acquires
-			orch.mu.Unlock()
-			if tries != tt.wantTries {
-				t.Errorf("acquire attempts = %d, want %d", tries, tt.wantTries)
-			}
-			if !tt.wantOK {
-				var pe *platform.PlatformError
-				if !errors.As(err, &pe) {
-					t.Fatalf("err = %v, want the containers-preparing refusal", err)
-				}
-				if !strings.Contains(pe.Message+pe.Suggestion, "warm container") || !strings.Contains(pe.Suggestion, "zcp retried") {
-					t.Errorf("refusal %q / %q should name the warm create and the retry", pe.Message, pe.Suggestion)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("acquire: %v", err)
-			}
-			if !strings.Contains(view.Note, "still preparing") || !strings.Contains(view.Note, "warm container") {
-				t.Errorf("note %q should say the acquire waited for a container being prepared", view.Note)
-			}
 		})
 	}
 }

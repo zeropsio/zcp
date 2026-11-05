@@ -11,8 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// non-parallel: these tests observe timing around the package-level
-// per-source deploy git lock.
+// non-parallel: these tests inspect the package-level per-source deploy git locks.
 
 // TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive: two stages
 // fed from one dev service wait on their builds at the same time, while every
@@ -21,7 +20,7 @@ func TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive(t *testing.T
 	source := "batch-f4-source"
 	mock := platform.NewMock().
 		WithServices(deployBatchTestServices(source, "batch-f4-stage", "batch-f4-worker"))
-	ssh := newBatchConcurrencySSH(50 * time.Millisecond)
+	ssh := newBatchConcurrencySSH()
 	ssh.waitForBuilds = 2
 
 	result := DeployBatchSSH(
@@ -48,6 +47,9 @@ func TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive(t *testing.T
 	if got := ssh.peakGitForSource(source); got != 1 {
 		t.Errorf("peak concurrent git/upload ExecSSH calls for source %q = %d, want 1", source, got)
 	}
+	if got := ssh.unlockedGitForSource(source); got != 0 {
+		t.Errorf("%d git/upload calls for source %q ran without its git lock", got, source)
+	}
 }
 
 func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
@@ -55,7 +57,7 @@ func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
 	sourceB := "batch-f4-source-b"
 	mock := platform.NewMock().
 		WithServices(deployBatchTestServices(sourceA, sourceB, "batch-f4-stage-a", "batch-f4-stage-b"))
-	ssh := newBatchConcurrencySSH(0)
+	ssh := newBatchConcurrencySSH()
 	ssh.waitForCalls = 2
 
 	result := DeployBatchSSH(
@@ -90,7 +92,7 @@ func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
 func TestDeployBatchSSH_LeaseSource_PushesFromAlias(t *testing.T) {
 	stateDir, alias := leaseDeployState(t, 51)
 	mock := platform.NewMock().WithServices(leaseDeployServices())
-	ssh := newBatchConcurrencySSH(50 * time.Millisecond)
+	ssh := newBatchConcurrencySSH()
 	ssh.waitForBuilds = 2
 
 	result := DeployBatchSSH(
@@ -116,6 +118,9 @@ func TestDeployBatchSSH_LeaseSource_PushesFromAlias(t *testing.T) {
 	}
 	if got := ssh.peakGitForSource(alias); got != 1 {
 		t.Errorf("peak concurrent git/upload ExecSSH calls for the alias = %d, want 1 (one git lock keyed on the alias)", got)
+	}
+	if got := ssh.unlockedGitForSource(alias); got != 0 {
+		t.Errorf("%d git/upload calls for alias %q ran without its git lock", got, alias)
 	}
 	for _, e := range result.Entries {
 		toPool := e.Target.TargetService == "webpool"
@@ -155,7 +160,6 @@ func assertDeployBatchNoKickoffErrors(t *testing.T, result *DeployBatchResult) {
 
 type batchConcurrencySSH struct {
 	mu               sync.Mutex
-	delay            time.Duration
 	waitForCalls     int
 	entered          int
 	allEnteredClosed bool
@@ -164,13 +168,14 @@ type batchConcurrencySSH struct {
 	peakInFlight     int
 	inFlightBySource map[string]int
 	peakBySource     map[string]int
-	// waitForBuilds holds each build wait until that many have entered
-	// (or a second passes); git/upload calls never wait on it.
+	// waitForBuilds holds each build wait until that many have entered;
+	// git/upload calls never wait on it.
 	waitForBuilds   int
 	builds          int
 	buildsEntered   chan struct{}
 	gitBySource     map[string]int
 	peakGitBySource map[string]int
+	unlockedGit     map[string]int
 }
 
 // isBuildWait reports a call that only awaits a build already uploaded: it
@@ -179,15 +184,15 @@ func isBuildWait(command string) bool {
 	return strings.Contains(command, "zcp-push-") && !strings.Contains(command, "zcli push") && !strings.Contains(command, "git ")
 }
 
-func newBatchConcurrencySSH(delay time.Duration) *batchConcurrencySSH {
+func newBatchConcurrencySSH() *batchConcurrencySSH {
 	return &batchConcurrencySSH{
-		delay:            delay,
 		allEntered:       make(chan struct{}),
 		inFlightBySource: make(map[string]int),
 		peakBySource:     make(map[string]int),
 		buildsEntered:    make(chan struct{}),
 		gitBySource:      make(map[string]int),
 		peakGitBySource:  make(map[string]int),
+		unlockedGit:      make(map[string]int),
 	}
 }
 
@@ -202,7 +207,6 @@ func (s *batchConcurrencySSH) ExecSSH(ctx context.Context, hostname, command str
 			case <-s.buildsEntered:
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(time.Second):
 			}
 		}
 		return []byte("ok"), nil
@@ -211,15 +215,6 @@ func (s *batchConcurrencySSH) ExecSSH(ctx context.Context, hostname, command str
 	if s.waitForCalls > 0 {
 		select {
 		case <-s.allEntered:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Second):
-		}
-	}
-
-	if s.delay > 0 {
-		select {
-		case <-time.After(s.delay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -245,6 +240,15 @@ func (s *batchConcurrencySSH) enter(hostname string, build bool) {
 			close(s.buildsEntered)
 		}
 	} else {
+		lock, ok := deploySourceGitLocks.locks.Load(hostname)
+		if !ok {
+			s.unlockedGit[hostname]++
+		} else if mu, ok := lock.(*sync.Mutex); !ok {
+			s.unlockedGit[hostname]++
+		} else if mu.TryLock() {
+			mu.Unlock()
+			s.unlockedGit[hostname]++
+		}
 		s.gitBySource[hostname]++
 		if s.gitBySource[hostname] > s.peakGitBySource[hostname] {
 			s.peakGitBySource[hostname] = s.gitBySource[hostname]
@@ -289,6 +293,12 @@ func (s *batchConcurrencySSH) peakGitForSource(hostname string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.peakGitBySource[hostname]
+}
+
+func (s *batchConcurrencySSH) unlockedGitForSource(hostname string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unlockedGit[hostname]
 }
 
 // hosts is every host an ssh call reached, sorted.

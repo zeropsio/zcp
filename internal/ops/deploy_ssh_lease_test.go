@@ -7,8 +7,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -114,6 +114,28 @@ func TestDeploySSH_LeaseSource_NoFindServiceAndPushesFromLease(t *testing.T) {
 	}
 }
 
+// deadlineOnWait reports when a caller first begins waiting on its context.
+// The test expires it only after the held lock was reached.
+type deadlineOnWait struct {
+	context.Context //nolint:containedctx // test context reports and controls the lock wait
+	waiting, done   chan struct{}
+	once            sync.Once
+}
+
+func (c *deadlineOnWait) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.done
+}
+
+func (c *deadlineOnWait) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
 func TestDeploySSH_LeaseSource_LockKeyedOnAlias(t *testing.T) {
 	t.Parallel()
 
@@ -142,18 +164,24 @@ func TestDeploySSH_LeaseSource_LockKeyedOnAlias(t *testing.T) {
 			defer unlock()
 
 			ssh := &mockSSHDeployer{output: []byte("ok")}
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-			defer cancel()
-			_, derr := DeploySSHWithLeases(ctx, mock, "proj-1", ssh, testAuthInfo(),
-				stateDir, alias, "appstage", "app", "", "")
+			deploy := func(ctx context.Context) error {
+				_, err := DeploySSHWithLeases(ctx, mock, "proj-1", ssh, testAuthInfo(),
+					stateDir, alias, "appstage", "app", "", "")
+				return err
+			}
 			if !tt.holdAlias {
-				if derr != nil {
-					t.Fatalf("unexpected error with an unrelated lock held: %v", derr)
+				if err := deploy(context.Background()); err != nil {
+					t.Fatalf("unexpected error with an unrelated lock held: %v", err)
 				}
 				return
 			}
-			if !errors.Is(derr, context.DeadlineExceeded) {
-				t.Fatalf("error = %v, want the lock wait to end with the context deadline", derr)
+			ctx := &deadlineOnWait{Context: context.Background(), waiting: make(chan struct{}), done: make(chan struct{})}
+			result := make(chan error, 1)
+			go func() { result <- deploy(ctx) }()
+			<-ctx.waiting
+			close(ctx.done)
+			if err := <-result; !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("error = %v, want the lock wait to end with the context deadline", err)
 			}
 			if len(ssh.calls) != 0 {
 				t.Errorf("ssh calls = %d while the alias lock is held, want 0", len(ssh.calls))

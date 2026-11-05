@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -127,6 +128,27 @@ func newParkFixture(t *testing.T, parked bool) *parkFixture {
 	hf.deps.SSHReadyEvery = time.Millisecond
 	hf.deps.StartedSSHWait = 200 * time.Millisecond
 	return &parkFixture{hostFixture: hf, ssh: ssh}
+}
+
+// unpark and release run readiness retries against the virtual clock.
+func (pf *parkFixture) unpark(t *testing.T) (LeaseView, error) {
+	t.Helper()
+	var view LeaseView
+	var err error
+	synctest.Test(t, func(t *testing.T) {
+		view, err = LeaseUnpark(context.Background(), pf.deps, "devpool-3")
+	})
+	return view, err
+}
+
+func (pf *parkFixture) release(t *testing.T, force bool) (LeaseView, error) {
+	t.Helper()
+	var view LeaseView
+	var err error
+	synctest.Test(t, func(t *testing.T) {
+		view, err = LeaseRelease(context.Background(), pf.deps, "devpool-3", force)
+	})
+	return view, err
 }
 
 // markParked rewrites alias's record parked since at.
@@ -375,7 +397,7 @@ func TestLeaseUnpark_StartsWaitsForSSHMountsAndSupervises(t *testing.T) {
 				pf.ssh.c.Env = map[string]string{"API_HOST": "node-id-1.runtime.webpool.zerops"} // kept from before the park
 			}
 
-			v, err := LeaseUnpark(context.Background(), pf.deps, "devpool-3")
+			v, err := pf.unpark(t)
 			if err != nil {
 				t.Fatalf("LeaseUnpark: %v", err)
 			}
@@ -411,7 +433,7 @@ func TestLeaseUnpark_SSHAnswersLate_WaitsForIt(t *testing.T) {
 	pf := newParkFixture(t, true)
 	pf.ssh.unready = 2
 
-	v, err := LeaseUnpark(context.Background(), pf.deps, "devpool-3")
+	v, err := pf.unpark(t)
 	if err != nil {
 		t.Fatalf("LeaseUnpark: %v", err)
 	}
@@ -434,7 +456,7 @@ func TestLeaseUnpark_SSHNeverAnswers_RunsUnmountedWithNote(t *testing.T) {
 	pf := newParkFixture(t, true)
 	pf.ssh.unready = 1 << 30
 
-	v, err := LeaseUnpark(context.Background(), pf.deps, "devpool-3")
+	v, err := pf.unpark(t)
 	if err != nil {
 		t.Fatalf("LeaseUnpark: %v", err)
 	}
@@ -473,7 +495,7 @@ func TestLeaseUnpark_RunningLease_StartsNothingRestoresTheRest(t *testing.T) {
 	pf := newParkFixture(t, false)
 	delete(pf.mounter.states, "/var/www/devpool-3")
 
-	v, err := LeaseUnpark(context.Background(), pf.deps, "devpool-3")
+	v, err := pf.unpark(t)
 	if err != nil {
 		t.Fatalf("LeaseUnpark: %v", err)
 	}
@@ -570,7 +592,7 @@ func TestLeaseRelease_Parked_StartsThenGuards(t *testing.T) {
 	t.Parallel()
 	pf := newParkFixture(t, true)
 
-	v, err := LeaseRelease(context.Background(), pf.deps, "devpool-3", false)
+	v, err := pf.release(t, false)
 	if err != nil {
 		t.Fatalf("LeaseRelease: %v", err)
 	}
@@ -614,7 +636,7 @@ func TestLeaseRelease_Parked_RefusedThenStoppedAgain(t *testing.T) {
 			pf.ssh.porcelain, pf.ssh.unready = tt.porcelain, tt.unready
 			pf.swarm.stopErr = tt.stopErr
 
-			_, err := LeaseRelease(context.Background(), pf.deps, "devpool-3", false)
+			_, err := pf.release(t, false)
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
 				t.Fatalf("err = %v, want a PREREQUISITE_MISSING refusal", err)

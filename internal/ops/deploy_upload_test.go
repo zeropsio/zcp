@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -144,16 +145,77 @@ func TestBuildSSHCommand_UploadPastItsBudget_StoppedNoBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping under -short; needs real git binary")
 	}
-	r := newPushRig(t, "echo 'Creating package'\nwhile [ ! -e upload-go ]; do sleep 0.1; done\necho 'Deploying service'\necho built > built\n")
+	r := newPushRig(t, "exec 3>\"$ZCLI_DONE\"\nexec 4<\"$ZCLI_GATE\"\necho 'Creating package'\necho > \"$ZCLI_STARTED\"\ncat <&4 >/dev/null\necho 'Deploying service'\necho built > built\n")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	start := time.Now()
-	out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", false, "", r.pushDir, uploadBudget{base: time.Second, cap: time.Second}))
-	if code != uploadUnfinishedExit {
-		t.Fatalf("push = exit %d, want %d (upload unfinished): %s", code, uploadUnfinishedExit, out)
+	dir := t.TempDir()
+	zcliStarted, zcliDone, zcliGate := filepath.Join(dir, "zcli-started"), filepath.Join(dir, "zcli-done"), filepath.Join(dir, "zcli-gate")
+	dateWaiting, dateGate := filepath.Join(dir, "date-waiting"), filepath.Join(dir, "date-gate")
+	watchReady, watchDone, watchGate := filepath.Join(dir, "watch-ready"), filepath.Join(dir, "watch-done"), filepath.Join(dir, "watch-gate")
+	if out, err := exec.CommandContext(ctx, "mkfifo", zcliStarted, zcliDone, zcliGate, dateWaiting, dateGate, watchReady, watchDone, watchGate).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo: %v: %s", err, out)
 	}
-	if took := time.Since(start); took > 15*time.Second {
-		t.Errorf("push past a 1 s budget returned after %s", took)
+	held := make([]*os.File, 0, 3)
+	for _, gate := range []string{zcliGate, dateGate, watchGate} {
+		f, err := os.OpenFile(gate, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, f)
+		defer f.Close()
+	}
+	realSleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	realAwk, err := exec.LookPath("awk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rigTool(t, r, "sleep", "if [ \"$1\" != 25 ]; then exec "+ShellQuote(realSleep)+" \"$@\"; fi\nexec 3>\"$WATCH_DONE\"\nexec 4<\"$WATCH_GATE\"\necho ready > \"$WATCH_READY\"\ncat <&4 >/dev/null\n")
+	rigTool(t, r, "awk", "IFS= read -r ready < \"$WATCH_READY\"\nexec "+ShellQuote(realAwk)+" \"$@\"\n")
+	rigTool(t, r, "date", "if [ ! -e \"$DATE_FIRST\" ]; then : > \"$DATE_FIRST\"; echo 1000; exit; fi\nexec 4<\"$DATE_GATE\"\necho waiting > \"$DATE_WAITING\"\ncat <&4 >/dev/null\necho 1001\n")
+	r.env = append(r.env, "ZCLI_STARTED="+zcliStarted, "ZCLI_DONE="+zcliDone, "ZCLI_GATE="+zcliGate,
+		"DATE_FIRST="+filepath.Join(dir, "date-first"), "DATE_WAITING="+dateWaiting, "DATE_GATE="+dateGate,
+		"WATCH_READY="+watchReady, "WATCH_DONE="+watchDone, "WATCH_GATE="+watchGate)
+	zcliEnded, watchEnded := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := os.ReadFile(zcliDone); zcliEnded <- err }()
+	go func() { _, err := os.ReadFile(watchDone); watchEnded <- err }()
+	type result struct {
+		out  string
+		code int
+	}
+	run := make(chan result, 1)
+	go func() {
+		out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", false, "", r.pushDir, uploadBudget{base: time.Second, cap: time.Second}))
+		run <- result{out, code}
+	}()
+	if _, err := os.ReadFile(zcliStarted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(dateWaiting); err != nil {
+		t.Fatal(err)
+	}
+	if err := held[1].Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := <-run
+	out, code := got.out, got.code
+	stopOut, _ := r.run(ctx, pushStopCommand(r.pushDir))
+	if err := held[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := held[2].Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-zcliEnded; err != nil {
+		t.Fatalf("zcli completion: %v", err)
+	}
+	if err := <-watchEnded; err != nil {
+		t.Fatalf("watchdog completion: %v", err)
+	}
+	if code != uploadUnfinishedExit {
+		t.Errorf("push = exit %d, want %d (upload unfinished): %s", code, uploadUnfinishedExit, out)
 	}
 	report, _ := splitUploadReport(out)
 	if !report.unfinished || report.budget != time.Second {
@@ -162,14 +224,9 @@ func TestBuildSSHCommand_UploadPastItsBudget_StoppedNoBuild(t *testing.T) {
 	if isSSHBuildTriggered(out) {
 		t.Errorf("an unfinished upload reads as a triggered build:\n%s", out)
 	}
-	stopOut, _ := r.run(ctx, pushStopCommand(r.pushDir))
 	if isSSHBuildTriggered(stopOut) {
 		t.Errorf("the stop says the build started:\n%s", stopOut)
 	}
-	if err := os.WriteFile(filepath.Join(r.dir, "upload-go"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(500 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(r.dir, "built")); err == nil {
 		t.Error("zcli asked for the build after its push was stopped")
 	}

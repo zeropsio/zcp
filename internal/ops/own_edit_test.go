@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +17,21 @@ import (
 
 // ownEditShell runs zcp's container commands on this machine with /var/www
 // moved under root, with git reading no global or system configuration.
-type ownEditShell struct{ root string }
+type ownEditShell struct {
+	root, path     string
+	processContext context.Context //nolint:containedctx // test controls the subprocess lifetime
+}
 
+//nolint:contextcheck // a controlled test may supply the process lifetime
 func (s ownEditShell) ExecSSH(ctx context.Context, _, command string) ([]byte, error) {
+	if s.processContext != nil {
+		ctx = s.processContext
+	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", strings.ReplaceAll(command, "'"+DevRepoRoot, "'"+s.root)) //nolint:gosec // G204: the commands under test, in a temp repository
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	if s.path != "" {
+		cmd.Env = append(cmd.Env, "PATH="+s.path+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("%w: %s", err, out)
@@ -150,10 +161,20 @@ func TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp(t *testing.T) {
 // they ran past it.
 func TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing(t *testing.T) {
 	t.Parallel()
-	if _, err := exec.LookPath("timeout"); err != nil {
-		t.Skip("no timeout command here; the containers zcp commits in carry coreutils' or busybox's")
-	}
 	root := t.TempDir()
+	bin := t.TempDir()
+	receipt, hookStarted := filepath.Join(bin, "timeout-started"), filepath.Join(bin, "hook-started")
+	expire, killed, hold := filepath.Join(bin, "expire"), filepath.Join(bin, "killed"), filepath.Join(bin, "hold")
+	if out, err := exec.CommandContext(t.Context(), "mkfifo", receipt, hookStarted, expire, killed, hold).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo: %v: %s", err, out)
+	}
+	// The timeout wrapper starts real git, holds the deadline until the hook is
+	// running, then delivers its timeout and reports the exact requested bound.
+	stub := "#!/bin/sh\nbound=$1\nshift\n\"$@\" &\npid=$!\nprintf '%s %s\\n' \"$bound\" \"$pid\" > " + shellQuote(receipt) +
+		"\nread expiry < " + shellQuote(expire) + "\nkill \"$pid\" 2>/dev/null || :\nprintf killed > " + shellQuote(killed) + "\nwait \"$pid\" 2>/dev/null || :\nexit 124\n"
+	if err := os.WriteFile(filepath.Join(bin, "timeout"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	origintest.Git(t, root, "init", "-q", "-b", "feat-x")
 	if err := os.WriteFile(filepath.Join(root, "zerops.yaml"), []byte("zerops:\n  - setup: dev\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -161,14 +182,63 @@ func TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing(t *testing.T) {
 	origintest.Git(t, root, "add", "-A")
 	origintest.Git(t, root, "commit", "-q", "-m", "app")
 	first := origintest.Git(t, root, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(root, ".git/hooks/pre-commit"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+	hook := "#!/bin/sh\nprintf '%s\\n' \"$$\" > " + shellQuote(hookStarted) + "\nread release < " + shellQuote(hold) + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".git/hooks/pre-commit"), []byte(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "zerops.yaml"), []byte("zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := commitOwnEdit(context.Background(), ownEditShell{root: root}, "appdev", "", []string{"zerops.yaml"}, "zcp: subject", "body", time.Second)
+	result := make(chan error, 1)
+	go func() {
+		_, err := commitOwnEdit(t.Context(), ownEditShell{root: root, path: bin, processContext: t.Context()}, "appdev", "", []string{"zerops.yaml"}, "zcp: subject", "body", time.Second)
+		result <- err
+	}()
+	readFIFO := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return strings.TrimSpace(string(data))
+	}
+	start := strings.Fields(readFIFO(receipt))
+	if len(start) != 2 || start[0] != "1" {
+		t.Fatalf("timeout request = %v, want a one-second budget and git's pid", start)
+	}
+	gitPID, err := strconv.Atoi(start[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hookPID int
+	t.Cleanup(func() {
+		for _, pid := range []int{gitPID, hookPID} {
+			if pid > 0 {
+				if p, err := os.FindProcess(pid); err == nil {
+					_ = p.Kill()
+				}
+			}
+		}
+	})
+	hookPID, err = strconv.Atoi(readFIFO(hookStarted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(expire, []byte("expire\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFIFO(killed); got != "killed" {
+		t.Fatalf("timeout receipt = %q", got)
+	}
+	// The real timeout signals its command's process group; the controlled
+	// wrapper reports killing git so the test can deliver the same signal to
+	// its held hook before collecting the result.
+	if p, err := os.FindProcess(hookPID); err == nil {
+		_ = p.Kill()
+	}
+	err = <-result
+	gitPID, hookPID = 0, 0
 	if err == nil || !strings.Contains(err.Error(), "the repository's commit checks ran past 1s") {
 		t.Fatalf("commitOwnEdit past its budget = %v, want the checks named as running past it", err)
 	}

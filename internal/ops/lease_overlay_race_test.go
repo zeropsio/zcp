@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -20,7 +21,7 @@ import (
 // siblingReleaseRace is ssh into the rewire fixture's leases that, the first
 // time a command sends webpool-7 an overlay naming hqpool-3's container,
 // releases hqpool-3 first — forced, through the fixture's own deps — and waits
-// for that release for up to 2 s before the send goes on. Without the group's
+// for the release to finish or block before the send goes on. Without the group's
 // lock the release rewires webpool-7 and drops hqpool-3 before the send lands;
 // with it, the release waits for the send and then rewires webpool-7 itself.
 type siblingReleaseRace struct {
@@ -48,10 +49,11 @@ func (r *siblingReleaseRace) ExecSSH(ctx context.Context, host, command string) 
 				_, err := LeaseReleaseChange(context.WithoutCancel(ctx), r.rf.deps, ownHQAlias, true)
 				r.done <- err
 			}()
+			synctest.Wait()
 			select {
 			case err := <-r.done:
 				r.done <- err
-			case <-time.After(2 * time.Second):
+			default:
 				// The release waits for the group's lock this send holds.
 			}
 		})
@@ -79,13 +81,8 @@ func (r *siblingReleaseRace) settle(t *testing.T) {
 	if !fired {
 		t.Fatal("no overlay naming hqpool-3's container was sent to webpool-7: the race never ran")
 	}
-	select {
-	case err := <-r.done:
-		if err != nil {
-			t.Errorf("release %s: %v", ownHQAlias, err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("release %s did not return", ownHQAlias)
+	if err := <-r.done; err != nil {
+		t.Errorf("release %s: %v", ownHQAlias, err)
 	}
 	for name, value := range r.rf.web.Overlay() {
 		if value == rewireHQHost {
@@ -101,15 +98,17 @@ func (r *siblingReleaseRace) settle(t *testing.T) {
 // released container (DP-22, DP-26).
 func TestDevServerStart_SiblingReleasedMeanwhile_NeverWiredToIt(t *testing.T) {
 	t.Parallel()
-	rf := newRewireFixture(t)
-	rf.acquire(t, groupHQPool, groupWebPool)
-	race := newSiblingReleaseRace(rf, rf.ssh)
+	synctest.Test(t, func(t *testing.T) {
+		rf := newRewireFixture(t)
+		rf.acquire(t, groupHQPool, groupWebPool)
+		race := newSiblingReleaseRace(rf, rf.ssh)
 
-	if _, err := ExecuteDevServer(context.Background(), race, rf.deps.Client, "p1",
-		DevServerParams{Action: "start", Hostname: ownWebAlias, Name: "web", StateDir: rf.stateDir}); err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	race.settle(t)
+		if _, err := ExecuteDevServer(context.Background(), race, rf.deps.Client, "p1",
+			DevServerParams{Action: "start", Hostname: ownWebAlias, Name: "web", StateDir: rf.stateDir}); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		race.settle(t)
+	})
 }
 
 // TestLeaseAcquire_SiblingReleasedDuringTheSupervisorStep_NeverWiredToIt: an
@@ -120,16 +119,18 @@ func TestDevServerStart_SiblingReleasedMeanwhile_NeverWiredToIt(t *testing.T) {
 // DP-26).
 func TestLeaseAcquire_SiblingReleasedDuringTheSupervisorStep_NeverWiredToIt(t *testing.T) {
 	t.Parallel()
-	rf := newRewireFixture(t)
-	rf.acquire(t, groupHQPool)
-	race := newSiblingReleaseRace(rf, rf.ssh)
-	d := rf.deps
-	d.SSH = race
+	synctest.Test(t, func(t *testing.T) {
+		rf := newRewireFixture(t)
+		rf.acquire(t, groupHQPool)
+		race := newSiblingReleaseRace(rf, rf.ssh)
+		d := rf.deps
+		d.SSH = race
 
-	if _, err := LeaseAcquireGroupChange(context.Background(), d, []string{groupWebPool}, testRepo, "feat"); err != nil {
-		t.Fatalf("acquire webpool: %v", err)
-	}
-	race.settle(t)
+		if _, err := LeaseAcquireGroupChange(context.Background(), d, []string{groupWebPool}, testRepo, "feat"); err != nil {
+			t.Fatalf("acquire webpool: %v", err)
+		}
+		race.settle(t)
+	})
 }
 
 // TestLeaseUnpark_SiblingReleasedMeanwhile_NeverWiredToIt: an unpark hands
@@ -138,19 +139,21 @@ func TestLeaseAcquire_SiblingReleasedDuringTheSupervisorStep_NeverWiredToIt(t *t
 // by the unpark's overlay naming the released container (DP-26, DP-28).
 func TestLeaseUnpark_SiblingReleasedMeanwhile_NeverWiredToIt(t *testing.T) {
 	t.Parallel()
-	rf := newRewireFixture(t)
-	rf.acquire(t, groupHQPool, groupWebPool)
-	if _, err := LeasePark(context.Background(), rf.deps, ownWebAlias); err != nil {
-		t.Fatalf("park %s: %v", ownWebAlias, err)
-	}
-	race := newSiblingReleaseRace(rf, rf.ssh)
-	d := rf.deps
-	d.SSH = race
+	synctest.Test(t, func(t *testing.T) {
+		rf := newRewireFixture(t)
+		rf.acquire(t, groupHQPool, groupWebPool)
+		if _, err := LeasePark(context.Background(), rf.deps, ownWebAlias); err != nil {
+			t.Fatalf("park %s: %v", ownWebAlias, err)
+		}
+		race := newSiblingReleaseRace(rf, rf.ssh)
+		d := rf.deps
+		d.SSH = race
 
-	if _, err := LeaseUnpark(context.Background(), d, ownWebAlias); err != nil {
-		t.Fatalf("unpark %s: %v", ownWebAlias, err)
-	}
-	race.settle(t)
+		if _, err := LeaseUnpark(context.Background(), d, ownWebAlias); err != nil {
+			t.Fatalf("unpark %s: %v", ownWebAlias, err)
+		}
+		race.settle(t)
+	})
 }
 
 // syncScripted answers a sync's push and fast-forward as the sync tests'
@@ -177,24 +180,26 @@ func (s syncScripted) ExecSSH(ctx context.Context, host, command string) ([]byte
 // overlay naming the released container (DP-24, DP-26).
 func TestLeaseSync_SiblingReleasedDuringTheTake_NeverWiredToIt(t *testing.T) {
 	t.Parallel()
-	rf := newRewireFixture(t)
-	rf.acquire(t, groupHQPool, groupWebPool)
-	// webpool-7's supervisor runs with another overlay, so the take sends one.
-	if _, err := supervisorCtl(context.Background(), rf.web, ownWebAlias, "env", "--clear"); err != nil {
-		t.Fatal(err)
-	}
-	race := newSiblingReleaseRace(rf, syncScripted{SSHDeployer: rf.ssh})
-	d := rf.deps
-	d.SSH = race
+	synctest.Test(t, func(t *testing.T) {
+		rf := newRewireFixture(t)
+		rf.acquire(t, groupHQPool, groupWebPool)
+		// webpool-7's supervisor runs with another overlay, so the take sends one.
+		if _, err := supervisorCtl(context.Background(), rf.web, ownWebAlias, "env", "--clear"); err != nil {
+			t.Fatal(err)
+		}
+		race := newSiblingReleaseRace(rf, syncScripted{SSHDeployer: rf.ssh})
+		d := rf.deps
+		d.SSH = race
 
-	v, err := LeaseSync(context.Background(), d, ownHQAlias)
-	if err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-	if m := syncMemberOf(t, v, ownWebAlias); m.Outcome != LeaseSyncFastForwarded {
-		t.Fatalf("member = %+v, want fast-forwarded", m)
-	}
-	race.settle(t)
+		v, err := LeaseSync(context.Background(), d, ownHQAlias)
+		if err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if m := syncMemberOf(t, v, ownWebAlias); m.Outcome != LeaseSyncFastForwarded {
+			t.Fatalf("member = %+v, want fast-forwarded", m)
+		}
+		race.settle(t)
+	})
 }
 
 // TestLeaseStatus_UnknownHolderParkingItsContainer_Named: a container listed

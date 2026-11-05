@@ -25,12 +25,10 @@ func TestPollProcess_WaitsThroughRollbackingCanceling(t *testing.T) {
 		platform.ProcessStatusCanceling,
 		platform.ProcessStatusFailed,
 	)
-	cfg := pollConfig{
-		initialInterval: time.Millisecond,
-		stepUpInterval:  time.Millisecond,
-		stepUpAfter:     time.Second,
-		timeout:         2 * time.Second,
-	}
+	cfg := testConfig()
+	cfg.stepUpInterval = time.Millisecond
+	cfg.stepUpAfter = time.Second
+	cfg.timeout = 2 * time.Second
 	proc, err := pollProcess(context.Background(), seq, "proc-1", nil, cfg)
 	if err != nil {
 		t.Fatalf("pollProcess: %v", err)
@@ -74,19 +72,13 @@ func newSequencer(statuses ...string) *platform.Mock {
 }
 
 func testConfig() pollConfig {
-	return pollConfig{
+	cfg := pollConfig{
 		initialInterval: 1 * time.Millisecond,
 		stepUpInterval:  2 * time.Millisecond,
 		stepUpAfter:     5 * time.Millisecond,
 		timeout:         50 * time.Millisecond,
 	}
-}
-
-// steppedConfig is testConfig on a clock the test drives: each wait advances
-// the poll's time by exactly its interval and fires at once, so elapsed time
-// counts polls, never wall time.
-func steppedConfig() pollConfig {
-	cfg := testConfig()
+	// Each wait advances exactly its interval, independent of machine speed.
 	now := time.Unix(0, 0)
 	cfg.now = func() time.Time { return now }
 	cfg.after = func(d time.Duration) <-chan time.Time {
@@ -181,13 +173,8 @@ func TestPollProcess_ContextCanceled(t *testing.T) {
 	seq := newSequencer("PENDING")
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel after a short delay.
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-	}()
-
-	_, err := pollProcess(ctx, seq, "proc-1", nil, testConfig())
+	// The first progress receipt proves the poll has observed the process.
+	_, err := pollProcess(ctx, seq, "proc-1", func(string, float64, float64) { cancel() }, testConfig())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -299,15 +286,16 @@ func TestPollProcess_GetProcessError(t *testing.T) {
 // to return a sequence of app version event slices for PollBuild tests.
 type appVersionSequencer struct {
 	*platform.Mock
-	mu       sync.Mutex
-	sequence [][]platform.AppVersionEvent
-	idx      int
-	// pollDelay is wall time each poll takes, standing in for a loaded machine.
-	pollDelay time.Duration
+	mu         sync.Mutex
+	sequence   [][]platform.AppVersionEvent
+	idx        int
+	beforePoll func()
 }
 
 func (s *appVersionSequencer) SearchAppVersions(_ context.Context, _ string, _ int) ([]platform.AppVersionEvent, error) {
-	time.Sleep(s.pollDelay)
+	if s.beforePoll != nil {
+		s.beforePoll()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.idx >= len(s.sequence) {
@@ -413,12 +401,30 @@ func TestPollBuild_FullLifecycleThroughActive(t *testing.T) {
 		statusBuilding, "PREPARING_RUNTIME", "WAITING_TO_DEPLOY",
 		"DEPLOYING", statusActive,
 	)
-	// Eight polls of 10 ms each outlast the 50 ms timeout in wall time; the
-	// poll's own time comes from the test, so machine speed never decides.
-	seq.pollDelay = 10 * time.Millisecond
+	// Hold every poll until the test observes it; the held time is unrelated
+	// to the poll's injected clock.
+	entered, release := make(chan struct{}), make(chan struct{})
+	seq.beforePoll = func() { entered <- struct{}{}; <-release }
 	ctx := context.Background()
-
-	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, steppedConfig())
+	type result struct {
+		event *platform.AppVersionEvent
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+		done <- result{event, err}
+	}()
+	for range 8 {
+		select {
+		case <-entered:
+			release <- struct{}{}
+		case got := <-done:
+			t.Fatalf("poll ended before all lifecycle states: %+v", got)
+		}
+	}
+	got := <-done
+	event, err := got.event, got.err
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -509,12 +515,7 @@ func TestPollBuild_ContextCanceled(t *testing.T) {
 	seq := newBuildSequencer(statusBuilding)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-	}()
-
-	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", func(string, float64, float64) { cancel() }, testConfig())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -852,24 +853,23 @@ func TestPollProcess_TimeoutSkipsProgressEmit(t *testing.T) {
 	seq := newSequencer("PENDING") // never terminates → forces timeout path
 	ctx := context.Background()
 
-	cfg := pollConfig{
-		initialInterval: 5 * time.Millisecond,
-		stepUpInterval:  5 * time.Millisecond,
-		stepUpAfter:     20 * time.Millisecond,
-		timeout:         30 * time.Millisecond,
-	}
+	cfg := testConfig()
+	cfg.initialInterval = 5 * time.Millisecond
+	cfg.stepUpInterval = 5 * time.Millisecond
+	cfg.stepUpAfter = 20 * time.Millisecond
+	cfg.timeout = 30 * time.Millisecond
 
 	var mu sync.Mutex
 	var lastEmit time.Time
 	cb := func(_ string, _, _ float64) {
 		mu.Lock()
 		defer mu.Unlock()
-		lastEmit = time.Now()
+		lastEmit = cfg.clockNow()
 	}
 
-	start := time.Now()
+	start := cfg.clockNow()
 	_, err := pollProcess(ctx, seq, "proc-1", cb, cfg)
-	returned := time.Now()
+	returned := cfg.clockNow()
 
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
@@ -886,8 +886,7 @@ func TestPollProcess_TimeoutSkipsProgressEmit(t *testing.T) {
 	// The fix moves timeout check before onProgress, so the iteration that
 	// detects timeout returns without emitting. Last emit was therefore on a
 	// prior in-progress iteration, ≥ initialInterval before timeout fired.
-	// Allow a 1 ms slack for scheduler jitter.
-	minGap := cfg.initialInterval - 1*time.Millisecond
+	minGap := cfg.initialInterval
 	if gap < minGap {
 		t.Errorf("race window: last progress emitted only %v before return (want ≥ %v); the timeout iteration is emitting progress immediately before responding, which is the bug — see internal/ops/progress.go header comment. start=%v lastEmit=%v returned=%v",
 			gap, minGap, start, lastEmitCopy, returned)
@@ -906,24 +905,23 @@ func TestPollBuild_TimeoutSkipsProgressEmit(t *testing.T) {
 		Sequence:       1,
 	}})
 
-	cfg := pollConfig{
-		initialInterval: 5 * time.Millisecond,
-		stepUpInterval:  5 * time.Millisecond,
-		stepUpAfter:     20 * time.Millisecond,
-		timeout:         30 * time.Millisecond,
-	}
+	cfg := testConfig()
+	cfg.initialInterval = 5 * time.Millisecond
+	cfg.stepUpInterval = 5 * time.Millisecond
+	cfg.stepUpAfter = 20 * time.Millisecond
+	cfg.timeout = 30 * time.Millisecond
 
 	var mu sync.Mutex
 	var lastEmit time.Time
 	cb := func(_ string, _, _ float64) {
 		mu.Lock()
 		defer mu.Unlock()
-		lastEmit = time.Now()
+		lastEmit = cfg.clockNow()
 	}
 
 	ctx := context.Background()
 	_, err := pollBuild(ctx, mock, "proj-1", "ss-1", cb, cfg)
-	returned := time.Now()
+	returned := cfg.clockNow()
 
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
@@ -937,7 +935,7 @@ func TestPollBuild_TimeoutSkipsProgressEmit(t *testing.T) {
 	}
 
 	gap := returned.Sub(lastEmitCopy)
-	minGap := cfg.initialInterval - 1*time.Millisecond
+	minGap := cfg.initialInterval
 	if gap < minGap {
 		t.Errorf("race window in pollBuild: last progress emitted only %v before return (want ≥ %v)", gap, minGap)
 	}

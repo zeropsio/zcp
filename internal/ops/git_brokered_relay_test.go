@@ -39,8 +39,10 @@ import (
 	"syscall"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/zeropsio/zcp/internal/hq"
 )
 
@@ -810,12 +812,11 @@ type relayLab struct {
 	readOnly    map[string]bool   // repository key → connected with a person's token
 
 	// GitHub's API on the stand-in: DELETE /installation/token.
-	revokeAsked  []string      // every token a revoke named
-	revokedAt    []time.Time   // when each revoke arrived
-	revokeStatus int           // what a revoke answers; 0 = 204, the token gone
-	revokeDelay  time.Duration // how long a revoke waits before answering
-	revokeDone   chan struct{} // optional receipt after a token is removed
-	mintDelay    time.Duration // how long HQ takes to mint a token
+	revokeAsked  []string        // every token a revoke named
+	revokeStatus int             // what a revoke answers; 0 = 204, the token gone
+	revokeWait   chan struct{}   // optional receipt for a revoke that never answers
+	revokeDone   chan struct{}   // optional receipt after a token is removed
+	mintHold     <-chan struct{} // optional gate before minting a token
 }
 
 // serveRevoke is GitHub's DELETE /installation/token, authenticated by the
@@ -823,18 +824,15 @@ type relayLab struct {
 func (l *relayLab) serveRevoke(w http.ResponseWriter, r *http.Request) {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	l.mu.Lock()
-	delay, status := l.revokeDelay, l.revokeStatus
+	wait, status := l.revokeWait, l.revokeStatus
 	if ok {
 		l.revokeAsked = append(l.revokeAsked, token)
-		l.revokedAt = append(l.revokedAt, time.Now())
 	}
 	l.mu.Unlock()
-	if delay > 0 {
-		select {
-		case <-time.After(delay):
-		case <-r.Context().Done():
-			return
-		}
+	if wait != nil {
+		close(wait)
+		<-r.Context().Done()
+		return
 	}
 	if status != 0 {
 		w.WriteHeader(status)
@@ -987,9 +985,15 @@ func (l *relayLab) serveMint(t *testing.T, w http.ResponseWriter, r *http.Reques
 	}
 	access := q.Get("access")
 	l.mu.Lock()
-	delay := l.mintDelay
+	hold := l.mintHold
 	l.mu.Unlock()
-	time.Sleep(delay)
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-r.Context().Done():
+			return
+		}
+	}
 	l.mu.Lock()
 	l.mints = append(l.mints, relayMint{path: path, access: access})
 	if l.readOnly[key] && (access == hq.GitHubAccessWrite || access == hq.GitHubAccessWorkflows) {
@@ -1588,18 +1592,10 @@ func TestBrokeredGit_Relay_FrameWriteFails_AnswersNothingAtOnce(t *testing.T) {
 			url, h := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
 			result := filepath.Join(t.TempDir(), "result")
-			writePreCommitHook(t, checkout, "s=$(date +%s); git show "+h.first+":app.txt >/dev/null 2>&1 4>&-; echo \"$? $(( $(date +%s) - s ))\" > "+ShellQuote(result)+"; exit 0\n")
-			start := time.Now()
+			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt >/dev/null 2>&1 4>&-; echo \"$?\" > "+ShellQuote(result)+"; exit 0\n")
 			l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
-			if took := time.Since(start); took > 30*time.Second {
-				t.Errorf("the call took %s, want the frameless helper to give up at once", took)
-			}
-			fields := strings.Fields(readFile(t, result))
-			if len(fields) != 2 || fields[0] == "0" {
-				t.Fatalf("the hook's show = %q, want a failure without a credential", fields)
-			}
-			if took, _ := strconv.Atoi(fields[1]); took > 10 {
-				t.Errorf("the frameless show took %ds, want at once", took)
+			if code := strings.TrimSpace(readFile(t, result)); code == "" || code == "0" {
+				t.Fatalf("the hook's show = %q, want a failure without a credential", code)
 			}
 		})
 	}
@@ -1673,14 +1669,47 @@ func TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock(t *testing.T) {
 		t.Run(shellName(sh), func(t *testing.T) {
 			t.Parallel()
 			l := newRelayLab(t)
-			l.mu.Lock()
-			l.mintDelay = time.Second
-			l.mu.Unlock()
 			url, h := l.repo(t, true, "acme/shop")
 			checkout := l.checkout(t, url)
 			dir := t.TempDir()
 			one, two := filepath.Join(dir, "one"), filepath.Join(dir, "two")
 			held := filepath.Join(dir, "held")
+			watcher, err := fsnotify.NewWatcher()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := watcher.Add(dir); err != nil {
+				t.Fatal(err)
+			}
+			mintHold := make(chan struct{})
+			var release sync.Once
+			l.mu.Lock()
+			l.mintHold = mintHold
+			l.mu.Unlock()
+			watched := make(chan error, 1)
+			go func() {
+				defer release.Do(func() { close(mintHold) })
+				for {
+					select {
+					case event, ok := <-watcher.Events:
+						if !ok {
+							watched <- errors.New("lock receipt watcher closed")
+							return
+						}
+						if event.Name == held && event.Op&(fsnotify.Create|fsnotify.Write) != 0 {
+							watched <- nil
+							return
+						}
+					case err := <-watcher.Errors:
+						watched <- err
+						return
+					}
+				}
+			}()
+			t.Cleanup(func() {
+				_ = watcher.Close()
+				release.Do(func() { close(mintHold) })
+			})
 			stub := t.TempDir()
 			body := "#!/bin/sh\n" + ShellQuote(realMkdir) + " \"$@\" 2>/dev/null; rc=$?\ncase \"$*\" in *zcp-relay-*) [ $rc -eq 0 ] || echo held >> " + ShellQuote(held) + ";; esac\nexit $rc\n"
 			if err := os.WriteFile(filepath.Join(stub, "mkdir"), []byte(body), 0o755); err != nil {
@@ -1688,6 +1717,9 @@ func TestBrokeredGit_Relay_ConcurrentHelpers_SerialisedByLock(t *testing.T) {
 			}
 			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt > "+ShellQuote(one)+" &\ngit show "+h.second+":lib.txt > "+ShellQuote(two)+" &\nwait\n")
 			l.runEnv(t, sh, l.env(stub), checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
+			if err := <-watched; err != nil {
+				t.Fatalf("watch lock contention: %v", err)
+			}
 			if _, err := os.Stat(held); err != nil {
 				t.Errorf("no helper ever found the lock held: the two fetches did not contend (%v)", err)
 			}
@@ -2292,16 +2324,25 @@ func TestBrokeredGit_Relay_AutoGC_RunsInTheForeground_HoldsNoSession(t *testing.
 
 // --- offline: the call ends when git does -----------------------------------
 
-// detachedHolder is a hook line leaving a process in the background with
-// descriptors 3 and 4 — the session's — open for twenty seconds, far past
-// the call's bound so a loaded machine never blurs the two.
-const detachedHolder = "(sleep 20 >/dev/null 2>&1 </dev/null &)\n"
+// heldDescriptorHook starts a holder of the session descriptors, and waits
+// until it started. The holder cannot finish until the session is stopped.
+func heldDescriptorHook(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	ready, hold := filepath.Join(dir, "ready"), filepath.Join(dir, "hold")
+	for _, path := range []string{ready, hold} {
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return "(printf 'ready\\n' > " + ShellQuote(ready) + "; read -r ignored < " + ShellQuote(hold) + ") >/dev/null 2>&1 </dev/null &\n" +
+		"read -r ignored < " + ShellQuote(ready) + "\n"
+}
 
 // TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall: a hook
 // leaving a process in the background that holds the session's descriptors
-// no longer holds the call: it returns once git ended, in well under the
-// twenty seconds, with git's own exit code — 0, 1 or 128 — from the script's
-// marker, though zcp ends the session itself.
+// no longer holds the call: it returns once git ended with git's own exit
+// code — 0, 1 or 128 — from the script's marker, though zcp ends the session.
 func TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -2319,15 +2360,10 @@ func TestBrokeredGit_Relay_DoneMarker_DetachedHolderDoesNotHoldTheCall(t *testin
 				l := newRelayLab(t)
 				url, _ := l.repo(t, false, "org/app-1/appdev")
 				checkout := l.checkout(t, url)
-				writePreCommitHook(t, checkout, detachedHolder+tc.hook)
-				start := time.Now()
+				writePreCommitHook(t, checkout, heldDescriptorHook(t)+tc.hook)
 				run := l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x")
-				took := time.Since(start)
 				if run.err != nil || run.code != tc.code {
 					t.Errorf("%s: exit %d, err %v; want git's %d\n%s", tc.name, run.code, run.err, tc.code, run.stderr)
-				}
-				if took > 10*time.Second {
-					t.Errorf("%s: the call took %s, held by the background process", tc.name, took)
 				}
 				if strings.Contains(run.stderr, "ZCPDONE") {
 					t.Errorf("%s: the marker reached the caller: %q", tc.name, run.stderr)
@@ -2350,35 +2386,110 @@ func TestBrokeredGit_Relay_DoneMarker_BackgroundFrameAfterGitGetsNothing(t *test
 			url, h := l.repo(t, false, "org/app-1/appdev")
 			checkout := l.checkout(t, url)
 			dir := t.TempDir()
-			out, rc := filepath.Join(dir, "out"), filepath.Join(dir, "rc")
-			writePreCommitHook(t, checkout, "(sleep 0.5; git show "+h.first+":app.txt > "+ShellQuote(out)+" 2>/dev/null; echo $? > "+ShellQuote(rc)+") >/dev/null 2>&1 </dev/null &\n")
-			start := time.Now()
-			l.run(t, sh, checkout, l.relay(), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
-			if took := time.Since(start); took > 10*time.Second {
-				t.Errorf("the call took %s", took)
-			}
-			deadline := time.Now().Add(10 * time.Second)
-			for time.Now().Before(deadline) {
-				if b, err := os.ReadFile(rc); err == nil && len(bytes.TrimSpace(b)) > 0 {
-					break
+			ready, gate, done, out := filepath.Join(dir, "ready"), filepath.Join(dir, "gate"), filepath.Join(dir, "done"), filepath.Join(dir, "out")
+			for _, path := range []string{ready, gate, done} {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
 				}
-				time.Sleep(50 * time.Millisecond)
 			}
-			code, err := os.ReadFile(rc)
-			if err == nil && strings.TrimSpace(string(code)) == "0" {
-				t.Errorf("the background lazy fetch after git ended was answered: %q", readFile(t, out))
+			gateFile, err := os.OpenFile(gate, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gateFile.Close()
+			doneFile, err := os.OpenFile(done, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer doneFile.Close()
+			hook := "(printf 'ready\\n' > " + ShellQuote(ready) + "; read -r ignored < " + ShellQuote(gate) +
+				"; git show " + h.first + ":app.txt > " + ShellQuote(out) + " 2>/dev/null; printf '%s\\n' \"$?\" > " + ShellQuote(done) +
+				") >/dev/null 2>&1 </dev/null &\nread -r ignored < " + ShellQuote(ready) + "\n"
+			writePreCommitHook(t, checkout, hook)
+			parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-m", "x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &windowRunner{session: &shellRunner{sh: sh, env: l.env()}, marked: make(chan struct{})}
+			stdout := &heldReader{started: make(chan struct{}), release: make(chan struct{})}
+			var stderr bytes.Buffer
+			ctx, cancel := context.WithCancel(t.Context())
+			var code int
+			var runErr error
+			finished := make(chan struct{})
+			var release sync.Once
+			free := func() { release.Do(func() { close(stdout.release) }) }
+			t.Cleanup(func() { free(); cancel(); <-finished })
+			go func() {
+				code, runErr = RunBrokeredGitRelayed(ctx, runner, "appdev", checkout, parsed, l.relay(), nil, stdout, &stderr)
+				close(finished)
+			}()
+			select {
+			case <-stdout.started:
+			case <-finished:
+				t.Fatalf("call ended before git's output was held: exit %d, err %v", code, runErr)
+			}
+			select {
+			case <-runner.marked:
+			case <-finished:
+				t.Fatalf("call ended before git's done frame: exit %d, err %v", code, runErr)
+			}
+			// EOF proves the done frame was processed and answers closed before
+			// the held background process asks for its credential.
+			if _, err := io.Copy(io.Discard, runner.answers); err != nil {
+				t.Fatalf("read answer closure: %v", err)
+			}
+			if _, err := io.WriteString(gateFile, "go\n"); err != nil {
+				t.Fatal(err)
+			}
+			line, err := bufio.NewReader(doneFile).ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			exit, err := strconv.Atoi(strings.TrimSpace(line))
+			if err != nil || exit == 0 {
+				t.Errorf("background lazy fetch exit %q: it must not receive a credential", strings.TrimSpace(line))
 			}
 			if b, _ := os.ReadFile(out); len(b) > 0 {
 				t.Errorf("the background process read %q", b)
 			}
-			locks, _ := filepath.Glob("/tmp/zcp-relay-*.lock")
-			for _, lock := range locks {
-				if fi, err := os.Stat(lock); err == nil && fi.ModTime().After(start) && time.Since(fi.ModTime()) > 5*time.Second {
-					t.Errorf("%s still held", lock)
-				}
+			commands := runner.session.seen()
+			lock := regexp.MustCompile(`/tmp/zcp-relay-[a-f0-9]+\.lock`).FindString(commands[0])
+			if lock == "" {
+				t.Fatal("call's relay lock path missing")
+			}
+			if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("background helper still holds %s: %v", lock, err)
+			}
+			free()
+			<-finished
+			if runErr != nil || code != 0 {
+				t.Errorf("commit exit %d, err %v; want git's 0: %s", code, runErr, stderr.String())
 			}
 		})
 	}
+}
+
+// heldRelayExit records whether revocation was received before the session
+// ended, then holds its return until the test has inspected that ordering.
+type heldRelayExit struct {
+	session  *shellRunner
+	revoked  <-chan struct{}
+	finished chan bool
+	release  <-chan struct{}
+}
+
+func (r *heldRelayExit) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	code, err := r.session.ExecSSHStdio(ctx, host, command, stdin, stdout, stderr)
+	before := false
+	select {
+	case <-r.revoked:
+		before = true
+	default:
+	}
+	r.finished <- before
+	<-r.release
+	return code, err
 }
 
 // TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker: the call's
@@ -2392,21 +2503,35 @@ func TestBrokeredGit_Relay_DoneMarker_RevokesRightAfterTheMarker(t *testing.T) {
 			l := newRelayLab(t)
 			url, h := l.repo(t, true, "acme/shop")
 			checkout := l.checkout(t, url)
-			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt >/dev/null\n"+detachedHolder)
-			start := time.Now()
-			l.run(t, sh, checkout, l.relay(url), "", "commit", "--allow-empty", "-m", "x").mustSucceed(t, "commit")
-			ended := time.Now()
-			if took := ended.Sub(start); took > 10*time.Second {
-				t.Errorf("the call took %s", took)
+			writePreCommitHook(t, checkout, "git show "+h.first+":app.txt >/dev/null\n"+heldDescriptorHook(t))
+			l.revokeDone = make(chan struct{}, 1)
+			release := make(chan struct{})
+			runner := &heldRelayExit{session: &shellRunner{sh: sh, env: l.env()}, revoked: l.revokeDone, finished: make(chan bool, 1), release: release}
+			parsed, err := ParseBrokeredGitArgs([]string{"commit", "--allow-empty", "-m", "x"})
+			if err != nil {
+				t.Fatal(err)
 			}
-			l.mu.Lock()
-			revoked, at := slices.Clone(l.revokeAsked), slices.Clone(l.revokedAt)
-			l.mu.Unlock()
-			if want := l.mintedTokens(); len(want) != 1 || !slices.Equal(revoked, want) {
-				t.Fatalf("revoked %q, want the minted %q", revoked, want)
+			type result struct {
+				code int
+				err  error
 			}
-			if at[0].After(ended.Add(-500 * time.Millisecond)) {
-				t.Errorf("revoked %s before the call returned, want right after the marker, ahead of the session's end", ended.Sub(at[0]))
+			ended := make(chan result, 1)
+			var stdout, stderr bytes.Buffer
+			go func() {
+				code, err := RunBrokeredGitRelayed(t.Context(), runner, "appdev", checkout, parsed, l.relay(url), nil, &stdout, &stderr)
+				ended <- result{code, err}
+			}()
+			beforeSessionEnd := <-runner.finished
+			close(release)
+			got := <-ended
+			if got.err != nil || got.code != 0 {
+				t.Fatalf("exit %d, err %v; want git's 0\n%s", got.code, got.err, stderr.String())
+			}
+			if !beforeSessionEnd {
+				t.Error("the token was not revoked before the held session ended")
+			}
+			if want := l.mintedTokens(); len(want) != 1 || !slices.Equal(l.revokes(), want) {
+				t.Fatalf("revoked %q, want the minted %q", l.revokes(), want)
 			}
 		})
 	}
@@ -2469,9 +2594,14 @@ func (b *windowBuffer) end(stop bool) {
 // the caller, as ssh writes out what it holds before it exits; a call its
 // context stops loses what the buffer still holds, as a killed ssh client
 // does.
-type windowRunner struct{ session *shellRunner }
+type windowRunner struct {
+	session *shellRunner
+	marked  chan struct{}
+	answers io.Reader
+}
 
 func (r *windowRunner) ExecSSHStdio(ctx context.Context, host, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	r.answers = stdin
 	buf := newWindowBuffer()
 	forwarded := make(chan struct{})
 	go func() {
@@ -2482,7 +2612,7 @@ func (r *windowRunner) ExecSSHStdio(ctx context.Context, host, command string, s
 			}
 		}
 	}()
-	code, err := r.session.ExecSSHStdio(ctx, host, command, stdin, buf, stderr)
+	code, err := r.session.ExecSSHStdio(ctx, host, command, stdin, buf, &doneFrameReceipt{dst: stderr, marked: r.marked})
 	buf.end(false)
 	select {
 	case <-forwarded:
@@ -2494,34 +2624,72 @@ func (r *windowRunner) ExecSSHStdio(ctx context.Context, host, command string, s
 	}
 }
 
-// lateReader is a caller's stdout that is read only after a pause — the
-// first write waits it out, as a pipe whose reader has not started reading —
-// and then takes everything at once.
-type lateReader struct {
-	pause time.Duration
-	once  sync.Once
-	mu    sync.Mutex
-	got   bytes.Buffer
+// doneFrameReceipt signals once the session emitted git's done frame.
+type doneFrameReceipt struct {
+	dst    io.Writer
+	marked chan struct{}
+	tail   []byte
+	once   sync.Once
 }
 
-func (w *lateReader) Write(p []byte) (int, error) {
-	w.once.Do(func() { time.Sleep(w.pause) })
+func (w *doneFrameReceipt) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	w.tail = append(w.tail, p[:n]...)
+	if bytes.Contains(w.tail, []byte("ZCPDONE-")) {
+		w.once.Do(func() { close(w.marked) })
+	}
+	if len(w.tail) > len("ZCPDONE-") {
+		w.tail = slices.Clone(w.tail[len(w.tail)-len("ZCPDONE-"):])
+	}
+	return n, err
+}
+
+// heldReader does not accept its first write until the test releases it.
+type heldReader struct {
+	started, release chan struct{}
+	once             sync.Once
+	mu               sync.Mutex
+	got              bytes.Buffer
+}
+
+func (w *heldReader) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.started); <-w.release })
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.got.Write(p)
 }
 
-func (w *lateReader) bytes() []byte {
+func (w *heldReader) bytes() []byte {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return slices.Clone(w.got.Bytes())
 }
 
+// TestEndAfterGrace_OutputHeld_GraceStartsAfterItEnds: elapsed grace before
+// the caller received git's output must never end the session.
+func TestEndAfterGrace_OutputHeld_GraceStartsAfterItEnds(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		gitEnded, outputEnded, sshEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		stopped := make(chan struct{})
+		go endAfterGrace(gitEnded, outputEnded, sshEnded, func() { close(stopped) })
+		close(gitEnded)
+		synctest.Wait()
+		time.Sleep(2 * relayDoneGrace)
+		select {
+		case <-stopped:
+			t.Fatal("the session ended while git's output was still held")
+		default:
+		}
+		close(outputEnded)
+		time.Sleep(relayDoneGrace)
+		<-stopped
+	})
+}
+
 // TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte: git's output the
 // ssh client still holds when the done marker arrives — the caller reading
-// slowly, here only well past the grace — all reaches the caller: the
-// session is ended only once every byte git wrote did, and the exit code is
-// git's.
+// slowly — all reaches the caller, and the exit code is git's.
 func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -2539,14 +2707,33 @@ func TestBrokeredGit_Relay_DoneMarker_SlowReaderGetsEveryByte(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runner := &windowRunner{session: &shellRunner{sh: sh, env: l.env()}}
-			stdout := &lateReader{pause: relayDoneGrace + 1500*time.Millisecond}
+			runner := &windowRunner{session: &shellRunner{sh: sh, env: l.env()}, marked: make(chan struct{})}
+			stdout := &heldReader{started: make(chan struct{}), release: make(chan struct{})}
 			var stderr bytes.Buffer
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-			defer cancel()
-			code, err := RunBrokeredGitRelayed(ctx, runner, "appdev", checkout, parsed, l.relay(), strings.NewReader(""), stdout, &stderr)
-			if err != nil || code != 0 {
-				t.Errorf("exit %d, err %v; want git's 0\n%s", code, err, stderr.String())
+			var code int
+			var runErr error
+			finished := make(chan struct{})
+			var release sync.Once
+			free := func() { release.Do(func() { close(stdout.release) }) }
+			t.Cleanup(func() { free(); <-finished })
+			go func() {
+				code, runErr = RunBrokeredGitRelayed(t.Context(), runner, "appdev", checkout, parsed, l.relay(), strings.NewReader(""), stdout, &stderr)
+				close(finished)
+			}()
+			select {
+			case <-stdout.started:
+			case <-finished:
+				t.Fatalf("call ended before the reader was held: exit %d, err %v", code, runErr)
+			}
+			select {
+			case <-runner.marked:
+			case <-finished:
+				t.Fatalf("call ended before git's done frame: exit %d, err %v", code, runErr)
+			}
+			free()
+			<-finished
+			if runErr != nil || code != 0 {
+				t.Errorf("exit %d, err %v; want git's 0\n%s", code, runErr, stderr.String())
 			}
 			if got := stdout.bytes(); !bytes.Equal(got, []byte(want.String())) {
 				t.Errorf("the caller got %d of git's %d bytes", len(got), want.Len())
@@ -2850,23 +3037,44 @@ func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing
 			for _, tc := range []struct {
 				name   string
 				status int
-				delay  time.Duration
+				wait   bool
 				args   []string
 				code   int
 			}{
-				{"refused, git succeeding", http.StatusInternalServerError, 0, []string{"log", "-p", "--format=%H"}, 0},
-				{"refused, git failing", http.StatusForbidden, 0, []string{"fetch", "origin", "refs/heads/no-such-branch"}, 128},
-				{"never answered", 0, 30 * time.Second, []string{"log", "-p", "--format=%H"}, 0},
+				{"refused, git succeeding", http.StatusInternalServerError, false, []string{"log", "-p", "--format=%H"}, 0},
+				{"refused, git failing", http.StatusForbidden, false, []string{"fetch", "origin", "refs/heads/no-such-branch"}, 128},
+				{"never answered", 0, true, []string{"log", "-p", "--format=%H"}, 0},
 			} {
 				l := newRelayLab(t)
 				url, _ := l.repo(t, true, "acme/shop")
 				checkout := l.checkout(t, url)
 				l.mu.Lock()
-				l.revokeStatus, l.revokeDelay = tc.status, tc.delay
+				l.revokeStatus = tc.status
+				if tc.wait {
+					l.revokeWait = make(chan struct{})
+				}
 				l.mu.Unlock()
-				start := time.Now()
-				run := l.run(t, sh, checkout, l.relay(url), "", tc.args...)
-				took := time.Since(start)
+				deadlines := make(chan time.Duration, 1)
+				expire := make(chan context.CancelFunc, 1)
+				relay := l.relay(url)
+				relay.revokeContext = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+					deadline := &deadlineOnWait{Context: ctx, waiting: make(chan struct{}), done: make(chan struct{})}
+					var once sync.Once
+					cancel := func() { once.Do(func() { close(deadline.done) }) }
+					deadlines <- d
+					expire <- cancel
+					return deadline, cancel
+				}
+				if tc.wait {
+					go func() {
+						select {
+						case <-l.revokeWait:
+							(<-expire)()
+						case <-t.Context().Done():
+						}
+					}()
+				}
+				run := l.run(t, sh, checkout, relay, "", tc.args...)
 				if run.err != nil || run.code != tc.code {
 					t.Errorf("%s: exit %d, err %v; want git's %d\n%s", tc.name, run.code, run.err, tc.code, run.stderr)
 				}
@@ -2885,8 +3093,8 @@ func TestBrokeredGit_Relay_RevokeFailure_KeepsExitCode_NoTokenPrinted(t *testing
 				if strings.Contains(run.stderr, "ghs_FAKE") {
 					t.Errorf("%s: stderr carries the token: %q", tc.name, run.stderr)
 				}
-				if tc.delay > 0 && took > 20*time.Second {
-					t.Errorf("%s: the call took %s, want the revoke bounded at 5 s", tc.name, took)
+				if got := <-deadlines; got != 5*time.Second {
+					t.Errorf("%s: revoke deadline = %s, want 5s", tc.name, got)
 				}
 			}
 		})
@@ -2901,6 +3109,20 @@ func (c *countingRunner) ExecSSHStdio(context.Context, string, string, io.Reader
 	return 0, nil
 }
 
+// observedReader signals when a read starts and when that held read ends.
+type observedReader struct {
+	io.Reader
+	started, finished chan struct{}
+	once              sync.Once
+}
+
+func (r *observedReader) Read(p []byte) (int, error) {
+	r.once.Do(func() { close(r.started) })
+	n, err := r.Reader.Read(p)
+	close(r.finished)
+	return n, err
+}
+
 // TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel: a call that reads
 // stdin — apply with no file — on a stdin that never ends is stopped by its
 // context at once, before anything runs in the service.
@@ -2908,25 +3130,22 @@ func TestBrokeredGit_Relay_StdinNeverClosing_StoppedByCancel(t *testing.T) {
 	t.Parallel()
 	stdin, never := io.Pipe()
 	t.Cleanup(func() { _ = never.Close() })
+	reader := &observedReader{Reader: stdin, started: make(chan struct{}), finished: make(chan struct{})}
 	runner := &countingRunner{}
 	ctx, cancel := context.WithCancel(t.Context())
-	time.AfterFunc(200*time.Millisecond, cancel)
+	defer cancel()
 	done := make(chan error, 1)
-	start := time.Now()
 	go func() {
-		_, err := RunBrokeredGitRelayed(ctx, runner, "appdev", "/var/www", BrokeredGitArgs{Subcommand: "apply"}, BrokeredGitRelay{}, stdin, io.Discard, io.Discard)
+		_, err := RunBrokeredGitRelayed(ctx, runner, "appdev", "/var/www", BrokeredGitArgs{Subcommand: "apply"}, BrokeredGitRelay{}, reader, io.Discard, io.Discard)
 		done <- err
 	}()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrBrokeredGitStdinStopped) {
-			t.Errorf("RunBrokeredGitRelayed = %v, want stopped while reading stdin", err)
-		}
-		if took := time.Since(start); took > 5*time.Second {
-			t.Errorf("stopped after %s, want at once", took)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the call kept reading stdin after it was stopped")
+	<-reader.started
+	cancel()
+	err := <-done
+	_ = never.Close()
+	<-reader.finished
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrBrokeredGitStdinStopped) {
+		t.Errorf("RunBrokeredGitRelayed = %v, want stopped while reading stdin", err)
 	}
 	if n := runner.calls.Load(); n != 0 {
 		t.Errorf("%d ssh calls, want none", n)
@@ -3597,40 +3816,30 @@ func startHelper(t *testing.T, sh []string, nonce string, env []string) *helperP
 // frame waits for the helper's frame and answers its id and host.
 func (p *helperProc) frame(t *testing.T) (id, host string) {
 	t.Helper()
-	select {
-	case line, ok := <-p.frames:
-		if !ok {
-			t.Fatal("the helper wrote no frame")
-		}
-		f := strings.SplitN(line, " ", 5)
-		if len(f) < 5 {
-			t.Fatalf("frame %q: want ZCPCRED-<nonce> <id> <protocol> <host> <path>", line)
-		}
-		return f[1], f[3]
-	case <-time.After(30 * time.Second):
-		t.Fatal("no frame within 30s")
+	line, ok := <-p.frames
+	if !ok {
+		t.Fatal("the helper wrote no frame")
 	}
-	return "", ""
+	f := strings.SplitN(line, " ", 5)
+	if len(f) < 5 {
+		t.Fatalf("frame %q: want ZCPCRED-<nonce> <id> <protocol> <host> <path>", line)
+	}
+	return f[1], f[3]
 }
 
 // wait waits for the helper to end and answers its exit code.
 func (p *helperProc) wait(t *testing.T) int {
 	t.Helper()
-	select {
-	case err := <-p.done:
-		p.done <- err
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		return 0
-	case <-time.After(30 * time.Second):
-		t.Fatal("the helper did not end within 30s")
+	err := <-p.done
+	p.done <- err
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
 	}
-	return -1
+	if err != nil {
+		t.Fatal(err)
+	}
+	return 0
 }
 
 const helperRequest = "protocol=https\nhost=hq.example\npath=git/o/a/appdev.git\n\n"
@@ -3676,17 +3885,11 @@ func TestBrokeredGit_Relay_MalformedFrame_ReleasesTheHelperAtOnce(t *testing.T) 
 					defer close(relayed)
 					relayFrames(framesR, nonce, io.Discard, answersW, func(string, string, string) (string, string) { return "mate", "never-FAKE" })
 				}()
-				start := time.Now()
 				err = cmd.Wait()
-				took := time.Since(start)
-				timedOut := ctx.Err() != nil
 				cancel()
 				_ = answersW.Close()
 				<-relayed
 				_ = framesR.Close()
-				if timedOut || took > 10*time.Second {
-					t.Errorf("%s: the helper did not end after zcp's decline (%s, %v)", tc.name, took, err)
-				}
 				if err != nil {
 					t.Errorf("%s: helper exit %v, want 0", tc.name, err)
 				}
@@ -3788,11 +3991,24 @@ func TestBrokeredGit_Relay_HelperSignalled_LockRemovedExit129(t *testing.T) {
 				if _, err := os.Stat(lock); err != nil {
 					t.Fatalf("%s: the helper waits without holding the lock: %v", sig, err)
 				}
+				// Hold the process, queue the signal and the answer, then resume it.
+				// The stop receipt makes signal delivery independent of scheduling.
+				if err := p.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+					t.Fatal(err)
+				}
+				var state syscall.WaitStatus
+				// On BSD Go classifies the SIGSTOP status as Continued; only
+				// stopped or exited children are returned with WUNTRACED.
+				if _, err := syscall.Wait4(p.cmd.Process.Pid, &state, syscall.WUNTRACED, nil); err != nil || (!state.Stopped() && !state.Continued()) {
+					t.Fatalf("wait for helper to stop: state %v, %v", state, err)
+				}
 				if err := p.cmd.Process.Signal(sig); err != nil {
 					t.Fatal(err)
 				}
-				time.Sleep(100 * time.Millisecond)
 				_, _ = fmt.Fprintf(p.fd3, "%s %s mate late-FAKE\n", id, host)
+				if err := p.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+					t.Fatal(err)
+				}
 				if code := p.wait(t); code != 129 {
 					t.Errorf("%s: helper exit %d, want 129", sig, code)
 				}

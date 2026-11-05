@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -791,7 +792,10 @@ func TestLeaseOwnership_HeldByOther_DropsTheRecord(t *testing.T) {
 		of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
 		of.routeHQ(takeOverFirst{poolOrch: of.hq, on: "stop"})
 
-		_, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+		var err error
+		synctest.Test(t, func(t *testing.T) {
+			_, err = LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+		})
 		var pe *platform.PlatformError
 		if !errors.As(err, &pe) || !strings.Contains(pe.Message, "notes.txt") {
 			t.Fatalf("err = %v, want the release refused for notes.txt", err)
@@ -1036,29 +1040,31 @@ func (f *freedWhileWaiting) Renew(ctx context.Context, id, lease string) (platfo
 // reset would take it from under the pool's next acquire.
 func TestLeaseOwnership_WarmLockBusy_NeverResetsAContainerFreedMeanwhile(t *testing.T) {
 	t.Parallel()
-	of := newOwnFixture(t)
-	of.acquire(t, groupHQPool)
-	of.routeHQ(&freedWhileWaiting{poolOrch: of.hq})
-	of.deps.Warm = &LeaseWarm{Target: 1, LockWait: 20 * time.Millisecond, Go: func(fn func()) { fn() }}
-	unlock, err := lockPoolWarm(context.Background(), of.stateDir, groupHQPool, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unlock()
+	synctest.Test(t, func(t *testing.T) {
+		of := newOwnFixture(t)
+		of.acquire(t, groupHQPool)
+		of.routeHQ(&freedWhileWaiting{poolOrch: of.hq})
+		of.deps.Warm = &LeaseWarm{Target: 1, LockWait: 20 * time.Millisecond, Go: func(fn func()) { fn() }}
+		unlock, err := lockPoolWarm(context.Background(), of.stateDir, groupHQPool, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
 
-	change, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, true)
-	if err != nil {
-		t.Fatalf("LeaseReleaseChange: %v", err)
-	}
-	if v := change.Leases[0]; v.State != LeaseStateLost || !strings.Contains(v.Note, "no longer reserves") {
-		t.Errorf("view = %+v, want lost: the container was released outside zcp meanwhile", v)
-	}
-	if got := of.hq.freeResetLog(); len(got) != 0 {
-		t.Errorf("free containers reset: %v", got)
-	}
-	if got := of.hq.releaseLog(); len(got) != 0 {
-		t.Errorf("releases = %+v, want none", got)
-	}
+		change, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, true)
+		if err != nil {
+			t.Fatalf("LeaseReleaseChange: %v", err)
+		}
+		if v := change.Leases[0]; v.State != LeaseStateLost || !strings.Contains(v.Note, "no longer reserves") {
+			t.Errorf("view = %+v, want lost: the container was released outside zcp meanwhile", v)
+		}
+		if got := of.hq.freeResetLog(); len(got) != 0 {
+			t.Errorf("free containers reset: %v", got)
+		}
+		if got := of.hq.releaseLog(); len(got) != 0 {
+			t.Errorf("releases = %+v, want none", got)
+		}
+	})
 }
 
 // TestLeaseOwnership_ReleaseBranch: a branch's release drops a member zcp no
@@ -1690,7 +1696,11 @@ func TestLeaseOwnership_HeldByOtherForItsOwnLease_KeptUnlessTheRenewAgrees(t *te
 			}
 			of.routeHQ(ownLeaseRefused{poolOrch: of.hq, on: tt.on})
 
-			v, err := tt.run(context.Background(), of.deps)
+			var v LeaseView
+			var err error
+			synctest.Test(t, func(t *testing.T) {
+				v, err = tt.run(context.Background(), of.deps)
+			})
 			if v.State == LeaseStateLost {
 				t.Fatalf("view = %+v: a held-by-other the renew does not confirm dropped zcp's own lease", v)
 			}
@@ -1752,15 +1762,17 @@ func TestLeaseOwnership_ParkedWake_LeaseEndsDuringTheSSHWait_GuardNeverReads(t *
 
 			var views []LeaseView
 			var err error
-			if branch {
-				var change LeaseChange
-				change, err = LeaseReleaseGroupChange(context.Background(), of.deps, "", "feat-x", false)
-				views = change.Leases
-			} else {
-				var v LeaseView
-				v, err = LeaseRelease(context.Background(), of.deps, ownHQAlias, false)
-				views = []LeaseView{v}
-			}
+			synctest.Test(t, func(t *testing.T) {
+				if branch {
+					var change LeaseChange
+					change, err = LeaseReleaseGroupChange(context.Background(), of.deps, "", "feat-x", false)
+					views = change.Leases
+				} else {
+					var v LeaseView
+					v, err = LeaseRelease(context.Background(), of.deps, ownHQAlias, false)
+					views = []LeaseView{v}
+				}
+			})
 			if err != nil {
 				t.Fatalf("release: %v", err)
 			}
@@ -1834,7 +1846,10 @@ func TestLeaseOwnership_DroppedOutsideARelease_NamesTheSiblingsStillWired(t *tes
 			of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
 			of.routeHQ(takeOverFirst{poolOrch: of.hq, on: tt.on})
 
-			err := tt.run(context.Background(), of.deps)
+			var err error
+			synctest.Test(t, func(t *testing.T) {
+				err = tt.run(context.Background(), of.deps)
+			})
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) || !strings.Contains(pe.Message, tt.file) {
 				t.Fatalf("err = %v, want the release refused for %s", err, tt.file)
@@ -1909,7 +1924,10 @@ func TestLeaseOwnership_StopHeldByOther_RenewUnanswered_NothingMountedOrWritten(
 		of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
 		of.routeHQ(takeOverThenRenewFails{poolOrch: of.hq})
 
-		_, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+		var err error
+		synctest.Test(t, func(t *testing.T) {
+			_, err = LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+		})
 		var pe *platform.PlatformError
 		if !errors.As(err, &pe) || !strings.Contains(pe.Message, "notes.txt") {
 			t.Fatalf("err = %v, want the release refused for notes.txt", err)
@@ -2051,7 +2069,10 @@ func TestLeaseOwnership_ParkedWake_RenewUnanswered_RefusalSaysItStartedIt(t *tes
 		return nil, nil
 	})
 
-	_, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+	var err error
+	synctest.Test(t, func(t *testing.T) {
+		_, err = LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+	})
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err = %v, want a refusal", err)

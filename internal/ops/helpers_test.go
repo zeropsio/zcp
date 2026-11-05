@@ -2,10 +2,10 @@
 package ops
 
 import (
-	"math"
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -165,33 +165,32 @@ func TestParseSince(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				expected := time.Now().Add(tt.wantDelta)
+				got, err := parseSince(tt.input)
 
-			got, err := parseSince(tt.input)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
+				if tt.wantErr {
+					if err == nil {
+						t.Fatal("expected error, got nil")
+					}
+					return
 				}
-				return
-			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if !tt.wantExact.IsZero() {
-				if !got.Equal(tt.wantExact) {
-					t.Fatalf("expected %v, got %v", tt.wantExact, got)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
 				}
-				return
-			}
 
-			// For duration-based tests, check that result is within tolerance
-			expected := time.Now().Add(tt.wantDelta)
-			diff := math.Abs(float64(got.Sub(expected)))
-			if diff > float64(2*time.Second) {
-				t.Fatalf("result %v too far from expected %v (diff: %v)", got, expected, time.Duration(diff))
-			}
+				if !tt.wantExact.IsZero() {
+					if !got.Equal(tt.wantExact) {
+						t.Fatalf("expected %v, got %v", tt.wantExact, got)
+					}
+					return
+				}
+
+				if !got.Equal(expected) {
+					t.Fatalf("result %v, want %v", got, expected)
+				}
+			})
 		})
 	}
 }

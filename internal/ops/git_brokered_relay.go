@@ -76,6 +76,8 @@ type BrokeredGitRelay struct {
 	// githubAPI is where the minted tokens are revoked, hq.GitHubAPIOrigin
 	// when empty; a test points it at a stand-in.
 	githubAPI string
+	// revokeContext lets tests drive the revoke deadline without wall time.
+	revokeContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 }
 
 func (r BrokeredGitRelay) api() string {
@@ -1265,8 +1267,12 @@ const relayRevokeBound = 5 * time.Second
 // within the hour regardless, so a failure is one stderr line naming the
 // repository, never the token, and changes nothing else.
 func (c *relayCall) revoke(ctx context.Context) {
+	deadline := c.relay.revokeContext
+	if deadline == nil {
+		deadline = context.WithTimeout
+	}
 	for _, m := range c.minted {
-		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), relayRevokeBound)
+		revokeCtx, cancel := deadline(context.WithoutCancel(ctx), relayRevokeBound)
 		err := hq.RevokeGitHubToken(revokeCtx, c.relay.HTTPClient, c.relay.api(), m.token)
 		cancel()
 		if err != nil {

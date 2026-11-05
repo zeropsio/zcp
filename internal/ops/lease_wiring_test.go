@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -36,38 +37,40 @@ func TestAwaitOverlayRestarts_WaitsForEachServerTheChangeRestarts(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := devservertest.NewSupervised(twoLeaseServers)
-			c.EnvRestartReads = tt.reads
-			if tt.stopped != "" {
-				c.Servers[tt.stopped].Status, c.Servers[tt.stopped].Desired = devsup.StatusStopped, devsup.DesiredStopped
-			}
-			before, err := supervisorCtl(context.Background(), c, "webpool-3", "status")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := supervisorCtl(context.Background(), c, "webpool-3", "env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops"); err != nil {
-				t.Fatal(err)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				c := devservertest.NewSupervised(twoLeaseServers)
+				c.EnvRestartReads = tt.reads
+				if tt.stopped != "" {
+					c.Servers[tt.stopped].Status, c.Servers[tt.stopped].Desired = devsup.StatusStopped, devsup.DesiredStopped
+				}
+				before, err := supervisorCtl(context.Background(), c, "webpool-3", "status")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := supervisorCtl(context.Background(), c, "webpool-3", "env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops"); err != nil {
+					t.Fatal(err)
+				}
 
-			st, pending, err := awaitOverlayRestarts(context.Background(), c, "webpool-3", before, tt.budget, time.Millisecond)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(pending, tt.wantPending) {
-				t.Errorf("pending = %v, want %v", pending, tt.wantPending)
-			}
-			if len(tt.wantPending) > 0 {
-				return
-			}
-			for name, s := range st.Servers {
-				wantRestarts := 1
-				if name == tt.stopped {
-					wantRestarts = 0
+				st, pending, err := awaitOverlayRestarts(context.Background(), c, "webpool-3", before, tt.budget, time.Millisecond)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if s.Restarts != wantRestarts {
-					t.Errorf("%s restarts = %d in the state returned, want %d", name, s.Restarts, wantRestarts)
+				if !slices.Equal(pending, tt.wantPending) {
+					t.Errorf("pending = %v, want %v", pending, tt.wantPending)
 				}
-			}
+				if len(tt.wantPending) > 0 {
+					return
+				}
+				for name, s := range st.Servers {
+					wantRestarts := 1
+					if name == tt.stopped {
+						wantRestarts = 0
+					}
+					if s.Restarts != wantRestarts {
+						t.Errorf("%s restarts = %d in the state returned, want %d", name, s.Restarts, wantRestarts)
+					}
+				}
+			})
 		})
 	}
 }

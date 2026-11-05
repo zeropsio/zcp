@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -493,6 +492,13 @@ func TestLeaseList_MissingMount_Unmounted(t *testing.T) {
 	}
 }
 
+type aliasContentionContext struct {
+	context.Context //nolint:containedctx // test context reports lock contention
+	contended       chan struct{}
+}
+
+func (c aliasContentionContext) aliasLockContended() { close(c.contended) }
+
 // Two lease calls that overlap must not lose a stanza: the render and the
 // install of the alias file run as one step, so the last install reflects
 // every record written before it.
@@ -520,11 +526,13 @@ func TestInstallLeaseAliases_Overlapping_LastInstallHasEveryRecord(t *testing.T)
 		t.Fatal(err)
 	}
 	errB := make(chan error, 1)
-	go func() { errB <- InstallLeaseAliases(context.Background(), copyInstall, stateDir, dest) }()
+	contended := make(chan struct{})
+	ctxB := aliasContentionContext{Context: context.Background(), contended: contended}
+	go func() { errB <- InstallLeaseAliases(ctxB, copyInstall, stateDir, dest) }()
 	select {
 	case err := <-errB: // B overtook A; A's stale install lands after it unless serialized
 		errB <- err
-	case <-time.After(300 * time.Millisecond):
+	case <-contended: // B really reached A's held lock
 	}
 	close(releaseA)
 	if err := <-errA; err != nil {

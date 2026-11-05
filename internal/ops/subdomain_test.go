@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -591,35 +592,37 @@ func TestSubdomain(t *testing.T) {
 // not initially enabled in yaml and the agent enables post-deploy, the
 // race is absorbed inside ops instead of falling out as a tool error.
 func TestSubdomain_Enable_RetriesOnNoSubdomainPorts(t *testing.T) {
-	// t.Parallel omitted — OverrideEnableRetryConfigForTest mutates a
-	// package-level config; parallel tests would clobber the backoff.
-	restore := OverrideEnableRetryConfigForTest([]time.Duration{
-		1 * time.Millisecond, 1 * time.Millisecond, 1 * time.Millisecond,
-	})
-	defer restore()
+	synctest.Test(t, func(t *testing.T) {
+		// t.Parallel omitted — OverrideEnableRetryConfigForTest mutates a
+		// package-level config; parallel tests would clobber the backoff.
+		restore := OverrideEnableRetryConfigForTest([]time.Duration{
+			1 * time.Millisecond, 1 * time.Millisecond, 1 * time.Millisecond,
+		})
+		defer restore()
 
-	services := []platform.ServiceStack{
-		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
-	}
-	mock := platform.NewMock().WithServices(services)
-	mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
-		Code:    platform.ErrAPIError,
-		APICode: apiCodeNoSubdomainPorts,
-		Message: "service does not yet have HTTP-supporting ports",
-	})
+		services := []platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
+		}
+		mock := platform.NewMock().WithServices(services)
+		mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
+			Code:    platform.ErrAPIError,
+			APICode: apiCodeNoSubdomainPorts,
+			Message: "service does not yet have HTTP-supporting ports",
+		})
 
-	_, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
-	if err == nil {
-		t.Fatal("expected noSubdomainPorts error after retry exhaustion; got nil")
-	}
-	if !isNoSubdomainPortsErr(err) {
-		t.Errorf("final error: want noSubdomainPorts, got %v", err)
-	}
-	// 1 initial + 3 retries = 4 calls.
-	wantCalls := 1 + 3
-	if got := mock.CallCounts["EnableSubdomainAccess"]; got != wantCalls {
-		t.Errorf("EnableSubdomainAccess calls: want %d (initial + retries), got %d", wantCalls, got)
-	}
+		_, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
+		if err == nil {
+			t.Fatal("expected noSubdomainPorts error after retry exhaustion; got nil")
+		}
+		if !isNoSubdomainPortsErr(err) {
+			t.Errorf("final error: want noSubdomainPorts, got %v", err)
+		}
+		// 1 initial + 3 retries = 4 calls.
+		wantCalls := 1 + 3
+		if got := mock.CallCounts["EnableSubdomainAccess"]; got != wantCalls {
+			t.Errorf("EnableSubdomainAccess calls: want %d (initial + retries), got %d", wantCalls, got)
+		}
+	})
 }
 
 // TestSubdomain_Enable_NonRetryableErrorShortCircuits verifies the

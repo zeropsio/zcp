@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -181,29 +182,31 @@ func probedSteps(t *testing.T, probe answer, seen *[][]string) browserStepExec {
 // step says script-timeout, the probe is no step of the walk, and the
 // remaining commands and the canned tail run.
 func TestRunBrowserSteps_EvalNeverSettledOnALivePage_WalkGoesOn(t *testing.T) {
-	var seen [][]string
-	run := probedSteps(t, answer{stdout: `{"success":true,"data":{"result":1},"error":null}`}, &seen)
-	steps := [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}, {"console"}}
-	stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
-	if err != nil {
-		t.Fatalf("walk: %v", err)
-	}
-	var got []BrowserStepResult
-	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
-		t.Fatalf("steps: %v", jerr)
-	}
-	if len(got) != len(steps) {
-		t.Fatalf("every step must answer in its place and the probe in none, got %s", stdout)
-	}
-	if got[1].ErrorKind != "script-timeout" {
-		t.Errorf("the eval that never settled must say script-timeout, got %q", got[1].ErrorKind)
-	}
-	if got[1].Error == nil || *got[1].Error != "CDP command timed out: Runtime.evaluate" {
-		t.Errorf("the step keeps agent-browser's own words, got %v", got[1].Error)
-	}
-	if len(seen) != len(steps)+1 || !isCommand(seen[2], "eval") || seen[2][len(seen[2])-1] == settleScript {
-		t.Errorf("one probe must run right after the timed-out eval, then the rest of the walk; sent %v", seen)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var seen [][]string
+		run := probedSteps(t, answer{stdout: `{"success":true,"data":{"result":1},"error":null}`}, &seen)
+		steps := [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}, {"console"}}
+		stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
+		if err != nil {
+			t.Fatalf("walk: %v", err)
+		}
+		var got []BrowserStepResult
+		if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+			t.Fatalf("steps: %v", jerr)
+		}
+		if len(got) != len(steps) {
+			t.Fatalf("every step must answer in its place and the probe in none, got %s", stdout)
+		}
+		if got[1].ErrorKind != "script-timeout" {
+			t.Errorf("the eval that never settled must say script-timeout, got %q", got[1].ErrorKind)
+		}
+		if got[1].Error == nil || *got[1].Error != "CDP command timed out: Runtime.evaluate" {
+			t.Errorf("the step keeps agent-browser's own words, got %v", got[1].Error)
+		}
+		if len(seen) != len(steps)+1 || !isCommand(seen[2], "eval") || seen[2][len(seen[2])-1] == settleScript {
+			t.Errorf("one probe must run right after the timed-out eval, then the rest of the walk; sent %v", seen)
+		}
+	})
 }
 
 // TestRunBrowserSteps_EvalTimeoutOnAHungPage_EndsTheWalk pins that when the
@@ -220,22 +223,24 @@ func TestRunBrowserSteps_EvalTimeoutOnAHungPage_EndsTheWalk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var seen [][]string
-			run := probedSteps(t, tt.probe, &seen)
-			stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}}, run)
-			if err != nil {
-				t.Fatalf("a wedge is an answer, not a walk error: %v", err)
-			}
-			var got []BrowserStepResult
-			if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != 2 {
-				t.Fatalf("want open and the timed-out eval, got %s (%v)", stdout, jerr)
-			}
-			if got[1].ErrorKind == "script-timeout" {
-				t.Error("an eval on a page that does not answer is no script-timeout")
-			}
-			if len(seen) != 3 {
-				t.Errorf("the walk must probe once, then stop; sent %v", seen)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				var seen [][]string
+				run := probedSteps(t, tt.probe, &seen)
+				stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}}, run)
+				if err != nil {
+					t.Fatalf("a wedge is an answer, not a walk error: %v", err)
+				}
+				var got []BrowserStepResult
+				if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != 2 {
+					t.Fatalf("want open and the timed-out eval, got %s (%v)", stdout, jerr)
+				}
+				if got[1].ErrorKind == "script-timeout" {
+					t.Error("an eval on a page that does not answer is no script-timeout")
+				}
+				if len(seen) != 3 {
+					t.Errorf("the walk must probe once, then stop; sent %v", seen)
+				}
+			})
 		})
 	}
 }
@@ -421,16 +426,18 @@ func TestBrowserUnitArgs_BoundEverythingTheBrowserRuns(t *testing.T) {
 // hand-back stuck on a hung tab until its bound still leaves the stop a whole
 // bound of its own, so a spinning page never keeps Chrome up.
 func TestReleaseBrowser_StopGetsItsOwnBoundAfterAHungHandBack(t *testing.T) {
-	hung := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-	stopCtxErr := errors.New("stop never ran")
-	stop := func(ctx context.Context) error { stopCtxErr = ctx.Err(); return nil }
-	err := releaseBrowser(context.Background(), true, 50*time.Millisecond, hung, stop)
-	if stopCtxErr != nil {
-		t.Errorf("the stop must start with its bound left, got %v", stopCtxErr)
-	}
-	if err == nil {
-		t.Error("a failed hand-back must be reported")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		hung := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+		stopCtxErr := errors.New("stop never ran")
+		stop := func(ctx context.Context) error { stopCtxErr = ctx.Err(); return nil }
+		err := releaseBrowser(context.Background(), true, 50*time.Millisecond, hung, stop)
+		if stopCtxErr != nil {
+			t.Errorf("the stop must start with its bound left, got %v", stopCtxErr)
+		}
+		if err == nil {
+			t.Error("a failed hand-back must be reported")
+		}
+	})
 }
 
 // TestBrowserSetupSteps_OneStepPerIsolation pins how each isolation opens

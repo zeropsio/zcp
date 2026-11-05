@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -738,22 +739,24 @@ func TestLeaseSync_FastForwardedMember_NamesOnlyServersNothingReloads(t *testing
 // measuring a crossing).
 func TestLeaseSync_ReportsEachStepsMilliseconds(t *testing.T) {
 	t.Parallel()
-	gf, remote := newSyncFixture(t, syncBranch)
-	remote.delay = 15 * time.Millisecond
-	v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
-	if err != nil {
-		t.Fatalf("LeaseSync: %v", err)
-	}
-	if v.CheckMillis < 15 || v.Push.Millis < 15 {
-		t.Errorf("check %d ms, push %d ms; want each at least the 15 ms its ssh call took", v.CheckMillis, v.Push.Millis)
-	}
-	m := syncMemberOf(t, v, "webpool-7")
-	if m.Millis < 15 {
-		t.Errorf("webpool-7 took %d ms, want at least 15", m.Millis)
-	}
-	if v.Millis < v.CheckMillis+v.Push.Millis+m.Millis {
-		t.Errorf("total %d ms is less than its steps (%d + %d + %d)", v.Millis, v.CheckMillis, v.Push.Millis, m.Millis)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		gf, remote := newSyncFixture(t, syncBranch)
+		remote.delay = 15 * time.Millisecond
+		v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
+		if err != nil {
+			t.Fatalf("LeaseSync: %v", err)
+		}
+		if v.CheckMillis < 15 || v.Push.Millis < 15 {
+			t.Errorf("check %d ms, push %d ms; want each at least the 15 ms its ssh call took", v.CheckMillis, v.Push.Millis)
+		}
+		m := syncMemberOf(t, v, "webpool-7")
+		if m.Millis < 15 {
+			t.Errorf("webpool-7 took %d ms, want at least 15", m.Millis)
+		}
+		if v.Millis < v.CheckMillis+v.Push.Millis+m.Millis {
+			t.Errorf("total %d ms is less than its steps (%d + %d + %d)", v.Millis, v.CheckMillis, v.Push.Millis, m.Millis)
+		}
+	})
 }
 
 // syncDevsupRemote is a syncRemote whose leases in containers run zcp-devsup:

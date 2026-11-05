@@ -11,11 +11,14 @@ package ops
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -26,10 +29,9 @@ const setsidStub = `#!/bin/sh
 exec perl -e 'use POSIX (); if (POSIX::setsid() < 0) { exit 0 if fork(); POSIX::setsid(); } exec { $ARGV[0] } @ARGV or die "setsid: $!\n";' -- "$@"
 `
 
-// slowGitStub is git whose fetch first sleeps $WARM_FETCH_SLEEP seconds: a
-// clone still running when the checkout comes.
-const slowGitStub = `#!/bin/sh
-for a in "$@"; do if [ "$a" = fetch ]; then sleep "${WARM_FETCH_SLEEP:-0}"; break; fi; done
+// heldGitStub reports its fetch and holds it until the test releases it.
+const heldGitStub = `#!/bin/sh
+for a in "$@"; do if [ "$a" = fetch ]; then printf x > "$WARM_FETCH_READY"; read -r _ < "$WARM_FETCH_GATE"; break; fi; done
 exec REALGIT "$@"
 `
 
@@ -39,6 +41,7 @@ exec REALGIT "$@"
 type warmCloneBox struct {
 	dir, home, stubs string
 	shell            string
+	cloneDone        *os.File
 }
 
 func newWarmCloneBox(t *testing.T, shell string) *warmCloneBox {
@@ -72,15 +75,15 @@ func newWarmCloneBox(t *testing.T, shell string) *warmCloneBox {
 	return b
 }
 
-// slowGit puts a git whose fetch sleeps for seconds first on PATH (dir).
-func slowGit(t *testing.T) string {
+// heldGit puts a git whose fetch waits for the test first on PATH.
+func heldGit(t *testing.T) string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(strings.ReplaceAll(slowGitStub, "REALGIT", shellQuote(gitPath))), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(strings.ReplaceAll(heldGitStub, "REALGIT", shellQuote(gitPath))), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -97,9 +100,37 @@ func (b *warmCloneBox) run(t *testing.T, command string, pathFirst []string, env
 
 func (b *warmCloneBox) runPath(t *testing.T, command string, path []string, env ...string) (string, error) {
 	t.Helper()
+	return b.runPathWithReceipt(t, command, path, false, env...)
+}
+
+// When join is set, fd 3 stays open in any child of the shell. Its EOF is a
+// receipt that even a mistakenly detached launch has finished.
+func (b *warmCloneBox) runPathWithReceipt(t *testing.T, command string, path []string, join bool, env ...string) (string, error) {
+	t.Helper()
+	if !join {
+		return b.runPathWithFD(t, command, path, nil, env...)
+	}
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readEnd.Close()
+	out, runErr := b.runPathWithFD(t, command, path, writeEnd, env...)
+	_ = writeEnd.Close()
+	if _, err := io.Copy(io.Discard, readEnd); err != nil {
+		t.Fatalf("wait for launch descendants: %v", err)
+	}
+	return out, runErr
+}
+
+func (b *warmCloneBox) runPathWithFD(t *testing.T, command string, path []string, childFD *os.File, env ...string) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, b.shell, "-c", command) //nolint:gosec // a test shell running the command under test
+	if childFD != nil {
+		cmd.ExtraFiles = []*os.File{childFD}
+	}
 	cmd.Env = append([]string{
 		"HOME=" + b.home, "PATH=" + strings.Join(path, string(os.PathListSeparator)),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
@@ -109,10 +140,19 @@ func (b *warmCloneBox) runPath(t *testing.T, command string, path []string, env 
 	return string(out), err
 }
 
-// launch starts the warm clone of repo and returns its answer.
+// launch starts the warm clone of repo and returns its answer. The inherited
+// pipe closes when the detached clone and all of its children have exited.
 func (b *warmCloneBox) launch(t *testing.T, repo string, pathFirst []string, env ...string) string {
 	t.Helper()
-	out, err := b.run(t, leaseWarmCloneCommand(b.dir, repo, "", ""), pathFirst, env...)
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.cloneDone = readEnd
+	t.Cleanup(func() { _ = readEnd.Close() })
+	path := append(append([]string{b.stubs}, pathFirst...), filepath.SplitList(os.Getenv("PATH"))...)
+	out, err := b.runPathWithFD(t, leaseWarmCloneCommand(b.dir, repo, "", ""), path, writeEnd, env...)
+	_ = writeEnd.Close()
 	if err != nil {
 		t.Fatalf("the warm clone's launch failed: %v\n%s", err, out)
 	}
@@ -128,24 +168,94 @@ func (b *warmCloneBox) state() string {
 	return string(raw)
 }
 
-// waitFor polls until cond holds, failing after 30 s.
-func waitFor(t *testing.T, what string, cond func() bool) {
+func hasLine(text, line string) bool { return slices.Contains(strings.Split(text, "\n"), line) }
+
+// cloneExited joins the detached clone without racing a wall clock or a
+// filesystem watcher against git creating and removing its transient files.
+func (b *warmCloneBox) cloneExited(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(20 * time.Millisecond)
+	if _, err := io.Copy(io.Discard, b.cloneDone); err != nil {
+		t.Fatalf("wait for the clone: %v", err)
 	}
 }
 
-func hasLine(text, line string) bool { return slices.Contains(strings.Split(text, "\n"), line) }
-
-// cloned waits for the detached clone to finish.
+// cloned waits for the detached clone to finish and checks its done receipt.
 func (b *warmCloneBox) cloned(t *testing.T) {
 	t.Helper()
-	waitFor(t, "the warm clone to finish", func() bool { return hasLine(b.state(), "done") })
+	b.cloneExited(t)
+	if !hasLine(b.state(), "done") {
+		t.Fatalf("clone exited without a done marker: %q", b.state())
+	}
+}
+
+func warmFIFO(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func warmReceive(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := io.ReadAll(f); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func warmRelease(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := io.WriteString(f, "release\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// reportCheckoutWait makes the first failed checkout flock observable without
+// changing flock's actual decision or the lock shared with the parent shell.
+func (b *warmCloneBox) reportCheckoutWait(t *testing.T) {
+	t.Helper()
+	flock, err := exec.LookPath("flock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+if [ "$1" = -n ] && [ "$2" = 8 ] && [ -n "$WARM_CHECKOUT_BLOCKED" ]; then
+  REALFLOCK "$@"; result=$?
+  if [ "$result" -ne 0 ] && mkdir "$WARM_CHECKOUT_BLOCKED.once" 2>/dev/null; then printf x > "$WARM_CHECKOUT_BLOCKED"; fi
+  exit "$result"
+fi
+exec REALFLOCK "$@"
+`
+	if err := os.WriteFile(filepath.Join(b.stubs, "flock"), []byte(strings.ReplaceAll(script, "REALFLOCK", shellQuote(flock))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// cleanHeldClone stops even a failed test's detached fetch and its children.
+func (b *warmCloneBox) cleanHeldClone(t *testing.T) {
+	t.Helper()
+	for line := range strings.SplitSeq(b.state(), "\n") {
+		if s, ok := strings.CutPrefix(line, "pid "); ok {
+			pid, err := strconv.Atoi(s)
+			if err != nil || pid <= 1 {
+				t.Fatalf("invalid clone pid %q", s)
+			}
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			return
+		}
+	}
+	t.Fatalf("the held clone has no pid in its state: %q", b.state())
 }
 
 // checkout runs the lease's checkout of branch of repo and returns its answer.
@@ -391,15 +501,30 @@ func TestLeaseWarmClone_Running_CheckoutWaitsForIt(t *testing.T) {
 	t.Parallel()
 	origin, _ := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
-	b.launch(t, origin, []string{slowGit(t)}, "WARM_FETCH_SLEEP=2")
-	waitFor(t, "the warm clone to hold /var/www", func() bool { return hasLine(b.state(), "repo "+leaseWarmRepoKey(origin)) })
+	ready := warmFIFO(t, b.stubs, "fetch-ready")
+	gate := warmFIFO(t, b.stubs, "fetch-gate")
+	blocked := warmFIFO(t, b.stubs, "checkout-blocked")
+	b.reportCheckoutWait(t)
+	b.launch(t, origin, []string{heldGit(t)}, "WARM_FETCH_READY="+ready, "WARM_FETCH_GATE="+gate)
+	warmReceive(t, ready)
+	b.cleanHeldClone(t)
 
-	begun := time.Now()
-	out := b.checkout(t, origin, "feat")
-
-	if took := time.Since(begun); took < time.Second {
-		t.Errorf("the checkout took %s: it did not wait for the running clone", took)
+	type answer struct {
+		out string
+		err error
 	}
+	finished := make(chan answer, 1)
+	go func() {
+		out, err := b.run(t, leaseCheckoutCommand(b.dir, origin, "feat", "", ""), nil, "WARM_CHECKOUT_BLOCKED="+blocked)
+		finished <- answer{out, err}
+	}()
+	warmReceive(t, blocked)
+	warmRelease(t, gate)
+	result := <-finished
+	if result.err != nil {
+		t.Fatalf("checkout failed: %v\n%s", result.err, result.out)
+	}
+	out := result.out
 	if !strings.Contains(out, leaseWarmCheckoutMarker+leaseWarmUsed) {
 		t.Errorf("checkout answered %q, want it to have taken the clone it waited for", out)
 	}
@@ -416,15 +541,13 @@ func TestLeaseWarmClone_RunningForAnotherRepository_CheckoutStopsIt(t *testing.T
 	other, _ := warmOrigin(t, map[string]string{"a.txt": "a"})
 	mine, mineSHA := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
-	b.launch(t, other, []string{slowGit(t)}, "WARM_FETCH_SLEEP=60")
-	waitFor(t, "the warm clone to hold /var/www", func() bool { return hasLine(b.state(), "repo "+leaseWarmRepoKey(other)) })
-
-	begun := time.Now()
+	ready := warmFIFO(t, b.stubs, "fetch-ready")
+	gate := warmFIFO(t, b.stubs, "fetch-gate")
+	b.launch(t, other, []string{heldGit(t)}, "WARM_FETCH_READY="+ready, "WARM_FETCH_GATE="+gate)
+	warmReceive(t, ready)
+	b.cleanHeldClone(t)
 	out := b.checkout(t, mine, "main")
 
-	if took := time.Since(begun); took > 20*time.Second {
-		t.Errorf("the checkout took %s: it waited for a clone of another repository", took)
-	}
 	if !strings.Contains(out, leaseWarmCheckoutMarker+leaseWarmDiscarded) {
 		t.Errorf("checkout answered %q, want it to say it removed the clone", out)
 	}
@@ -446,12 +569,15 @@ func TestLeaseWarmClone_TreeAlreadyARepository_LeftAlone(t *testing.T) {
 	b.checkout(t, origin, "feat")
 	head := b.git(t, "rev-parse", "HEAD")
 
-	out := b.launch(t, origin, nil)
+	path := append([]string{b.stubs}, filepath.SplitList(os.Getenv("PATH"))...)
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), path, true)
+	if err != nil {
+		t.Fatalf("launch failed: %v\n%s", err, out)
+	}
 
 	if !strings.Contains(out, "@@zcp-warm present") {
 		t.Errorf("launch answered %q, want present", out)
 	}
-	time.Sleep(300 * time.Millisecond)
 	if b.state() != "" || b.git(t, "rev-parse", "HEAD") != head || b.git(t, "rev-parse", "--abbrev-ref", "HEAD") != "feat" {
 		t.Error("the launch changed a checkout it must leave alone")
 	}
@@ -465,7 +591,7 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 	origin, _ := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
 
-	out, err := b.runPath(t, leaseWarmCloneCommand(b.dir, origin, "", ""), append([]string{b.stubs}, pathWithout("flock")...))
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), append([]string{b.stubs}, pathWithout("flock")...), true)
 	if err != nil {
 		t.Fatalf("launch: %v\n%s", err, out)
 	}
@@ -473,7 +599,6 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 	if !strings.Contains(out, "@@zcp-warm tools") {
 		t.Errorf("launch answered %q, want tools", out)
 	}
-	time.Sleep(300 * time.Millisecond)
 	if b.exists(".git") {
 		t.Error("a clone was started without flock")
 	}
@@ -540,7 +665,10 @@ func discardStaysInside(t *testing.T, shell string) {
 			t.Fatal(err)
 		}
 		b.launch(t, evil, nil)
-		waitFor(t, "the warm clone to record its commit", func() bool { return strings.Contains(b.state(), "commit ") })
+		b.cloneExited(t)
+		if !strings.Contains(b.state(), "commit ") {
+			t.Fatalf("the refused checkout never recorded its commit: %q", b.state())
+		}
 
 		out := b.checkout(t, mine, "main")
 

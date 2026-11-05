@@ -201,18 +201,9 @@ func TestPublishPage_AFifo_RefusedWithoutWaiting(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(cwd, "pipe.png"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := PublishPage(filepath.Join(cwd, ".zcp", "state"), cwd, PageInput{Title: "x", HTML: `<img src="pipe.png">`})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "pipe.png is not a file") {
-			t.Errorf("err = %v, want the FIFO refused", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the publish blocked on a FIFO")
+	_, err := PublishPage(filepath.Join(cwd, ".zcp", "state"), cwd, PageInput{Title: "x", HTML: `<img src="pipe.png">`})
+	if err == nil || !strings.Contains(err.Error(), "pipe.png is not a file") {
+		t.Errorf("err = %v, want the FIFO refused", err)
 	}
 }
 

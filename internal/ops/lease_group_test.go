@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -573,12 +574,7 @@ func TestLeaseAcquireGroup_ReservesInParallel(t *testing.T) {
 		done <- err
 	}()
 	for range 2 {
-		select {
-		case <-entered:
-		case <-time.After(5 * time.Second):
-			close(gate)
-			t.Fatal("the second reservation did not start while the first was still waiting: they run one after the other")
-		}
+		<-entered
 	}
 	close(gate)
 	if err := <-done; err != nil {
@@ -824,48 +820,54 @@ func TestLeaseAcquire_LostLeaseOfTheBranch_RefusedNamingTheRelease(t *testing.T)
 // waited returns it, reused.
 func TestLeaseAcquire_ConcurrentSameKey_ReservesOnce(t *testing.T) {
 	t.Parallel()
-	gf := newGroupFixture(t)
-	gate := make(chan struct{})
-	gf.hq.gate, gf.hq.entered = gate, make(chan struct{}, 2)
+	synctest.Test(t, func(t *testing.T) {
+		gf := newGroupFixture(t)
+		gate := make(chan struct{})
+		gf.hq.gate, gf.hq.entered = gate, make(chan struct{}, 2)
 
-	type outcome struct {
-		view LeaseView
-		err  error
-	}
-	results := make(chan outcome, 2)
-	for range 2 {
-		go func() {
-			v, err := LeaseAcquire(context.Background(), gf.deps, groupHQPool, testRepo, "feat")
-			results <- outcome{v, err}
-		}()
-	}
-	<-gf.hq.entered
-	// The other acquire waits for the key, never reaching the orchestrator.
-	select {
-	case <-gf.hq.entered:
-		close(gate)
-		t.Fatal("two acquires of one key reached the orchestrator at once")
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(gate)
-	got := make([]outcome, 0, 2)
-	for range 2 {
-		got = append(got, <-results)
-	}
-	for _, o := range got {
-		if o.err != nil {
-			t.Fatalf("acquire: %v", o.err)
+		type outcome struct {
+			view LeaseView
+			err  error
 		}
-	}
-	if got[0].view.Alias != got[1].view.Alias {
-		t.Errorf("the acquires returned %s and %s, want one lease", got[0].view.Alias, got[1].view.Alias)
-	}
-	if got[0].view.Reused == got[1].view.Reused {
-		t.Errorf("reused = %v and %v, want exactly the second one reused", got[0].view.Reused, got[1].view.Reused)
-	}
-	if n := gf.hq.acquireCount(); n != 1 {
-		t.Errorf("the orchestrator reserved %d containers, want 1", n)
-	}
+		results := make(chan outcome, 2)
+		for range 2 {
+			go func() {
+				v, err := LeaseAcquire(context.Background(), gf.deps, groupHQPool, testRepo, "feat")
+				results <- outcome{v, err}
+			}()
+		}
+		<-gf.hq.entered
+		// The other acquire waits for the key, never reaching the orchestrator.
+		synctest.Wait()
+		overtook := false
+		select {
+		case <-gf.hq.entered:
+			overtook = true
+		default:
+		}
+		close(gate)
+		got := make([]outcome, 0, 2)
+		for range 2 {
+			got = append(got, <-results)
+		}
+		if overtook {
+			t.Error("two acquires of one key reached the orchestrator at once")
+		}
+		for _, o := range got {
+			if o.err != nil {
+				t.Fatalf("acquire: %v", o.err)
+			}
+		}
+		if got[0].view.Alias != got[1].view.Alias {
+			t.Errorf("the acquires returned %s and %s, want one lease", got[0].view.Alias, got[1].view.Alias)
+		}
+		if got[0].view.Reused == got[1].view.Reused {
+			t.Errorf("reused = %v and %v, want exactly the second one reused", got[0].view.Reused, got[1].view.Reused)
+		}
+		if n := gf.hq.acquireCount(); n != 1 {
+			t.Errorf("the orchestrator reserved %d containers, want 1", n)
+		}
+	})
 }
 
 // Acquires of different branches on one pool never wait for each other.
@@ -882,12 +884,7 @@ func TestLeaseAcquire_ConcurrentDifferentKeys_RunTogether(t *testing.T) {
 		}()
 	}
 	for range 2 {
-		select {
-		case <-gf.hq.entered:
-		case <-time.After(5 * time.Second):
-			close(gate)
-			t.Fatal("an acquire of another branch waited for the first one")
-		}
+		<-gf.hq.entered
 	}
 	close(gate)
 	for range 2 {

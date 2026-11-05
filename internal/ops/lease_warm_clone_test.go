@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -293,31 +294,33 @@ func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testin
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4)
-			orch.add(3, "", true, false, 1)
-			wf, ssh := newWarmCloneFixture(t, orch)
-			wf.deps.Warm.LaunchRetry = time.Millisecond
-			failure := tt.failure(t)
-			tries := 0
-			base := ssh.fn
-			ssh.setHandler(func(host, command string) ([]byte, error) {
-				if isWarmCloneLaunch(command) {
-					tries++
-					if tries <= tt.failures {
-						return nil, failure
+			synctest.Test(t, func(t *testing.T) {
+				orch := newWarmOrch(4)
+				orch.add(3, "", true, false, 1)
+				wf, ssh := newWarmCloneFixture(t, orch)
+				wf.deps.Warm.LaunchRetry = time.Millisecond
+				failure := tt.failure(t)
+				tries := 0
+				base := ssh.fn
+				ssh.setHandler(func(host, command string) ([]byte, error) {
+					if isWarmCloneLaunch(command) {
+						tries++
+						if tries <= tt.failures {
+							return nil, failure
+						}
 					}
+					return base(host, command)
+				})
+
+				wf.acquire(t, "feat-a")
+
+				if tries != tt.wantTries {
+					t.Errorf("launch tries = %d, want %d", tries, tt.wantTries)
 				}
-				return base(host, command)
+				if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != tt.outcome {
+					t.Errorf("status clone = %+v, want %s", clone, tt.outcome)
+				}
 			})
-
-			wf.acquire(t, "feat-a")
-
-			if tries != tt.wantTries {
-				t.Errorf("launch tries = %d, want %d", tries, tt.wantTries)
-			}
-			if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != tt.outcome {
-				t.Errorf("status clone = %+v, want %s", clone, tt.outcome)
-			}
 		})
 	}
 }

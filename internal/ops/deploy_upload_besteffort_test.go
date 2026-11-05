@@ -84,17 +84,66 @@ func TestBuildSSHCommand_MeasurementHangs_PushGoesOnWithinItsBound(t *testing.T)
 			t.Parallel()
 			r := newPushRig(t, "echo 'Deploying service'\n")
 			r.shell = shell
-			rigTool(t, r, "ls", "exec sleep 30\n")
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			start := time.Now()
-			out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", true, "", r.pushDir, testBudget(2*time.Second)))
-			took := time.Since(start)
+			dir := t.TempDir()
+			measurement, watchdog := filepath.Join(dir, "measurement"), filepath.Join(dir, "watchdog")
+			measureGate, watchGate, measureDone := filepath.Join(dir, "measure-gate"), filepath.Join(dir, "watch-gate"), filepath.Join(dir, "measure-done")
+			if out, err := exec.CommandContext(ctx, "mkfifo", measurement, watchdog, measureGate, watchGate, measureDone).CombinedOutput(); err != nil {
+				t.Fatalf("mkfifo: %v: %s", err, out)
+			}
+			heldMeasure, err := os.OpenFile(measureGate, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer heldMeasure.Close()
+			heldWatch, err := os.OpenFile(watchGate, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer heldWatch.Close()
+			realSleep, err := exec.LookPath("sleep")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rigTool(t, r, "ls", "exec 3>\"$MEASURE_DONE\"\nexec 4<\"$MEASURE_GATE\"\necho reached > \"$MEASUREMENT\"\ncat <&4 >/dev/null\n")
+			rigTool(t, r, "sleep", "if [ \"$1\" = 1 ]; then exec "+ShellQuote(realSleep)+" \"$@\"; fi\nexec 4<\"$WATCH_GATE\"\necho \"$1\" > \"$WATCHDOG\"\ncat <&4 >/dev/null\n")
+			rigTool(t, r, "date", "echo 1000\n")
+			r.env = append(r.env, "MEASUREMENT="+measurement, "WATCHDOG="+watchdog, "MEASURE_GATE="+measureGate, "WATCH_GATE="+watchGate, "MEASURE_DONE="+measureDone)
+			done := make(chan error, 1)
+			go func() { _, err := os.ReadFile(measureDone); done <- err }()
+			type result struct {
+				out  string
+				code int
+			}
+			run := make(chan result, 1)
+			go func() {
+				out, code := r.run(ctx, buildSSHCommandWithin("svc-1", r.dir, "", true, "", r.pushDir, testBudget(2*time.Second)))
+				run <- result{out, code}
+			}()
+			if _, err := os.ReadFile(measurement); err != nil {
+				t.Fatal(err)
+			}
+			bound, err := os.ReadFile(watchdog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := heldWatch.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got := <-run
+			if err := heldMeasure.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("measurement completion: %v", err)
+			}
+			out, code := got.out, got.code
 			if code != 0 || !isSSHBuildTriggered(out) {
 				t.Fatalf("push = exit %d, want zcli run to its upload: %s", code, out)
 			}
-			if took > 15*time.Second {
-				t.Errorf("push with a hung measurement took %s, want it on its way soon after the 2 s bound, long before the 30 s hang ends", took)
+			if string(bound) != "2\n" {
+				t.Errorf("measurement watchdog = %q, want 2 seconds", bound)
 			}
 			report, _ := splitUploadReport(out)
 			if report.unmeasured != "timeout" || report.budget != 7*time.Second {

@@ -3,6 +3,8 @@
 package ops
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +17,7 @@ import (
 // across this process's concurrent tool calls and `zcp init`. Without it two
 // overlapping installs can land in the wrong order and the file loses a
 // stanza. The caller MUST call the returned release function.
-func acquireLeaseAliasLock(stateDir string) (func(), error) {
+func acquireLeaseAliasLock(ctx context.Context, stateDir string) (func(), error) {
 	dir := leaseDir(stateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", dir, err)
@@ -24,9 +26,21 @@ func acquireLeaseAliasLock(stateDir string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open alias lock: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+	// A receipt lets an observer know the lock actually blocked, rather than
+	// guessing from elapsed time. Ordinary calls use the blocking lock directly.
+	var lockErr error
+	if observer, ok := ctx.(interface{ aliasLockContended() }); ok {
+		lockErr = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if errors.Is(lockErr, unix.EWOULDBLOCK) || errors.Is(lockErr, unix.EAGAIN) {
+			observer.aliasLockContended()
+			lockErr = unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		}
+	} else {
+		lockErr = unix.Flock(int(f.Fd()), unix.LOCK_EX)
+	}
+	if lockErr != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("acquire alias lock: %w", err)
+		return nil, fmt.Errorf("acquire alias lock: %w", lockErr)
 	}
 	return func() {
 		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)

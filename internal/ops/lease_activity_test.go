@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -603,57 +604,59 @@ func TestLeaseStatus_ActivityUnreadable_SaysWhy(t *testing.T) {
 // the others stand.
 func TestLeaseStatus_ActivityReadsInParallelWithinBudget(t *testing.T) {
 	t.Parallel()
-	const head = int64(1792756800)
-	const budget = 300 * time.Millisecond
-	fx := newLeaseFixture(t)
-	fx.deps.ActivityTimeout = budget
-	for n := int64(3); n <= 6; n++ {
-		recordLease(t, fx.stateDir, testPoolHost, "svc-pool", n, "b"+strconv.FormatInt(n, 10))
-		fx.swarm.containers = append(fx.swarm.containers, reservedContainer("c-"+strconv.FormatInt(n, 10), n))
-	}
-	var arrived sync.WaitGroup
-	arrived.Add(3)
-	allIn := make(chan struct{})
-	go func() { arrived.Wait(); close(allIn) }()
-	fx.deps.SSH = &ctxSSH{fn: func(ctx context.Context, host, _ string) ([]byte, error) {
-		if host != "devpool-6" {
-			arrived.Done()
-			select {
-			case <-allIn:
-				return checkoutAnswer(head, "", nil, 0), nil
-			case <-ctx.Done():
+	synctest.Test(t, func(t *testing.T) {
+		const head = int64(1792756800)
+		const budget = 300 * time.Millisecond
+		fx := newLeaseFixture(t)
+		fx.deps.ActivityTimeout = budget
+		for n := int64(3); n <= 6; n++ {
+			recordLease(t, fx.stateDir, testPoolHost, "svc-pool", n, "b"+strconv.FormatInt(n, 10))
+			fx.swarm.containers = append(fx.swarm.containers, reservedContainer("c-"+strconv.FormatInt(n, 10), n))
+		}
+		var arrived sync.WaitGroup
+		arrived.Add(3)
+		allIn := make(chan struct{})
+		go func() { arrived.Wait(); close(allIn) }()
+		fx.deps.SSH = &ctxSSH{fn: func(ctx context.Context, host, _ string) ([]byte, error) {
+			if host != "devpool-6" {
+				arrived.Done()
+				select {
+				case <-allIn:
+					return checkoutAnswer(head, "", nil, 0), nil
+				case <-ctx.Done():
+				}
+			} else {
+				<-ctx.Done()
 			}
-		} else {
-			<-ctx.Done()
-		}
-		return nil, &platform.SSHExecError{Hostname: host, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", ctx.Err())}
-	}}
+			return nil, &platform.SSHExecError{Hostname: host, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", ctx.Err())}
+		}}
 
-	start := time.Now()
-	status, err := LeaseStatus(context.Background(), fx.deps, testPoolHost)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("LeaseStatus: %v", err)
-	}
-
-	if elapsed > 3*time.Second {
-		t.Errorf("status took %s with a %s budget per read", elapsed, budget)
-	}
-	for _, v := range status.Leases {
-		if v.Activity == nil {
-			t.Errorf("%s has no activity", v.Alias)
-			continue
+		start := time.Now()
+		status, err := LeaseStatus(context.Background(), fx.deps, testPoolHost)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("LeaseStatus: %v", err)
 		}
-		if v.Alias == "devpool-6" {
-			if v.Activity.LastChangeAt != "" || v.Unsaved != nil || !strings.Contains(v.Activity.Note, "did not finish within "+budget.String()) {
-				t.Errorf("devpool-6 = %+v / %+v, want cut at the budget, saying so, with nothing read", v.Activity, v.Unsaved)
+
+		if elapsed != budget {
+			t.Errorf("status took virtual time %s, want exactly the %s budget", elapsed, budget)
+		}
+		for _, v := range status.Leases {
+			if v.Activity == nil {
+				t.Errorf("%s has no activity", v.Alias)
+				continue
 			}
-			continue
+			if v.Alias == "devpool-6" {
+				if v.Activity.LastChangeAt != "" || v.Unsaved != nil || !strings.Contains(v.Activity.Note, "did not finish within "+budget.String()) {
+					t.Errorf("devpool-6 = %+v / %+v, want cut at the budget, saying so, with nothing read", v.Activity, v.Unsaved)
+				}
+				continue
+			}
+			if v.Activity.LastChangeAt != rfc3339(head) || v.Unsaved == nil {
+				t.Errorf("%s = %+v / %+v, want read: the reads run at once", v.Alias, v.Activity, v.Unsaved)
+			}
 		}
-		if v.Activity.LastChangeAt != rfc3339(head) || v.Unsaved == nil {
-			t.Errorf("%s = %+v / %+v, want read: the reads run at once", v.Alias, v.Activity, v.Unsaved)
-		}
-	}
+	})
 }
 
 // TestLeaseStatus_ActivityNotRead_SaysWhyOrStaysAbsent: status reads a lease

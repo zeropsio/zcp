@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -222,6 +223,23 @@ func testBoxDeps(mock *platform.Mock, fake *fakeBox) BoxDeps {
 	}
 }
 
+// The setup's readiness and pull budgets run on virtual time, so a test's
+// fake API responses cannot lose to a preempted machine.
+func testBoxSetup(t *testing.T, d BoxDeps, host string) (BoxSetupResult, error) {
+	t.Helper()
+	var result BoxSetupResult
+	var err error
+	synctest.Test(t, func(t *testing.T) { result, err = BoxSetup(context.Background(), d, host) })
+	return result, err
+}
+
+func testBoxSetupImported(t *testing.T, d BoxDeps, host, id string) *BoxSetupResult {
+	t.Helper()
+	var result *BoxSetupResult
+	synctest.Test(t, func(t *testing.T) { result = BoxSetupImported(context.Background(), d, host, id) })
+	return result
+}
+
 func readyBase() platform.BoxBase {
 	return platform.BoxBase{Name: BoxDefaultBaseName, Status: platform.BoxBaseStatusReady, Digest: testBoxDigest, ImageRef: BoxDefaultBaseImageRef}
 }
@@ -243,7 +261,7 @@ func TestBoxSetup_FreshWorkspace_PullsBaseThenAddsDomain(t *testing.T) {
 		// included (live, 2026-10-24): only the poll tells it finished.
 		opAnswers: []platform.BoxOperation{runningPull("op-1"), finishedPull("op-1")},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -291,7 +309,7 @@ func TestBoxSetup_AlreadySetUp_NoMutations(t *testing.T) {
 		bases:     []platform.BoxBase{readyBase()},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -316,7 +334,7 @@ func TestBoxSetup_ExistingDomains_Merged(t *testing.T) {
 		bases:     []platform.BoxBase{readyBase()},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{own}},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -332,7 +350,7 @@ func TestBoxSetup_ExistingDomains_Merged(t *testing.T) {
 func TestBoxSetup_PullStillRunning_ReportsPullingWithRecovery(t *testing.T) {
 	t.Parallel()
 	fake := &fakeBox{pullOp: runningPull("op-7"), opAnswers: []platform.BoxOperation{runningPull("op-7")}}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -362,7 +380,7 @@ func TestBoxSetup_PullInProgress_PollsItInsteadOfPullingAgain(t *testing.T) {
 		opAnswers: []platform.BoxOperation{finishedPull("op-9")},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -383,7 +401,7 @@ func TestBoxSetup_PullingBaseWithoutAnOperation_NeverPullsAgain(t *testing.T) {
 		bases:     []platform.BoxBase{{Name: BoxDefaultBaseName, Status: platform.BoxBaseStatusFlattening}},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -402,7 +420,7 @@ func TestBoxSetup_PullTransportFailure_RetriesWithTheSameKey(t *testing.T) {
 		pullOp:    runningPull("op-1"),
 		opAnswers: []platform.BoxOperation{finishedPull("op-1")},
 	}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -499,7 +517,7 @@ func TestBoxSetup_Failures(t *testing.T) {
 			if tt.mock != nil {
 				tt.mock(mock)
 			}
-			got, err := BoxSetup(context.Background(), testBoxDeps(mock, tt.fake), testBoxHost)
+			got, err := testBoxSetup(t, testBoxDeps(mock, tt.fake), testBoxHost)
 			if err != nil {
 				t.Fatalf("BoxSetup: %v (a setup failure is named in the result, never an error)", err)
 			}
@@ -536,7 +554,7 @@ func TestBoxSetup_OrchestratorLate_WaitsForIt(t *testing.T) {
 	// serviceStackNoActiveContainer for a moment (the zbox CLI retries it).
 	fake := &fakeBox{pingErrOnce: 3, bases: []platform.BoxBase{readyBase()},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}}}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -553,7 +571,7 @@ func TestBoxSetup_SubdomainOff_ReportsRecovery(t *testing.T) {
 	svc := testBoxService()
 	svc.SubdomainAccess = false
 	fake := &fakeBox{bases: []platform.BoxBase{readyBase()}}
-	got, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(svc), fake), testBoxHost)
+	got, err := testBoxSetup(t, testBoxDeps(testBoxMock(svc), fake), testBoxHost)
 	if err != nil {
 		t.Fatalf("BoxSetup: %v", err)
 	}
@@ -575,7 +593,7 @@ func TestBoxSetup_SubdomainOff_ReportsRecovery(t *testing.T) {
 func TestBoxSetup_NotABox_Refused(t *testing.T) {
 	t.Parallel()
 	fake := &fakeBox{}
-	_, err := BoxSetup(context.Background(), testBoxDeps(testBoxMock(testBoxService()), fake), "app")
+	_, err := testBoxSetup(t, testBoxDeps(testBoxMock(testBoxService()), fake), "app")
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
 		t.Fatalf("err = %v, want INVALID_PARAMETER", err)
@@ -593,10 +611,10 @@ func TestBoxSetupImported_OnlyABox(t *testing.T) {
 	fake := &fakeBox{bases: []platform.BoxBase{readyBase()},
 		workspace: platform.BoxWorkspace{Domains: []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}}}
 	d := testBoxDeps(testBoxMock(testBoxService()), fake)
-	if got := BoxSetupImported(context.Background(), d, "app", "svc-app"); got != nil {
+	if got := testBoxSetupImported(t, d, "app", "svc-app"); got != nil {
 		t.Errorf("an app runtime got a setup block: %+v", got)
 	}
-	got := BoxSetupImported(context.Background(), d, testBoxHost, testBoxID)
+	got := testBoxSetupImported(t, d, testBoxHost, testBoxID)
 	if got == nil || got.Status != BoxSetupReady {
 		t.Errorf("the Box's block = %+v, want READY", got)
 	}

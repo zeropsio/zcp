@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -51,37 +52,39 @@ func (c *envBarrierClient) GetServiceEnv(ctx context.Context, serviceID string) 
 // waited find the credential written.
 func TestEnsurePoolHQCredential_ConcurrentAcquiresOfOnePool_WriteOnce(t *testing.T) {
 	t.Parallel()
-	const acquires = 4
-	fx := newLeaseFixture(t)
-	inAMate(fx)
-	client := newEnvBarrierClient(fx.deps.Client.(*platform.Mock), acquires)
-	fx.deps.Client = client
-	pool := &platform.ServiceStack{ID: "svc-pool", Name: testPoolHost}
+	synctest.Test(t, func(t *testing.T) {
+		const acquires = 4
+		fx := newLeaseFixture(t)
+		inAMate(fx)
+		client := newEnvBarrierClient(fx.deps.Client.(*platform.Mock), acquires)
+		fx.deps.Client = client
+		pool := &platform.ServiceStack{ID: "svc-pool", Name: testPoolHost}
 
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	errs := make(chan error, acquires)
-	for range acquires {
-		wg.Go(func() {
-			<-start
-			_, err := ensurePoolHQCredential(context.Background(), fx.deps, pool, leaseHQRepo)
-			errs <- err
-		})
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Errorf("ensurePoolHQCredential: %v", err)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make(chan error, acquires)
+		for range acquires {
+			wg.Go(func() {
+				<-start
+				_, err := ensurePoolHQCredential(context.Background(), fx.deps, pool, leaseHQRepo)
+				errs <- err
+			})
 		}
-	}
-	if got := client.CallCount("CreateServiceEnvVar"); got != 1 {
-		t.Errorf("HQ credential creates = %d, want 1: concurrent acquires of one pool each wrote it", got)
-	}
-	if got := client.CallCount("DeleteUserData"); got != 0 {
-		t.Errorf("HQ credential deletes = %d, want 0: a write deleted the variable another acquire had just created", got)
-	}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Errorf("ensurePoolHQCredential: %v", err)
+			}
+		}
+		if got := client.CallCount("CreateServiceEnvVar"); got != 1 {
+			t.Errorf("HQ credential creates = %d, want 1: concurrent acquires of one pool each wrote it", got)
+		}
+		if got := client.CallCount("DeleteUserData"); got != 0 {
+			t.Errorf("HQ credential deletes = %d, want 0: a write deleted the variable another acquire had just created", got)
+		}
+	})
 }
 
 // TestRenewPoolHQCredentials_RacingAnAcquire_WritesOnce: the repository pass
@@ -90,30 +93,32 @@ func TestEnsurePoolHQCredential_ConcurrentAcquiresOfOnePool_WriteOnce(t *testing
 // the record under the pool's lock and leaves the credential alone.
 func TestRenewPoolHQCredentials_RacingAnAcquire_WritesOnce(t *testing.T) {
 	t.Parallel()
-	fx := newLeaseFixture(t)
-	inAMate(fx)
-	client := newEnvBarrierClient(fx.deps.Client.(*platform.Mock), 2)
-	fx.deps.Client = client
-	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolOldCredential))
-	pool := &platform.ServiceStack{ID: "svc-pool", Name: testPoolHost}
+	synctest.Test(t, func(t *testing.T) {
+		fx := newLeaseFixture(t)
+		inAMate(fx)
+		client := newEnvBarrierClient(fx.deps.Client.(*platform.Mock), 2)
+		fx.deps.Client = client
+		writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolOldCredential))
+		pool := &platform.ServiceStack{ID: "svc-pool", Name: testPoolHost}
 
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	wg.Go(func() {
-		<-start
-		if _, err := ensurePoolHQCredential(context.Background(), fx.deps, pool, leaseHQRepo); err != nil {
-			t.Errorf("ensurePoolHQCredential: %v", err)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Go(func() {
+			<-start
+			if _, err := ensurePoolHQCredential(context.Background(), fx.deps, pool, leaseHQRepo); err != nil {
+				t.Errorf("ensurePoolHQCredential: %v", err)
+			}
+		})
+		wg.Go(func() {
+			<-start
+			if failures := RenewPoolHQCredentials(context.Background(), client, fx.stateDir, poolMateCredential); len(failures) != 0 {
+				t.Errorf("RenewPoolHQCredentials failures = %+v", failures)
+			}
+		})
+		close(start)
+		wg.Wait()
+		if got := client.CallCount("CreateServiceEnvVar"); got != 1 {
+			t.Errorf("HQ credential creates = %d, want 1: the renewal and the acquire each wrote it", got)
 		}
 	})
-	wg.Go(func() {
-		<-start
-		if failures := RenewPoolHQCredentials(context.Background(), client, fx.stateDir, poolMateCredential); len(failures) != 0 {
-			t.Errorf("RenewPoolHQCredentials failures = %+v", failures)
-		}
-	})
-	close(start)
-	wg.Wait()
-	if got := client.CallCount("CreateServiceEnvVar"); got != 1 {
-		t.Errorf("HQ credential creates = %d, want 1: the renewal and the acquire each wrote it", got)
-	}
 }

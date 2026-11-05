@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -27,19 +28,6 @@ import (
 // raceOtherRepo is the repository another zcp process leases the same branch
 // name of.
 const raceOtherRepo = "https://github.com/acme/other"
-
-// waitForRecord waits until zcp has written alias's record.
-func waitForRecord(t *testing.T, stateDir, alias string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := loadLeaseRecord(stateDir, alias); err == nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("no record of %s within 5 s", alias)
-}
 
 // takenByAnotherZcp is another zcp process sharing the state directory that
 // took hqpool's container #3 again — released elsewhere, then acquired for
@@ -78,57 +66,57 @@ func recordLeaseOf(t *testing.T, stateDir, alias string) string {
 // reserved.
 func TestLeaseAcquireGroup_MemberEndsWhileAnotherWaits_NeverCheckedOutOrWrittenOver(t *testing.T) {
 	t.Parallel()
-	gf := newGroupFixture(t)
-	gate, entered := make(chan struct{}), make(chan struct{}, 1)
-	gf.web.mu.Lock()
-	gf.web.gate, gf.web.entered = gate, entered
-	gf.web.mu.Unlock()
-	type result struct {
-		change LeaseChange
-		err    error
-	}
-	done := make(chan result, 1)
-	go func() {
-		change, err := LeaseAcquireGroupChange(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, testRepo, "feat")
-		done <- result{change, err}
-	}()
-	<-entered // webpool's acquire waits at its orchestrator
-	waitForRecord(t, gf.stateDir, ownHQAlias)
-	takenByAnotherZcp(t, gf)
-	close(gate)
-
-	var res result
-	select {
-	case res = <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the group acquire did not return")
-	}
-	if res.err == nil {
-		t.Fatalf("acquire = %+v, want a refusal: hqpool-3's lease ended before its checkout", res.change.Leases)
-	}
-	if !strings.Contains(res.err.Error(), ownHQAlias) {
-		t.Errorf("refusal %q should name %s", res.err, ownHQAlias)
-	}
-	for _, c := range gf.ssh.checkouts() {
-		if c.hostname == ownHQAlias {
-			t.Errorf("checked out in %s, another lease's container: %s", ownHQAlias, c.command)
+	synctest.Test(t, func(t *testing.T) {
+		gf := newGroupFixture(t)
+		gate, entered := make(chan struct{}), make(chan struct{}, 1)
+		gf.web.mu.Lock()
+		gf.web.gate, gf.web.entered = gate, entered
+		gf.web.mu.Unlock()
+		type result struct {
+			change LeaseChange
+			err    error
 		}
-	}
-	if got := recordLeaseOf(t, gf.stateDir, ownHQAlias); got != ownOtherLease {
-		t.Errorf("%s's record holds lease %q, want the other process's, untouched", ownHQAlias, got)
-	}
-	if got := gf.hq.leaseOf(ownHQContainer); got != ownOtherLease {
-		t.Errorf("the container's lease = %q, want the other process's", got)
-	}
-	if resets := gf.hq.freeResetLog(); len(resets) != 0 {
-		t.Errorf("free containers reset: %v", resets)
-	}
-	if got := recordLeaseOf(t, gf.stateDir, ownWebAlias); got != "" {
-		t.Errorf("webpool-7's record survived the refusal (lease %q): the acquire hands back what it reserved", got)
-	}
-	if rels := gf.web.releaseLog(); len(rels) != 1 || rels[0].id != ownWebContainer {
-		t.Errorf("webpool releases = %+v, want webpool-7 handed back", rels)
-	}
+		done := make(chan result, 1)
+		go func() {
+			change, err := LeaseAcquireGroupChange(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, testRepo, "feat")
+			done <- result{change, err}
+		}()
+		<-entered       // webpool's acquire waits at its orchestrator
+		synctest.Wait() // the unblocked member finishes reserving while webpool is held
+		if _, err := loadLeaseRecord(gf.stateDir, ownHQAlias); err != nil {
+			t.Fatalf("the unblocked member did not record %s: %v", ownHQAlias, err)
+		}
+		takenByAnotherZcp(t, gf)
+		close(gate)
+
+		res := <-done
+		if res.err == nil {
+			t.Fatalf("acquire = %+v, want a refusal: hqpool-3's lease ended before its checkout", res.change.Leases)
+		}
+		if !strings.Contains(res.err.Error(), ownHQAlias) {
+			t.Errorf("refusal %q should name %s", res.err, ownHQAlias)
+		}
+		for _, c := range gf.ssh.checkouts() {
+			if c.hostname == ownHQAlias {
+				t.Errorf("checked out in %s, another lease's container: %s", ownHQAlias, c.command)
+			}
+		}
+		if got := recordLeaseOf(t, gf.stateDir, ownHQAlias); got != ownOtherLease {
+			t.Errorf("%s's record holds lease %q, want the other process's, untouched", ownHQAlias, got)
+		}
+		if got := gf.hq.leaseOf(ownHQContainer); got != ownOtherLease {
+			t.Errorf("the container's lease = %q, want the other process's", got)
+		}
+		if resets := gf.hq.freeResetLog(); len(resets) != 0 {
+			t.Errorf("free containers reset: %v", resets)
+		}
+		if got := recordLeaseOf(t, gf.stateDir, ownWebAlias); got != "" {
+			t.Errorf("webpool-7's record survived the refusal (lease %q): the acquire hands back what it reserved", got)
+		}
+		if rels := gf.web.releaseLog(); len(rels) != 1 || rels[0].id != ownWebContainer {
+			t.Errorf("webpool releases = %+v, want webpool-7 handed back", rels)
+		}
+	})
 }
 
 // TestLeaseAcquire_RecordTakenDuringTheCheckout_NeverWrittenOver: the
@@ -208,52 +196,50 @@ func newRewireTrio(t *testing.T, hqRelease func()) (*rewireFixture, *devserverte
 // neither container.
 func TestLeaseRelease_TwoSiblingsAtOnce_NoOverlayNamesEither(t *testing.T) {
 	t.Parallel()
-	atRelease, proceed := make(chan struct{}, 1), make(chan struct{})
-	var once sync.Once
-	rf, worker := newRewireTrio(t, func() {
-		once.Do(func() {
-			atRelease <- struct{}{}
-			<-proceed
+	synctest.Test(t, func(t *testing.T) {
+		atRelease, proceed := make(chan struct{}, 1), make(chan struct{})
+		var once sync.Once
+		rf, worker := newRewireTrio(t, func() {
+			once.Do(func() {
+				atRelease <- struct{}{}
+				<-proceed
+			})
 		})
-	})
-	rf.acquire(t, groupHQPool, groupWebPool, "apipool")
-	if got, want := worker.Overlay(), map[string]string{"HQ_HOST": rewireHQHost, "WEB_HOST": rewireWebHost}; !maps.Equal(got, want) {
-		t.Fatalf("apipool-5's overlay after the acquire = %v, want %v", got, want)
-	}
+		rf.acquire(t, groupHQPool, groupWebPool, "apipool")
+		if got, want := worker.Overlay(), map[string]string{"HQ_HOST": rewireHQHost, "WEB_HOST": rewireWebHost}; !maps.Equal(got, want) {
+			t.Fatalf("apipool-5's overlay after the acquire = %v, want %v", got, want)
+		}
 
-	doneHQ, doneWeb := make(chan error, 1), make(chan error, 1)
-	go func() {
-		_, err := LeaseReleaseChange(context.Background(), rf.deps, ownHQAlias, true)
-		doneHQ <- err
-	}()
-	<-atRelease // hqpool-3's siblings are rewired without it; its release waits at the orchestrator
-	go func() {
-		_, err := LeaseReleaseChange(context.Background(), rf.deps, ownWebAlias, true)
-		doneWeb <- err
-	}()
-	select {
-	case err := <-doneWeb:
-		doneWeb <- err
-	case <-time.After(2 * time.Second):
-		// webpool-7's release waits for hqpool-3's to finish.
-	}
-	close(proceed)
-	for name, ch := range map[string]chan error{ownHQAlias: doneHQ, ownWebAlias: doneWeb} {
+		doneHQ, doneWeb := make(chan error, 1), make(chan error, 1)
+		go func() {
+			_, err := LeaseReleaseChange(context.Background(), rf.deps, ownHQAlias, true)
+			doneHQ <- err
+		}()
+		<-atRelease // hqpool-3's siblings are rewired without it; its release waits at the orchestrator
+		go func() {
+			_, err := LeaseReleaseChange(context.Background(), rf.deps, ownWebAlias, true)
+			doneWeb <- err
+		}()
+		synctest.Wait()
 		select {
-		case err := <-ch:
-			if err != nil {
+		case err := <-doneWeb:
+			doneWeb <- err
+		default:
+			// webpool-7's release waits for hqpool-3's to finish.
+		}
+		close(proceed)
+		for name, ch := range map[string]chan error{ownHQAlias: doneHQ, ownWebAlias: doneWeb} {
+			if err := <-ch; err != nil {
 				t.Errorf("release %s: %v", name, err)
 			}
-		case <-time.After(10 * time.Second):
-			t.Fatalf("release %s did not return", name)
 		}
-	}
 
-	for name, value := range worker.Overlay() {
-		if value == rewireHQHost || value == rewireWebHost {
-			t.Errorf("apipool-5's worker runs with %s=%s, a container released with its lease (overlay %v)", name, value, worker.Overlay())
+		for name, value := range worker.Overlay() {
+			if value == rewireHQHost || value == rewireWebHost {
+				t.Errorf("apipool-5's worker runs with %s=%s, a container released with its lease (overlay %v)", name, value, worker.Overlay())
+			}
 		}
-	}
+	})
 }
 
 // TestScale_PoolLowering_ContainerBeingParkedIsLeased: a container its holder

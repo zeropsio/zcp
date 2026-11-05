@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -434,76 +435,75 @@ func TestImport_NilTypes_NoWarnings(t *testing.T) {
 
 func TestImport_DeletingServiceConflict_WaitsAndSucceeds(t *testing.T) {
 	t.Parallel()
-
-	callCount := 0
-	mock := &deletingMock{
-		Mock: importMock(),
-		listServicesFunc: func() []platform.ServiceStack {
-			callCount++
-			if callCount <= 2 {
-				// First 2 polls: service still DELETING.
-				return []platform.ServiceStack{
-					{ID: "svc-old", Name: "api", Status: "DELETING"},
+	synctest.Test(t, func(t *testing.T) {
+		callCount := 0
+		mock := &deletingMock{
+			Mock: importMock(),
+			listServicesFunc: func() []platform.ServiceStack {
+				callCount++
+				if callCount <= 2 {
+					// First 2 polls: service still DELETING.
+					return []platform.ServiceStack{
+						{ID: "svc-old", Name: "api", Status: "DELETING"},
+					}
 				}
-			}
-			// After 2 polls: service gone.
-			return []platform.ServiceStack{}
-		},
-	}
+				// After 2 polls: service gone.
+				return []platform.ServiceStack{}
+			},
+		}
 
-	content := `services:
+		content := `services:
   - hostname: api
     type: nodejs@22
     mode: NON_HA
 `
-	result, err := Import(context.Background(), mock, "proj-1", content, "", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.ProjectID != "proj-1" {
-		t.Errorf("expected projectId=proj-1, got %s", result.ProjectID)
-	}
-	if callCount < 3 {
-		t.Errorf("expected at least 3 ListServices calls (2 DELETING + 1 clear), got %d", callCount)
-	}
+		result, err := Import(context.Background(), mock, "proj-1", content, "", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.ProjectID != "proj-1" {
+			t.Errorf("expected projectId=proj-1, got %s", result.ProjectID)
+		}
+		if callCount < 3 {
+			t.Errorf("expected at least 3 ListServices calls (2 DELETING + 1 clear), got %d", callCount)
+		}
+	})
 }
 
 func TestImport_DeletingServiceConflict_Timeout(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping timeout test in short mode")
-	}
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		mock := &deletingMock{
+			Mock: importMock(),
+			listServicesFunc: func() []platform.ServiceStack {
+				// Always DELETING — never clears.
+				return []platform.ServiceStack{
+					{ID: "svc-old", Name: "api", Status: "DELETING"},
+				}
+			},
+		}
 
-	mock := &deletingMock{
-		Mock: importMock(),
-		listServicesFunc: func() []platform.ServiceStack {
-			// Always DELETING — never clears.
-			return []platform.ServiceStack{
-				{ID: "svc-old", Name: "api", Status: "DELETING"},
-			}
-		},
-	}
-
-	content := `services:
+		content := `services:
   - hostname: api
     type: nodejs@22
     mode: NON_HA
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	_, err := Import(ctx, mock, "proj-1", content, "", false)
-	if err == nil {
-		t.Fatal("expected timeout error for stuck DELETING service")
-	}
+		_, err := Import(ctx, mock, "proj-1", content, "", false)
+		if err == nil {
+			t.Fatal("expected timeout error for stuck DELETING service")
+		}
 
-	pe, ok := err.(*platform.PlatformError)
-	if !ok {
-		t.Fatalf("expected *PlatformError, got %T: %v", err, err)
-	}
-	if pe.Code != platform.ErrAPITimeout {
-		t.Errorf("expected code %s, got %s", platform.ErrAPITimeout, pe.Code)
-	}
+		pe, ok := err.(*platform.PlatformError)
+		if !ok {
+			t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+		}
+		if pe.Code != platform.ErrAPITimeout {
+			t.Errorf("expected code %s, got %s", platform.ErrAPITimeout, pe.Code)
+		}
+	})
 }
 
 func TestImport_DeletingServiceNoConflict(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -129,23 +130,25 @@ func TestProbe_ADevServerGetsItsFirstCompile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			server := &compilingServer{compile: tt.compile}
-			p := httpProbe{doer: server, patient: tt.patient, first: 20 * time.Millisecond, ceiling: 300 * time.Millisecond}
-			start := time.Now()
-			check := p.probe(context.Background(), "http://appdev:3000/", checkNameHTTPInternal)
-			took := time.Since(start)
-			if check.Status != tt.wantStatus {
-				t.Errorf("status = %q (%s), want %q", check.Status, check.Detail, tt.wantStatus)
-			}
-			if tt.wantTries > 0 && server.tries != tt.wantTries {
-				t.Errorf("requests = %d, want %d", server.tries, tt.wantTries)
-			}
-			if tt.wantStatus == CheckFail && tt.patient && (took < 300*time.Millisecond || took > 600*time.Millisecond) {
-				t.Errorf("gave up after %s, want at the 300ms ceiling", took)
-			}
-			if tt.wantStatus == CheckPass && tt.compile > 0 && !strings.Contains(check.Detail, "first request") {
-				t.Errorf("detail = %q, want it to say the page compiled on its first request", check.Detail)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				server := &compilingServer{compile: tt.compile}
+				p := httpProbe{doer: server, patient: tt.patient, first: 20 * time.Millisecond, ceiling: 300 * time.Millisecond}
+				start := time.Now()
+				check := p.probe(context.Background(), "http://appdev:3000/", checkNameHTTPInternal)
+				took := time.Since(start)
+				if check.Status != tt.wantStatus {
+					t.Errorf("status = %q (%s), want %q", check.Status, check.Detail, tt.wantStatus)
+				}
+				if tt.wantTries > 0 && server.tries != tt.wantTries {
+					t.Errorf("requests = %d, want %d", server.tries, tt.wantTries)
+				}
+				if tt.wantStatus == CheckFail && tt.patient && took != 300*time.Millisecond {
+					t.Errorf("gave up after %s, want at the 300ms ceiling", took)
+				}
+				if tt.wantStatus == CheckPass && tt.compile > 0 && !strings.Contains(check.Detail, "first request") {
+					t.Errorf("detail = %q, want it to say the page compiled on its first request", check.Detail)
+				}
+			})
 		})
 	}
 }

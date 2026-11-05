@@ -1612,12 +1612,12 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 	}{
 		{
 			name:      "stopped mid-upload",
-			zcli:      "echo 'Uploading'\necho > \"$ZCLI_REACHED\"\nwhile [ ! -e upload-go ]; do sleep 0.1; done\necho 'Deploying service'\necho built > built\n",
+			zcli:      "exec 3>\"$ZCLI_DONE\"\nexec 4<\"$ZCLI_GATE\"\necho 'Uploading'\necho > \"$ZCLI_REACHED\"\ncat <&4 >/dev/null\necho 'Deploying service'\necho built > built\n",
 			wantBuilt: false,
 		},
 		{
 			name:       "stopped after the upload",
-			zcli:       "echo 'Deploying service'\necho built > built\necho > \"$ZCLI_REACHED\"\nwhile [ ! -e upload-go ]; do sleep 0.1; done\n",
+			zcli:       "exec 3>\"$ZCLI_DONE\"\nexec 4<\"$ZCLI_GATE\"\necho 'Deploying service'\necho built > built\necho > \"$ZCLI_REACHED\"\ncat <&4 >/dev/null\n",
 			wantBuilt:  true,
 			wantMarker: true,
 		},
@@ -1631,10 +1631,22 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 			// zcli writes this fifo when it reaches the line the case stops
 			// it at; reading it waits for that, however slow the setup is.
 			reached := filepath.Join(t.TempDir(), "reached")
-			if out, err := exec.CommandContext(ctx, "mkfifo", reached).CombinedOutput(); err != nil {
+			done := filepath.Join(t.TempDir(), "done")
+			gate := filepath.Join(t.TempDir(), "gate")
+			if out, err := exec.CommandContext(ctx, "mkfifo", reached, done, gate).CombinedOutput(); err != nil {
 				t.Fatalf("mkfifo: %v: %s", err, out)
 			}
-			r.env = append(r.env, "ZCLI_REACHED="+reached)
+			held, err := os.OpenFile(gate, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer held.Close()
+			r.env = append(r.env, "ZCLI_REACHED="+reached, "ZCLI_DONE="+done, "ZCLI_GATE="+gate)
+			zcliDone := make(chan error, 1)
+			go func() {
+				_, err := os.ReadFile(done)
+				zcliDone <- err
+			}()
 			// The upload call's session ends as a stopped ssh client's does,
 			// once zcli is there.
 			session, endSession := context.WithCancel(ctx)
@@ -1661,10 +1673,12 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 			<-pushed
 
 			stopOut, _ := r.run(ctx, pushStopCommand(r.pushDir))
-			if err := os.WriteFile(filepath.Join(r.dir, "upload-go"), nil, 0o600); err != nil {
+			if err := held.Close(); err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(time.Second)
+			if err := <-zcliDone; err != nil {
+				t.Fatalf("read zcli completion: %v", err)
+			}
 			if _, err := os.Stat(filepath.Join(r.dir, "built")); (err == nil) != tt.wantBuilt {
 				t.Errorf("zcli asked for the build = %v, want %v", err == nil, tt.wantBuilt)
 			}

@@ -81,6 +81,17 @@ func activityLine(t *testing.T, ssh *localCheckoutSSH) string {
 	return line
 }
 
+// activityCheckout runs this real-shell fixture under the test's lifetime;
+// these tests check the read's content, while timeout behavior is tested separately.
+type activityCheckout struct {
+	*localCheckoutSSH
+	ctx context.Context //nolint:containedctx // test subprocess lifetime follows the test
+}
+
+func (s activityCheckout) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	return s.localCheckoutSSH.ExecSSH(s.ctx, host, command) //nolint:contextcheck // this test deliberately uses the test lifetime
+}
+
 // TestLeaseActivity_RealCheckout_ReadsWithoutWritingAndAgreesWithTheGuard:
 // in a real checkout, the read answers "<epoch> " (an empty second field)
 // when nothing is modified and "<epoch> <epoch>" once files are; it takes the
@@ -107,7 +118,7 @@ func TestLeaseActivity_RealCheckout_ReadsWithoutWritingAndAgreesWithTheGuard(t *
 	before := readCheckoutIndex(t, work)
 
 	ssh := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 0)}
-	d := LeaseDeps{SSH: ssh, ActivityTimeout: time.Minute} // a loaded local shell may outlast the container's budget
+	d := LeaseDeps{SSH: activityCheckout{ssh, t.Context()}}
 	rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
 
 	// Nothing modified: the second field is empty.
@@ -237,12 +248,8 @@ func TestLeaseActivity_RealShell_SupervisorAnswersAfterGitFails_KeepsGitsFailure
 		t.Skip("git is not installed")
 	}
 	rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
-	// A local shell under a loaded test run can outlast the container's
-	// budget; this test is about what the read answers, not its speed.
-	const budget = time.Minute
-
 	notACheckout := &localCheckoutSSH{dir: t.TempDir(), path: withFakeSupervisor(t, gnuStatPath(t), 0)}
-	act, unsaved := readLeaseActivity(context.Background(), LeaseDeps{SSH: notACheckout, ActivityTimeout: budget}, rec)
+	act, unsaved := readLeaseActivity(context.Background(), LeaseDeps{SSH: activityCheckout{notACheckout, t.Context()}}, rec)
 	if unsaved != nil || !strings.Contains(strings.ToLower(act.Note), "not a git repository") || strings.Contains(act.Note, "preview") {
 		t.Errorf("not a checkout = %+v / %+v, want git status's failure in git's words, nothing about the preview", act, unsaved)
 	}
@@ -255,13 +262,13 @@ func TestLeaseActivity_RealShell_SupervisorAnswersAfterGitFails_KeepsGitsFailure
 	work := t.TempDir()
 	runCheckout(t, work, origin, "feat")
 	failing := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 2)}
-	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: failing, ActivityTimeout: budget}, rec)
+	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: activityCheckout{failing, t.Context()}}, rec)
 	if act.LastChangeAt == "" || unsaved == nil || act.PreviewOpenConns != nil || !strings.Contains(act.Note, "preview not observed") {
 		t.Errorf("a failing supervisor = %+v / %+v, want the checkout read and the preview not observed", act, unsaved)
 	}
 
 	clean := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 0)}
-	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: clean, ActivityTimeout: budget}, rec)
+	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: activityCheckout{clean, t.Context()}}, rec)
 	if act.LastChangeAt == "" || unsaved == nil || act.Note != "" || act.PreviewOpenConns == nil || *act.PreviewOpenConns != 1 {
 		t.Errorf("clean = %+v / %+v, want the checkout and the preview read, no note", act, unsaved)
 	}

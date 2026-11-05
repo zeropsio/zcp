@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -546,12 +547,12 @@ func TestLeaseList_NoPool_CoversEveryPoolAndRecord(t *testing.T) {
 // cut short after the container was reserved.
 type slowAcquireSwarm struct {
 	*fakeSwarm
-	started chan struct{}
+	started chan context.Context
 	answer  chan struct{}
 }
 
 func (s slowAcquireSwarm) Acquire(ctx context.Context, req platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
-	close(s.started)
+	s.started <- ctx
 	select {
 	case <-ctx.Done():
 		return platform.SwarmAcquired{}, fmt.Errorf("request: %w", ctx.Err())
@@ -567,7 +568,7 @@ func TestLeaseAcquire_CallerGoneMidAcquire_NoLeak(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
-	slow := slowAcquireSwarm{fakeSwarm: fx.swarm, started: make(chan struct{}), answer: make(chan struct{})}
+	slow := slowAcquireSwarm{fakeSwarm: fx.swarm, started: make(chan context.Context), answer: make(chan struct{})}
 	fx.deps.Swarm = func(string, string) SwarmAPI { return slow }
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -576,9 +577,11 @@ func TestLeaseAcquire_CallerGoneMidAcquire_NoLeak(t *testing.T) {
 		defer close(done)
 		_, _ = LeaseAcquire(ctx, fx.deps, testPoolHost, testRepo, "feature")
 	}()
-	<-slow.started
+	acquireCtx := <-slow.started
 	cancel()
-	time.Sleep(50 * time.Millisecond) // the caller is gone before the orchestrator answers
+	if err := acquireCtx.Err(); err != nil {
+		t.Errorf("the in-flight reservation inherited the caller's cancellation: %v", err)
+	}
 	close(slow.answer)
 	<-done
 
@@ -826,22 +829,15 @@ func (hangingListSwarm) Containers(ctx context.Context) ([]platform.SwarmContain
 // read budget, however long the client allows a start or a reset to take.
 func TestLeaseList_HangingOrchestrator_BoundedByTheReadBudget(t *testing.T) {
 	t.Parallel()
-	fx := newLeaseFixture(t)
-	fx.deps.Swarm = func(string, string) SwarmAPI { return hangingListSwarm{fx.swarm} }
-	fx.deps.ReadTimeout = 50 * time.Millisecond
-	done := make(chan error, 1)
-	go func() {
+	synctest.Test(t, func(t *testing.T) {
+		fx := newLeaseFixture(t)
+		fx.deps.Swarm = func(string, string) SwarmAPI { return hangingListSwarm{fx.swarm} }
+		fx.deps.ReadTimeout = 50 * time.Millisecond
 		_, err := LeaseList(context.Background(), fx.deps, testPoolHost)
-		done <- err
-	}()
-	select {
-	case err := <-done:
 		if err == nil {
 			t.Error("a listing the orchestrator never answered reported no error")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("status still waiting on the orchestrator after 5s")
-	}
+	})
 }
 
 // TestPoolOrchestratorCheck: a pool is never probed by its hostname (PS-3);

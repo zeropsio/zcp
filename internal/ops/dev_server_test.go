@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -1320,19 +1321,21 @@ func TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeap
 // server still starting when the budget ends is read as starting.
 func TestReadDevServersSettled_AServerStillStartingWhenTheBudgetEndsIsReadStarting(t *testing.T) {
 	t.Parallel()
-	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"vets","port":8083,"command":"b","cwd":"."}]}`)
-	c.Settle = map[string]int{"vets": 1000}
-	c.Redeploy()
+	synctest.Test(t, func(t *testing.T) {
+		c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"vets","port":8083,"command":"b","cwd":"."}]}`)
+		c.Settle = map[string]int{"vets": 1000}
+		c.Redeploy()
 
-	start := time.Now()
-	ds, err := readDevServersSettled(t.Context(), c, "petclinicdev", "/var/www", 100*time.Millisecond, 10*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if took := time.Since(start); took > time.Second {
-		t.Fatalf("the read took %s past a 100ms budget", took)
-	}
-	if got := ds.State.Servers["vets"].Status; got != devsup.StatusStarting {
-		t.Fatalf("vets = %q, want starting", got)
-	}
+		start := time.Now()
+		ds, err := readDevServersSettled(t.Context(), c, "petclinicdev", "/var/www", 100*time.Millisecond, 10*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if took := time.Since(start); took != 100*time.Millisecond {
+			t.Fatalf("the read took %s, want the 100ms budget", took)
+		}
+		if got := ds.State.Servers["vets"].Status; got != devsup.StatusStarting {
+			t.Fatalf("vets = %q, want starting", got)
+		}
+	})
 }

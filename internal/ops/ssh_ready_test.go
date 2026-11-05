@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -87,22 +88,24 @@ func TestWaitSSHReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := tt.ctx()
-			defer cancel()
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := tt.ctx()
+				defer cancel()
 
-			err := waitSSHReady(ctx, tt.deployer, "testhost", tt.cfg)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
+				err := waitSSHReady(ctx, tt.deployer, "testhost", tt.cfg)
+				if tt.wantErr {
+					if err == nil {
+						t.Fatal("expected error, got nil")
+					}
+					if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+						t.Errorf("error %q does not contain %q", err.Error(), tt.errSubstr)
+					}
+					return
 				}
-				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
-					t.Errorf("error %q does not contain %q", err.Error(), tt.errSubstr)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			})
 		})
 	}
 }

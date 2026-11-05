@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -18,9 +19,10 @@ import (
 // responses with empty bodies. When the queue is exhausted, the last entry
 // is returned repeatedly.
 type sequencingHTTP struct {
-	mu        sync.Mutex
-	responses []int
-	calls     atomic.Int32
+	mu         sync.Mutex
+	responses  []int
+	calls      atomic.Int32
+	onResponse func()
 }
 
 func (s *sequencingHTTP) Do(*http.Request) (*http.Response, error) {
@@ -33,6 +35,9 @@ func (s *sequencingHTTP) Do(*http.Request) (*http.Response, error) {
 	next := s.responses[0]
 	if len(s.responses) > 1 {
 		s.responses = s.responses[1:]
+	}
+	if s.onResponse != nil {
+		s.onResponse()
 	}
 	if next < 0 {
 		return nil, fmt.Errorf("transport error")
@@ -52,114 +57,126 @@ func TestWaitHTTPReady(t *testing.T) {
 	// failures). Subtests therefore run sequentially.
 
 	t.Run("immediate 200 returns nil on first attempt", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{200}}
-		err := WaitHTTPReady(context.Background(), doer, "http://test/")
-		if err != nil {
-			t.Fatalf("want nil, got %v", err)
-		}
-		if got := doer.calls.Load(); got != 1 {
-			t.Errorf("want 1 HTTP call, got %d", got)
-		}
+			doer := &sequencingHTTP{responses: []int{200}}
+			err := WaitHTTPReady(context.Background(), doer, "http://test/")
+			if err != nil {
+				t.Fatalf("want nil, got %v", err)
+			}
+			if got := doer.calls.Load(); got != 1 {
+				t.Errorf("want 1 HTTP call, got %d", got)
+			}
+		})
 	})
 
 	t.Run("404 counts as ready (< 500 contract)", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{404}}
-		if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
-			t.Fatalf("404 must count as ready: got %v", err)
-		}
+			doer := &sequencingHTTP{responses: []int{404}}
+			if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
+				t.Fatalf("404 must count as ready: got %v", err)
+			}
+		})
 	})
 
 	t.Run("5xx retried until 200", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{502, 502, 200}}
-		if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
-			t.Fatalf("want nil after 3 attempts, got %v", err)
-		}
-		if got := doer.calls.Load(); got < 3 {
-			t.Errorf("want ≥3 HTTP calls, got %d", got)
-		}
+			doer := &sequencingHTTP{responses: []int{502, 502, 200}}
+			if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
+				t.Fatalf("want nil after 3 attempts, got %v", err)
+			}
+			if got := doer.calls.Load(); got < 3 {
+				t.Errorf("want ≥3 HTTP calls, got %d", got)
+			}
+		})
 	})
 
 	t.Run("transport error retried until success", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{-1, -1, 200}}
-		if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
-			t.Fatalf("want nil after transport retries, got %v", err)
-		}
+			doer := &sequencingHTTP{responses: []int{-1, -1, 200}}
+			if err := WaitHTTPReady(context.Background(), doer, "http://test/"); err != nil {
+				t.Fatalf("want nil after transport retries, got %v", err)
+			}
+		})
 	})
 
 	t.Run("timeout on 5xx loop wraps last status", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{503}}
-		err := WaitHTTPReady(context.Background(), doer, "http://test/")
-		if err == nil {
-			t.Fatal("want timeout error, got nil")
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, "http not ready") {
-			t.Errorf("want 'http not ready' in error, got: %s", msg)
-		}
-		if !strings.Contains(msg, "HTTP 503") {
-			t.Errorf("want last status wrapped, got: %s", msg)
-		}
+			doer := &sequencingHTTP{responses: []int{503}}
+			err := WaitHTTPReady(context.Background(), doer, "http://test/")
+			if err == nil {
+				t.Fatal("want timeout error, got nil")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "http not ready") {
+				t.Errorf("want 'http not ready' in error, got: %s", msg)
+			}
+			if !strings.Contains(msg, "HTTP 503") {
+				t.Errorf("want last status wrapped, got: %s", msg)
+			}
+		})
 	})
 
 	t.Run("timeout on transport error wraps last cause", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
+			defer restore()
 
-		doer := &sequencingHTTP{responses: []int{-1}}
-		err := WaitHTTPReady(context.Background(), doer, "http://test/")
-		if err == nil {
-			t.Fatal("want timeout error, got nil")
-		}
-		if !strings.Contains(err.Error(), "transport error") {
-			t.Errorf("want 'transport error' wrapped, got: %v", err)
-		}
+			doer := &sequencingHTTP{responses: []int{-1}}
+			err := WaitHTTPReady(context.Background(), doer, "http://test/")
+			if err == nil {
+				t.Fatal("want timeout error, got nil")
+			}
+			if !strings.Contains(err.Error(), "transport error") {
+				t.Errorf("want 'transport error' wrapped, got: %v", err)
+			}
+		})
 	})
 
 	t.Run("pre-cancelled context returns ctx error", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
 
-		doer := &sequencingHTTP{responses: []int{200}}
-		err := WaitHTTPReady(ctx, doer, "http://test/")
-		if !errors.Is(err, context.Canceled) {
-			t.Errorf("want context.Canceled, got %v", err)
-		}
+			doer := &sequencingHTTP{responses: []int{200}}
+			err := WaitHTTPReady(ctx, doer, "http://test/")
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("want context.Canceled, got %v", err)
+			}
+		})
 	})
 
 	t.Run("context cancelled mid-flight returns ctx error", func(t *testing.T) {
-		restore := OverrideHTTPReadyConfigForTest(10*time.Millisecond, 1*time.Second)
-		defer restore()
+		synctest.Test(t, func(t *testing.T) {
+			restore := OverrideHTTPReadyConfigForTest(10*time.Millisecond, 1*time.Second)
+			defer restore()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		// Cancel after first response arrives.
-		doer := &sequencingHTTP{responses: []int{502, 502, 502}}
-		go func() {
-			time.Sleep(5 * time.Millisecond)
-			cancel()
-		}()
+			ctx, cancel := context.WithCancel(context.Background())
+			// Cancel when the first response arrives.
+			doer := &sequencingHTTP{responses: []int{502, 502, 502}, onResponse: cancel}
 
-		err := WaitHTTPReady(ctx, doer, "http://test/")
-		if !errors.Is(err, context.Canceled) {
-			t.Errorf("want context.Canceled, got %v", err)
-		}
+			err := WaitHTTPReady(ctx, doer, "http://test/")
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("want context.Canceled, got %v", err)
+			}
+		})
 	})
 
 	t.Run("nil client returns error, zero HTTP calls", func(t *testing.T) {
