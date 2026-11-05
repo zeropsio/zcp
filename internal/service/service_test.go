@@ -365,19 +365,11 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
-			// The seed is ready before the server reads its signer store once.
-			seeded := ""
-			service.SetMateSeedSignIns(func(_ context.Context, lookup func(string) string) {
-				seeded = lookup("PATH")
-			})
-			t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
 			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
 			var gotEnv []string
 			var atLaunch mate.Status
-			var seededAtLaunch string
 			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
 				gotEnv = extraEnv
-				seededAtLaunch = seeded
 				atLaunch, _ = mate.ReadStatus(statusPath)
 				releaseBoot()
 				return nil
@@ -398,9 +390,6 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Start(mate): %v", err)
-			}
-			if seededAtLaunch != tt.store["PATH"] {
-				t.Errorf("the sign-in seed ran over %q before the server started, want the live store's", seededAtLaunch)
 			}
 			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
 				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)

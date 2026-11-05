@@ -407,9 +407,7 @@ needs attended recovery, never a guessed legacy capability.
 `zerops@mate` when the unit is registered, so an update needs no container restart. It is what the
 web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
 `{installed, latest, contract, updateAvailable}` from the same resolver, using the manifest cache
-(§2.1c) — the one reader of "is there a newer mate" in the whole product. It also reports the
-completed sign-in seed as `signIns: {state, input?, at, error?}` (§10.5); `input` is an opaque
-fingerprint of HQ's origin and the project key, never the key. The text status names the same state and reason.
+(§2.1c) — the one reader of "is there a newer mate" in the whole product.
 
 The same status says whether a container restart, which installs both halves (§2.9 step 7), would
 change anything. **`zcp: {installed, latest, behind}`**, always present, is this binary (its
@@ -4733,24 +4731,8 @@ When a sign-in the Mate's server walked succeeds, the server keeps who started i
 behind that connection (§3.8) — before anything else hears of the success, in `~/.mate/signed-in.json`
 beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at start: a restart keeps
 the record, and a rewrite under a running server changes nothing. A Mate migrated from main, whose
-signer facts have been ported to HQ and which has no document, gets it written from HQ's
-`GET /api/mate/self` signer map (the project key in the header, §3.6) by `zcp service mate` before
-its server first starts — once, each sign-in dated by the seed (`mate.SeedSignInsForIdentity`).
-That supervisor is the server's parent, so it reaches HQ at the origin §3.5 resolves for a process
-the server did not start.
-The read has a bounded request context, and its failure always continues to the server's start and
-its own link to HQ. HQ's answer must name the container's project id. An existing document is
-preserved without asking HQ, including one written while HQ was answering. A completed seed is
-never repeated, even after its store disappears. A seed counts as done only when HQ answered it. A
-read HQ did not answer (503, no connection, timeout) leaves the store untouched, logs the reason and
-records `retry`; the supervisor tries again after 5 s, 15 s, 45 s, 2 min and twice 5 min, and every
-later start reads again while the marker says `retry`. A refusal (4xx), or a store that will not
-write, records `failed` with an opaque fingerprint of HQ's origin and the project key in
-`~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports either outcome. The same
-failed input is not retried on a launch; a changed HQ origin or project key permits one new attempt.
-To ask again explicitly, remove the marker and start the Mate service again. A seed completed after
-the server has started is read on its next manual restart, since the server reads its store only at
-startup. HQ omits the signer map when its ported record is empty. An API key login has no sign-in
+signer facts have been ported to HQ, takes its signers from HQ's link frame: HQ sends the ported
+signer map on the Mate's link and the server applies it to its own store; zcp reads no signers. An API key login has no sign-in
 to walk: the connection that stores its key signs it in, and its stored key is its credential. That
 record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
 `orchestration.dispatchCommand`'s turn-starting commands from any connection but the signer's, holds
@@ -4762,8 +4744,8 @@ signed in before the record existed, from a terminal, or copied in — runs for 
 signs it in through Mate. Forging a record takes access to the container, and that access already
 holds the login's credential. The Mate reports its signers to its HQ in its summary
 (`MateSummary.signers`), and HQ hands them on to whoever may observe the Mate for the menu's
-"signed in by". HQ also keeps the ported signer metadata in its project record for this one-time
-seed; the server's sign-in store owns subsequent sign-ins. The card names the
+"signed in by". HQ also keeps the ported signer metadata in its project record for that link frame;
+the server's sign-in store owns subsequent sign-ins. The card names the
 signer in place of the composer for everyone else. Said out loud: the gate stops turns; everyone
 who can open a Mate can copy its login file from the terminal. D6 keeps a colleague from running
 someone else's agent by habit, and records who signed it in; it does not claim to stop theft.

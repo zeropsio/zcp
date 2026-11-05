@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -225,8 +223,7 @@ func mateLaunchSetupThenInstall() {
 var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines), seeds the server's absent sign-ins from HQ with the
-// project key, starts keeping the wired dev services' git on the Mate's HQ
+// mate.LaunchEnvLines), starts keeping the wired dev services' git on the Mate's HQ
 // (tools.KeepMateDevGit), and starts the boot import when the container
 // carries a runtimes plan. The plan, the Mate's key and its project come from the live
 // env store, as the guard's flag does: a unit's own environment carries none
@@ -243,7 +240,6 @@ func mateLaunchSetup() {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
-	mateSeedSignIns(context.Background(), lookup)
 	go keepMateDevGit(env)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
@@ -260,83 +256,6 @@ func keepMateDevGit(env func() func(string) string) {
 		}
 	}()
 	tools.KeepMateDevGit(context.Background(), env, logHQ)
-}
-
-// hqCallTimeout bounds each call to HQ.
-const hqCallTimeout = 15 * time.Second
-
-// mateSeedSignIns seeds the server's sign-ins at launch (launchSeedSignIns);
-// package-level so tests stand in for it.
-var mateSeedSignIns = launchSeedSignIns
-
-// SetMateSeedSignIns stands in for the sign-in seed; for tests.
-func SetMateSeedSignIns(fn func(context.Context, func(string) string)) { mateSeedSignIns = fn }
-
-// seedRetryDelays are the waits between the retries of a seed HQ did not
-// answer, while this process runs; after the last, the next start tries again.
-var seedRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second, 2 * time.Minute, 5 * time.Minute, 5 * time.Minute}
-
-// launchSeedSignIns seeds once before the server starts; a seed HQ did not
-// answer is retried in the background (retrySignInSeed).
-func launchSeedSignIns(ctx context.Context, lookup func(string) string) {
-	if seedSignIns(ctx, lookup) {
-		go retrySignInSeed(ctx, lookup, sleepContext)
-	}
-}
-
-// retrySignInSeed tries an owed seed again after each delay, until HQ takes or
-// refuses it or the delays run out. A seed written after the server started is
-// read on its next restart, since the server reads its store only at startup.
-func retrySignInSeed(ctx context.Context, lookup func(string) string, wait func(context.Context, time.Duration) bool) {
-	for _, delay := range seedRetryDelays {
-		if !wait(ctx, delay) || !seedSignIns(ctx, lookup) {
-			return
-		}
-	}
-}
-
-// sleepContext waits d, reporting false when ctx ends first.
-func sleepContext(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-// seedSignIns reads the signers with the Mate's identity as the env holds it
-// now, and reports whether the seed is still owed because HQ did not answer.
-// A refusal is retained for that input, reported by mate status, and never
-// fatal to launch or the link; a changed identity permits a new attempt, and
-// removing the marker and restarting the unit is the operator's manual
-// "again". HQ naming no signers is read once more by the unit's next start.
-func seedSignIns(ctx context.Context, lookup func(string) string) (owed bool) {
-	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, mate.HQIdentity(lookup))
-	if err != nil {
-		logHQ("sign-ins wait for the key: " + err.Error())
-		return false
-	}
-	_, err = mate.SeedSignInsForEnrollment(mate.SignInsPath(), mate.SignInsSeededPath(), client.SignersInput(), func() (map[string]string, error) {
-		ctx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-		defer cancel()
-		signers, err := client.Signers(ctx, lookup("projectId"))
-		if hq.IsUnavailable(err) {
-			return nil, &mate.TransientError{Err: err}
-		}
-		return signers, err
-	}, time.Now())
-	var transient *mate.TransientError
-	switch {
-	case errors.As(err, &transient):
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; HQ did not answer, the seed is tried again (reported by `zcp mate status --json`)\n", err)
-		return true
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; failed input retained in %s (reported by `zcp mate status --json`); a changed identity permits one new attempt; to try again manually, remove the marker and start the Mate service again\n", err, mate.SignInsSeededPath())
-	}
-	return false
 }
 
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }

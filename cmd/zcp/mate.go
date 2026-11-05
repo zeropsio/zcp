@@ -84,17 +84,16 @@ const mateVerbStatus = "status"
 // fresh install — and about this zcp against its latest release, with
 // whether a container restart would change either (§2.9).
 type mateStatusResult struct {
-	Installed       string                  `json:"installed"`
-	Latest          string                  `json:"latest"`
-	Contract        int                     `json:"contract"`
-	UpdateAvailable bool                    `json:"updateAvailable"`
-	CheckedAt       string                  `json:"checkedAt"`
-	Error           string                  `json:"error,omitempty"`
-	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
-	Updater         *mateUpdaterStatus      `json:"updater,omitempty"`
-	ZCP             zcpReleaseStatus        `json:"zcp"`
-	RestartNeeded   bool                    `json:"restartNeeded"`
-	Why             string                  `json:"why,omitempty"`
+	Installed       string             `json:"installed"`
+	Latest          string             `json:"latest"`
+	Contract        int                `json:"contract"`
+	UpdateAvailable bool               `json:"updateAvailable"`
+	CheckedAt       string             `json:"checkedAt"`
+	Error           string             `json:"error,omitempty"`
+	Updater         *mateUpdaterStatus `json:"updater,omitempty"`
+	ZCP             zcpReleaseStatus   `json:"zcp"`
+	RestartNeeded   bool               `json:"restartNeeded"`
+	Why             string             `json:"why,omitempty"`
 }
 
 // mateUpdaterStatus is the status's "updater" key (§2.1d).
@@ -126,12 +125,6 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 		Contract:  mate.SupportedContract,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if seed, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath()); err == nil {
-		result.SignIns = &seed
-	} else if !os.IsNotExist(err) {
-		result.SignIns = &mate.SignInsSeedStatus{State: "failed", Error: err.Error()}
-	}
-
 	if installed, err := mate.InstalledVersion(); err == nil {
 		result.Installed = installed
 	}
@@ -209,13 +202,6 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "zcp: installed %s, %s available; a restart installs it\n", result.ZCP.Installed, result.ZCP.Latest)
 	case result.RestartNeeded:
 		fmt.Fprintf(os.Stdout, "restart needed: %s\n", result.Why)
-	}
-	if result.SignIns != nil {
-		fmt.Fprintf(os.Stdout, "sign-in seed: %s", result.SignIns.State)
-		if result.SignIns.Error != "" {
-			fmt.Fprintf(os.Stdout, ": %s", result.SignIns.Error)
-		}
-		fmt.Fprintln(os.Stdout)
 	}
 }
 
