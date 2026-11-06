@@ -1542,7 +1542,9 @@ func TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild(t *testing.T) 
 }
 
 // pushRig is a source repository with a fake zcli on PATH, for running the
-// push and build-wait commands in real bash.
+// push and build-wait commands in real bash. A push outlives the session that
+// started it, as on a container, and the rig awaits it before the test's
+// directories go.
 type pushRig struct {
 	t       *testing.T
 	dir     string
@@ -1564,13 +1566,28 @@ func newPushRig(t *testing.T, zcli string) *pushRig {
 	if err := os.WriteFile(filepath.Join(bin, "zcli"), []byte("#!/bin/sh\n"+zcli), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &pushRig{
+	r := &pushRig{
 		t:       t,
 		dir:     dir,
 		pushDir: filepath.Join(t.TempDir(), "zcp-push-test"),
 		env:     append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH")),
 		stdin:   "tok\n",
 	}
+	// The push session returns at zcli's deploying line while zcli's wrapper
+	// still writes rc into the run directory, so the rig waits for the push as
+	// the build wait does, on the machine's own tools rather than a test's
+	// fakes. It runs after the test's deferred releases and before the TempDir
+	// cleanup, which was registered first and so runs last.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		//nolint:gosec // G204: the build wait over the rig's own t.TempDir run directory
+		out, err := exec.CommandContext(ctx, "sh", "-c", buildWaitCommand(r.pushDir)).CombinedOutput()
+		if ctx.Err() != nil {
+			t.Errorf("push in %s still running at the test's end: %v: %s", r.pushDir, err, out)
+		}
+	})
+	return r
 }
 
 // run runs script in bash until it exits or ctx ends, as an ssh session does.
@@ -1688,9 +1705,6 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 			if _, err := os.Stat(r.pushDir); !tt.wantMarker && !os.IsNotExist(err) {
 				t.Errorf("stopped push left its run directory: %v", err)
 			}
-			if tt.wantMarker {
-				r.run(ctx, buildWaitCommand(r.pushDir))
-			}
 		})
 	}
 }
@@ -1774,7 +1788,6 @@ func TestBuildSSHCommand_NextPush_RemovesOldFinishedRuns(t *testing.T) {
 	if out, code := r.run(ctx, buildSSHCommand("svc-1", r.dir, "", false, "", r.pushDir)); code != 0 {
 		t.Fatalf("push = exit %d: %s", code, out)
 	}
-	r.run(ctx, buildWaitCommand(r.pushDir))
 	for name, wantKept := range map[string]bool{"zcp-push-OLDDONE": false, "zcp-push-NEWDONE": true, "zcp-push-OLDRUNNING": true} {
 		if _, err := os.Stat(filepath.Join(runs, name)); (err == nil) != wantKept {
 			t.Errorf("%s kept = %v, want %v", name, err == nil, wantKept)
