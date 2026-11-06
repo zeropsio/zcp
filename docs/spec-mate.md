@@ -706,17 +706,14 @@ Live edits do not survive — every boot re-renders `internal/content/templates/
 succeeded (a degraded mate step still leaves the marker); `initAt` moving is how a client sees a
 restart re-initialized the container.
 
-**`GET {BasePath}/.well-known/t3/environment`** → mate's own liveness: `200` **and**
-`content-type: application/json` **and** a body carrying `"basePath":"/mate"` — never the status
-code alone, since a mis-proxied prefix can reach something else that answers `200`.
-`mateUp` is the **client-side conjunction of both**: stock nginx cannot branch a response body on a
-subrequest, so folding both fields into the readiness route would need the sidecar process this
-design removes. A client must also read a `404` on `{BasePath}/healthz` as its own third state —
-*mate is not enabled on this container* — distinct from "still starting". Budget (measured, see the ledger): a restart is ~17 s to `/healthz`, ~19 s to `mateUp`,
-~14 s of L7 `502` in between, which a client renders as "restarting". The hosted client reads
-`mateUp` on demand for a Mate HQ has presence for — once when HQ newly says that Mate is online, and
-at the person's _Try now_ — and on a backing-off ladder, 2, 4, 8, 15, 30 and then 60 s, only for one
-HQ has no presence for (`containerMachine.ts`, `probe.ts`).
+**`GET {BasePath}/.well-known/t3/environment`** is the Mate descriptor and the client's primary
+readiness evidence. A JSON response must contain an `environmentId`; if it names a `basePath`, that
+path must be `/mate`. Status alone cannot prove the right service answered. The client returns
+`ready` when the descriptor is valid and reads `/healthz` only as a fallback when it is not. The
+fallback distinguishes an initializing Mate, a container that predates or does not serve Mate, and
+an unreachable container; a 5xx is not evidence that Mate is absent. There is no `mateUp` field in
+the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mate's
+`containerHealth.ts`.
 
 ### 2.6 What survives what
 
@@ -2990,13 +2987,15 @@ before _Add_ returns, so nothing after it needs a browser (`matePress.ts:1-17`).
 plan's (`planEnvironmentCreation`, `createEnvironment.ts`), in order:
 
 - `create-project` (`POST /client/{id}/project`). A Mate's project is created with the `mate` tag, a
-  stage's or a production's with none: where it stands is HQ's to say (`createEnvironment.ts`).
+  stage's or a production's with none: where it stands is HQ's to say. A stage whose recipe contains
+  a whole project may instead create it and its services in one import (`createEnvironment.ts`).
 - `register` — the registration in HQ (MB-24), for a Mate before its import:
   a Mate's record attached to its application with its face, or a record in no application (`POST
   /api/mates`), with who asks for its stand-up in the same write — an attach bound to the Mate's
   birth takes the ask the intent was recorded with (`POST /api/births`, `standUp`), any other
-  carries its own (`standUp`), so the record and its ask never part; a stage or a production
-  attached as its tier, with its deploy key (§10.11), after its import (`createEnvironment.ts`
+  carries its own (`standUp`), so the record and its ask never part; a stage attaches as its tier
+  with its deploy key (§10.11) after its import, while production attaches after project creation
+  without importing services (`createEnvironment.ts`
   `planEnvironmentCreation`, `matePress.ts` `pressRegistration`, mate-hq `internal/structure/routes.go`).
   Attachment leaves a Mate's birth open until an admitted hello or authorized deletion; an admitted
   hello ends a Chief birth only after the maker's live Chief registration (mate-hq `spec/protocol.md`,
@@ -3008,11 +3007,13 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts`), in order:
   envIsolation: service@zcp`. The platform creates the services in descending `priority` and
   isolates every service's variables from the others but the container's, so `ZCP_API_KEY` is the
   container's alone (zerops-docs `env-variables.mdx`, `import.mdx` `priority`); a new project never
-  reads `envIsolation: none` (ZEROPS-081). A stage's or a production's import is its tier, whole.
+  reads `envIsolation: none` (ZEROPS-081). A stage imports its tier whole. Production imports no
+  services at creation; an approved release supplies them later.
 - `await-ready` — for a Mate, the hand-off: the press returns, and the container links to HQ on its
-  own; for a stage or a production, the account's pushed service listing settles when it is nonempty
+  own; for a stage, the account's pushed service listing settles when it is nonempty
   and every service is `ACTIVE` or `READY_TO_DEPLOY`. The latter is reported as not deployed. This
-  wait has no patience timer (`runEnvironmentCreation.ts`, `runEnvironmentCreation.test.ts`).
+  wait has no patience timer. Production has no service wait at creation (`runEnvironmentCreation.ts`,
+  `runEnvironmentCreation.test.ts`).
 
 The registration is part of every creation: there is no environment made without one. A Mate's
 registration comes before its container, so a press that stops after it leaves a Mate HQ holds;
@@ -3034,8 +3035,9 @@ socket starts HQ's reconnect grace (default two minutes); the same session and s
 within the grace keeps the hold. A take naming a socket not yet open gets the same grace. There is
 no renewal: `renew:true` is refused `410 press_renewal_gone`. Holding a press takes Basic user or
 above on the project (`hold_press`). A second owner or person is refused `press_held` while the
-hold runs and can take it once HQ ends the hold. A press runs until Zerops accepted the import; the
-minutes the container then takes to come up are the platform's. A press that finishes deletes its
+hold runs and can take it once HQ ends the hold. A Mate's press hands off after Zerops accepted the
+container import; the minutes it then takes to come up are the platform's. Production creation has
+no import to wait for. A press that finishes deletes its
 record; one that stops ends its hold and keeps the record if it is still there. Attaching a stage or
 production also deletes its non-Mate press in the placement transaction (mate-hq
 `internal/structure/attach.go`). HQ streams the `held` verdict to readers, which do not time it out
@@ -6307,10 +6309,11 @@ live in the Vault (§5.8).
 
 HQ's environment records replace `environments.yaml`: each keeps its name, tier (`stage`,
 `production`), delivery target, sources (branches, or `release`) and order. A target can be a
-Zerops project or a Git repository branch. For a Zerops target, _Add stage_ and _Add production_
-create the project from the recipe's tier converted to import-ready form — `buildFromGit` +
-`zeropsSetup` becomes `startWithoutCode` with the source map kept — attach it to the application,
-then give HQ an environment-specific token with `BASIC_USER` on that project. HQ deploys it;
+Zerops project or a Git repository branch. For a Zerops target, _Add stage_ creates the project
+from the recipe's tier converted to import-ready form — `buildFromGit` + `zeropsSetup` becomes
+`startWithoutCode` with the source map kept. _Add production_ creates and registers an empty
+project; an approved release creates its services. Both attach it to the application and give HQ
+an environment-specific token with `BASIC_USER` on that project. HQ deploys it;
 an unfinished attachment/key step says what remains and can be finished. Navigation offers these
 verbs when permissions and the vacant tier slot allow them, otherwise supplies the reason.
 Stage is optional; adding production does not require it. _Add Mate_ reads the AI Agent tier.
