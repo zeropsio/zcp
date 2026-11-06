@@ -1769,12 +1769,6 @@ person keeps on GitHub is the checkout's origin instead (`spec-mate.md §5.10`).
 
 ```
 edit ──► dev self-deploy ──► commit ──► push ──► deliver to target ──► verify ──► roll back
- │            │                │          │             │                │            │
- │  mate checkpoints        working    user/agent    origin,      stage: §4.9 or    zerops_   re-activate a
- │  (refs/t3/*, turn        tree, -g,  commit with   tracked      CI-on-push        verify    recorded
- │  history; never          repo       ambient       ref          prod: CI-on-push            appVersion
- │  a delivery)             travels    identity                   only (P-LP-10/11)           (GF-8)
- └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **edit → dev self-deploy** is the fast loop and stays dirty by design: the working tree
@@ -1803,7 +1797,6 @@ Independent work lives on branches; integration happens at the origin (a pull re
 host, or a fast-forward of the tracked ref); the stage consumes the tracked ref, so which
 checkout produced a change is invisible to delivery. Evidence tags are written in the
 checkout that deployed; the other checkout sees them only through the origin (GF-9, OPEN).
-Mate checkpoints stay per checkout (`spec-mate.md §6.4`) and are never pushed.
 
 ### 12.5 Delivery contract — provider-agnostic
 
@@ -1814,7 +1807,7 @@ target, and leave an appVersion whose version name is that revision's sha.** Sha
 |---|---|---|
 | GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name: `BuildIntegration=actions`'s setup-aware zcli workflow (`tools/workflow_build_integration.go`) passes `--version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"` in a bash step (GF-10; the compact wrapper-action variant, `zeropsio/actions`, cannot express it). The §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`, `ZEROPS_TOKEN_PROD`) does NOT yet — separate template, GF-10 not extended there. |
 | GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
-| A Mate's HQ deploying the application's environments from its own archive of a commit | built for stages, live 2026-10-02 (`spec-mate.md §10.8`); production moves to HQ next. It replaces the Gitea Actions shape verified live 2026-09-14, retired with the Gitea; zcp writes no workflow into a Mate's repositories | version name `main <sha7>` (live: `main 48b289b`) |
+| A Mate's HQ deploying the application's environments from its own archive of a commit | built for stages and production (`spec-mate.md` §10.8, §10.11); zcp writes no workflow into a Mate's repositories | version name `<label> <sha7>`: `main` for a stage, the release tag for production (mate-hq `internal/releases/versions.go`) |
 | user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
 | zcp-owned webhook relay | **not needed**; removed from the plan | — |
 
