@@ -36,8 +36,10 @@ const (
 	// 0.16.0 is the first contract-2 release: it links with the project key
 	// and its package declares the HQ origin. 0.16.40 still lacks Observe
 	// credential delivery; 0.16.41 is required for the frame receiver and
-	// file writer used by strict HQ reads.
-	MinimumMateVersion = "0.16.41" // release: set to the rev 7 Mate tag
+	// file writer used by strict HQ reads. 0.16.54 is the first rev 7
+	// release: it admits people by its own live access list and answers
+	// HQ's tokened tickets; an older Mate is refused every ticket by rev 7 HQ.
+	MinimumMateVersion = "0.16.54"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order
