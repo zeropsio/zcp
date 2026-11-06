@@ -2180,11 +2180,12 @@ credential, a sign-in or a Mate's link to HQ follows this one and points here. I
 name the tests that hold them; a row whose test is not written yet says so.
 
 The model in one paragraph: everything that lives on Zerops — roles, memberships, project
-overrides, the project list — has one home, Zerops, and whoever needs it reads it there, live, with
-their own credential: the browser with the person's token, a Mate's server with its project key,
-both over the Zerops websocket (§3.8, §3.9). HQ holds only what Zerops has no notion of —
-applications, changes, releases, Mate records, its own sessions and secrets — and holds no person's
-role and no organisation-wide credential. A Mate proves itself to HQ with the Zerops key its
+overrides, the project list — has one home, Zerops. The browser reads with the person's token and a
+Mate's server with its project key, both over the Zerops websocket (§3.8, §3.9). HQ reads members
+with a linked or presented project key and project facts with the project's own credential; linked
+project facts can be shared between HQ processes (§3.4). HQ holds its own applications, changes,
+releases, Mate records, sessions and secrets, but no person's general role and no credential with an
+organisation-wide role. A Mate proves itself to HQ with the Zerops key its
 project already gave it, on a connection it dials out; the connection is the proof, and nothing HQ
 mints is the Mate's proof. A person proves themselves to HQ with their own Zerops access token at
 sign-in, at each renewal and in the body of each HQ verb that decides on a role; HQ reads with it
@@ -2230,10 +2231,11 @@ a span attribute.
 | Person's Git password        | person × application                                             | the person's git client; HQ a hash                          | min(12 h, the token's end at issue); ended early by `access_report`                             | fetch and push to HQ's git; targets fixed at issue from one fresh read with the token                                     |
 | Provider (AI) logins         | the Mate's current owner                                         | the container                                               | the provider's                                                                                  | agent runs; signed out on hand-over                                                                                       |
 
-- **No organisation-wide credential.** HQ holds no credential that spans an organisation and no
-  person's role. Every reader that needs Zerops uses a project key or a deploy token for its own
-  project (the deploy watch's websocket login included), or the person's own token for the one
-  request it arrives in. What HQ no longer holds is listed in §3.15.
+- **No organisation-wide credential.** HQ holds no credential with an organisation-wide role and
+  no person's general role. A project key can read the organisation's member list; a project's own
+  key or deploy token reads its project facts (the deploy watch's websocket login included). A verb
+  that decides on a person's role uses the person's token for the request it arrives in. What HQ no
+  longer holds is listed in §3.15.
 - **One effective-role function**, `override ?? orgRole`, in `packages/shared` (§10.3): Zerops has
   no server-side answer for it, and its GUI computes the same. The client applies it over its live
   data (§3.8), the Mate's server over its live list (§3.9); HQ applies it only inside a verb, over
@@ -2315,9 +2317,9 @@ a span attribute.
   at each HQ session renewal and in the body of a verb that decides on a role, always in a request
   body over TLS, never a URL or a header.
 - **The HQ session** — HQ's bearer for one person in one organisation, held by the browser, hash
-  stored at HQ. It carries identity only — the person's id, the organisation, e-mail and name, and
-  its expiry — and never a role or a project. It ends at the expiry of the Zerops token it was
-  opened or last renewed with, which the client sends, and at most 6 h after that read (§3.7). It
+  stored at HQ. It carries identity only — the person's id, the organisation and its expiry — and
+  never a role or a project. It ends no later than the Zerops token's expiry when the client sends
+  it, and at most 6 h after the read that opened or renewed it (§3.7). It
   opens HQ's person API (the structure, changes, releases, tickets). Its id is stable for its whole
   life: a renewal extends the same session to a new expiry and never mints a new id, so the id every
   ticket carried names each Mate connection opened through it. Ends at its expiry, at sign-out, or
@@ -2350,16 +2352,17 @@ Every call HQ makes to Zerops goes through one named gate with a rate and concur
 Zerops does not answer `429`, it queues, and an unbounded storm turns into "Zerops unavailable" for
 every organisation. Key resolutions for new hashes, background verifications of cached entries,
 reads with an environment's deploy token, the door's identity read and the fresh read of a verb or
-of a person's Git password issue, made with that person's token, all queue there. HQ polls no
-organisation view and no decision waits on an organisation read: a removal made in Zerops arrives at each Mate on its
-own live list (§3.9), and at HQ in that Mate's report.
+of a person's Git password issue, made with that person's token, all queue there. HQ also reads
+members and project overrides when its unattended decisions and overviews need them; a link holder
+can share those facts with other HQ processes (§3.10). A removal made in Zerops reaches each Mate's
+own live list (§3.9), and its access report informs HQ's revocation path.
 
 ### 3.5 A Mate starts and links
 
 ```mermaid
 sequenceDiagram
   participant M as Mate server
-  participant H as HQ (leader)
+  participant H as HQ
   participant Z as Zerops
   M->>H: TLS WebSocket to HQ's link route (nothing in the URL)
   M->>H: hello (§2.8)
@@ -2406,8 +2409,9 @@ sequenceDiagram
   fresh state (mate `apps/server/src/zerops/ZeropsHqLink.ts`; mate-hq `internal/matelink/link.go`).
   No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
   fleet at once.
-- On every link HQ sends the Mate's state and the Mate's Git credential on the terms of §3.3. HQ
-  sends a Mate nothing about who may open it: the Mate keeps that list itself (§3.9).
+- On every link HQ sends the Mate's state and the Mate's Git credential on the terms of §3.3. The
+  Mate keeps its access list itself (§3.9); a known Chief's state also names its current or last
+  registered opener, or `null` when that history is ambiguous (§3.8).
 
 ### 3.6 zcp's calls and git
 
@@ -2478,7 +2482,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant B as Browser
-  participant H as HQ (leader)
+  participant H as HQ
   participant M as Mate server
   B->>H: ticket for project P (HQ session)
   H->>H: identity, organisation and expiry from the HQ session; no Zerops call
@@ -2580,8 +2584,9 @@ sequenceDiagram
   and HQ retries; HQ does not close the link for it. HQ serializes reports per Mate; one strictly
   older than the last applied report changes nothing, while reports with equal timestamps both apply.
   A first report may still find missing live Git password holders.
-  HQ answers no overview from the report: the client and the container read Zerops with their own
-  credentials (§3.8, §3.11).
+  The report is not the source of HQ's Chief overview: HQ reads that separately with its member
+  reader and the projects' credentials (§3.11). The client and the container also read Zerops with
+  their own credentials (§3.8, §3.11).
 - **Role change and removal.** Whenever the list changes whom it opens for or shows, the Mate
   re-evaluates every connection: a person whose role narrowed and who still opens keeps the
   connection at the new role; a person no longer open is disconnected, and offboarding signs their
@@ -2624,16 +2629,17 @@ sequenceDiagram
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in,
   renewal and the verbs that decide on a role wait for Zerops. Each Mate keeps its last list and its
   open connections, and refuses new tickets once the list is stale (above).
-- **Liveness.** HQ polls no organisation view, holds no credential that could read one and runs no
-  reconcile sweep over its Mates or environments: it reads Zerops with a project credential only
-  when that credential is used — a Mate's project key as it links or calls (§3.3), an environment's
-  deploy token at that environment's deploy. Before a deploy HQ reads the token's own record: a
+- **Liveness.** For unattended reads HQ's member reader can use a linked or presented project key
+  for the organisation's members and each project's own key for its overrides. Current link holders
+  can share their read facts with other HQ processes; a project not covered by a read is unknown,
+  not proof of absence (mate-hq `internal/zerops/memberfacts.go`, `internal/identity/roles.go`).
+  Before a deploy HQ reads the environment token's own record: a
   token Zerops refuses, or one that reaches more than its project, is marked invalid (`keyInvalid`)
   and deploys nothing until a person keeps a new one; one Zerops no longer finds (`/user/info`: `400
   userNotFound`) may have gone with its project, and HQ drops the environment's project once a read
   with the project's own credential answers `400 projectNotFound`; a read Zerops does not answer
-  marks nothing and keeps the project for its next deploy. Members and overrides arrive at HQ only
-  in the Mates' `access_report` (§3.9).
+  marks nothing and keeps the project for its next deploy. The Mate's separate `access_report`
+  drives the revocation path (§3.9).
 - **Project deleted.** The container dies with it and the link drops by transport; a deleted Mate
   project leaves no live key to ask with. A person's client whose own `project` stream drops a
   project HQ still places (§3.16), and whose own read of it answers `400 projectNotFound`, tells HQ
@@ -2741,7 +2747,8 @@ sequenceDiagram
 - **A person HQ hears of from no Mate**: in an organisation with no linked Mate (§3.9), a removed
   person's HQ session lasts until the Zerops token it was opened or last renewed with ends (at most
   6 h), and their Git password until the end of the token it was issued from (§3.3).
-- **An HQ deploy** blocks opening Mates for its duration.
+- **An HQ deploy** may delay a new ticket while a Mate's link reconnects; existing Mate
+  connections stay open and healthy HQ processes continue serving (§3.10).
 
 ### 3.15 Removed
 
@@ -2758,9 +2765,9 @@ sequenceDiagram
 - `ZCP_ORG_TOKEN`, `ZCP_ORG_ID`, `ZCP_ORG_API`, the Chief credential, its Zerops proxy and
   `chief/person`.
 - The organisation's key, in every use: its required hand-over at the first sign-in and its optional
-  hand-over at a later one, the door's `org_not_started` and `org_key_rejected`, HQ's member and
-  override reader, the organisation reconcile that read with it, its refusal frame, and the deploy
-  watch's websocket login (moved to the environment's deploy token).
+  hand-over at a later one, the door's `org_not_started` and `org_key_rejected`, the member and
+  override reader that used that key, the organisation reconcile that read with it, its refusal
+  frame, and the deploy watch's websocket login (moved to the environment's deploy token).
 - Revision 6's per-session reach was replaced by the Mate's own live list (§3.9) and the client's verdict from live Zerops data (§3.8).
 - Every role HQ kept: the person's roles on the HQ session, the refusal recorded on it, the
   ticket's stale-session conflict and the client's renewal on it, the renew signal, HQ's `access`
@@ -2896,7 +2903,7 @@ compatibility declaration (§2.1d).
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp with the background-work loss of §3.11. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | TC-20 | The Mate keeps its access list from the Zerops websocket with its project key — its own project's `project` updates, the organisation's `client-user` updates and list — and re-reads it in full at start, after every reconnect and every 5 min ± 60 s; every frame recomputes the list from its content, so a repeated frame changes nothing; a failed read (timeout, `5xx`, `429`, a closed socket) keeps the last list and every open connection, and no connection closes at 15 min. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                         |
 | TC-21 | When the Mate sends `key-refused`, HQ drops the key and closes the link. When zcp asks `POST /api/mate/key-recheck`, HQ verifies the key itself, at most once per key per minute, and cuts it off on a definite refusal. mate-hq `internal/matelink/routes.go`, `internal/projectkeys/keys.go`; zcp `internal/hq/keyrecheck.go`. Test to be written (Mate server, zcp client, HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| TC-22 | The Mate's access list is `GET /project/{own}` overrides ∩ `POST /client-user/search` persons: an `ACTIVE` person at effective `BASIC_USER` or above opens, `READ_ONLY` is listed, integration tokens and everyone else are absent; after every link opening, every full read and every change of the list the Mate sends `access_report {at, openers, listed}`, the full list every time. HQ derives `missing` as the persons its stored `openers ∪ listed` for the Mate names and the report names in neither, ends their HQ sessions and Git passwords in the organisation at once and stores the report's lists in the same write; a demotion to `READ_ONLY` is not missing, a revocation HQ could not apply is derived again at the next report without closing the link, and the first report of a Mate HQ holds no lists for has no `missing`. Tests to be rewritten: `ZeropsMateAccessList.test.ts`, `accessreport_test.go`. |
+| TC-22 | The Mate's access list is `GET /project/{own}` overrides ∩ `POST /client-user/search` persons: an `ACTIVE` person at effective `BASIC_USER` or above opens, `READ_ONLY` is listed, integration tokens and everyone else are absent; after every link opening, every full read and every change of the list the Mate sends `access_report {at, openers, listed}`, the full list every time. HQ derives `missing` from the last applied list and live Git password holders of the Mate's application, less those the report names, then ends their HQ sessions and Git passwords in the organisation and stores the report's lists; a demotion to `READ_ONLY` is not missing, and a revocation HQ could not apply is derived again at the next report without closing the link. A first report may find missing password holders; equally stamped reports both apply. `ZeropsMateAccessList.test.ts`; mate-hq `accessreport_test.go` — `TestAPersonGivenAGitPasswordForAMatesApplicationWhileItsLinkWasDownLosesItAtTheFirstReportThatMissesThem`, `TestTwoAccessReportsStampedInTheSameMillisecondBothApply`. |
 | TC-23 | The Mate answers a ticket for a listed person `ticket_refused` `read_only` and for an absent one `not_in_list`; HQ relays either as a definitive `403 zerops_read_only` or `403 not_in_list`, records nothing of it on the HQ session and asks the Mate again on the next ticket request; HQ issues a ticket from the HQ session alone, with no Zerops call. Test to be written (HQ, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | TC-24 | A verb that decides on a role carries the person's access token in its body; HQ decides on one fresh `GET /user/info`, and `GET /project/{id}` for a project the verb names, through the effective-role function, and keeps nothing of the read. A person's Git password fixes its targets at issue from one such read and ends at the earlier of 12 h and the token's end. Test to be written (HQ).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | TC-25 | A Mate's visibility (`open`, `listed` or `hidden`) is the client's verdict from live Zerops data through the effective-role function; on the person's own `client-user` frame the client re-reads `POST /project/search`. HQ's stream lists every Mate of the organisation. Test to be written (web client).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -2976,11 +2983,14 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts`), in order:
   stage's or a production's with none: where it stands is HQ's to say (`createEnvironment.ts`).
 - `register` — the registration in HQ (MB-24), for a Mate before its import:
   a Mate's record attached to its application with its face, or a record in no application (`POST
-  /api/mates`), with who asks for its stand-up in the same write — an attach that closes the Mate's
-  birth intent takes the ask the intent was recorded with (`POST /api/births`, `standUp`), any other
+  /api/mates`), with who asks for its stand-up in the same write — an attach bound to the Mate's
+  birth takes the ask the intent was recorded with (`POST /api/births`, `standUp`), any other
   carries its own (`standUp`), so the record and its ask never part; a stage or a production
   attached as its tier, with its deploy key (§10.11), after its import (`createEnvironment.ts`
   `planEnvironmentCreation`, `matePress.ts` `pressRegistration`, mate-hq `internal/structure/routes.go`).
+  Attachment leaves a Mate's birth open until an admitted hello or authorized deletion; an admitted
+  hello ends a Chief birth only after the maker's live Chief registration (mate-hq `spec/protocol.md`,
+  `internal/structure/birth_decisions_test.go`).
 - `import` — ONE Zerops import of the whole tier. A Mate's holds its zcp container — with the key
   the person mints for it, a key that holds only its own project; the agent sees the application's
   stage and production through HQ (`zerops_observe`, §10.8), never through a key on a sibling — at
@@ -3000,9 +3010,10 @@ that record alone does not establish that another import or setup continuation i
 registration HQ refuses stops the press there, for
 a Mate and a stage or a production alike, with HQ's refusal on the step.
 _Finish setup_ is offered according to the current birth and press state; an unheld press or a
-container absent from a listing does not by itself permit another import. An accepted import remains
-recorded after its hold ends. Existing setup handling can harden an older Mate by lowering its key
-from `ADMIN` and moving it off the project's variables (`hardenMate`).
+container absent from a listing does not by itself permit another import. For a Mate with a bound
+birth, the accepted import remains on that birth after the press hold ends or the press is removed,
+while the birth stays open. Existing setup handling can harden an older Mate by lowering its key from
+`ADMIN` and moving it off the project's variables (`hardenMate`).
 
 **Every press holds its project at HQ.** A press — a Mate's, a stage's or a production's — takes
 its project's record at HQ (`hq_press`, keyed by the project: `kind` `mate`, `stage` or
@@ -3015,9 +3026,11 @@ no renewal: `renew:true` is refused `410 press_renewal_gone`. Holding a press ta
 above on the project (`hold_press`). A second owner or person is refused `press_held` while the
 hold runs and can take it once HQ ends the hold. A press runs until Zerops accepted the import; the
 minutes the container then takes to come up are the platform's. A press that finishes deletes its
-record; one that stops ends its hold and keeps the record. HQ streams the `held` verdict to readers,
-which do not time it out locally. A missing or unheld press without the exact import's current result
-is unknown, not evidence that an accepted import stopped or permission to import again. An exact
+record; one that stops ends its hold and keeps the record if it is still there. Attaching a stage or
+production also deletes its non-Mate press in the placement transaction (mate-hq
+`internal/structure/attach.go`). HQ streams the `held` verdict to readers, which do not time it out
+locally. A missing or unheld press without the exact import's current result is unknown, not evidence
+that an accepted import stopped or permission to import again. An exact
 failed or canceled import is stopped; any other known import status is still followed. A hold HQ
 refuses this person outright (not another press's) is never asked again: the press goes on unheld. The record goes with its
 project. The tab keeps its presses in memory only for its screens; a reload forgets them, and HQ's
@@ -3976,13 +3989,13 @@ A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount so
 is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
 released and the mount goes. **The name alone says it is a lease's** (`kind: "lease"`): a Zerops service
 hostname is lowercase alphanumeric with no dash, and zcp names a lease `<pool>-<number>`
-(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so no sweep depends on whether the envelope's `leases[]` has been read
-yet — the checkpoint sweep runs at boot before any envelope does. The leases an envelope reported stay a
-second signal, never the only one.
+(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so the startup checkpoint sweep can exclude it even before the
+envelope's `leases[]` has been read. The leases an envelope reported stay a second signal, never the
+only one.
 
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
-a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the
-checkpoint reactor, the diff query — see the same shape they always did.
+a turn start calls explicitly. `ZeropsRepositories` consumers include the git spawner (§6.2) and the
+diff query.
 
 The environment descriptor (`/.well-known/t3/environment`, contract C-5) states the container's
 Zerops project as an optional `zerops.projectId` (from `T3CODE_ZEROPS_PROJECT_ID`, Zerops mode
@@ -4118,10 +4131,11 @@ dev service's own git over SSH, never by git on the mount (`ZeropsGitCommitDiff.
 by the dev service's own git, over ssh, never by git here").
 
 The refs the removed capture left under `refs/t3/checkpoints/` would hold their objects for good, so
-each mate start deletes them in every mounted service checkout, else in the server's own folder; a
-repository a start cannot reach keeps them until a later one (`vcs/checkpointRefsSweep.ts`, "a
-start deletes the snapshot refs the removed workspace capture left in a Mate's checkouts, and
-nothing else"). Nothing else in mate writes or prunes a ref.
+each Mate start attempts to delete them asynchronously in the available non-lease service checkouts,
+or in the server's configured folder when none are available. Lease repositories are excluded; a
+repository the sweep cannot reach keeps its refs until a later successful attempt, without stopping
+the other checkouts (`vcs/checkpointRefsSweep.ts`, "a start deletes the snapshot refs the removed
+workspace capture left in a Mate's checkouts, and nothing else"). The sweep removes no other refs.
 
 ### 6.5 What stays on the mount, and why
 
@@ -4156,7 +4170,7 @@ S3 tries to watch the mount for git state.
 | MG-3 | Only `GIT_*` and `LC_ALL` cross the wire, `GIT_TRACE2*` is stripped, path-valued flags/env are mapped mount→host, and the two absolute-path-returning argv shapes are mapped host→mount (`--git-common-dir` left alone). `ZeropsGitSpawner.test.ts` — "forwards only GIT_* and LC_ALL, and never the server's own environment", "strips the trace2 event stream, whose file is local and whose watcher never fires", "maps the two argv shapes that return an absolute path", "leaves --git-common-dir alone, because git answers it relatively". |
 | MG-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. `ZeropsGitSpawner.test.ts` — "names an ssh transport failure rather than letting it read as a git verdict", "caps concurrent sessions per host without capping across hosts". |
 | MG-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / `GitManager` — never left to a default a client or a `.t3/project` file could override. `ZeropsPolicy.test.ts` — "thread.create persists a null worktree path on Zerops", "project.meta.update forces the default thread env mode to local", "refuses the stacked commit/push/PR action server-side", "never lets a status read fetch from a remote". |
-| MG-6 | Diff reads what each repository has beyond `main` with the dev service's own git; nothing per turn is captured, reverted or kept as a ref, and a start deletes the `refs/t3/checkpoints/` refs the removed capture left in every mounted checkout. `ZeropsGitCommitDiff.test.ts` — "are read by the dev service's own git, over ssh, never by git here"; `checkpointRefsSweep.test.ts` — "a start deletes the snapshot refs the removed workspace capture left in a Mate's checkouts, and nothing else". |
+| MG-6 | Diff reads what each repository has beyond `main` with the dev service's own git; nothing per turn is captured, reverted or kept as a ref. A start asynchronously attempts to remove the old `refs/t3/checkpoints/` refs from available non-lease service checkouts, or the configured folder if none are available. `ZeropsGitCommitDiff.test.ts` — "are read by the dev service's own git, over ssh, never by git here"; `checkpointRefsSweep.test.ts` — "a start deletes the snapshot refs the removed workspace capture left in a Mate's checkouts, and nothing else", "a start never sweeps the refs of a pool container a thread's agent leased". |
 
 ### 6.6 A Mate's HQ access is its project key
 
@@ -6161,13 +6175,13 @@ said as not knowing, never as "no change is open". `hq_describe_retry.go`; `Test
 - **A change asks for review only when it is ready (2026-10-05, D7 and F8 of run 11).** A change
   asks the person for nothing — no composer line, no *Review* on its menu row, no waiting face, no
   merge step — until the Mate marks it ready by describing it: HQ records the head the description
-  was written at (`hq_change.ready_head`, migration `0043`), and the change is ready
-  (`HqChange.ready`) while that is its head. A description with words sets it — an old zcp's
+  was written at (`hq_change.described_head`, mate-hq `migrations/0010_changes.sql`), and the change
+  is ready (`HqChange.ready`) while that is its head. A description with words sets it — an old zcp's
   `PATCH {body}` included — an empty one clears it, a title alone leaves it. On current HQ a push
   carries readiness to its new head only if HQ successfully verifies that the change's own verbatim
   diff is unchanged; a changed or unreadable diff makes it a draft again. Older HQ may mark a moved
-  head draft even when the diff is unchanged. Changes described before `0043` keep asking at the
-  head they have. A client reads a change from an older HQ, which sends no
+  head draft even when the diff is unchanged. The older HQ's migration `0043` kept changes already
+  described ready at their then-current head. A client reads a change from an older HQ, which sends no
   `ready`, as ready. Words HQ did not take are kept on the pair only so the pictures they show stay
   kept; the answer asks the agent to call `describe-change` again, and nothing else re-sends them.
   Each repository's change gets its own title: the describe call takes `title` — what this
