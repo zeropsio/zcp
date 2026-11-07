@@ -147,7 +147,7 @@ func TestCheck_RenameOntoAnotherPackagesTitle_FailsRatchet(t *testing.T) {
 	}
 }
 
-// witness: scripts/check-witness.go | c.added[w] → witnesses[w]
+// witness: scripts/check-witness.go | approved = approved || c.added[w] → approved = approved || c.added[w] || c.sha != ""
 func TestCheck_RewordedDropWithoutSameWitnessCase_Fails(t *testing.T) {
 	problems := check(input{
 		base:    parsed(t, map[string]string{"calc/calc_test.go": "package calc\n\nimport \"testing\"\n\n// witness: calc/calc.go | return n * 2 → return n * 3\nfunc TestDouble(t *testing.T) {}\n"}),
