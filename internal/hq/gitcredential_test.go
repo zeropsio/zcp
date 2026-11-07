@@ -17,35 +17,38 @@ import (
 )
 
 // git asks the helper with the remote's protocol and host; only the HQ this
-// Mate's key names gets the Git credential its link carries, under the user
-// HQ's git reads — never the key.
+// Mate's key names is answered, with that project key under the user HQ's
+// git reads (HQ asks Zerops about the key on the push), never the Git
+// credential file the Mate's server keeps; a container without the key
+// declines, so git never sends an empty password.
+// witness: internal/hq/gitcredential.go | return GitAnswer{Username: GitUser, Password: id.Key}, nil → return GitAnswer{Username: GitUser, Password: id.ProjectID}, nil
 func TestGitCredential_AnswersOnlyTheLinkedHQ(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
 		hq      string
-		linked  bool
+		key     string
 		request string
 		want    string
 		wantOK  bool
 	}{
-		{"the enrolled HQ", "https://hq.example", true, "protocol=https\nhost=hq.example\npath=git/app/appdev.git\n\n", "secret", true},
-		{"https's own port named", "https://hq.example", true, "protocol=https\nhost=hq.example:443\n\n", "secret", true},
-		{"an HQ on a port of its own", "http://127.0.0.1:8080/", true, "protocol=http\nhost=127.0.0.1:8080\n\n", "secret", true},
-		{"the host in another case", "https://HQ.example", true, "protocol=https\nhost=hq.EXAMPLE\n\n", "secret", true},
-		{"git's other attributes ignored", "https://hq.example", true, "capability[]=authtype\nprotocol=https\nhost=hq.example\nwwwauth[]=Basic realm=\"hq\"\n\n", "secret", true},
-		{"another port on the HQ's host", "https://hq.example", true, "protocol=https\nhost=hq.example:8443\n\n", "", false},
-		{"the HQ's host over plain http", "https://hq.example", true, "protocol=http\nhost=hq.example\n\n", "", false},
-		{"another host", "https://hq.example", true, "protocol=https\nhost=gitlab.com\npath=team/app.git\n\n", "", false},
-		{"no host at all", "https://hq.example", true, "protocol=https\n\n", "", false},
-		{"no Git credential linked", "https://hq.example", false, "protocol=https\nhost=hq.example\n\n", "", false},
+		{"the enrolled HQ", "https://hq.example", "the-key", "protocol=https\nhost=hq.example\npath=git/app/appdev.git\n\n", "the-key", true},
+		{"https's own port named", "https://hq.example", "the-key", "protocol=https\nhost=hq.example:443\n\n", "the-key", true},
+		{"an HQ on a port of its own", "http://127.0.0.1:8080/", "the-key", "protocol=http\nhost=127.0.0.1:8080\n\n", "the-key", true},
+		{"the host in another case", "https://HQ.example", "the-key", "protocol=https\nhost=hq.EXAMPLE\n\n", "the-key", true},
+		{"git's other attributes ignored", "https://hq.example", "the-key", "capability[]=authtype\nprotocol=https\nhost=hq.example\nwwwauth[]=Basic realm=\"hq\"\n\n", "the-key", true},
+		{"another port on the HQ's host", "https://hq.example", "the-key", "protocol=https\nhost=hq.example:8443\n\n", "", false},
+		{"the HQ's host over plain http", "https://hq.example", "the-key", "protocol=http\nhost=hq.example\n\n", "", false},
+		{"another host", "https://hq.example", "the-key", "protocol=https\nhost=gitlab.com\npath=team/app.git\n\n", "", false},
+		{"no host at all", "https://hq.example", "the-key", "protocol=https\n\n", "", false},
+		{"no project key in the environment", "https://hq.example", "", "protocol=https\nhost=hq.example\n\n", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			path := linkedCredential(t, tt.linked)
-			id := Identity{Origin: tt.hq, ProjectID: "p1", Key: "the-key", GitCredentialPath: path}
+			// The Mate's server holds a Git credential of its own; HQ is never sent it.
+			id := Identity{Origin: tt.hq, ProjectID: "p1", Key: tt.key, GitCredentialPath: serverCredential(t)}
 			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), id, http.DefaultClient)
 			if got.Password != tt.want || (err == nil) != tt.wantOK {
 				t.Errorf("AnswerGit = %q, %v; want %q, ok %v", got.Password, err, tt.want, tt.wantOK)
@@ -111,7 +114,7 @@ func TestAnswerGit_AGitHubRepositoryGetsTheTokenHQMintsForIt(t *testing.T) {
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			t.Cleanup(srv.Close)
-			id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+			id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 
 			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), id, srv.Client())
 			if asked.Load() != tt.wantAsked {
@@ -152,7 +155,7 @@ func TestAnswerGit_AnHQThatNeverAnswersIsGivenUp(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() { close(release); srv.Close() })
-	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -316,7 +319,7 @@ func TestGitHubCredentialFor_SendsAccess(t *testing.T) {
 	t.Parallel()
 	for _, access := range []string{GitHubAccessRead, GitHubAccessWrite, GitHubAccessWorkflows, ""} {
 		srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEaccess"}`)
-		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 		client, err := Open(srv.Client(), id)
 		if err != nil {
 			t.Fatal(err)
@@ -347,7 +350,7 @@ func TestGitHubCredentialFor_SendsAccess(t *testing.T) {
 func TestGitHubCredentialFor_BadAccess_Declined(t *testing.T) {
 	t.Parallel()
 	srv, asked := accessHQ(t, http.StatusBadRequest, `{"code":"git_credential_refused","reason":"bad_access"}`)
-	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 	client, err := Open(srv.Client(), id)
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +376,7 @@ func TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt(t *testing.T) {
 	t.Parallel()
 	for _, access := range []string{GitHubAccessWrite, GitHubAccessWorkflows} {
 		srv, asked := accessHQ(t, http.StatusConflict, `{"code":"git_credential_refused","reason":"read_only_remote"}`)
-		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 		got, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), access)
 		var declined *DeclinedError
 		if !errors.As(err, &declined) || got.Password != "" {
@@ -393,7 +396,7 @@ func TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt(t *testing.T) {
 func TestAnswerGit_StillSendsNoAccess(t *testing.T) {
 	t.Parallel()
 	srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEbroad"}`)
-	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
 	got, err := AnswerGit(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client())
 	if err != nil || got.Password != "ghs_FAKEbroad" {
 		t.Fatalf("AnswerGit = %v", err)
@@ -403,15 +406,13 @@ func TestAnswerGit_StillSendsNoAccess(t *testing.T) {
 	}
 }
 
-// linkedCredential is the path of the Git credential file the Mate's server
-// would write: holding "secret" when linked, absent otherwise.
-func linkedCredential(t *testing.T, linked bool) string {
+// serverCredential is the Git credential file the Mate's server keeps,
+// holding "secret".
+func serverCredential(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "git-credential")
-	if linked {
-		if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	return path
 }

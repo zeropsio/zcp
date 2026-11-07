@@ -123,12 +123,13 @@ func TestCLIDispatch_HQ_IsAVerb(t *testing.T) {
 }
 
 // TestRunHQGitCredential: `zcp hq git-credential` is the credential helper
-// git runs on every fetch and push from the Mate's shell — it prints the Mate
-// credential under HQ's git user for the linked HQ, and for a repository on
+// git runs on every fetch and push from the Mate's shell — it prints the
+// project key under HQ's git user for the linked HQ, and for a repository on
 // GitHub the token HQ mints for it at that call, and nothing else on stdout.
 // Declining exits non-zero with nothing printed, so a helper chain goes on to
 // its next answer and never sends an empty password; why it declined goes to
 // stderr, never the credential.
+// witness: internal/hq/gitcredential.go | return GitAnswer{Username: GitUser, Password: id.Key}, nil → return GitAnswer{Username: GitUser, Password: id.ProjectID}, nil
 func TestRunHQGitCredential(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,11 +143,7 @@ func TestRunHQGitCredential(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	hqHost := strings.TrimPrefix(srv.URL, "http://")
-	path := filepath.Join(t.TempDir(), "git-credential")
-	if err := os.WriteFile(path, []byte("secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	id := hq.Identity{Origin: srv.URL, ProjectID: "p1", Key: "the-key", GitCredentialPath: path}
+	id := hq.Identity{Origin: srv.URL, ProjectID: "p1", Key: "the-key"}
 	tests := []struct {
 		name       string
 		args       []string
@@ -155,7 +152,7 @@ func TestRunHQGitCredential(t *testing.T) {
 		wantCode   int
 		wantStderr string
 	}{
-		{"get for the HQ", []string{"get"}, "protocol=http\nhost=" + hqHost + "\n\n", "username=mate\npassword=secret\n", 0, ""},
+		{"get for the HQ", []string{"get"}, "protocol=http\nhost=" + hqHost + "\n\n", "username=mate\npassword=the-key\n", 0, ""},
 		{"get for a mounted GitHub repository", []string{"get"}, "protocol=https\nhost=github.com\npath=acme/shop.git\n\n", "username=x-access-token\npassword=ghs_minted\n", 0, ""},
 		{"get for a GitHub repository HQ does not mount", []string{"get"}, "protocol=https\nhost=github.com\npath=acme/other.git\n\n", "", 1, "mounts no repository"},
 		{"get for GitHub naming no repository", []string{"get"}, "protocol=https\nhost=github.com\n\n", "", 1, "useHttpPath"},
@@ -177,7 +174,7 @@ func TestRunHQGitCredential(t *testing.T) {
 			if tt.wantStderr == "" && errOut.Len() > 0 || !strings.Contains(errOut.String(), tt.wantStderr) {
 				t.Errorf("stderr = %q, want %q", errOut.String(), tt.wantStderr)
 			}
-			if strings.Contains(errOut.String(), "secret") || strings.Contains(errOut.String(), "ghs_") {
+			if strings.Contains(errOut.String(), "the-key") || strings.Contains(errOut.String(), "ghs_") {
 				t.Errorf("stderr %q carries a credential", errOut.String())
 			}
 		})

@@ -779,26 +779,24 @@ func (r *shellRunner) seen() []string {
 }
 
 const (
-	relayLabKey        = "project-key-FAKE-91c2"
-	relayLabCredential = "mate-credential-FAKE-7f3a"
-	relayLabAppID      = "app-1"
-	relayTokenUser     = "x-access-token"
-	relayFixtureToken  = "ghs_FAKEfixture"
+	relayLabKey       = "project-key-FAKE-91c2"
+	relayLabAppID     = "app-1"
+	relayTokenUser    = "x-access-token"
+	relayFixtureToken = "ghs_FAKEfixture"
 )
 
 // relayMint is one token the fake HQ was asked for.
 type relayMint struct{ path, access string }
 
 // relayLab is a fake HQ and a GitHub stand-in. HQ serves git under /git/
-// behind `mate:<credential>`, mints a token for any repository the stand-in
+// behind `mate:<project key>`, mints a token for any repository the stand-in
 // holds (as HQ mints for any repository the application mounts), and names
 // the record's repository origin in /api/mate/self; the stand-in serves each
 // repository behind the tokens HQ minted for it.
 type relayLab struct {
-	hq, gh   *httptest.Server
-	root     string
-	home     string
-	credPath string
+	hq, gh *httptest.Server
+	root   string
+	home   string
 
 	mu         sync.Mutex
 	mints      []relayMint
@@ -877,10 +875,6 @@ func newRelayLab(t *testing.T) *relayLab {
 		root: t.TempDir(), home: t.TempDir(), tokens: map[string]string{relayFixtureToken: "*"}, tokenUse: map[string]int{},
 		tokenAccess: map[string]string{}, readOnly: map[string]bool{},
 	}
-	l.credPath = filepath.Join(t.TempDir(), "git-credential")
-	if err := os.WriteFile(l.credPath, []byte(relayLabCredential+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	backend := func(root, prefix string) *cgi.Handler {
 		return &cgi.Handler{
 			Path: gitPath, Args: []string{"http-backend"}, Root: prefix,
@@ -902,7 +896,7 @@ func newRelayLab(t *testing.T) *relayLab {
 		case r.URL.Path == "/api/mate/self":
 			l.serveSelf(w, r)
 		case strings.HasPrefix(r.URL.Path, "/git/"):
-			if user, pass, ok := r.BasicAuth(); !ok || user != hq.GitUser || pass != relayLabCredential {
+			if user, pass, ok := r.BasicAuth(); !ok || user != hq.GitUser || pass != relayLabKey {
 				w.Header().Set("WWW-Authenticate", `Basic realm="hq"`)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -1122,7 +1116,7 @@ func (l *relayLab) repo(t *testing.T, onGitHub bool, name string) (string, relay
 // partial clone, origin url, the fixture's own credential never kept.
 func (l *relayLab) checkout(t *testing.T, url string) string {
 	t.Helper()
-	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabCredential))
+	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabKey))
 	if strings.HasPrefix(url, l.gh.URL) {
 		header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(relayTokenUser+":"+relayFixtureToken))
 	}
@@ -1136,7 +1130,7 @@ func (l *relayLab) checkout(t *testing.T, url string) string {
 // relay is the relay of a call whose records name repos.
 func (l *relayLab) relay(repos ...string) BrokeredGitRelay {
 	return BrokeredGitRelay{
-		Identity:     hq.Identity{Origin: l.hq.URL, Key: relayLabKey, ProjectID: "p1", GitCredentialPath: l.credPath},
+		Identity:     hq.Identity{Origin: l.hq.URL, Key: relayLabKey, ProjectID: "p1"},
 		HTTPClient:   l.hq.Client(),
 		Repos:        repos,
 		githubOrigin: l.gh.URL,
@@ -1214,7 +1208,7 @@ func (l *relayLab) missingBlobs(t *testing.T, checkout string) int {
 
 // TestBrokeredGit_Relay_PushFetchLsRemote_AgainstAuthServer: ls-remote,
 // fetch and push against an HQ behind Basic auth, each answered with the
-// Mate credential over the ssh session.
+// project key over the ssh session.
 func TestBrokeredGit_Relay_PushFetchLsRemote_AgainstAuthServer(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -1331,7 +1325,7 @@ func TestBrokeredGit_Relay_PartialClone_GitHubLazyFetchesShareOneMintedToken(t *
 // TestBrokeredGit_Relay_PartialClone_HQPairWithoutGitToken_Answered: a pair
 // not wired through holds no GIT_TOKEN, and the helper persisted in its
 // checkout would answer an empty password; the relay answers its lazy
-// fetches with the Mate credential instead.
+// fetches with the project key instead.
 func TestBrokeredGit_Relay_PartialClone_HQPairWithoutGitToken_Answered(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
@@ -1354,10 +1348,12 @@ func TestBrokeredGit_Relay_PartialClone_HQPairWithoutGitToken_Answered(t *testin
 	}
 }
 
-// TestBrokeredGit_Relay_HQFrame_AnsweredWithMateCredentialAnyPath: HQ is
-// answered for any path, the Mate credential covering every repository of
-// the application.
-func TestBrokeredGit_Relay_HQFrame_AnsweredWithMateCredentialAnyPath(t *testing.T) {
+// TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath: HQ is
+// answered for any path with the Mate's project key under HQ's git user —
+// the key HQ asks Zerops about on the push, covering every repository of the
+// application.
+// witness: internal/hq/gitcredential.go | return GitAnswer{Username: GitUser, Password: id.Key}, nil → return GitAnswer{Username: GitUser, Password: id.ProjectID}, nil
+func TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {
 		t.Run(shellName(sh), func(t *testing.T) {
@@ -1371,12 +1367,12 @@ func TestBrokeredGit_Relay_HQFrame_AnsweredWithMateCredentialAnyPath(t *testing.
 			if !strings.Contains(run.stdout, otherHistory.third) {
 				t.Errorf("ls-remote sibling = %q, want its main", run.stdout)
 			}
-			want := "Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabCredential))
+			want := "Basic " + base64.StdEncoding.EncodeToString([]byte(hq.GitUser+":"+relayLabKey))
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			for _, a := range l.sawAuth {
 				if a != want {
-					t.Errorf("HQ was sent %q, want only the Mate credential", a)
+					t.Errorf("HQ was sent %q, want only the project key", a)
 				}
 			}
 		})
@@ -1546,7 +1542,7 @@ func TestBrokeredGit_Relay_StdinPayloadOver64KiB_WithLazyFetchingPreCommitHook_N
 			if message != strings.TrimSpace(payload.String()) {
 				t.Errorf("commit message differs from the payload (%d bytes vs %d)", len(message), len(payload.String()))
 			}
-			for _, leak := range []string{"ghs_FAKE", relayTokenUser, "ZCPCRED", relayLabCredential} {
+			for _, leak := range []string{"ghs_FAKE", relayTokenUser, "ZCPCRED", relayLabKey} {
 				if strings.Contains(raw, leak) {
 					t.Errorf("the commit carries %q", leak)
 				}
@@ -1952,7 +1948,7 @@ func TestBrokeredGit_Relay_NoSecretInArgvStdoutStderr(t *testing.T) {
 			if len(l.minted()) == 0 {
 				t.Fatal("no token minted: the GitHub path was not exercised")
 			}
-			secrets := []string{relayLabCredential, relayLabKey, "ghs_FAKE0"}
+			secrets := []string{relayLabKey, "ghs_FAKE0"}
 			for _, run := range runs {
 				for _, s := range secrets {
 					for _, c := range run.commands {
@@ -2910,7 +2906,7 @@ func TestBrokeredGit_Relay_CallerStdoutGone_EndsWithGitsExitCode(t *testing.T) {
 
 // TestBrokeredGit_Relay_RevokesEachCachedTokenOnce: when a call ends, each
 // GitHub token it minted is revoked once — however many requests it
-// answered — and the Mate credential HQ holds is never revoked.
+// answered — and the project key HQ is answered with is never revoked.
 func TestBrokeredGit_Relay_RevokesEachCachedTokenOnce(t *testing.T) {
 	t.Parallel()
 	for _, sh := range relayShellsFor(t) {

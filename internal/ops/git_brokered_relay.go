@@ -55,8 +55,8 @@ type BrokeredGitHQRepo struct {
 // BrokeredGitRelay is what a relayed call answers credential requests from,
 // every value zcp's own: the record lookups are the caller's.
 type BrokeredGitRelay struct {
-	// Identity is the Mate's: HQ's origin, answered for any path with the
-	// Mate credential in the file it names, and the key HQ mints with.
+	// Identity is the Mate's: HQ's origin, answered for any path with its
+	// project key (hq.AnswerGitFor), the key HQ also mints with.
 	Identity hq.Identity
 	// HTTPClient reaches HQ.
 	HTTPClient hq.Doer
@@ -1154,7 +1154,7 @@ func gitHubPathPart(s string) bool {
 }
 
 // answer answers one request: HQ by its scheme and host, any path, with the
-// Mate credential (read once per call); GitHub for a repository the relay
+// project key (once per call); GitHub for a repository the relay
 // allows, with the token HQ mints for it (once per call, reused); anything
 // else declined, said once.
 func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (string, string) {

@@ -78,9 +78,8 @@ func readGitRequest(request io.Reader) gitRequest {
 
 // AnswerGit answers git's credential request (the attributes git writes to a
 // helper's stdin; `zcp hq git-credential`) for the Mate that id names:
-//   - HQ itself, by its scheme, host and port, gets the Mate's Git credential
-//     under GitUser, read from the file id names at each request so
-//     one HQ replaced over the link is the one used. Never the project key;
+//   - HQ itself, by its scheme, host and port, gets the Mate's project key
+//     under GitUser (hqAnswer);
 //   - a repository on https://github.com gets the token HQ mints for this
 //     Mate and that repository at this moment (Client.GitHubCredential) —
 //     never kept, never written anywhere but git's pipe;
@@ -88,11 +87,7 @@ func readGitRequest(request io.Reader) gitRequest {
 func AnswerGit(ctx context.Context, request io.Reader, id Identity, httpClient Doer) (GitAnswer, error) {
 	req := readGitRequest(request)
 	if isHQ(req, id.Origin) {
-		credential, err := ReadGitCredential(id.GitCredentialPath)
-		if err != nil {
-			return GitAnswer{}, &DeclinedError{Reason: err.Error()}
-		}
-		return GitAnswer{Username: GitUser, Password: credential}, nil
+		return hqAnswer(id)
 	}
 	if !strings.EqualFold(req.protocol, "https") || hostPort(req.host, "https") != GitHubHost {
 		return GitAnswer{}, &DeclinedError{}
@@ -109,6 +104,17 @@ func AnswerGit(ctx context.Context, request io.Reader, id Identity, httpClient D
 		return GitAnswer{}, &DeclinedError{Reason: gitHubRefusal(err, req.path)}
 	}
 	return answer, nil
+}
+
+// hqAnswer is HQ's own git answered: the project key id carries — read from
+// the live env store, so a regenerated key is the one presented — under
+// GitUser, which HQ asks Zerops about on the push (docs/spec-mate.md §2.8).
+// No key is a decline, so git never sends an empty password.
+func hqAnswer(id Identity) (GitAnswer, error) {
+	if id.Key == "" {
+		return GitAnswer{}, &DeclinedError{Reason: fmt.Sprintf("%s is not in this container's environment, so git has nothing to present to HQ", EnvKey)}
+	}
+	return GitAnswer{Username: GitUser, Password: id.Key}, nil
 }
 
 // hqConnectBound is how long the helper waits for a connection to HQ.
@@ -177,7 +183,7 @@ func (c Client) GitHubCredentialFor(ctx context.Context, repo, access string) (G
 
 // AnswerGitFor is AnswerGit for a relayed `zcp git` call, asking HQ for a
 // GitHub token carrying access (GitHubCredentialFor). HQ itself is answered
-// as AnswerGit answers it — access means nothing for HQ's own git. HQ
+// as AnswerGit answers it (hqAnswer) — access means nothing for HQ's own git. HQ
 // refusing the access (bad_access) or a push to a repository connected with
 // a person's token (read_only_remote) is a decline naming it, never retried
 // with another access. AnswerGit, the `zcp hq git-credential` fallback, asks
@@ -185,11 +191,7 @@ func (c Client) GitHubCredentialFor(ctx context.Context, repo, access string) (G
 func AnswerGitFor(ctx context.Context, request io.Reader, id Identity, httpClient Doer, access string) (GitAnswer, error) {
 	req := readGitRequest(request)
 	if isHQ(req, id.Origin) {
-		credential, err := ReadGitCredential(id.GitCredentialPath)
-		if err != nil {
-			return GitAnswer{}, &DeclinedError{Reason: err.Error()}
-		}
-		return GitAnswer{Username: GitUser, Password: credential}, nil
+		return hqAnswer(id)
 	}
 	if !strings.EqualFold(req.protocol, "https") || hostPort(req.host, "https") != GitHubHost {
 		return GitAnswer{}, &DeclinedError{}

@@ -880,6 +880,15 @@ environment instead, never a probed flag (§2.2).
   recipe once; a refused key is returned at once, without a link-wait loop. The shared HQ client may
   retry a `503` within its bounded budget (zcp `internal/tools/standup.go`, `internal/hq/client.go`;
   mate `apps/server/src/zerops/ZeropsSetup.ts`).
+- **Git.** Every git credential zcp answers for HQ's own host — `zcp hq git-credential` in the
+  `zcp` container and a relayed `zcp git` call (§6.8) — is Basic `mate:<ZCP_API_KEY>`: the project
+  key the container already has, read from the live env store at each call, which HQ asks Zerops
+  about on the push. No new stored secret and no `serve` flag; a container without the key declines,
+  so git never sends an empty password. The key reaches a dev service only over a relayed call's
+  ssh session and is never written there: the dev service's own `GIT_TOKEN` and a pool's
+  `ZCP_HQ_GIT_TOKEN` keep the C-7 credential (zcp `internal/hq/gitcredential.go`;
+  `TestGitCredential_AnswersOnlyTheLinkedHQ`, `TestRunHQGitCredential`,
+  `TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath`).
 
 The Observe child credential belongs to the normal ZCP authorization context: Mate writes
 `~/.zcp/hq/observe-credential` atomically with mode `0600`, or removes it on revocation;
@@ -2435,7 +2444,9 @@ sequenceDiagram
   alike. Tool availability and the Mate flag confer no authority.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
   same way, as a header scoped to HQ's host, never stored in a git config or a URL.
-- git from a Mate's dev service presents the Mate's Git credential (§3.3), never the project key.
+- git from a Mate's dev service presents the Mate's Git credential its `GIT_TOKEN` holds (§3.3); a
+  relayed `zcp git` call (§6.8) is answered from the `zcp` container with the project key under
+  `mate`, over its ssh session only, never written into the dev service (§2.8).
   A project without a Mate uses the temporary project-key exception in §6.7.
 - `zcli push` of a self-deploy on the dev service runs over SSH with the key only in that command's
   environment, never `zcli login` (§10.10). The key is sent over SSH's standard input
@@ -2900,7 +2911,7 @@ compatibility declaration (§2.1d).
 | TC-7  | The Mate takes every connection's role from its own live access list: a narrowed role applied and a person no longer open disconnected; nothing HQ sends admits a person or keeps a connection open. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | TC-9  | A Mate whose access list is stale (TC-13) refuses every new ticket `ticket_refused` `not_in_list` and keeps every open connection; its next successful full read admits again. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| TC-10 | The dev service's stored git credential is only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service — a relayed call carries it only over its ssh session (§2.8). Test to be written (zcp wiring, HQ git).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-11 | zcp's Chief reader reads Zerops with its project key, and the client reads Zerops with the person's token. HQ also offers an allowlisted Chief overview (§2.11, §3.11). `TestOrgReader_ReadsOnlyTheAllowlistFromZerops`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `internal/chief/service_test.go`. |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-13 | The Mate's access list is stale once older than 15 min from its last successful full read, not from the link or HQ. A refused read keeps the list and its previous read time; it does not make a still-current list stale. mate `apps/server/src/zerops/ZeropsMateAccessList.ts`, `apps/server/src/zerops/ZeropsMateAccessList.test.ts` — "A read Zerops refuses for good (401, 400 userNotFound\|projectNotFound) keeps the last list as it was, and it still decides", "A list older than 15 minutes refuses new tickets with reason not_in_list but is kept for the connections already open".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -3863,8 +3874,8 @@ themselves; no token crosses the conversation.
   `TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment`, `TestTellMirror_SaysEachOnce`,
   `TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand`,
   `TestClient_AppRepos_ReadsEachRepositorysRemote`, `TestClient_AppRepos_ReadsEveryPage`.
-- **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate's Git credential
-  (§3.3) under the user `mate`, and `https://github.com` with what `GET
+- **The helper.** `zcp hq git-credential get` answers HQ's own host with the project key under the
+  user `mate` (§2.8), and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at
   that call — a write token for a repository HQ mounts, a read-only one for a followed repository
   HQ holds one for — written to git's pipe only: never cached, never logged, never on disk. HQ's
@@ -4194,7 +4205,8 @@ names checked before HQ is asked for it, whether this project is the Chief (§2.
 live env store at each call, so a regenerated key is the one it presents. A refusal is HQ's word on
 the key (`key_refused`, `key_too_wide`, `key_not_sensitive`, `not_a_mate`), said once and asked again
 on the bounded backoff of §0 rule 4; a call HQ or Zerops does not answer is retried the same way.
-The dev service's git presents the Mate's Git credential, never the key (§3.3, §10.10).
+The dev service's stored `GIT_TOKEN` holds the Mate's Git credential, never the key; a relayed call
+presents the key over its ssh session only (§2.8, §3.3, §10.10).
 
 **One Mate per project (audit D2, 2026-10-03).** A Mate is a `zcp@1` service, and HQ keys a Mate
 by its project — its record, its link, its key entry, its overview — so a project holds one. The
@@ -4350,7 +4362,7 @@ came first, else ssh's failure (`TestHandleSIGPIPE_*`).
 **A relay frame is answered only from zcp-side records and the call's own argv — never from the
 dev checkout's config, which the dev service writes, nor from `ServiceMeta.RemoteURL`, written from
 the checkout's live origin: HQ mints for any repository the application mounts.** HQ's own origin,
-from the Mate's identity, is answered for any path with the Mate's Git credential (§3.3).
+from the Mate's identity, is answered for any path with the Mate's project key under `mate` (§2.8).
 `https://github.com` is answered for the record's HQ origin, which zcp writes from HQ's state (while
 it names none, HQ's live origin of the record's repository, read once), and for a URL a fetch, pull,
 push, ls-remote or clone names as a positional argument. A remote name, a `url.insteadOf` rewrite
@@ -4871,7 +4883,7 @@ branch it names beside its one change opened naming none — an HQ that keeps th
 one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a token
 for a GitHub repository at that call (`GET /api/mate/git-credential?host=github.com&path=…`, §5.10);
-git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; HQ's named difference 3 — the address without it answers 404) with the Mate's Git credential (§3.3), which today takes a Mate's push only
+git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; HQ's named difference 3 — the address without it answers 404) with the Mate's Git credential (§3.3) or its project key (§2.8), which today takes a Mate's push only
 on the branch of its own open change, only forward — zcp's guidance already pushes a branch of the
 agent's own, which takes design B's relaxed rule (any branch name; `main` and tags HQ's) on HQ's
 side. §10.10 is what zcp does with it.
