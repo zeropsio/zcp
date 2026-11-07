@@ -96,7 +96,7 @@ zerops[]:
     initCommands: string[]             # every container start (migrations, seeding)
     prepareCommands: string[]          # runtime image customization
     documentRoot: string               # webserver runtimes only (PHP/Nginx/Static)
-    healthCheck: { httpGet | exec }    # 2xx or exit 0; restart after configurable failureTimeout (no fixed schema default)
+    healthCheck: { httpGet | exec, restart: container|service }  # 2xx or exit 0; after configurable failureTimeout (no fixed schema default) restarts the container (default) or, with restart: service, only its start commands
     envVariables: map<string, string|number|bool>
     crontab[]: { timing: cron, command: string, allContainers: bool }
     routing: { cors, redirects[], headers[] }

@@ -958,6 +958,14 @@
                   "recoveryTimeout": {
                     "description": "Time until container is connected and becomes publicly available.",
                     "type": "integer"
+                  },
+                  "restart": {
+                    "description": "What Zerops restarts after the failure timeout: the whole container (default) or only the start commands inside it.",
+                    "enum": [
+                      "container",
+                      "service"
+                    ],
+                    "type": "string"
                   }
                 },
                 "type": "object"
