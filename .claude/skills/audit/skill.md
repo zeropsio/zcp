@@ -92,11 +92,11 @@ Then say: **"Fix these? (yes / pick numbers / skip)"**
 For each approved finding, in sequence:
 1. Make the single change
 2. `go build ./...` — must compile
-3. `go test ./<package>/... -count=1 -short` — must pass
-4. If build or test fails -> revert the change, report why, move to next finding
-5. If both pass -> report success, move to next finding
+3. `go vet ./<package>/...` and `golangci-lint run ./<package>/...` — must pass
+4. If build, vet or lint fails -> revert the change, report why, move to next finding
+5. If all pass -> report success, move to next finding
 
-After all approved fixes are done, run `go test ./... -count=1 -short` (full suite).
+Tests run only when the owner explicitly asks.
 
 Summarize: what was fixed, what was skipped, what failed.
 

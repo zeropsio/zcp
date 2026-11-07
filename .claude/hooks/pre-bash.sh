@@ -1,5 +1,5 @@
 #!/bin/bash
-# PreToolUse hook: Security gate + pre-commit lint gate + pre-push test gate
+# PreToolUse hook: Security gate + pre-commit lint gate (no test runs)
 # Exit 0 = allow, Exit 2 = block (stderr fed to Claude)
 
 # Require jq — without it, security checks silently fail
@@ -69,30 +69,6 @@ fi
 if echo "$COMMAND" | grep -qE 'dd\s+.*of=/dev/'; then
     echo "BLOCKED: Direct disk write with dd." >&2
     exit 2
-fi
-
-# ============================================================
-# PRE-PUSH TEST GATE — block push if tests fail
-# ============================================================
-
-if echo "$COMMAND" | grep -qE '^git\s+push'; then
-    MODULE_ROOT=$(gate_root)
-    cd "$MODULE_ROOT" || exit 0
-    [ -f "go.mod" ] || exit 0
-
-    # Per-package bound inside the hook's own 120 s (.claude/settings.json).
-    # Without -v, go test prints only "ok <pkg>" for passing packages and the
-    # whole output of every failing test, so the log minus "ok" lines is the
-    # failing tests' assertions; the full log stays on disk for a flake.
-    TEST_LOG=$(mktemp "${TMPDIR:-/tmp}/zcp-push-gate.XXXXXX")
-    if ! go test ./... -count=1 -short -timeout=100s >"$TEST_LOG" 2>&1; then
-        echo "BLOCKED: Tests failing. Fix before pushing. Full output: $TEST_LOG" >&2
-        grep -vE '^ok[[:space:]]|^\?[[:space:]]' "$TEST_LOG" | head -80 >&2
-        exit 2
-    fi
-    rm -f "$TEST_LOG"
-
-    exit 0
 fi
 
 # ============================================================

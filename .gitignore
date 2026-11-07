@@ -31,7 +31,6 @@ dc-live-summary*.json
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/compact-state.md
-.claude/last-test-result
 .claude/worktrees/
 .claude/agent-memory/
 .claude/teams/
