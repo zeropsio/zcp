@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -46,10 +44,6 @@ type Identity struct {
 	// that resolved the project sets it; nothing else needs it, so check()
 	// does not.
 	OrgID string
-	// GitCredentialPath is the file the Mate's server keeps its Git
-	// credential in (GitCredentialPath): not part of what is presented, but
-	// of where this Mate's HQ lives on its disk.
-	GitCredentialPath string
 	// ChangesPath is the file the Mate's server keeps the link's last
 	// `state` frame's changes in (ChangesPath), on the same disk.
 	ChangesPath string
@@ -63,8 +57,7 @@ func IdentityFrom(getenv func(string) string) Identity {
 		Key:       strings.TrimSpace(getenv(EnvKey)),
 		ProjectID: strings.TrimSpace(getenv(EnvProjectID)),
 
-		GitCredentialPath: GitCredentialPath(),
-		ChangesPath:       ChangesPath(),
+		ChangesPath: ChangesPath(),
 	}
 }
 
@@ -96,30 +89,8 @@ const EnvGitCredential = "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL"
 // GitCredentialPath is where the server keeps the Git credential HQ sends it:
 // beside mate.env under the service user's home, which a container restart
 // keeps. The server writes it, mode 0600, in one rename and removes it when
-// HQ revokes; zcp only reads it.
+// HQ revokes; zcp names it to the server and reads it nowhere: its git
+// reaches HQ through the relay with the project key.
 func GitCredentialPath() string {
 	return filepath.Join(runtime.HomeDir(), ".zcp", "hq", "git-credential")
-}
-
-// ErrNoGitCredential is no Git credential in the file: the Mate's server is
-// not linked to HQ yet, or HQ revoked what it had. The server's own word for
-// why is its /mate/setup.json.
-var ErrNoGitCredential = errors.New("the Mate's server holds no Git credential from HQ: it is not linked to HQ (its /mate/setup.json says why)")
-
-// ReadGitCredential is the Mate's Git credential in the file at path, read at
-// each use: HQ replaces it over the link, and the file is the only copy zcp
-// consults.
-func ReadGitCredential(path string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", ErrNoGitCredential
-	}
-	if err != nil {
-		return "", fmt.Errorf("read the Git credential: %w", err)
-	}
-	credential := strings.TrimSpace(string(raw))
-	if credential == "" {
-		return "", ErrNoGitCredential
-	}
-	return credential, nil
 }

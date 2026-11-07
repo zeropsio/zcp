@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/runtime"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -233,9 +232,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			fake := newFakeHQ(t)
 			link := fake.link(t)
 			if tt.notEnrolled {
-				link = &runtime.HQLink{GitCredentialPath: link.GitCredentialPath}
-			} else {
-				hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
+				link = &runtime.HQLink{}
 			}
 			stateDir := t.TempDir()
 			for _, dev := range tt.pairs {

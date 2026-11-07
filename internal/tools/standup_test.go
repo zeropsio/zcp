@@ -497,11 +497,7 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.status = newStandupStatus(f.statusPath)
 	f.mounter = &standupMounter{}
-	credentialPath := filepath.Join(f.root, "git-credential")
-	if err := os.WriteFile(credentialPath, []byte(standupCredential), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.identity = hq.Identity{Origin: f.srv.URL, OrgID: labOrg, ProjectID: "p1", Key: standupKey, GitCredentialPath: credentialPath}
+	f.identity = hq.Identity{Origin: f.srv.URL, OrgID: labOrg, ProjectID: "p1", Key: standupKey}
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")

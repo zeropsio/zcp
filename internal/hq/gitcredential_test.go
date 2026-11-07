@@ -47,8 +47,7 @@ func TestGitCredential_AnswersOnlyTheLinkedHQ(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			// The Mate's server holds a Git credential of its own; HQ is never sent it.
-			id := Identity{Origin: tt.hq, ProjectID: "p1", Key: tt.key, GitCredentialPath: serverCredential(t)}
+			id := Identity{Origin: tt.hq, ProjectID: "p1", Key: tt.key}
 			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), id, http.DefaultClient)
 			if got.Password != tt.want || (err == nil) != tt.wantOK {
 				t.Errorf("AnswerGit = %q, %v; want %q, ok %v", got.Password, err, tt.want, tt.wantOK)
@@ -404,15 +403,4 @@ func TestAnswerGit_StillSendsNoAccess(t *testing.T) {
 	if !slices.Equal(*asked, []string{"<none>"}) {
 		t.Errorf("AnswerGit asked HQ with access %q, want none", *asked)
 	}
-}
-
-// serverCredential is the Git credential file the Mate's server keeps,
-// holding "secret".
-func serverCredential(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "git-credential")
-	if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }

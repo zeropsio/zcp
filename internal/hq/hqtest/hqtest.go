@@ -21,10 +21,8 @@ func Link(t *testing.T, origin, projectID, key string) {
 	t.Setenv(hq.EnvKey, key)
 }
 
-// GitCredential writes the Git credential the Mate's server would hold from
-// HQ to the file at path, where zcp reads it: hq.GitCredentialPath under the
-// test's HOME, or the file a test's own container names
-// (runtime.HQLink.GitCredentialPath).
+// GitCredential writes a credential the Mate's server would hold to the file
+// at path, mode 0600, as the server does.
 func GitCredential(t *testing.T, path, credential string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

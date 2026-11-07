@@ -8,32 +8,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
-	leaseIntHQ           = "https://hq.example.invalid"
-	leaseIntHQRepo       = leaseIntHQ + "/git/org-1/a1/web"
-	leaseIntHQCredential = "the-mate-credential-0001"
+	leaseIntHQ     = "https://hq.example.invalid"
+	leaseIntHQRepo = leaseIntHQ + "/git/org-1/a1/web"
+	leaseIntHQKey  = "the-project-key-0001"
 )
 
 // leaseIntHQLink links the test's container to the HQ at leaseIntHQ, the way
-// a Mate's container presents itself to its HQ: its identity, and a file
-// outside the working directory for the Git credential the Mate's server
-// keeps, holding leaseIntHQCredential.
+// a Mate's container presents itself to its HQ: its identity, the project
+// key leaseIntHQKey among it.
 func leaseIntHQLink(t *testing.T) *runtime.HQLink {
 	t.Helper()
-	link := &runtime.HQLink{Origin: leaseIntHQ, ProjectID: "proj-1", Key: "the-project-key",
-		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
-	hqtest.GitCredential(t, link.GitCredentialPath, leaseIntHQCredential)
-	return link
+	return &runtime.HQLink{Origin: leaseIntHQ, ProjectID: "proj-1", Key: leaseIntHQKey}
 }
 
 // routeLeaseOrchestrator answers devpool's orchestrator with one container
@@ -88,7 +82,7 @@ func routeLeaseOrchestrator(t *testing.T) {
 // git user `mate` — the relayed session's helper answers the fetch with the
 // Mate's project key, so the checkout names no helper of its own and keeps
 // none — and a git-push deploy from that lease is refused with HQ's branch
-// rule. Neither result carries the Mate credential.
+// rule. Neither result carries the project key.
 func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir) and a swap of
 	// http.DefaultTransport (the orchestrator).
@@ -131,7 +125,7 @@ func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T
 		}
 	}
 	for _, out := range []string{text, refusal, checkout.command} {
-		if strings.Contains(out, leaseIntHQCredential) || strings.Contains(out, leaseIntLease) {
+		if strings.Contains(out, leaseIntHQKey) || strings.Contains(out, leaseIntLease) {
 			t.Errorf("a secret reached %s", out)
 		}
 	}

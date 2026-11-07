@@ -25,7 +25,6 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
@@ -172,13 +171,13 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 }
 
 // link is a container of the lab's Mate linked to this HQ: its identity, and
-// files of its own for the Git credential and the last `state` frame's
-// changes the Mate's server keeps, which nothing has written yet.
+// a file of its own for the last `state` frame's changes the Mate's server
+// keeps, which nothing has written yet.
 func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), ".zcp", "hq")
 	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
-		GitCredentialPath: filepath.Join(dir, "git-credential"), ChangesPath: filepath.Join(dir, "changes.json")}
+		ChangesPath: filepath.Join(dir, "changes.json")}
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {
@@ -785,14 +784,12 @@ func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 }
 
 // relink is HQ sending the Mate's server a new Git credential over the link:
-// HQ takes credential from now on and revokes the one before, and the file
-// the server keeps holds it.
+// HQ takes credential from now on and revokes the one before.
 func (l *hqLab) relink(credential string) {
 	l.t.Helper()
 	l.hq.mu.Lock()
 	l.hq.credential = credential
 	l.hq.mu.Unlock()
-	hqtest.GitCredential(l.t, l.rt.HQ.GitCredentialPath, credential)
 }
 
 // merge squashes the Mate's change #1 in appdev onto `main`, the way HQ's
@@ -1166,7 +1163,6 @@ func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
 	t.Helper()
 	schemas := newRecipeSchemaCache(t, true)
 	link := fake.link(t)
-	hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
 	lab := &hqLab{t: t, hq: fake, schemas: schemas, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: link}}
 	lab.git("init", "-q", "-b", "main")

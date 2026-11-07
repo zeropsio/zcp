@@ -9,28 +9,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
-	leaseHQAddress    = "https://hq.example.invalid"
-	leaseHQRepo       = leaseHQAddress + "/git/org-1/a1/web"
-	leaseHQCredential = "the-mate-credential-0001"
+	leaseHQAddress = "https://hq.example.invalid"
+	leaseHQRepo    = leaseHQAddress + "/git/org-1/a1/web"
+	leaseHQKey     = "the-project-key-0001"
 )
 
 // leaseHQLink links a test's container to the HQ at leaseHQAddress, the way
-// a Mate's container presents itself to its HQ: its identity, and a file of
-// its own for the Git credential the Mate's server keeps, holding
-// leaseHQCredential.
+// a Mate's container presents itself to its HQ: its identity, the project
+// key leaseHQKey among it.
 func leaseHQLink(t *testing.T) *runtime.HQLink {
 	t.Helper()
-	link := &runtime.HQLink{Origin: leaseHQAddress, ProjectID: "proj-1", Key: "the-project-key",
-		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
-	hqtest.GitCredential(t, link.GitCredentialPath, leaseHQCredential)
-	return link
+	return &runtime.HQLink{Origin: leaseHQAddress, ProjectID: "proj-1", Key: leaseHQKey}
 }
 
 // TestLeaseAcquire_HQRepoInAMate_ClonedThroughTheRelay_NoHQCredentialInThePool:
@@ -114,7 +109,7 @@ func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 			t.Errorf("result %s lacks %q", text, want)
 		}
 	}
-	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, ops.PoolHQCredentialEnvKey, leaseHQCredential, leaseTestLease, "no zcp command puts it"} {
+	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, ops.PoolHQCredentialEnvKey, leaseHQKey, leaseTestLease, "no zcp command puts it"} {
 		if strings.Contains(text, banned) {
 			t.Errorf("result %s carries %q", text, banned)
 		}
