@@ -3,4 +3,7 @@
 # lint run once in pre-commit; complete checks belong to CI.
 # Install: git config core.hooksPath .githooks (done by make setup)
 
-exec "$(git rev-parse --show-toplevel)/scripts/witness-replay.sh"
+# Worktrees share one hooks directory; a checkout from before the witness rule has no script.
+REPLAY="$(git rev-parse --show-toplevel)/scripts/witness-replay.sh"
+[ -x "$REPLAY" ] || exit 0
+exec "$REPLAY"
