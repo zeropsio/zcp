@@ -81,12 +81,16 @@ if echo "$COMMAND" | grep -qE '^git\s+push'; then
     [ -f "go.mod" ] || exit 0
 
     # Per-package bound inside the hook's own 120 s (.claude/settings.json).
-    TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=100s 2>&1)
-    if echo "$TEST_OUTPUT" | grep -qE 'FAIL'; then
-        echo "BLOCKED: Tests failing. Fix before pushing." >&2
-        echo "$TEST_OUTPUT" | grep -E 'FAIL|---' | tail -5 >&2
+    # Without -v, go test prints only "ok <pkg>" for passing packages and the
+    # whole output of every failing test, so the log minus "ok" lines is the
+    # failing tests' assertions; the full log stays on disk for a flake.
+    TEST_LOG=$(mktemp "${TMPDIR:-/tmp}/zcp-push-gate.XXXXXX")
+    if ! go test ./... -count=1 -short -timeout=100s >"$TEST_LOG" 2>&1; then
+        echo "BLOCKED: Tests failing. Fix before pushing. Full output: $TEST_LOG" >&2
+        grep -vE '^ok[[:space:]]|^\?[[:space:]]' "$TEST_LOG" | head -80 >&2
         exit 2
     fi
+    rm -f "$TEST_LOG"
 
     exit 0
 fi
