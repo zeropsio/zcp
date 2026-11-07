@@ -28,6 +28,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -3757,6 +3758,20 @@ func relayRandHex(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
+// helperDefaultInterrupt gives every helper SIGINT's default disposition,
+// as git has it under sshd. A test binary a non-interactive shell started in
+// the background inherits SIGINT ignored, so would every helper it starts,
+// and a shell cannot trap a signal ignored at its entry: the helper would
+// hand git the answer after SIGINT. A signal the binary catches is default
+// again in a child it execs.
+var helperDefaultInterrupt sync.Once
+
+func catchInheritedIgnoredInterrupt() {
+	if signal.Ignored(syscall.SIGINT) {
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGINT)
+	}
+}
+
 // helperProc is the relay helper running as git runs it — `<helper> get`
 // in sh — its request on stdin, answers on descriptor 3, frames on 4.
 type helperProc struct {
@@ -3771,6 +3786,7 @@ type helperProc struct {
 // helperRequest.
 func startHelper(t *testing.T, sh []string, nonce string, env []string) *helperProc {
 	t.Helper()
+	helperDefaultInterrupt.Do(catchInheritedIgnoredInterrupt)
 	ansR, ansW, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
