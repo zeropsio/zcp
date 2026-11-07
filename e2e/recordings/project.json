@@ -1,0 +1,39 @@
+{
+  "$provenance": {
+    "producer": "zerops",
+    "revision": "2026-11-07",
+    "via": "zcp e2e TestRecord",
+    "schema": "GET /api/rest/public/project/{id}"
+  },
+  "value": {
+    "clientId": "REC0000000000000000002",
+    "created": "2026-01-01T00:00:00Z",
+    "description": "",
+    "id": "REC0000000000000000001",
+    "lastUpdate": "2026-01-01T00:00:00Z",
+    "logForwardingType": null,
+    "mode": "LIGHT",
+    "name": "localflow",
+    "primaryInstanceLocation": {
+      "id": "eu-central",
+      "name": "EU Central (prg1)",
+      "pingUrl": "https://proxy.app-prg1.zerops.io/api/rest/ping"
+    },
+    "publicIpV4": null,
+    "publicIpV4Shared": false,
+    "publicIpV6": "2001:db8::1",
+    "publicZone": "000000000000000000000000000.prg1-zerops.zone",
+    "recipeSource": null,
+    "recipeSourceUrl": null,
+    "status": "ACTIVE",
+    "tagList": [],
+    "userRoles": [
+      {
+        "clientUserId": "REC0000000000000000004",
+        "id": "REC0000000000000000005",
+        "roleCode": "BASIC_USER"
+      }
+    ],
+    "zeropsSubdomainHost": "0000"
+  }
+}

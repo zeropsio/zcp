@@ -1,0 +1,57 @@
+{
+  "$provenance": {
+    "producer": "zerops",
+    "revision": "2026-11-07",
+    "via": "zcp e2e TestRecord",
+    "schema": "GET /api/rest/public/user/info"
+  },
+  "value": {
+    "avatar": null,
+    "clientUserList": [
+      {
+        "canCreateProjects": false,
+        "canEditFinances": false,
+        "canViewFinances": false,
+        "client": {
+          "accountName": "KRLS",
+          "avatar": null,
+          "id": "REC0000000000000000002"
+        },
+        "clientId": "REC0000000000000000002",
+        "id": "REC0000000000000000004",
+        "roleCode": "NO_ACCESS",
+        "status": "ACTIVE",
+        "user": {
+          "avatar": null,
+          "email": "user@example.invalid",
+          "emailVerified": false,
+          "firstName": "Recorded User",
+          "fullName": "Recorded User",
+          "id": "REC0000000000000000003",
+          "lastName": ""
+        },
+        "userId": "REC0000000000000000003"
+      }
+    ],
+    "countryCallingCode": null,
+    "created": "2026-01-01T00:00:00Z",
+    "email": "user@example.invalid",
+    "emailVerified": false,
+    "firstName": "Recorded User",
+    "fullName": "Recorded User",
+    "hasPasskey": false,
+    "hasU2F": false,
+    "id": "REC0000000000000000003",
+    "intercomHash": "redacted",
+    "language": {
+      "id": "en",
+      "name": "English"
+    },
+    "lastName": "",
+    "lastUpdate": "2026-01-01T00:00:00Z",
+    "passwordIsSet": true,
+    "phoneNumber": null,
+    "status": "ACTIVE",
+    "totpIsSet": false
+  }
+}

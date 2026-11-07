@@ -1,0 +1,1592 @@
+{
+  "$provenance": {
+    "producer": "zerops",
+    "revision": "2026-11-07",
+    "via": "zcp e2e TestRecord",
+    "schema": "GET /api/rest/public/project/{id}/service-stack"
+  },
+  "value": {
+    "count": 5,
+    "limit": 1000,
+    "list": [
+      {
+        "activeAppVersion": null,
+        "autoscalingProfileId": "oltp-staging",
+        "autoscalingProfileOverrides": null,
+        "base": "postgresql:single@17",
+        "buildCache": null,
+        "cdnEnabled": false,
+        "coreService": {
+          "autoscalingProfileId": null,
+          "base": "core:single@2",
+          "buildCache": null,
+          "cdnEnabled": false,
+          "currentAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "customAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000021",
+          "isSystem": true,
+          "name": "core",
+          "nestId": "prg1",
+          "objectStorageId": null,
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "serviceStackTypeId": "core",
+          "serviceStackTypeInfo": {
+            "serviceStackTypeCategory": "CORE",
+            "serviceStackTypeName": "Core",
+            "serviceStackTypeVersionName": "core:single@2"
+          },
+          "serviceStackTypeVersionId": "core_v2_single",
+          "startOnProjectStart": true,
+          "status": "ACTIVE"
+        },
+        "created": "2026-01-01T00:00:00Z",
+        "currentAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": null,
+            "minContainerCount": null
+          },
+          "verticalAutoscaling": {
+            "cpuMode": "SHARED",
+            "maxResource": {
+              "cpuCoreCount": 3,
+              "diskGBytes": 100,
+              "memoryGBytes": 6
+            },
+            "minFreeResource": {
+              "cpuCoreCount": 0.10000000149011612,
+              "cpuCorePercent": 20,
+              "memoryGBytes": 0.25,
+              "memoryPercent": 20
+            },
+            "minResource": {
+              "cpuCoreCount": 1,
+              "diskGBytes": 1,
+              "memoryGBytes": 1
+            },
+            "startCpuCoreCount": 2,
+            "swapEnabled": true
+          }
+        },
+        "customAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": null,
+            "minContainerCount": null
+          },
+          "verticalAutoscaling": null
+        },
+        "customPortsEnabled": true,
+        "githubIntegration": null,
+        "gitlabIntegration": null,
+        "id": "REC0000000000000000007",
+        "isSystem": false,
+        "lastUpdate": "2026-01-01T00:00:00Z",
+        "mode": "NON_HA",
+        "name": "db",
+        "nestId": "prg1",
+        "objectStorageId": null,
+        "ports": [
+          {
+            "description": "",
+            "port": 5432,
+            "protocol": "tcp",
+            "scheme": "postgresql"
+          },
+          {
+            "description": "",
+            "port": 6432,
+            "protocol": "tcp",
+            "scheme": "postgresql"
+          }
+        ],
+        "project": {
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "description": "",
+          "id": "REC0000000000000000001",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "mode": "LIGHT",
+          "name": "localflow",
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "status": "ACTIVE",
+          "tagList": [],
+          "userRoles": [
+            {
+              "clientUserId": "REC0000000000000000004",
+              "id": "REC0000000000000000005",
+              "roleCode": "BASIC_USER"
+            }
+          ]
+        },
+        "projectId": "REC0000000000000000001",
+        "recipeSource": null,
+        "recipeSourceUrl": null,
+        "reloadAvailable": true,
+        "requestedPorts": {
+          "isActive": false,
+          "requestedPorts": []
+        },
+        "serviceStackTypeId": "postgresql",
+        "serviceStackTypeInfo": {
+          "serviceStackTypeCategory": "STANDARD",
+          "serviceStackTypeName": "PostgreSQL",
+          "serviceStackTypeVersionName": "postgresql:single@17"
+        },
+        "serviceStackTypeVersionId": "postgresql_v17_single",
+        "startOnProjectStart": false,
+        "status": "STOPPED",
+        "subdomainAccess": false,
+        "userData": [
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "45 0 * * *",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000006",
+            "internal": false,
+            "key": "BACKUP_PERIOD",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "postgresql://${user}:${password}@${hostname}:${port}",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000008",
+            "internal": false,
+            "key": "connectionString",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "postgresql://${user}:${password}@${hostname}:${portTls}",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000009",
+            "internal": false,
+            "key": "connectionTlsString",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "db",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000010",
+            "internal": false,
+            "key": "dbName",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "db",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000011",
+            "internal": false,
+            "key": "hostname",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "redacted",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000012",
+            "internal": false,
+            "key": "password",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": true,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "5432",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000013",
+            "internal": false,
+            "key": "port",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "6432",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000014",
+            "internal": false,
+            "key": "portTls",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000001",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000015",
+            "internal": false,
+            "key": "projectId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000007",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000016",
+            "internal": false,
+            "key": "serviceId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "postgres",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000017",
+            "internal": false,
+            "key": "superUser",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "redacted",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000018",
+            "internal": false,
+            "key": "superUserPassword",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": true,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "db",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000019",
+            "internal": false,
+            "key": "user",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "db:9630",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000020",
+            "internal": false,
+            "key": "ZEROPS_PROMETHEUS_PORT",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000007",
+            "serviceStackName": "db",
+            "type": "SYSTEM"
+          }
+        ],
+        "versionNumber": "v17.7"
+      },
+      {
+        "activeAppVersion": {
+          "activationDate": "2026-01-01T00:00:00Z",
+          "build": {
+            "cacheSnapshotId": null,
+            "containerCreationStart": "2026-01-01T00:00:00Z",
+            "endDate": "2026-01-01T00:00:00Z",
+            "pipelineFailed": null,
+            "pipelineFinish": "2026-01-01T00:00:00Z",
+            "pipelineStart": "2026-01-01T00:00:00Z",
+            "serviceStackId": "REC0000000000000000033",
+            "serviceStackName": "buildfebridgev1784818927",
+            "serviceStackTypeVersionId": "ubuntu_build_runtime",
+            "serviceStackTypeVersionName": null,
+            "startDate": "2026-01-01T00:00:00Z"
+          },
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "createdByUser": {
+            "avatar": null,
+            "email": "user@example.invalid",
+            "firstName": "Recorded User",
+            "fullName": "Recorded User",
+            "id": "REC0000000000000000003",
+            "type": "USER"
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000032",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "projectId": "REC0000000000000000001",
+          "publicGitSource": null,
+          "sequence": 5,
+          "serviceStackId": "REC0000000000000000023",
+          "source": "CLI",
+          "status": "ACTIVE",
+          "userDataList": []
+        },
+        "autoscalingProfileId": null,
+        "autoscalingProfileOverrides": null,
+        "base": "alpine/static@1.0",
+        "buildCache": null,
+        "cdnEnabled": false,
+        "coreService": {
+          "autoscalingProfileId": null,
+          "base": "core:single@2",
+          "buildCache": null,
+          "cdnEnabled": false,
+          "currentAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "customAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000021",
+          "isSystem": true,
+          "name": "core",
+          "nestId": "prg1",
+          "objectStorageId": null,
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "serviceStackTypeId": "core",
+          "serviceStackTypeInfo": {
+            "serviceStackTypeCategory": "CORE",
+            "serviceStackTypeName": "Core",
+            "serviceStackTypeVersionName": "core:single@2"
+          },
+          "serviceStackTypeVersionId": "core_v2_single",
+          "startOnProjectStart": true,
+          "status": "ACTIVE"
+        },
+        "created": "2026-01-01T00:00:00Z",
+        "currentAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": 3,
+            "minContainerCount": 1
+          },
+          "verticalAutoscaling": {
+            "cpuMode": "SHARED",
+            "maxResource": {
+              "cpuCoreCount": 3,
+              "diskGBytes": 100,
+              "memoryGBytes": 6
+            },
+            "minFreeResource": {
+              "cpuCoreCount": 0.10000000149011612,
+              "cpuCorePercent": 0,
+              "memoryGBytes": 0.0625,
+              "memoryPercent": 0
+            },
+            "minResource": {
+              "cpuCoreCount": 1,
+              "diskGBytes": 1,
+              "memoryGBytes": 0.125
+            },
+            "startCpuCoreCount": 2,
+            "swapEnabled": true
+          }
+        },
+        "customAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": null,
+            "minContainerCount": null
+          },
+          "verticalAutoscaling": null
+        },
+        "customPortsEnabled": true,
+        "githubIntegration": null,
+        "gitlabIntegration": null,
+        "id": "REC0000000000000000023",
+        "isSystem": false,
+        "lastUpdate": "2026-01-01T00:00:00Z",
+        "mode": null,
+        "name": "febridge",
+        "nestId": "prg1",
+        "objectStorageId": null,
+        "ports": [
+          {
+            "description": "",
+            "port": 80,
+            "protocol": "tcp",
+            "scheme": "http"
+          }
+        ],
+        "project": {
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "description": "",
+          "id": "REC0000000000000000001",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "mode": "LIGHT",
+          "name": "localflow",
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "status": "ACTIVE",
+          "tagList": [],
+          "userRoles": [
+            {
+              "clientUserId": "REC0000000000000000004",
+              "id": "REC0000000000000000005",
+              "roleCode": "BASIC_USER"
+            }
+          ]
+        },
+        "projectId": "REC0000000000000000001",
+        "recipeSource": null,
+        "recipeSourceUrl": null,
+        "reloadAvailable": true,
+        "requestedPorts": {
+          "isActive": false,
+          "requestedPorts": []
+        },
+        "serviceStackTypeId": "static",
+        "serviceStackTypeInfo": {
+          "serviceStackTypeCategory": "USER",
+          "serviceStackTypeName": "Static",
+          "serviceStackTypeVersionName": "alpine/static@1.0"
+        },
+        "serviceStackTypeVersionId": "alpine_static",
+        "startOnProjectStart": false,
+        "status": "STOPPED",
+        "subdomainAccess": true,
+        "userData": [
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "https://febridge-0000.prg1.zerops.app",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000022",
+            "internal": false,
+            "key": "zeropsSubdomain",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000024",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_RUNTIME_PREPARE",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "bJNfBit4QBGAiw69wwRtXw",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000025",
+            "internal": false,
+            "key": "appVersionId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "febridge",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000026",
+            "internal": false,
+            "key": "hostname",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "cpu-max-10m-test",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000027",
+            "internal": false,
+            "key": "appVersionName",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "/home/zerops/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zerops/bin:/var/www/node_modules/.bin:/usr/local/go/bin:/home/zerops/.cargo/bin",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000028",
+            "internal": false,
+            "key": "PATH",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000001",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000029",
+            "internal": false,
+            "key": "projectId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000030",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_BUILD",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000023",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000031",
+            "internal": false,
+            "key": "serviceId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000023",
+            "serviceStackName": "febridge",
+            "type": "SYSTEM"
+          }
+        ],
+        "versionNumber": "v1.0.0"
+      },
+      {
+        "activeAppVersion": {
+          "activationDate": "2026-01-01T00:00:00Z",
+          "build": null,
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "createdByUser": {
+            "avatar": null,
+            "email": "user@example.invalid",
+            "firstName": "Recorded User",
+            "fullName": "Recorded User",
+            "id": "REC0000000000000000003",
+            "type": "USER"
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000044",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "projectId": "REC0000000000000000001",
+          "publicGitSource": null,
+          "sequence": 1,
+          "serviceStackId": "REC0000000000000000035",
+          "source": "NONE",
+          "status": "ACTIVE",
+          "userDataList": []
+        },
+        "autoscalingProfileId": null,
+        "autoscalingProfileOverrides": null,
+        "base": "ubuntu/nodejs@24",
+        "buildCache": null,
+        "cdnEnabled": false,
+        "coreService": {
+          "autoscalingProfileId": null,
+          "base": "core:single@2",
+          "buildCache": null,
+          "cdnEnabled": false,
+          "currentAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "customAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000021",
+          "isSystem": true,
+          "name": "core",
+          "nestId": "prg1",
+          "objectStorageId": null,
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "serviceStackTypeId": "core",
+          "serviceStackTypeInfo": {
+            "serviceStackTypeCategory": "CORE",
+            "serviceStackTypeName": "Core",
+            "serviceStackTypeVersionName": "core:single@2"
+          },
+          "serviceStackTypeVersionId": "core_v2_single",
+          "startOnProjectStart": true,
+          "status": "ACTIVE"
+        },
+        "created": "2026-01-01T00:00:00Z",
+        "currentAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": 3,
+            "minContainerCount": 1
+          },
+          "verticalAutoscaling": {
+            "cpuMode": "SHARED",
+            "maxResource": {
+              "cpuCoreCount": 3,
+              "diskGBytes": 100,
+              "memoryGBytes": 6
+            },
+            "minFreeResource": {
+              "cpuCoreCount": 0.10000000149011612,
+              "cpuCorePercent": 0,
+              "memoryGBytes": 0.0625,
+              "memoryPercent": 0
+            },
+            "minResource": {
+              "cpuCoreCount": 1,
+              "diskGBytes": 1,
+              "memoryGBytes": 0.125
+            },
+            "startCpuCoreCount": 2,
+            "swapEnabled": true
+          }
+        },
+        "customAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": null,
+            "minContainerCount": null
+          },
+          "verticalAutoscaling": null
+        },
+        "customPortsEnabled": true,
+        "githubIntegration": null,
+        "gitlabIntegration": null,
+        "id": "REC0000000000000000035",
+        "isSystem": false,
+        "lastUpdate": "2026-01-01T00:00:00Z",
+        "mode": null,
+        "name": "app",
+        "nestId": "prg1",
+        "objectStorageId": null,
+        "ports": [],
+        "project": {
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "description": "",
+          "id": "REC0000000000000000001",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "mode": "LIGHT",
+          "name": "localflow",
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "status": "ACTIVE",
+          "tagList": [],
+          "userRoles": [
+            {
+              "clientUserId": "REC0000000000000000004",
+              "id": "REC0000000000000000005",
+              "roleCode": "BASIC_USER"
+            }
+          ]
+        },
+        "projectId": "REC0000000000000000001",
+        "recipeSource": null,
+        "recipeSourceUrl": null,
+        "reloadAvailable": true,
+        "requestedPorts": {
+          "isActive": false,
+          "requestedPorts": []
+        },
+        "serviceStackTypeId": "nodejs",
+        "serviceStackTypeInfo": {
+          "serviceStackTypeCategory": "USER",
+          "serviceStackTypeName": "Node.js",
+          "serviceStackTypeVersionName": "ubuntu/nodejs@24"
+        },
+        "serviceStackTypeVersionId": "ubuntu_nodejs_v24",
+        "startOnProjectStart": false,
+        "status": "STOPPED",
+        "subdomainAccess": false,
+        "userData": [
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "https://app-0000.prg1.zerops.app",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000034",
+            "internal": false,
+            "key": "zeropsSubdomain",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "/home/zerops/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zerops/bin",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000036",
+            "internal": false,
+            "key": "PATH",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000044",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000037",
+            "internal": false,
+            "key": "appVersionId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "app",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000038",
+            "internal": false,
+            "key": "hostname",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000001",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000039",
+            "internal": false,
+            "key": "projectId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000040",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_RUNTIME_PREPARE",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000035",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000041",
+            "internal": false,
+            "key": "serviceId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000042",
+            "internal": false,
+            "key": "appVersionName",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000043",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_BUILD",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000035",
+            "serviceStackName": "app",
+            "type": "SYSTEM"
+          }
+        ],
+        "versionNumber": "v24.16.0"
+      },
+      {
+        "activeAppVersion": {
+          "activationDate": "2026-01-01T00:00:00Z",
+          "build": {
+            "cacheSnapshotId": null,
+            "containerCreationStart": "2026-01-01T00:00:00Z",
+            "endDate": "2026-01-01T00:00:00Z",
+            "pipelineFailed": null,
+            "pipelineFinish": "2026-01-01T00:00:00Z",
+            "pipelineStart": "2026-01-01T00:00:00Z",
+            "serviceStackId": "REC0000000000000000047",
+            "serviceStackName": "buildzcpv1784718736",
+            "serviceStackTypeVersionId": "ubuntu_build_runtime",
+            "serviceStackTypeVersionName": null,
+            "startDate": "2026-01-01T00:00:00Z"
+          },
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "createdByUser": {
+            "avatar": {
+              "externalAvatarUrl": null,
+              "largeAvatarUrl": "https://storage-prg1.zerops.io/4g-avatar/REC0000000000000000045-large.jpg?v=1777877677",
+              "smallAvatarUrl": "https://storage-prg1.zerops.io/4g-avatar/REC0000000000000000045-small.jpg?v=1777877677"
+            },
+            "email": "user@example.invalid",
+            "firstName": "Recorded User",
+            "fullName": "Recorded User",
+            "id": "REC0000000000000000045",
+            "type": "USER"
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000046",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "projectId": "REC0000000000000000001",
+          "publicGitSource": null,
+          "sequence": 1,
+          "serviceStackId": "REC0000000000000000048",
+          "source": "GIT",
+          "status": "ACTIVE",
+          "userDataList": [
+            {
+              "content": "zcp@1",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_RUN_BASE",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "build:\n    base: ubuntu@22.04\n    deployFiles: ./\nrun:\n    initCommands:\n        - curl -sSfL https://zerops.io/zcp/install.sh | sudo sh\n        - zcp init\n        - sudo -E zcp init nginx\n    base: zcp@1\n    ports:\n        - port: 8080\n          httpSupport: true\n    startCommands:\n        - name: nginx\n          command: zcp service start nginx\n        - name: vscode\n          command: zcp service start vscode\n",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_YAML",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "ubuntu",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_RUN_OS",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "RUNTIME",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_RUN_MODE",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_appVersionName",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "",
+              "editable": false,
+              "internal": false,
+              "key": "appVersionName",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "[\"curl -sSfL https://zerops.io/zcp/install.sh | sudo sh\",\"zcp init\",\"sudo -E zcp init nginx\"]",
+              "editable": false,
+              "internal": true,
+              "key": "initCommands",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "REC0000000000000000048",
+              "editable": false,
+              "internal": false,
+              "key": "serviceId",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "zcp@1",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_BASE",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "REC0000000000000000046",
+              "editable": false,
+              "internal": true,
+              "key": "ZEROPS_appVersionId",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "REC0000000000000000046",
+              "editable": false,
+              "internal": false,
+              "key": "appVersionId",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "/var/www/",
+              "editable": false,
+              "internal": true,
+              "key": "workingDir",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "NONE",
+              "editable": false,
+              "internal": false,
+              "key": "ZEROPS_DEBUG_BUILD",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "REC0000000000000000001",
+              "editable": false,
+              "internal": false,
+              "key": "projectId",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "/home/zerops/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zerops/bin:/var/www/node_modules/.bin:/usr/local/go/bin:/home/zerops/.cargo/bin",
+              "editable": true,
+              "internal": false,
+              "key": "PATH",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "NONE",
+              "editable": false,
+              "internal": false,
+              "key": "ZEROPS_DEBUG_RUNTIME_PREPARE",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "zcp",
+              "editable": false,
+              "internal": false,
+              "key": "hostname",
+              "sensitive": false,
+              "type": "SYSTEM"
+            },
+            {
+              "content": "https://zcp-0000-8080.prg1.zerops.app",
+              "editable": false,
+              "internal": false,
+              "key": "zeropsSubdomain",
+              "sensitive": false,
+              "type": "SYSTEM"
+            }
+          ]
+        },
+        "autoscalingProfileId": null,
+        "autoscalingProfileOverrides": null,
+        "base": "zcp@1",
+        "buildCache": null,
+        "cdnEnabled": false,
+        "coreService": {
+          "autoscalingProfileId": null,
+          "base": "core:single@2",
+          "buildCache": null,
+          "cdnEnabled": false,
+          "currentAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "customAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000021",
+          "isSystem": true,
+          "name": "core",
+          "nestId": "prg1",
+          "objectStorageId": null,
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "serviceStackTypeId": "core",
+          "serviceStackTypeInfo": {
+            "serviceStackTypeCategory": "CORE",
+            "serviceStackTypeName": "Core",
+            "serviceStackTypeVersionName": "core:single@2"
+          },
+          "serviceStackTypeVersionId": "core_v2_single",
+          "startOnProjectStart": true,
+          "status": "ACTIVE"
+        },
+        "created": "2026-01-01T00:00:00Z",
+        "currentAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": 1,
+            "minContainerCount": 1
+          },
+          "verticalAutoscaling": {
+            "cpuMode": "SHARED",
+            "maxResource": {
+              "cpuCoreCount": 3,
+              "diskGBytes": 100,
+              "memoryGBytes": 6
+            },
+            "minFreeResource": {
+              "cpuCoreCount": 0.25,
+              "cpuCorePercent": 0,
+              "memoryGBytes": 2,
+              "memoryPercent": 10
+            },
+            "minResource": {
+              "cpuCoreCount": 2,
+              "diskGBytes": 2,
+              "memoryGBytes": 2
+            },
+            "startCpuCoreCount": 2,
+            "swapEnabled": true
+          }
+        },
+        "customAutoscaling": {
+          "horizontalAutoscaling": {
+            "maxContainerCount": 1,
+            "minContainerCount": null
+          },
+          "verticalAutoscaling": {
+            "cpuMode": null,
+            "maxResource": {
+              "cpuCoreCount": null,
+              "diskGBytes": null,
+              "memoryGBytes": null
+            },
+            "minFreeResource": {
+              "cpuCoreCount": null,
+              "cpuCorePercent": null,
+              "memoryGBytes": null,
+              "memoryPercent": null
+            },
+            "minResource": {
+              "cpuCoreCount": null,
+              "diskGBytes": null,
+              "memoryGBytes": 2
+            },
+            "startCpuCoreCount": null,
+            "swapEnabled": null
+          }
+        },
+        "customPortsEnabled": true,
+        "githubIntegration": null,
+        "gitlabIntegration": null,
+        "id": "REC0000000000000000048",
+        "isSystem": false,
+        "lastUpdate": "2026-01-01T00:00:00Z",
+        "mode": null,
+        "name": "zcp",
+        "nestId": "prg1",
+        "objectStorageId": null,
+        "ports": [
+          {
+            "description": "",
+            "port": 8080,
+            "protocol": "tcp",
+            "scheme": "http"
+          }
+        ],
+        "project": {
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "description": "",
+          "id": "REC0000000000000000001",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "mode": "LIGHT",
+          "name": "localflow",
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "status": "ACTIVE",
+          "tagList": [],
+          "userRoles": [
+            {
+              "clientUserId": "REC0000000000000000004",
+              "id": "REC0000000000000000005",
+              "roleCode": "BASIC_USER"
+            }
+          ]
+        },
+        "projectId": "REC0000000000000000001",
+        "recipeSource": "zeropsio/zcp",
+        "recipeSourceUrl": null,
+        "reloadAvailable": true,
+        "requestedPorts": {
+          "isActive": false,
+          "requestedPorts": []
+        },
+        "serviceStackTypeId": "zcp",
+        "serviceStackTypeInfo": {
+          "serviceStackTypeCategory": "USER",
+          "serviceStackTypeName": "Zerops Control Plane",
+          "serviceStackTypeVersionName": "zcp@1"
+        },
+        "serviceStackTypeVersionId": "zcp_v1",
+        "startOnProjectStart": true,
+        "status": "ACTIVE",
+        "subdomainAccess": true,
+        "userData": [
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000046",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000049",
+            "internal": false,
+            "key": "appVersionId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000050",
+            "internal": false,
+            "key": "appVersionName",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "zcp",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000051",
+            "internal": false,
+            "key": "hostname",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "/home/zerops/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zerops/bin:/var/www/node_modules/.bin:/usr/local/go/bin:/home/zerops/.cargo/bin",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": true,
+            "id": "REC0000000000000000052",
+            "internal": false,
+            "key": "PATH",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000001",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000053",
+            "internal": false,
+            "key": "projectId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000048",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000054",
+            "internal": false,
+            "key": "serviceId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "https://zcp-0000-8080.prg1.zerops.app",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000055",
+            "internal": false,
+            "key": "zeropsSubdomain",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000056",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_BUILD",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "NONE",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000057",
+            "internal": false,
+            "key": "ZEROPS_DEBUG_RUNTIME_PREPARE",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000048",
+            "serviceStackName": "zcp",
+            "type": "SYSTEM"
+          }
+        ],
+        "versionNumber": "v1"
+      },
+      {
+        "activeAppVersion": null,
+        "autoscalingProfileId": null,
+        "autoscalingProfileOverrides": null,
+        "base": "core:single@2",
+        "buildCache": null,
+        "cdnEnabled": false,
+        "coreService": {
+          "autoscalingProfileId": null,
+          "base": "core:single@2",
+          "buildCache": null,
+          "cdnEnabled": false,
+          "currentAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "customAutoscaling": {
+            "horizontalAutoscaling": null,
+            "verticalAutoscaling": null
+          },
+          "githubIntegration": null,
+          "gitlabIntegration": null,
+          "id": "REC0000000000000000021",
+          "isSystem": true,
+          "name": "core",
+          "nestId": "prg1",
+          "objectStorageId": null,
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "serviceStackTypeId": "core",
+          "serviceStackTypeInfo": {
+            "serviceStackTypeCategory": "CORE",
+            "serviceStackTypeName": "Core",
+            "serviceStackTypeVersionName": "core:single@2"
+          },
+          "serviceStackTypeVersionId": "core_v2_single",
+          "startOnProjectStart": true,
+          "status": "ACTIVE"
+        },
+        "created": "2026-01-01T00:00:00Z",
+        "currentAutoscaling": {
+          "horizontalAutoscaling": null,
+          "verticalAutoscaling": null
+        },
+        "customAutoscaling": {
+          "horizontalAutoscaling": null,
+          "verticalAutoscaling": null
+        },
+        "customPortsEnabled": false,
+        "githubIntegration": null,
+        "gitlabIntegration": null,
+        "id": "REC0000000000000000021",
+        "isSystem": true,
+        "lastUpdate": "2026-01-01T00:00:00Z",
+        "mode": "single",
+        "name": "core",
+        "nestId": "prg1",
+        "objectStorageId": null,
+        "ports": [],
+        "project": {
+          "clientId": "REC0000000000000000002",
+          "created": "2026-01-01T00:00:00Z",
+          "description": "",
+          "id": "REC0000000000000000001",
+          "lastUpdate": "2026-01-01T00:00:00Z",
+          "mode": "LIGHT",
+          "name": "localflow",
+          "recipeSource": null,
+          "recipeSourceUrl": null,
+          "status": "ACTIVE",
+          "tagList": [],
+          "userRoles": [
+            {
+              "clientUserId": "REC0000000000000000004",
+              "id": "REC0000000000000000005",
+              "roleCode": "BASIC_USER"
+            }
+          ]
+        },
+        "projectId": "REC0000000000000000001",
+        "recipeSource": null,
+        "recipeSourceUrl": null,
+        "reloadAvailable": false,
+        "requestedPorts": {
+          "isActive": false,
+          "requestedPorts": []
+        },
+        "serviceStackTypeId": "core",
+        "serviceStackTypeInfo": {
+          "serviceStackTypeCategory": "CORE",
+          "serviceStackTypeName": "Core",
+          "serviceStackTypeVersionName": "core:single@2"
+        },
+        "serviceStackTypeVersionId": "core_v2_single",
+        "startOnProjectStart": true,
+        "status": "ACTIVE",
+        "subdomainAccess": false,
+        "userData": [
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "core",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000058",
+            "internal": false,
+            "key": "hostname",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000021",
+            "serviceStackName": "core",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000001",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000059",
+            "internal": false,
+            "key": "projectId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000021",
+            "serviceStackName": "core",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "REC0000000000000000021",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000060",
+            "internal": false,
+            "key": "serviceId",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000021",
+            "serviceStackName": "core",
+            "type": "SYSTEM"
+          },
+          {
+            "clientId": "REC0000000000000000002",
+            "content": "[]",
+            "created": "2026-01-01T00:00:00Z",
+            "editable": false,
+            "id": "REC0000000000000000061",
+            "internal": false,
+            "key": "ZEROPS_PROMETHEUS_CUSTOM_SD",
+            "lastUpdate": "2026-01-01T00:00:00Z",
+            "projectId": "REC0000000000000000001",
+            "sensitive": false,
+            "serviceStackId": "REC0000000000000000021",
+            "serviceStackName": "core",
+            "type": "SYSTEM"
+          }
+        ],
+        "versionNumber": ""
+      }
+    ],
+    "offset": 0,
+    "total": 5
+  }
+}
