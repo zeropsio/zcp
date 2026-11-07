@@ -222,13 +222,12 @@ Bootstrap sessions survive process restart and can be reattached via `route=resu
 ## Development
 
 ```bash
-go test ./... -count=1 -short    # All tests, fast
-go test ./... -count=1 -race     # All tests with race detection
 go build -o bin/zcp ./cmd/zcp    # Build
+go vet ./...                     # Vet
 make lint-fast                   # Lint (~3s)
 ```
 
-E2E tests need a real Zerops project: `go test ./e2e/ -tags e2e` (requires `ZCP_API_KEY` or zcli login).
+Tests run only on explicit request (`make test-short`, `make test-race`, or the manually dispatched `Tests` workflow). E2E tests need a real Zerops project: `go test ./e2e/ -tags e2e` (requires `ZCP_API_KEY` or zcli login).
 
 ## Release
 
@@ -237,4 +236,4 @@ make release        # Minor bump (e.g. v8.104.0 → v8.105.0)
 make release-patch  # Patch bump (e.g. v8.104.0 → v8.104.1)
 ```
 
-Both run tests before tagging. If tests fail, the release is aborted. Requires a clean worktree (no uncommitted changes to tracked files; untracked files are ignored).
+Both run `go vet` and lint before tagging. If either fails, the release is aborted. Requires a clean worktree (no uncommitted changes to tracked files; untracked files are ignored).

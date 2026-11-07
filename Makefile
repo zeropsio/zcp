@@ -30,10 +30,10 @@ setup: ## Bootstrap development environment (install all tools)
 	@jq --version
 	@echo "==> Setup complete."
 
-check-changed: ## Run affected short tests and native lint (staged diff)
+check-changed: ## Run witness lines and native lint of affected packages (staged diff)
 	./scripts/check-changed.sh
 
-test: ## Manually run all tests (complete acceptance runs in CI)
+test: ## Manually run all tests (only on explicit request; CI runs none)
 	go test ./... -count=1
 
 test-short: ## Manually run all packages in short mode
@@ -69,12 +69,13 @@ lint-local: ## Manually lint all packages (native only, offline)
 vet: ## Run go vet
 	go vet ./...
 
-vet-tags: ## Compile-check build-tagged test files (api/e2e) so they can't silently rot
+vet-tags: ## Compile-check build-tagged test files (api/e2e/livegit) so they can't silently rot
 	# go test ./... (default tags) never compiles these, so a signature/struct
 	# change leaves them broken + invisible until an operator runs them. go vet
 	# type-checks them without executing (no TestMain side effects).
 	go vet -tags api ./...
 	go vet -tags e2e ./...
+	go vet -tags livegit ./...
 
 build: ## Build binary
 	@[ "$$(ls internal/knowledge/recipes/*.md 2>/dev/null | wc -l)" -ge 20 ] || { echo "recipe corpus missing — run: make sync-recipes" >&2; exit 1; }
@@ -102,10 +103,10 @@ clean: ## Remove build artifacts
 ###########
 # RELEASE #
 ###########
-release: ## Minor bump, test, tag, push (e.g. v2.61.0 → v2.62.0). Use V=x.y.z for explicit version.
+release: ## Minor bump, vet, lint, tag, push (e.g. v2.61.0 → v2.62.0). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=minor
 
-release-patch: ## Patch bump, test, tag, push (e.g. v2.61.0 → v2.61.1). Use V=x.y.z for explicit version.
+release-patch: ## Patch bump, vet, lint, tag, push (e.g. v2.61.0 → v2.61.1). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=patch
 
 _release:
@@ -136,8 +137,9 @@ _release:
 		read ans; \
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1;; esac; \
 	fi; \
-	printf "Running tests...\n"; \
-	go test ./... -count=1 -short || { echo "ERROR: tests failed, aborting release."; exit 1; }; \
+	printf "Running vet and lint...\n"; \
+	go vet ./... || { echo "ERROR: go vet failed, aborting release."; exit 1; }; \
+	$(LINT) run ./... || { echo "ERROR: lint failed, aborting release."; exit 1; }; \
 	go run ./cmd/mate-release-check || { echo "ERROR: compatible Mate release is not published, aborting release."; exit 1; }; \
 	echo "Tagging $$NEXT ($$COMMITS commits since $${LATEST:-no previous tag})..."; \
 	git tag -a "$$NEXT" -m "Release $$NEXT"; \

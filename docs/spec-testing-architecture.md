@@ -183,28 +183,34 @@ SEMANTIC rot. Both are required — neither subsumes the other.
 ### 5.1 CI corpus identity and release reuse
 
 CI runs on pushes to exactly `main` and `wt/keys`, on pull requests, and on
-manual dispatch. Ordinary worktree pushes do not start CI. Preparation hydrates
-knowledge once, restores tracked overrides, and publishes the six embedded
-knowledge trees as one immutable archive identified by source commit, run,
-attempt, and SHA-256. Test and lint restore that archive only after checking its
-digest; replacing the trees prevents checkout-only files from changing the input.
+manual dispatch. Ordinary worktree pushes do not start CI. CI builds every target
+platform, vets the default and build-tagged packages, lints and checks witness
+lines; it runs no test. Test suites run only in the dispatch-only `Tests`
+workflow (`.github/workflows/tests.yml`).
+Decision: No test suite runs automatically — not on push, pull request, schedule, pre-commit, pre-push or release; tests run only when the owner explicitly asks (Karel, 2026-11-07).
+
+Preparation hydrates knowledge once, restores tracked overrides, and publishes the
+six embedded knowledge trees as one immutable archive identified by source commit,
+run, attempt, and SHA-256. Build, lint and test restore that archive only after
+checking its digest; replacing the trees prevents checkout-only files from
+changing the input.
 
 A push to `main` looks for a pull request of its commit in this repository whose
-CI run attempt passed test and lint and whose archive names a checked-out commit
+CI run attempt passed build and lint and whose archive names a checked-out commit
 (the pull request's merge commit) with the same tree as `main`. It verifies that
-archive's digest, republishes it as its own, and skips test and lint. Any other
+archive's digest, republishes it as its own, and skips build and lint. Any other
 case — no pull request, a red, unfinished or forked run, another tree, a commit
-GitHub no longer returns, a missing archive — runs the full suite.
-Decision: A push to main whose tree already passed CI on its pull request reuses that verdict instead of running the suite again.
+GitHub no longer returns, a missing archive — runs full CI.
+Decision: A push to main whose tree already passed CI on its pull request reuses that verdict instead of running CI again.
 
-Decision: A tree without a green verdict is always tested in full; a release still requires a green verdict for its exact commit.
+Decision: A tree without a green verdict is always checked in full; a release still requires a green verdict for its exact commit.
 
 A release can reuse a retained archive only from successful CI on the exact
 checked-out source commit in this repository, triggered by a push or manual
-dispatch on `main` or `wt/keys`, with both test and lint successful in that run
+dispatch on `main` or `wt/keys`, with both build and lint successful in that run
 attempt, or with that attempt's preparation having verified a reused verdict.
 It verifies the digest before reusing acceptance and before each build.
-Decision: Releasing a commit whose CI already passed does not rerun its tests; releasing a commit whose CI is still running waits for that run's verdict instead of starting another.
+Decision: Releasing a commit whose CI already passed does not rerun its checks; releasing a commit whose CI is still running waits for that run's verdict instead of starting another.
 
 Decision: A commit without a green CI verdict is never released.
 
@@ -302,10 +308,11 @@ use the staged diff, including deletions and both sides of renames. `--base <ref
 compares that ref with the working tree; `--files` accepts explicit relative paths;
 `--plan` emits the selection without running checks.
 
-Decision: local checks run affected `-short` tests and native affected-package lint;
-complete acceptance belongs to CI, and pre-push must not repeat full lint.
+Decision: local checks run native affected-package lint and no test; `--tests` also
+runs the selection's `-short` tests, only on the owner's explicit request. Pre-push
+runs only the static witness checks of the pushed range and must not repeat lint.
 
-Decision: when a selected package exits before running tests with the exact
+Decision: with `--tests`, when a selected package exits before running tests with the exact
 `knowledge.UnsyncedCorpusMessage` guard, local changed checks report that package
 as `not run locally: knowledge corpus not synced — run make sync; CI runs it`.
 Only that package's guard failure is non-failing; named-test failures, build
@@ -326,7 +333,7 @@ empty successful check. An incomplete Go graph widens selection as well.
 Selector contracts live in `scripts/test_check_changed.py`; complete all-package
 test and lint Makefile targets remain available for manual diagnostics.
 
-Decision: A zcp test drives time through an injected clock or an explicit completion signal; CI runs each test file once.
+Decision: A zcp test drives time through an injected clock or an explicit completion signal; the Tests workflow runs each test file once.
 
 ## 8. Invariants (pin with tests)
 

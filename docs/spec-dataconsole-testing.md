@@ -146,8 +146,8 @@ recovery, always behind the lock.
 
 ## 7. The JS/DOM CI lane
 
-CI installs pinned Node (`setup-node`) and runs `npm ci` in `webui/` before
-the single Go test invocation, which includes the T2 exec harnesses. `ZCP_JS_REQUIRED=1` (set in CI) turns a
+The dispatch-only Tests workflow installs pinned Node (`setup-node`) and runs `npm ci` in `webui/` before
+the single Go test invocation, which includes the T2 exec harnesses. `ZCP_JS_REQUIRED=1` (set there) turns a
 missing-node/jsdom skip into a FAILURE in all three harnesses
 (`spa_jstest_test.go`, `spa_domtest_test.go`, `studio_jstest_test.go`);
 locally, absence still skips. The non-empty glob guards stay: a harness that

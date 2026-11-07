@@ -4,6 +4,8 @@ Go supplies production and test import edges. Filesystem test readers are leaves
 editing a file they inspect changes their assertions, not their compiled exports.
 Keeping those edges distinct avoids turning every edit into a topology-wide build.
 Unknown ownership and global configuration deliberately select every package.
+Native lint runs on the selection; its short tests run only with --tests, which
+nothing invokes automatically (tests run when the owner explicitly asks).
 """
 
 import argparse
@@ -204,6 +206,8 @@ def main():
     parser.add_argument("--plan", action="store_true", help="print the JSON plan without running checks")
     parser.add_argument("--base", help="compare a Git base with the working tree (default: staged diff)")
     parser.add_argument("--files", nargs="*", help="explicit repository-relative changed paths")
+    parser.add_argument("--tests", action="store_true",
+                        help="also run the selection's short tests (explicit requests only)")
     args = parser.parse_args()
     root = Path(output("git", "rev-parse", "--show-toplevel").strip()).resolve()
     os.chdir(root)
@@ -229,7 +233,7 @@ def main():
     # would make their git commands mutate the caller's checkout instead.
     git_local = set(output("git", "rev-parse", "--local-env-vars").splitlines())
     check_env = {key: value for key, value in os.environ.items() if key not in git_local}
-    if any(file in SELECTOR_FILES or file.startswith(".githooks/") for file in files):
+    if args.tests and any(file in SELECTOR_FILES or file.startswith(".githooks/") for file in files):
         subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts",
                         "-p", "test_check_changed.py"], env=check_env, check=True)
     if not selected:
@@ -239,7 +243,8 @@ def main():
         lint = shutil.which("golangci-lint")
     if not lint:
         raise RuntimeError("golangci-lint not found; run make setup")
-    run_tests(selected, check_env)
+    if args.tests:
+        run_tests(selected, check_env)
     subprocess.run([lint, "run", *selected, "--timeout=120s"], env=check_env, check=True)
 
 

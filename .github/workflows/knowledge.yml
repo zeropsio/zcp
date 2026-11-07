@@ -58,7 +58,7 @@ jobs:
               core.setOutput('artifact', proof.artifactName);
               core.setOutput('digest', proof.digest);
             } else {
-              core.info(`No green CI verdict for tree ${SOURCE_TREE}; testing it in full`);
+              core.info(`No green CI verdict for tree ${SOURCE_TREE}; checking it in full`);
             }
 
       - name: Download proven corpus

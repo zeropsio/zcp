@@ -9,7 +9,7 @@ permissions:
   actions: read
 
 jobs:
-  # Reuse a green exact-SHA verdict, or wait for main CI; never start tag tests.
+  # Reuse a green exact-SHA build-and-lint verdict, or wait for main CI; never start tag checks.
   validation:
     uses: ./.github/workflows/ci.yml
     with:

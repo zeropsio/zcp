@@ -40,17 +40,17 @@ Read the home before changes:
 
 L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/`, `server/`, `tools/`. Type strings at entry boundaries; shared types start in topology, never workflow. Dependencies → `docs/spec-architecture.md`, `.golangci.yaml::depguard`, `internal/topology/architecture_test.go`.
 
-## TDD — Mandatory
+## Tests
 
-RED → GREEN → REFACTOR, with the failing test run before the implementation exists; pure refactors skip RED, keep affected layers green. Table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
+Tests run only when the owner explicitly asks (the dispatch-only `Tests` workflow, `make test*`, `scripts/check-changed.sh --tests`); nothing runs them automatically. Normal verification is lint (`make check-changed`), `go vet ./...` and `go build ./...`. A test you write or change: table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
 Admission, level and removal: OWNER.md Testing. `scripts/check-witness.go` enforces witness lines and drop trailers (touched test files per staged commit in `make check-changed`, touched owners per pushed range in pre-push). New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/` (platform responses only from `e2e/recordings/`, written by `go test ./e2e -tags e2e -run TestRecord`), live `./e2e/ -tags e2e`. The zcp↔Mate seam's live case installs a released Mate through download → SHA-256 → install and boots `mate serve` (`TestMateInstall_Release_Serves`).
 
 ## Commands
 
 - `make setup` — dev tools and git hooks.
-- `make check-changed` — affected short tests and native lint from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
-- Complete acceptance runs in CI; `make test-short`, `make test-race`, `make lint-fast` and `make lint-local` remain manual all-package diagnostics. Pre-push does not repeat lint.
+- `make check-changed` — witness lines and native lint of affected packages from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
+- CI runs build (all platforms), `go vet` (default and build-tagged) and lint, no test. Pre-push runs only the static witness checks. `make lint-fast` and `make lint-local` are manual all-package lint.
 - Knowledge sync (gitignored markdown, pull before build): `zcp sync pull recipes [<slug>]` / `pull guides`; `zcp sync push recipes <slug> [--dry-run]` / `push guides` → GitHub PR; `zcp sync cache-clear [<slug>]`; `zcp sync recipe {create-repo,push-app,publish,export}`. Loop: pull → edit → push → merge → cache-clear → pull. Config: `.sync.yaml`, `.env STRAPI_API_TOKEN`.
 
 ## How to work

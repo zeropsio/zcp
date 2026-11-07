@@ -1,7 +1,7 @@
-// A source SHA alone is not proof: require full CI coverage and the retained
+// A source SHA alone is not proof: require full CI (build and lint) and the retained
 // corpus from that successful run attempt. PR and release wrappers cannot attest.
 // knowledge-v1-<checked-out commit>-<run>-<attempt>-<SHA-256>; a pull request
-// run checks out its merge commit, so the name records the commit it tested.
+// run checks out its merge commit, so the name records the commit it checked.
 const CORPUS = /^knowledge-v1-([a-f0-9]{40})-(\d+)-(\d+)-([a-f0-9]{64})$/;
 
 function isOwnGreenRun(run, repo) {
@@ -28,13 +28,13 @@ async function runCorpus(github, repo, run) {
   return null;
 }
 
-// 'tested' when test and lint passed in this attempt; 'reused' when its
+// 'checked' when build and lint passed in this attempt; 'reused' when its
 // preparation verified an earlier green verdict, which is why they were skipped.
 async function attemptVerdict(github, repo, run) {
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
     ...repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
   });
-  if (['test', 'lint'].every(name => jobs.some(job => job.name === name && job.conclusion === 'success'))) return 'tested';
+  if (['build', 'lint'].every(name => jobs.some(job => job.name === name && job.conclusion === 'success'))) return 'checked';
   const prepare = jobs.find(job => job.name === 'knowledge / prepare' && job.conclusion === 'success');
   return prepare?.steps?.some(step => step.name === 'Verify proven corpus' && step.conclusion === 'success') ? 'reused' : null;
 }
@@ -62,8 +62,8 @@ async function commitTree(github, repo, sha) {
   }
 }
 
-// A push to main reuses the green verdict of a pull request that tested this
-// exact tree. Absence is not an error: the caller then tests the tree in full.
+// A push to main reuses the green verdict of a pull request that checked this
+// exact tree. Absence is not an error: the caller then checks the tree in full.
 async function selectTreeCorpus(github, repo, sha, tree) {
   const pulls = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
     ...repo, commit_sha: sha, per_page: 100,
@@ -76,14 +76,14 @@ async function selectTreeCorpus(github, repo, sha, tree) {
       if (run.event !== 'pull_request' || run.head_sha !== pull.head.sha || !isOwnGreenRun(run, repo)) continue;
       const corpus = await runCorpus(github, repo, run);
       if (!corpus || await commitTree(github, repo, corpus.source) !== tree) continue;
-      if (await attemptVerdict(github, repo, run) !== 'tested') continue;
+      if (await attemptVerdict(github, repo, run) !== 'checked') continue;
       return corpus.proof;
     }
   }
   return null;
 }
 
-// Release consumes CI's verdict; absence of proof must never start a second suite.
+// Release consumes CI's verdict; absence of proof must never start a second CI.
 async function requireCorpus(github, repo, sha, wait = ms => new Promise(resolve => setTimeout(resolve, ms))) {
   const proof = await selectCorpus(github, repo, sha);
   if (proof) return proof;

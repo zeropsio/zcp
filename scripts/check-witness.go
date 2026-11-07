@@ -9,11 +9,11 @@
 //
 // The staged form (make check-changed, pre-commit) checks touched test files
 // only: drop trailers live in a commit message that does not exist yet. The
-// range form (scripts/witness-replay.sh, pre-push) also checks witnesses in
-// untouched test files that name an owner touched in the range, the drop
-// trailers, and with --replay applies each new witness of a short test and
-// requires its case to fail. Tests behind an e2e build tag get the static
-// checks only.
+// range form (scripts/witness-check.sh in pre-push, and CI) also checks
+// witnesses in untouched test files that name an owner touched in the range
+// and the drop trailers. Only the dispatch-only Tests workflow adds --replay,
+// which applies each new witness of a short test and requires its case to
+// fail. Tests behind an e2e build tag get the static checks only.
 package main
 
 import (

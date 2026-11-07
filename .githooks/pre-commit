@@ -1,5 +1,6 @@
 #!/bin/bash
-# Pre-commit hook: run tests and native lint selected from the staged diff.
+# Pre-commit hook: witness lines and native lint selected from the staged diff;
+# no tests run (they run only when the owner explicitly asks).
 # Install: git config core.hooksPath .githooks (done by make setup)
 
 set -euo pipefail

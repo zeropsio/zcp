@@ -1,9 +1,9 @@
 #!/bin/bash
-# Pre-push hook: witness checks and replay per pushed range; tests and native
-# lint run once in pre-commit; complete checks belong to CI.
+# Pre-push hook: static witness and drop-trailer checks per pushed range; no
+# tests run. Native lint runs once in pre-commit; CI runs lint, vet and build.
 # Install: git config core.hooksPath .githooks (done by make setup)
 
 # Worktrees share one hooks directory; a checkout from before the witness rule has no script.
-REPLAY="$(git rev-parse --show-toplevel)/scripts/witness-replay.sh"
-[ -x "$REPLAY" ] || exit 0
-exec "$REPLAY"
+CHECK="$(git rev-parse --show-toplevel)/scripts/witness-check.sh"
+[ -x "$CHECK" ] || exit 0
+exec "$CHECK"

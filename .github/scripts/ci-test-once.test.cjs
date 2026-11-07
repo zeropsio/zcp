@@ -6,7 +6,7 @@ const test = require('node:test');
 // These Go harnesses delegate to the actual JS files. Repeating their packages
 // after ./... repeats every delegated file, even with a different -run filter.
 test('CI runs delegated JS files once with dependencies required', () => {
-  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/tests.yml'), 'utf8');
   const runs = workflow.split(/\n      - /).filter(step => /go test\b/.test(step.replace(/^\s*#.*$/gm, '')));
   const liveGitCommand = "go test -race -tags livegit ./internal/ops -run '^(TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound|TestHQGit_ATransferIsBoundedByItsStallNotItsLength|TestReadOriginTip_StallingOrigin_EndsWithinItsBound)$'";
   const liveGit = runs.filter(step => step.includes(liveGitCommand));

@@ -156,7 +156,8 @@ class CheckChangedTests(unittest.TestCase):
                 self.assertEqual(self.run_plan([file])["packages"],
                                  ["./" + p for p in sorted(readers | {"internal/content"})])
 
-    def test_precommit_runs_selected_short_tests_and_lint(self):
+    # witness: scripts/check_changed.py | if args.tests: → if True:
+    def test_precommit_runs_selected_lint_without_tests(self):
         scripts = self.root / "scripts"
         scripts.mkdir()
         for name in ("check-changed.sh", "check_changed.py"):
@@ -174,7 +175,7 @@ class CheckChangedTests(unittest.TestCase):
             'echo "Git hook environment leaked into checks" >&2; exit 19; fi; '
             'echo "go $*" >> "$CALLS"; exit "${TEST_EXIT:-0}"; fi\n')
         lint = self.bin / "golangci-lint"
-        lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\n')
+        lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\nexit "${LINT_EXIT:-0}"\n')
         lint.chmod(0o755)
         calls = self.root / "calls"
         env = dict(self.env, CALLS=str(calls), GIT_DIR=str(self.root / ".git"),
@@ -183,19 +184,18 @@ class CheckChangedTests(unittest.TestCase):
                                 cwd=self.root, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short -json ./internal/content ./internal/unrelated",
             "lint run ./internal/content ./internal/unrelated --timeout=120s"])
         calls.unlink()
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-commit")],
-                                cwd=self.root, env=dict(env, TEST_EXIT="7"),
+                                cwd=self.root, env=dict(env, LINT_EXIT="7"),
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short -json ./internal/content ./internal/unrelated"])
+            "lint run ./internal/content ./internal/unrelated --timeout=120s"])
 
     def test_prepush_does_not_repeat_checks(self):
         (self.root / "scripts").mkdir()
-        shutil.copy2(ENTRY.with_name("witness-replay.sh"), self.root / "scripts/witness-replay.sh")
+        shutil.copy2(ENTRY.with_name("witness-check.sh"), self.root / "scripts/witness-check.sh")
         # Git feeds pre-push one line per pushed ref; a push of nothing feeds none.
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-push")],
                                 cwd=self.root, env=self.env, capture_output=True, text=True,
@@ -259,7 +259,7 @@ class CheckChangedTests(unittest.TestCase):
                 events_file.write_text("\n".join(
                     json.dumps(value) if isinstance(value, dict) else value for value in events) + "\n")
                 result = subprocess.run(
-                    ["bash", str(ENTRY), "--files", "internal/content/atoms/example.md",
+                    ["bash", str(ENTRY), "--tests", "--files", "internal/content/atoms/example.md",
                      "internal/knowledge/documents.go"], cwd=self.root,
                     env=dict(self.env, CALLS=str(calls), EVENTS=str(events_file), TEST_EXIT=str(test_exit)),
                     capture_output=True, text=True)
@@ -277,7 +277,7 @@ class CheckChangedTests(unittest.TestCase):
         # Even the accepted environment failure must not bypass native lint.
         events_file.write_text("\n".join(json.dumps(value) for value in missing()) + "\n")
         result = subprocess.run(
-            ["bash", str(ENTRY), "--files", "internal/content/atoms/example.md"], cwd=self.root,
+            ["bash", str(ENTRY), "--tests", "--files", "internal/content/atoms/example.md"], cwd=self.root,
             env=dict(self.env, CALLS=str(calls), EVENTS=str(events_file), TEST_EXIT="1", LINT_EXIT="9"),
             capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -1,0 +1,60 @@
+name: Tests
+
+# Test suites run only when the owner explicitly asks: dispatch this workflow
+# by hand. No push, pull request or schedule starts it, and no release needs it.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  knowledge:
+    uses: ./.github/workflows/knowledge.yml
+
+  test:
+    name: test
+    needs: knowledge
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The witness replay reads the commit range and its merge base.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - uses: ./.github/actions/restore-knowledge
+        with:
+          artifact: ${{ needs.knowledge.outputs.artifact }}
+          digest: ${{ needs.knowledge.outputs.digest }}
+
+      # node is required on PATH before the Test step: the Data Console JS/DOM
+      # suites and TestWelcomeJS (internal/content, shells out to `node --test`)
+      # must both run there — a test run never silently skips them.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Corpus proof tests
+        run: node --test .github/scripts/*.test.cjs
+
+      - name: Data Console webui deps (npm ci)
+        run: npm ci --prefix internal/dataconsole/console/webui
+
+      - name: Test
+        env:
+          CGO_ENABLED: '1'
+          ZCP_JS_REQUIRED: '1'
+        run: go test -race ./... -count=1
+
+      # Replay of new short-test witnesses since main (scripts/check-witness.go --replay).
+      - name: Witness replay
+        run: go run scripts/check-witness.go --base origin/main --head "$GITHUB_SHA" --replay
+
+      - name: Live Git transport bounds
+        run: go test -race -tags livegit ./internal/ops -run '^(TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound|TestHQGit_ATransferIsBoundedByItsStallNotItsLength|TestReadOriginTip_StallingOrigin_EndsWithinItsBound)$'

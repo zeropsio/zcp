@@ -26,7 +26,7 @@ const prRun = { id: 30, run_attempt: 1, head_sha: head, head_branch: 'fix/card',
   status: 'completed', conclusion: 'success' };
 const prArtifact = { name: `knowledge-v1-${merged}-30-1-${digest}`, expired: false,
   workflow_run: { id: 30, head_sha: head } };
-const tested = [{ name: 'test', conclusion: 'success' }, { name: 'lint', conclusion: 'success' }];
+const checked = [{ name: 'build', conclusion: 'success' }, { name: 'lint', conclusion: 'success' }];
 
 // mode 'commit' is the release (reuse-ci); mode 'tree' is a push to main (reuse-tree).
 async function consumeProof({ mode = 'commit', runs = [run], updates = [], artifacts = [artifact],
@@ -64,7 +64,7 @@ async function consumeProof({ mode = 'commit', runs = [run], updates = [], artif
     assert.ok(owner, 'artifacts and jobs are read only from a listed run');
     if (method === 'jobs') {
       assert.equal(params.attempt_number, owner.run_attempt);
-      return jobs ?? [tested[0], { name: 'lint', conclusion: lint }];
+      return jobs ?? [checked[0], { name: 'lint', conclusion: lint }];
     }
     return artifacts;
   } };
@@ -129,7 +129,7 @@ test('Release corpus download and digest verification fail closed', () => {
   assert.match(releaseWorkflow, /validation:\s+uses: \.\/\.github\/workflows\/ci.yml\s+with:\s+reuse-ci: true/);
   assert.match(releaseWorkflow, /needs: validation/);
   const ci = readFileSync(join(__dirname, '../workflows/ci.yml'), 'utf8');
-  for (const job of ['test', 'lint']) {
+  for (const job of ['build', 'lint']) {
     const consumer = ci.split(`\n  ${job}:\n`)[1].split('\n  lint:')[0];
     assert.match(consumer, /if: needs\.knowledge\.outputs\.reused != 'true'/,
       `proven corpus skips release ${job}`);
@@ -140,7 +140,7 @@ test('Release corpus download and digest verification fail closed', () => {
 const reusedMain = [
   { name: 'knowledge / prepare', conclusion: 'success',
     steps: [{ name: 'Verify proven corpus', conclusion: 'success' }] },
-  { name: 'test', conclusion: 'skipped' }, { name: 'lint', conclusion: 'skipped' },
+  { name: 'build', conclusion: 'skipped' }, { name: 'lint', conclusion: 'skipped' },
 ];
 
 test('A main push whose tree passed CI on its pull request reuses that verdict', async () => {

@@ -10,7 +10,7 @@ const run = { id: 12, run_attempt: 2, head_sha: sha, head_branch: 'wt/keys',
   status: 'completed', conclusion: 'success' };
 const artifact = { name: `knowledge-v1-${sha}-12-2-${digest}`, expired: false,
   workflow_run: { id: 12, head_sha: sha } };
-const jobs = ['test', 'lint'].map(name => ({ name, conclusion: 'success' }));
+const jobs = ['build', 'lint'].map(name => ({ name, conclusion: 'success' }));
 
 async function select(runs = [run], artifacts = [artifact], coverage = jobs) {
   const actions = { listWorkflowRuns: 'runs', listWorkflowRunArtifacts: 'artifacts',
