@@ -644,7 +644,7 @@ Every launch adds four more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
-| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link and read by zcp to set a dev pool's `ZCP_HQ_GIT_TOKEN` (§3.3, §10.10). It names a path, never the credential |
+| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link (§3.3); zcp reads it nowhere: a dev service and a pool reach HQ's git through the relay with the project key (§6.8). It names a path, never the credential |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
@@ -887,7 +887,8 @@ environment instead, never a probed flag (§2.2).
   so git never sends an empty password. The key reaches a dev service only over a relayed call's
   ssh session and is never written there: zcp's own git in a dev service — the wiring's fetch,
   the `main` check — runs as a relayed script too (`ops.RelayedSSH`), so a dev service stores no
-  Git credential; a pool's `ZCP_HQ_GIT_TOKEN` keeps the C-7 credential (zcp
+  Git credential, and neither does a pool: zcp's git in a lease runs relayed too and the
+  agent's through `zcp git <alias>` (`spec-workflows.md` §8 DP-12, DP-16) (zcp
   `internal/hq/gitcredential.go`, `internal/ops/git_relayed_script.go`;
   `TestGitCredential_AnswersOnlyTheLinkedHQ`, `TestRunHQGitCredential`,
   `TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath`,
@@ -1694,8 +1695,8 @@ How zcp does it:
   the pool's live `maxContainers` and vertical scale, its service variables with `sshIsolation`
   as written and its orchestrator's tokens left out, no `buildFromGit` and no `zeropsSetup` (its
   image is deployed from a lease, never by an import — the comment above it names the setup) and
-  no credential: a pool of a repository in HQ takes the Mate's from zcp at its first acquire
-  (`ZCP_HQ_GIT_TOKEN`, docs/spec-workflows.md §8 DP-16) and its `GIT_TOKEN` stays the person's.
+  no credential: a lease of a repository in HQ reaches it through zcp's relay
+  (docs/spec-workflows.md §8 DP-16) and the pool's `GIT_TOKEN` stays the person's.
   A utility that is a Mate's own dev tooling — a mail catcher, a database admin UI, by its
   hostname or its repository's name — stays on the AI Agent tier; Stage and Small Production
   leave it out and say so (the medusa group's production once came up with its mailpit, D30).
@@ -2309,11 +2310,10 @@ a span attribute.
   when HQ learns the project is gone (§3.10), or when a person disconnects the Mate in
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
   of a high-entropy platform token is not invertible.
-- **The Mate's Git credential** — HQ-issued, for git over HTTPS from a dev pool's leases only. HQ sends it
-  down the Mate's link; the Mate's server keeps it in the file `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL`
-  names (mode 0600); zcp reads that file and writes the value as the pool's `ZCP_HQ_GIT_TOKEN`
-  secret (§10.10). A dev service holds no credential: its git reaches HQ only through the relay,
-  which presents the project key over the session (§2.8, §6.8). It opens HQ's git for the applications that hold the Mate's project, fetch,
+- **The Mate's Git credential** — HQ-issued. HQ sends it down the Mate's link; the Mate's server
+  keeps it in the file `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names (mode 0600). zcp reads it nowhere:
+  neither a dev service nor a pool holds a credential, since their git reaches HQ only through the
+  relay, which presents the project key over the session (§2.8, §6.8). It opens HQ's git for the applications that hold the Mate's project, fetch,
   and push only to the project's own change branches (the rules of §10.10, *A Mate's git*); no HQ
   API, no Zerops. HQ sends one on every link where none is live for the project, and whenever the
   project enters an application; it sends `null` (revoked) when the project leaves it; after an HQ
@@ -5950,18 +5950,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   records the pair as pushing there (`wireHQOrigin`) — no `git-push-setup`, no token, no probe — and
   every git zcp runs there against HQ (the base-branch fetch, the `main` check) is a relayed script
   (`ops.RelayedSSH`), answered with the project key over the session, as an agent's `zcp git` is.
-  A dev pool holds the Mate's Git credential (§3.3) (`spec-workflows.md` §8 DP-16): the file the server
-  keeps it in (C-3) is the credential's one home, and the Mate's own service (`zcp service start mate`) looks at
-  the file every 10 s; the repository pass — bootstrap, adopt and every develop start — does the same
-  outside its backoff. The pool holds it under a variable of its own: inside a
-  Mate an acquire of a repository on HQ writes it to the pool's `ZCP_HQ_GIT_TOKEN` — never the pool's `GIT_TOKEN`, which
-  every container of the pool reads and a lease of a repository outside HQ answers its host with, so it stays the
-  user's — when zcp's fingerprint for that pool — kept in
-  `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs; the Mate's
-  service's look and the repository pass renew every pool holding one, so a held lease pushes with the credential HQ
-  sent from its next fresh session. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
-  with its pair, into the same `ZCP_HQ_GIT_TOKEN`, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
-  fingerprint over and the per-pool record goes, so the pool is never renewed twice.
+  A dev pool holds no Git credential either: zcp's git in a lease of a repository on HQ — the
+  checkout, a sync's push, the release guard's fetch — runs as a relayed script, and the agent's
+  runs through `zcp git <alias>` (`spec-workflows.md` §8 DP-12, DP-16). A repository on HQ is
+  never warm-cloned into a pool: a detached clone outlives the relayed session that would answer it.
 - **A Mate moved to another HQ.** A wired pair whose record names its own repository
   (`/git/[<org>/]<app>/<repo>.git` of its HQ record) on another host than the HQ the Mate links to now
   was wired before the move; any other remote is the person's and is never moved. At the Mate's service start, and at
@@ -5970,7 +5962,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   helper for the retired host goes and HQ's is written for the current one, and the record follows.
   A pair keyed by its dev pool has no checkout to point: only its record follows.
   A start that could not finish — the dev service stopped, HQ not answering — is taken again on the
-  pass's backoff, and so is a credential renewal that failed; each command on a dev service is bounded
+  pass's backoff; each command on a dev service is bounded
   to 15 s. A pair a refused push marked keeps the pass's backoff: the pass wires it again. The project key
   is never written into the dev service or a pool: they run the application's code and its dependencies. The
   helper persisted in `.git/config` for HQ's host answers nothing in the dev service and, for

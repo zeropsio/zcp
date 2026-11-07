@@ -1,9 +1,9 @@
 // Tests for: tools/hq_wiring.go, tools/hq_origin_kept.go, tools/hq_change.go,
 // tools/workflow_git_push_setup.go, tools/adopt_gitpush_reconcile.go — the HQ
 // and adopt readers of a pair keyed by its dev pool (docs/spec-workflows.md
-// §13 PM-10, §8 E8): the credential is renewed on the pool by the id the pair
-// records, DP-16's per-pool record is taken over, and nothing reaches the
-// pool's hostname over ssh, since it answers from a random container.
+// §13 PM-10, §8 E8): nothing reaches the pool's hostname over ssh, since it
+// answers from a random container, and no pass writes a Git credential on the
+// pool.
 package tools
 
 import (
@@ -130,153 +130,14 @@ func assertNoDevStub(t *testing.T, stateDir string) {
 	}
 }
 
-func poolRecordPath(stateDir string) string {
-	return filepath.Join(stateDir, "leases", "credentials", testPool+".json")
-}
-
-// TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH: once a wired pair is keyed by its
-// dev pool, the repository pass gives the pool — by the id the pair records —
-// the Mate credential the enrollment holds, as its ZCP_HQ_GIT_TOKEN, and
-// records its fingerprint on the pair; it reaches neither the pool nor the
-// retired dev service over ssh (no origin to point, no `main` to sync: a pool
-// has no checkout of its own), and writes no meta keyed by the retired dev.
-// Outside a Mate zcp never writes a pool's HQ credential, and nowhere its
-// GIT_TOKEN.
-func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
-	// Non-parallel: newHQLab sets HOME and package tuning knobs.
-	const renewed = "the-credential-after-the-move"
-	tests := []struct {
-		name      string
-		mate      bool
-		wantRenew bool
-	}{
-		{name: "in a Mate", mate: true, wantRenew: true},
-		{name: "outside a Mate", mate: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lab := newHQLab(t)
-			lab.wire()
-			ssh := lab.keyPairOnPool()
-			lab.rt.MateEnabled = tt.mate
-			lab.relink(renewed)
-
-			report := lab.poolPass(ssh)
-
-			token, held := poolHQCredential(t, lab.mock, testPoolID)
-			switch {
-			case tt.wantRenew && (!held || token.Content != renewed || !token.Sensitive):
-				t.Errorf("the pool's %s = %+v (held %v), want the renewed credential as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)
-			case !tt.wantRenew && held:
-				t.Errorf("a pass outside a Mate wrote the pool's %s: %+v", ops.PoolHQCredentialEnvKey, token)
-			}
-			if token, held := serviceGitToken(t, lab.mock, testPoolID); held {
-				t.Errorf("the pass wrote the pool's GIT_TOKEN, the user's: %+v", token)
-			}
-			if tt.wantRenew {
-				if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(renewed); got != want {
-					t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
-				}
-			}
-			for _, host := range []string{testPool, "appdev"} {
-				if n := ssh.reached(host); n != 0 {
-					t.Errorf("the pass reached %s over ssh %d time(s): %v", host, n, report)
-				}
-			}
-			assertNoDevStub(t, lab.stateDir)
-			assertNoSecretOnDisk(t, lab.stateDir, renewed)
-		})
-	}
-}
-
-// TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers: a pool's
-// GIT_TOKEN is the user's — what a lease of a repository outside HQ there
-// authenticates with — and zcp never writes over it. Renewing a pool-keyed
-// pair's Mate credential gives the pool the new credential as a secret of its
-// own and leaves the user's GIT_TOKEN as it was.
-func TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers(t *testing.T) {
-	// Non-parallel: newHQLab sets HOME and package tuning knobs.
-	const (
-		renewed    = "the-credential-after-the-move"
-		usersToken = "the-users-own-github-token"
-	)
-	lab := newHQLab(t)
-	lab.wire()
-	ssh := lab.keyPairOnPool()
-	lab.rt.MateEnabled = true
-	lab.mock.WithServiceEnv(testPoolID, []platform.ServiceEnvVar{{ID: "e-git", Key: ops.GitTokenEnvKey, Content: usersToken, Sensitive: true}})
-	lab.relink(renewed)
-
-	lab.poolPass(ssh)
-
-	if token, held := serviceGitToken(t, lab.mock, testPoolID); !held || token.Content != usersToken {
-		t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the user's own token, never written over", token, held)
-	}
-	envs, err := lab.mock.GetServiceEnv(t.Context(), testPoolID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(envs, func(e platform.ServiceEnvVar) bool { return e.Content == renewed && e.Sensitive }) {
-		t.Errorf("the pool holds no secret with the renewed credential: %+v", envs)
-	}
-	if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(renewed); got != want {
-		t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
-	}
-}
-
-// TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord: an acquire keeps
-// a fingerprint per pool of the Mate credential it wrote (DP-16); once the
-// pool keys a pair, the pair's record is that fingerprint's one home. The
-// pass adopts the per-pool record when it names the pool service the pair
-// records and tells more than the pair does, removes it, and renews the pool
-// once, never twice; a record of another pool service is left to the
-// per-pool renewal.
-func TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord(t *testing.T) {
-	// Non-parallel: newHQLab sets HOME and package tuning knobs.
-	tests := []struct {
-		name string
-		// recordID and recordFP are the per-pool record an acquire left.
-		recordID, recordFP string
-		wantWrites         int
-		wantRecordGone     bool
-	}{
-		{name: "the record names the pool and the credential held now", recordID: testPoolID, recordFP: hq.GitCredentialFingerprint(labCredential), wantWrites: 0, wantRecordGone: true},
-		{name: "the record names the pool and a revoked credential", recordID: testPoolID, recordFP: hq.GitCredentialFingerprint("a-revoked-credential"), wantWrites: 1, wantRecordGone: true},
-		{name: "the record names another pool service", recordID: "svc-an-older-pool", recordFP: hq.GitCredentialFingerprint(labCredential), wantWrites: 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lab := newHQLab(t)
-			lab.wire()
-			ssh := lab.keyPairOnPool()
-			lab.rt.MateEnabled = true
-			writePoolCredentialFingerprint(t, lab.stateDir, testPool, tt.recordID, tt.recordFP)
-			before := lab.mock.CallCount("CreateServiceEnvVar")
-
-			lab.poolPass(ssh)
-
-			if n := lab.mock.CallCount("CreateServiceEnvVar") - before; n != tt.wantWrites {
-				t.Errorf("HQ credential writes = %d, want %d", n, tt.wantWrites)
-			}
-			if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(labCredential); got != want {
-				t.Errorf("the pair records fingerprint %q, want the enrollment's %q", got, want)
-			}
-			_, err := os.Stat(poolRecordPath(lab.stateDir))
-			if gone := errors.Is(err, os.ErrNotExist); gone != tt.wantRecordGone {
-				t.Errorf("per-pool record gone = %v, want %v", gone, tt.wantRecordGone)
-			}
-			if n := ssh.reached(testPool); n != 0 {
-				t.Errorf("the pass reached the pool over ssh %d time(s)", n)
-			}
-		})
-	}
-}
-
 // TestHQPass_PoolDevHalf_NeverWiredOverSSH: a pass wires a pair by running
 // git-push setup and git on its dev service's checkout, which a pair keyed by
 // its dev pool has not. Such a pair is never one to wire, and when HQ holds
 // the Mate in another application it is not wired there either: the pass
-// says so, asks HQ for no repository and reaches the pool over no ssh.
+// says so, asks HQ for no repository and reaches the pool over no ssh. A
+// pair already wired is kept the same way, and no pass gives the pool a Git
+// credential: an acquire answers HQ through the relay with the Mate's project
+// key, and the pool's GIT_TOKEN is the user's.
 func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 	// Non-parallel: newHQLab sets HOME and package tuning knobs.
 	tests := []struct {
@@ -295,6 +156,10 @@ func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
+		},
+		{
+			name:    "the pair is wired on the Mate's HQ",
+			arrange: func(*testing.T, *hqLab) {},
 		},
 		{
 			name:     "HQ holds the Mate in another application",
@@ -316,14 +181,21 @@ func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 			if n := lab.hq.callCount("POST /api/mate/repos") - asked; n != 0 {
 				t.Errorf("the pass asked HQ for a repository %d time(s): %s", n, report)
 			}
-			if n := ssh.reached(testPool); n != 0 {
-				t.Errorf("the pass reached the pool over ssh %d time(s): %s", n, report)
+			for _, host := range []string{testPool, "appdev"} {
+				if n := ssh.reached(host); n != 0 {
+					t.Errorf("the pass reached %s over ssh %d time(s): %s", host, n, report)
+				}
 			}
 			if tt.wantLine != "" && !strings.Contains(report, tt.wantLine) {
 				t.Errorf("the report does not name %q: %s", tt.wantLine, report)
 			}
 			if got := lab.poolMeta().HQ.AppID; got != labApp {
 				t.Errorf("the pair's repository moved to application %q", got)
+			}
+			for _, key := range []string{ops.PoolHQCredentialEnvKey, "GIT_TOKEN"} {
+				if v, held := serviceEnvVar(t, lab.mock, testPoolID, key); held {
+					t.Errorf("the pass wrote the pool's %s: %+v", key, v)
+				}
 			}
 			assertNoDevStub(t, lab.stateDir)
 		})
@@ -336,46 +208,22 @@ func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 // stub meta under the hostname it read: a dev-keyed stub would bring a
 // retired dev service back as a pair of its own.
 func TestHQUpsertCallbacks_MissingMeta_SkipWrite(t *testing.T) {
-	// Non-parallel: newHQLab sets HOME and package tuning knobs.
-	lab := newHQLab(t)
-	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
-	if !ok {
-		t.Fatal("the lab's Mate is not enrolled")
-	}
+	t.Parallel()
 	app := labApp
-	read := func() *workflow.ServiceMeta {
-		return &workflow.ServiceMeta{
-			Hostname: "appdev", Mode: topology.PlanModeStandard, GitPushState: topology.GitPushConfigured,
-			HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: "fp-old"},
-		}
+	read := &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard, GitPushState: topology.GitPushConfigured,
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"},
 	}
-	tests := []struct {
-		name  string
-		write func(stateDir string)
-	}{
-		{name: "recordHQOrigin", write: func(stateDir string) {
-			recordHQOrigin(stateDir, read(), hq.MateState{AppID: &app, Repos: []hq.MateRepo{{Name: "appdev"}}})
-		}},
-		{name: "renewHQPairCredential", write: func(stateDir string) {
-			if line := renewHQPairCredential(t.Context(), lab.mock, labMate, stateDir, hqc, read()); line != "" {
-				t.Fatalf("the renewal failed: %s", line)
-			}
-		}},
+	stateDir := t.TempDir()
+
+	recordHQOrigin(stateDir, read, hq.MateState{AppID: &app, Repos: []hq.MateRepo{{Name: "appdev"}}})
+
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stateDir := t.TempDir()
-
-			tt.write(stateDir)
-
-			metas, err := workflow.ListServiceMetas(stateDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(metas) != 0 {
-				t.Errorf("%s wrote %d meta(s) for a pair that is gone: %+v", tt.name, len(metas), metas[0])
-			}
-		})
+	if len(metas) != 0 {
+		t.Errorf("recordHQOrigin wrote %d meta(s) for a pair that is gone: %+v", len(metas), metas[0])
 	}
 }
 

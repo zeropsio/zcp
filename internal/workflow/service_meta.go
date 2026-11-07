@@ -193,11 +193,6 @@ type HQRepoRef struct {
 	Repo string `json:"repo"`
 	// WiredAt is when the repository was wired, RFC3339.
 	WiredAt string `json:"wiredAt,omitempty"`
-	// CredentialFingerprint names the Mate credential the dev service holds
-	// as GIT_TOKEN — a dev pool as its HQ credential, ZCP_HQ_GIT_TOKEN —
-	// (hq.GitCredentialFingerprint), never the credential: HQ sending the
-	// Mate a new one revokes it, and a pass renews what differs.
-	CredentialFingerprint string `json:"credentialFingerprint,omitempty"`
 	// Change is the number of the Mate's open change in Repo as the Mate's
 	// own state in HQ last named it, 0 for none. Recorded rather than
 	// re-derived: a pass reads what became of it from that state.

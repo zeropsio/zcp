@@ -7,8 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -461,33 +459,6 @@ func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {
 	want := `{"branch":"fix-login","repo":"appdev","title":"Fix the login"}`
 	if len(*calls) != 1 || (*calls)[0].Body != want {
 		t.Errorf("calls = %+v, want one with body %s", *calls, want)
-	}
-}
-
-// TestGitCredentialFingerprint_IsTheClientsFingerprint: a record that names
-// the Git credential a service or a pool was given keeps one fingerprint, so
-// the one zcp computes from a credential it read from the Mate's file is the
-// client's — 16 hex characters, never the credential.
-func TestGitCredentialFingerprint_IsTheClientsFingerprint(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "git-credential")
-	if err := os.WriteFile(path, []byte("the-credential\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	client, err := Open(nil, Identity{Origin: "https://hq.example.invalid", Key: "good", ProjectID: "p-mate", GitCredentialPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, held, err := client.GitCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := GitCredentialFingerprint("the-credential")
-	if got != held {
-		t.Errorf("GitCredentialFingerprint = %q, want the client's %q", got, held)
-	}
-	if len(got) != 16 || strings.Contains(got, "the-credential") || got == GitCredentialFingerprint("another") {
-		t.Errorf("fingerprint %q: want 16 hex characters that tell credentials apart", got)
 	}
 }
 

@@ -23,11 +23,9 @@ import (
 // <host>`, ops.RelayedSSH), which answers HQ with the Mate's project key over
 // the session: it holds no credential of its own. Its origin is the pair's
 // repository at HQ's address — a copy of the HQ the Mate links to, stale the
-// moment the Mate moves to another HQ — and a dev pool keying a pair holds
-// the Mate's Git credential HQ sends over the link, stale at every link HQ
-// opens. The repository pass renews them, but runs only when an agent
-// bootstraps, adopts or starts develop; the Mate's own service keeps them
-// current in between (KeepMateDevGit).
+// moment the Mate moves to another HQ. The repository pass moves it, but
+// runs only when an agent bootstraps, adopts or starts develop; the Mate's
+// own service does at its start (KeepMateDevGit).
 
 // devGitDeps is what keeping the dev services' git reaches: the platform,
 // HQ, the dev services over SSH, the container and its state.
@@ -47,8 +45,8 @@ type devGitDeps struct {
 // lock, for an SSH session's own bound of minutes.
 const devGitSSHWithin = 15 * time.Second
 
-// devGitLookEvery is how often the Mate's service looks whether HQ sent a
-// new credential: a read of one small file and the pairs' records.
+// devGitLookEvery is how often the Mate's service looks whether a start that
+// did not settle is due again (hqAttemptDue): a read of the clock.
 const devGitLookEvery = 10 * time.Second
 
 // KeepMateDevGit keeps every wired pair's dev service on this Mate's HQ
@@ -122,11 +120,9 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 
 // keepMateDevGit keeps every wired pair's dev service on this Mate's HQ for
 // as long as ctx lasts and ticks come: the Mate's start (startDevGit) at
-// started, then each new credential HQ sends (followMateCredential) at the
-// tick after it lands. A start that did not settle — a dev service stopped,
-// HQ not answering — is taken again on hqAttemptDue's backoff, counted in
-// the ticks' own times, while every tick between still follows the
-// credential. Finished changes are looked for (followLeaseCompletion) at the
+// started. A start that did not settle — a dev service stopped, HQ not
+// answering — is taken again on hqAttemptDue's backoff, counted in the
+// ticks' own times. Finished changes are looked for (followLeaseCompletion) at the
 // start — the file may already hold one — and at each wake changed sends,
 // never at a tick. deps is asked for at each look; false skips the look. A
 // line goes to log when the look of its kind before did not say it.
@@ -134,9 +130,6 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 	var (
 		settled bool
 		retry   hqPairState
-		// renewals are the pairs whose last renewal failed, with its record:
-		// each is tried again on hqAttemptDue's backoff.
-		renewals = map[string]hqPairState{}
 	)
 	sayNew := func(said map[string]bool, lines []string) map[string]bool {
 		saying := make(map[string]bool, len(lines))
@@ -148,17 +141,15 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		}
 		return saying
 	}
-	var saidCredentials, saidCompletion map[string]bool
-	credentials := func(d devGitDeps, at time.Time) {
-		var lines []string
+	var saidStart, saidCompletion map[string]bool
+	start := func(d devGitDeps, at time.Time) {
 		if settled || !hqAttemptDue(retry, at) {
-			lines = followMateCredential(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir, at, renewals)
-		} else {
-			lines, settled = startDevGit(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir)
-			retry = nextHQAttempt(retry, at, "", false)
+			return
 		}
-		lines = append(lines, followPoolCredentials(ctx, d.client, d.rt, d.stateDir, at, renewals)...)
-		saidCredentials = sayNew(saidCredentials, lines)
+		var lines []string
+		lines, settled = startDevGit(ctx, d.httpClient, d.ssh, d.rt, d.stateDir)
+		retry = nextHQAttempt(retry, at, "", false)
+		saidStart = sayNew(saidStart, lines)
 	}
 	complete := func(d devGitDeps) {
 		saidCompletion = sayNew(saidCompletion, followLeaseCompletion(ctx, d))
@@ -172,7 +163,7 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		turn(d)
 	}
 	look(func(d devGitDeps) {
-		credentials(d, started)
+		start(d, started)
 		complete(d)
 	})
 	for {
@@ -183,7 +174,7 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			if !open {
 				return
 			}
-			look(func(d devGitDeps) { credentials(d, at) })
+			look(func(d devGitDeps) { start(d, at) })
 		case <-changed:
 			look(complete)
 		}
@@ -192,13 +183,11 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 
 // startDevGit is the Mate's start for every wired pair's dev service: a pair
 // wired at an HQ the Mate no longer links to is moved to the current one
-// (moveFromRetiredHQ), a dev pool keying it holds the Mate's current credential
-// (renewHQPairCredential), and origin is where HQ says its code is kept
+// (moveFromRetiredHQ), and origin is where HQ says its code is kept
 // (hqPairOrigin). settled is false when a pair could not be brought there —
 // HQ or the dev service not answering — so the caller tries again.
 func startDevGit(
 	ctx context.Context,
-	client platform.Client,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
@@ -212,7 +201,7 @@ func startDevGit(
 	self := lazySelf(ctx, hqc)
 	for _, hostname := range pairs {
 		line, done := withPairLocked(ctx, stateDir, hostname, func(m *workflow.ServiceMeta) (string, bool) {
-			return startPairDevGit(ctx, client, sshDeployer, rt, stateDir, hqc, self, m)
+			return startPairDevGit(ctx, sshDeployer, stateDir, hqc, self, m)
 		})
 		settled = settled && done
 		if line != "" {
@@ -225,9 +214,7 @@ func startDevGit(
 // startPairDevGit is one wired pair's turn of startDevGit.
 func startPairDevGit(
 	ctx context.Context,
-	client platform.Client,
 	sshDeployer ops.SSHDeployer,
-	rt runtime.Info,
 	stateDir string,
 	hqc hq.Client,
 	self func() (hq.MateState, error),
@@ -239,11 +226,6 @@ func startPairDevGit(
 		if line != "" {
 			said = append(said, line)
 		}
-	}
-	if hqPairCredentialStale(m, hqc, rt) {
-		line := renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m)
-		say(line)
-		settled = settled && line == ""
 	}
 	line, moved := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m)
 	say(line)
@@ -262,85 +244,6 @@ func startPairDevGit(
 		settled = false
 	}
 	return strings.Join(said, "; "), settled
-}
-
-// followMateCredential gives each dev pool keying a wired pair the Mate's Git
-// credential once HQ sent a new one (hqPairCredentialStale): a read of the
-// file and the records, and nothing else, while none is new. A pair whose
-// renewal failed is in renewals and tried again only once hqAttemptDue says
-// so, counted at at, so a dev service that cannot take it is not asked of
-// the platform at every look.
-func followMateCredential(
-	ctx context.Context,
-	client platform.Client,
-	httpClient ops.HTTPDoer,
-	sshDeployer ops.SSHDeployer,
-	rt runtime.Info,
-	stateDir string,
-	at time.Time,
-	renewals map[string]hqPairState,
-) []string {
-	hqc, pairs, ok := wiredDevGitPairs(httpClient, sshDeployer, rt, stateDir)
-	if !ok {
-		return nil
-	}
-	var lines []string
-	for _, hostname := range pairs {
-		if failed, ok := renewals[hostname]; ok && !hqAttemptDue(failed, at) {
-			continue
-		}
-		line, _ := withPairLocked(ctx, stateDir, hostname, func(m *workflow.ServiceMeta) (string, bool) {
-			if !hqPairCredentialStale(m, hqc, rt) {
-				return "", true
-			}
-			return renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m), true
-		})
-		if line == "" {
-			delete(renewals, hostname)
-			continue
-		}
-		renewals[hostname] = nextHQAttempt(renewals[hostname], at, line, false)
-		lines = append(lines, hostname+": "+line)
-	}
-	return lines
-}
-
-// poolRenewalKey keys a pool's failed renewal in followMateCredential's
-// renewals beside the pairs': a pool keying a pair is named like it.
-func poolRenewalKey(pool string) string { return "pool " + pool }
-
-// followPoolCredentials gives each pool an acquire put the Mate's Git
-// credential on (ops.PoolCredentialRecordPools) the one the Mate's file holds
-// now, once HQ sent a new one: a lease of an HQ repository there pushes with
-// it from its next fresh session (docs/spec-workflows.md §8 DP-16). A pool
-// keying a pair is its pair's (followMateCredential, renewHQPairCredential).
-// While none is new it reads the file and the records, and nothing else; a
-// pool whose renewal failed is in renewals and tried again only once
-// hqAttemptDue says so, counted at at. With no credential in the Mate's file
-// it says which pools keep what they hold (poolCredentialsNotRenewed).
-func followPoolCredentials(ctx context.Context, client platform.Client, rt runtime.Info, stateDir string, at time.Time, renewals map[string]hqPairState) []string {
-	if !rt.InContainer || !rt.MateEnabled {
-		return nil
-	}
-	credential, err := hq.ReadGitCredential(hqIdentity(rt).GitCredentialPath)
-	if err != nil {
-		return poolCredentialsNotRenewed(stateDir, err)
-	}
-	var lines []string
-	for _, pool := range ops.PoolCredentialRecordPools(stateDir) {
-		key := poolRenewalKey(pool)
-		if failed, ok := renewals[key]; ok && !hqAttemptDue(failed, at) {
-			continue
-		}
-		if err := ops.RenewPoolHQCredential(ctx, client, stateDir, pool, credential); err != nil {
-			line := fmt.Sprintf("HQ sent the Mate a new Git credential, and git in the pool's leases cannot reach HQ until its %s holds it, which could not be written (%v) — retrying.", ops.PoolHQCredentialEnvKey, err)
-			renewals[key] = nextHQAttempt(renewals[key], at, line, false)
-			lines = append(lines, pool+": "+line)
-			continue
-		}
-		delete(renewals, key)
-	}
-	return lines
 }
 
 // wiredDevGitPairs is this Mate's HQ and the hostnames of its wired pairs,

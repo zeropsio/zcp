@@ -1,14 +1,11 @@
 // Tests for: ops/lease_checkout.go — a lease of a repository on the Mate's HQ
-// authenticates as HQ's git user and names HQ's branch rule
+// reaches HQ relayed and names HQ's branch rule
 // (docs/spec-workflows.md §8 DP-12).
 package ops
 
 import (
 	"context"
 	"errors"
-	"maps"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,119 +18,72 @@ const (
 	leaseHQRepo = leaseHQURL + "/git/a1/web"
 )
 
-// TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate: HQ's git takes only the
-// user `mate`, so a repository on the Mate's HQ is fetched, and keeps its
-// helper, as that user — under HQ's scope, its port included, as a dev
-// service's checkout keeps it. Every other repository keeps the lease's oauth2
-// helper.
-func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
+// TestLeaseCheckoutCommand_HQRepoNamesNoHelper_OthersKeepTheOAuth2One: a
+// repository on the Mate's HQ is fetched with no helper of the command's own
+// and keeps none — the relayed session's helper answers HQ, and a
+// `-c credential.helper=` would clear it — while every other repository is
+// fetched with, and keeps, the lease's oauth2 helper under its own scope, its
+// port included.
+// witness: internal/ops/lease_checkout.go | if !strings.HasPrefix(repo, httpsScheme+"://") || IsHQRemote(repo, hqURL) { → if !strings.HasPrefix(repo, httpsScheme+"://") {
+func TestLeaseCheckoutCommand_HQRepoNamesNoHelper_OthersKeepTheOAuth2One(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		repo       string
-		hqURL      string
-		wantHelper string
-		wantScope  string
+		name      string
+		repo      string
+		hqURL     string
+		wantScope string // "" for a repository on HQ: no helper at all
 	}{
-		{"a repository on HQ", leaseHQRepo, leaseHQURL, leaseHQCredentialHelperShell("hq.example.invalid"), "hq.example.invalid"},
-		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", leaseHQCredentialHelperShell("hq.example.invalid:3000"), "hq.example.invalid:3000"},
-		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, leaseCredentialHelperShell("github.com"), "github.com"},
-		{"a container enrolled with no HQ", leaseHQRepo, "", leaseCredentialHelperShell("hq.example.invalid"), "hq.example.invalid"},
-		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell("hq.example.invalid:3000"), "hq.example.invalid:3000"},
-		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, leaseCredentialHelperShell("git.example.invalid:8443"), "git.example.invalid:8443"},
+		{"a repository on HQ", leaseHQRepo, leaseHQURL, ""},
+		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", ""},
+		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, "github.com"},
+		{"a container enrolled with no HQ", leaseHQRepo, "", "hq.example.invalid"},
+		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, "hq.example.invalid:3000"},
+		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, "git.example.invalid:8443"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := leaseCheckoutCommand("/var/www", tt.repo, "feat", "", tt.hqURL)
-			fetch := "-c credential.helper= -c credential.helper=" + shellQuote(tt.wantHelper) + " fetch"
-			persisted := "git config --replace-all " + shellQuote("credential.https://"+tt.wantScope+".helper") + " " + shellQuote(tt.wantHelper)
+			if tt.wantScope == "" {
+				if !strings.Contains(cmd, "GIT_TERMINAL_PROMPT=0 git fetch -q --prune origin") || strings.Contains(cmd, "credential.helper") || strings.Contains(cmd, "username=") {
+					t.Errorf("the checkout of a repository on HQ names a helper of its own:\n%s", cmd)
+				}
+				return
+			}
+			helper := leaseCredentialHelperShell(tt.wantScope)
+			fetch := "-c credential.helper= -c credential.helper=" + shellQuote(helper) + " fetch"
+			persisted := "git config --replace-all " + shellQuote("credential.https://"+tt.wantScope+".helper") + " " + shellQuote(helper)
 			for _, want := range []string{fetch, persisted} {
 				if !strings.Contains(cmd, want) {
 					t.Errorf("command lacks %q:\n%s", want, cmd)
 				}
-			}
-			if strings.Contains(tt.wantHelper, "username=mate") && strings.Contains(cmd, "username=oauth2") {
-				t.Errorf("a repository on HQ is still asked for as oauth2:\n%s", cmd)
-			}
-			if strings.Contains(cmd, "zcp hq git-credential") {
-				t.Errorf("the lease asks a zcp the pool container does not have:\n%s", cmd)
-			}
-		})
-	}
-}
-
-// TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly: the helper a
-// lease of an HQ repository keeps answers the pool's session from its
-// ZCP_HQ_GIT_TOKEN as `mate` — never from GIT_TOKEN, the user's — and without
-// it answers nothing: it never falls back to `zcp hq git-credential` the way a
-// dev service's HQ helper does, since zcp is not installed in a pool
-// container. It is the lease helper with HQ's user and the pool's HQ
-// credential, not a helper of another shape.
-func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
-	t.Parallel()
-	requireGit(t)
-	want := strings.Replace(leaseCredentialHelperShell("hq.example.invalid"), "username=oauth2", "username=mate", 1)
-	if want = strings.ReplaceAll(want, "$"+GitTokenEnvKey, "$"+PoolHQCredentialEnvKey); leaseHQCredentialHelperShell("hq.example.invalid") != want {
-		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user and the pool's HQ credential\n%s", leaseHQCredentialHelperShell("hq.example.invalid"), want)
-	}
-	tests := []struct {
-		name     string
-		env      map[string]string
-		wantUser string
-		want     string
-	}{
-		{"the pool's session answers its HQ credential as mate", map[string]string{PoolHQCredentialEnvKey: "the-pool-secret", GitTokenEnvKey: "the-users-token"}, "mate", "the-pool-secret"},
-		{"the user's GIT_TOKEN alone is never answered to HQ", map[string]string{GitTokenEnvKey: "the-users-token"}, "", ""},
-		{"without either it answers nothing and asks no zcp", nil, "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			// A zcp that would answer — and leaves a mark when asked.
-			marker := filepath.Join(t.TempDir(), "zcp-was-asked")
-			env := map[string]string{"PATH": fakeZcpPath(t, "touch "+shellQuote(marker)+"; printf 'username=mate\\npassword=from-zcp\\n'")}
-			maps.Copy(env, tt.env)
-			repo, home := t.TempDir(), t.TempDir()
-			script := "git init -q && " + leaseCredentialHelperConfig(leaseHQRepo, leaseHQURL, "")
-			if out, err := gitShell(t, repo, home, nil, "", script); err != nil {
-				t.Fatalf("persist the helper: %v\n%s", err, out)
-			}
-			user, got, answered := answeredCredential(t, repo, home, env, leaseHQRepo)
-			if got != tt.want || answered != (tt.want != "") {
-				t.Errorf("the helper answered %q (answered=%v), want %q", got, answered, tt.want)
-			}
-			if tt.want != "" && user != tt.wantUser {
-				t.Errorf("the helper answered the user %q, want %q", user, tt.wantUser)
-			}
-			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("the helper ran zcp (%v); a pool container has none", err)
 			}
 		})
 	}
 }
 
 // TestLeaseAcquire_HQRepo_ChecksOutAsMate: acquire reads the enrollment's HQ
-// address when it checks out, and the lease record keeps the canonical
+// address when it checks out, runs the checkout of a repository there as a
+// relayed session (HQGit), which answers HQ as the Mate, and the lease record
+// keeps the canonical
 // repository (never a credential) for the release guard and the git-push
 // refusal to tell an HQ lease by.
 func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
-	ssh := &leaseSSH{}
-	fx.deps.SSH = ssh
+	ssh, relayed := &leaseSSH{}, &leaseSSH{}
+	fx.deps.SSH, fx.deps.HQGit = ssh, relayed
 	fx.deps.HQAddress = func() string { return leaseHQURL }
 	fx.swarm.acquired = acquiredAs(3)
 
 	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo+".git", "feat"); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	cmds := ssh.checkouts()
-	if len(cmds) != 1 {
-		t.Fatalf("checkouts = %v, want the one checkout", cmds)
+	if cmds := relayed.checkouts(); len(cmds) != 1 || cmds[0].hostname != "devpool-3" {
+		t.Fatalf("relayed checkouts = %v, want the one checkout of devpool-3, answered with the Mate's key", cmds)
 	}
-	if !strings.Contains(cmds[0].command, shellQuote(leaseHQCredentialHelperShell("hq.example.invalid"))) || strings.Contains(cmds[0].command, "username=oauth2") {
-		t.Errorf("the checkout of a repository on HQ does not authenticate as mate:\n%s", cmds[0].command)
+	if cmds := ssh.checkouts(); len(cmds) != 0 {
+		t.Errorf("the checkout of a repository on HQ ran over plain ssh too: %v", cmds)
 	}
 	info, ok, err := LeaseTarget(fx.stateDir, "devpool-3")
 	if err != nil || !ok {
@@ -145,12 +95,12 @@ func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 }
 
 // TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential: a lease of an
-// HQ repository whose pool ZCP_HQ_GIT_TOKEN is unset or another token — outside a
-// Mate, or a secret changed or revoked since zcp wrote it (DP-16) — fails at
+// HQ repository whose git reached HQ with nothing answering it — outside the
+// relay — or with the Mate's project key HQ refused (DP-16) fails at
 // checkout. The container goes back and the refusal says what is missing as a
 // prerequisite — not as GIT_TOKEN_*, whose contract asks the user for a token:
-// the Mate credential is no user's token to ask for or make up — and that an
-// acquire inside a Mate writes it, so the next one is the step to take.
+// the Mate's key is no user's token to ask for or make up — and that git
+// against HQ runs through zcp.
 func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -158,8 +108,8 @@ func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) 
 		output string
 		want   string
 	}{
-		{"no HQ credential in the pool", "fatal: could not read Username for 'https://hq.example.invalid': terminal prompts disabled", "is not set"},
-		{"HQ refuses the pool's HQ credential", "remote: Unauthorized\nfatal: Authentication failed for 'https://hq.example.invalid/git/a1/web/'", "refused"},
+		{"git outside the relay", "fatal: could not read Username for 'https://hq.example.invalid': terminal prompts disabled", "nothing answered it"},
+		{"HQ refuses the Mate's key", "remote: Unauthorized\nfatal: Authentication failed for 'https://hq.example.invalid/git/a1/web/'", "refused"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,13 +129,13 @@ func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) 
 			if pe.Code != platform.ErrPrerequisiteMissing {
 				t.Errorf("code = %s, want %s (the Mate credential is no user's token)", pe.Code, platform.ErrPrerequisiteMissing)
 			}
-			for _, want := range []string{"`mate`", "HQ credential", PoolHQCredentialEnvKey, "pool", tt.want, "never ask", "inside a Mate", "Acquire again"} {
+			for _, want := range []string{"project key", "zcp git <alias>", tt.want, "never ask"} {
 				if !strings.Contains(pe.Suggestion, want) {
 					t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
 				}
 			}
-			if strings.Contains(pe.Suggestion, "no zcp command puts it") {
-				t.Errorf("suggestion %q still says no zcp command puts the credential on a pool", pe.Suggestion)
+			if strings.Contains(pe.Suggestion, PoolHQCredentialEnvKey) {
+				t.Errorf("suggestion %q still names a credential stored in the pool", pe.Suggestion)
 			}
 			if len(fx.swarm.releases) != 1 || !fx.swarm.releases[0].reset {
 				t.Errorf("releases = %+v, want the container handed back with a reset", fx.swarm.releases)
@@ -228,7 +178,7 @@ func TestLeaseRelease_HQRepo_HintNamesHQsBranchRule(t *testing.T) {
 
 			_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
 			pe := assertRefusedAndKept(t, hf, err)
-			hqWords := []string{"branch of your own", "`git checkout -b <branch>`", "`git push -u origin <branch>`", "HQ refuses a push of `main`", "force push"}
+			hqWords := []string{"branch of your own", "`git checkout -b <branch>`", "`zcp git <alias> push -u origin <branch>`", "HQ refuses a push of `main`", "force push"}
 			for _, w := range hqWords {
 				if got := strings.Contains(pe.Suggestion, w); got != tt.onHQ {
 					t.Errorf("suggestion %q names %q: %v, want %v", pe.Suggestion, w, got, tt.onHQ)

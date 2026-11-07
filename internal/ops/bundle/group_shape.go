@@ -34,9 +34,9 @@ const defaultPoolMaxContainers = 3
 // admits zcp among them. No build and no setup: a
 // pool's image is deployed from a lease of it, never by an import, and a
 // runtime built from HQ would read as a dev half to clone into. No
-// credential either: a pool of a repository in HQ gets the Mate's own from
-// zcp at its first acquire (ZCP_HQ_GIT_TOKEN, DP-16), and its GIT_TOKEN stays
-// the person's, so the tier names neither. The comment says which setup its
+// credential either: zcp answers a lease's git against HQ itself, with the
+// Mate's project key (DP-16), and the pool's GIT_TOKEN stays the person's,
+// so the tier names neither. The comment says which setup its
 // image is.
 func groupPoolEntry(r GroupRuntime, priority int) (map[string]any, string) {
 	entry := map[string]any{

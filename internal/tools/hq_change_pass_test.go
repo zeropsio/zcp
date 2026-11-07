@@ -30,7 +30,7 @@ func (l *hqLab) wirePoolPair(pool, stage string) {
 		m.Hostname, m.Mode, m.Stages = pool, topology.PlanModeStandard, []topology.StageRef{{Hostname: stage}}
 		m.BootstrapSession, m.BootstrappedAt, m.GitPushState = "test", "2026-10-02", topology.GitPushConfigured
 		m.DevPool = &workflow.DevPoolRef{ServiceID: "svc-" + pool}
-		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: hq.GitCredentialFingerprint(labCredential)}
+		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"}
 		return nil
 	}); err != nil {
 		l.t.Fatal(err)

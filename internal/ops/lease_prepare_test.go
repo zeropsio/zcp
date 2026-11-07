@@ -243,18 +243,18 @@ func jsonString(t *testing.T, s string) string {
 
 // TestLeaseAcquire_FailedPrepareAndSupervisor_NameNoSecretZcpHolds: every
 // process in a pool container reads the pool's service env, so a repository's
-// prepare or a supervisor that dumps its env prints this Mate's HQ credential
-// and the pool's orchestrator bearer. What a failed one printed reaches the
+// prepare or a supervisor that dumps its env prints the pool's orchestrator
+// bearer. What a failed one printed reaches the
 // acquire's result, and so the model and the Mate client: zcp takes the
 // secrets it holds out of it — before it bounds the tail, so no fragment of
 // one survives the cut (review R4-6).
 func TestLeaseAcquire_FailedPrepareAndSupervisor_NameNoSecretZcpHolds(t *testing.T) {
 	t.Parallel()
-	const fragment = "ential-0001" // poolMateCredential's end
-	// The 600-byte tail starts inside the credential's line, mid-credential.
-	prepOut := "ZCP_HQ_GIT_TOKEN=" + poolMateCredential + "\nAPI_TOKEN=" + testPoolToken + "\n" + strings.Repeat("y", 560) + "\n"
+	const fragment = "ken-0001" // testPoolToken's end
+	// The 600-byte tail starts inside the bearer's line, mid-bearer.
+	prepOut := "API_TOKEN=" + testPoolToken + "\n" + strings.Repeat("y", 590) + "\n"
 	supervisor := "@@zcp-devsup check 2\n" + "@@zcp-devsup started 2\n" +
-		"panic: env dump ZCP_HQ_GIT_TOKEN=" + poolMateCredential + " API_TOKEN=" + testPoolToken + "\n@@zcp-devsup log 0\n"
+		"panic: env dump API_TOKEN=" + testPoolToken + "\n@@zcp-devsup log 0\n"
 	fx := newLeaseFixture(t)
 	inAMate(fx)
 	fx.deps.Env = func(key string) (string, bool) {
@@ -282,7 +282,7 @@ func TestLeaseAcquire_FailedPrepareAndSupervisor_NameNoSecretZcpHolds(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{poolMateCredential, testPoolToken, fragment} {
+	for _, secret := range []string{testPoolToken, fragment} {
 		if strings.Contains(string(raw), secret) {
 			t.Errorf("the acquire's result carries %q:\n%s", secret, raw)
 		}

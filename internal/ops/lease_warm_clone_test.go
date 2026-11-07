@@ -18,7 +18,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -325,61 +324,39 @@ func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testin
 	}
 }
 
-// TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool: a
-// repository on the Mate's HQ is fetched with this Mate's HQ credential on the
-// pool's ZCP_HQ_GIT_TOKEN, which an acquire writes (DP-16): the clone starts only when
-// zcp's record says the pool holds the credential the enrollment holds now —
-// never outside a Mate, never before an acquire wrote it, never after the Mate
-// enrolled again — and never writes it itself.
-func TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool(t *testing.T) {
+// TestLeaseWarmClone_HQRepository_NeverWarmed: a pool warms no clone of a
+// repository on the Mate's HQ (DP-16) — zcp answers HQ's git only over a
+// session it holds, which a detached clone outlives, and the pool stores no
+// HQ credential — in a Mate or outside one. Its status says the clone was
+// skipped for HQ, and nothing is written to the pool's env.
+// witness: internal/ops/lease_warm_clone.go | if IsHQRemote(repo, d.hqAddress()) { → if false {
+func TestLeaseWarmClone_HQRepository_NeverWarmed(t *testing.T) {
 	t.Parallel()
-	current := hq.GitCredentialFingerprint(poolMateCredential)
-	tests := []struct {
-		name      string
-		inAMate   bool
-		recordFor string
-		recorded  string
-		wantClone bool
-	}{
-		{"outside a Mate", false, "svc-pool", current, false},
-		{"no credential written yet", true, "", "", false},
-		{"the Mate enrolled again", true, "svc-pool", hq.GitCredentialFingerprint(poolOldCredential), false},
-		{"the pool was re-created", true, "svc-gone", current, false},
-		{"the pool holds the credential", true, "svc-pool", current, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, mate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "outside a Mate", true: "in a Mate"}[mate], func(t *testing.T) {
 			t.Parallel()
 			orch := newWarmOrch(4)
 			wf, ssh := newWarmCloneFixture(t, orch)
 			wf.deps.HQAddress = func() string { return leaseHQURL }
-			if tt.inAMate {
-				wf.deps.PoolCredential = PoolHQCredential{Read: func() (string, bool) { return poolMateCredential, true }}
+			if mate {
+				wf.deps.HQGit = relayedThrough{deps: &wf.deps}
 			}
 			if err := storeWarmCloneRepo(wf.stateDir, testPoolHost, leaseHQRepo); err != nil {
 				t.Fatal(err)
-			}
-			if tt.recordFor != "" {
-				writePoolCredentialRecord(t, wf.stateDir, testPoolHost, tt.recordFor, tt.recorded)
 			}
 			wf.hold(t, 5, true)
 			mock := wf.deps.Client.(*platform.Mock)
 
 			wf.release(t, "devpool-5")
 
-			launches := ssh.launches()
-			if tt.wantClone != (len(launches) == 1) || len(launches) > 1 {
-				t.Fatalf("clone launches = %+v, want a clone: %v", launches, tt.wantClone)
-			}
-			if tt.wantClone && !strings.Contains(launches[0].command, "username=mate") {
-				t.Errorf("an HQ repository's clone must authenticate as mate: %s", launches[0].command)
+			if launches := ssh.launches(); len(launches) != 0 {
+				t.Fatalf("clone launches = %+v, want none of a repository on HQ", launches)
 			}
 			if writes := mock.CallCount("CreateServiceEnvVar"); writes != 0 {
-				t.Errorf("HQ credential writes = %d, want none: only an acquire writes the credential", writes)
+				t.Errorf("env writes = %d, want none", writes)
 			}
-			clone := warmCloneOf(t, wf)
-			if !tt.wantClone && (clone == nil || clone.Outcome != LeaseWarmCloneSkipped || !strings.Contains(clone.Note, "HQ")) {
-				t.Errorf("status clone = %+v, want skipped naming HQ's credential", clone)
+			if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneSkipped || !strings.Contains(clone.Note, "HQ") {
+				t.Errorf("status clone = %+v, want skipped naming HQ", clone)
 			}
 		})
 	}
@@ -443,30 +420,19 @@ func TestClassifyCheckoutFailure_WarmCloneThatWouldNotStop(t *testing.T) {
 }
 
 // TestLeaseWarmCloneCommand_CredentialNeverInIt: the clone authenticates as a
-// checkout does — the inline helper answering from the session's GIT_TOKEN,
-// or as HQ's user `mate` from the pool's HQ credential for a repository on the
-// Mate's HQ — and persists no helper, identity or credential: the checkout
-// that takes it does.
+// checkout does — the inline helper answering from the session's GIT_TOKEN as
+// oauth2 — and persists no helper, identity or credential: the checkout that
+// takes it does.
 func TestLeaseWarmCloneCommand_CredentialNeverInIt(t *testing.T) {
 	t.Parallel()
-	plain := leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo))
-	onHQ := leaseWarmCloneCommand(LeaseWorkDir, leaseHQRepo, leaseHQURL, "")
-	for name, c := range map[string]string{"plain": plain, "hq": onHQ} {
-		reads := "$" + GitTokenEnvKey
-		if name == "hq" {
-			reads = "$" + PoolHQCredentialEnvKey
-		}
-		if !strings.Contains(c, "fetch -q --prune origin") || !strings.Contains(c, reads) {
-			t.Errorf("%s: the clone must fetch through the session-env helper reading %s: %s", name, reads, c)
-		}
-		for _, never := range []string{"git config", poolMateCredential, testPoolToken, "credential.https"} {
-			if strings.Contains(c, never) {
-				t.Errorf("%s: the clone carries %q: %s", name, never, c)
-			}
-		}
+	c := leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHelperScope(testRepo))
+	if !strings.Contains(c, "fetch -q --prune origin") || !strings.Contains(c, "$"+GitTokenEnvKey) || !strings.Contains(c, "username=oauth2") {
+		t.Errorf("the clone must fetch through the session-env helper reading %s as oauth2: %s", GitTokenEnvKey, c)
 	}
-	if !strings.Contains(plain, "username=oauth2") || !strings.Contains(onHQ, "username=mate") {
-		t.Error("the plain clone answers oauth2 and the HQ clone answers mate")
+	for _, never := range []string{"git config", testPoolToken, "credential.https"} {
+		if strings.Contains(c, never) {
+			t.Errorf("the clone carries %q: %s", never, c)
+		}
 	}
 }
 

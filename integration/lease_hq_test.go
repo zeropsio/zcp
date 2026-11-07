@@ -85,8 +85,9 @@ func routeLeaseOrchestrator(t *testing.T) {
 
 // TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule: in a Mate
 // linked to its HQ, a lease of a repository on it is checked out as HQ's
-// git user `mate` — the fetch and the helper the repository keeps under HQ's
-// scope — and a git-push deploy from that lease is refused with HQ's branch
+// git user `mate` — the relayed session's helper answers the fetch with the
+// Mate's project key, so the checkout names no helper of its own and keeps
+// none — and a git-push deploy from that lease is refused with HQ's branch
 // rule. Neither result carries the Mate credential.
 func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir) and a swap of
@@ -115,10 +116,8 @@ func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T
 		t.Fatal("the checkout did not run")
 	case checkout.hostname != "devpool-3":
 		t.Errorf("the checkout ran on %q, want the alias devpool-3", checkout.hostname)
-	case !strings.Contains(checkout.command, "echo username=mate;") || strings.Contains(checkout.command, "username=oauth2"):
-		t.Errorf("the checkout of a repository on HQ does not authenticate as mate:\n%s", checkout.command)
-	case !strings.Contains(checkout.command, "credential.https://hq.example.invalid.helper"):
-		t.Errorf("the checkout keeps no helper under HQ's scope:\n%s", checkout.command)
+	case strings.Contains(checkout.command, "credential."):
+		t.Errorf("the checkout of a repository on HQ names a helper of its own, which would clear the relayed session's:\n%s", checkout.command)
 	}
 
 	res = callAndGetResult(t, session, "zerops_deploy", map[string]any{"sourceService": "devpool-3", "targetService": "app", "strategy": "git-push"})

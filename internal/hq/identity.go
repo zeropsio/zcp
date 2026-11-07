@@ -123,21 +123,3 @@ func ReadGitCredential(path string) (string, error) {
 	}
 	return credential, nil
 }
-
-// GitCredentialFingerprint names a Git credential without carrying it: what a
-// service's record keeps to know which credential its dev service was given.
-func GitCredentialFingerprint(credential string) string {
-	sum := sha256.Sum256([]byte(credential))
-	return hex.EncodeToString(sum[:8])
-}
-
-// GitCredential is the Mate's Git credential as the file holds it now, with
-// its fingerprint: ErrNoGitCredential while the Mate is not linked. zcp gives
-// the dev service a copy and never writes the file.
-func (c Client) GitCredential() (credential, fingerprint string, err error) {
-	credential, err = ReadGitCredential(c.id.GitCredentialPath)
-	if err != nil {
-		return "", "", err
-	}
-	return credential, GitCredentialFingerprint(credential), nil
-}

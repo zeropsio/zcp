@@ -48,7 +48,6 @@ type groupMember struct {
 	// becomesDefault: the pool has no default repository yet; the group's
 	// becomes it once the acquire worked.
 	becomesDefault bool
-	cred           poolCredentialState
 	// rec is the member's record once reserved is set.
 	rec      leaseRecord
 	reserved bool
@@ -137,13 +136,6 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		}
 		m.becomesDefault = becomesDefault[m.pool]
 		fresh = append(fresh, m)
-	}
-	// A repository on the Mate's HQ is fetched with the Mate credential, which
-	// zcp puts on each pool before any container is taken (DP-16).
-	for _, m := range fresh {
-		if m.cred, err = ensurePoolHQCredential(ctx, d, m.rp.svc, repoURL); err != nil {
-			return LeaseChange{}, err
-		}
 	}
 	failed := func() bool { return slices.ContainsFunc(fresh, func(m *groupMember) bool { return m.err != nil }) }
 	runMembers(fresh, func(m *groupMember) { reserveMember(ctx, d, m, repoURL, branch) })
@@ -620,7 +612,7 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 			m.err = unverifiedLeaseRefusal(m.rec.alias(), "checked out", v)
 			return ""
 		}
-		got, err := m.cred.checkout(ctx, d, m.rec, repoURL, branch, cutFrom, from)
+		got, err := checkoutLease(ctx, d, m.rec, repoURL, branch, cutFrom, from)
 		if err != nil {
 			m.err = abandonLease(ctx, d, m.rec, err)
 			m.reserved = false

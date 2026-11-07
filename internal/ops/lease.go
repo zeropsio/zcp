@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -64,10 +65,12 @@ type LeaseDeps struct {
 	// each use ("" — or nil — for none): a repository on it is checked out as
 	// HQ's git user (DP-12).
 	HQAddress func() string
-	// PoolCredential puts the Mate credential on the pool
-	// (PoolHQCredentialEnvKey) before a lease of a repository on HQ takes a
-	// container (DP-16); the zero value — outside a Mate — never writes.
-	PoolCredential PoolHQCredential
+	// HQGit runs zcp's own git against the Mate's HQ in a leased container —
+	// the checkout's fetch, the release guard's, a sync's push and
+	// fast-forwards — as relayed sessions (RelayedSSH), answered with the
+	// Mate's project key over the session (DP-16): a pool stores no HQ
+	// credential. nil — outside a Mate — runs that git over SSH as any other.
+	HQGit git.SSHExecutor
 	// ReadTimeout bounds one orchestrator read (a container listing); zero
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
 	// a reset; a read that hangs must not hold a status call that long.
@@ -99,6 +102,15 @@ type LeaseDeps struct {
 	// acquire takes one lease per pool — and answers whether the pool's
 	// subdomain serves now, and a note on what it could not do. nil runs none.
 	PublicAccess func(ctx context.Context, alias string) (on bool, note string)
+}
+
+// gitSSH runs zcp's git against a lease's origin: relayed (HQGit) for a
+// repository on the Mate's HQ (onHQ), over SSH otherwise.
+func (d LeaseDeps) gitSSH(onHQ bool) git.SSHExecutor {
+	if onHQ && d.HQGit != nil {
+		return d.HQGit
+	}
+	return d.SSH
 }
 
 // now reads zcp's clock.

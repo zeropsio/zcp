@@ -178,18 +178,14 @@ func RedactEnvValue(key, value, serviceType string, sensitive bool) (string, boo
 // reference this constant so they cannot drift apart.
 const GitTokenEnvKey = "GIT_TOKEN"
 
-// PoolHQCredentialEnvKey is the single owner of the env-var name a pool
-// service holds this Mate's HQ credential under (docs/spec-workflows.md §8
-// DP-16): inside a Mate an acquire of a repository on HQ writes it
-// (EnvSetService, sensitive=true), the repository pass renews it, and only
-// the helper a lease of an HQ repository authenticates with reads it
-// ($ZCP_HQ_GIT_TOKEN, leaseHQCredentialHelperShell) — inline at that
-// repository's fetch and persisted under HQ's scope alone. It is a variable
-// of its own, never the pool's GIT_TOKEN: every container of a pool reads
-// the pool's whole service env, and a lease of a repository outside HQ
-// answers its host's 401 with GIT_TOKEN — the user's, which zcp never writes.
-// The ZCP_ prefix keeps it out of Mate's vault (isVaultHidden) and is no
-// ZEROPS_ prefix, which the platform forbids for custom envs.
+// PoolHQCredentialEnvKey is the single owner of the retired env-var name a
+// pool service held this Mate's HQ credential under. Nothing writes or reads
+// it any more — zcp answers a lease's git against HQ with the Mate's project
+// key over a relayed session (docs/spec-workflows.md §8 DP-16) — but pools a
+// zcp before that wrote it still carry a live credential there. So it stays a
+// credential in credentialValueKeys, its value masked at every echo site, and
+// out of generated .env files, as GiteaTokenEnvKey stays, until no pool
+// carries it.
 const PoolHQCredentialEnvKey = "ZCP_HQ_GIT_TOKEN"
 
 // GiteaTokenEnvKey is the single owner of the retired Gitea bot-token env-var

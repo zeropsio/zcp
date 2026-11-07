@@ -51,9 +51,6 @@ type MigratedDev struct {
 	// stamp included (the stamp names the dev's subdomain, not the pool's);
 	// nil when it had none.
 	PublicAccess *topology.PublicAccessRecord `json:"publicAccess,omitempty"`
-	// CredentialFingerprint names the Mate credential the dev service held as
-	// GIT_TOKEN (HQRepoRef.CredentialFingerprint); "" for none.
-	CredentialFingerprint string `json:"credentialFingerprint,omitempty"`
 	// Parts are the pools a dev service serving several parts was split
 	// into, one per part, in the order of the dev pair's stages; empty for a
 	// single part. Every part's pair carries the same list: a split reverts
@@ -241,11 +238,6 @@ func (m *ServiceMeta) onPool(move PoolPairMove) *ServiceMeta {
 	if rec, ok := m.PublicAccess[dev]; ok {
 		from.PublicAccess = &rec
 	}
-	if m.HQ != nil {
-		from.CredentialFingerprint = m.HQ.CredentialFingerprint
-		out.HQ.CredentialFingerprint = ""
-	}
-
 	out.Hostname = move.Pool
 	out.PrimarySetupName = move.PoolSetup
 	out.Repo = nil
@@ -286,9 +278,6 @@ func (m *ServiceMeta) keyedOnDev() (*ServiceMeta, error) {
 			rec.SubdomainEnabledByZcpAt = from.PublicAccess.SubdomainEnabledByZcpAt
 		}
 		out.SetPublicAccess(from.Hostname, rec)
-	}
-	if out.HQ != nil {
-		out.HQ.CredentialFingerprint = from.CredentialFingerprint
 	}
 	out.DevPool = nil
 	out.dropEmptyMaps()

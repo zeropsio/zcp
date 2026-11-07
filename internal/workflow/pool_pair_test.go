@@ -38,7 +38,7 @@ func devKeyedPair() *ServiceMeta {
 		Repo: &topology.Repo{BaselineAppVersion: "av-1", Provenance: topology.RepoProvenanceExisting},
 		HQ: &HQRepoRef{
 			AppID: "app-1", Repo: "appdev", WiredAt: "2026-10-01T12:00:00Z",
-			CredentialFingerprint: "fp-dev", Change: 7, Branch: "feat-x",
+			Change: 7, Branch: "feat-x",
 		},
 	}
 }
@@ -99,14 +99,13 @@ func TestMigratePairToPool_KeysThePairOnThePool(t *testing.T) {
 		"apppool":  {Intent: topology.PublicAccessSubdomain},
 		"appstage": was.PublicAccess["appstage"],
 	}
-	want.HQ.CredentialFingerprint = ""
 	serves := true
 	devAccess := was.PublicAccess["appdev"]
 	want.DevPool = &DevPoolRef{
 		ServiceID: "pool-id",
 		MigratedFrom: &MigratedDev{
 			Hostname: "appdev", PrimarySetupName: "dev", Repo: was.Repo,
-			ServesHTTP: &serves, PublicAccess: &devAccess, CredentialFingerprint: "fp-dev",
+			ServesHTTP: &serves, PublicAccess: &devAccess,
 		},
 	}
 	if !reflect.DeepEqual(onDisk, want) {
@@ -454,7 +453,7 @@ func TestMigratePairToPools_SplitsThePairOnePerPart(t *testing.T) {
 	devAccess := was.PublicAccess["appdev"]
 	from := &MigratedDev{
 		Hostname: "appdev", PrimarySetupName: "dev", Repo: was.Repo,
-		ServesHTTP: &serves, PublicAccess: &devAccess, CredentialFingerprint: "fp-dev",
+		ServesHTTP: &serves, PublicAccess: &devAccess,
 		Parts: []string{"webpool", "apipool"},
 	}
 	for i, tc := range []struct {
@@ -477,7 +476,6 @@ func TestMigratePairToPools_SplitsThePairOnePerPart(t *testing.T) {
 		want.Repo = nil
 		want.ServesHTTPByHost = tc.serves
 		want.PublicAccess = tc.access
-		want.HQ.CredentialFingerprint = ""
 		want.DevPool = &DevPoolRef{ServiceID: tc.poolID, MigratedFrom: from}
 		onDisk, err := ReadServiceMeta(dir, tc.pool)
 		if err != nil || onDisk == nil {

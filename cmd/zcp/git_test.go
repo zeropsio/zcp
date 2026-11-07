@@ -424,6 +424,20 @@ func gitPoolPairMeta() *workflow.ServiceMeta {
 
 // writeGitLeaseRecord writes the record zerops_lease keeps of apppool-3, a
 // lease of the pool apppool, parked or not.
+// withGitLeaseRepo records repo as the repository apppool-3 is leased for.
+func withGitLeaseRepo(t *testing.T, stateDir, repo string) {
+	t.Helper()
+	path := filepath.Join(stateDir, "leases", "apppool-3.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.Replace(body, []byte(`{`), []byte(`{"repo":"`+repo+`",`), 1)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeGitLeaseRecord(t *testing.T, stateDir string, parked bool) {
 	t.Helper()
 	writeInitLeaseRecord(t, stateDir)
@@ -640,8 +654,12 @@ func TestRunGitCmd_LeaseAlias_Parked_RefusedNamingTheUnpark(t *testing.T) {
 // orchestrator gives zcp — asked once, before the ssh call — runs git in the
 // lease's checkout, /var/www of its container, reached by the alias; in a
 // Mate container a lease of a pool pair wired to HQ is relayed, answered
-// from the pool pair's record, and one of a pair not wired stays the plain
-// passthrough.
+// from the pool pair's record, and so is a lease of a repository on the
+// Mate's HQ whatever its pair, which the pool stores no credential for; one
+// of a pair not wired, of a repository elsewhere, stays the plain
+// passthrough. A Mate reads its identity once to tell; outside one nothing
+// reads it.
+// witness: cmd/zcp/git.go | return target.hqLease || (target.meta != nil → return (target.meta != nil
 func TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout(t *testing.T) {
 	t.Parallel()
 	wired := gitPoolPairMeta()
@@ -649,18 +667,23 @@ func TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		meta    *workflow.ServiceMeta
+		repo    string
 		mate    bool
 		relayed bool
 	}{
-		{"plain, no Mate", wired, false, false},
-		{"plain, pair not wired", gitPoolPairMeta(), true, false},
-		{"relayed, pair wired to HQ", wired, true, true},
+		{"plain, no Mate", wired, "", false, false},
+		{"plain, pair not wired", gitPoolPairMeta(), "https://github.com/acme/app.git", true, false},
+		{"relayed, pair wired to HQ", wired, "", true, true},
+		{"relayed, the lease's repository on HQ, pair not wired", gitPoolPairMeta(), "https://hq.example/git/org-1/app-1/appdev.git", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			stateDir := t.TempDir()
 			writeGitTestMeta(t, stateDir, tc.meta)
 			writeGitLeaseRecord(t, stateDir, false)
+			if tc.repo != "" {
+				withGitLeaseRepo(t, stateDir, tc.repo)
+			}
 			ssh := &fakeGitSSH{}
 			deps, stdout, stderr := gitTestDeps(stateDir, ssh)
 			deps.rt.MateEnabled = tc.mate
@@ -695,8 +718,8 @@ func TestRunGitCmd_LeaseAlias_Owned_RunsInTheLeaseCheckout(t *testing.T) {
 				if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git '-C' '/tmp/wt-b' 'status'`; !strings.HasSuffix(script, want) {
 					t.Errorf("script = %q, want the plain passthrough ending %q", script, want)
 				}
-				if reads != 0 {
-					t.Errorf("the HQ identity was read %d times for a plain call", reads)
+				if want := map[bool]int{false: 0, true: 1}[tc.mate]; reads != want {
+					t.Errorf("the HQ identity was read %d times for a plain call, want %d", reads, want)
 				}
 			}
 			if stdout.Len() != 0 {
@@ -784,32 +807,32 @@ var relayedScriptMarks = []string{
 
 // TestRunGitCmd_NotWiredThrough_StillRelayed: in a Mate container every
 // subcommand of an HQ-wired pair is relayed — a partial clone's lazy fetches
-// need a credential on any of them — whether the pair was wired through (its
-// dev holds GIT_TOKEN) or not.
+// need a credential on any of them — whether the pair was wired through (set
+// up to push) or not.
 func TestRunGitCmd_NotWiredThrough_StillRelayed(t *testing.T) {
 	t.Parallel()
-	for _, fingerprint := range []string{"", "fp-1"} {
+	for _, state := range []topology.GitPushState{topology.GitPushUnconfigured, topology.GitPushConfigured} {
 		stateDir := t.TempDir()
 		meta := hqWiredMeta()
-		meta.HQ.CredentialFingerprint = fingerprint
+		meta.GitPushState = state
 		writeGitTestMeta(t, stateDir, meta)
 		ssh := &fakeGitSSH{}
 		deps, stdout, stderr := gitTestDeps(stateDir, ssh)
 		deps.rt.MateEnabled = true
 		if code := runGitCmd(t.Context(), []string{"appdev", "status"}, deps); code != 0 {
-			t.Fatalf("fingerprint %q: exit %d, stderr %q", fingerprint, code, stderr.String())
+			t.Fatalf("state %q: exit %d, stderr %q", state, code, stderr.String())
 		}
 		if len(ssh.calls) != 1 || ssh.calls[0].host != "appdev" {
-			t.Fatalf("fingerprint %q: ssh calls = %+v, want one to appdev", fingerprint, ssh.calls)
+			t.Fatalf("state %q: ssh calls = %+v, want one to appdev", state, ssh.calls)
 		}
 		script := remoteScript(t, ssh.calls[0].command)
 		for _, mark := range relayedScriptMarks {
 			if !strings.Contains(script, mark) {
-				t.Errorf("fingerprint %q: script lacks %q:\n%s", fingerprint, mark, script)
+				t.Errorf("state %q: script lacks %q:\n%s", state, mark, script)
 			}
 		}
 		if stdout.Len() != 0 {
-			t.Errorf("fingerprint %q: stdout = %q", fingerprint, stdout.String())
+			t.Errorf("state %q: stdout = %q", state, stdout.String())
 		}
 	}
 }

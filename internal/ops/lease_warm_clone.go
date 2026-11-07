@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -40,13 +39,13 @@ import (
 // away with /var/www, which leaves the empty /var/www today's checkout expects.
 //
 // zcp writes into a free container only right after reading it by id as free,
-// only for a pool it leased a repository from, and — for a repository on the
-// Mate's HQ — only once the pool's HQ credential (PoolHQCredentialEnvKey) is
-// this Mate's current one by zcp's own record (DP-16): the clone authenticates
-// exactly as a checkout does — a repository outside HQ from the pool's
-// GIT_TOKEN, answered only to the host it is bound to (leaseTokenScope), one
-// on HQ from the HQ credential, which no other repository's helper reads —
-// and writes no credential, helper or identity.
+// and only for a pool it leased a repository outside the Mate's HQ from: the
+// clone authenticates exactly as a checkout does, from the pool's GIT_TOKEN,
+// answered only to the host it is bound to (leaseTokenScope), and writes no
+// credential, helper or identity. A repository on HQ is never warmed (DP-16):
+// zcp answers HQ's git only over a session it holds (LeaseDeps.HQGit), which
+// a clone detached from it outlives, and the pool stores no HQ credential —
+// its acquire clones it relayed.
 
 // leaseWarmStateFile is the clone's state, inside the clone's .git so it lives
 // and goes with the clone.
@@ -142,13 +141,12 @@ func leaseWarmRepoKey(repo string) string {
 // setsid, without which nothing would keep a checkout from running beside it).
 // The clone runs in its own session (setsid), so a checkout can stop its whole
 // process group; its output goes to $HOME/.zcp/warm/clone.log. It fetches
-// through the inline helper a checkout uses (leaseCredentialHelperFor), so the
-// credential comes from the session's env — GIT_TOKEN, answering tokenScope
-// alone, or the pool's HQ credential for a repository on HQ, answering HQ
-// alone — and is never composed in, and it persists nothing: the checkout
-// that takes the clone sets the helper and the identity. repo and workDir are
-// shell-quoted.
-func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
+// through the inline helper a checkout uses (leaseCredentialHelperShell), so
+// the credential comes from the session's env — GIT_TOKEN, answering
+// tokenScope alone — and is never composed in, and it persists nothing: the
+// checkout that takes the clone sets the helper and the identity. repo and
+// workDir are shell-quoted.
+func leaseWarmCloneCommand(workDir, repo, tokenScope string) string {
 	q := shellQuote
 	wd := q(workDir)
 	state := ".git/" + leaseWarmStateFile
@@ -161,7 +159,7 @@ func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
 		"git init -q || exit 1",
 		`printf 'repo %s\npid %s\n' ` + q(leaseWarmRepoKey(repo)) + ` "$$" > ` + state + " || exit 1",
 		"git remote add origin " + q(repo) + " && " +
-			"git " + leaseInlineHelperArgs(leaseCredentialHelperFor(repo, hqURL, tokenScope)) + " fetch -q --prune origin && " +
+			"git " + leaseInlineHelperArgs(leaseCredentialHelperShell(tokenScope)) + " fetch -q --prune origin && " +
 			"c=$(git rev-parse -q --verify " + q("refs/remotes/origin/"+leaseDefaultBranch+"^{commit}") + ") && " +
 			`printf 'commit %s\n' "$c" >> ` + state + " && " +
 			`git checkout -q -f --detach "$c" && ` +
@@ -181,6 +179,10 @@ func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
 	}, "\n")
 }
 
+// leaseCheckoutLockFD is the descriptor a checkout holds the work dir's flock
+// on: one a relayed session leaves free.
+const leaseCheckoutLockFD = "7"
+
 // leaseWarmCheckoutSteps are the two steps a checkout of repo runs in the work
 // dir before anything else. lock holds the work dir's flock for the rest of
 // the checkout — waiting for a running clone of repo up to leaseWarmCloneWait,
@@ -190,16 +192,19 @@ func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
 // inside the work dir (leaseWarmInsideNames), then its .git (answering
 // discarded). A checkout that finds no clone changes nothing here.
 // Where flock is missing no clone was ever started (leaseWarmCloneCommand).
+// The lock is held on descriptor leaseCheckoutLockFD: the checkout of a
+// repository on HQ runs as a relayed session, whose helper answers only
+// while 3, 4, 8 and 9 are the session's own (relayPrologue).
 func leaseWarmCheckoutSteps(repo string) (lock, settle string) {
 	q := shellQuote
 	state := ".git/" + leaseWarmStateFile
 	mine := q("repo " + leaseWarmRepoKey(repo))
 	wait := strconv.Itoa(int(leaseWarmCloneWait / time.Second))
-	lock = "{ if command -v flock >/dev/null 2>&1; then exec 8<.; end=$(( $(date +%s) + " + wait + " )); " +
-		"while ! flock -n 8; do " +
+	lock = "{ if command -v flock >/dev/null 2>&1; then exec " + leaseCheckoutLockFD + "<.; end=$(( $(date +%s) + " + wait + " )); " +
+		"while ! flock -n " + leaseCheckoutLockFD + "; do " +
 		"if { [ -f " + state + " ] && ! grep -qx " + mine + " " + state + "; } || [ \"$(date +%s)\" -ge \"$end\" ]; then " +
 		"p=$(sed -n 's/^pid //p' " + state + " 2>/dev/null); if [ -n \"$p\" ]; then kill -s TERM -- \"-$p\" 2>/dev/null; fi; " +
-		"flock -w 10 8 || { echo " + q(leaseWarmBusy) + " >&2; exit 4; }; break; fi; " +
+		"flock -w 10 " + leaseCheckoutLockFD + " || { echo " + q(leaseWarmBusy) + " >&2; exit 4; }; break; fi; " +
 		"sleep 0.2 2>/dev/null || sleep 1; done; fi; }"
 	settle = "{ if [ ! -f " + state + " ]; then :; " +
 		"elif grep -qx " + mine + " " + state + " && grep -qx done " + state + "; then " +
@@ -339,30 +344,9 @@ func readWarmClone(stateDir, pool string) *LeaseWarmClone {
 	return &c
 }
 
-// warmCloneCredentialGap says why the pool cannot fetch repo for a clone zcp
-// would start now, "" when it can: a repository outside the Mate's HQ takes
-// the pool's own GIT_TOKEN (the user's, DP-6); one on HQ takes only this
-// Mate's HQ credential, which only an acquire writes there (DP-16, under
-// PoolHQCredentialEnvKey), so a clone waits for zcp's record to say the pool
-// holds the Git credential the Mate's server keeps from HQ now.
-func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo string) string {
-	if !IsHQRemote(repo, d.hqAddress()) {
-		return ""
-	}
-	const onHQ = "the repository is on this Mate's HQ, whose git takes only this Mate's HQ credential, and "
-	if d.PoolCredential.Read == nil {
-		return onHQ + "zcp runs outside a Mate, so the pool holds no HQ credential it wrote"
-	}
-	credential, ok := d.PoolCredential.Read()
-	if !ok || credential == "" {
-		return onHQ + "the Mate's server holds no Git credential from HQ: it is not linked to HQ yet (its /mate/setup.json says why)"
-	}
-	rec, found := readPoolCredential(d.StateDir, pool.Name)
-	if !found || rec.PoolServiceID != pool.ID || rec.needsRenewal(hq.GitCredentialFingerprint(credential)) {
-		return onHQ + "zcp's record does not say the pool holds the one the Mate's server keeps from HQ now (an acquire of an HQ repository writes it)"
-	}
-	return ""
-}
+// warmCloneHQSkip is the note of a clone zcp never starts: repo is on the
+// Mate's HQ, whose git zcp answers only within a session it holds.
+const warmCloneHQSkip = "the repository is on this Mate's HQ, whose git zcp answers only over its own ssh session, which a clone running on in the background outlives, so the pool warms none of it; an acquire clones it"
 
 // cloneLater starts the clone in each of ids in the background (cloneInto).
 func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
@@ -379,7 +363,7 @@ func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPoo
 // cloneInto starts, in each container of ids still free, the clone of the
 // repository the pool's last lease checked out, and records what it did. It
 // does nothing for a pool zcp never leased a repository from, and records a
-// skip when the pool's credential cannot fetch it (warmCloneCredentialGap).
+// skip for a repository on the Mate's HQ (warmCloneHQSkip).
 func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return
@@ -389,8 +373,8 @@ func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool
 	if repo == "" {
 		return
 	}
-	if gap := warmCloneCredentialGap(d, rp.svc, repo); gap != "" {
-		w.recordClone(d, pool, LeaseWarmClone{Repo: topology.CanonicalRepoURL(repo), Outcome: LeaseWarmCloneSkipped, Note: gap + "; nothing was cloned"})
+	if IsHQRemote(repo, d.hqAddress()) {
+		w.recordClone(d, pool, LeaseWarmClone{Repo: topology.CanonicalRepoURL(repo), Outcome: LeaseWarmCloneSkipped, Note: warmCloneHQSkip + "; nothing was cloned"})
 		return
 	}
 	for _, id := range ids {
@@ -419,7 +403,7 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	// The pool's GIT_TOKEN answers the scope its default repository or an
 	// earlier lease bound it to; a clone never binds it (repo "").
 	tokenScope, _ := leaseTokenScope(d.StateDir, rp.svc.Name, d.hqAddress(), "")
-	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, d.hqAddress(), tokenScope))
+	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, tokenScope))
 	if err != nil {
 		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)
 		return out

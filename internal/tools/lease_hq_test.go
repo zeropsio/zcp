@@ -4,6 +4,7 @@ package tools
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,35 +33,67 @@ func leaseHQLink(t *testing.T) *runtime.HQLink {
 	return link
 }
 
-// TestLeaseTool_HQRepo_ChecksOutAsMate: zerops_lease reads the HQ this
-// container presents itself to at the acquire, so the checkout of a
-// repository on it authenticates as HQ's git user `mate`; the result never
-// carries the Mate credential.
-func TestLeaseTool_HQRepo_ChecksOutAsMate(t *testing.T) {
+// TestLeaseAcquire_HQRepoInAMate_ClonedThroughTheRelay_NoHQCredentialInThePool:
+// a pool acquire clones an HQ repository through the relay with the project
+// key; no HQ Git credential is stored in the pool. The HQ takes only the
+// Mate's project key, the acquire's checkout lands on HQ's main, and neither
+// the pool's variables, the leased container's git config nor zcp's state
+// holds a credential for it.
+// witness: internal/tools/hq_lease_completion.go | deps.HQGit = relayed → _ = relayed
+func TestLeaseAcquire_HQRepoInAMate_ClonedThroughTheRelay_NoHQCredentialInThePool(t *testing.T) {
 	t.Parallel()
-	ssh := &leaseStubSSH{}
-	srv, _, _ := leaseToolServerIn(t, runtime.Info{HQ: leaseHQLink(t)}, ssh)
+	fake := newFakeHQ(t)
+	fake.credential = "a-credential-no-git-presents"
+	fake.ensureRepo(t.Context(), labApp, "web")
+	main := fake.git(t.Context(), fake.repoDir(labApp, "web"), "rev-parse", "main")
+	repo := fake.srv.URL + "/git/" + labOrg + "/" + labApp + "/web.git"
+	leased := t.TempDir()
+	ssh := &labSSH{t: t, dirs: map[string]string{"devpool-3": leased, "node-id-3.runtime.devpool.zerops": leased}, home: t.TempDir(), caFile: fake.caFile}
+	// A relayed session clears git's TLS variables: the lab's CA reaches its
+	// git from the global configuration, as a container's CA store would.
+	if err := os.WriteFile(filepath.Join(ssh.home, ".gitconfig"), []byte("[http]\n\tsslCAInfo = "+fake.caFile+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: fake.link(t)}
+	srv, stateDir, mock := leaseToolServerIn(t, rt, ssh)
+	ssh.mock = mock
 
-	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseHQRepo + ".git", "branch": "feat"})
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": repo, "branch": "feat"})
 	text := getTextContent(t, res)
 	if res.IsError {
-		t.Fatalf("acquire: %s", text)
+		t.Fatalf("acquire of a repository on HQ: %s", text)
 	}
-	if !ssh.sawCommand("echo username=mate;") || ssh.sawCommand("username=oauth2") {
-		t.Errorf("the checkout of a repository on HQ does not authenticate as mate: %v", ssh.calls)
+	if got, _ := leasedGit(t, leased, "rev-parse", "HEAD"); got != main {
+		t.Errorf("the leased checkout is at %q, want HQ's main %q", got, main)
 	}
-	if !ssh.sawCommand("credential.https://hq.example.invalid.helper") {
-		t.Errorf("the checkout keeps no helper under HQ's scope: %v", ssh.calls)
+	for _, key := range []string{ops.PoolHQCredentialEnvKey, ops.GitTokenEnvKey} {
+		if v, held := serviceEnvVar(t, mock, "svc-pool", key); held {
+			t.Errorf("the acquire stored the pool's %s: %+v", key, v)
+		}
 	}
-	if ssh.sawCommand(leaseHQCredential) || strings.Contains(text, leaseHQCredential) {
-		t.Errorf("the Mate credential reached a command or the result: %s", text)
+	if helpers, _ := leasedGit(t, leased, "config", "--get-regexp", `^credential\.`); helpers != "" {
+		t.Errorf("the leased checkout keeps a credential helper: %s", helpers)
+	}
+	for _, secret := range []string{labKey, labCredential} {
+		if strings.Contains(text, secret) {
+			t.Errorf("the result carries a credential: %s", text)
+		}
+		assertNoSecretOnDisk(t, stateDir, secret)
+		assertNoSecretOnDisk(t, filepath.Join(leased, ".git"), secret)
 	}
 }
 
-// TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing: a pool whose
-// ZCP_HQ_GIT_TOKEN is not the Mate credential cannot reach HQ; the refusal names the missing
-// credential as a prerequisite and never appends the contract that asks the
-// user for a token of their own.
+// leasedGit is git's trimmed answer in the leased checkout dir.
+func leasedGit(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...).Output() //nolint:gosec // G204: a test's own git
+	return strings.TrimSpace(string(out)), err
+}
+
+// TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing: a checkout git asked a
+// credential of that nothing answered cannot reach HQ; the refusal names the
+// Mate's project key and the relayed `zcp git` as the prerequisite and never
+// appends the contract that asks the user for a token of their own.
 func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 	t.Parallel()
 	ssh := &leaseStubSSH{fn: func(string) ([]byte, error) {
@@ -76,12 +109,12 @@ func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("want an error result, got: %s", text)
 	}
-	for _, want := range []string{platform.ErrPrerequisiteMissing, "`mate`", "HQ credential", "pool's " + ops.PoolHQCredentialEnvKey, "terminal prompts disabled"} {
+	for _, want := range []string{platform.ErrPrerequisiteMissing, "project key", "zcp git ", "never ask", "terminal prompts disabled"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("result %s lacks %q", text, want)
 		}
 	}
-	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, leaseHQCredential, leaseTestLease, "no zcp command puts it"} {
+	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, ops.PoolHQCredentialEnvKey, leaseHQCredential, leaseTestLease, "no zcp command puts it"} {
 		if strings.Contains(text, banned) {
 			t.Errorf("result %s carries %q", text, banned)
 		}

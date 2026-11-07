@@ -34,7 +34,7 @@ func (l *hqLab) retireHQ() {
 	l.git("remote", "set-url", "origin", retired)
 	if err := workflow.UpdateServiceMeta(l.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 		m.RemoteURL = retired
-		m.HQ.CredentialFingerprint, m.HQ.Origin = "", nil
+		m.HQ.Origin = nil
 		return nil
 	}); err != nil {
 		l.t.Fatal(err)
@@ -61,7 +61,7 @@ func (l *hqLab) gitConfig(key string) string {
 // mateStart is the Mate's start as it reaches the pair's dev service.
 func (l *hqLab) mateStart() []string {
 	l.t.Helper()
-	lines, _ := startDevGit(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
+	lines, _ := startDevGit(l.t.Context(), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
 	return lines
 }
 

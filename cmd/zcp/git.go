@@ -130,8 +130,8 @@ func brokeredGitStateDir() string {
 // mount); a service they do not name — an unadopted one — in /var/www. A
 // lease alias is asked about first (gitLeaseTarget).
 //
-// In a Mate container a call to an HQ-wired pair — or to a lease of a pool
-// pair wired to HQ — is relayed (ops.RunBrokeredGitRelayed): zcp answers
+// In a Mate container a call to an HQ-wired pair — or to a lease of a
+// repository on the Mate's HQ, or of a pool pair wired to HQ — is relayed (ops.RunBrokeredGitRelayed): zcp answers
 // git's credential requests over the ssh session from the Mate's identity,
 // the record's HQ origin and the call's argv (brokeredGitRelayFor). Such a
 // call is also refused, with exit 2, for git's own credential subcommands, a
@@ -162,12 +162,15 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 	}
 	meta, dir := target.meta, target.dir
 	var code int
-	if isRelayedGit(d.rt, meta) {
+	if isRelayedGit(d.rt, target) {
 		if err := ops.CheckRelayedGitArgs(gitArgs); err != nil {
 			return refuse(err.Error())
 		}
 		var id hq.Identity
-		if d.hqIdentity != nil {
+		switch {
+		case target.id != nil:
+			id = *target.id
+		case d.hqIdentity != nil:
 			id = d.hqIdentity()
 		}
 		relay := brokeredGitRelayFor(meta, id, d.hqHTTP, gitArgs)
@@ -211,10 +214,15 @@ func gitRecordUnread(d gitCmdDeps, host string, err error) int {
 
 // gitTarget is where a call runs git — the directory, in the container ssh
 // reaches by the call's host — and the record a relayed call answers from,
-// nil for none.
+// nil for none. hqLease: the host is a lease of a repository on the Mate's
+// HQ, whose git only the relay answers — the pool stores no credential for
+// it — whether or not a pair record names it; id is the Mate's identity that
+// was read to tell, nil when none was.
 type gitTarget struct {
-	dir  string
-	meta *workflow.ServiceMeta
+	dir     string
+	meta    *workflow.ServiceMeta
+	hqLease bool
+	id      *hq.Identity
 }
 
 // gitTargetOf is the target of a call to host, or — stopped true — the exit
@@ -290,7 +298,13 @@ func gitLeaseTarget(ctx context.Context, host string, d gitCmdDeps) (target gitT
 	if !meta.DevIsPool() || meta.Hostname != lease.Pool {
 		meta = nil
 	}
-	return gitTarget{dir: ops.LeaseWorkDir, meta: meta}, 0, false
+	target = gitTarget{dir: ops.LeaseWorkDir, meta: meta}
+	// Only a Mate's git is relayed: outside one the identity is never read.
+	if d.rt.MateEnabled && d.hqIdentity != nil {
+		id := d.hqIdentity()
+		target.id, target.hqLease = &id, ops.IsHQRemote(lease.Repo, id.Origin)
+	}
+	return target, 0, false
 }
 
 // refusalLine is a refusal's message and, for a platform refusal, what to do
@@ -304,25 +318,33 @@ func refusalLine(err error) string {
 	return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(line)
 }
 
-// isRelayedGit reports whether a call answered from meta — the record naming
-// the host, or for a lease the pair keyed by its pool — is relayed: in a Mate
-// container, every subcommand of a pair wired to an HQ repository — wired
-// through or not — since its checkout is a partial clone whose lazy fetches
-// ask for a credential on any of them.
-func isRelayedGit(rt runtime.Info, meta *workflow.ServiceMeta) bool {
-	return rt.MateEnabled && meta != nil && meta.HQ != nil && meta.HQ.Repo != ""
+// isRelayedGit reports whether a call to target is relayed: in a Mate
+// container, every subcommand of a lease of a repository on HQ, and of a pair
+// its record — the record naming the host, or for a lease the pair keyed by
+// its pool — names wired to an HQ repository, wired through or not, since its
+// checkout is a partial clone whose lazy fetches ask for a credential on any
+// of them.
+func isRelayedGit(rt runtime.Info, target gitTarget) bool {
+	if !rt.MateEnabled {
+		return false
+	}
+	return target.hqLease || (target.meta != nil && target.meta.HQ != nil && target.meta.HQ.Repo != "")
 }
 
 // brokeredGitRelayFor is what a relayed call to meta's pair answers from:
 // the Mate's identity — HQ's host, any path — the record's HQ origin, which
 // zcp writes from HQ's own state, or, while the record names none, HQ's live
 // origin of the record's repository; and the URLs args write literally.
-// Never the record's RemoteURL, written from the checkout's live origin.
+// Never the record's RemoteURL, written from the checkout's live origin. A
+// lease no wired pair's record names (meta nil, or one wired to no HQ
+// repository) answers from the identity and args alone.
 func brokeredGitRelayFor(meta *workflow.ServiceMeta, id hq.Identity, httpClient hq.Doer, args ops.BrokeredGitArgs) ops.BrokeredGitRelay {
 	relay := ops.BrokeredGitRelay{Identity: id, HTTPClient: httpClient}
-	if origin := meta.HQ.Origin; origin != nil && origin.URL != "" {
-		relay.Repos = append(relay.Repos, origin.URL)
-	} else {
+	switch {
+	case meta == nil || meta.HQ == nil || meta.HQ.Repo == "":
+	case meta.HQ.Origin != nil && meta.HQ.Origin.URL != "":
+		relay.Repos = append(relay.Repos, meta.HQ.Origin.URL)
+	default:
 		relay.LiveOrigin = &ops.BrokeredGitHQRepo{AppID: meta.HQ.AppID, Repo: meta.HQ.Repo}
 	}
 	relay.Repos = append(relay.Repos, ops.BrokeredGitArgvURLs(args, id.Origin)...)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -188,20 +189,7 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	view.CheckMillis = time.Since(start).Milliseconds()
 	pushStart := time.Now()
 	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
-	renewals := newLeaseCredentialRenewals()
-	view.Push, view.Commit, err = pushLeaseBranch(ctx, d.SSH, alias, branch, onHQ)
-	// HQ refusing the pool's credential: renewed in this call, pushed once
-	// more (renewLeasePoolCredential).
-	if err != nil && onHQ && gitCredentialRefused(err) {
-		r := renewals.renew(ctx, d, rec)
-		if r.renewed {
-			view.Push, view.Commit, err = pushLeaseBranch(ctx, d.SSH, alias, branch, onHQ)
-		}
-		if err != nil && gitCredentialRefused(err) {
-			err = heldLeaseCredentialRefusal(err, fmt.Sprintf("Lease %s could not push branch %s to origin, so no other lease was touched", alias, branch),
-				r, LeaseSyncCall(alias))
-		}
-	}
+	view.Push, view.Commit, err = pushLeaseBranch(ctx, d.gitSSH(onHQ), alias, branch, onHQ)
 	// The check reached the source; a push it does not reach says so
 	// through its refusal's cause.
 	if _, silent := leaseNotAnswering(err); silent {
@@ -228,7 +216,7 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 			parkedMember(m, alias)
 			return
 		}
-		fastForwardMember(ctx, d, mrec, m, branch, alias, onHQ, renewals)
+		fastForwardMember(ctx, d, mrec, m, branch, alias, onHQ)
 	})
 	for _, m := range members {
 		view.Members = append(view.Members, *m)
@@ -325,7 +313,7 @@ func (a leaseSyncAnswer) pushedRef(branch string) (flag byte, summary string, ok
 // pushLeaseBranch runs the source's push (leaseSyncPushCommand) and reads its
 // outcome, refusing a checkout on another branch and a push origin refused or
 // that never reached it. onHQ: the lease's repository is on the Mate's HQ.
-func pushLeaseBranch(ctx context.Context, ssh SSHDeployer, alias, branch string, onHQ bool) (LeaseSyncPush, string, error) {
+func pushLeaseBranch(ctx context.Context, ssh git.SSHExecutor, alias, branch string, onHQ bool) (LeaseSyncPush, string, error) {
 	out, err := ssh.ExecSSH(ctx, alias, leaseSyncPushCommand(branch))
 	a := parseLeaseSyncAnswer(string(out))
 	if head, ok := a.marks["head"]; ok && err == nil {
@@ -427,26 +415,10 @@ func leaseSyncMemberCommand(branch string) string {
 // whether the container answered (noteLeaseAnswer); a member that moved also
 // names its running dev servers nothing reloads. source is the lease the sync
 // pushed from, onHQ whether the repository is on the Mate's HQ.
-func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *LeaseSyncMember, branch, source string, onHQ bool, renewals *leaseCredentialRenewals) {
+func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *LeaseSyncMember, branch, source string, onHQ bool) {
 	start := time.Now()
 	defer func() { m.Millis = time.Since(start).Milliseconds() }()
-	out, err := d.SSH.ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
-	// HQ refusing the member's pool's credential on its fetch: that pool
-	// renewed in this call, the member tried once more.
-	if err != nil && onHQ && gitCredentialRefused(err) {
-		r := renewals.renew(ctx, d, rec)
-		if r.renewed {
-			out, err = d.SSH.ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
-		}
-		if err != nil && gitCredentialRefused(err) {
-			code, _ := classifyCheckoutFailure(err, onHQ)
-			m.Outcome, m.Code = LeaseSyncFailed, code
-			m.Note = fmt.Sprintf("%s could not be fetched or fast-forwarded (%s). %s", m.Alias, sshFailureText(err),
-				heldLeaseHQCredentialSuggestion(hqRefusalWhy(err), r, LeaseSyncCall(source)))
-			noteLeaseAnswer(d.StateDir, rec, err, d.now())
-			return
-		}
-	}
+	out, err := d.gitSSH(onHQ).ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
 	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	if err != nil {
 		memberFailure(m, err, onHQ)

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +15,7 @@ import (
 // commit on no remote branch until a fetch of origin goes through — origin
 // already has it, but the container's remote-tracking refs are stale — and
 // whose fetches answer fetches in turn (nil: goes through). mate makes zcp a
-// Mate, which writes the pool's HQ credential.
+// Mate, whose git against HQ runs relayed (relayedThrough).
 func compareFixture(t *testing.T, repo string, mate bool, fetches ...error) (*hostFixture, func() int) {
 	t.Helper()
 	hf := newHostFixture(t)
@@ -65,7 +66,7 @@ func compareFixture(t *testing.T, repo string, mate bool, fetches ...error) (*ho
 	}
 	hf.deps.HQAddress = func() string { return leaseHQURL }
 	if mate {
-		hf.deps.PoolCredential = PoolHQCredential{Read: func() (string, bool) { return poolMateCredential, true }}
+		hf.deps.HQGit = relayedThrough{deps: &hf.deps}
 	}
 	ssh.reset()
 	hf.events = nil
@@ -85,11 +86,10 @@ func authRefused(t *testing.T, repo string) error {
 // 2026-10-27): a commit pushed from elsewhere is on origin while the lease's
 // remote-tracking refs still predate it, so counted against them it reads as
 // unpushed and the release is refused for work it would not lose. The guard
-// fetches origin first and counts again. HQ refusing that fetch for the
-// pool's credential renews it in the call and fetches once more; refused
-// again — or a repository outside HQ whose host refused the pool's token —
-// the guard says it could not compare and why, never that the commit is
-// unpushed, and releases nothing.
+// fetches origin first — relayed for a repository on the Mate's HQ — and
+// counts again. HQ refusing that fetch, or a repository outside HQ whose host
+// refused the pool's token, the guard says it could not compare and why,
+// never that the commit is unpushed, and releases nothing.
 func TestLeaseRelease_ComparesWithOriginBeforeCountingCommitsUnpushed(t *testing.T) {
 	t.Parallel()
 	t.Run("the commit is on origin: released", func(t *testing.T) {
@@ -101,28 +101,22 @@ func TestLeaseRelease_ComparesWithOriginBeforeCountingCommitsUnpushed(t *testing
 		if tries() != 1 || len(hf.swarm.releases) != 1 {
 			t.Errorf("fetches = %d, releases = %+v; want one fetch and the release", tries(), hf.swarm.releases)
 		}
-	})
-	t.Run("HQ refuses the fetch, renewed in the call: released", func(t *testing.T) {
-		t.Parallel()
-		hf, tries := compareFixture(t, leaseHQRepo, true, authRefused(t, leaseHQRepo))
-		mock, _ := hf.deps.Client.(*platform.Mock)
-		before := mock.CallCount("CreateServiceEnvVar")
-		if _, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false); err != nil {
-			t.Fatalf("release after the pool's renewal: %v", err)
-		}
-		if n := mock.CallCount("CreateServiceEnvVar") - before; tries() != 2 || n != 1 {
-			t.Errorf("fetches = %d, credential writes = %d; want two fetches around one write", tries(), n)
+		if !slices.ContainsFunc(hf.deps.SSH.(*leaseSSH).commands(), func(c string) bool {
+			return strings.HasPrefix(c, relayedMark) && strings.Contains(c, "fetch -q --prune origin")
+		}) {
+			t.Error("the guard's fetch of a repository on HQ did not run relayed")
 		}
 	})
-	t.Run("HQ refuses again: could not compare", func(t *testing.T) {
+	// witness: internal/ops/lease_checkout.go | _, suggestion = classifyCheckoutFailure(err, onHQ) → _, _ = classifyCheckoutFailure(err, onHQ)
+	t.Run("HQ refuses the fetch: could not compare", func(t *testing.T) {
 		t.Parallel()
-		hf, _ := compareFixture(t, leaseHQRepo, true, authRefused(t, leaseHQRepo), authRefused(t, leaseHQRepo))
+		hf, _ := compareFixture(t, leaseHQRepo, true, authRefused(t, leaseHQRepo))
 		_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
 		pe := assertRefusedAndKept(t, hf, err)
 		if !strings.Contains(pe.Message, "could not compare") || strings.Contains(pe.Message, "would lose") {
 			t.Errorf("message %q: want it could not compare, not that releasing would lose work", pe.Message)
 		}
-		for _, want := range []string{`zerops_workflow action="start" workflow="develop"`, "zerops_lease action=release lease=devpool-3"} {
+		for _, want := range []string{"project key", "zcp git <alias>", "zerops_lease action=release lease=devpool-3 force=true"} {
 			if !strings.Contains(pe.Suggestion, want) {
 				t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
 			}

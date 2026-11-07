@@ -151,7 +151,7 @@ func (b *warmCloneBox) launch(t *testing.T, repo string, pathFirst []string, env
 	b.cloneDone = readEnd
 	t.Cleanup(func() { _ = readEnd.Close() })
 	path := append(append([]string{b.stubs}, pathFirst...), filepath.SplitList(os.Getenv("PATH"))...)
-	out, err := b.runPathWithFD(t, leaseWarmCloneCommand(b.dir, repo, "", ""), path, writeEnd, env...)
+	out, err := b.runPathWithFD(t, leaseWarmCloneCommand(b.dir, repo, ""), path, writeEnd, env...)
 	_ = writeEnd.Close()
 	if err != nil {
 		t.Fatalf("the warm clone's launch failed: %v\n%s", err, out)
@@ -230,14 +230,14 @@ func (b *warmCloneBox) reportCheckoutWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := `#!/bin/sh
-if [ "$1" = -n ] && [ "$2" = 8 ] && [ -n "$WARM_CHECKOUT_BLOCKED" ]; then
+if [ "$1" = -n ] && [ "$2" = LOCKFD ] && [ -n "$WARM_CHECKOUT_BLOCKED" ]; then
   REALFLOCK "$@"; result=$?
   if [ "$result" -ne 0 ] && mkdir "$WARM_CHECKOUT_BLOCKED.once" 2>/dev/null; then printf x > "$WARM_CHECKOUT_BLOCKED"; fi
   exit "$result"
 fi
 exec REALFLOCK "$@"
 `
-	if err := os.WriteFile(filepath.Join(b.stubs, "flock"), []byte(strings.ReplaceAll(script, "REALFLOCK", shellQuote(flock))), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(b.stubs, "flock"), []byte(strings.NewReplacer("REALFLOCK", shellQuote(flock), "LOCKFD", leaseCheckoutLockFD).Replace(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -570,7 +570,7 @@ func TestLeaseWarmClone_TreeAlreadyARepository_LeftAlone(t *testing.T) {
 	head := b.git(t, "rev-parse", "HEAD")
 
 	path := append([]string{b.stubs}, filepath.SplitList(os.Getenv("PATH"))...)
-	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), path, true)
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, ""), path, true)
 	if err != nil {
 		t.Fatalf("launch failed: %v\n%s", err, out)
 	}
@@ -591,7 +591,7 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 	origin, _ := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
 
-	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), append([]string{b.stubs}, pathWithout("flock")...), true)
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, ""), append([]string{b.stubs}, pathWithout("flock")...), true)
 	if err != nil {
 		t.Fatalf("launch: %v\n%s", err, out)
 	}

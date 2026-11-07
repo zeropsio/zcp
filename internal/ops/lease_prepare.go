@@ -87,23 +87,17 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 
 // leaseSecrets are the secrets zcp holds that every process of a pool
 // container reads in the pool's service env, and so a repository's prepare
-// or a supervisor that prints its env prints: this Mate's HQ credential
-// (PoolHQCredentialEnvKey) and the pool's orchestrator bearer as zcp's live
-// env names it (liveBearer). The person's GIT_TOKEN zcp never holds, so it
-// cannot take it out (review R4-6).
+// or a supervisor that prints its env prints: the pool's orchestrator bearer
+// as zcp's live env names it (liveBearer). The person's GIT_TOKEN zcp never
+// holds, so it cannot take it out (review R4-6).
 func leaseSecrets(d LeaseDeps, pool string) []string {
-	var secrets []string
-	if d.PoolCredential.Read != nil {
-		if credential, ok := d.PoolCredential.Read(); ok && credential != "" {
-			secrets = append(secrets, credential)
-		}
+	if pool == "" {
+		return nil
 	}
-	if pool != "" {
-		if bearer, _ := liveBearer(d, pool); bearer != "" {
-			secrets = append(secrets, bearer)
-		}
+	if bearer, _ := liveBearer(d, pool); bearer != "" {
+		return []string{bearer}
 	}
-	return secrets
+	return nil
 }
 
 // scrubSecrets is text with every one of secrets replaced by [redacted].

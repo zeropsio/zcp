@@ -149,37 +149,6 @@ func TestLeaseAcquire_PoolTokenBindsAtTheFirstLeaseOutsideHQ(t *testing.T) {
 	}
 }
 
-// TestLeaseAcquire_HQCredentialAnswersOnlyHQ: the pool's HQ credential is
-// this Mate's, for HQ's git alone. The helpers a lease of an HQ repository
-// hands git — the fetch's and the one the repository keeps — answer it to
-// HQ's host and never to another (a redirect, or the helper kept under
-// another scope).
-func TestLeaseAcquire_HQCredentialAnswersOnlyHQ(t *testing.T) {
-	t.Parallel()
-	requireGit(t)
-	fx := newLeaseFixture(t)
-	inAMate(fx)
-	ssh := &leaseSSH{}
-	fx.deps.SSH = ssh
-	fx.swarm.acquired = acquiredAs(3)
-	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	cmd := ssh.checkouts()[0].command
-	session := map[string]string{PoolHQCredentialEnvKey: poolMateCredential}
-	if user, password, _ := inlineAnswer(t, cmd, session, leaseHQRepo); user != "mate" || password != poolMateCredential {
-		t.Errorf("the fetch answers HQ with %q / %q, want mate with the Mate credential", user, password)
-	}
-	for what, ask := range map[string]func() (string, string, bool){
-		"the fetch's helper":              func() (string, string, bool) { return inlineAnswer(t, cmd, session, foreignRepo) },
-		"the helper the repository keeps": func() (string, string, bool) { return persistedHelperAnswer(t, cmd, session, foreignRepo) },
-	} {
-		if _, password, answered := ask(); answered && strings.Contains(password, poolMateCredential) {
-			t.Errorf("%s answers %s with the Mate credential", what, foreignRepo)
-		}
-	}
-}
-
 // TestLeaseCheckout_ForeignHostAsksForACredential_NamesTheTokensHost: a
 // private repository on a host the pool's GIT_TOKEN is not for fails at its
 // fetch with git's "terminal prompts disabled". It is no missing token — the

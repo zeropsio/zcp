@@ -34,9 +34,10 @@ its containers away from the app.
    checks the branch out there; a branch that does not exist yet is cut from
    `main`, or from the branch `from="<branch>"` names. `repo` is remembered
    per pool — pass it on the first acquire only.
-   The clone uses the pool's own `GIT_TOKEN` service secret — for a
-   repository on this Mate's HQ, the HQ credential zcp puts on the pool
-   itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it
+   The clone uses the pool's own `GIT_TOKEN` service secret; a repository
+   on this Mate's HQ zcp clones itself, answering HQ with this Mate's
+   project key, and nothing is stored in the pool. You never type a
+   credential. Each lease it
    took carries `devServers`: each server's `status` — `running`, or
    `starting` while it still compiles — and the preview server's `url`.
    Check a `starting` one with
@@ -47,7 +48,11 @@ its containers away from the app.
    command inside the lease, over SSH to the alias —
    `ssh <alias> "cd /var/www && git add -A && git commit -m '<what>' && git push -u origin <branch>"`
    (the first push of a new branch sets its upstream). The same pool secret
-   authenticates it there. Never run git on the mount `/var/www/<alias>`
+   authenticates it there. For a repository on this Mate's HQ run git
+   through zcp instead —
+   `zcp git <alias> add -A`, `zcp git <alias> commit -m '<what>'`,
+   `zcp git <alias> push -u origin <branch>` — which answers HQ for it; a
+   plain ssh git there has no credential. Never run git on the mount `/var/www/<alias>`
    from this container: no credential reaches the mount, so a fetch or push
    there fails asking for one. A release never commits for you.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`

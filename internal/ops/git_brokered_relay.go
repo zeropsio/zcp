@@ -595,8 +595,10 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 
 // relayPrologue begins every relayed script: the environment scrubbed, the
 // session's stdin kept as descriptor 3 (answers) and its stderr as 4
-// (frames), each with the copy a helper checks it against (relayHelper),
-// and the call's lock and staged stdin removed whenever the script ends.
+// (frames), each with the copy a helper checks it against (relayHelper) as
+// 8 and 9, and the call's lock and staged stdin removed whenever the script
+// ends. A script that reopens any of the four leaves git's requests
+// unanswered.
 func relayPrologue(nonce string) string {
 	return "unset " + brokeredGitScrubbedEnv + "; " +
 		"exec 3<&0 4>&2 8<&0 9>&2; " +

@@ -37,25 +37,28 @@ type leaseBranchRelease func(ctx context.Context, repo, branch string, confirm f
 // pass's (DP-34) and `zcp lease release`'s (DP-35): the lease operations over
 // client and swarm, a lease's ssh alias and mount through mounter (nil: no
 // host side), git in its container through ssh, each pool's warm container
-// (DP-27), the HQ a repository is recognised on, and — inside a Mate — the
-// Mate's Git credential for a pool's leases of an HQ repository (DP-16).
+// (DP-27), the HQ a repository is recognised on, and — inside a Mate — git
+// against that HQ relayed (DP-16).
 func LeaseDepsFor(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) ops.LeaseDeps {
 	return leaseDepsIn(leaseDeps(client, projectID, stateDir, swarm, mounter, ssh), rt)
 }
 
 // leaseDepsIn is deps in the container rt describes: the HQ a repository is
-// recognised on and, inside a Mate, the pool's HQ credential (DP-12, DP-16).
+// recognised on and, inside a Mate, zcp's git against it in a leased
+// container run relayed (DP-12, DP-16).
 func leaseDepsIn(deps ops.LeaseDeps, rt runtime.Info) ops.LeaseDeps {
 	// The HQ a repository is recognised on is the one the container rt
-	// presents itself to, read at each acquire, as git-push-setup reads it
-	// for a dev service.
+	// presents itself to, read at each acquire, as the wiring reads it for a
+	// dev service.
 	deps.HQAddress = func() string { return hqAddress(rt) }
 	if rt.MateEnabled {
-		// Inside a Mate an acquire of an HQ repository puts the Mate
-		// credential on the pool (ops.PoolHQCredentialEnvKey), as
-		// git-push-setup puts it on a wired dev service (DP-16); outside one
-		// zcp writes nothing, and the pool's GIT_TOKEN is the user's always.
-		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential(rt), Kept: pairKeptPoolCredential(deps.StateDir)}
+		// Inside a Mate zcp answers a lease's git against HQ with the Mate's
+		// project key over the session, as it answers a wired dev service's;
+		// the pool stores no HQ credential. An ssh that runs no relayed
+		// session leaves that git unanswered, and its checkout says so.
+		if relayed, err := hqRelayed(deps.SSH, &http.Client{Timeout: hqCallTimeout}, rt); err == nil {
+			deps.HQGit = relayed
+		}
 	}
 	return deps
 }

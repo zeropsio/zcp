@@ -69,21 +69,6 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 	return deps
 }
 
-// pairKeptPoolCredential answers, for a pool, the record of the HQ credential
-// it holds that a pair keyed by the pool keeps — the pool service the pair
-// records and its credential fingerprint — once the repository pass took the
-// acquire's per-pool record over (takeOverPoolCredential, DP-16); false when
-// no pair keyed by the pool keeps one.
-func pairKeptPoolCredential(stateDir string) func(pool string) (string, string, bool) {
-	return func(pool string) (string, string, bool) {
-		m, err := workflow.ReadServiceMeta(stateDir, pool)
-		if err != nil || !m.DevIsPool() || m.DevPool.ServiceID == "" || m.HQ == nil || m.HQ.CredentialFingerprint == "" {
-			return "", "", false
-		}
-		return m.DevPool.ServiceID, m.HQ.CredentialFingerprint, true
-	}
-}
-
 // leaseToolResult is what zerops_lease returns. It never carries the lease
 // string itself.
 type leaseToolResult struct {
