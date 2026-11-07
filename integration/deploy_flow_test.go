@@ -16,7 +16,6 @@ import (
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -124,14 +123,7 @@ func setupLeaseTestServer(t *testing.T, mock *platform.Mock, logFetcher platform
 func setupTestServerIn(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.ClientSession, func()) {
 	t.Helper()
 
-	authInfo := &auth.Info{
-		ProjectID:   "proj-1",
-		Token:       "test-token",
-		APIHost:     "localhost",
-		Region:      "prg1",
-		ClientID:    "client-1",
-		ProjectName: "test-project",
-	}
+	authInfo := testAuthInfo(mock)
 
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
@@ -164,7 +156,7 @@ func setupTestServerIn(t *testing.T, mock *platform.Mock, logFetcher platform.Lo
 }
 
 func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
-	mock := defaultMock()
+	mock := defaultMock(t)
 	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
@@ -215,7 +207,8 @@ func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
 		t.Error("expected SSHReady=true after successful deploy with SSH deployer")
 	}
 
-	// Step 3: Verify service still RUNNING after deploy.
+	// Step 3: Verify the service keeps the status discover saw before the deploy.
+	preDeployStatus := dr.Services[0].Status
 	postDeployText := callAndGetText(t, session, "zerops_discover", map[string]any{
 		"service": "app",
 	})
@@ -223,13 +216,13 @@ func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
 	if err := json.Unmarshal([]byte(postDeployText), &postDR); err != nil {
 		t.Fatalf("parse post-deploy discover: %v", err)
 	}
-	if len(postDR.Services) != 1 || postDR.Services[0].Status != "RUNNING" {
-		t.Errorf("expected RUNNING after deploy, got: %+v", postDR.Services)
+	if len(postDR.Services) != 1 || postDR.Services[0].Status != preDeployStatus {
+		t.Errorf("expected %s after deploy, got: %+v", preDeployStatus, postDR.Services)
 	}
 }
 
 func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
-	mock := defaultMock()
+	mock := defaultMock(t)
 	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
@@ -269,7 +262,7 @@ func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
 func TestIntegration_DeployNotRegisteredWithoutDeployer(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	// Server created WITHOUT deployer — zerops_deploy should not be registered.
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
@@ -286,7 +279,7 @@ func TestIntegration_DeployNotRegisteredWithoutDeployer(t *testing.T) {
 }
 
 func TestIntegration_DeployError(t *testing.T) {
-	mock := defaultMock()
+	mock := defaultMock(t)
 	deployer := &mockSSHDeployer{
 		output: []byte("error: push failed"),
 		err:    fmt.Errorf("ssh app: exit status 1"),

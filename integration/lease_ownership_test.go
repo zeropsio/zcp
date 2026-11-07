@@ -114,7 +114,7 @@ func ownershipIntServer(t *testing.T, orch *ownershipIntOrch) func(args map[stri
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).

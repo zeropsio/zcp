@@ -17,12 +17,10 @@ import (
 	"github.com/zeropsio/zcp/internal/server"
 )
 
-// setupTestServer creates a full MCP server with mock backend and returns a
-// connected client session. The cleanup function must be called when done.
-func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher) (*mcp.ClientSession, func()) {
-	t.Helper()
-
-	authInfo := &auth.Info{
+// testAuthInfo is the server's auth over mock: like auth.Resolve, it names the
+// project the mock holds (a seeded project without an org keeps client-1).
+func testAuthInfo(mock *platform.Mock) *auth.Info {
+	info := &auth.Info{
 		ProjectID:   "proj-1",
 		Token:       "test-token",
 		APIHost:     "localhost",
@@ -30,6 +28,21 @@ func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogF
 		ClientID:    "client-1",
 		ProjectName: "test-project",
 	}
+	if p, err := mock.GetProject(context.Background(), ""); err == nil {
+		info.ProjectID, info.ProjectName = p.ID, p.Name
+		if p.ClientID != "" {
+			info.ClientID = p.ClientID
+		}
+	}
+	return info
+}
+
+// setupTestServer creates a full MCP server with mock backend and returns a
+// connected client session. The cleanup function must be called when done.
+func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher) (*mcp.ClientSession, func()) {
+	t.Helper()
+
+	authInfo := testAuthInfo(mock)
 
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
@@ -88,34 +101,31 @@ func callAndGetResult(t *testing.T, session *mcp.ClientSession, name string, arg
 	return result
 }
 
-// defaultMock creates a standard mock with project, services, env vars, and events.
-// Includes pre-registered FINISHED processes for manage/import polling.
-func defaultMock() *platform.Mock {
-	return platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "test-project", Status: "ACTIVE"}).
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-			{ID: "svc-2", Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-		}).
-		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+// defaultMock is the mock platform seeded with the recorded e2e project and
+// its services (e2e/recordings/), an env var and events on its app service,
+// and a FINISHED process for every lifecycle action of every recorded service
+// so manage calls poll to completion.
+func defaultMock(t *testing.T) *platform.Mock {
+	t.Helper()
+	rec := loadRecordedPlatform(t)
+	app := rec.service(t, "app")
+	mock := rec.mock().
+		WithServiceEnv(app.ID, []platform.ServiceEnvVar{
 			{ID: "env-1", Key: "DB_HOST", Content: "db"},
 		}).
 		WithProcessEvents([]platform.ProcessEvent{
 			{ID: "pe-1", ActionName: "start", Status: "FINISHED"},
 		}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
+			{ID: "av-1", ProjectID: rec.project.ID, ServiceStackID: app.ID, Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		}).
-		// Pre-register processes for manage tool polling.
-		WithProcess(&platform.Process{ID: "proc-start-svc-1", ActionName: "start", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-stop-svc-1", ActionName: "stop", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-restart-svc-1", ActionName: "restart", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-start-svc-2", ActionName: "start", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-stop-svc-2", ActionName: "stop", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-restart-svc-2", ActionName: "restart", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-delete-svc-2", ActionName: "delete", Status: "FINISHED"}).
-		WithProcess(&platform.Process{ID: "proc-envset-svc-1", ActionName: "envSet", Status: "FINISHED"})
+		WithProcess(&platform.Process{ID: "proc-envset-" + app.ID, ActionName: "envSet", Status: "FINISHED"})
+	for _, svc := range rec.services {
+		for _, action := range []string{"start", "stop", "restart", "delete"} {
+			mock = mock.WithProcess(&platform.Process{ID: "proc-" + action + "-" + svc.ID, ActionName: action, Status: "FINISHED"})
+		}
+	}
+	return mock
 }
 
 func defaultLogFetcher() *platform.MockLogFetcher {
@@ -127,7 +137,7 @@ func defaultLogFetcher() *platform.MockLogFetcher {
 func TestIntegration_DiscoverThenManage(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -138,12 +148,13 @@ func TestIntegration_DiscoverThenManage(t *testing.T) {
 	if err := json.Unmarshal([]byte(discoverText), &dr); err != nil {
 		t.Fatalf("parse discover result: %v", err)
 	}
-	if len(dr.Services) != 2 {
-		t.Fatalf("expected 2 services, got %d", len(dr.Services))
+	if want := len(recordedUserHostnames(t, loadRecordedPlatform(t))); len(dr.Services) != want {
+		t.Fatalf("expected the %d recorded user services, got %d", want, len(dr.Services))
 	}
 
 	// Step 2: Use discovered hostname to restart a service.
-	// Manage now blocks until process completes. Mock returns proc-restart-svc-1.
+	// Manage now blocks until process completes; defaultMock holds a FINISHED
+	// restart process for every recorded service.
 	hostname := dr.Services[0].Hostname
 	manageText := callAndGetText(t, session, "zerops_manage", map[string]any{
 		"action":          "restart",
@@ -205,7 +216,7 @@ func TestIntegration_DiscoverPoolAndSandbox_OwnKinds(t *testing.T) {
 func TestIntegration_DiscoverThenScale(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -244,7 +255,7 @@ func TestIntegration_DiscoverThenScale(t *testing.T) {
 func TestIntegration_ImportThenDiscover(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithImportResult(&platform.ImportResult{
 			ProjectID:   "proj-1",
 			ProjectName: "test-project",
@@ -297,15 +308,15 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
 	if err := json.Unmarshal([]byte(discoverText), &dr); err != nil {
 		t.Fatalf("parse discover result: %v", err)
 	}
-	if len(dr.Services) != 2 {
-		t.Fatalf("expected 2 services, got %d", len(dr.Services))
+	if want := len(recordedUserHostnames(t, loadRecordedPlatform(t))); len(dr.Services) != want {
+		t.Fatalf("expected the %d recorded user services, got %d", want, len(dr.Services))
 	}
 }
 
 func TestIntegration_EnvSetThenDiscover(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -354,7 +365,7 @@ func TestIntegration_EnvSetThenDiscover(t *testing.T) {
 func TestIntegration_DiscoverProjectEnvs(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
 		})
@@ -384,7 +395,7 @@ func TestIntegration_DiscoverProjectEnvs(t *testing.T) {
 func TestIntegration_Delete(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -416,7 +427,7 @@ func TestIntegration_Delete(t *testing.T) {
 func TestIntegration_ProcessPolling(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithProcess(&platform.Process{
 			ID:         "p1",
 			ActionName: "restart",
@@ -450,7 +461,7 @@ func TestIntegration_ProcessPolling(t *testing.T) {
 func TestIntegration_ErrorPropagation(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithError("ListServicesDirect", platform.NewPlatformError(
 			platform.ErrAPIError, "simulated API failure", "retry later",
 		))
@@ -484,7 +495,7 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 func TestIntegration_WorkflowBootstrap(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -503,7 +514,7 @@ func TestIntegration_WorkflowBootstrap(t *testing.T) {
 func TestIntegration_WorkflowNoParams_Error(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 

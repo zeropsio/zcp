@@ -138,7 +138,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupWorkflowServer(t, mock)
 	defer cleanup()
 
@@ -277,7 +277,7 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupWorkflowServer(t, mock)
 	defer cleanup()
 
@@ -351,7 +351,7 @@ func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 func TestIntegration_BootstrapConductor_ResetAndRestart(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock(t)
 	session, cleanup := setupWorkflowServer(t, mock)
 	defer cleanup()
 

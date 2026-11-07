@@ -26,7 +26,7 @@ func TestScale_Integration_PoolRaisePastThePreviewPorts_Refused(t *testing.T) {
 	for p := 3001; p <= 3003; p++ {
 		pool.Ports = append(pool.Ports, platform.Port{Port: p, Protocol: "tcp", Scheme: "http"})
 	}
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{pool}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())

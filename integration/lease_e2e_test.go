@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -31,8 +30,9 @@ import (
 )
 
 // leaseE2EPoolMock is a project holding the pool devpool, its API_TOKEN set.
-func leaseE2EPoolMock() *platform.Mock {
-	return defaultMock().
+func leaseE2EPoolMock(t *testing.T) *platform.Mock {
+	t.Helper()
+	return defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -48,7 +48,7 @@ func TestLease_Integration_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 	t.Chdir(t.TempDir())
 	routeLeaseOrchestrator(t)
 	ssh := &stageLeaseSSH{}
-	session, cleanup := setupLeaseTestServer(t, leaseE2EPoolMock(), defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, leaseE2EPoolMock(t), defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	const given = "https://git.example.com/team/repo.git"
@@ -217,9 +217,9 @@ func TestLease_Integration_UnmountedLease_EnvelopeSaysWhatStatusSays(t *testing.
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
 	}
-	authInfo := &auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1", ClientID: "client-1", ProjectName: "test-project"}
+	mock := leaseE2EPoolMock(t)
 	// nopMounter finds nothing mounted: /var/www/devpool-3 is gone.
-	srv := server.New(context.Background(), leaseE2EPoolMock(), authInfo, store, defaultLogFetcher(), nil, &nopMounter{}, runtime.Info{InContainer: true}, nil)
+	srv := server.New(context.Background(), mock, testAuthInfo(mock), store, defaultLogFetcher(), nil, &nopMounter{}, runtime.Info{InContainer: true}, nil)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.MCPServer().Connect(context.Background(), st, nil)
 	if err != nil {

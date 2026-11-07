@@ -108,7 +108,7 @@ func TestBox_Integration_ImportFinishesSetup_ThenSetupChangesNothing(t *testing.
 	api := httptest.NewServer(box)
 	defer api.Close()
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-box", Name: "box1", Status: "ACTIVE", SubdomainAccess: true,
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}},

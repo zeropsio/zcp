@@ -149,7 +149,7 @@ func TestLease_Integration_FullAndStoppedPools(t *testing.T) {
 	recordIntLease(t, "devpool", "svc-pool", 3, "feat-a")
 	recordIntLease(t, "stoppool", "svc-stop", 2, "feat-b")
 	token := []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 10), intPool("svc-stop", "stoppool", "STOPPED", 4)}).
 		WithServiceEnv("svc-pool", token).WithServiceEnv("svc-stop", token)
 	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
@@ -221,7 +221,7 @@ func TestScale_Integration_PoolLoweringOverALease_AsksFirst(t *testing.T) {
 	t.Chdir(t.TempDir())
 	routePools(t, map[string]http.Handler{"orch.devpool.zerops": poolOrchestrator(5, 5, map[int]bool{5: true})})
 	recordIntLease(t, "devpool", "svc-pool", 5, "feat-x")
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 5)}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)

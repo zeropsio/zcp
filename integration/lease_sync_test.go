@@ -78,7 +78,7 @@ func TestLease_Integration_Sync_PushesThenFastForwardsTheBranchsOtherLeases(t *t
 	http.DefaultTransport = orchestratorRoutes{targets: map[string]*url.URL{"orch.hqpool.zerops": hqTarget, "orch.webpool.zerops": webTarget}, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-hqpool", Name: "hqpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 			{ID: "svc-webpool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},

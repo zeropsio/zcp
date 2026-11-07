@@ -197,7 +197,7 @@ func TestLease_Integration_WarmPool_KeepsOneRemovesTheOther(t *testing.T) {
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -288,7 +288,7 @@ func TestLease_Integration_WarmContainerGetsTheRepository(t *testing.T) {
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -390,7 +390,7 @@ func TestLease_Integration_Release_BackgroundWarmClone_EndsBeforeTheTestTearsDow
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-devpool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).

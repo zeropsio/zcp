@@ -105,7 +105,7 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 			{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -239,7 +239,7 @@ func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -361,14 +361,14 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 	}
 
 	vouchFor(t, "webpool") // the pool's orchestrator gives zcp its lease (DP-2)
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-stage", Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			{ID: "svc-pool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-stage", ProjectID: "proj-1", ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
+			{ID: "av-stage", ProjectID: recordedProjectID(t), ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		})
 	ssh := &stageLeaseSSH{}
 	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
@@ -519,7 +519,7 @@ func TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder(t *testing.T
 	http.DefaultTransport = orchestratorRoutes{targets: map[string]*url.URL{"orch.hqpool.zerops": hqTarget, "orch.webpool.zerops": webTarget}, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-hqpool", Name: "hqpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 			{ID: "svc-webpool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
@@ -682,7 +682,7 @@ func TestLease_Integration_StatusReportsActivityAndUnsaved(t *testing.T) {
 	changed := time.Date(2026, 10, 23, 14, 30, 0, 0, time.UTC)
 	ssh := &activityLeaseSSH{answer: fmt.Sprintf("@@zcp-lease activity %d %d\n@@zcp-lease status\n M src/App.tsx\n?? notes.txt\n@@zcp-lease unpushed\n1\n",
 		changed.Add(-time.Hour).Unix(), changed.Unix())}
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -799,7 +799,7 @@ func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEv
 	http.DefaultTransport = orchestratorRoutes{targets: map[string]*url.URL{"orch.hqpool.zerops": hqTarget, "orch.webpool.zerops": webTarget}, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-hqpool", Name: "hqpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 			{ID: "svc-webpool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
@@ -954,7 +954,7 @@ func TestLease_Integration_IdleStatusAndFullPoolByActivity(t *testing.T) {
 		"devpool-2": wholeCheckoutRead(now.Add(-time.Hour), "", 1),
 		"devpool-3": wholeCheckoutRead(now.Add(-50*time.Hour), "?? notes.txt", 0),
 	}}
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 4)}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)

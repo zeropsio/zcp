@@ -184,7 +184,7 @@ func TestLease_Integration_LeaseNotOurs_ToolsNeverReachIt(t *testing.T) {
 			c := &devservertest.Container{Installed: true, SupervisorVersion: "v9.300.0", Formats: []int{1},
 				Declaration: `{"version":1,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`, YAMLFile: "zerops.yaml", YAML: devservertest.SupervisedYAML}
 			ssh := &reachSSH{Container: c}
-			mock := defaultMock().
+			mock := defaultMock(t).
 				WithServices([]platform.ServiceStack{
 					{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 					{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},

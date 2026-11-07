@@ -34,7 +34,7 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 	dir := t.TempDir()
 	t.Chdir(dir)
 	routeLeaseOrchestrator(t)
-	mock := defaultMock().
+	mock := defaultMock(t).
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
