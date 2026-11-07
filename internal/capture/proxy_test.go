@@ -283,10 +283,23 @@ func TestProxy_ContextCancellationClosesListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProxy() error = %v", err)
 	}
+	// net/http closes only the listeners its Serve already tracks before it
+	// invokes the shutdown callback; a served request is the receipt that
+	// Serve tracks this one.
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, proxy.URL()+"/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&http.Client{Transport: &http.Transport{DisableKeepAlives: true}}).Do(request)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
 	shutdown := make(chan struct{})
 	proxy.httpServer.RegisterOnShutdown(sync.OnceFunc(func() { close(shutdown) }))
 	cancel()
-	<-shutdown // net/http closes its listeners before invoking this callback
+	<-shutdown
 	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", proxy.listener.Addr().String())
 	if err == nil {
 		_ = conn.Close()
