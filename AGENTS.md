@@ -44,7 +44,7 @@ L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/
 
 RED → GREEN → REFACTOR, with the failing test run before the implementation exists; pure refactors skip RED, keep affected layers green. Table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
-Checks: platform/ops type/interface → unit/tool/integration/e2e; handler → tool/integration/e2e; new tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/`, live `./e2e/ -tags e2e`.
+Admission, level and removal: OWNER.md Testing. New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/`, live `./e2e/ -tags e2e`.
 
 ## Commands
 
