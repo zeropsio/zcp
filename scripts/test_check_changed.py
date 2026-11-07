@@ -196,8 +196,10 @@ class CheckChangedTests(unittest.TestCase):
     def test_prepush_does_not_repeat_checks(self):
         (self.root / "scripts").mkdir()
         shutil.copy2(ENTRY.with_name("witness-replay.sh"), self.root / "scripts/witness-replay.sh")
+        # Git feeds pre-push one line per pushed ref; a push of nothing feeds none.
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-push")],
-                                cwd=self.root, env=self.env, capture_output=True, text=True)
+                                cwd=self.root, env=self.env, capture_output=True, text=True,
+                                input="")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
