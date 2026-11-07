@@ -731,7 +731,7 @@ func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *
 			"Tell the person the recipe's buildFromGit for this pair names a repository that does not exist; the recipe repository's AI Agent tier needs fixing before this pair can stand up.")
 		return
 	}
-	outcome := rewireHQPair(ctx, d.batch.client, d.batch.httpClient, d.batch.sshDeployer, d.batch.rtInfo, d.batch.stateDir, hqc, meta, sp.pair.RepoName)
+	outcome := rewireHQPair(ctx, d.batch.httpClient, d.batch.sshDeployer, d.batch.rtInfo, d.batch.stateDir, hqc, meta, sp.pair.RepoName)
 	if !outcome.wired {
 		next := "Call zerops_standup again; it continues from here."
 		if outcome.remedy != "" {

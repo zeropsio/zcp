@@ -644,7 +644,7 @@ Every launch adds four more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
-| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link and read by zcp to set the dev service's `GIT_TOKEN` (§3.3, §10.10). It names a path, never the credential |
+| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link and read by zcp to set a dev pool's `ZCP_HQ_GIT_TOKEN` (§3.3, §10.10). It names a path, never the credential |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
@@ -885,10 +885,14 @@ environment instead, never a probed flag (§2.2).
   key the container already has, read from the live env store at each call, which HQ asks Zerops
   about on the push. No new stored secret and no `serve` flag; a container without the key declines,
   so git never sends an empty password. The key reaches a dev service only over a relayed call's
-  ssh session and is never written there: the dev service's own `GIT_TOKEN` and a pool's
-  `ZCP_HQ_GIT_TOKEN` keep the C-7 credential (zcp `internal/hq/gitcredential.go`;
+  ssh session and is never written there: zcp's own git in a dev service — the wiring's fetch,
+  the `main` check — runs as a relayed script too (`ops.RelayedSSH`), so a dev service stores no
+  Git credential; a pool's `ZCP_HQ_GIT_TOKEN` keeps the C-7 credential (zcp
+  `internal/hq/gitcredential.go`, `internal/ops/git_relayed_script.go`;
   `TestGitCredential_AnswersOnlyTheLinkedHQ`, `TestRunHQGitCredential`,
-  `TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath`).
+  `TestBrokeredGit_Relay_HQFrame_AnsweredWithTheProjectKeyAnyPath`,
+  `TestRelayedSSH_ZcpsScriptReachesHQWithTheProjectKey`,
+  `TestRelayOnly_ADevServicesPushToHQIsAnsweredThroughTheRelayWithTheProjectKey`).
 
 The Observe child credential belongs to the normal ZCP authorization context: Mate writes
 `~/.zcp/hq/observe-credential` atomically with mode `0600`, or removes it on revocation;
@@ -2305,18 +2309,20 @@ a span attribute.
   when HQ learns the project is gone (§3.10), or when a person disconnects the Mate in
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
   of a high-entropy platform token is not invertible.
-- **The Mate's Git credential** — HQ-issued, for git over HTTPS from the dev service only. HQ sends it
+- **The Mate's Git credential** — HQ-issued, for git over HTTPS from a dev pool's leases only. HQ sends it
   down the Mate's link; the Mate's server keeps it in the file `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL`
-  names (mode 0600); zcp reads that file and writes the value as the dev service's `GIT_TOKEN`
-  secret (§10.10). It opens HQ's git for the applications that hold the Mate's project, fetch,
+  names (mode 0600); zcp reads that file and writes the value as the pool's `ZCP_HQ_GIT_TOKEN`
+  secret (§10.10). A dev service holds no credential: its git reaches HQ only through the relay,
+  which presents the project key over the session (§2.8, §6.8). It opens HQ's git for the applications that hold the Mate's project, fetch,
   and push only to the project's own change branches (the rules of §10.10, *A Mate's git*); no HQ
   API, no Zerops. HQ sends one on every link where none is live for the project, and whenever the
   project enters an application; it sends `null` (revoked) when the project leaves it; after an HQ
   import, which revokes every restored credential, it issues a new one on the next link. Lives until
   HQ revokes it — a person in HQ, the Mate's key entry dropped, the project leaving its application
-  — or replaces it with a new one over the link. Why not the project
-  key: the dev service runs the application's code and its dependencies, and `ZCP_API_KEY` there
-  would give a malicious dependency project-wide Zerops write.
+  — or replaces it with a new one over the link. Why the project key is never stored there: a
+  dev service or pool runs the application's code and its dependencies, and `ZCP_API_KEY` there
+  would give a malicious dependency project-wide Zerops write; the relay hands it to git for one
+  request, over the session, and stores nothing.
 - **The person's Zerops session** — Zerops' access token and refresh token, held by the browser
   exactly as today (where it is stored is decided separately; memory only would cost a fresh
   sign-in on every reload). The client uses it for its own Zerops reads and writes (§4, §5) and its
@@ -2444,8 +2450,8 @@ sequenceDiagram
   alike. Tool availability and the Mate flag confer no authority.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
   same way, as a header scoped to HQ's host, never stored in a git config or a URL.
-- git from a Mate's dev service presents the Mate's Git credential its `GIT_TOKEN` holds (§3.3); a
-  relayed `zcp git` call (§6.8) is answered from the `zcp` container with the project key under
+- git from a Mate's dev service reaches HQ only through a relayed call — `zcp git` (§6.8) or zcp's
+  own wiring (`ops.RelayedSSH`) — answered from the `zcp` container with the project key under
   `mate`, over its ssh session only, never written into the dev service (§2.8).
   A project without a Mate uses the temporary project-key exception in §6.7.
 - `zcli push` of a self-deploy on the dev service runs over SSH with the key only in that command's
@@ -2911,7 +2917,7 @@ compatibility declaration (§2.1d).
 | TC-7  | The Mate takes every connection's role from its own live access list: a narrowed role applied and a person no longer open disconnected; nothing HQ sends admits a person or keeps a connection open. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | TC-9  | A Mate whose access list is stale (TC-13) refuses every new ticket `ticket_refused` `not_in_list` and keeps every open connection; its next successful full read admits again. Test to be written (Mate server, injected clock).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| TC-10 | The dev service's stored git credential is only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service — a relayed call carries it only over its ssh session (§2.8). Test to be written (zcp wiring, HQ git).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| TC-10 | The dev service stores no git credential; its git reaches HQ only through the relay, which carries the project key over its ssh session only and is never written into the dev service (§2.8). `TestRelayOnly_ADevServicesPushToHQIsAnsweredThroughTheRelayWithTheProjectKey`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-11 | zcp's Chief reader reads Zerops with its project key, and the client reads Zerops with the person's token. HQ also offers an allowlisted Chief overview (§2.11, §3.11). `TestOrgReader_ReadsOnlyTheAllowlistFromZerops`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `internal/chief/service_test.go`. |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-13 | The Mate's access list is stale once older than 15 min from its last successful full read, not from the link or HQ. A refused read keeps the list and its previous read time; it does not make a still-current list stale. mate `apps/server/src/zerops/ZeropsMateAccessList.ts`, `apps/server/src/zerops/ZeropsMateAccessList.test.ts` — "A read Zerops refuses for good (401, 400 userNotFound\|projectNotFound) keeps the last list as it was, and it still decides", "A list older than 15 minutes refuses new tickets with reason not_in_list but is kept for the connections already open".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -4205,8 +4211,8 @@ names checked before HQ is asked for it, whether this project is the Chief (§2.
 live env store at each call, so a regenerated key is the one it presents. A refusal is HQ's word on
 the key (`key_refused`, `key_too_wide`, `key_not_sensitive`, `not_a_mate`), said once and asked again
 on the bounded backoff of §0 rule 4; a call HQ or Zerops does not answer is retried the same way.
-The dev service's stored `GIT_TOKEN` holds the Mate's Git credential, never the key; a relayed call
-presents the key over its ssh session only (§2.8, §3.3, §10.10).
+A dev service stores no Git credential: a relayed call — `zcp git` or zcp's own wiring — presents
+the key over its ssh session only (§2.8, §3.3, §10.10).
 
 **One Mate per project (audit D2, 2026-10-03).** A Mate is a `zcp@1` service, and HQ keys a Mate
 by its project — its record, its link, its key entry, its overview — so a project holds one. The
@@ -5749,8 +5755,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   GitHub (the wiring points it there), the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
   that branch and the person merges it in Mate
   (`TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs`). `zerops_deploy strategy="git-push"` from a pair
-  wired to HQ, to any remote, refuses before git runs — its `GIT_TOKEN` is the Mate's HQ
-  credential — and says the plain-git way. The person reviews a change by its description:
+  wired to HQ, to any remote, refuses before git runs — the pair holds no credential, its git
+  reaches HQ through `zcp git` alone — and says that way. The person reviews a change by its description:
   `zerops_workflow action="describe-change"` sets it on the pair's open change (MB-34).
 - **A Mate closes its own abandoned change** (owner decision D-5, 2026-10-25): `zerops_workflow
   action="close-change" branch=<branch>` — or `service=` a lease of it; never inferred, not even as
@@ -5940,14 +5946,14 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **A Mate HQ now holds in another application** is wired there on its next pass: the repository of
   the same name in the new application, made if new, `origin` pointed at it and the checkout put on
   its `main`; its change in the old application stays where it is.
-- **The credential.** The dev service holds the Mate's Git credential (§3.3) as its `GIT_TOKEN`
-  service secret, written by the wiring's `git-push-setup`, which the per-command credential helper
-  presents as the user `mate`. The file the server keeps it in (C-3) is the credential's one home:
-  the pair's record keeps only a fingerprint of the copy the dev service holds
-  (`HQRepoRef.credentialFingerprint`). The Mate's own service (`zcp service start mate`) looks at
-  the file every 10 s and rewrites only that secret when the fingerprint differs from the file's, as
-  after HQ issued a new one on a link, leaving the checkout's branch and origin alone; the repository
-  pass — bootstrap, adopt and every develop start — does the same outside its backoff. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16), under a variable of its own: inside a
+- **The credential.** A dev service holds none. The wiring points origin at the repository and
+  records the pair as pushing there (`wireHQOrigin`) — no `git-push-setup`, no token, no probe — and
+  every git zcp runs there against HQ (the base-branch fetch, the `main` check) is a relayed script
+  (`ops.RelayedSSH`), answered with the project key over the session, as an agent's `zcp git` is.
+  A dev pool holds the Mate's Git credential (§3.3) (`spec-workflows.md` §8 DP-16): the file the server
+  keeps it in (C-3) is the credential's one home, and the Mate's own service (`zcp service start mate`) looks at
+  the file every 10 s; the repository pass — bootstrap, adopt and every develop start — does the same
+  outside its backoff. The pool holds it under a variable of its own: inside a
   Mate an acquire of a repository on HQ writes it to the pool's `ZCP_HQ_GIT_TOKEN` — never the pool's `GIT_TOKEN`, which
   every container of the pool reads and a lease of a repository outside HQ answers its host with, so it stays the
   user's — when zcp's fingerprint for that pool — kept in
@@ -5967,9 +5973,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   pass's backoff, and so is a credential renewal that failed; each command on a dev service is bounded
   to 15 s. A pair a refused push marked keeps the pass's backoff: the pass wires it again. The project key
   is never written into the dev service or a pool: they run the application's code and its dependencies. The
-  helper persisted in `.git/config` for HQ's host answers the dev service from `GIT_TOKEN` and,
-  for sessions on the older guidance, a shell in the zcp container from `zcp hq git-credential`,
-  which reads the file at each request and answers for HQ's host only — and, for github.com, with
+  helper persisted in `.git/config` for HQ's host answers nothing in the dev service and, for
+  sessions on the older guidance, a shell in the zcp container from `zcp hq git-credential`,
+  which answers HQ's host with the project key — and, for github.com, with
   HQ's per-call token (§5.10). Guidance runs a dev repository's git through `zcp git <host>`
   (§6.8), whose relayed call clears both helpers for itself.
 - A push to HQ is watched for no build and offers no integration, and a wired pair's direct deploys

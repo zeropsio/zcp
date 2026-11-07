@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -81,7 +79,7 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		start func(*hqLab)
-		// refused: a push with the revoked credential marked the pair.
+		// refused: a refused push marked the pair.
 		refused bool
 	}{
 		{name: "the Mate's start", start: mateStart},
@@ -91,12 +89,10 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			const rotated = "the-credential-after-the-move"
 			lab := newHQLab(t)
 			lab.wire()
 			want := lab.git("remote", "get-url", "origin")
 			lab.retireHQ()
-			lab.relink(rotated)
 			if tc.refused {
 				degradeGitPushStateToBroken(lab.stateDir, "appdev")
 			}
@@ -112,13 +108,13 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 			if got := lab.gitConfig("credential." + retiredHQ + ".helper"); got != "" {
 				t.Errorf("git still holds a helper for the retired HQ: %q", got)
 			}
-			if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != rotated {
-				t.Errorf("the dev service holds %q, want the Mate's current credential", held)
+			if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != "" {
+				t.Errorf("the dev service holds GIT_TOKEN %q, want no Git credential stored there", held)
 			}
-			if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && GIT_TERMINAL_PROMPT=0 git fetch -q origin"); err != nil {
-				t.Errorf("plain git in a dev service session cannot reach HQ: %v\n%s", err, out)
+			if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err != nil {
+				t.Errorf("git in the dev service cannot reach the current HQ through the relay: %v\n%s", err, out)
 			}
-			assertNoSecretOnDisk(t, lab.stateDir, rotated)
+			assertNoSecretOnDisk(t, lab.stateDir, labKey)
 		})
 	}
 }
@@ -126,90 +122,6 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 // devGitDeps is the lab's Mate as its service reaches it.
 func (l *hqLab) devGitDeps(context.Context) (devGitDeps, bool) {
 	return devGitDeps{client: l.mock, httpClient: l.hq.srv.Client(), ssh: l.ssh, rt: l.rt, stateDir: l.stateDir}, true
-}
-
-// TestMateService_EveryCredentialHQSendsReachesTheDevService: HQ sends the
-// Mate a new Git credential on every link it opens and revokes the one
-// before. The Mate's service hands each one to the wired pair's dev service
-// at its next look, with no person and no agent pass, so plain git in its
-// sessions keeps reaching HQ; a look with nothing new costs the dev service
-// nothing.
-func TestMateService_EveryCredentialHQSendsReachesTheDevService(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-	lab.wire()
-	ticks := make(chan time.Time)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		keepMateDevGit(t.Context(), lab.devGitDeps, time.Time{}, ticks, nil, func(string) {})
-	}()
-	// look lets the service take one look and waits until it took it: the
-	// second send is taken only once the first look is over.
-	look := func() {
-		ticks <- time.Time{}
-		ticks <- time.Time{}
-	}
-	// The Mate's start is over once the service takes its first tick.
-	ticks <- time.Time{}
-
-	for _, credential := range []string{"sent-on-the-next-link", "sent-on-the-link-after"} {
-		lab.relink(credential)
-		look()
-		if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != credential {
-			t.Errorf("the dev service holds %q, want %q", held, credential)
-		}
-		if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && GIT_TERMINAL_PROMPT=0 git fetch -q origin"); err != nil {
-			t.Errorf("plain git in a dev service session cannot reach HQ: %v\n%s", err, out)
-		}
-	}
-
-	lab.ssh.mu.Lock()
-	before := len(lab.ssh.commands)
-	lab.ssh.mu.Unlock()
-	look()
-	lab.ssh.mu.Lock()
-	idle := lab.ssh.commands[before:]
-	lab.ssh.mu.Unlock()
-	if len(idle) != 0 {
-		t.Errorf("a look with no new credential ran %q on the dev service", idle)
-	}
-
-	close(ticks)
-	<-done
-}
-
-// TestMateService_ACredentialTheServerHasNotYetReceivedIsHandedOnOnceItLands:
-// the Mate's service starts before its server links to HQ, so the file holds
-// no credential yet. Nothing is written onto the dev service then; the
-// credential the link brings reaches it at the next look.
-func TestMateService_ACredentialTheServerHasNotYetReceivedIsHandedOnOnceItLands(t *testing.T) {
-	t.Parallel()
-	const linked = "sent-when-the-server-linked"
-	lab := newHQLab(t)
-	lab.wire()
-	if err := os.Remove(lab.rt.HQ.GitCredentialPath); err != nil {
-		t.Fatal(err)
-	}
-	ticks := make(chan time.Time, 1)
-	ticks <- time.Time{}
-	close(ticks)
-	looks := 0
-	deps := func(ctx context.Context) (devGitDeps, bool) {
-		if looks++; looks == 2 {
-			if held := lab.ssh.gitToken(ctx, "svc-appdev"); held != labCredential {
-				t.Errorf("before the server linked, the dev service was given %q", held)
-			}
-			lab.relink(linked)
-		}
-		return lab.devGitDeps(ctx)
-	}
-
-	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
-
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != linked {
-		t.Errorf("the dev service holds %q, want the credential the link brought", held)
-	}
 }
 
 // TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver: HQ
@@ -307,63 +219,6 @@ func TestDevService_ARemoteThatIsNotItsHQRepositoryIsNeverMoved(t *testing.T) {
 				t.Errorf("the record's remote = %q, want %q kept", got, remote)
 			}
 		})
-	}
-}
-
-// listCounter is a platform client that counts its service listings: each
-// renewal of a dev service's credential starts with one.
-type listCounter struct {
-	platform.Client
-	mu    sync.Mutex
-	lists int
-}
-
-func (c *listCounter) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
-	c.mu.Lock()
-	c.lists++
-	c.mu.Unlock()
-	return c.Client.ListServices(ctx, projectID)
-}
-
-func (c *listCounter) count() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lists
-}
-
-// TestMateService_ARenewalThatKeepsFailingIsTriedAgainOnlyOnceItsWaitIsOver:
-// a dev service that cannot take the new credential — deleted, say — is
-// not asked of the platform at every look, but again once the wait after
-// the last try is over.
-func TestMateService_ARenewalThatKeepsFailingIsTriedAgainOnlyOnceItsWaitIsOver(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-	lab.wire()
-	lab.mock.WithServices([]platform.ServiceStack{{ID: "svc-appstage", Name: "appstage"}})
-	lab.relink("sent-on-the-next-link")
-	client := &listCounter{Client: lab.mock}
-	started := time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC)
-	ticks := make(chan time.Time, 3)
-	ticks <- started.Add(devGitLookEvery)
-	ticks <- started.Add(2 * devGitLookEvery)
-	ticks <- started.Add(hqWaitBackoff + 2*devGitLookEvery)
-	close(ticks)
-	var lists []int
-	deps := func(ctx context.Context) (devGitDeps, bool) {
-		lists = append(lists, client.count())
-		d, ok := lab.devGitDeps(ctx)
-		d.client = client
-		return d, ok
-	}
-
-	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
-	lists = append(lists, client.count())
-
-	if within := lists[3] - lists[2]; within != 0 {
-		t.Errorf("a look within the wait asked the platform %d time(s)", within)
-	}
-	if after := lists[4] - lists[3]; after == 0 {
-		t.Error("the look after the wait did not try the renewal again")
 	}
 }
 

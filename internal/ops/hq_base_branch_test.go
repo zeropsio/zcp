@@ -781,8 +781,8 @@ func TestBuildBaseBranchCommand_Idempotent(t *testing.T) {
 }
 
 // TestBuildBaseBranchCommand_Shape pins the pieces that cannot be seen from
-// the outcome: the fetch authenticates through HQ's session credential
-// helper (the credential never reaches argv), `main` is fetched BEFORE the
+// the outcome: the fetch names no credential of its own — it runs as a
+// relayed script, which answers it (RelayedSSH) — `main` is fetched BEFORE the
 // branch is decided, and a Mate's wiring makes no commit at all — HQ's
 // unwritten root is never joined into a history (no `commit-tree`, no
 // unrelated-histories merge), and no porcelain replays, rewrites or runs the
@@ -793,8 +793,6 @@ func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 	cmd := BuildBaseBranchCommand("/var/www")
 	for _, want := range []string{
 		"cd '/var/www'",
-		"credential.helper=",
-		"echo username=mate",
 		"fetch --no-tags origin 'main'",
 		"b='main'",
 		"git merge-base FETCH_HEAD HEAD",
@@ -811,7 +809,7 @@ func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 	// the pair's history or its working copy), never `-B`, a force or a
 	// reset: moving or resetting an existing branch would discard work the
 	// Mate has already pushed.
-	for _, absent := range []string{`commit-tree "HEAD^{tree}"`, "-p FETCH_HEAD", "Join the repository's base", "allow-unrelated-histories", "rebase", "git merge ", "checkout -B", "--force", "reset"} {
+	for _, absent := range []string{"GIT_TOKEN", `commit-tree "HEAD^{tree}"`, "-p FETCH_HEAD", "Join the repository's base", "allow-unrelated-histories", "rebase", "git merge ", "checkout -B", "--force", "reset"} {
 		if strings.Contains(cmd, absent) {
 			t.Errorf("command must not carry %q:\n%s", absent, cmd)
 		}

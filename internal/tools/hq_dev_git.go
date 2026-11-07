@@ -19,16 +19,15 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// A wired pair's dev service reaches HQ with plain git: origin is the pair's
-// repository at HQ's address, git's persisted helper answers that host, and
-// the helper reads the Mate's Git credential the dev service holds as its
-// GIT_TOKEN. All three are copies of what the Mate holds — the HQ it links
-// to, the credential HQ sends over the link — and go stale the moment
-// either moves: a Mate moved to another HQ, and every link HQ opens, which
-// sends a new credential and revokes the one before. The repository pass
-// renews them, but runs only when an agent bootstraps, adopts or starts
-// develop; the Mate's own service keeps them current in between
-// (KeepMateDevGit).
+// A wired pair's dev service reaches HQ only through the relay (`zcp git
+// <host>`, ops.RelayedSSH), which answers HQ with the Mate's project key over
+// the session: it holds no credential of its own. Its origin is the pair's
+// repository at HQ's address — a copy of the HQ the Mate links to, stale the
+// moment the Mate moves to another HQ — and a dev pool keying a pair holds
+// the Mate's Git credential HQ sends over the link, stale at every link HQ
+// opens. The repository pass renews them, but runs only when an agent
+// bootstraps, adopts or starts develop; the Mate's own service keeps them
+// current in between (KeepMateDevGit).
 
 // devGitDeps is what keeping the dev services' git reaches: the platform,
 // HQ, the dev services over SSH, the container and its state.
@@ -193,7 +192,7 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 
 // startDevGit is the Mate's start for every wired pair's dev service: a pair
 // wired at an HQ the Mate no longer links to is moved to the current one
-// (moveFromRetiredHQ), its credential is the Mate's current one
+// (moveFromRetiredHQ), a dev pool keying it holds the Mate's current credential
 // (renewHQPairCredential), and origin is where HQ says its code is kept
 // (hqPairOrigin). settled is false when a pair could not be brought there —
 // HQ or the dev service not answering — so the caller tries again.
@@ -265,7 +264,7 @@ func startPairDevGit(
 	return strings.Join(said, "; "), settled
 }
 
-// followMateCredential gives each wired pair's dev service the Mate's Git
+// followMateCredential gives each dev pool keying a wired pair the Mate's Git
 // credential once HQ sent a new one (hqPairCredentialStale): a read of the
 // file and the records, and nothing else, while none is new. A pair whose
 // renewal failed is in renewals and tried again only once hqAttemptDue says

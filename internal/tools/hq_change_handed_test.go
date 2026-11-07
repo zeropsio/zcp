@@ -84,13 +84,13 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 			if take == nil {
 				t.Fatalf("the words give no command that takes the branch:\n%s", text)
 			}
-			if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(take[1])); err != nil {
+			if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(take[1])); err != nil {
 				t.Fatalf("taking the branch as the words say (%s): %v\n%s", take[1], err, out)
 			}
 			lab.write(map[string]string{"login.js": "the whole fix\n"})
 			lab.git("add", "-A")
 			lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "Carry the fix on")
-			if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git push -q origin "+answer.Branch); err != nil {
+			if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && git push -q origin "+answer.Branch); err != nil {
 				t.Fatalf("pushing to the branch open-change names: %v\n%s", err, out)
 			}
 			if got, want := lab.remoteHead(tc.want), lab.git("rev-parse", "HEAD"); got != want {

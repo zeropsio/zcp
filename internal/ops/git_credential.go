@@ -25,19 +25,20 @@ import (
 const gitCredentialHelperShell = `!f() { test "$1" = get && { echo username=oauth2; echo "password=$GIT_TOKEN"; }; }; f`
 
 // hqCredentialHelperShell is the helper persisted for a remote on the Mate's
-// HQ, which reads git's user as `mate` and the Mate credential as its
-// password. The dev service's sessions answer from GIT_TOKEN, the service
-// secret git-push-setup writes the credential to; the Mate's shell, which
-// runs git on the same repository through the mount, carries no GIT_TOKEN —
-// it asks `zcp hq git-credential`, which answers HQ's host from the
-// Mate's Git credential file as it is now (HQ replaces the credential over the
-// link), handing it git's request on stdin; this helper is stored under HQ's scope only, so it
-// never asks for another host. With neither it answers
-// nothing at all, never an empty password, so git goes on to its next helper.
-const hqCredentialHelperShell = `!f() { test "$1" = get || return 0; if test -n "$GIT_TOKEN"; then echo username=mate; echo "password=$GIT_TOKEN"; else zcp hq git-credential get; fi; }; f`
+// HQ. Only the Mate's shell, which runs git on the same repository through
+// the mount, answers with it: it asks `zcp hq git-credential`, which answers
+// HQ's host with the Mate's project key as it is now, handing it git's
+// request on stdin; this helper is stored under HQ's scope only, so it never
+// asks for another host. A dev service holds no zcp and no credential: its
+// git reaches HQ only through a relayed call (`zcp git <host>`, RelayedSSH),
+// whose empty helper clears this one. Without zcp it answers nothing at all,
+// never an empty password, so git goes on to its next helper.
+const hqCredentialHelperShell = `!f() { test "$1" = get || return 0; command -v zcp >/dev/null 2>&1 && zcp hq git-credential get; }; f`
 
-// hqCredentialHelperShellInline is hqCredentialHelperShell for one git
-// invocation run in a dev service's session, which always carries GIT_TOKEN.
+// hqCredentialHelperShellInline is git-push-setup's helper for one git
+// invocation against a remote on HQ: the user `mate` with the session's
+// GIT_TOKEN, the token git-push-setup was given. A Mate never runs
+// git-push-setup — its pairs are wired relay-only.
 const hqCredentialHelperShellInline = `!f() { test "$1" = get && { echo username=mate; echo "password=$GIT_TOKEN"; }; }; f`
 
 // gitCredentialHelperArgs returns the `-c` git arguments that make ONE git

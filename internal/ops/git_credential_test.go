@@ -208,12 +208,12 @@ func TestBuildGitTagPushCommand_NoInlineIdentity(t *testing.T) {
 	}
 }
 
-// The persisted helper answers two shells. The dev service's own sessions
-// carry GIT_TOKEN, the service secret git-push-setup writes. The Mate's shell
-// runs git on the same repository through the mount and carries no GIT_TOKEN
-// — on a remote on the Mate's HQ the helper asks `zcp hq git-credential`,
-// which answers from the enrollment. Every other host answers GIT_TOKEN alone:
-// the Mate credential is never sent anywhere but the Mate's own HQ.
+// The persisted helper answers two shells. On a remote on the Mate's HQ it
+// asks `zcp hq git-credential` — only the Mate's shell, running git on the
+// same repository through the mount, has one — and a dev service's session
+// gets nothing there: its git reaches HQ through the relay. Every other host
+// answers the session's GIT_TOKEN alone, the service secret git-push-setup
+// writes: the Mate's answer is never sent anywhere but the Mate's own HQ.
 const (
 	helperHQURL      = "https://hq.example.invalid"
 	helperCredential = "the-mate-credential"
@@ -302,8 +302,8 @@ func TestPersistedCredentialHelper_ByShellAndHost(t *testing.T) {
 		wantUser string
 	}{
 		{"the Mate's shell on its HQ answers the Mate credential", helperHQRepo, helperHQURL, mateShell, "", helperCredential, "mate"},
-		{"the dev service on the HQ answers its service secret", helperHQRepo, helperHQURL, devSession, "", helperGitToken, "mate"},
-		{"the service secret wins where both are there", helperHQRepo, helperHQURL, both, "", helperGitToken, "mate"},
+		{"the dev service on the HQ answers no stored credential", helperHQRepo, helperHQURL, devSession, "", "", ""},
+		{"zcp answers the HQ where both are there, never the service secret", helperHQRepo, helperHQURL, both, "", helperCredential, "mate"},
 		{"github.com never gets the Mate credential", helperGitHubRepo, helperHQURL, mateShell, "", "", "oauth2"},
 		{"github.com answers the service secret", helperGitHubRepo, helperHQURL, both, "", helperGitToken, "oauth2"},
 		{"another host never gets the Mate credential", "https://code.example.invalid/acme/appdev.git", helperHQURL, mateShell, "", "", "oauth2"},
@@ -312,7 +312,7 @@ func TestPersistedCredentialHelper_ByShellAndHost(t *testing.T) {
 		{"an HQ whose name has an underscore never answers github.com", underscoreHQ + "/git/a1/appdev.git", underscoreHQ, mateShell, helperGitHubRepo, "", ""},
 		{"a remote whose host is no credential scope answers github.com nothing, even in the dev service", ipv6HQ + "/git/a1/appdev.git", ipv6HQ, devSession, helperGitHubRepo, "", ""},
 		{"an HQ on its own port answers the Mate's shell", portHQ + "/git/a1/appdev.git", portHQ, mateShell, "", helperCredential, "mate"},
-		{"an HQ on its own port answers the dev service", portHQ + "/git/a1/appdev.git", portHQ, devSession, "", helperGitToken, "mate"},
+		{"an HQ on its own port answers no stored credential in the dev service", portHQ + "/git/a1/appdev.git", portHQ, devSession, "", "", ""},
 		{"the HQ's host on another port never gets the Mate credential", portHQ + "/git/a1/appdev.git", helperHQURL, mateShell, "", "", "oauth2"},
 		{"the HQ's port stated as the default is the default", helperHQURL + ":443/git/a1/appdev.git", helperHQURL, mateShell, helperHQRepo, helperCredential, "mate"},
 		{"a host on its own port answers the dev service there", "https://code.example.invalid:8443/acme/appdev.git", helperHQURL, devSession, "", helperGitToken, "oauth2"},
@@ -355,7 +355,8 @@ func fakeZcpPath(t *testing.T, script string) string {
 // the Mate credential, and only the enrollment holds it — so the HQ helper
 // asks `zcp hq git-credential` for it as it is now, handing it the request
 // (the host) on stdin, and answers nothing where no zcp answers: never an
-// empty password. A dev service's session keeps its service secret.
+// empty password. A session's service secret is never HQ's answer: a dev
+// service's git reaches HQ through the relay alone.
 func TestPersistedCredentialHelper_TheMatesShellAsksZcp(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
@@ -368,7 +369,7 @@ func TestPersistedCredentialHelper_TheMatesShellAsksZcp(t *testing.T) {
 		{"zcp answers the credential as it is now", zcpAnswering, nil, helperCredential},
 		{"no zcp to ask: no password at all", "exit 127", nil, ""},
 		{"zcp declines: no password at all", "cat >/dev/null; exit 1", nil, ""},
-		{"the dev service's session keeps its service secret", zcpAnswering, map[string]string{"GIT_TOKEN": helperGitToken}, helperGitToken},
+		{"a session's service secret is never HQ's answer", zcpAnswering, map[string]string{"GIT_TOKEN": helperGitToken}, helperCredential},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

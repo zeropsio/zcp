@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/ops"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
@@ -214,7 +217,7 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 	f.mu.Unlock()
 	if strings.HasPrefix(r.URL.Path, "/git/") {
 		user, password, ok := r.BasicAuth()
-		if keyed := r.Header.Get("Authorization") == "Project "+labKey; !keyed && (!ok || user != hq.GitUser || password != credential) {
+		if keyed := r.Header.Get("Authorization") == "Project "+labKey; !keyed && (!ok || user != hq.GitUser || (password != credential && password != labKey)) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="HQ"`)
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
@@ -1047,14 +1050,7 @@ func (s *labSSH) run(ctx context.Context, hostname, command string, stdin []byte
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", strings.ReplaceAll(command, "/var/www", dir)) //nolint:gosec // G204: the commands under test, in a temp checkout
 	cmd.Dir = dir
-	token := s.gitToken(ctx, "svc-"+hostname)
-	if s.sessionToken != nil {
-		token = s.sessionToken(command, token)
-	}
-	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_GLOBAL=" + filepath.Join(s.home, ".gitconfig"), "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
-		"GIT_TOKEN=" + token,
-	}
+	cmd.Env = s.env(ctx, hostname, command)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -1065,12 +1061,71 @@ func (s *labSSH) run(ctx context.Context, hostname, command string, stdin []byte
 	return out, nil
 }
 
+// fakeRelayedSession is a relayed session (ops.RelayedSSH) a fake answers
+// from its ExecSSH: out on stdout, the exit status its error carries.
+func fakeRelayedSession(out []byte, err error, stdout io.Writer) (int, error) {
+	if _, werr := stdout.Write(out); werr != nil {
+		return -1, werr
+	}
+	if err == nil {
+		return 0, nil
+	}
+	var code int
+	if _, after, ok := strings.Cut(err.Error(), "exit status "); ok {
+		if _, scanErr := fmt.Sscanf(after, "%d", &code); scanErr == nil {
+			return code, nil
+		}
+	}
+	return 1, nil
+}
+
+// ExecSSHStdio runs command in hostname's checkout as ExecSSH does, with
+// the caller's own stdio: a relayed session (ops.RelayedSSH).
+func (s *labSSH) ExecSSHStdio(ctx context.Context, hostname, command string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	s.mu.Lock()
+	s.commands = append(s.commands, command)
+	s.mu.Unlock()
+	if s.pause != nil {
+		s.pause(command)
+	}
+	dir, ok := s.dirs[hostname]
+	if !ok {
+		return -1, fmt.Errorf("no host %s in the lab", hostname)
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", strings.ReplaceAll(command, "/var/www", dir)) //nolint:gosec // G204: the commands under test, in a temp checkout
+	cmd.Dir = dir
+	cmd.Env = s.env(ctx, hostname, command)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
 func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
 	return s.run(ctx, hostname, command, stdin)
 }
 
 func (s *labSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
+}
+
+// env is a session's environment on hostname: the GIT_TOKEN the platform
+// holds for the service now among it.
+func (s *labSSH) env(ctx context.Context, hostname, command string) []string {
+	token := s.gitToken(ctx, "svc-"+hostname)
+	if s.sessionToken != nil {
+		token = s.sessionToken(command, token)
+	}
+	return []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_GLOBAL=" + filepath.Join(s.home, ".gitconfig"), "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
+		"GIT_TOKEN=" + token,
+	}
 }
 
 func (s *labSSH) gitToken(ctx context.Context, serviceID string) string {
@@ -1119,6 +1174,11 @@ func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
 	lab.git("update-ref", "HEAD", lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", tree, "-m", "zcp init"))
 	lab.mock = platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}, {ID: "svc-appstage", Name: "appstage"}})
 	lab.ssh = &labSSH{t: t, mock: lab.mock, dirs: map[string]string{"appdev": lab.pair}, home: t.TempDir(), caFile: fake.caFile}
+	// A relayed session clears git's TLS variables, so the lab's CA reaches
+	// its git from the global configuration, as a container's own CA store would.
+	if err := os.WriteFile(filepath.Join(lab.ssh.home, ".gitconfig"), []byte("[http]\n\tsslCAInfo = "+fake.caFile+"\n"), 0o600); err != nil {
+		t.Fatalf("lab CA: %v", err)
+	}
 	if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{
 		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test", BootstrappedAt: "2026-10-02",
@@ -1198,6 +1258,12 @@ func (l *hqLab) write(files map[string]string) {
 }
 
 // wire runs a repository pass, which gives the pair its repository in HQ.
+// devGit runs git in the pair's dev service as `zcp git appdev` does, through
+// the relay: the only way a dev service's git reaches HQ.
+func (l *hqLab) devGit() ops.RelayedSSH {
+	return ops.RelayedSSH{SSH: l.ssh, Relay: ops.BrokeredGitRelay{Identity: hqIdentity(l.rt), HTTPClient: l.hq.srv.Client()}}
+}
+
 func (l *hqLab) wire() []string {
 	l.t.Helper()
 	var opts []hqPassOption
@@ -1228,7 +1294,7 @@ func (l *hqLab) openChange() hq.Change {
 		l.t.Fatalf("opening the change: %v", err)
 	}
 	push := "cd /var/www && git push -q origin HEAD:refs/heads/" + hqc.ChangeBranch(opened.Change.Number)
-	if out, err := l.ssh.ExecSSH(l.t.Context(), "appdev", push); err != nil {
+	if out, err := l.devGit().ExecSSH(l.t.Context(), "appdev", push); err != nil {
 		l.t.Fatalf("pushing the change's branch: %v\n%s", err, out)
 	}
 	return opened.Change

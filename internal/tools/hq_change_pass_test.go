@@ -367,7 +367,7 @@ func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
 	}
 
 	lab.git("checkout", "-q", "add-signup")
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch origin && git merge --ff-only origin/add-signup"); err != nil {
+	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch origin && git merge --ff-only origin/add-signup"); err != nil {
 		t.Fatalf("the fast-forward the pass names: %v\n%s", err, out)
 	}
 	if head := lab.git("rev-parse", "HEAD"); head != merge {

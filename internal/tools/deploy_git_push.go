@@ -452,8 +452,9 @@ func handleGitPush(
 	}
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
 
-	// A pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN: a push
-	// to any remote would hand it over, so none runs, whatever the remote.
+	// A pair wired to HQ holds no credential: its git reaches HQ through the
+	// relay alone (`zcp git <host>`), so no push of this strategy runs,
+	// whatever the remote.
 	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote, rt) {
 		refusal := hqGitPushRefusal(hostname, rt.MateEnabled)
 		recordAttempt(refusal.Message, topology.FailureClassConfig)

@@ -93,12 +93,12 @@ func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *
 	if rename == nil || push == nil {
 		t.Fatalf("the words give no command that takes the branch on this checkout, or pushes it:\n%s", text)
 	}
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(rename[1])); err != nil {
+	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(rename[1])); err != nil {
 		t.Fatalf("taking the branch as the words say (%s): %v\n%s", rename[1], err, out)
 	}
 	lab.write(map[string]string{"login.js": "the whole fix\n"})
 	lab.commit("Carry the fix on")
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
+	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
 		t.Fatalf("pushing as the words say (%s): %v\n%s", push[1], err, out)
 	}
 	if got, want := lab.remoteHead(branch), lab.git("rev-parse", "HEAD"); got != want {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -234,6 +235,12 @@ const (
 	standupHead      = "0123456789abcdef0123456789abcdef01234567"
 	standupHeadShort = "0123456"
 )
+
+// ExecSSHStdio answers a relayed session from ExecSSH.
+func (s *standupSSH) ExecSSHStdio(ctx context.Context, host, cmd string, _ io.Reader, stdout, _ io.Writer) (int, error) {
+	out, err := s.ExecSSH(ctx, host, cmd)
+	return fakeRelayedSession(out, err, stdout)
+}
 
 func (s *standupSSH) ExecSSH(ctx context.Context, host, cmd string) ([]byte, error) {
 	s.mu.Lock()

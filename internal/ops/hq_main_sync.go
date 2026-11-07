@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -35,13 +34,13 @@ import (
 //     that keeps them named: `main` moves only by a merge, and no commit of
 //     the agent's is ever discarded.
 //
-// Run again, it changes nothing more. Auth rides HQ's session credential
-// helper, as BuildBaseBranchCommand's does.
+// Run again, it changes nothing more. It runs as a relayed script, as
+// BuildBaseBranchCommand does.
 func BuildMainSyncCommand(workingDir, repoURL string) string {
 	mark := func(state string) string { return `echo "` + mainSyncMarker + state + `"` }
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
-		hqGit(fmt.Sprintf("%s fetch -q --no-tags %s %s", hqCredentialHelperArgs(), shellQuote(repoURL), shellQuote(baseBranch))),
+		hqGit("fetch -q --no-tags " + shellQuote(repoURL) + " " + shellQuote(baseBranch)),
 		`{ ref="refs/heads/` + baseBranch + `"; new=$(git rev-parse FETCH_HEAD); old=$(git rev-parse -q --verify "$ref" || true); ` +
 			`if [ -z "$old" ] || git merge-base --is-ancestor "$old" "$new"; then exit 0; fi; ` +
 			`if [ "$(git rev-list --count "$old")" = 1 ] && [ "$(git rev-parse "$old^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then ` +

@@ -6,7 +6,6 @@ package tools
 import (
 	"context"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -26,9 +24,8 @@ import (
 
 // TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain: the pass asks
 // HQ for the repository named after the dev half, points the checkout's
-// origin at it with the Mate credential where git-push-setup keeps it — a
-// sensitive service env on the push source, never a file zcp writes — and
-// puts the checkout on `main`, descending from HQ's main.
+// origin at it — storing no credential anywhere: its git reaches HQ through
+// the relay — and puts the checkout on `main`, descending from HQ's main.
 func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
 	t.Parallel()
 	lab := newHQLab(t)
@@ -54,10 +51,10 @@ func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
 	if lab.git("rev-parse", "HEAD") != lab.remoteHead("main") {
 		t.Errorf("a pair fresh from zcp init is cut AT HQ's main")
 	}
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != labCredential {
-		t.Errorf("the push source holds %q, want the Mate credential", held)
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != "" {
+		t.Errorf("the push source holds GIT_TOKEN %q, want no Git credential stored there", held)
 	}
-	assertNoSecretOnDisk(t, lab.stateDir, labCredential)
+	assertNoSecretOnDisk(t, lab.stateDir, labKey)
 
 	// One repository per pair: the next pass asks HQ for none.
 	elapseHQBackoff(t, lab.stateDir)
@@ -399,7 +396,7 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 			m, _ := workflow.FindServiceMeta(lab.stateDir, tt.hostname)
 			hqc, _ := openHQ(lab.hq.srv.Client(), lab.rt)
 
-			outcome := rewireHQPair(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqc, m, tt.repoName)
+			outcome := rewireHQPair(t.Context(), lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqc, m, tt.repoName)
 
 			if outcome.wired || !strings.Contains(outcome.remedy, tt.wantRemedy) || !strings.Contains(outcome.line, "recipe repository") {
 				t.Errorf("outcome = %+v, want a refusal whose remedy says %q", outcome, tt.wantRemedy)
@@ -411,120 +408,6 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 				t.Errorf("the pair was recorded wired: %+v", meta.HQ)
 			}
 		})
-	}
-}
-
-// TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewOne:
-// HQ sends the Mate a new Git credential and revokes the one the dev service
-// holds. The next pass gives the dev service the new one at once,
-// backoff or not, so git in its sessions keeps reaching HQ — and leaves the
-// checkout's branch and origin as the agent left them.
-func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewOne(t *testing.T) {
-	t.Parallel()
-	const renewed = "the-renewed-credential"
-	lab := newHQLab(t)
-	lab.wire()
-	lab.git("checkout", "-q", "-b", "fix-login")
-	origin := lab.git("remote", "get-url", "origin")
-	lab.relink(renewed)
-	if _, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err == nil {
-		t.Fatal("the revoked credential still reaches HQ; the lab does not revoke it")
-	}
-
-	lab.wire()
-
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
-		t.Errorf("the dev service holds %q, want the renewed credential", held)
-	}
-	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err != nil {
-		t.Errorf("git in a dev service session cannot reach HQ: %v\n%s", err, out)
-	}
-	if got := lab.git("branch", "--show-current"); got != "fix-login" {
-		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
-	}
-	if got := lab.git("remote", "get-url", "origin"); got != origin {
-		t.Errorf("origin = %q, want %q kept", got, origin)
-	}
-	assertNoSecretOnDisk(t, lab.stateDir, renewed)
-}
-
-// TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential: the
-// dev service's git presents the Mate's Git credential and nothing else; the
-// project key never appears in anything written to either half of the pair.
-func TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-
-	lab.wire()
-
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != labCredential {
-		t.Errorf("the dev service holds %q, want the Git credential", held)
-	}
-	for _, id := range []string{"svc-appdev", "svc-appstage"} {
-		envs, _ := lab.mock.GetServiceEnv(t.Context(), id)
-		for _, env := range envs {
-			if strings.Contains(env.Content, labKey) {
-				t.Errorf("%s carries the project key in %s", id, env.Key)
-			}
-		}
-	}
-}
-
-// TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent: the Git
-// credential is whatever the file the server keeps holds at the pass, not
-// something zcp remembers or derives from the key.
-func TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent(t *testing.T) {
-	t.Parallel()
-	const fromFile = "what-the-file-holds"
-	lab := newHQLab(t)
-	lab.wire()
-	hqtest.GitCredential(t, lab.rt.HQ.GitCredentialPath, fromFile)
-
-	lab.wire()
-
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != fromFile {
-		t.Errorf("the dev service holds %q, want the file's content", held)
-	}
-}
-
-// TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked: no
-// file, no credential to hand a dev service — the pass says the Mate is not
-// linked and writes no token.
-func TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-	if err := os.Remove(lab.rt.HQ.GitCredentialPath); err != nil {
-		t.Fatal(err)
-	}
-
-	lines := lab.wire()
-
-	if !strings.Contains(strings.Join(lines, "\n"), "not linked") {
-		t.Errorf("the pass says %q, want it to say the Mate is not linked", lines)
-	}
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != "" {
-		t.Errorf("the dev service holds %q, want no token", held)
-	}
-}
-
-// TestDevelopStart_RenewsTheDevServicesCredential: work starts at develop,
-// so its start runs the repository pass that renews a revoked credential.
-func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
-	t.Parallel()
-	const renewed = "the-renewed-credential"
-	lab := newHQLab(t)
-	lab.wire()
-	lab.relink(renewed)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
-		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
-
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "develop", "intent": "fix the login", "scope": []string{"appdev"},
-	})
-
-	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
-		t.Errorf("after develop's start the dev service holds %q, want the renewed credential", held)
 	}
 }
 

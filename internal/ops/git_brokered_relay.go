@@ -555,11 +555,7 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // (measured on alpine 3.21 and ubuntu 24.04).
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
-	b.WriteString("unset " + brokeredGitScrubbedEnv + "; ")
-	b.WriteString("exec 3<&0 4>&2 8<&0 9>&2; ")
-	b.WriteString("L=" + ShellQuote(relayLockPath(nonce)) + "; d=; ")
-	b.WriteString("trap " + ShellQuote(relayCleanup) + " EXIT; ")
-	b.WriteString("trap " + ShellQuote(relayCleanup+"; exit 129") + " INT TERM HUP; ")
+	b.WriteString(relayPrologue(nonce))
 	if stdin {
 		b.WriteString(relayStdinStep + "; ")
 	}
@@ -593,12 +589,29 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 	} else {
 		b.WriteString(" < /dev/null")
 	}
-	// git ended: mark the end of its stdout on stdout itself, then say so,
-	// with its exit code, before the traps clean up, so zcp ends the call
-	// even while something git started still holds the session's
-	// descriptors — once every byte git wrote reached the caller.
-	b.WriteString(`; r=$?; printf '` + relayEndMark(nonce) + `' 2>/dev/null; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`)
+	b.WriteString(relayEpilogue(nonce))
 	return "/bin/sh -c " + ShellQuote(b.String())
+}
+
+// relayPrologue begins every relayed script: the environment scrubbed, the
+// session's stdin kept as descriptor 3 (answers) and its stderr as 4
+// (frames), each with the copy a helper checks it against (relayHelper),
+// and the call's lock and staged stdin removed whenever the script ends.
+func relayPrologue(nonce string) string {
+	return "unset " + brokeredGitScrubbedEnv + "; " +
+		"exec 3<&0 4>&2 8<&0 9>&2; " +
+		"L=" + ShellQuote(relayLockPath(nonce)) + "; d=; " +
+		"trap " + ShellQuote(relayCleanup) + " EXIT; " +
+		"trap " + ShellQuote(relayCleanup+"; exit 129") + " INT TERM HUP; "
+}
+
+// relayEpilogue ends every relayed script once git — or the script — ended:
+// the end of its stdout marked on stdout itself, then the done marker with
+// its exit code on the frames descriptor, before the traps clean up, so zcp
+// ends the call even while something git started still holds the session's
+// descriptors — once every byte git wrote reached the caller.
+func relayEpilogue(nonce string) string {
+	return `; r=$?; printf '` + relayEndMark(nonce) + `' 2>/dev/null; printf '\n` + relayDonePrefix(nonce) + `%s\n' "$r" >&4 2>/dev/null; exit $r`
 }
 
 // relayLineCap bounds a frame line zcp parses: a longer line is relayed as
@@ -1371,7 +1384,20 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
 	command := buildRelayedGitCommand(dir, args, nonce, forward, brokeredGitAllowProtocol(args, relay.Identity.Origin))
+	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
+	var forwarded []byte
+	if forward {
+		// One write, so nothing can come between the length and the bytes.
+		forwarded = append(fmt.Appendf(nil, "%d\n", len(payload)), payload...)
+	}
+	return runRelayedSession(ctx, ssh, host, command, nonce, call, forwarded, stdout)
+}
 
+// runRelayedSession runs command — a relayed script nonce marks — over ssh
+// to host, answering its frames through call, forwarded (nil for none)
+// written on the answers descriptor first, git's stdout copied to stdout
+// (relayStdout) and the rest of the session's stderr to call's stderr.
+func runRelayedSession(ctx context.Context, ssh SSHStdioRunner, host, command, nonce string, call *relayCall, forwarded []byte, stdout io.Writer) (int, error) {
 	p, err := openRelayPipes(stdout, nonce)
 	if err != nil {
 		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
@@ -1382,11 +1408,9 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	var mu sync.Mutex
 	answers := lockedWriter{mu: &mu, w: p.answersW}
 	var wg sync.WaitGroup
-	if forward {
-		// One write, so nothing can come between the length and the bytes.
-		wg.Go(func() { _, _ = answers.Write(append(fmt.Appendf(nil, "%d\n", len(payload)), payload...)) })
+	if forwarded != nil {
+		wg.Go(func() { _, _ = answers.Write(forwarded) })
 	}
-	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
 	// git's end, from the script's marker: no answer after it — descriptor
 	// 3 closed, so a waiting helper reads EOF and lets the lock go — the
 	// call's tokens revoked at once, and the session ended after a grace,
@@ -1408,7 +1432,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 	relayed := make(chan struct{})
 	go func() {
 		defer close(relayed)
-		relayStream(p.framesR, nonce, stderr, answers, func(protocol, host, path string) (string, string) {
+		relayStream(p.framesR, nonce, call.stderr, answers, func(protocol, host, path string) (string, string) {
 			return call.answer(callCtx, protocol, host, path)
 		}, onDone)
 	}()

@@ -85,9 +85,9 @@ func hqGit(args string) string {
 // history of its own on the unwritten root, is left exactly where it is, so a
 // later pass cannot rewrite the shas under an open change.
 //
-// Auth rides HQ's session credential helper, like every other remote-reading
-// command here: the Mate credential reaches git over an anonymous pipe, never
-// argv and never a file.
+// It runs as a relayed script (RelayedSSH): every git in it, a lazy fetch
+// included, is answered HQ's own origin with the Mate's project key over the
+// session — never argv, never a file, nothing stored in the dev service.
 func BuildBaseBranchCommand(workingDir string) string {
 	return baseBranchCommand(workingDir, false)
 }
@@ -121,10 +121,10 @@ func baseBranchCommand(workingDir string, joinRoot bool) string {
 	// there is no base to descend from, so the pair's HEAD becomes `main` and
 	// the first push creates it in HQ. Any other failure of the fetch ends the
 	// command with git's own status, as it always did.
-	fetchArgs := fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(baseBranch))
+	fetchArgs := "fetch --no-tags origin " + shellQuote(baseBranch)
 	if !joinRoot {
 		// Keep ancestry for merge-base and main sync; Git's promisor remote
-		// gets current and historical blobs through the existing helper on demand.
+		// gets current and historical blobs on demand, through the relay.
 		fetchArgs += " --filter=blob:none"
 	}
 	fetchBase := `{ if fetched=$(` + hqGit(fetchArgs) + ` 2>&1); then nomain=; ` +
