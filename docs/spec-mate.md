@@ -2427,6 +2427,10 @@ sequenceDiagram
   A process's stop or loss of its instance liveness retires its links; starting another process does not
   disconnect links held by a healthy peer. A Mate reconnects with random backoff and gets a
   fresh state (mate `apps/server/src/zerops/ZeropsHqLink.ts`; mate-hq `internal/matelink/link.go`).
+  A link HQ closed refusing the key (`4401`, `4403` with HQ's code) is not redialled on that
+  backoff: the same hello hears the same answer. The Mate dials again once its env store changed
+  (where a new `ZCP_API_KEY` lands), when it restarts, or after 15 minutes for what the container
+  cannot see (HQ holding the project as a Mate again, the token edited in Zerops).
   No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
   fleet at once.
 - On every link HQ sends the Mate's state and the Mate's Git credential on the terms of §3.3. The
