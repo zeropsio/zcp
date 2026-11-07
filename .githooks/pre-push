@@ -1,5 +1,6 @@
 #!/bin/bash
-# Tests and native lint run once in pre-commit; complete checks belong to CI.
+# Pre-push hook: witness checks and replay per pushed range; tests and native
+# lint run once in pre-commit; complete checks belong to CI.
 # Install: git config core.hooksPath .githooks (done by make setup)
 
-exit 0
+exec "$(git rev-parse --show-toplevel)/scripts/witness-replay.sh"

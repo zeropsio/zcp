@@ -44,7 +44,7 @@ L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/
 
 RED → GREEN → REFACTOR, with the failing test run before the implementation exists; pure refactors skip RED, keep affected layers green. Table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
-Admission, level and removal: OWNER.md Testing. New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/`, live `./e2e/ -tags e2e`.
+Admission, level and removal: OWNER.md Testing. `scripts/check-witness.go` enforces witness lines and drop trailers (touched test files per staged commit in `make check-changed`, touched owners per pushed range in pre-push). New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/`, live `./e2e/ -tags e2e`.
 
 ## Commands
 

@@ -168,7 +168,8 @@ class CheckChangedTests(unittest.TestCase):
         subprocess.run(["git", "add", "internal/unrelated/new.go"], cwd=self.root,
                        env=self.env, check=True)
         (self.bin / "go").write_text(
-            '#!/bin/sh\nif [ "$1" = list ]; then cat "$GRAPH"; '
+            # go run is the witness check: it reads the hook's index like the selector does.
+            '#!/bin/sh\nif [ "$1" = run ]; then exit 0; fi\nif [ "$1" = list ]; then cat "$GRAPH"; '
             'else if [ -n "${GIT_DIR:-}${GIT_INDEX_FILE:-}" ]; then '
             'echo "Git hook environment leaked into checks" >&2; exit 19; fi; '
             'echo "go $*" >> "$CALLS"; exit "${TEST_EXIT:-0}"; fi\n')
@@ -193,6 +194,8 @@ class CheckChangedTests(unittest.TestCase):
             "go test -short -json ./internal/content ./internal/unrelated"])
 
     def test_prepush_does_not_repeat_checks(self):
+        (self.root / "scripts").mkdir()
+        shutil.copy2(ENTRY.with_name("witness-replay.sh"), self.root / "scripts/witness-replay.sh")
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-push")],
                                 cwd=self.root, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
