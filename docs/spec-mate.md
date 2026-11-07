@@ -621,6 +621,11 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
   re-creating. `config.test.ts` — "honors an explicit auto-bootstrap flag over the serve command
   opt-out"; `serverRuntimeStartup.test.ts` — "resolveAutoBootstrapWelcomeTargets returns existing
   project and thread ids".
+- **A stop ends the Mate on its own terms.** `zcp service start` (`service.runCommand`, the launcher
+  of every `zerops@<name>` unit) relays each SIGINT/SIGTERM it receives to its child and waits for the
+  child to exit; it never sends SIGKILL. The Mate's runtime runs its shutdown (sockets and stores
+  closed). The deadline is the unit's: systemd's `TimeoutStopSec` (90 s on a Zerops container),
+  then SIGKILL to the cgroup. An update's `systemctl restart` (§2.1d) thus stops a drained Mate cleanly.
 
 ### 2.3 The environment contract
 

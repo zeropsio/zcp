@@ -387,13 +387,19 @@ func Start(name string) error {
 	return err
 }
 
-// runCommand starts a child process and waits for it.
-// The context cancels on SIGINT/SIGTERM, which sends SIGKILL to the child.
+// runCommand starts a child process and waits for it. Every SIGINT/SIGTERM
+// zcp receives is relayed to the child, which shuts down through its own
+// handler (a Mate closes its sockets and stores, nginx and code-server
+// theirs); zcp never escalates. The stop deadline belongs to the unit:
+// systemd's TimeoutStopSec, then SIGKILL of the whole cgroup.
 func runCommand(binary string, args, extraEnv []string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// Registered before Start, so a stop arriving during the launch is held
+	// for the child instead of ending zcp by the default action.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
-	cmd := exec.CommandContext(ctx, binary, args[1:]...) //nolint:gosec // binary is resolved from a hardcoded service map via LookPath
+	// A context that never cancels: ending the child is the relayed signal's job alone.
+	cmd := exec.CommandContext(context.Background(), binary, args[1:]...) //nolint:gosec // binary is resolved from a hardcoded service map via LookPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -404,11 +410,20 @@ func runCommand(binary string, args, extraEnv []string) error {
 	fmt.Fprintf(os.Stderr, "[zcp] exec: %s %v (pid will follow)\n", binary, args[1:])
 
 	if err := cmd.Start(); err != nil {
+		signal.Stop(signals)
 		return fmt.Errorf("start: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[zcp] started pid %d\n", cmd.Process.Pid)
 
+	relayed := make(chan struct{})
+	go func() {
+		defer close(relayed)
+		relaySignals(signals, cmd.Process)
+	}()
 	err := cmd.Wait()
+	signal.Stop(signals)
+	close(signals)
+	<-relayed
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -418,6 +433,20 @@ func runCommand(binary string, args, extraEnv []string) error {
 		return fmt.Errorf("%s exited: %w", args[0], err)
 	}
 	return nil
+}
+
+// relaySignals sends each signal zcp receives to the child until the channel
+// closes after the child exited.
+func relaySignals(signals <-chan os.Signal, child *os.Process) {
+	for sig := range signals {
+		if err := child.Signal(sig); err != nil {
+			if !errors.Is(err, os.ErrProcessDone) {
+				fmt.Fprintf(os.Stderr, "[zcp] relay %v to pid %d: %v\n", sig, child.Pid, err)
+			}
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[zcp] relayed %v to pid %d\n", sig, child.Pid)
+	}
 }
 
 // systemdSetTasksMax raises a unit's TasksMax via `systemctl set-property
