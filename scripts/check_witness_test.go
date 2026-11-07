@@ -310,3 +310,18 @@ func TestSpan_DropsLineBeforeWhyParagraph_Approves(t *testing.T) {
 		t.Fatalf("want the classed Drops-test line to approve TestDouble, got %q", problems)
 	}
 }
+
+// witness: scripts/check-witness.go | if f.e2e { → if false {
+func TestNewWitnesses_E2ETaggedFile_StaticCheckOnly(t *testing.T) {
+	witnessed := "\n\nimport \"testing\"\n\n// witness: calc/calc.go | return n * 2 → return n * 3\nfunc TestDouble(t *testing.T) {}\n"
+	items := newWitnesses(input{
+		base: map[string]testFile{},
+		head: parsed(t, map[string]string{
+			"e2e/calc_test.go":  "//go:build e2e\n\npackage e2e" + witnessed,
+			"calc/calc_test.go": "package calc" + witnessed,
+		}),
+	})
+	if len(items) != 1 || items[0].file != "calc/calc_test.go" {
+		t.Fatalf("want only the short test's witness replayed, got %+v", items)
+	}
+}
