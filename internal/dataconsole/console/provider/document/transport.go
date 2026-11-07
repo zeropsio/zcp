@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
@@ -20,6 +22,24 @@ type transport struct {
 	base    string
 	client  *http.Client
 	setAuth func(*http.Request)
+	// diag receives the cause of a failed client.Do (server log); nil → stderr.
+	// The cause never reaches the returned error.
+	diag io.Writer
+}
+
+// logTransportFailure writes the operation and the cause of a failed client.Do
+// to the server log. A *url.Error's embedded URL is dropped: only the
+// underlying cause is written.
+func (t *transport) logTransportFailure(method, urlPath string, err error) {
+	w := t.diag
+	if w == nil {
+		w = os.Stderr
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	_, _ = fmt.Fprintf(w, "dataconsole: doc transport %s %s: %v\n", method, urlPath, err)
 }
 
 // request performs one HTTP call and returns the raw response body on 2xx.
@@ -43,6 +63,7 @@ func (t *transport) request(ctx context.Context, method, urlPath string, body []
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
+		t.logTransportFailure(method, urlPath, err)
 		return nil, fmt.Errorf("doc: transport: %w", provider.ErrUpstream)
 	}
 	defer func() { _ = resp.Body.Close() }()

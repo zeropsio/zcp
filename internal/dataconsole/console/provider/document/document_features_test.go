@@ -371,3 +371,34 @@ func (rec *writeRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{}`))
 }
+
+// witness: internal/dataconsole/console/provider/document/transport.go | t.logTransportFailure(method, urlPath, err) → _ = err
+// TestRequest_ClientDoFailure_CauseLoggedResponseSanitized pins that a failed
+// client.Do's cause reaches the server log with the operation while the
+// returned error stays the sanitized ErrUpstream.
+func TestRequest_ClientDoFailure_CauseLoggedResponseSanitized(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("connection reset by peer")
+	var logBuf strings.Builder
+	tr := &transport{
+		base:    "http://secret-host:9200",
+		client:  &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, cause })},
+		setAuth: func(*http.Request) {},
+		diag:    &logBuf,
+	}
+	_, err := tr.request(context.Background(), http.MethodPost, "/idx/_create/1", nil)
+	if !errors.Is(err, provider.ErrUpstream) || err.Error() != "doc: transport: "+provider.ErrUpstream.Error() {
+		t.Fatalf("response error = %v, want sanitized ErrUpstream", err)
+	}
+	got := logBuf.String()
+	if !strings.Contains(got, "connection reset by peer") || !strings.Contains(got, "POST /idx/_create/1") {
+		t.Fatalf("log = %q, want cause and operation", got)
+	}
+	if strings.Contains(got, "secret-host") {
+		t.Fatalf("log leaks endpoint: %q", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
