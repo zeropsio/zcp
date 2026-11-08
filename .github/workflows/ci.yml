@@ -85,6 +85,9 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.8.0
+          # Built from the Go module proxy: the action's default download from GitHub releases
+          # answers 504 whenever GitHub's release downloads do, which fails the job for no code reason.
+          install-mode: goinstall
           # Skip the action's online `config verify` step: it fetches the
           # golangci JSON schema from golangci-lint.run, which times out on
           # runner network blips and fails the whole job (nothing to do with
