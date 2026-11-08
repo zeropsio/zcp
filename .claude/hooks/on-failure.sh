@@ -26,7 +26,7 @@ fi
 
 # golangci-lint not found
 if echo "$STDERR" | grep -qE 'golangci-lint.*not found|command not found.*golangci'; then
-    SUGGESTION="Install golangci-lint: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0"
+    SUGGESTION="Run golangci-lint through ./tools/golangci-lint.sh: it resolves or installs the pinned version."
 fi
 
 # Import cycle

@@ -174,7 +174,8 @@ class CheckChangedTests(unittest.TestCase):
             'else if [ -n "${GIT_DIR:-}${GIT_INDEX_FILE:-}" ]; then '
             'echo "Git hook environment leaked into checks" >&2; exit 19; fi; '
             'echo "go $*" >> "$CALLS"; exit "${TEST_EXIT:-0}"; fi\n')
-        lint = self.bin / "golangci-lint"
+        lint = self.root / "tools/golangci-lint.sh"
+        lint.parent.mkdir(exist_ok=True)
         lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\nexit "${LINT_EXIT:-0}"\n')
         lint.chmod(0o755)
         calls = self.root / "calls"
@@ -241,7 +242,8 @@ class CheckChangedTests(unittest.TestCase):
             ("guard and raw error", missing() + ["go: unexpected tool error"], 1, False, [guarded]),
             ("guard and tool failure", missing(), 2, False, [guarded]),
         ]
-        lint = self.bin / "golangci-lint"
+        lint = self.root / "tools/golangci-lint.sh"
+        lint.parent.mkdir(exist_ok=True)
         lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\nexit "${LINT_EXIT:-0}"\n')
         lint.chmod(0o755)
         (self.bin / "go").write_text(

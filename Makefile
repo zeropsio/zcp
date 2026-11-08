@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILT   ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 MODULE  := github.com/zeropsio/zcp
-LINT    := $(shell [ -x ./bin/golangci-lint ] && echo "./bin/golangci-lint" || { command -v golangci-lint 2>/dev/null || echo "./bin/golangci-lint"; })
+LINT    := ./tools/golangci-lint.sh
 LDFLAGS  = -s -w \
   -X $(MODULE)/internal/server.Version=$(VERSION) \
   -X $(MODULE)/internal/server.Commit=$(COMMIT) \
@@ -18,8 +18,6 @@ setup: ## Bootstrap development environment (install all tools)
 	@echo "==> Checking prerequisites..."
 	@command -v go >/dev/null 2>&1 || { echo "ERROR: Go not installed"; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not installed (brew install jq)"; exit 1; }
-	@echo "==> Installing golangci-lint..."
-	@./tools/install.sh
 	@echo "==> Configuring git hooks..."
 	@git config core.hooksPath .githooks
 	@chmod +x .githooks/* 2>/dev/null || true

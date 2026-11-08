@@ -95,9 +95,8 @@ fi
 # Lint gate — exit 2 to actually block the commit
 GO_STAGED=$(echo "$STAGED" | grep -E '\.go$')
 if [ -n "$GO_STAGED" ]; then
-    LINT_BIN="golangci-lint"
-    [ -x "${MODULE_ROOT}/bin/golangci-lint" ] && LINT_BIN="${MODULE_ROOT}/bin/golangci-lint"
-    if command -v "$LINT_BIN" &>/dev/null || [ -x "$LINT_BIN" ]; then
+    LINT_BIN="${MODULE_ROOT}/tools/golangci-lint.sh"
+    if [ -x "$LINT_BIN" ]; then
         # Lint only packages with staged Go files (not entire codebase)
         # Exclude e2e/ — requires --build-tags e2e (separate CI step).
         # Filter out directories that no longer exist (deleted-package

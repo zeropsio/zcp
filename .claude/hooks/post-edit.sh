@@ -36,8 +36,8 @@ if [ -d "$PKG_DIR" ]; then
     fi
 
     # Fast lint (non-blocking)
-    if command -v golangci-lint &>/dev/null; then
-        LINT_OUTPUT=$(golangci-lint run "./${PKG_DIR}" --fast-only --timeout=30s 2>&1)
+    if [ -x ./tools/golangci-lint.sh ]; then
+        LINT_OUTPUT=$(./tools/golangci-lint.sh run "./${PKG_DIR}" --fast-only --timeout=30s 2>&1)
         LINT_EXIT=$?
         if [ $LINT_EXIT -ne 0 ] && [ -n "$LINT_OUTPUT" ]; then
             LINT_LINES=$(echo "$LINT_OUTPUT" | tail -10)

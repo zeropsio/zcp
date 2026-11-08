@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import subprocess
 import sys
 
@@ -238,11 +237,7 @@ def main():
                         "-p", "test_check_changed.py"], env=check_env, check=True)
     if not selected:
         return
-    lint = str(root / "bin/golangci-lint")
-    if not os.access(lint, os.X_OK):
-        lint = shutil.which("golangci-lint")
-    if not lint:
-        raise RuntimeError("golangci-lint not found; run make setup")
+    lint = str(root / "tools/golangci-lint.sh")
     if args.tests:
         run_tests(selected, check_env)
     subprocess.run([lint, "run", *selected, "--timeout=120s"], env=check_env, check=True)
