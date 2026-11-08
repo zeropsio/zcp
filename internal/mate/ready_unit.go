@@ -3,6 +3,7 @@ package mate
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -24,14 +25,16 @@ func execUnitQuery(ctx context.Context, name string, args ...string) ([]byte, er
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-// ObserveRestart captures the old unit identity before requesting a restart.
-// An unavailable observation is not proof of exit: the boot's HTTP receipts and
-// their progress window still decide the result when unit state cannot be read.
+// ObserveRestart captures the old unit identity before requesting a restart and
+// removes the boot file, so every receipt in it afterwards is the new boot's.
+// An unavailable observation is not proof of exit: the boot's receipts and their
+// progress window still decide the result when unit state cannot be read.
 func ObserveRestart(ctx context.Context) RestartReadiness {
 	return observeRestart(ctx, execUnitQuery)
 }
 
 func observeRestart(ctx context.Context, show unitQuery) RestartReadiness {
+	_ = os.Remove(BootFilePath())
 	return RestartReadiness{before: readReadinessUnit(ctx, show), show: show}
 }
 

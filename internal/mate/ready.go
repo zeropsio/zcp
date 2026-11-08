@@ -8,6 +8,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -28,10 +30,19 @@ type UpdateReadiness struct {
 	BootID   string `json:"bootId"`
 	Ready    bool   `json:"ready"`
 	Drained  bool   `json:"drained"`
-	// Progress counts the boot's units of work done; it only grows within a boot.
-	Progress int64 `json:"progress"`
-	// Error is the boot's own report that its startup failed.
-	Error string `json:"error,omitempty"`
+}
+
+// BootFilePath is where a booting Mate reports its progress until it accepts
+// commands (ZCP_MATE_BOOT_FILE, §2.1d). Its HTTP server answers nothing before
+// then, so this file is the only receipt of a boot still on its way.
+func BootFilePath() string { return filepath.Join(Prefix(), "boot.json") }
+
+// bootFile is one receipt in BootFilePath.
+type bootFile struct {
+	Protocol int    `json:"protocol"`
+	PID      int    `json:"pid"`
+	Progress int64  `json:"progress"`
+	Error    string `json:"error,omitempty"`
 }
 
 // UpdateRequest calls Mate's loopback updater API; a non-200 answer is an *UpdateHTTPError.
@@ -115,14 +126,45 @@ const (
 	// new boot.
 	verdictReady
 	// verdictFailed: the unit exited, the new boot runs another version, it reported
-	// a failed startup, or another boot replaced it.
+	// a failed startup, or another boot or process replaced it.
 	verdictFailed
 )
 
-// bootReceipts follows the one new boot a wait attributes to its restart.
+// bootReceipts follows the one new boot a wait attributes to its restart: its
+// HTTP boot id, and the process id and progress of its boot file.
 type bootReceipts struct {
 	boot     string
+	pid      int
 	progress int64
+}
+
+// observeFile reads the boot file a restart's new boot writes; ObserveRestart
+// removed the previous one, so any receipt there is this restart's. A missing or
+// unreadable file is no receipt.
+func (b *bootReceipts) observeFile() (readinessVerdict, bool, error) {
+	f, ok := readBootFile()
+	if !ok {
+		return verdictBooting, false, nil
+	}
+	if b.pid != 0 && f.PID != b.pid {
+		return verdictFailed, false, fmt.Errorf("booting process %d was replaced by process %d", b.pid, f.PID)
+	}
+	if f.Error != "" {
+		return verdictFailed, false, fmt.Errorf("booting process %d reported: %s", f.PID, f.Error)
+	}
+	advanced := b.pid == 0 || f.Progress > b.progress
+	b.pid, b.progress = f.PID, max(b.progress, f.Progress)
+	return verdictBooting, advanced, nil
+}
+
+// readBootFile is the boot file's receipt, when one of protocol 1 is there.
+func readBootFile() (bootFile, bool) {
+	var f bootFile
+	raw, err := os.ReadFile(BootFilePath())
+	if err == nil {
+		err = json.Unmarshal(raw, &f)
+	}
+	return f, err == nil && f.Protocol == 1 && f.PID > 0
 }
 
 // observe judges one readiness answer. Only the new boot's answers count: the old
@@ -141,13 +183,10 @@ func (b *bootReceipts) observe(ctx context.Context, version, oldBoot string) (re
 	if r.Version != version {
 		return verdictFailed, false, fmt.Errorf("boot %q runs version %q", r.BootID, r.Version)
 	}
-	if r.Error != "" {
-		return verdictFailed, false, fmt.Errorf("boot %q reported: %s", r.BootID, r.Error)
-	}
-	advanced := b.boot == "" || r.Progress > b.progress
-	b.boot, b.progress = r.BootID, max(b.progress, r.Progress)
+	advanced := b.boot == ""
+	b.boot = r.BootID
 	if !r.Ready {
-		return verdictBooting, advanced, fmt.Errorf("boot %q not ready at progress %d", r.BootID, r.Progress)
+		return verdictBooting, advanced, fmt.Errorf("boot %q not ready", r.BootID)
 	}
 	if err := environmentReady(ctx); err != nil {
 		return verdictBooting, advanced, fmt.Errorf("probe environment readiness: %w", err)
@@ -157,6 +196,8 @@ func (b *bootReceipts) observe(ctx context.Context, version, oldBoot string) (re
 
 // waitReady ends ready, or failed on an attributed failure or once horizon passes.
 // With window > 0 every receipt of boot progress moves horizon to window from then.
+// Only a wait after a restart reads the boot file: a cold boot's file may be a
+// previous boot's.
 func waitReady(version, oldBoot string, horizon time.Time, window time.Duration, restart *RestartReadiness) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -174,6 +215,13 @@ func waitReady(version, oldBoot string, horizon time.Time, window time.Duration,
 		probeCtx, probeCancel := context.WithDeadline(context.Background(), probeDeadline)
 		verdict, advanced, observation := receipts.observe(probeCtx, version, oldBoot)
 		probeCancel()
+		if restart != nil && verdict == verdictBooting {
+			fileVerdict, fileAdvanced, fileErr := receipts.observeFile()
+			if fileVerdict == verdictFailed {
+				verdict, observation = fileVerdict, fileErr
+			}
+			advanced = advanced || fileAdvanced
+		}
 		if err := exitedReadinessUnit(context.Background(), restart); err != nil {
 			return fmt.Errorf("readiness for %s: %w", version, err)
 		}

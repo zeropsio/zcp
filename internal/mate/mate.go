@@ -814,11 +814,13 @@ const EnvHQGitCredential = hq.EnvGitCredential
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix, the
 // status file it reads a new Mate's setup from (status.go), the update
-// coordinator state, and the file it keeps its Git credential in.
+// coordinator state, the file it reports its boot progress in (BootFilePath),
+// and the file it keeps its Git credential in.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
 		"ZCP_MATE_UPDATE_STATE_FILE=" + UpdateStatePath(),
+		"ZCP_MATE_BOOT_FILE=" + BootFilePath(),
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
 		EnvHQGitCredential + "=" + hq.GitCredentialPath(),
 	}

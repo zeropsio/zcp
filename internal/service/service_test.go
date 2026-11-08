@@ -302,6 +302,7 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	}
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
 		"ZCP_MATE_UPDATE_STATE_FILE=" + mate.UpdateStatePath(),
+		"ZCP_MATE_BOOT_FILE=" + mate.BootFilePath(),
 		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
 		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential")}
 	if !slices.Equal(gotEnv, want) {

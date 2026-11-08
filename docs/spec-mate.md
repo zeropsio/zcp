@@ -561,28 +561,34 @@ A new process with MainPID zero, a candidate attempt in failed state, or a new u
 invocation that entered auto-restart ends the wait
 immediately, including a clean process exit. Stale exit status and the old process stopping
 during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
-HTTP receipts and the progress window remain authoritative.
+receipts and the progress window remain authoritative.
 
-The wait's verdict comes from receipts, never from a total budget. Each 1-second probe of
-loopback readiness reads one of three states:
+The wait's verdict comes from receipts, never from a total budget. Every 100 ms it reads the
+unit, a 1-second probe of loopback readiness and, after a restart, the boot file; together they give
+one of three states:
 
-- **ready** — the exact version, a nonempty boot id other than the old one, `ready: true`, and C-4;
-- **failed** — the unit attempt exited or failed (above), or the new boot answered with another
-  version, reported `error` (its startup failed), or was replaced by a later boot id;
+- **ready** — readiness answers the exact version, a nonempty boot id other than the old one,
+  `ready: true`, and C-4 holds;
+- **failed** — the unit attempt exited or failed (above); the new boot answered with another version
+  or a later boot id replaced it; the boot file reports `error` (startup failed) or a different
+  process than the one it named before;
 - **booting** — anything else: no answer, the old boot still answering, `ready: false`.
 
-While booting, the first answer of the new boot and every answer whose `progress` grew are receipts
-of boot progress, and each starts `UpdateProgressWindow` (2 minutes) anew; the wait ends failed only
-when the window passes without one. A release that predates progress receipts (rollback, recovery to
-an older last-good) gives none, so its whole boot has to fit one window.
+While booting, the first answer of the new boot, the first boot-file receipt and every receipt whose
+`progress` grew start `UpdateProgressWindow` (2 minutes) anew; the wait ends failed only when the
+window passes without one. A release that predates the boot file (rollback, recovery to an older
+last-good) gives no progress receipts, so its whole boot has to fit one window.
 
-Mate's side of the receipt: `GET /api/mate/update/readiness` answers at once while the boot has not
-reached command readiness, `{protocol:1, version, bootId, ready:false, progress[, error]}`. `progress`
-counts the boot's units of work done (each page of events a conversation load folds) and only grows
-within a boot; `error` appears once startup failed. After command readiness it answers as before, with
-`ready` meaning idle and its `blockers` (mate `apps/server/src/spi/serverCommandReadiness.ts`,
-`apps/server/src/zerops/mateUpdateHttp.ts`; zcp `internal/mate/ready.go`). The fields are additive:
-an older Mate's readiness, which answers only once ready, still decides by its exit and the window.
+The boot file is the only receipt of a boot still on its way: the server answers no HTTP request,
+readiness included, before command readiness, and a boot that folds a long history leaves its event
+loop no turn before that. zcp names it in the launch environment (`ZCP_MATE_BOOT_FILE`,
+`mate.BootFilePath`) and removes it before each restart it requests (`mate.ObserveRestart`); a cold
+boot's observation never reads it, since it may be an earlier boot's. Until command readiness the
+server replaces it whole in one rename at each step, `{protocol:1, pid, progress[, error]}`:
+`progress` counts the boot's units of work (each page of events a conversation load folds) and only
+grows within a process; `error` appears once startup failed. After command readiness it is not
+written (mate `apps/server/src/spi/serverCommandReadiness.ts`, `apps/server/src/zerops/mateBootFile.ts`;
+zcp `internal/mate/ready.go`).
 
 The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
 worker process identity, last proved running version and remembered failure), syncs them, and
@@ -663,12 +669,13 @@ Only non-secret identifiers are written; a token never enters `~/.zcp/mate.env` 
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
 file is reported and mate starts anyway — diagnosable, unlike a unit that refuses to launch.
 
-Every launch adds four more on top (`mate.LaunchEnvLines`), whatever init wrote:
+Every launch adds five more on top (`mate.LaunchEnvLines`), whatever init wrote:
 
 | Key | Value |
 |---|---|
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
+| `ZCP_MATE_BOOT_FILE` | the file a booting server reports its progress in until it accepts commands (`mate.BootFilePath`, §2.1d) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link (§3.3); zcp reads it nowhere: a dev service and a pool reach HQ's git through the relay with the project key (§6.8). It names a path, never the credential |
 
