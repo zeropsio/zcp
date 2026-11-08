@@ -4543,9 +4543,10 @@ unknown`) and, while a login runs, `login` (§8.2). The server watches the crede
 directory filtered by basename; a missing `~/.claude`/`~/.codex` is watched for via `$HOME`) and the
 env store; events coalesce (~1 s, single-flight per agent).
 
-**Presence is not authentication.** On a credential event the server verifies with the CLI itself —
-`claude auth status` (JSON `loggedIn`) / `codex login status` — and only a fresh `authenticated`
-result writes the flag. The mate server writes it itself, on its own zcp service, through the Zerops
+**Presence is not authentication.** On a credential event the server verifies with the agent itself —
+`claude auth status` (JSON `loggedIn`) / Codex's app-server `account/read` (an account, or no OpenAI
+login required; `codex login status` reads only the file and says "Logged in" over a token OpenAI no
+longer refreshes) — and only a fresh `authenticated` result writes the flag. The mate server writes it itself, on its own zcp service, through the Zerops
 API with its own key (`GET /service-stack/{serviceId}/env`, `POST /service-stack/{serviceId}/user-data`,
 `DELETE /user-data/{id}`; the hardened key may, measured 2026-09-22): absent → create, a
 non-sensitive `true` → nothing, any other value or a sensitive row → replaced. The flag is written
