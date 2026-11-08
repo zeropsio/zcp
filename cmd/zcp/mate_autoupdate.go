@@ -139,7 +139,6 @@ func runMateUpdateWorker(args []string) int {
 	// The durable switch record excludes installers during restart. The lock
 	// must be released: the new unit takes the same lock before its launch.
 
-	var readinessDeadline time.Time
 	var readiness mate.RestartReadiness
 	err = mate.SwitchUpdate(desired.Version, drain.BootID, mate.SwitchHooks{
 		PreventRollback: !mate.RollbackAllowed(installed, desired),
@@ -149,8 +148,7 @@ func runMateUpdateWorker(args []string) int {
 				locked = false
 			}
 			readiness = mate.ObserveRestart(context.Background())
-			readinessDeadline = time.Now().Add(mate.UpdateStartupBudget)
-			ctx, cancel := context.WithDeadline(context.Background(), readinessDeadline)
+			ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "sudo", "systemctl", "restart", "--no-block", "zerops@mate.service")
 			cmd.Stdout = os.Stderr
@@ -160,7 +158,9 @@ func runMateUpdateWorker(args []string) int {
 			}
 			return nil
 		},
-		Ready: func(version, boot string) error { return readiness.WaitReady(version, boot, readinessDeadline) }, Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
+		Ready: func(version, boot string) error {
+			return readiness.WaitReady(version, boot, mate.UpdateProgressWindow)
+		}, Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
 	})
 	if err != nil {
 		return failMateUpdate(false, err.Error())
@@ -183,7 +183,6 @@ func runMateUpdateRecovery() int {
 			unlock()
 		}
 	}()
-	var deadline time.Time
 	var readiness mate.RestartReadiness
 	err = mate.RecoverStoppedUpdate(mate.SwitchHooks{
 		Restart: func() error {
@@ -192,8 +191,7 @@ func runMateUpdateRecovery() int {
 				locked = false
 			}
 			readiness = mate.ObserveRestart(context.Background())
-			deadline = time.Now().Add(mate.UpdateStartupBudget)
-			ctx, cancel := context.WithDeadline(context.Background(), deadline)
+			ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "sudo", "systemctl", "restart", "--no-block", "zerops@mate.service")
 			cmd.Stdout = os.Stderr
@@ -203,7 +201,7 @@ func runMateUpdateRecovery() int {
 			}
 			return nil
 		},
-		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, deadline) },
+		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, mate.UpdateProgressWindow) },
 		Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
 	})
 	if err != nil {

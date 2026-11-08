@@ -90,12 +90,11 @@ func TestMateInstall_Release_Serves(t *testing.T) {
 	}
 
 	readiness := mate.ObserveRestart(context.Background())
-	deadline := time.Now().Add(mate.UpdateStartupBudget)
 	if out, err := exec.Command("sudo", "systemctl", "start", "--no-block", mateUnit).CombinedOutput(); err != nil {
 		t.Fatalf("start step: %v: %s", err, out)
 	}
-	if err := readiness.WaitReady(release.Version, "", deadline); err != nil {
-		t.Fatalf("health step (%s budget): %v", mate.UpdateStartupBudget, err)
+	if err := readiness.WaitReady(release.Version, "", mate.UpdateProgressWindow); err != nil {
+		t.Fatalf("health step (%s progress window): %v", mate.UpdateProgressWindow, err)
 	}
 	// Boot advances last-good once the installed release serves; so does this.
 	if err := mate.CommitLastGood(release.Version); err != nil {

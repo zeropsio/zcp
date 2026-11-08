@@ -128,7 +128,7 @@ func TestRestartReadiness_UnitSequences_AttributesCandidateExit(t *testing.T) {
 						}}
 						t.Cleanup(func() { http.DefaultTransport = original })
 						start := time.Now()
-						err := wait.WaitReady("0.15.202", "old", start.Add(time.Second))
+						err := wait.WaitReady("0.15.202", "old", time.Second)
 						if gotExit := err != nil && strings.Contains(err.Error(), "mate unit process exited"); gotExit != tc.wantExit {
 							t.Fatalf("ASSERTION: candidate exit=%v, want %v; readiness error=%v", gotExit, tc.wantExit, err)
 						}
@@ -193,7 +193,7 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 							updateUnit()
 							return nil
 						},
-						Ready:  func(version, boot string) error { return wait.WaitReady(version, boot, time.Now().Add(60*time.Second)) },
+						Ready:  func(version, boot string) error { return wait.WaitReady(version, boot, 60*time.Second) },
 						Commit: func() error { return nil }, Cancel: func() error { return nil },
 					})
 					if err != nil {
@@ -230,7 +230,7 @@ func TestWaitReady_UpdateDecisions(t *testing.T) {
 					original := http.DefaultTransport
 					http.DefaultTransport = exitReadinessTransport{version: func() string { return "0.15.202" }, ready: func() bool { return time.Since(start) >= readyAt }}
 					t.Cleanup(func() { http.DefaultTransport = original })
-					err := wait.WaitReady("0.15.202", "old", start.Add(60*time.Second))
+					err := wait.WaitReady("0.15.202", "old", 60*time.Second)
 					wantReady := readyAt < 60*time.Second
 					if (err == nil) != wantReady {
 						t.Fatalf("ready=%v error=%v; want ready=%v", err == nil, err, wantReady)
@@ -272,7 +272,7 @@ func TestWaitReady_StaleUnitState_DoesNotAbort(t *testing.T) {
 					return false
 				}}
 				t.Cleanup(func() { http.DefaultTransport = original })
-				if err := wait.WaitReady("0.15.202", "old", start.Add(60*time.Second)); err != nil {
+				if err := wait.WaitReady("0.15.202", "old", 60*time.Second); err != nil {
 					t.Fatalf("stale state aborted startup: %v", err)
 				}
 				if elapsed := time.Since(start); elapsed != time.Second {
@@ -296,7 +296,15 @@ func TestRestartReadiness_ExistingProofs_Required(t *testing.T) {
 				original := http.DefaultTransport
 				http.DefaultTransport = transport
 				t.Cleanup(func() { http.DefaultTransport = original })
-				if err := wait.WaitReady("0.15.111", "old", time.Now().Add(60*time.Second)); err != nil {
+				err := wait.WaitReady("0.15.111", "old", 60*time.Second)
+				if invalid == "version" {
+					// A new boot running another version is an attributed failure, not a wait.
+					if err == nil || transport.readinessCalls != 1 {
+						t.Fatalf("new boot on another version: error=%v, requests=%d; want a failure on the first answer", err, transport.readinessCalls)
+					}
+					return
+				}
+				if err != nil {
 					t.Fatal(err)
 				}
 				if transport.readinessCalls != 2 {
@@ -323,7 +331,7 @@ func TestRestartReadiness_UnknownUnit_WaitsForProof(t *testing.T) {
 				original := http.DefaultTransport
 				http.DefaultTransport = exitReadinessTransport{version: func() string { return "0.15.202" }, ready: func() bool { return time.Since(start) >= time.Second }}
 				t.Cleanup(func() { http.DefaultTransport = original })
-				if err := wait.WaitReady("0.15.202", "old", start.Add(60*time.Second)); err != nil {
+				if err := wait.WaitReady("0.15.202", "old", 60*time.Second); err != nil {
 					t.Fatalf("unknown unit aborted startup: %v", err)
 				}
 				if elapsed := time.Since(start); elapsed != time.Second {
@@ -363,7 +371,7 @@ func TestRestartReadiness_RecoveryProcessExits_FailsImmediately(t *testing.T) {
 				return nil
 			},
 			Ready: func(version, boot string) error {
-				observed = wait.WaitReady(version, boot, start.Add(60*time.Second))
+				observed = wait.WaitReady(version, boot, 60*time.Second)
 				return observed
 			},
 			Commit: func() error { committed = true; return nil }, Cancel: func() error { return nil },

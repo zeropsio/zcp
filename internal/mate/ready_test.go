@@ -64,7 +64,15 @@ func TestMateUpdate_ReadinessProof_Result(t *testing.T) {
 			http.DefaultTransport = transport
 			t.Cleanup(func() { http.DefaultTransport = original })
 			synctest.Test(t, func(t *testing.T) {
-				if err := mate.WaitReady("0.15.111", "old", time.Now().Add(time.Second)); err != nil {
+				err := mate.WaitReady("0.15.111", "old", time.Now().Add(time.Second))
+				if invalid == "version" {
+					// A new boot running another version is an attributed failure, not a wait.
+					if err == nil || transport.readinessCalls != 1 {
+						t.Fatalf("new boot on another version: error=%v, requests=%d; want a failure on the first answer", err, transport.readinessCalls)
+					}
+					return
+				}
+				if err != nil {
 					t.Fatal(err)
 				}
 				if transport.readinessCalls != 2 {

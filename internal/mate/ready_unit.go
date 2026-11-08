@@ -25,8 +25,8 @@ func execUnitQuery(ctx context.Context, name string, args ...string) ([]byte, er
 }
 
 // ObserveRestart captures the old unit identity before requesting a restart.
-// An unavailable observation is not proof of exit: HTTP readiness and its
-// existing deadline still decide the result when unit state cannot be read.
+// An unavailable observation is not proof of exit: the boot's HTTP receipts and
+// their progress window still decide the result when unit state cannot be read.
 func ObserveRestart(ctx context.Context) RestartReadiness {
 	return observeRestart(ctx, execUnitQuery)
 }
@@ -35,10 +35,12 @@ func observeRestart(ctx context.Context, show unitQuery) RestartReadiness {
 	return RestartReadiness{before: readReadinessUnit(ctx, show), show: show}
 }
 
-// WaitReady retains the complete readiness proof, but stops when the restarted
-// unit's process has exited or the new unit attempt has failed.
-func (r RestartReadiness) WaitReady(version, oldBoot string, deadline time.Time) error {
-	return waitReady(version, oldBoot, deadline, &r)
+// WaitReady waits for the complete readiness proof while the restarted boot keeps
+// advancing: it fails when the unit's process exits, the new unit attempt fails, the
+// boot reports a failure or runs another version, or window passes without a
+// receipt of boot progress. Elapsed time alone never fails a boot that advances.
+func (r RestartReadiness) WaitReady(version, oldBoot string, window time.Duration) error {
+	return waitReady(version, oldBoot, time.Now().Add(window), window, &r)
 }
 
 const failedUnitState = "failed"
@@ -55,7 +57,7 @@ func readReadinessUnit(ctx context.Context, show unitQuery) readinessUnitState {
 	if show == nil {
 		show = execUnitQuery
 	}
-	// Use the existing one-second probe bound within the overall startup budget.
+	// Use the existing one-second probe bound of each readiness observation.
 	probeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	out, err := show(probeCtx, "systemctl", "show", "zerops@mate.service", "--property=MainPID,ActiveState,SubState,ExecMainStatus,InvocationID,ExecMainStartTimestampMonotonic")

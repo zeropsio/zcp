@@ -547,7 +547,8 @@ proof leaves the switch untouched. Status probes once, bounded by one second; a 
 ordinary status can observe late readiness. It never restarts or installs a bundle.
 
 Decision: A Mate whose process exits during an update is rolled back without waiting for the deadline.
-Decision: A Mate whose process is still running is waited for until it is ready or the deadline passes.
+Decision: A Mate whose process is still running is waited for until it is ready, reports a failure, or makes no boot progress for the progress window.
+Decision: A candidate that is alive and still booting is never recorded as failedVersion because time passed; only an attributed failure or no boot progress for the progress window fails it.
 Decision: Stopping the old Mate during an update never counts as the new Mate's failure.
 Decision: An update stops waiting the moment the Mate's process exits.
 Decision: A running Mate updated by init receives the same candidate readiness window as an update worker.
@@ -560,19 +561,39 @@ A new process with MainPID zero, a candidate attempt in failed state, or a new u
 invocation that entered auto-restart ends the wait
 immediately, including a clean process exit. Stale exit status and the old process stopping
 during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
-HTTP proof and deadline remain authoritative. No startup-progress receipt is assumed.
+HTTP receipts and the progress window remain authoritative.
+
+The wait's verdict comes from receipts, never from a total budget. Each 1-second probe of
+loopback readiness reads one of three states:
+
+- **ready** — the exact version, a nonempty boot id other than the old one, `ready: true`, and C-4;
+- **failed** — the unit attempt exited or failed (above), or the new boot answered with another
+  version, reported `error` (its startup failed), or was replaced by a later boot id;
+- **booting** — anything else: no answer, the old boot still answering, `ready: false`.
+
+While booting, the first answer of the new boot and every answer whose `progress` grew are receipts
+of boot progress, and each starts `UpdateProgressWindow` (2 minutes) anew; the wait ends failed only
+when the window passes without one. A release that predates progress receipts (rollback, recovery to
+an older last-good) gives none, so its whole boot has to fit one window.
+
+Mate's side of the receipt: `GET /api/mate/update/readiness` answers at once while the boot has not
+reached command readiness, `{protocol:1, version, bootId, ready:false, progress[, error]}`. `progress`
+counts the boot's units of work done (each page of events a conversation load folds) and only grows
+within a boot; `error` appears once startup failed. After command readiness it answers as before, with
+`ready` meaning idle and its `blockers` (mate `apps/server/src/spi/serverCommandReadiness.ts`,
+`apps/server/src/zerops/mateUpdateHttp.ts`; zcp `internal/mate/ready.go`). The fields are additive:
+an older Mate's readiness, which answers only once ready, still decides by its exit and the window.
 
 The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
 worker process identity, last proved running version and remembered failure), syncs them, and
 atomically moves `current`. Only then is the lock released and a nonblocking unit restart
 requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` path and keeps
-admission fenced. Within 60 seconds of the restart request, readiness must prove protocol 1,
-the exact version, a different nonempty boot id, engine/database readiness, and C-4. POST
+admission fenced. Readiness must prove protocol 1, the exact version, a different nonempty boot
+id, engine/database readiness, and C-4 before the progress window passes without a receipt. POST
 `/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
-Live init, the update worker and recovery share this startup budget at the readiness owner:
-Eli's recorded recovery took about 44 seconds
-to ready, while seven KRLS tx - Lior starts took 3.071–5.977 seconds. The 16-second margin
-above that observed slow start does not guarantee readiness.
+Live init, the update worker and recovery share this wait at the readiness owner. A first boot
+can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
+and the fold persists as it goes, so a later boot resumes it.
 `zcp init` at cold boot is the other route: after it settles an installed release it observes the same
 readiness proof for 30 seconds (without holding the install lock) and only then moves `last-good`; a Mate not ready
 in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
