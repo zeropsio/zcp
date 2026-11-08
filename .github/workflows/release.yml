@@ -127,6 +127,8 @@ jobs:
           merge-multiple: true
 
       - name: Require a compatible published Mate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: go run ./cmd/mate-release-check
 
       - name: Create GitHub release

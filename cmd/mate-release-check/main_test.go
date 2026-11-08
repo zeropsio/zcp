@@ -87,7 +87,7 @@ func TestRun_PublishedMate_DecidesWhetherZcpMayRelease(t *testing.T) {
 				return &http.Response{StatusCode: tt.status, Status: fmt.Sprint(tt.status), Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
 			})}
 			var output bytes.Buffer
-			if got := run(t.Context(), client, &output); got != tt.wantExit {
+			if got := run(t.Context(), client, "", &output); got != tt.wantExit {
 				t.Fatalf("release exit = %d, want %d: %s", got, tt.wantExit, output.String())
 			}
 			if calls != 1 || !strings.Contains(output.String(), tt.wantText) {
@@ -121,7 +121,7 @@ func TestRun_UnreachablePublishedMate_CachedReleaseDoesNotAuthorizePublishing(t 
 		return nil, errors.New("offline")
 	})
 	var output bytes.Buffer
-	if got := run(t.Context(), client, &output); got != 1 || !strings.Contains(output.String(), "offline") {
+	if got := run(t.Context(), client, "", &output); got != 1 || !strings.Contains(output.String(), "offline") {
 		t.Fatalf("cached install cannot authorize publishing: exit=%d output=%q", got, output.String())
 	}
 }

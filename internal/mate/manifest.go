@@ -174,7 +174,7 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 		}
 	}
 
-	m, err := fetchManifest(ctx, client, ManifestURL())
+	m, err := fetchManifest(ctx, client, ManifestURL(), "")
 	if err != nil {
 		// A refresh that could not reach the manifest keeps what the last one
 		// read, while that is fresh: a boot asks for a refresh so a release
@@ -199,8 +199,11 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 // CheckPublishedRelease gates a zcp release on the Mate already published to
 // the canonical stable channel. Release authorization never uses a local cache
 // or the installation URL override: neither proves what new containers fetch.
-func CheckPublishedRelease(ctx context.Context, client *http.Client) (Manifest, error) {
-	m, err := fetchManifest(ctx, client, defaultManifestURL)
+// A non-empty githubToken signs the request in: anonymous github.com downloads
+// from runners can connect and never answer. net/http drops the header when the
+// download redirects off github.com.
+func CheckPublishedRelease(ctx context.Context, client *http.Client, githubToken string) (Manifest, error) {
+	m, err := fetchManifest(ctx, client, defaultManifestURL, githubToken)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("check published Mate: %w", err)
 	}
@@ -210,8 +213,9 @@ func CheckPublishedRelease(ctx context.Context, client *http.Client) (Manifest, 
 	return m, nil
 }
 
-// fetchManifest reads the manifest from url, unvalidated.
-func fetchManifest(ctx context.Context, client *http.Client, url string) (Manifest, error) {
+// fetchManifest reads the manifest from url, unvalidated; an empty githubToken
+// keeps the request anonymous.
+func fetchManifest(ctx context.Context, client *http.Client, url, githubToken string) (Manifest, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -221,6 +225,9 @@ func fetchManifest(ctx context.Context, client *http.Client, url string) (Manife
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build mate manifest request: %w", err)
+	}
+	if githubToken != "" {
+		req.Header.Set("Authorization", "Bearer "+githubToken)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
