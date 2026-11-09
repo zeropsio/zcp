@@ -17,7 +17,7 @@ A repository you did not write — in the working directory, or one the
 person asks to run or develop here — runs in the dev service as its
 developers run it locally. Scaffold nothing for it.
 
-1. **Given its address, ask first** with `zerops_origin action="request" url="<its address>" repo="{hostname}" why="<one line>"` if you have it. Never ask for a token.
+1. **Given its address, ask first** with `zerops_origin action="request" url="<its address>" repo="{hostname}" why="<one line>"` if you have it. Never ask for a token. If the person wants the code on GitHub — a GitHub copy, pull requests there — and its repository has no remote, ask with `zerops_mirror action="request" repo="{hostname}" why="<one line>"`.
 2. **Read how the repo is developed before you write any setup:** `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, package scripts, `Makefile`, `.devcontainer/`, `Procfile`, a compose file — the install and dev commands, ports, system packages, host setting.
 3. **The dev setup stays minimal:** base, system packages in `run.prepareCommands`, `run.ports` with every port a dev server will listen on (a port added later takes a redeploy), `deployFiles: [.]`, no dependency install in `buildCommands`; the first deploy puts its `run.start` under the dev-server supervisor. A package manager the run image already ships is used as it stands: installing it again globally fails with `EEXIST`.
 4. **Size it before the first install** from the repo's own hints, else for a JavaScript workspace with several apps `zerops_scale serviceHostname="{hostname}" minRam=8 minCpu=2`.
