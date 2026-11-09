@@ -479,7 +479,7 @@ installed it degrades like any other install failure (MD-1).
 | Check | Rule |
 |---|---|
 | `contract` | must equal `mate.SupportedContract` (today `2` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
-| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.54, the first rev 7 release, which admits people by its own live access list and answers HQ's tokened tickets). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.114, the first release that draws the mirror card (§5.11); 0.16.54 was the first rev 7 release, which admits people by its own live access list and answers HQ's tokened tickets). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
 **There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub
@@ -501,8 +501,8 @@ release target and the release workflow fetch the published stable manifest and 
 publish unless its version reaches the floor and its contract equals `SupportedContract`.
 The release check uses the canonical stable channel, never a container's manifest override
 or cache. An older zcp ignores additive manifest metadata; no new `serve` flag is passed.
-The floor is 0.16.54, the first rev 7 Mate: rev 7 HQ refuses every ticket an older Mate
-asks for. A 0.16.54 prerelease sorts below the stable floor and cannot authorize publication. The supporting stable manifest must
+The floor is 0.16.114, the first Mate that draws the mirror card (§5.11); rev 7 HQ (0.16.54) refuses every ticket an older Mate
+asks for. A 0.16.114 prerelease sorts below the stable floor and cannot authorize publication. The supporting stable manifest must
 be published before zcp releases.
 Auto-update protocol 1 is probed before it is used.
 
@@ -2921,7 +2921,7 @@ To verify live before building on them:
 ### 3.17 Contract-2 delivery
 
 Mate 0.16.0 declares contract 2 and the shared HQ origin in its installed package. zcp's
-`SupportedContract` remains 2; `MinimumMateVersion` is 0.16.54, the first rev 7 Mate. The server links with its
+`SupportedContract` remains 2; `MinimumMateVersion` is 0.16.114, the first Mate that draws the mirror card. The server links with its
 project key and writes HQ's Git credential to the file zcp reads (§3.3); zcp presents the
 project key in its HQ request headers (§3.6). The hosted client is `https://mate.zerops.io`.
 
@@ -4005,11 +4005,12 @@ token or address crosses the conversation.
   HQ by its name in the application — a dev hostname — and an optional one-line `why` the card
   shows. It writes nothing. It reads `GET /api/mate/self` once for the application, then the
   application's repositories with their remotes (`GET /api/apps/:appId/repos`, the project key;
-  `hq.Client.AppRepos`). A `repo` the application does not have is refused naming the ones it has;
+  `hq.Client.AppRepos`). A `repo` the application does not have, or the recipe repository (`group`), is refused naming the ones it has;
   a Mate in no application, or an HQ that does not answer, is a failure that asks nothing. A
-  repository that already has a remote answers
+  repository whose remote is connected and valid, through the organisation's GitHub app, answers
   `{"connected":{"mirror":{"repo":"<repo>","url":"<remote>"}},"nextActions":"…"}`: nothing is
-  asked, and the agent tells the person so if they asked. One with none answers
+  asked, and the agent tells the person so if they asked. Any other (no remote, an invalid one, or one
+  through a person's token, which HQ only follows and never mirrors) answers
   `{"requested":{"mirror":{"repo":"<repo>","why":"<why>"}},"nextActions":"…"}` (`why` absent when
   none was given), telling the agent to say one sentence — that it asked the person to connect
   `repo` to GitHub, in the card above — never to push to GitHub itself, how to take the ask back,
@@ -4023,15 +4024,10 @@ token or address crosses the conversation.
   settles once HQ shows the repository's remote. A `withdrawn` answer closes the card of the ask
   naming `repo`; a `connected` answer draws none.
 - **Where the agent reads it.** AGENTS.md's git host paragraph names the call for a repository
-  whose status says `origin.mode=none`; the existing-repository develop guidance
-  (`develop-first-deploy-existing-repo`, step 1) names it in its call form. The atom lint names
-  `zerops_mirror` only in its call form (`content.AcceptedMirrorActions`).
+  whose status says `origin.mode=none`. The atom lint names `zerops_mirror` only in its call form
+  (`content.AcceptedMirrorActions`).
 
-The first Mate that draws the mirror card is not released yet; `MinimumMateVersion` moves to it in
-the release that ships it. zcp `TestMirrorRequest_NoRemote_AsksThePerson`,
-`TestMirrorRequest_RepositoryWithARemote_AnswersConnected`,
-`TestMirrorWithdraw_AnswersWhatItWithdrew`, `TestAnnotations_MirrorTool`,
-`TestAtomLintAcceptedMirrorActionsMatchTheTool`, `TestServer_ObserveToolGating`.
+The first Mate that draws the mirror card is 0.16.114; `MinimumMateVersion` is that release.
 
 ### Invariants
 

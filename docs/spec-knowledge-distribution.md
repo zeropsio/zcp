@@ -645,8 +645,7 @@ Enforced by `TestAtomAuthoringLint` (`internal/content/atoms_lint.go`):
    (`zerops_origin action="request" …`, `content.AcceptedOriginActions`,
    kept in sync with the tool by
    `TestAtomLintAcceptedOriginActionsMatchTheTool`), and `zerops_mirror`
-   likewise (`content.AcceptedMirrorActions`,
-   `TestAtomLintAcceptedMirrorActionsMatchTheTool`); `zerops_dev_server`
+   likewise (`content.AcceptedMirrorActions`); `zerops_dev_server`
    names `hostname` before its other arguments; ToolSearch selects
    carry the MCP-server prefix.
 7. **Joining unrelated histories** — `--allow-unrelated-histories`. An
