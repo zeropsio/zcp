@@ -61,7 +61,7 @@ func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 		if in.Action == mirrorActionWithdraw {
 			return mirrorWithdraw(in), nil, nil
 		}
-		if in.Action != "request" {
+		if in.Action != envActionRequest {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid action %q", in.Action), "Use action=\"request\", or action=\"withdraw\" to take back an ask no longer needed.")), nil, nil
 		}
