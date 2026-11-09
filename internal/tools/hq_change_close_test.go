@@ -7,10 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // closeChange is zerops_workflow action="close-change" in the lab.
@@ -157,4 +160,46 @@ func closeCalls(f *fakeHQ) int {
 		}
 	}
 	return n
+}
+
+// TestCloseChange_RefusedKey_SaysSoAndNoRetry: HQ answering this Mate's
+// state 401 key_refused is a known answer, not HQ silent — close-change
+// names the refused key, closes nothing and advises no retry, since asking
+// again closes nothing until the key is renewed. Run in-process: HQ's
+// answer is the 401 {"code":"key_refused"} it gives every call of a revoked
+// key.
+// witness: internal/tools/hq_change_close.go | if why := accessRefusal(err); why != "" { → if why := ""; why != "" {
+func TestCloseChange_RefusedKey_SaysSoAndNoRetry(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeWiredPair(t, stateDir, "appdev", "appdev")
+	rt := runtime.Info{OrgID: labOrg, HQ: &runtime.HQLink{Origin: "https://hq.example.invalid", ProjectID: labMate, Key: labKey}}
+	refusing := refusingDoer{status: http.StatusUnauthorized, body: `{"code":"key_refused"}`}
+
+	res, _, err := handleCloseChange(context.Background(), refusing, rt, stateDir, WorkflowInput{Branch: "fix-login"})
+	if err != nil {
+		t.Fatalf("handleCloseChange: %v", err)
+	}
+	text := resultText(t, res)
+	var answer changeCloseResult
+	if res.IsError || json.Unmarshal([]byte(text), &answer) != nil {
+		t.Fatalf("want an answer naming the refused key, got: %s", text)
+	}
+	if answer.Closed || !strings.Contains(answer.Message, "HQ refused this Mate's key (401 key_refused)") || !strings.Contains(answer.Message, "will not help until") {
+		t.Errorf("want nothing closed, the refused key named and no retry: %s", answer.Message)
+	}
+	if strings.Contains(answer.Message, "once HQ answers") {
+		t.Errorf("the answer advises a retry: %s", answer.Message)
+	}
+}
+
+// refusingDoer answers every request in-process with status and body.
+type refusingDoer struct {
+	status int
+	body   string
+}
+
+func (d refusingDoer) Do(req *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: d.status, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(d.body)), Request: req}, nil
 }

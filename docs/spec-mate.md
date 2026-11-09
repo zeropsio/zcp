@@ -5839,9 +5839,13 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   forgetting it; HQ shows it closed by its Mate in the change's conversation. A change on the branch
   that is not this Mate's own is not in its state and is never asked for. Only an HQ that keeps an
   open change per branch (`openPerBranch`) is asked; an older one, one that answers the route 404 or
-  405 (no close for a Mate yet), and a 403 all get the same answer: nothing was closed, a person
-  closes it in its review, by its link. A Zerops refusal and a project confirmed gone instead name
-  that cause; neither says HQ lacks the close operation (`TestCloseChange_OwnByBranch`,
+  405 (no close for a Mate yet), and any other 403 all get the same answer: nothing was closed, a person
+  closes it in its review, by its link. A refusal of this Mate's access — its key (`401
+  key_refused` and the other key codes), Zerops, or its project confirmed gone — read from its state
+  or from the close, is a known answer: it names that cause, as describe-change does (one
+  derivation), says nothing was closed and that calling again will not help until the access is
+  back, never advises a retry, and never says HQ lacks the close operation
+  (`TestCloseChange_RefusedKey_SaysSoAndNoRetry`, `TestCloseChange_OwnByBranch`,
   `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`,
   `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`). The refusal past five open changes
   names it beside asking the person to merge or close one.

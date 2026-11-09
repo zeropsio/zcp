@@ -64,6 +64,10 @@ func handleCloseChange(
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	state, err := hqc.Once().Self(callCtx)
 	cancel()
+	if why := accessRefusal(err); why != "" {
+		result.Message = closeAccessRefusedWords(why)
+		return jsonResult(result), nil, nil
+	}
 	if err != nil {
 		return convertError(platform.NewPlatformError(platform.ErrAPIError,
 			fmt.Sprintf("Nothing was closed: whether a change of this Mate is open on %q in %q is unknown — HQ at %s did not tell (%s).", target.Branch, target.Repo, hqc.Address(), hqNotServingWords(err)),
@@ -97,13 +101,11 @@ func handleCloseChange(
 	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
 	_, err = hqc.CloseChange(callCtx, target.Repo, pick.Number)
 	cancel()
-	var refused *hq.RefusedError
-	if errors.As(err, &refused) {
-		if why := changeProjectRefusal(refused); why != "" {
-			result.Message = fmt.Sprintf("Nothing was closed: %s. The change and its branch stay as they are.", why)
-			return jsonResult(result), nil, nil
-		}
+	if refusal := accessRefusal(err); refusal != "" {
+		result.Message = closeAccessRefusedWords(refusal)
+		return jsonResult(result), nil, nil
 	}
+	var refused *hq.RefusedError
 	switch {
 	case errors.As(err, &refused) && refused.Reason == "change_not_open":
 		_ = workflow.ForgetHQChange(stateDir, target.AppID, target.Repo, pick.Number)
@@ -141,6 +143,13 @@ func changeProjectRefusal(refused *hq.RefusedError) string {
 	default:
 		return ""
 	}
+}
+
+// closeAccessRefusedWords is close-change's answer where HQ refused this
+// Mate's access (accessRefusal): a known answer, so nothing was closed and
+// asking again cannot close anything until the access is back.
+func closeAccessRefusedWords(refusal string) string {
+	return fmt.Sprintf("Nothing was closed: %s — this Mate's access, not the change. Calling close-change again will not help until that access is back (a refused key, until it is renewed): tell the person their Mate's access to HQ is refused. The change and its branch stay as they are.", refusal)
 }
 
 // personClosesWords is close-change's answer where HQ closes no change for a
