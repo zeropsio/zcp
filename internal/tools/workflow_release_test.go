@@ -262,6 +262,10 @@ func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 					t.Errorf("nextStep missing %q: %s", want, body["nextStep"])
 				}
 			}
+			// Only a Mate has the release ask and HQ's observation.
+			if text := extractText(result); strings.Contains(text, "zerops_propose_release") != tt.mate || strings.Contains(text, "zerops_observe") != tt.mate {
+				t.Errorf("handoff names a Mate's tools = %v, want %v: %s", !tt.mate, tt.mate, text)
+			}
 			if proofReads != 0 || len(ssh.commands) != 0 {
 				t.Errorf("HQ handoff ran legacy preflight: proofReads=%d SSH=%v", proofReads, ssh.commands)
 			}
@@ -291,11 +295,11 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 			if err := json.Unmarshal([]byte(text), &body); err != nil {
 				t.Fatal(err)
 			}
-			wantPipeline := "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate; this tool has not checked them."
+			wantPipeline := "HQ Core delivers each approved release to the application's production, creating the services its production tier declares first. Once the person releases, read zerops_observe action=deployments for how it ended: a job that did not go out carries reason and evidence.processes[].error. If a service could not be created, say so in plain words, name the service and propose creating it again with zerops_propose_create_service; never tell the person to run the deploy again."
 			if body["pipeline"] != wantPipeline {
 				t.Errorf("pipeline = %q, want %q", body["pipeline"], wantPipeline)
 			}
-			wantNextStep := "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview."
+			wantNextStep := "Propose it: zerops_propose_release reason=\"<why now, in one line>\" puts a card in this conversation where the person reviews what goes out and releases with their own access; it says so when nothing waits. They can also release in Mate themselves. While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview."
 			if body["nextStep"] != wantNextStep {
 				t.Errorf("nextStep = %q, want %q", body["nextStep"], wantNextStep)
 			}

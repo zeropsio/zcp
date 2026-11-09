@@ -40,6 +40,18 @@ type MateState struct {
 	// Chief is the Chief this Mate answers to: itself if it is a registered
 	// Chief, otherwise its owner's usable Chief; nil while it has none.
 	Chief *Chief `json:"chief"`
+	// ReleaseOffer is what waits for the person's release of the Mate's
+	// application; nil while nothing waits, and from an HQ older than it.
+	ReleaseOffer *ReleaseOffer `json:"releaseOffer,omitempty"`
+}
+
+// ReleaseOffer is the release a Mate may ask its person for
+// (docs/spec-mate.md §2.11, release.offer): Head pins what waits, so an ask
+// made at one head is known stale once HQ answers another, and Suggestion is
+// the version HQ would release it as. zcp passes both on as HQ gave them.
+type ReleaseOffer struct {
+	Head       string `json:"head"`
+	Suggestion string `json:"suggestion"`
 }
 
 // Chief is the project of the Chief a Mate answers to, one person's Chief

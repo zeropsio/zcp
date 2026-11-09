@@ -265,3 +265,30 @@ func TestClient_IsChief_AnUnansweredHQIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want HQ unavailable", err)
 	}
 }
+
+// A Mate's state names the release that waits for its person: the head HQ
+// pins it at and the version it suggests. With nothing waiting, and from an
+// HQ older than release asks, it names none.
+// witness: internal/hq/self.go | ReleaseOffer *ReleaseOffer `json:"releaseOffer,omitempty"` → ReleaseOffer *ReleaseOffer `json:"-"`
+func TestClient_Self_ReleaseOffer_DecodesWhatWaitsAndNone(t *testing.T) {
+	t.Parallel()
+	const waiting = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],` +
+		`"releaseOffer":{"head":"4444444444444444444444444444444444444444","suggestion":"v1.4.0"}}`
+	client, _ := answering(t, waiting)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &ReleaseOffer{Head: "4444444444444444444444444444444444444444", Suggestion: "v1.4.0"}
+	if !reflect.DeepEqual(state.ReleaseOffer, want) {
+		t.Errorf("release offer = %+v, want %+v", state.ReleaseOffer, want)
+	}
+
+	older, _ := answering(t, selfSample)
+	if state, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if state.ReleaseOffer != nil {
+		t.Errorf("release offer from an HQ that names none = %+v, want nil", state.ReleaseOffer)
+	}
+}
