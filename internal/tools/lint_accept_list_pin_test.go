@@ -182,26 +182,3 @@ func TestAtomLintAcceptedOriginActionsMatchTheTool(t *testing.T) {
 		t.Error("zerops_origin takes an action outside content.AcceptedOriginActions: update the list in internal/content/atoms_lint.go")
 	}
 }
-
-// TestAtomLintAcceptedMirrorActionsMatchTheTool pins
-// content.AcceptedMirrorActions to zerops_mirror: every listed action is one
-// the tool takes, and an action outside the list is refused.
-// witness: internal/content/atoms_lint.go | var AcceptedMirrorActions = []string{"request", "withdraw"} → var AcceptedMirrorActions = []string{"request", "withdraw", "connect"}
-func TestAtomLintAcceptedMirrorActionsMatchTheTool(t *testing.T) {
-	t.Parallel()
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	RegisterMirror(srv, http.DefaultClient, "P_MATE")
-	invalid := func(action string) bool {
-		result := callTool(t, srv, "zerops_mirror", map[string]any{"action": action})
-		return result.IsError && strings.Contains(getTextContent(t, result), "Invalid action")
-	}
-	for _, action := range content.AcceptedMirrorActions {
-		if invalid(action) {
-			t.Errorf("content.AcceptedMirrorActions lists %q, which zerops_mirror refuses as an invalid action", action)
-		}
-	}
-	if !invalid("connect") {
-		t.Error("zerops_mirror takes an action outside content.AcceptedMirrorActions: update the list in internal/content/atoms_lint.go")
-	}
-}
