@@ -496,11 +496,12 @@ func pictureTag(alt, url string, width, height int) string {
 // keep.
 const pictureRetakeSuggestion = "Show a picture it keeps, or take the screenshot again with zerops_browser screenshot=true and show the picture its result names — or leave the picture out."
 
-// refusedForGood reports whether HQ's refusal of an attachment is one it
-// will repeat: a 4xx other than a timeout or too many requests.
+// refusedForGood reports a refusal of the picture itself, leaving upstream
+// access and project refusals to retain the description and their cause.
 func refusedForGood(refused *hq.RefusedError) bool {
 	return refused.Status >= 400 && refused.Status < 500 &&
-		refused.Status != http.StatusRequestTimeout && refused.Status != http.StatusTooManyRequests
+		refused.Status != http.StatusRequestTimeout && refused.Status != http.StatusTooManyRequests &&
+		changeProjectRefusal(refused) == ""
 }
 
 // keptPicturesSentence says which pictures this Mate keeps for the change

@@ -98,6 +98,12 @@ func handleCloseChange(
 	_, err = hqc.CloseChange(callCtx, target.Repo, pick.Number)
 	cancel()
 	var refused *hq.RefusedError
+	if errors.As(err, &refused) {
+		if why := changeProjectRefusal(refused); why != "" {
+			result.Message = fmt.Sprintf("Nothing was closed: %s. The change and its branch stay as they are.", why)
+			return jsonResult(result), nil, nil
+		}
+	}
 	switch {
 	case errors.As(err, &refused) && refused.Reason == "change_not_open":
 		_ = workflow.ForgetHQChange(stateDir, target.AppID, target.Repo, pick.Number)
@@ -122,6 +128,19 @@ func handleCloseChange(
 			strings.Join(held, ", "), ops.LeaseReleaseBranchCall(target.Branch, "", false))
 	}
 	return jsonResult(result), nil, nil
+}
+
+// changeProjectRefusal names an upstream refusal or a project confirmed gone;
+// neither says that a close or an attachment is unsupported.
+func changeProjectRefusal(refused *hq.RefusedError) string {
+	switch {
+	case refused.Status == http.StatusForbidden && refused.Code == "zerops_refused":
+		return fmt.Sprintf("Zerops refused access (%s)", hqRefusalWords(refused))
+	case refused.Status == http.StatusNotFound && refused.Code == "project_not_found" && refused.Reason == "project_gone":
+		return "HQ reports this Mate's project is gone from its organisation"
+	default:
+		return ""
+	}
 }
 
 // personClosesWords is close-change's answer where HQ closes no change for a

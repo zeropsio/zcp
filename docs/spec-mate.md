@@ -5804,7 +5804,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   that is not this Mate's own is not in its state and is never asked for. Only an HQ that keeps an
   open change per branch (`openPerBranch`) is asked; an older one, one that answers the route 404 or
   405 (no close for a Mate yet), and a 403 all get the same answer: nothing was closed, a person
-  closes it in its review, by its link (`TestCloseChange_OwnByBranch`,
+  closes it in its review, by its link. A Zerops refusal and a project confirmed gone instead name
+  that cause; neither says HQ lacks the close operation (`TestCloseChange_OwnByBranch`,
   `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`,
   `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`). The refusal past five open changes
   names it beside asking the person to merge or close one.
@@ -6279,8 +6280,9 @@ at most, so a reader reserves its box before the bytes arrive. Never a body with
 picture the Mate does not keep is refused before anything is written — the refusal names the
 pictures it does keep and how long one is kept; one pruned while the words went on is refused the
 same way and the words are not kept — and one HQ will never take (over 20 MiB, or a 4xx other than
-408/429) writes nothing and drops the words, while HQ refusing for now keeps them for the next
-describe. A picture's file kept only as another change's address is one the change being described
+408, 429 or the project refusals below) writes nothing and drops the words. A Zerops refusal or a
+project confirmed gone keeps the words and the original refusal; HQ refusing for now keeps them for
+the next describe. A picture's file kept only as another change's address is one the change being described
 cannot show. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
 `TestKeepPicture_*`, `TestDescribeChange_MissingPictureNamesWhatIsKept`, `TestPictureRefs`.
 
