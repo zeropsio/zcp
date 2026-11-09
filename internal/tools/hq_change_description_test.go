@@ -399,7 +399,7 @@ func TestDescribeChange_Pictures(t *testing.T) {
 		id := keptScreenshot(t, lab.stateDir, []byte("not a png at all"), 800, 600)
 		words := "![The count](" + id + ")"
 		text, isError := lab.describe("", words)
-		for _, want := range []string{"PREREQUISITE_MISSING", "Nothing was written onto change #1", "not_png", "dropped", "without that picture"} {
+		for _, want := range []string{"PREREQUISITE_MISSING", "Nothing was written onto change #1", "not_raster", "dropped", "without that picture"} {
 			if !isError || !strings.Contains(text, want) {
 				t.Errorf("want a refusal saying %q, got:\n%s", want, text)
 			}

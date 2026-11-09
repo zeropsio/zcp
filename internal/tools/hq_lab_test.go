@@ -402,7 +402,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		case r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "attachments":
 			png, _ := io.ReadAll(r.Body)
 			if r.Header.Get("Content-Type") != "image/png" || !strings.HasPrefix(string(png), "\x89PNG") {
-				refuse(http.StatusBadRequest, "invalid", "not_png")
+				refuse(http.StatusBadRequest, "invalid", "not_raster")
 				return
 			}
 			id := fmt.Sprintf("att-%d", len(f.attachments)+1)

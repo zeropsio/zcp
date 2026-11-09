@@ -128,7 +128,7 @@ func TestDescribeTransient(t *testing.T) {
 		{"504", &hq.RefusedError{Status: http.StatusGatewayTimeout}, true},
 		{"500", &hq.RefusedError{Status: http.StatusInternalServerError}, false},
 		{"409 change_not_open", &hq.RefusedError{Status: http.StatusConflict, Code: "conflict", Reason: "change_not_open"}, false},
-		{"a picture HQ will not keep", fmt.Errorf("%w: HQ refused shot-1 (not_png)", errCannotAttach), false},
+		{"a picture HQ will not keep", fmt.Errorf("%w: HQ refused shot-1 (not_raster)", errCannotAttach), false},
 		{"anything else", errors.New("shot-1 is no longer kept"), false},
 	}
 	for _, tt := range tests {

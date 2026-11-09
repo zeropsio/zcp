@@ -6279,10 +6279,13 @@ which the client reads as the person — the width and height the picture's shap
 at most, so a reader reserves its box before the bytes arrive. Never a body with a broken picture: a
 picture the Mate does not keep is refused before anything is written — the refusal names the
 pictures it does keep and how long one is kept; one pruned while the words went on is refused the
-same way and the words are not kept — and one HQ will never take (over 20 MiB, or a 4xx other than
-408, 429 or the project refusals below) writes nothing and drops the words. A Zerops refusal or a
-project confirmed gone keeps the words and the original refusal; HQ refusing for now keeps them for
-the next describe. A picture's file kept only as another change's address is one the change being described
+same way and the words are not kept — and one HQ refuses for what it is (over 20 MiB, `413
+too_large`, or no raster picture, `400 invalid` reason `not_raster`) writes nothing and drops the
+words. Only those refusals are about the picture. HQ's word on the Mate's key (`401 key_refused`,
+`403 key_too_wide`, `key_not_sensitive`, `not_a_mate`), a Zerops refusal or a project confirmed gone
+is about its access, which can come back: nothing is written, the words and their pictures are kept
+for the next describe, and the answer names that refusal. Any other refusal, and HQ refusing for
+now, keeps them the same way. A picture's file kept only as another change's address is one the change being described
 cannot show. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
 `TestKeepPicture_*`, `TestDescribeChange_MissingPictureNamesWhatIsKept`, `TestPictureRefs`.
 

@@ -67,9 +67,10 @@ type changeDescriptionResult struct {
 }
 
 // errCannotAttach is a picture HQ will never keep for a change — larger than
-// it takes, or refused for what it is: nothing is written then, never a
-// description with a broken picture, and words that show it are dropped,
-// since they could never go on. HQ refusing for now (429, a 5xx) is not one.
+// it takes, or refused for what it is (pictureRefused): nothing is written
+// then, never a description with a broken picture, and words that show it are
+// dropped, since they could never go on. HQ refusing the Mate's key, its
+// project or the change says nothing of the picture, and is not one.
 var errCannotAttach = errors.New("a picture could not be attached")
 
 // picturesGoneError is pictures a description shows that are no longer kept
@@ -206,6 +207,14 @@ func handleDescribeChange(
 		if keepErr != nil {
 			return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w",
 				number, err, keepErr), WithRecoveryStatus()), nil, nil
+		}
+		if refusal := accessRefusal(err); refusal != "" {
+			return jsonResult(changeDescriptionResult{
+				Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true,
+				Message: fmt.Sprintf("Nothing was written onto change #%d: %s — this Mate's access, not the words or their pictures. "+
+					"The description is kept; call describe-change again once the access is back, and if it is still refused, tell the person their Mate's access to HQ is refused.",
+					number, refusal),
+			}), nil, nil
 		}
 		if away != describeServed {
 			return jsonResult(changeDescriptionResult{
@@ -457,7 +466,7 @@ func changeBody(ctx context.Context, hqc hq.Client, stateDir string, ref changeR
 			kept, err := hqc.Attach(callCtx, ref.Repo, ref.Number, png)
 			cancel()
 			var refused *hq.RefusedError
-			if errors.As(err, &refused) && refusedForGood(refused) {
+			if errors.As(err, &refused) && pictureRefused(refused) {
 				return "", fmt.Errorf("%w: HQ refused %s (%s)", errCannotAttach, id, hqRefusalWords(refused))
 			}
 			if err != nil {
@@ -496,12 +505,37 @@ func pictureTag(alt, url string, width, height int) string {
 // keep.
 const pictureRetakeSuggestion = "Show a picture it keeps, or take the screenshot again with zerops_browser screenshot=true and show the picture its result names — or leave the picture out."
 
-// refusedForGood reports a refusal of the picture itself, leaving upstream
-// access and project refusals to retain the description and their cause.
-func refusedForGood(refused *hq.RefusedError) bool {
-	return refused.Status >= 400 && refused.Status < 500 &&
-		refused.Status != http.StatusRequestTimeout && refused.Status != http.StatusTooManyRequests &&
-		changeProjectRefusal(refused) == ""
+// pictureRefused reports HQ refusing an attachment for the picture itself:
+// larger than it takes (413 too_large) or no raster picture (400 invalid,
+// not_raster). Only these say the words showing it can never go on; a refusal
+// of the Mate's key, its project or the change keeps them.
+func pictureRefused(refused *hq.RefusedError) bool {
+	switch {
+	case refused.Status == http.StatusRequestEntityTooLarge && refused.Code == "too_large":
+		return true
+	case refused.Status == http.StatusBadRequest && refused.Code == "invalid" && refused.Reason == "not_raster":
+		return true
+	}
+	return false
+}
+
+// accessRefusal names HQ refusing this Mate's access — HQ's word on its key
+// (key_refused, key_too_wide, key_not_sensitive, not_a_mate), Zerops refusing
+// it, or its project gone — for the words a describe keeps; "" for any other
+// answer.
+func accessRefusal(err error) string {
+	var refused *hq.RefusedError
+	if !errors.As(err, &refused) {
+		return ""
+	}
+	if project := changeProjectRefusal(refused); project != "" {
+		return project
+	}
+	switch refused.Code {
+	case "key_refused", "key_too_wide", "key_not_sensitive", "not_a_mate":
+		return fmt.Sprintf("HQ refused this Mate's key (%d %s)", refused.Status, hqRefusalWords(refused))
+	}
+	return ""
 }
 
 // keptPicturesSentence says which pictures this Mate keeps for the change
