@@ -3,6 +3,7 @@ package ops
 import (
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -62,6 +63,11 @@ func NewMirrorWithdrawal(repo string) (MirrorWithdrawal, error) {
 // each after its pair's dev hostname.
 func mirrorRepo(repo string) (string, error) {
 	repo = strings.TrimSpace(repo)
+	if repo == hq.RecipeRepo {
+		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+			"The recipe repository cannot be connected to GitHub",
+			"repo is the repository in HQ to connect, by its name in the application — the dev service's hostname (app).")
+	}
 	if perr := platform.ValidateHostname(repo); perr != nil {
 		perr.Suggestion = "repo is the repository in HQ to connect, by its name in the application — the dev service's hostname (app)."
 		return "", perr

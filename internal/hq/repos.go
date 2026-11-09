@@ -25,6 +25,9 @@ type RepoRemote struct {
 	URL           string `json:"url"`
 	Via           string `json:"via"`
 	DivergedSince string `json:"divergedSince,omitempty"`
+	// InvalidSince is when HQ found the remote unusable (its GitHub app was
+	// forgotten, say), "" while it is valid.
+	InvalidSince string `json:"invalidSince,omitempty"`
 }
 
 // The ways HQ reaches a repository's remote. Through the organisation's

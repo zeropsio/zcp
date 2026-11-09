@@ -99,15 +99,19 @@ func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 }
 
 // mirrorAnswerOf answers a checked request from the application's
-// repositories in HQ: connected when the asked one already has a remote —
-// nothing to ask — else asked. A repository the application does not have is
+// repositories in HQ: connected when the asked one is already mirrored —
+// a valid remote through the organisation's GitHub app, nothing to ask — else
+// asked: an invalid remote, or one through a token that HQ only follows, is
+// not a mirror. A repository the application does not have is
 // refused, naming the ones it has.
 func mirrorAnswerOf(req ops.MirrorRequest, repos []hq.AppRepo) (mirrorAnswer, error) {
 	i := slices.IndexFunc(repos, func(r hq.AppRepo) bool { return r.Name == req.Repo })
 	if i < 0 {
 		names := make([]string, 0, len(repos))
 		for _, r := range repos {
-			names = append(names, r.Name)
+			if r.Name != hq.RecipeRepo {
+				names = append(names, r.Name)
+			}
 		}
 		have := "it has none yet"
 		if len(names) > 0 {
@@ -117,7 +121,7 @@ func mirrorAnswerOf(req ops.MirrorRequest, repos []hq.AppRepo) (mirrorAnswer, er
 			fmt.Sprintf("The application in HQ has no repository %q, so nothing was asked", req.Repo),
 			"repo is a repository of the application in HQ, by its name: "+have+".")
 	}
-	if remote := repos[i].Remote; remote != nil {
+	if remote := repos[i].Remote; remote != nil && remote.InvalidSince == "" && remote.Via == hq.RemoteViaApp {
 		return mirrorAnswer{
 			Connected: &mirrorConnected{Mirror: ops.MirrorConnection{Repo: req.Repo, URL: remote.URL}},
 			NextActions: fmt.Sprintf("Nothing was asked: %s already has a remote in HQ, %s. If the person asked to connect it, tell them so in one sentence; "+
