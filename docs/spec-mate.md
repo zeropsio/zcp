@@ -2223,13 +2223,20 @@ ships before a zcp that sends it.
   `projectId` is the Mate's own project and `projectName` its application's name (this project's
   while HQ names none), summarised "Release <suggestion> to production".
 
+A release's outcome is read, never assumed: `zerops_observe action=deployments` lists HQ's jobs, and
+one that did not go out carries `reason` and `evidence.processes[].error`. The release ask's note,
+the release handoff (§10.10) and the Mate's `AGENTS.md` section say so, and that when a release did
+not go out because a service could not be created, the Mate says so in plain words, names the
+service and proposes the creation again rather than telling the person to run the deploy again.
+
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
 Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
 and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
 names its two proposal tools for stage and production, `zerops_propose_reveal` to show the person a
-secret (never printing or pasting one), and `zerops_propose_ask_chief` for what neither its project
+secret (never printing or pasting one), `zerops_propose_create_service` and `zerops_propose_release`
+with where a release's outcome is read, and `zerops_propose_ask_chief` for what neither its project
 nor `zerops_observe` shows. The shared section tells a Mate to connect a tool with
 `zerops_propose_mcp` and never to ask the person to paste a key in chat.
 

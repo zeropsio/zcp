@@ -594,6 +594,8 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
 				"`zerops_propose_reveal`", "never print or paste a secret value",
+				"`zerops_propose_create_service` before the release", "`zerops_propose_release`",
+				`action="deployments"`, "never tell the person to run the deploy again",
 				"act on this Mate's own project only", "another application's production error",
 				"Mate's Addresses", "DNS records", "AAAA", "Full (strict)",
 				"`zerops_propose_mcp`", "never ask the person to paste a key in chat",
