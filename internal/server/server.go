@@ -372,7 +372,8 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 // registerMateCards registers the tools whose answers a Mate's client draws
 // as cards, so they are Mate-gated like every mate-shaped effect
 // (docs/spec-mate.md §2.0). A Mate's agent asks where the code of the
-// repository it came from is kept (§5.10), and proposes changes to its
+// repository it came from is kept (§5.10) and asks the person to connect a
+// repository to GitHub (§5.11), and proposes changes to its
 // application's stage and production, checked against HQ's observation,
 // and MCP servers for its agents (§2.11). Asking the person's Chief registers
 // in New, once HQ names one; org mode is the Chief and registers none of these.
@@ -381,6 +382,7 @@ func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir 
 		return
 	}
 	tools.RegisterOrigin(s.server, httpClient, projectID, s.rtInfo.OrgID, stateDir)
+	tools.RegisterMirror(s.server, httpClient, projectID)
 	tools.RegisterAppPropose(s.server, httpClient, projectID, s.rtInfo)
 	tools.RegisterMcpPropose(s.server, projectID, s.rtInfo)
 }
