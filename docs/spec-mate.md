@@ -3993,6 +3993,46 @@ zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 behind, imports when ahead, replaces an unwritten HQ root, and reports divergence without overwriting
 either history."
 
+### 5.11 The mirror ask — the agent asks the person to connect a repository to GitHub (2026-11-09)
+
+The reverse of §5.10: the code already lives in a repository of the Mate's application in HQ, and
+the person wants it on GitHub — a GitHub copy, GitHub pull requests from Mate's repository,
+"connect to GitHub". The agent asks; the person picks the GitHub account and repository in Mate
+and connects it through HQ, which then mirrors it (§5.10, *A repository HQ mirrors to GitHub*). No
+token or address crosses the conversation.
+
+- **Request.** `zerops_mirror action=request` (Mate-gated, §2.0) takes `repo`, the repository in
+  HQ by its name in the application — a dev hostname — and an optional one-line `why` the card
+  shows. It writes nothing. It reads `GET /api/mate/self` once for the application, then the
+  application's repositories with their remotes (`GET /api/apps/:appId/repos`, the project key;
+  `hq.Client.AppRepos`). A `repo` the application does not have is refused naming the ones it has;
+  a Mate in no application, or an HQ that does not answer, is a failure that asks nothing. A
+  repository that already has a remote answers
+  `{"connected":{"mirror":{"repo":"<repo>","url":"<remote>"}},"nextActions":"…"}`: nothing is
+  asked, and the agent tells the person so if they asked. One with none answers
+  `{"requested":{"mirror":{"repo":"<repo>","why":"<why>"}},"nextActions":"…"}` (`why` absent when
+  none was given), telling the agent to say one sentence — that it asked the person to connect
+  `repo` to GitHub, in the card above — never to push to GitHub itself, how to take the ask back,
+  and to end its turn.
+- **Withdraw.** `zerops_mirror action=withdraw` takes `repo` (required). The agent withdraws an
+  ask it no longer needs instead of telling the person in chat that a card is outdated. It writes
+  nothing and asks HQ nothing; it answers
+  `{"withdrawn":{"mirror":{"repo":"<repo>"}},"nextActions":"…"}`.
+- **mate.** The engine opens a mirror ask on a `requested` answer and draws a card holding the
+  GitHub account and repository picker for `repo`; the person connects through HQ, and the card
+  settles once HQ shows the repository's remote. A `withdrawn` answer closes the card of the ask
+  naming `repo`; a `connected` answer draws none.
+- **Where the agent reads it.** AGENTS.md's git host paragraph names the call for a repository
+  whose status says `origin.mode=none`; the existing-repository develop guidance
+  (`develop-first-deploy-existing-repo`, step 1) names it in its call form. The atom lint names
+  `zerops_mirror` only in its call form (`content.AcceptedMirrorActions`).
+
+The first Mate that draws the mirror card is not released yet; `MinimumMateVersion` moves to it in
+the release that ships it. zcp `TestMirrorRequest_NoRemote_AsksThePerson`,
+`TestMirrorRequest_RepositoryWithARemote_AnswersConnected`,
+`TestMirrorWithdraw_AnswersWhatItWithdrew`, `TestAnnotations_MirrorTool`,
+`TestAtomLintAcceptedMirrorActionsMatchTheTool`, `TestServer_ObserveToolGating`.
+
 ### Invariants
 
 | ID | Invariant |
