@@ -278,3 +278,32 @@ func TestProposeCreateService_Refuses(t *testing.T) {
 		})
 	}
 }
+
+// TestProposeRelease_WhatWaits_ShapeAndNothing: a release ask carries the
+// head HQ pins what waits at and the version it suggests, from the Mate's own
+// project; with nothing waiting it is refused, and so is one without a reason.
+// witness: internal/ops/app_proposal.go | if offer == nil || strings.TrimSpace(offer.Head) == "" { → if offer == nil {
+func TestProposeRelease_WhatWaits_ShapeAndNothing(t *testing.T) {
+	t.Parallel()
+	offer := &ReleaseOfferParams{Head: "4444444444444444444444444444444444444444", Suggestion: "v1.4.0"}
+	got, err := ProposeRelease("pMate", "Tea Shop", fixedID, offer, "The three changes you asked for are merged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalJSON(t, got, `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"release.offer","summary":"Release v1.4.0 to production","reason":"The three changes you asked for are merged","projectId":"pMate","projectName":"Tea Shop","params":{"head":"4444444444444444444444444444444444444444","suggestion":"v1.4.0"}},"note":"`+ProposalNote+ReleaseNote+`"}`)
+
+	for name, refused := range map[string]struct {
+		offer  *ReleaseOfferParams
+		reason string
+		want   string
+	}{
+		"nothing waits":           {nil, "r", "Nothing waits for release"},
+		"an offer pinned nowhere": {&ReleaseOfferParams{Suggestion: "v1.4.0"}, "r", "Nothing waits for release"},
+		"no reason":               {offer, " ", "reason"},
+	} {
+		_, err := ProposeRelease("pMate", "Tea Shop", fixedID, refused.offer, refused.reason)
+		if text := refusalWords(t, err); !strings.Contains(text, refused.want) {
+			t.Errorf("%s: refusal %q, want it to mention %q", name, text, refused.want)
+		}
+	}
+}

@@ -237,3 +237,60 @@ func TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks(t *testing
 		t.Errorf("a service production has: error=%v %s, want a refusal naming it", refused.IsError, text)
 	}
 }
+
+// TestAppPropose_Release_OverMCP_ProposesWhatWaitsOrSaysNothingDoes:
+// zerops_propose_release answers a release.offer proposal carrying the head
+// and the suggested version of HQ's Mate state, from the Mate's own project
+// under its application's name, without an observation; while HQ names no
+// release offer — nothing waits, or an HQ older than it — it says so.
+// witness: internal/tools/app_propose.go | offer = &ops.ReleaseOfferParams{Head: o.Head, Suggestion: o.Suggestion} → offer = &ops.ReleaseOfferParams{Head: o.Head}
+func TestAppPropose_Release_OverMCP_ProposesWhatWaitsOrSaysNothingDoes(t *testing.T) {
+	// non-parallel: the Mate's identity is the process environment.
+	tests := []struct {
+		name    string
+		offer   string
+		want    map[string]any
+		refusal string
+	}{
+		{
+			name:  "a release waits",
+			offer: `,"releaseOffer":{"head":"4444444444444444444444444444444444444444","suggestion":"v1.4.0"}`,
+			want:  map[string]any{"kind": "release.offer", "summary": "Release v1.4.0 to production", "projectId": "P_MATE", "projectName": "Tea Shop", "reason": "The three changes are merged"},
+		},
+		{name: "nothing waits, or an older HQ", refusal: "Nothing waits for release"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" {
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = w.Write([]byte(`{"projectId":"P_MATE","name":"Juno","face":"f","standupRequestedBy":null,"appId":"a1","appName":"Tea Shop","changes":[]` + tt.offer + `}`))
+			}))
+			defer fake.Close()
+			t.Setenv("HOME", t.TempDir())
+			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterAppPropose(srv, fake.Client(), "P_MATE", runtime.Info{InContainer: true, MateEnabled: true})
+			result := callTool(t, srv, "zerops_propose_release", map[string]any{"reason": "The three changes are merged"})
+			if tt.refusal != "" {
+				if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || !strings.Contains(text, tt.refusal) {
+					t.Fatalf("error=%v %s, want a refusal saying %q", result.IsError, text, tt.refusal)
+				}
+				return
+			}
+			proposal := appProposal(t, result)
+			for key, want := range tt.want {
+				if proposal[key] != want {
+					t.Errorf("proposal.%s = %v, want %v", key, proposal[key], want)
+				}
+			}
+			wantParams := map[string]any{"head": "4444444444444444444444444444444444444444", "suggestion": "v1.4.0"}
+			if !reflect.DeepEqual(proposal["params"], wantParams) {
+				t.Errorf("proposal.params = %v, want %v", proposal["params"], wantParams)
+			}
+		})
+	}
+}

@@ -288,3 +288,44 @@ func appProduction(ctx context.Context, src AppSource) (AppEnvironment, error) {
 		"Your application has no production yet, so there is nothing to create a service in",
 		"The person's first release makes production with every service its tier declares.")
 }
+
+// ProposalReleaseOffer asks the person to release what waits
+// (docs/spec-mate.md §2.11): theirs to do, with their own access.
+const ProposalReleaseOffer = "release.offer"
+
+// ReleaseNote follows a release.offer proposal's note: how a release ended
+// is read, and a creation that failed is asked for again, never deployed past.
+const ReleaseNote = " After the person releases, read zerops_observe action=deployments for how it ended before you say it is live: a job that did not go out carries reason and evidence.processes[].error. If a service could not be created, say so in plain words, name the service and propose creating it again with zerops_propose_create_service; never tell the person to run the deploy again."
+
+// ReleaseOfferParams are release.offer's params, as HQ gave them: the head
+// that pins what waits and the version HQ suggests.
+type ReleaseOfferParams struct {
+	Head       string `json:"head"`
+	Suggestion string `json:"suggestion"`
+}
+
+// ProposeRelease returns the release that waits (offer, as HQ's Mate state
+// names it; nil when nothing waits) as a release.offer proposal from the
+// Mate's own project. It releases nothing: the person reviews what goes out
+// and releases with their own access.
+func ProposeRelease(projectID, projectName string, newID func() string, offer *ReleaseOfferParams, reason string) (*OrgProposalResult, error) {
+	reason, err := proposalReason(reason)
+	if err != nil {
+		return nil, err
+	}
+	if offer == nil || strings.TrimSpace(offer.Head) == "" {
+		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			"Nothing waits for release",
+			"A release carries what is merged to main and not yet released; nothing was proposed.")
+	}
+	summary := "Release to production"
+	if version := strings.TrimSpace(offer.Suggestion); version != "" {
+		summary = fmt.Sprintf("Release %s to production", version)
+	}
+	p := &orgProject{Project: platform.Project{ID: projectID, Name: projectName}}
+	result, err := proposalResult(newID, ProposalReleaseOffer, reason, p, nil, summary, *offer)
+	if result != nil {
+		result.Note += ReleaseNote
+	}
+	return result, err
+}

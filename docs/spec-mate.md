@@ -2054,7 +2054,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | service.create | mate.message | chief.message | domain.add | access.set | mcp.add",
+    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | service.create | release.offer | mate.message | chief.message | domain.add | access.set | mcp.add",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -2214,6 +2214,14 @@ ships before a zcp that sends it.
   carries hostnames only, never the import: the card reads what it creates from HQ's own plan and
   checks it against the person's permission to release. Its note adds to read production's
   `status` before saying a service is there or proposing the release.
+- `zerops_propose_release {reason}` proposes `release.offer`: that the person release what waits.
+  What waits is HQ's to say: the optional `releaseOffer: {head, suggestion}` of `GET /api/mate/self`
+  (the project key; no observation), read by its shape. While HQ names none — nothing waits, or an
+  HQ older than it — the tool answers "Nothing waits for release" and proposes nothing. `params` →
+  `{"head", "suggestion"}` as HQ gave them: `head` pins the ask, so the card of an ask made at one
+  head is replaced once HQ offers another, and `suggestion` is the version HQ would release it as.
+  `projectId` is the Mate's own project and `projectName` its application's name (this project's
+  while HQ names none), summarised "Release <suggestion> to production".
 
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
@@ -2238,6 +2246,7 @@ nor `zerops_observe` shows. The shared section tells a Mate to connect a tool wi
 | OM-9 | A Mate's `zerops_propose_mcp` returns an `mcp.add` proposal of the shape above from its own project, never carrying a secret value, and runs nothing; only a Mate's project mode registers it. `TestProposeMcp_Shape`, `TestProposeMcp_RefusesSecretsAndWhatCannotConnect`, `TestMcpPropose_OverMCP_ProposesAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-10 | A Mate's `zerops_propose_reveal` returns an `env.reveal` proposal of the shape above naming a key in its application's stage or production or its own project, never a value: a key or reason holding one is refused before anything is read; only a Mate's project mode registers it. `TestProposeReveal_Shape`, `TestProposeReveal_RefusesAValue`, `TestProposeReveal_RefusesWhatIsNotThere`, `TestRevealPropose_OverMCP_ProposesANameNeverAValue`, `TestServer_AppProposeToolGating`. |
 | OM-11 | A Mate's `zerops_propose_create_service` returns a `service.create` proposal of the shape above for its application's production: hostnames the production tier on `main` declares and production's observed status lacks, with the recipe head the tier was read at, never an import; anything else is refused by the hostname. It creates nothing; only a Mate's project mode registers it. `TestProposeCreateService_DeclaredAndMissing_Shape`, `TestProposeCreateService_Refuses`, `TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks`, `TestServer_AppProposeToolGating`. |
+| OM-12 | A Mate's `zerops_propose_release` returns a `release.offer` proposal of the shape above carrying the `head` and `suggestion` of HQ's `releaseOffer`, and answers "Nothing waits for release" while HQ names none. It releases nothing; only a Mate's project mode registers it. `TestClient_Self_ReleaseOffer_DecodesWhatWaitsAndNone`, `TestProposeRelease_WhatWaits_ShapeAndNothing`, `TestAppPropose_Release_OverMCP_ProposesWhatWaitsOrSaysNothingDoes`, `TestServer_AppProposeToolGating`. |
 
 ## 3. Trust and credentials
 
@@ -6388,11 +6397,15 @@ Outside HQ, `action="release"` keeps tagging the pair's own checkout remote.
 `status="release-person-required"` when this container is a Mate, or the named pair has a
 recorded HQ repository. This happens before service/bootstrap requirements, git-push prerequisites,
 freshness checks, tag reads or tag writes; `releaseVersion` does not authorize an agent to tag HQ.
-The result tells the agent to ask the person to open this Mate's application on Mate's projects
-page, choose _Review release_, review what it carries, and press _Release_ with the version shown.
-The pipeline note says Core deploys production from approved releases, and explicitly says this
-tool has not checked production setup or release readiness. `ProdLaunches` is not evidence of either
-in HQ. The handoff conditionally points to _Add production_ when missing and _Merge_ for any
+In a Mate the result tells the agent to propose the release with `zerops_propose_release` (§2.11),
+whose card the person reviews and releases from, and that they can also release in Mate themselves;
+outside a Mate, which has neither that tool nor `zerops_observe`, it tells the agent to tell the
+person. A Mate's pipeline note says Core delivers each approved release to production, creating the
+services its production tier declares first, and that once the person releases, the agent reads
+`zerops_observe action=deployments` for how it ended: when a service could not be created it says
+so, names the service and proposes the creation again (`zerops_propose_create_service`), never
+telling the person to run the deploy again. `ProdLaunches` is not evidence of production setup or
+release readiness in HQ. The handoff conditionally points to _Add production_ when missing and _Merge_ for any
 still-open changes the person wants included; a blocked review names its unmet requirements in Mate.
 It never recommends launch-production or tag-consuming CI for HQ.
 `TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice` covers both missing and stale

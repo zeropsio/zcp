@@ -280,20 +280,32 @@ func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflo
 
 // hqReleaseHandoff ends the agent's release request visibly. A Mate cannot
 // push release tags; Core makes the application's release for the person.
-// A release takes main only, so it names the open changes the ledger keeps
-// as not in it (releaseOpenChangesWords).
+// A Mate asks for it with zerops_propose_release and reads how it ended with
+// zerops_observe, which only a Mate has. A release takes main only, so the
+// handoff names the open changes the ledger keeps as not in it
+// (releaseOpenChangesWords).
 func hqReleaseHandoff(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) *mcp.CallToolResult {
+	pipeline := "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate."
+	nextStep := "Tell the person: they release in Mate, from this conversation."
+	if rt.InContainer && rt.MateEnabled {
+		pipeline = hqReleaseOutcomeWords
+		nextStep = "Propose it: zerops_propose_release reason=\"<why now, in one line>\" puts a card in this conversation where the person reviews what goes out and releases with their own access; it says so when nothing waits. They can also release in Mate themselves."
+	}
 	answer := map[string]string{
 		"status":   "release-person-required",
 		"message":  "A release is a person's action in Mate. HQ Core creates the application's release; this tool cannot push release tags to HQ.",
-		"pipeline": "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate; this tool has not checked them.",
-		"nextStep": "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
+		"pipeline": pipeline,
+		"nextStep": nextStep + " While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
 	}
 	if open := releaseOpenChangesWords(ctx, httpClient, rt, stateDir); open != "" {
 		answer["openChanges"] = open
 	}
 	return jsonResult(answer)
 }
+
+// hqReleaseOutcomeWords tell a Mate what a release does in HQ and where it
+// reads how one ended: zerops_observe's deployments, never an assumption.
+const hqReleaseOutcomeWords = "HQ Core delivers each approved release to the application's production, creating the services its production tier declares first. Once the person releases, read zerops_observe action=deployments for how it ended: a job that did not go out carries reason and evidence.processes[].error. If a service could not be created, say so in plain words, name the service and propose creating it again with zerops_propose_create_service; never tell the person to run the deploy again."
 
 // releaseTagSuggestion reads the remote's v* tags (authenticated — works
 // for private repos) and suggests the next patch bump. Defaults to
