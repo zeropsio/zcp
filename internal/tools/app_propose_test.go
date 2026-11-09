@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -21,11 +22,17 @@ import (
 
 // appObserveHQ answers a Mate's observations of its application: stage and
 // production, and production's services. It records each observation asked.
+// It also answers the production tier of the recipe on main, which declares
+// the api production runs and a db it lacks.
 func appObserveHQ(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
 	var asked []string
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/mate/recipe/production" {
+			_, _ = w.Write([]byte(`{"state":"present","mainHead":"4444444444444444444444444444444444444444","importYaml":"services:\n  - hostname: api\n    type: nodejs@22\n  - hostname: db\n    type: postgresql@18\n"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/mate/observe" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -192,5 +199,41 @@ func TestRevealPropose_OverMCP_ProposesANameNeverAValue(t *testing.T) {
 	})
 	if !refused.IsError || len(asked()) != 2 {
 		t.Errorf("a call with a value: error=%v observations=%v, want a refusal before any read", refused.IsError, asked())
+	}
+}
+
+// TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks:
+// zerops_propose_create_service answers a service.create proposal for a
+// service the production tier on main declares and production's observed
+// status lacks, with the recipe head the tier was read at, and refuses one
+// production already has by its name.
+// witness: internal/tools/app_propose.go | ops.CreateServiceInput{Services: in.Services, Reason: in.Reason} → ops.CreateServiceInput{Reason: in.Reason}
+func TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks(t *testing.T) {
+	// non-parallel: the Mate's identity and profile are the process environment.
+	fake, asked := appObserveHQ(t)
+	hqtest.Link(t, fake.URL, "P_MATE", "good")
+	observeTestProfile(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	RegisterAppPropose(srv, fake.Client(), "P_MATE", runtime.Info{InContainer: true, MateEnabled: true})
+
+	proposal := appProposal(t, callTool(t, srv, "zerops_propose_create_service", map[string]any{
+		"services": []string{"db"}, "reason": "The People change keeps invitations in a database",
+	}))
+	for key, want := range map[string]any{"kind": "service.create", "summary": "Create db in Production", "projectId": "P_PROD", "projectName": "Production"} {
+		if proposal[key] != want {
+			t.Errorf("proposal.%s = %v, want %v", key, proposal[key], want)
+		}
+	}
+	wantParams := map[string]any{"services": []any{"db"}, "recipeHead": "4444444444444444444444444444444444444444"}
+	if !reflect.DeepEqual(proposal["params"], wantParams) {
+		t.Errorf("proposal.params = %v, want %v", proposal["params"], wantParams)
+	}
+	if got := asked(); !slices.Equal(got, []string{"environments", "status P_PROD"}) {
+		t.Errorf("observations = %v, want the environments, then production's status only", got)
+	}
+
+	refused := callTool(t, srv, "zerops_propose_create_service", map[string]any{"services": []string{"api"}, "reason": "r"})
+	if text := refused.Content[0].(*mcp.TextContent).Text; !refused.IsError || !strings.Contains(text, "api is already in production") {
+		t.Errorf("a service production has: error=%v %s, want a refusal naming it", refused.IsError, text)
 	}
 }

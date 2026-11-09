@@ -2054,7 +2054,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | mate.message | chief.message | domain.add | access.set | mcp.add",
+    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | service.create | mate.message | chief.message | domain.add | access.set | mcp.add",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -2194,6 +2194,27 @@ of a reveal. The person's client reveals through Zerops' own reveal (sudo step-u
 the value only in the card for 30 seconds or until the person leaves, never stores it, and records
 the reveal at HQ (who, which key, when) before showing it.
 
+**A Mate proposes toward a release.** Production stays the person's: no tool lets a Mate create a
+service there or release. In a Mate's container (`ZCP_MATE_ENABLED`, project mode) it asks for
+them, each ask a proposal of the shape above with no `serviceId`, its `reason` one line of at most
+280 characters. A client older than a kind shows its result as a plain tool row, so the client
+ships before a zcp that sends it.
+
+- `zerops_propose_create_service {services, reason}` proposes `service.create`: creating services
+  the application's production lacks, raised when a change the Mate merges or is about to hand over
+  needs one, before it proposes the release. `services` are hostnames, each once. zcp checks each
+  against the production tier of the recipe on `main` (`GET /api/mate/recipe/production`, the
+  project key, §10.8) and then against HQ's observation as above (`environments`, then
+  production's `status`): one the tier does not declare is refused before anything is observed
+  ("cache is not declared for production", with what it declares), one production already has
+  after ("db is already in production"); so are a recipe with no production tier on `main` and an
+  application with no production yet, whose first release makes it whole. `params` →
+  `{"services": ["db"], "recipeHead": "<the recipe head the tier was read at>"}`, `projectId`
+  production's, `projectName` "Production", summarised "Create <hostnames> in Production". It
+  carries hostnames only, never the import: the card reads what it creates from HQ's own plan and
+  checks it against the person's permission to release. Its note adds to read production's
+  `status` before saying a service is there or proposing the release.
+
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
@@ -2216,6 +2237,7 @@ nor `zerops_observe` shows. The shared section tells a Mate to connect a tool wi
 | OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-9 | A Mate's `zerops_propose_mcp` returns an `mcp.add` proposal of the shape above from its own project, never carrying a secret value, and runs nothing; only a Mate's project mode registers it. `TestProposeMcp_Shape`, `TestProposeMcp_RefusesSecretsAndWhatCannotConnect`, `TestMcpPropose_OverMCP_ProposesAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-10 | A Mate's `zerops_propose_reveal` returns an `env.reveal` proposal of the shape above naming a key in its application's stage or production or its own project, never a value: a key or reason holding one is refused before anything is read; only a Mate's project mode registers it. `TestProposeReveal_Shape`, `TestProposeReveal_RefusesAValue`, `TestProposeReveal_RefusesWhatIsNotThere`, `TestRevealPropose_OverMCP_ProposesANameNeverAValue`, `TestServer_AppProposeToolGating`. |
+| OM-11 | A Mate's `zerops_propose_create_service` returns a `service.create` proposal of the shape above for its application's production: hostnames the production tier on `main` declares and production's observed status lacks, with the recipe head the tier was read at, never an import; anything else is refused by the hostname. It creates nothing; only a Mate's project mode registers it. `TestProposeCreateService_DeclaredAndMissing_Shape`, `TestProposeCreateService_Refuses`, `TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks`, `TestServer_AppProposeToolGating`. |
 
 ## 3. Trust and credentials
 

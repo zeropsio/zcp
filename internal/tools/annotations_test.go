@@ -783,6 +783,8 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 		"zerops_propose_env":     "Propose a variable",
 		"zerops_propose_mcp":     "Propose an MCP server",
 		"zerops_propose_reveal":  "Propose a reveal",
+
+		"zerops_propose_create_service": "Propose creating a service",
 	} {
 		tool := tools[name]
 		if tool == nil {

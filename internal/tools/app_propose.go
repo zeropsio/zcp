@@ -50,13 +50,21 @@ type AppProposeRevealInput struct {
 	Reason      string `json:"reason"            jsonschema:"Why the person wants to see it, in one sentence, for the card. Never a value."`
 }
 
+// AppProposeCreateServiceInput is zerops_propose_create_service's input:
+// hostnames only — the import is HQ's, read by the card.
+type AppProposeCreateServiceInput struct {
+	Services []string `json:"services" jsonschema:"Hostnames the production tier of the recipe declares and production lacks (zerops_observe action=status lists what it has)."`
+	Reason   string   `json:"reason"   jsonschema:"Why the next release needs them, in one line, for the person deciding."`
+}
+
 // appEnvRestartNote follows a variable's proposal: a running service keeps
 // the environment it started with.
 const appEnvRestartNote = " A running service reads the new value only after a restart."
 
 // RegisterAppPropose registers a Mate's proposal tools for its application's
-// stage and production, checked against HQ's observation, and its reveal of a
-// hidden value there or in its own project. A Mate's client
+// stage and production, checked against HQ's observation, its reveal of a
+// hidden value there or in its own project, and its ask to create the
+// services production lacks. A Mate's client
 // draws the card, so they are Mate-gated like every mate-shaped effect (§2.0).
 func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, rt runtime.Info) {
 	if !rt.InContainer || !rt.MateEnabled {
@@ -106,6 +114,14 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 		return appAnswer(ops.ProposeReveal(ctx, src, uuid.NewString, projectID, ops.RevealInput{
 			Environment: in.Environment, Project: in.Project, Service: in.Service, Key: in.Key, Reason: in.Reason,
 		}))
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_propose_create_service",
+		Description: "When a change you merge or are about to hand over needs a service production lacks — a database or cache its production tier declares — propose creating it, before you propose a release. Creates nothing: the person creates it on a card, with their own access.",
+		Annotations: orgPropose("Propose creating a service"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeCreateServiceInput) (*mcp.CallToolResult, any, error) {
+		return appAnswer(ops.ProposeCreateService(ctx, src, src, uuid.NewString, ops.CreateServiceInput{Services: in.Services, Reason: in.Reason}))
 	})
 }
 
@@ -185,4 +201,47 @@ func (a observedApp) Services(ctx context.Context, projectID string) ([]platform
 		services = append(services, platform.ServiceStack{ID: s.ID, Name: s.Name, Status: s.Status})
 	}
 	return services, nil
+}
+
+// keyed is a client of the Mate's HQ under its project key, sending each
+// call once: what a proposal reads beside the observation.
+func (a observedApp) keyed() (hq.Client, error) {
+	client, err := hq.Open(a.doer, hqIdentity(a.rt))
+	if err != nil {
+		return hq.Client{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("HQ could not be addressed, so nothing was proposed: %v", err), "")
+	}
+	if client.ProjectID() != a.projectID {
+		return hq.Client{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			"This Mate's key belongs to another project, so nothing was proposed", "")
+	}
+	return client.Once(), nil
+}
+
+// hqUnread is a read of HQ that did not answer what a proposal is checked
+// against: nothing is proposed on a guess.
+func hqUnread(what string, err error) error {
+	return platform.NewPlatformError(platform.ErrAPIError,
+		fmt.Sprintf("HQ could not be read, so %s is unknown and nothing was proposed: %v", what, err), "Propose again later.")
+}
+
+// ProductionTier is the production tier of the application's recipe on main,
+// with the recipe head HQ read it at.
+func (a observedApp) ProductionTier(ctx context.Context) (ops.ProductionTier, error) {
+	client, err := a.keyed()
+	if err != nil {
+		return ops.ProductionTier{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+	defer cancel()
+	read, err := client.RecipeTier(ctx, hq.RecipeTierProduction)
+	var refused *hq.RefusedError
+	switch {
+	case errors.As(err, &refused) && refused.Reason == "mate_not_in_app":
+		return ops.ProductionTier{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			"HQ holds this Mate in no application yet, so it has no production to create a service in", "")
+	case err != nil:
+		return ops.ProductionTier{}, hqUnread("what the production tier declares", err)
+	}
+	return ops.ProductionTier{Present: read.State == hq.RecipePresent, ImportYAML: read.ImportYAML, Head: read.MainHead}, nil
 }

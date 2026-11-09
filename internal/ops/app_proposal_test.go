@@ -164,3 +164,117 @@ func TestProposeAppAction_Refuses(t *testing.T) {
 		})
 	}
 }
+
+// testRecipe is the production tier of the application's recipe as HQ holds
+// it on main.
+type testRecipe struct{ tier ProductionTier }
+
+func (r testRecipe) ProductionTier(context.Context) (ProductionTier, error) { return r.tier, nil }
+
+// declaredProduction declares the two services production runs and two it lacks.
+func declaredProduction() testRecipe {
+	return testRecipe{tier: ProductionTier{Present: true, Head: "4444444444444444444444444444444444444444", ImportYAML: `services:
+  - hostname: api
+    type: nodejs@22
+  - hostname: worker
+    type: nodejs@22
+  - hostname: db
+    type: postgresql@18
+  - hostname: cache
+    type: valkey@7.2
+`}}
+}
+
+func proposalJSON(t *testing.T, got *OrgProposalResult, want string) {
+	t.Helper()
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotDoc, wantDoc any
+	_ = json.Unmarshal(raw, &gotDoc)
+	if err := json.Unmarshal([]byte(want), &wantDoc); err != nil {
+		t.Fatalf("bad want: %v", err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("proposal\n got %s\nwant %s", raw, want)
+	}
+}
+
+func refusalWords(t *testing.T, err error) string {
+	t.Helper()
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a platform error the agent can act on", err)
+	}
+	return pe.Message + " " + pe.Suggestion
+}
+
+// TestProposeCreateService_DeclaredAndMissing_Shape pins the card a creation
+// is drawn from: the hostnames the production tier declares and production
+// lacks, each once, at the recipe head the tier was read at — hostnames only,
+// never the import — in production, whose services alone are read.
+// witness: internal/ops/app_proposal.go | ServiceCreateParams{Services: hostnames, RecipeHead: tier.Head} → ServiceCreateParams{Services: hostnames}
+func TestProposeCreateService_DeclaredAndMissing_Shape(t *testing.T) {
+	t.Parallel()
+	app := newTestApp()
+	got, err := ProposeCreateService(context.Background(), app, declaredProduction(), fixedID, CreateServiceInput{
+		Services: []string{" db ", "cache", "db"}, Reason: "The People change keeps invitations in a database",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalJSON(t, got, `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"service.create","summary":"Create db and cache in Production","reason":"The People change keeps invitations in a database","projectId":"pProd","projectName":"Production","params":{"services":["db","cache"],"recipeHead":"4444444444444444444444444444444444444444"}},"note":"`+ProposalNote+CreateServiceNote+`"}`)
+	if !slices.Equal(app.read, []string{"pProd"}) {
+		t.Errorf("services read for %v, want only [pProd]", app.read)
+	}
+}
+
+// TestProposeCreateService_Refuses: a service production already has, one its
+// tier does not declare, a recipe or an application without a production, no
+// service and no one-line reason are each refused in words the agent can act
+// on, naming the hostname.
+// witness: internal/ops/app_proposal.go | if present[hostname] { → if false {
+func TestProposeCreateService_Refuses(t *testing.T) {
+	t.Parallel()
+	noProduction := newTestApp()
+	noProduction.envs = noProduction.envs[:1]
+	tests := []struct {
+		name   string
+		app    *testApp
+		recipe *testRecipe
+		in     CreateServiceInput
+		want   []string
+	}{
+		{name: "already in production", in: CreateServiceInput{Services: []string{"api"}, Reason: "r"}, want: []string{"api is already in production"}},
+		{name: "not declared", in: CreateServiceInput{Services: []string{"queue"}, Reason: "r"}, want: []string{"queue is not declared for production", "db"}},
+		{name: "one missing, one already there", in: CreateServiceInput{Services: []string{"db", "worker"}, Reason: "r"}, want: []string{"worker is already in production"}},
+		{name: "no production tier on main", recipe: &testRecipe{}, in: CreateServiceInput{Services: []string{"db"}, Reason: "r"}, want: []string{"no production tier"}},
+		{name: "no production yet", app: noProduction, in: CreateServiceInput{Services: []string{"db"}, Reason: "r"}, want: []string{"no production yet"}},
+		{name: "no service named", in: CreateServiceInput{Reason: "r"}, want: []string{"services"}},
+		{name: "no reason", in: CreateServiceInput{Services: []string{"db"}}, want: []string{"reason"}},
+		{name: "a reason over one line", in: CreateServiceInput{Services: []string{"db"}, Reason: "one\ntwo"}, want: []string{"one line"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app, recipe := tt.app, declaredProduction()
+			if app == nil {
+				app = newTestApp()
+			}
+			if tt.recipe != nil {
+				recipe = *tt.recipe
+			}
+			_, err := ProposeCreateService(context.Background(), app, recipe, fixedID, tt.in)
+			text := refusalWords(t, err)
+			for _, want := range tt.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("refusal %q, want it to mention %q", text, want)
+				}
+			}
+		})
+	}
+}
