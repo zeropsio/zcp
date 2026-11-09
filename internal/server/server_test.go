@@ -792,9 +792,9 @@ func TestServer_ObserveToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			// zerops_origin asks through HQ like zerops_observe reads through
-			// it: both are a Mate's and nothing else's.
-			for _, name := range []string{"zerops_observe", "zerops_origin"} {
+			// zerops_origin and zerops_mirror ask through HQ like zerops_observe
+			// reads through it: all are a Mate's and nothing else's.
+			for _, name := range []string{"zerops_observe", "zerops_origin", "zerops_mirror"} {
 				found := false
 				for _, tool := range result.Tools {
 					found = found || tool.Name == name

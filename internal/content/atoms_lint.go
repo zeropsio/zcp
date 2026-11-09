@@ -167,32 +167,49 @@ var atomLintRules = []atomLintRule{
 // `TestAtomLintAcceptedOriginActionsMatchTheTool` keeps the two in sync.
 var AcceptedOriginActions = []string{"request", "withdraw"}
 
-// originCallRe matches every zerops_origin mention with the action it names
-// right after it, if any.
-var originCallRe = regexp.MustCompile(`zerops_origin(?: action="([a-z]+)")?`)
+// AcceptedMirrorActions lists every `action="X"` value zerops_mirror takes.
+// Source of truth is `internal/tools/mirror.go` (RegisterMirror's handler);
+// `TestAtomLintAcceptedMirrorActionsMatchTheTool` keeps the two in sync.
+var AcceptedMirrorActions = []string{"request", "withdraw"}
 
-// originCallViolations flags a zerops_origin mention that is not its call:
-// the tool refuses a call without an action it takes, so an atom names it
-// as `zerops_origin action="request" …` (or "withdraw"), never bare and
-// never with its arguments in another order.
-func originCallViolations(ctx atomLintCtx) []AtomLintViolation {
+// actionCall is a tool an atom names only in its call form: its action first
+// and one the tool takes, since the tool refuses a call without one. Its re
+// matches every mention of the tool with the action it names right after it,
+// if any.
+type actionCall struct {
+	re       *regexp.Regexp
+	accepted []string
+	pattern  string
+}
+
+var actionCalls = []actionCall{
+	{regexp.MustCompile(`zerops_origin(?: action="([a-z]+)")?`), AcceptedOriginActions, "origin-call-without-action"},
+	{regexp.MustCompile(`zerops_mirror(?: action="([a-z]+)")?`), AcceptedMirrorActions, "mirror-call-without-action"},
+}
+
+// actionCallViolations flags a mention of an actionCall tool that is not its
+// call: an atom names it as `zerops_origin action="request" …` (or
+// "withdraw"), never bare and never with its arguments in another order.
+func actionCallViolations(ctx atomLintCtx) []AtomLintViolation {
 	var out []AtomLintViolation
 	for i, line := range ctx.bodyLines {
 		trimmed := strings.TrimSpace(line)
-		for _, m := range originCallRe.FindAllStringSubmatch(line, -1) {
-			if slices.Contains(AcceptedOriginActions, m[1]) {
-				continue
+		for _, call := range actionCalls {
+			for _, m := range call.re.FindAllStringSubmatch(line, -1) {
+				if slices.Contains(call.accepted, m[1]) {
+					continue
+				}
+				if _, allowed := atomLintAllowlist[ctx.file+"::"+trimmed]; allowed {
+					continue
+				}
+				out = append(out, AtomLintViolation{
+					AtomFile: ctx.file,
+					Category: "tool-call-shape",
+					Pattern:  call.pattern,
+					Line:     ctx.frontmatterLines + i + 1,
+					Snippet:  trimmed,
+				})
 			}
-			if _, allowed := atomLintAllowlist[ctx.file+"::"+trimmed]; allowed {
-				continue
-			}
-			out = append(out, AtomLintViolation{
-				AtomFile: ctx.file,
-				Category: "tool-call-shape",
-				Pattern:  "origin-call-without-action",
-				Line:     ctx.frontmatterLines + i + 1,
-				Snippet:  trimmed,
-			})
 		}
 	}
 	return out
@@ -250,7 +267,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, staleStrategyViolations(ctx)...)
 		out = append(out, statusTokenViolations(ctx)...)
 		out = append(out, overrideAdviceScopeViolations(ctx)...)
-		out = append(out, originCallViolations(ctx)...)
+		out = append(out, actionCallViolations(ctx)...)
 	}
 	return out
 }
