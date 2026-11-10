@@ -6415,7 +6415,11 @@ person. A Mate's pipeline note says Core delivers each approved release to produ
 services its production tier declares first, and that once the person releases, the agent reads
 `zerops_observe action=deployments` for how it ended: when a service could not be created it says
 so, names the service and proposes the creation again (`zerops_propose_create_service`), never
-telling the person to run the deploy again. `ProdLaunches` is not evidence of production setup or
+telling the person to run the deploy again. A Mate's application guidance also says what HQ's
+`production_effect_approval_required` (and a preparation problem named `approval`) means: the
+approval is the person's release itself, which creates what production lacks first; Mate has no
+separate control to approve, so the agent proposes the release or the creation and never sends the
+person to approve anything on a page. `ProdLaunches` is not evidence of production setup or
 release readiness in HQ. The handoff conditionally points to _Add production_ when missing and _Merge_ for any
 still-open changes the person wants included; a blocked review names its unmet requirements in Mate.
 It never recommends launch-production or tag-consuming CI for HQ.
