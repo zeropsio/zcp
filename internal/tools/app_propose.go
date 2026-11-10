@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -173,7 +172,7 @@ func (a observedApp) observe(ctx context.Context, in hq.ObservationRequest, out 
 	if err != nil {
 		return fmt.Errorf("HQ could not be addressed: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, hq.ObserveBound)
 	defer cancel()
 	body, err := client.Observe(ctx, in)
 	if err != nil {

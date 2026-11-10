@@ -110,10 +110,13 @@ func OpenObservation(doer Doer, id Identity) (ObservationClient, error) {
 	if doer == nil {
 		return ObservationClient{}, errors.New("open HQ observation: no HTTP client")
 	}
-	// As with OpenProject, a custom Doer owns its redirect policy.
+	// As with OpenProject, a custom Doer owns its redirect policy. A shared
+	// client's Timeout is its other callers' bound: ObserveBound is the
+	// observation's only one.
 	if client, ok := doer.(*http.Client); ok {
 		isolated := *client
 		isolated.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		isolated.Timeout = 0
 		doer = &isolated
 	}
 	return ObservationClient{doer: doer, origin: strings.TrimRight(id.Origin, "/"), key: id.Key}, nil
@@ -121,6 +124,10 @@ func OpenObservation(doer Doer, id Identity) (ObservationClient, error) {
 
 // ObserveOutputLimit bounds HQ facts and the tool's final text, including own metadata.
 const ObserveOutputLimit = 512 * 1024
+
+// ObserveBound is how long one observation waits for HQ, which reads the
+// target's platform before it answers.
+const ObserveBound = 45 * time.Second
 
 // Observe makes one bounded request, rereading the profile's child credential
 // immediately before it. Both proofs are required; no retry, cache or /self call.
@@ -149,7 +156,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 			}
 		}})
 	}
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, ObserveBound)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+"/api/mate/observe", bytes.NewReader(body))
 	if err != nil {
