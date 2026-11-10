@@ -969,7 +969,7 @@ UTF-8 string and returns lowercase hexadecimal: the outer hash takes the first d
 not its raw bytes. It lets HQ retain that credential across a relink without sending its secret (mate
 `apps/server/src/zerops/ZeropsGitCredentialFile.ts`; mate-hq `internal/git/credentials.go`).
 `origin` is its public
-origin: HTTPS, a host ending in a Zerops-managed subdomain suffix, no path. HQ validates it,
+origin: HTTPS, a bare origin, no path; HQ requires no particular host suffix. HQ validates it,
 keeps it with the link and returns it in the ticket answer; an invalid origin closes the link as
 bad hello. No Zerops read discovers it: the server takes it from the platform's `zeropsSubdomain`,
 which reaches its environment through the live env store (§2.3, MD-8), so nothing is set by hand.
