@@ -161,9 +161,13 @@ const (
 	changeStillOpen changeOutcome = iota
 	// changeMerged: the state names it merged.
 	changeMerged
-	// changeClosed: the state names it closed without merging — or, from an
-	// HQ that keeps one open change per repository, lists it no more while
-	// it would still list it.
+	// changeLandedWith: the state names it closed by HQ because another
+	// change's landing carried all of it to main (hq.MateChange.CarriedBy):
+	// its work is on main as a merged one's is, with no squash of its own.
+	changeLandedWith
+	// changeClosed: the state names it closed without merging, its work not
+	// on main — or, from an HQ that keeps one open change per repository,
+	// lists it no more while it would still list it.
 	changeClosed
 	// changeUnlisted: an HQ that lists every open change lists it no more —
 	// it settled, and more changes settled since than its state lists, so
@@ -192,6 +196,9 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 			case hq.ChangeMerged:
 				return changeMerged, s
 			}
+			if s.CarriedBy() > 0 {
+				return changeLandedWith, s
+			}
 			return changeClosed, s
 		}
 		listed++
@@ -219,11 +226,14 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // which a Mate's HQ pass releases by itself once nothing unsaved is left in
 // them (releaseCompletedLeases, DP-34), so the note names no release for the
 // agent to run — and the stages of its repository's pairs, which track main
-// (address is this Mate's HQ, which names the leases' repository). The change
-// is forgotten as soon as it is no longer open. "" while it is open, which is
-// the ordinary state and worth no words — or unknown.
+// (address is this Mate's HQ, which names the leases' repository). A change
+// that landed with another is said as that, never as closed without merging
+// — a Mate told nothing of it is on main does the work again — and takes the
+// merged change's note, none of which reads a squash of the change's own.
+// The change is forgotten as soon as it is no longer open. "" while it is
+// open, which is the ordinary state and worth no words — or unknown.
 func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.MateState) string {
-	outcome, _ := outcomeOf(state, c)
+	outcome, s := outcomeOf(state, c)
 	if outcome == changeStillOpen || outcome == changeUnknown {
 		return ""
 	}
@@ -232,6 +242,11 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	case changeMerged:
 		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
 			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
+	case changeLandedWith:
+		with := s.CarriedBy()
+		return fmt.Sprintf("change #%d landed with #%d — #%d's merge carried every commit of it, so HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
+			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
+			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
 	case changeStillOpen, changeClosed, changeUnknown:
@@ -239,8 +254,9 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", c.Number, hqBase)
 }
 
-// mainTakesTheMerge says how the repository's main takes a merged change
-// where route runs its git, and that the next work's branch is cut from it:
+// mainTakesTheMerge says how the repository's main takes a merged change —
+// or one another change's merge carried — where route runs its git, and that
+// the next work's branch is cut from it:
 // main fast-forwarded in a dev service; in a dev pool a lease acquired on a
 // new branch cuts it from main as HQ has it.
 func mainTakesTheMerge(route repoRoute) string {
@@ -252,9 +268,10 @@ func mainTakesTheMerge(route repoRoute) string {
 		route.where(), route.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
 }
 
-// mergedLeases names the leases zcp still holds on a merged change's branch,
-// "" for none: a Mate's HQ pass releases them by itself once nothing unsaved
-// is left in them (DP-34), so what keeps one is work to commit and push.
+// mergedLeases names the leases zcp still holds on the branch of a change
+// whose work is on main — merged, or landed with another — "" for none: a
+// Mate's HQ pass releases them by itself once nothing unsaved is left in them
+// (DP-34), so what keeps one is work to commit and push.
 func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 	held := leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch)
 	if len(held) == 0 {
@@ -265,7 +282,7 @@ func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 }
 
 // mergedStages names the stages of the repository's pairs, which track main
-// and so take it once a change merged; "" for none.
+// and so take it once a change's work is on it; "" for none.
 func mergedStages(stateDir string, c workflow.HQChange) string {
 	if words := stagesTrackMain(stateDir, c.AppID, c.Repo); words != "" {
 		return "; " + words

@@ -149,13 +149,15 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 	// non-parallel: the Mate's identity is the process environment.
 	for _, tt := range []struct {
 		name, state    string
+		landedWith     int
 		status         int
 		merged, unread bool
 		labels         []string
 	}{
-		{"merged since the last pass", "merged", http.StatusOK, true, false, nil},
-		{"open with current standing", "open", http.StatusOK, false, false, []string{"ready", "behind main"}},
-		{"unknown while HQ cannot refresh", "", http.StatusServiceUnavailable, false, true, []string{"draft"}},
+		{"merged since the last pass", "merged", 0, http.StatusOK, true, false, nil},
+		{"landed with another change since the last pass", "closed", 2, http.StatusOK, false, false, nil},
+		{"open with current standing", "open", 0, http.StatusOK, false, false, []string{"ready", "behind main"}},
+		{"unknown while HQ cannot refresh", "", 0, http.StatusServiceUnavailable, false, true, []string{"draft"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := t.TempDir()
@@ -181,9 +183,13 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 						writeHQJSON(w, tt.status, map[string]any{"code": "not_active"})
 						return
 					}
+					change := map[string]any{"repo": "group", "number": 1, "branch": "setup", "state": tt.state, "head": "abc123", "ready": true, "mergeability": "clean", "behind": true}
+					if tt.landedWith > 0 {
+						change["landedWith"] = tt.landedWith
+					}
 					writeHQJSON(w, http.StatusOK, map[string]any{
 						"appId": "a1", "projectId": "P_MATE", "openPerBranch": true,
-						"changes": []map[string]any{{"repo": "group", "number": 1, "branch": "setup", "state": tt.state, "head": "abc123", "ready": true, "mergeability": "clean", "behind": true}},
+						"changes": []map[string]any{change},
 					})
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
@@ -206,10 +212,11 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 				Changes      []struct {
 					Repo    string `json:"repo"`
 					Changes []struct {
-						Number int      `json:"number"`
-						Branch string   `json:"branch"`
-						Merged bool     `json:"merged"`
-						Labels []string `json:"labels"`
+						Number     int      `json:"number"`
+						Branch     string   `json:"branch"`
+						Merged     bool     `json:"merged"`
+						LandedWith int      `json:"landedWith"`
+						Labels     []string `json:"labels"`
 					} `json:"changes"`
 				} `json:"changes"`
 				AsLastRead *bool `json:"changesAsLastRead"`
@@ -224,8 +231,8 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 				t.Fatalf("environment result lacks known change and freshness: %s", text)
 			}
 			change := got.Changes[0].Changes[0]
-			if change.Number != 1 || change.Branch != "setup" || change.Merged != tt.merged || !reflect.DeepEqual(change.Labels, tt.labels) || *got.AsLastRead != tt.unread {
-				t.Errorf("change standing = %s, want merged=%v labels=%v asLastRead=%v", text, tt.merged, tt.labels, tt.unread)
+			if change.Number != 1 || change.Branch != "setup" || change.Merged != tt.merged || change.LandedWith != tt.landedWith || !reflect.DeepEqual(change.Labels, tt.labels) || *got.AsLastRead != tt.unread {
+				t.Errorf("change standing = %s, want merged=%v landedWith=%d labels=%v asLastRead=%v", text, tt.merged, tt.landedWith, tt.labels, tt.unread)
 			}
 			if environmentReads.Load() != 1 || selfReads.Load() != 1 {
 				t.Errorf("reads: environments=%d self=%d, want one each", environmentReads.Load(), selfReads.Load())

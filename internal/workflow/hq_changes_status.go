@@ -17,13 +17,28 @@ type HQRepoChanges struct {
 // HQChangeLine is one change: its number and branch, its standing (ready or
 // draft, behind main, conflicting; an old one's age), and the leases on its
 // branch, by alias. Merged is a change HQ merged since zcp last told it: its
-// leases hold merged work.
+// leases hold merged work. LandedWith is, on a change HQ closed because
+// another change's landing carried all of it to main, that change's number:
+// its work is on main as a merged one's is; 0 otherwise.
 type HQChangeLine struct {
-	Number int      `json:"number"`
-	Branch string   `json:"branch"`
-	Labels []string `json:"labels"`
-	Leases []string `json:"leases"`
-	Merged bool     `json:"merged"`
+	Number     int      `json:"number"`
+	Branch     string   `json:"branch"`
+	Labels     []string `json:"labels"`
+	Leases     []string `json:"leases"`
+	Merged     bool     `json:"merged"`
+	LandedWith int      `json:"landedWith,omitempty"`
+}
+
+// Landing is how the change's work reached main — "merged", or "landed with
+// #N" for one another change's landing carried; "" while it has not.
+func (c HQChangeLine) Landing() string {
+	switch {
+	case c.LandedWith > 0:
+		return fmt.Sprintf("landed with #%d", c.LandedWith)
+	case c.Merged:
+		return "merged"
+	}
+	return ""
 }
 
 // HQBranchLine is a branch leases hold with no change of the Mate's yet.
@@ -51,8 +66,8 @@ func renderHQChanges(b *strings.Builder, env StateEnvelope) {
 			if c.Branch == "" {
 				item = fmt.Sprintf("#%d", c.Number)
 			}
-			if c.Merged {
-				items = append(items, item+mergedWords(c.Leases))
+			if landing := c.Landing(); landing != "" {
+				items = append(items, item+landedWords(landing, c.Leases))
 				continue
 			}
 			if len(c.Labels) > 0 {
@@ -70,12 +85,13 @@ func renderHQChanges(b *strings.Builder, env StateEnvelope) {
 	}
 }
 
-// mergedWords is what a merged change's item says after its number and
-// branch: the leases still on its branch hold merged work, to release, and new
-// work starts from main.
-func mergedWords(leases []string) string {
+// landedWords is what the item of a change whose work is on main says after
+// its number and branch, by its landing (HQChangeLine.Landing): the leases
+// still on its branch hold work main has, to release, and new work starts
+// from main.
+func landedWords(landing string, leases []string) string {
 	if len(leases) == 0 {
-		return ": merged — start new work from main"
+		return ": " + landing + " — start new work from main"
 	}
-	return fmt.Sprintf(" — leases %s: merged — release them, or start new work from main", strings.Join(leases, ", "))
+	return fmt.Sprintf(" — leases %s: %s — release them, or start new work from main", strings.Join(leases, ", "), landing)
 }

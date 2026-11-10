@@ -265,11 +265,13 @@ func settlementUnprovenFor(leases []ops.LeaseTargetInfo, settled string) bool {
 // orchestrator would not release named with why), or not released — its
 // leases kept, with the unsaved work each holds, or why.
 func completionWords(change hq.MateChange, group leaseGroupOnHQ, released ops.LeaseChange, err error) string {
-	ended := "merged"
-	if change.State == hq.ChangeClosed {
-		ended = "closed without merging"
+	ended := "is merged"
+	if with := change.CarriedBy(); with > 0 {
+		ended = fmt.Sprintf("landed with #%d, all of its work on %q through that merge", with, hqBase)
+	} else if change.State == hq.ChangeClosed {
+		ended = "is closed without merging"
 	}
-	head := fmt.Sprintf("change #%d on %q is %s", change.Number, group.branch, ended)
+	head := fmt.Sprintf("change #%d on %q %s", change.Number, group.branch, ended)
 	aliases := make([]string, 0, len(group.leases))
 	for _, l := range group.leases {
 		aliases = append(aliases, l.Alias)

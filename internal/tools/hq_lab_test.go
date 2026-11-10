@@ -441,7 +441,7 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		key := fmt.Sprintf("%s#%d", c.Repo, c.Number)
 		// HQ stores a change's branch by its short name.
 		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead,
-			Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), Handed: f.handed[key]}
+			LandedWith: c.LandedWith, Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), Handed: f.handed[key]}
 		if !f.untitled {
 			change.Title = &c.Title
 		}
@@ -916,6 +916,17 @@ func (f *fakeHQ) closeChange(repo string, number int) {
 	defer f.mu.Unlock()
 	change := f.find(f.appID, repo, number, hq.ChangeOpen)
 	change.State, change.Head = hq.ChangeClosed, f.branchHead(f.t.Context(), change)
+	f.writeRefs()
+}
+
+// landWith is HQ closing the Mate's change number in appdev because change
+// with's landing on main carried every commit of it: closed at its head,
+// naming with, with no squash of its own.
+func (f *fakeHQ) landWith(number, with int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	change := f.find(f.appID, "appdev", number, hq.ChangeOpen)
+	change.State, change.Head, change.LandedWith = hq.ChangeClosed, f.branchHead(f.t.Context(), change), with
 	f.writeRefs()
 }
 
