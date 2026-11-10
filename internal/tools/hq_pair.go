@@ -109,10 +109,12 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, rt 
 //   - changes still open after the fresh read → name each once, per
 //     repository however many pairs share it, and tell the person to merge
 //     them;
-//   - a merge in HQ, recorded or not → the code is on main; point to Put it
-//     live;
-//   - no change at all, or one closed without merging → nothing of the
-//     Mate's work has reached main; it has to be pushed and merged first.
+//   - a merge in HQ, recorded or not — the Mate's own change merged, or
+//     landed with another whose merge carried it → the code is on main;
+//     point to Put it live;
+//   - no change at all, or one closed without merging, its work not on
+//     main → nothing of the Mate's work has reached main; it has to be
+//     pushed and merged first.
 //
 // A Mate that cannot reach HQ at all — no key or HQ origin in its container —
 // knows none of the three, and says so.
@@ -150,7 +152,7 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt
 			for _, change := range state.Changes {
 				switch {
 				case change.Repo != repo.Repo:
-				case change.State == hq.ChangeMerged:
+				case change.OnMain():
 					merged = true
 				case change.State == hq.ChangeOpen:
 					numbers = append(numbers, change.Number)

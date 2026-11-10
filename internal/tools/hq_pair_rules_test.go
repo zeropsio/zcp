@@ -175,6 +175,8 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "branch of your own"}},
 		{name: "a change closed without merging means push and merge first", settle: func(lab *hqLab) { lab.hq.close(1) },
 			want: []string{"branch of your own"}, wantNone: []string{"#1", "Tell the person: production is added and released"}},
+		{name: "a change that landed with another is on main, as a merged one", settle: func(lab *hqLab) { lab.hq.landWith(1, 2) },
+			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "branch of your own"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

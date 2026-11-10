@@ -95,6 +95,12 @@ type MateChange struct {
 	Head       *string `json:"head"`
 	MergedSha  *string `json:"mergedSha"`
 	LandedHead *string `json:"landedHead"`
+	// LandedWith is, on a change HQ closed because another change's landing
+	// on `main` carried every commit of it, that change's number in the same
+	// repository — any Mate's: all of this one's work is on `main` through
+	// that squash, with no MergedSha or LandedHead of its own. 0 on every
+	// other change, and from an HQ older than it.
+	LandedWith int `json:"landedWith,omitempty"`
 	// Branch is the branch the change is bound to, by its short name: one
 	// its Mate named, or `mate/<project id>/<number>` of the Mate that opened
 	// it. "" from an HQ older than branches in the Mate's state.
@@ -128,6 +134,22 @@ type MateChange struct {
 	// from an older HQ. zcp reports them without judging validity itself.
 	Problems         []Problem         `json:"problems,omitempty"`
 	RecipeValidation *RecipeValidation `json:"recipeValidation,omitempty"`
+}
+
+// CarriedBy is the number of the change whose landing put all of c's work on
+// `main` while c closed with no squash of its own (LandedWith); 0 for a
+// change merged itself, still open, or closed with its work not on `main`.
+func (c MateChange) CarriedBy() int {
+	if c.State != ChangeClosed {
+		return 0
+	}
+	return c.LandedWith
+}
+
+// OnMain reports whether all of c's work is on `main`: merged, or carried
+// there by another change's landing (CarriedBy).
+func (c MateChange) OnMain() bool {
+	return c.State == ChangeMerged || c.CarriedBy() > 0
 }
 
 // Problem is HQ's actionable finding, as given by the owning boundary.

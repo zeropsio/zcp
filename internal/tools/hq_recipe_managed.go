@@ -63,10 +63,11 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 
 // recipeDeclined reports whether a person declined the proposal titled
 // title: the Mate's latest change of that title in the recipe repository
-// was closed without merging, none of the Mate's changes there merged after
-// it (recipeClosedProposal), and no merge before it superseded it
-// (recipeSuperseded). A later merge — a tier added, another service carried
-// — changes main, and what the proposal would be is worth asking about
+// was closed without merging, none of the Mate's changes there reached main
+// after it (recipeClosedProposal), and no merge before it superseded it
+// (recipeSuperseded). A proposal that landed with another change is on main,
+// never declined. A later merge — a tier added, another service carried —
+// changes main, and what the proposal would be is worth asking about
 // again. scratch holds main of the recipe repository at main; the closed
 // change's branch is read into it only when a merge came before it.
 func recipeDeclined(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, main string, state hq.MateState, title string) bool {
@@ -79,8 +80,9 @@ func recipeDeclined(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, mai
 }
 
 // recipeClosedProposal is the Mate's latest change titled title in the
-// recipe repository when it was closed without merging and none of the
-// Mate's changes there merged after it; nil otherwise.
+// recipe repository when it was closed without merging, its work not on main
+// (hq.MateChange.OnMain), and none of the Mate's changes there reached main
+// after it, merged or landed with another; nil otherwise.
 func recipeClosedProposal(state hq.MateState, title string) *hq.MateChange {
 	var latest *hq.MateChange
 	for i := range state.Changes {
@@ -88,8 +90,8 @@ func recipeClosedProposal(state hq.MateState, title string) *hq.MateChange {
 			latest = c
 		}
 	}
-	if latest == nil || latest.State != hq.ChangeClosed || slices.ContainsFunc(state.Changes, func(c hq.MateChange) bool {
-		return c.Repo == hq.RecipeRepo && c.State == hq.ChangeMerged && c.Number > latest.Number
+	if latest == nil || latest.State != hq.ChangeClosed || latest.OnMain() || slices.ContainsFunc(state.Changes, func(c hq.MateChange) bool {
+		return c.Repo == hq.RecipeRepo && c.OnMain() && c.Number > latest.Number
 	}) {
 		return nil
 	}
@@ -98,7 +100,8 @@ func recipeClosedProposal(state hq.MateState, title string) *hq.MateChange {
 
 // recipeEarlierMerges are the Mate's changes in the recipe repository that
 // were opened before closed — HQ numbers a repository's changes as they open
-// — and merged, each naming the commit its landing left on main.
+// — and merged, each naming the commit its landing left on main: one that
+// landed with another change left none of its own, and is not among them.
 func recipeEarlierMerges(state hq.MateState, closed hq.MateChange) []hq.MateChange {
 	var merged []hq.MateChange
 	for _, c := range state.Changes {

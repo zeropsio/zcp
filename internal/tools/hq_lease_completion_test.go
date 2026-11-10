@@ -271,6 +271,8 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 	merged := hq.MateChange{Repo: "appdev", Number: 4, State: hq.ChangeMerged, Branch: "fix-login", UpdatedAt: "2026-10-26T10:00:00Z"}
 	closed := merged
 	closed.State = hq.ChangeClosed
+	landed := closed
+	landed.LandedWith = 5
 	open := merged
 	open.State, open.Number = hq.ChangeOpen, 6
 	tests := []struct {
@@ -284,6 +286,8 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{`repository "appdev"`, "change #4", `"fix-login"`, "merged", "hqpool-4", "boxpool-6", "released"}},
 		{name: "closed", changes: []hq.MateChange{closed},
 			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "closed", "hqpool-4", "boxpool-6", "released"}},
+		{name: "landed with another change", changes: []hq.MateChange{landed},
+			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "was merged as part of #5", `all of its work on "main"`, "hqpool-4", "boxpool-6", "released"}},
 		{name: "open", changes: []hq.MateChange{open}},
 		{name: "another open change uses the branch", changes: []hq.MateChange{open, merged}},
 		{name: "no change on the branch", changes: []hq.MateChange{{Repo: "appdev", Number: 2, State: hq.ChangeMerged, Branch: "unleased-work"}}},
