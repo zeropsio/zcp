@@ -2215,6 +2215,8 @@ ships before a zcp that sends it.
   checks it against the person's permission to release. Its note adds to read production's
   `status` before saying a service is there or proposing the release.
 - `zerops_propose_release {reason}` proposes `release.offer`: that the person release what waits.
+  The agent calls it only when the person asks to release or to put what is merged live; after a
+  merge it says the change is merged and waits for their release, and raises no card by itself.
   What waits is HQ's to say: the optional `releaseOffer: {head, suggestion}` of `GET /api/mate/self`
   (the project key; no observation), read by its shape. While HQ names none — nothing waits, or an
   HQ older than it — the tool answers "Nothing waits for release" and proposes nothing. `params` →

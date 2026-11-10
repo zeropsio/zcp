@@ -59,7 +59,7 @@ type AppProposeCreateServiceInput struct {
 // AppProposeReleaseInput is zerops_propose_release's input: what goes out is
 // HQ's to say, never the agent's.
 type AppProposeReleaseInput struct {
-	Reason string `json:"reason" jsonschema:"Why now, in one line, for the person deciding: what is merged and ready."`
+	Reason string `json:"reason" jsonschema:"Why now, in a few words, for the person deciding. Never a restatement of the changes: the card lists them."`
 }
 
 // appEnvRestartNote follows a variable's proposal: a running service keeps
@@ -131,7 +131,7 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_propose_release",
-		Description: "When what the person asked for is merged and ready, propose that they release it: a card in this conversation shows what goes out, and they release with their own access. Releases nothing, and says so when nothing waits. Once they release, read zerops_observe action=deployments for how it ended.",
+		Description: "Only when the person asks to release, or to put what is merged live: proposes it as a card showing what goes out; they release with their own access. Never by yourself after a merge: say the change is merged and waits for their release. Releases nothing, and says when nothing waits. Afterwards read zerops_observe action=deployments for the outcome.",
 		Annotations: orgPropose("Propose a release"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeReleaseInput) (*mcp.CallToolResult, any, error) {
 		offer, application, err := src.releaseOffer(ctx)
