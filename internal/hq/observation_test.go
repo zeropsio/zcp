@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func observeProfile(t *testing.T) string {
@@ -224,6 +225,37 @@ func TestObserveClient_Overload_RetryLaterWithoutRepeating(t *testing.T) {
 	var unavailable *UnavailableError
 	if !errors.As(err, &unavailable) || unavailable.Code != "too_many_requests" || calls.Load() != 1 {
 		t.Fatalf("overload must advise retry later after one attempt: error=%v calls=%d", err, calls.Load())
+	}
+}
+
+// An observation waits for HQ as long as its stated bound, whatever shorter
+// timeout the server's shared client carries; that client keeps its own
+// timeout for every other caller.
+// witness: internal/hq/observation.go | isolated.Timeout = 0 →
+func TestObserveClient_ShorterSharedClientTimeout_WaitsItsOwnBound(t *testing.T) {
+	// non-parallel: profile credential follows HOME.
+	path := observeProfile(t)
+	if err := os.WriteFile(path, []byte("zobs.org."+strings.Repeat("A", 43)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const sharedTimeout, hqAnswersAfter = 50 * time.Millisecond, 400 * time.Millisecond
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(hqAnswersAfter)
+		_, _ = w.Write([]byte(observeEnvelope("status", `"target"`, "services")))
+	}))
+	defer fake.Close()
+	shared := fake.Client()
+	shared.Timeout = sharedTimeout
+	client, err := OpenObservation(shared, Identity{Origin: fake.URL, ProjectID: "source", Key: "project-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Observe(context.Background(), ObservationRequest{Action: "status", ProjectID: "target"})
+	if err != nil || string(out) != observeEnvelope("status", `"target"`, "services") {
+		t.Fatalf("an answer inside the observation's bound must reach the reader: %v", err)
+	}
+	if shared.Timeout != sharedTimeout {
+		t.Fatalf("the shared client's own timeout changed to %v", shared.Timeout)
 	}
 }
 

@@ -57,7 +57,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 			return failure(fmt.Sprintf("HQ could not be addressed: %v", err)), nil, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, hq.ObserveBound)
 		defer cancel()
 		body, err := client.Observe(ctx, in)
 		if err != nil {
