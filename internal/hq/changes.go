@@ -168,7 +168,8 @@ func (c Client) BranchOf(number int, branch string) string {
 func (c Client) AttachmentURL(path string) string { return c.Address() + path }
 
 // The states of a change: open until it is merged into `main`, or closed
-// without merging.
+// without merging — by a person or its Mate, its work not on `main`, or by HQ
+// once another change's landing carried all of it there (LandedWith).
 const (
 	ChangeOpen   = "open"
 	ChangeMerged = "merged"
@@ -178,7 +179,7 @@ const (
 // Change is a change as HQ records it (hqChanges.ts HqChange). Head is the
 // commit its branch was last pushed to, nil until the first push lands; once
 // merged, MergedSha is the squash on `main` and LandedHead the head it
-// squashed.
+// squashed. LandedWith is as MateChange has it.
 type Change struct {
 	AppID         string `json:"appId"`
 	Repo          string `json:"repo"`
@@ -193,6 +194,7 @@ type Change struct {
 	Head         *string `json:"head"`
 	MergedSha    *string `json:"mergedSha"`
 	LandedHead   *string `json:"landedHead"`
+	LandedWith   int     `json:"landedWith,omitempty"`
 	OpenedAt     string  `json:"openedAt"`
 	MergedAt     *string `json:"mergedAt"`
 	ClosedAt     *string `json:"closedAt"`

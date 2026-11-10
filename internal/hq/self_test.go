@@ -222,6 +222,46 @@ func TestClient_Self_Changes_DecodeCorePush(t *testing.T) {
 	}
 }
 
+// A change HQ closed because another change's landing carried every commit
+// of it names that change as `landedWith`: its work is on `main` with no
+// squash of its own. Every other change — merged itself, closed with its work
+// not on `main`, open — and every change of an older HQ carries none, and the
+// field is read only on a closed change.
+// witness: internal/hq/self.go | return c.State == ChangeMerged || c.CarriedBy() > 0 → return c.State == ChangeMerged
+func TestClient_Self_Changes_DecodeLandedWith(t *testing.T) {
+	t.Parallel()
+	const head = "1111111111111111111111111111111111111111"
+	const state = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","openPerBranch":true,"changes":[` +
+		`{"repo":"appdev","number":38,"title":"Signup","state":"merged","head":"` + head + `","mergedSha":"` + head + `","landedHead":"` + head + `","branch":"signup"},` +
+		`{"repo":"appdev","number":37,"title":"Login","state":"closed","head":"` + head + `","mergedSha":null,"landedHead":null,"landedWith":38,"branch":"login"},` +
+		`{"repo":"appdev","number":36,"title":"Dropped","state":"closed","head":"` + head + `","mergedSha":null,"landedHead":null,"branch":"dropped"},` +
+		`{"repo":"appdev","number":35,"title":"Open","state":"open","head":"` + head + `","mergedSha":null,"landedHead":null,"landedWith":38,"branch":"open"}]}`
+	client, _ := answering(t, state)
+
+	got, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []struct {
+		carriedBy int
+		onMain    bool
+	}{{0, true}, {38, true}, {0, false}, {0, false}} {
+		if c := got.Changes[i]; c.CarriedBy() != want.carriedBy || c.OnMain() != want.onMain {
+			t.Errorf("#%d (%s): carried by #%d, on main %v; want #%d, %v", c.Number, c.State, c.CarriedBy(), c.OnMain(), want.carriedBy, want.onMain)
+		}
+	}
+
+	older, _ := answering(t, selfSample)
+	if got, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got.Changes {
+		if c.CarriedBy() != 0 || c.OnMain() != (c.State == ChangeMerged) {
+			t.Errorf("change #%d from an older HQ reads carried by #%d, on main %v", c.Number, c.CarriedBy(), c.OnMain())
+		}
+	}
+}
+
 // The Chief a Mate answers to rides on its state as the project it names,
 // which a Mate compares with its own; no Chief is null.
 func TestClient_IsChief_IsTheChiefNamingThisMatesProject(t *testing.T) {
