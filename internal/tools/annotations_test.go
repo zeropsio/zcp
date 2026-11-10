@@ -799,6 +799,10 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 			t.Errorf("%s description has %d words (max 60)", name, words)
 		}
 	}
+	// A release is proposed when the person asks for it, never announced after a merge.
+	if d := tools["zerops_propose_release"].Description; !strings.Contains(d, "Only when the person asks to release") || !strings.Contains(d, "Never by yourself after a merge") {
+		t.Errorf("zerops_propose_release does not keep its card to the person's ask:\n%s", d)
+	}
 	schema, err := json.Marshal(tools["zerops_propose_env"].InputSchema)
 	if err != nil {
 		t.Fatal(err)

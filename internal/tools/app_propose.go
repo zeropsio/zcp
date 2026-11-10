@@ -131,7 +131,7 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_propose_release",
-		Description: "When the person asks you to release, or to put what is merged live, propose it: a card in this conversation shows what goes out, and they release with their own access. Never call it on your own after a merge: say that the change is merged and waits for their release. Releases nothing, and says so when nothing waits. Once they release, read zerops_observe action=deployments for how it ended.",
+		Description: "Only when the person asks to release, or to put what is merged live: proposes it as a card showing what goes out; they release with their own access. Never by yourself after a merge: say the change is merged and waits for their release. Releases nothing, and says when nothing waits. Afterwards read zerops_observe action=deployments for the outcome.",
 		Annotations: orgPropose("Propose a release"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeReleaseInput) (*mcp.CallToolResult, any, error) {
 		offer, application, err := src.releaseOffer(ctx)
