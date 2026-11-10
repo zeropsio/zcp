@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -552,6 +554,7 @@ func VerifyAllWithMeta(
 	runtimeMetaFor RuntimeMetaResolver,
 	publicAccessFor PublicAccessResolver,
 ) (*VerifyAllResult, error) {
+	started := time.Now()
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -564,6 +567,9 @@ func VerifyAllWithMeta(
 			targets = append(targets, svc)
 		}
 	}
+	defer func() {
+		fmt.Fprintf(os.Stderr, "[zcp] verified services=%d elapsedMs=%d\n", len(targets), time.Since(started).Milliseconds())
+	}()
 
 	if len(targets) == 0 {
 		return &VerifyAllResult{
@@ -573,18 +579,14 @@ func VerifyAllWithMeta(
 		}, nil
 	}
 
-	// Run verifyService per service with bounded concurrency.
-	// Uses pre-fetched service data — no additional ListServices calls.
+	// Run verifyService per service using the pre-fetched service data.
 	results := make([]VerifyResult, len(targets))
-	sem := make(chan struct{}, 5) // max 5 concurrent
 	var wg sync.WaitGroup
 
 	for i := range targets {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
 
 			runtimeMeta := RuntimeMeta{}
 			if runtimeMetaFor != nil {

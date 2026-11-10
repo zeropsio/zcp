@@ -96,7 +96,7 @@ func TestAttachRollbackInfo_NeverDeployed_StaysNil(t *testing.T) {
 }
 
 // barrierAppVersionsClient holds platform reads until their entry receipts
-// prove the bounded first wave overlaps.
+// prove the service reads overlap.
 type barrierAppVersionsClient struct {
 	platform.Client
 	barrier *readBarrier
@@ -139,14 +139,11 @@ func TestAttachRollbackInfo_ManyServices_ReadsRunConcurrently(t *testing.T) {
 		defer close(done)
 		attachRollbackInfo(context.Background(), services, client, "proj-1")
 	}()
-	for range attachRollbackInfoConcurrency {
+	for range services {
 		<-barrier.entered
 	}
 	close(barrier.release)
 	<-done
-	if peak := barrier.peak.Load(); peak != attachRollbackInfoConcurrency {
-		t.Errorf("peak concurrent reads = %d, want %d", peak, attachRollbackInfoConcurrency)
-	}
 	for _, svc := range services {
 		if svc.Rollback == nil || svc.Rollback.Active == "" {
 			t.Errorf("service %s: Rollback = %+v, want Active set", svc.Hostname, svc.Rollback)

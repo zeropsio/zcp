@@ -2,18 +2,15 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
-
-// attachRollbackInfoConcurrency bounds how many per-service
-// ops.AppVersionCandidates platform reads attachRollbackInfo runs at
-// once, so a project with many runtime services doesn't serialize several
-// seconds of API latency onto every status call.
-const attachRollbackInfoConcurrency = 4
 
 // attachRollbackInfo populates services[i].Rollback for every app-runtime
 // service (docs/spec-workflows.md §8 R2 generalised / §12.6 GF-8) — the
@@ -24,16 +21,15 @@ const attachRollbackInfoConcurrency = 4
 // service) just leaves that hostname without a rollback block, mirroring
 // attachRepoStatus. No-op without a platform client or project.
 //
-// The per-service ops.AppVersionCandidates reads run concurrently,
-// bounded by attachRollbackInfoConcurrency, once the single hostname ->
-// serviceID lookup is done. The map write is the only critical section,
-// guarded by mu; this function returns only after every goroutine has
-// finished (wg.Wait), so ctx cancellation never leaves one running past
-// return.
+// The per-service ops.AppVersionCandidates reads run concurrently once the
+// single hostname -> serviceID lookup is done. The map write is guarded by mu;
+// this function returns only after every goroutine has finished (wg.Wait), so
+// ctx cancellation never leaves one running past return.
 func attachRollbackInfo(ctx context.Context, services []workflow.ServiceSnapshot, client platform.Client, projectID string) {
 	if client == nil || projectID == "" {
 		return
 	}
+	started := time.Now()
 	live, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return
@@ -46,7 +42,7 @@ func attachRollbackInfo(ctx context.Context, services []workflow.ServiceSnapshot
 	infos := make(map[string]workflow.RollbackInfo, len(services))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, attachRollbackInfoConcurrency)
+	count := 0
 	for _, svc := range services {
 		if !svc.RuntimeClass.IsAppRuntime() {
 			continue
@@ -55,11 +51,10 @@ func attachRollbackInfo(ctx context.Context, services []workflow.ServiceSnapshot
 		if !ok {
 			continue
 		}
+		count++
 		wg.Add(1)
 		go func(svc workflow.ServiceSnapshot, id string) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
 
 			candidates, candErr := ops.AppVersionCandidates(ctx, client, id)
 			if candErr != nil {
@@ -85,4 +80,5 @@ func attachRollbackInfo(ctx context.Context, services []workflow.ServiceSnapshot
 	}
 	wg.Wait()
 	workflow.ApplyRollbackInfo(services, infos)
+	fmt.Fprintf(os.Stderr, "[zcp] rollback read services=%d elapsedMs=%d\n", count, time.Since(started).Milliseconds())
 }
