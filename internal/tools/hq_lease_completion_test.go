@@ -287,7 +287,7 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 		{name: "closed", changes: []hq.MateChange{closed},
 			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "closed", "hqpool-4", "boxpool-6", "released"}},
 		{name: "landed with another change", changes: []hq.MateChange{landed},
-			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "landed with #5", `all of its work on "main"`, "hqpool-4", "boxpool-6", "released"}},
+			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "was merged as part of #5", `all of its work on "main"`, "hqpool-4", "boxpool-6", "released"}},
 		{name: "open", changes: []hq.MateChange{open}},
 		{name: "another open change uses the branch", changes: []hq.MateChange{open, merged}},
 		{name: "no change on the branch", changes: []hq.MateChange{{Repo: "appdev", Number: 2, State: hq.ChangeMerged, Branch: "unleased-work"}}},

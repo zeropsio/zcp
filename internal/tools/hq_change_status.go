@@ -353,7 +353,17 @@ func groupChangeWords(changes []workflow.HQChange, leases []hqLeaseBranch, state
 	if len(groupAliases(leases, g)) > 1 {
 		which = "these leases"
 	}
-	return fmt.Sprintf("change #%d %s — release %s (`%s`), or start new work from %s", landed.Number, landed.Landing(), which, ops.LeaseReleaseBranchCall(g.branch, "", false), hqBase)
+	return fmt.Sprintf("change #%d %s — release %s (`%s`), or start new work from %s", landed.Number, landedSaid(*landed), which, ops.LeaseReleaseBranchCall(g.branch, "", false), hqBase)
+}
+
+// landedSaid is what a sentence says became of a change whose work is on
+// main, after its number: "merged", or "was merged as part of #N" for one
+// another change's landing carried.
+func landedSaid(line workflow.HQChangeLine) string {
+	if line.LandedWith > 0 {
+		return "was " + line.Landing()
+	}
+	return line.Landing()
 }
 
 // groupChange is the change on group g's branch: words for the ledger's open
@@ -430,7 +440,7 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 	for _, g := range groups {
 		words, landed, _ := groupChange(changes, state, g)
 		if landed != nil {
-			words = fmt.Sprintf("change #%d %s", landed.Number, landed.Landing())
+			words = fmt.Sprintf("change #%d %s", landed.Number, landedSaid(*landed))
 			if held := groupAliases(leases, g); len(held) > 0 {
 				// Merged work either way: its own squash, or the other change's.
 				words += fmt.Sprintf(" — the branch's leases still held (%s) hold merged work: release them (`%s`), or start new work from %s",

@@ -239,7 +239,7 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 		// HQ closed it because #2's squash carried every commit of it: its
 		// work is on main, so it reads as a merged one does, never as closed
 		// with nothing on main, which has a Mate do the work again.
-		{name: "landed with another change", settle: func(f *fakeHQ) { f.landWith(1, 2) }, want: []string{"change #1 landed with #2",
+		{name: "landed with another change", settle: func(f *fakeHQ) { f.landWith(1, 2) }, want: []string{"change #1 was merged as part of #2", "#2 was built on it and merged first",
 			`all of its work is on "main" now`, "nothing to do again",
 			"bring it up to date in its dev service appdev (`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main`)"}},
 	} {

@@ -267,7 +267,7 @@ func settlementUnprovenFor(leases []ops.LeaseTargetInfo, settled string) bool {
 func completionWords(change hq.MateChange, group leaseGroupOnHQ, released ops.LeaseChange, err error) string {
 	ended := "is merged"
 	if with := change.CarriedBy(); with > 0 {
-		ended = fmt.Sprintf("landed with #%d, all of its work on %q through that merge", with, hqBase)
+		ended = fmt.Sprintf("was merged as part of #%d, all of its work on %q through that merge", with, hqBase)
 	} else if change.State == hq.ChangeClosed {
 		ended = "is closed without merging"
 	}

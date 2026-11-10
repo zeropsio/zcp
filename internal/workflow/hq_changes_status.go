@@ -29,12 +29,13 @@ type HQChangeLine struct {
 	LandedWith int      `json:"landedWith,omitempty"`
 }
 
-// Landing is how the change's work reached main — "merged", or "landed with
-// #N" for one another change's landing carried; "" while it has not.
+// Landing is how the change's work reached main, in the words a person reads
+// — "merged", or "merged as part of #N" for one another change's landing
+// carried; "" while it has not.
 func (c HQChangeLine) Landing() string {
 	switch {
 	case c.LandedWith > 0:
-		return fmt.Sprintf("landed with #%d", c.LandedWith)
+		return fmt.Sprintf("merged as part of #%d", c.LandedWith)
 	case c.Merged:
 		return "merged"
 	}

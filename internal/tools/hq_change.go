@@ -244,7 +244,7 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
 	case changeLandedWith:
 		with := s.CarriedBy()
-		return fmt.Sprintf("change #%d landed with #%d — #%d's merge carried every commit of it, so HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
+		return fmt.Sprintf("change #%d was merged as part of #%d — #%d was built on it and merged first, so its merge carried every commit of this one and HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
 			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
 			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
 	case changeUnlisted:
