@@ -40,7 +40,7 @@ func installMateFuse() error {
 	units := map[string]string{
 		mateFuseName + ".service": "[Unit]\nDescription=zcp: update a Mate cut off from HQ for an hour\n\n" +
 			"[Service]\nType=oneshot\nUser=" + me.Uid + "\nEnvironment=HOME=" + runtime.HomeDir() + "\n" +
-			"ExecStart=" + bin + " mate fuse\nTimeoutStartSec=15min\n",
+			"ExecStart=" + bin + " mate fuse\nTimeoutStartSec=20min\n",
 		mateFuseName + ".timer": "[Unit]\nDescription=zcp: Mate cut-off fuse\n\n" +
 			"[Timer]\nOnBootSec=10min\nOnUnitInactiveSec=5min\nRandomizedDelaySec=2min\n\n" +
 			"[Install]\nWantedBy=timers.target\n",

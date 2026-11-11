@@ -834,7 +834,8 @@ is unknown and not acted on), then takes the first that applies:
    for an attended update (a Mate that does not answer is not waited for), the fuse records the
    release (`zcpRestartedFor`), and `zcp self restart` asks the platform for the container restart
    that is a boot: install.sh installs the newest zcp, `zcp init` the newest Mate (§2.9 step 7).
-   A refused restart forgets the record and cancels the drain. zcp replaces itself only this way:
+   A refused restart forgets the record and cancels the drain; an accepted one that does not end the
+   process within 5 minutes (the Mate server's own grace) cancels the drain and keeps the record. zcp replaces itself only this way:
    its own processes, the Mate's environment and the timer are written by init at boot.
 4. Nothing newer: nothing. No drain, no restart, no request to the Mate.
 

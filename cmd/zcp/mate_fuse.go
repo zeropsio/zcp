@@ -26,6 +26,12 @@ import (
 // mateFuseCutoff is how long the Mate goes without an HQ link before the fuse acts.
 const mateFuseCutoff = time.Hour
 
+// mateFuseRestartGrace is how long the fuse waits, after the platform accepted
+// the container restart, for the restart to end this process. It equals the
+// Mate server's own grace for the same restart (MATE_RESTART_GRACE, 5 minutes);
+// the unit's TimeoutStartSec must exceed it.
+var mateFuseRestartGrace = 5 * time.Minute
+
 // mateFuseRecord is the fuse's own memory: when it last saw the link up, and the
 // zcp release it already restarted the container for (one attempt per release).
 type mateFuseRecord struct {
@@ -110,7 +116,15 @@ func restartForZCP(rec mateFuseRecord, status mateStatusResult, lookup func(stri
 			_ = writeMateFuseRecord(rec)
 		}
 	}
-	if code != 0 && drained {
+	if code == 0 {
+		// An accepted request is not a restart that happened: the container's
+		// restart kills this process within the grace; still alive after it, the
+		// restart never came and the drain is cancelled so the Mate admits work
+		// again. The record keeps the release: one attempt per release.
+		time.Sleep(mateFuseRestartGrace)
+		fmt.Fprintf(os.Stderr, "mate fuse: the container did not restart within %s\n", mateFuseRestartGrace)
+	}
+	if drained {
 		_ = mate.PostUpdate("cancel")
 	}
 	return code
