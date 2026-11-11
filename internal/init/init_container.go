@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/zeropsio/zcp/internal/init/adapters"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // commandRunner + vsCodeWorkDir are package-level for test affordances
@@ -67,7 +68,16 @@ func registeredAdapters() []adapters.Adapter {
 // GLC-4 invariant preserved: this function performs NO git setup.
 // Container Claude install is pure file writes; git initialization for
 // mounted dev services is ops.InitServiceGit's job at bootstrap time.
-func runContainerAdapters(env adapters.Env) {
+func runContainerAdapters(baseDir string, rt runtime.Info) error {
+	env := adapters.Env{
+		BaseDir:       baseDir,
+		Home:          runtime.HomeDir(),
+		RT:            rt,
+		VSCodeWorkDir: vsCodeWorkDir,
+		CommandRunner: commandRunner,
+		CommandOutput: commandOutput,
+		LookPath:      adapters.DefaultLookPath,
+	}
 	for _, a := range registeredAdapters() {
 		if !a.Detect(env) {
 			fmt.Fprintf(os.Stderr, "  → %s: not detected, skip\n", a.Name())
@@ -86,4 +96,5 @@ func runContainerAdapters(env adapters.Env) {
 			fmt.Fprintf(os.Stderr, "  ! %s config failed: %v (skip — re-run `zcp init` once the path resolves)\n", a.Name(), err)
 		}
 	}
+	return nil
 }

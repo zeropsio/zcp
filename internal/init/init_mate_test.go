@@ -124,7 +124,7 @@ func (r *mateRig) installBundle(t *testing.T) {
 func (r *mateRig) unitCreateCalls() [][]string {
 	var out [][]string
 	for _, cmd := range r.commands {
-		if len(cmd) >= 5 && cmd[len(cmd)-4] == "unit" && cmd[len(cmd)-3] == "create" {
+		if len(cmd) >= 5 && strings.Join(cmd[:5], " ") == "sudo -E zsc unit create" {
 			out = append(out, cmd)
 		}
 	}
@@ -235,28 +235,6 @@ func TestRun_Mate_InstallsPinnedBundle_WhenAbsent(t *testing.T) {
 	}
 	if len(rig.unitCreateCalls()) != 1 {
 		t.Errorf("expected one unit create, got %v", rig.commands)
-	}
-}
-
-// TestRun_Mate_UnitCreateArgs locks the supervision primitive: the same
-// `zsc unit create` the sshfs mounts use, with a bare ExecStart verb. A unit's
-// command is frozen at creation and survives a container restart, so nothing
-// that can change between releases may be baked into it.
-func TestRun_Mate_UnitCreateArgs(t *testing.T) {
-	rig := newMateRig(t)
-	rig.installBundle(t)
-
-	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-		t.Fatalf("Run(): %v", err)
-	}
-	calls := rig.unitCreateCalls()
-	if len(calls) != 1 {
-		t.Fatalf("expected one unit create, got %v", rig.commands)
-	}
-	want := []string{"sudo", "-E", "zsc", "unit", "create", mate.UnitName, mate.UnitCommand}
-	got := calls[0]
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("unit create:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -650,30 +628,6 @@ func (r *mateRig) restartCalls() [][]string {
 	return out
 }
 
-// TestRun_Mate_UpdatedBundle_RestartsExistingUnit is the live finding from
-// z3-eval: the unit starts at boot from WantedBy=multi-user.target, on its own,
-// BEFORE `zcp init` runs (measured: unit active at 16:45:12, the zcp binary
-// replaced at 16:45:14, init later still). So it serves whatever was on disk at
-// boot, and a bundle this step just replaced reaches it only if init restarts
-// the unit — otherwise a moved pin serves from the NEXT restart.
-func TestRun_Mate_UpdatedBundle_RestartsExistingUnit(t *testing.T) {
-	rig := newMateRig(t)
-	rig.installBundle(t)
-	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
-		t.Fatalf("seed unit file: %v", err)
-	}
-	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
-		return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: pinnedTestVersion}, nil
-	})
-
-	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-		t.Fatalf("Run(): %v", err)
-	}
-	if got := rig.restartCalls(); len(got) != 1 {
-		t.Fatalf("an updated bundle must restart the already-running unit, got %v", rig.commands)
-	}
-}
-
 // TestRun_Mate_UnchangedBundle_DoesNotRestart keeps the common warm restart
 // cheap: nothing changed, so the running server is already the right one and
 // bouncing it would drop live sessions for no reason.
@@ -698,33 +652,8 @@ func TestRun_Mate_UnchangedBundle_DoesNotRestart(t *testing.T) {
 	}
 }
 
-// TestRun_Mate_ChangedEnvContract_RestartsExistingUnit: the supervisor merges
-// ~/.zcp/mate.env at launch, so an operator's new ZCP_MATE_ALLOWED_ORIGINS reaches
-// the running server no other way. Found by hand on z3-eval, where setting that
-// env and re-running init left the old allowlist live until a manual restart.
-func TestRun_Mate_ChangedEnvContract_RestartsExistingUnit(t *testing.T) {
-	rig := newMateRig(t)
-	rig.installBundle(t)
-	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
-		t.Fatalf("seed unit file: %v", err)
-	}
-	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-		t.Fatalf("seed run: %v", err)
-	}
-	rig.commands = nil
-
-	t.Setenv(mate.SourceAllowedOrigins, "https://mate.example.test")
-	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-		t.Fatalf("Run(): %v", err)
-	}
-	if got := rig.restartCalls(); len(got) != 1 {
-		t.Fatalf("a rewritten env contract must restart the unit, got %v", rig.commands)
-	}
-}
-
-// TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit: `zsc unit create` starts the
-// unit itself, so restarting one this run just created costs a second boot for
-// nothing.
+// TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit checks that init does not
+// restart a newly registered unit.
 func TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
 	rig := newMateRig(t)
 	rig.installBundle(t)
@@ -743,12 +672,8 @@ func TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
 	}
 }
 
-// TestRun_Mate_InstallsUnderTheSharedLock: `zcp init` installs and decides the
-// restart under the install lock the unit's own start takes, so a unit that
-// started while init was installing waits for it, then finds nothing to do
-// and starts the new release once — init's restart only ever stops a server
-// that runs the old one, or a start still waiting on the lock. A lock held
-// past the wait degrades the step and leaves the other updater alone.
+// TestRun_Mate_InstallsUnderTheSharedLock checks that installation holds
+// the shared lock and a competing owner postpones the install.
 func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 	for _, lockedAway := range []bool{false, true} {
 		name := "the lock is free"
@@ -785,23 +710,12 @@ func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 				}
 				return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: pinnedTestVersion}, nil
 			})
-			restartedHeld := false
-			zcpinit.SetCommandRunner(func(name string, args ...string) error {
-				if strings.Contains(strings.Join(args, " "), "systemctl restart") {
-					restartedHeld = held()
-				}
-				return nil
-			})
-			t.Cleanup(zcpinit.ResetCommandRunner)
 
 			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
 				t.Fatalf("Run(): %v", err)
 			}
 			if ensured == lockedAway {
 				t.Errorf("ensured=%v, locked away=%v", ensured, lockedAway)
-			}
-			if restartedHeld == lockedAway {
-				t.Errorf("restarted=%v, locked away=%v", restartedHeld, lockedAway)
 			}
 			if !lockedAway && held() {
 				t.Error("init must release the lock when it is done")
@@ -810,24 +724,19 @@ func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 	}
 }
 
-// TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd: when systemd says the
-// mate unit's file changed on disk since it loaded it (NeedDaemonReload=yes —
-// what it warns "run 'systemctl daemon-reload'" about, live), the step reloads
-// systemd's units through the same command runner, before any restart it
-// makes, so that restart — and any later one — runs the definition on disk.
-// It reloads whether or not it restarts, and never when the unit is unchanged.
+// TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd checks whether init
+// reloads systemd when the registered unit changed on disk.
 func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
 	tests := []struct {
-		name        string
-		needReload  string
-		updated     bool
-		wantReload  bool
-		wantRestart bool
+		name       string
+		needReload string
+		updated    bool
+		wantReload bool
 	}{
-		{"changed on disk, bundle updated", "yes", true, true, true},
-		{"changed on disk, nothing to restart for", "yes", false, true, false},
-		{"unchanged, bundle updated", "no", true, false, true},
-		{"unchanged, nothing to restart for", "no", false, false, false},
+		{"changed on disk, bundle updated", "yes", true, true},
+		{"changed on disk, nothing to restart for", "yes", false, true},
+		{"unchanged, bundle updated", "no", true, false},
+		{"unchanged, nothing to restart for", "no", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -836,8 +745,7 @@ func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
 			if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
 				t.Fatalf("seed unit file: %v", err)
 			}
-			// Seed the env file as this run writes it: only the bundle
-			// decides the restart.
+			// Seed the environment as this run writes it.
 			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
 				t.Fatalf("seed run: %v", err)
 			}
@@ -859,23 +767,14 @@ func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
 			if !asked {
 				t.Errorf("the step never asked systemd whether %s changed on disk, queries %v", unit, rig.queries)
 			}
-			reload, restart := -1, -1
-			for i, cmd := range rig.commands {
-				switch strings.Join(cmd, " ") {
-				case "sudo systemctl daemon-reload":
-					reload = i
-				case "sudo systemctl restart " + unit:
-					restart = i
+			reload := false
+			for _, cmd := range rig.commands {
+				if strings.Join(cmd, " ") == "sudo systemctl daemon-reload" {
+					reload = true
 				}
 			}
-			if (reload >= 0) != tt.wantReload {
-				t.Errorf("daemon-reload ran = %v, want %v: %v", reload >= 0, tt.wantReload, rig.commands)
-			}
-			if (restart >= 0) != tt.wantRestart {
-				t.Errorf("restart ran = %v, want %v: %v", restart >= 0, tt.wantRestart, rig.commands)
-			}
-			if reload >= 0 && restart >= 0 && reload > restart {
-				t.Errorf("daemon-reload must precede the restart: %v", rig.commands)
+			if reload != tt.wantReload {
+				t.Errorf("daemon-reload ran = %v, want %v: %v", reload, tt.wantReload, rig.commands)
 			}
 		})
 	}

@@ -118,13 +118,37 @@ func disableMate() error {
 // hand-pushed dev build at or above MinimumMateVersion is kept unless forced.
 // See mate.EnsureInstalled for the pass in detail.
 //
-// When the bundle cannot be had, no unit is registered either — a unit whose
-// ExecStart cannot resolve crash-loops at every boot and buries the real cause
-// under a restart counter.
-func enableMate(rt runtime.Info) error {
-	// The mate server treats a non-empty project id as THE signal that it runs
-	// inside a Zerops project. Without one there is nothing to bind to, and
-	// starting anyway would leave a plain upstream server on the origin.
+// When no bundle is available, a first init does not register a unit whose
+// ExecStart cannot resolve and would crash-loop when started.
+func enableMate(rt runtime.Info) (retErr error) {
+	commitLastGood := false
+	// Always request a start of a usable installed bundle, even if this init
+	// step fails. The install lock is released first by the later defer; the
+	// unit's own start also needs that lock. Starting an active unit is a no-op.
+	defer func() {
+		installed, err := mate.InstalledVersion()
+		if err != nil || mate.BelowFloor(installed) {
+			return
+		}
+		unit := "zerops@" + mate.UnitName + ".service"
+		fmt.Fprintf(os.Stderr, "    → ensuring %s is running\n", unit)
+		if err := commandRunner("sudo", "systemctl", "start", "--no-block", unit); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("start %s: %w", unit, err))
+			return
+		}
+		if commitLastGood {
+			commitBootLastGood()
+		}
+	}()
+	unitExisted := mateUnitFileExists()
+	if unitExisted {
+		// Existing units may still have a boot-start link from an older init.
+		if err := ensureMateUnit(); err != nil {
+			return fmt.Errorf("prepare Mate unit: %w", err)
+		}
+	}
+	// This init cannot write a valid identity contract without a project ID.
+	// The deferred start still tries a previously registered usable bundle.
 	if rt.ProjectID == "" {
 		return errors.New("no projectId in the container environment — mate has no Zerops project to bind to")
 	}
@@ -135,6 +159,19 @@ func enableMate(rt runtime.Info) error {
 		return fmt.Errorf("mate install postponed: %w", lockErr)
 	}
 	defer release()
+	if !unitExisted {
+		// Disabling Mate removes the unit but keeps its bundle. Register that
+		// usable bundle first so an update failure can still start it.
+		if installed, err := mate.InstalledVersion(); err == nil && !mate.BelowFloor(installed) {
+			if _, err := writeMateEnv(rt); err != nil {
+				return fmt.Errorf("write Mate environment: %w", err)
+			}
+			if err := ensureMateUnit(); err != nil {
+				return fmt.Errorf("register installed Mate: %w", err)
+			}
+			unitExisted = true
+		}
+	}
 	// An unfinished updater switch owns startup and readiness. Use the same
 	// recovery authority as the installer before changing its environment.
 	if skip, err := mate.PrepareUpdateBoot(); err != nil {
@@ -143,7 +180,6 @@ func enableMate(rt runtime.Info) error {
 		return nil
 	}
 
-	unitExisted := mateUnitFileExists()
 	running, err := runningMate(unitExisted)
 	if err != nil {
 		return fmt.Errorf("determine Mate activity: %w", err)
@@ -188,8 +224,10 @@ func enableMate(rt runtime.Info) error {
 			return err
 		}
 	}
-	if err := ensureMateUnit(); err != nil {
-		return err
+	if !unitExisted {
+		if err := ensureMateUnit(); err != nil {
+			return fmt.Errorf("register Mate unit: %w", err)
+		}
 	}
 	if !running {
 		reloadMateUnitIfChanged()
@@ -201,26 +239,12 @@ func enableMate(rt runtime.Info) error {
 				return fmt.Errorf("switch Mate environment: %w", err)
 			}
 		} else if !bundleChanged(result) {
-			release()
-			commitBootLastGood()
+			commitLastGood = true
 		}
 		return nil
 	}
 
-	// A registered inactive unit still starts immediately with the installed
-	// bundle and environment. A newly created unit was started by zsc already.
-	if unitExisted && (bundleChanged(result) || envChanged) {
-		fmt.Fprintf(os.Stderr, "    → restarting zerops@%s to pick up the change\n", mate.UnitName)
-		if err := commandRunner("sudo", "systemctl", "restart", "zerops@"+mate.UnitName+".service"); err != nil {
-			// Best-effort: the new bytes are on disk and the next restart
-			// serves them. Naming it beats failing a container start.
-			fmt.Fprintf(os.Stderr, "    ! restart zerops@%s failed (the change serves from the next restart): %v\n", mate.UnitName, err)
-		}
-	}
-
-	// The unit's own start takes the install lock, so the readiness wait runs without it.
-	release()
-	commitBootLastGood()
+	commitLastGood = true
 	return nil
 }
 
@@ -403,18 +427,22 @@ func reloadMateUnitIfChanged() {
 	}
 }
 
-// ensureMateUnit registers the supervised unit when it is not there yet.
+// ensureMateUnit registers the supervised unit when absent and disables its
+// boot start on every enabled init.
 //
 // `zsc unit` has only create and remove — no idempotent upsert — and a unit
 // created this way survives a container restart, while `zcp init` runs on
 // every boot. So the unit file's presence is the check.
 func ensureMateUnit() error {
-	if mateUnitFileExists() {
-		return nil
+	if !mateUnitFileExists() {
+		fmt.Fprintf(os.Stderr, "    → registering unit zerops@%s\n", mate.UnitName)
+		if err := commandRunner("sudo", "-E", "zsc", "unit", "create", "--enable=false", "--start=false", mate.UnitName, mate.UnitCommand); err != nil {
+			return fmt.Errorf("zsc unit create %s: %w", mate.UnitName, err)
+		}
 	}
-	fmt.Fprintf(os.Stderr, "    → registering unit zerops@%s\n", mate.UnitName)
-	if err := commandRunner("sudo", "-E", "zsc", "unit", "create", mate.UnitName, mate.UnitCommand); err != nil {
-		return fmt.Errorf("zsc unit create %s: %w", mate.UnitName, err)
+	unit := "zerops@" + mate.UnitName + ".service"
+	if err := commandRunner("sudo", "systemctl", "disable", unit); err != nil {
+		return fmt.Errorf("disable boot start for %s: %w", unit, err)
 	}
 	return nil
 }

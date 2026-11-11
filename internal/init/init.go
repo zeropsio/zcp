@@ -102,21 +102,18 @@ func Run(baseDir string, rt runtime.Info, opts ...Option) error {
 		// orchestrator vouches for its container (docs/spec-workflows.md §8
 		// DP-2).
 		steps = append(steps, step{"Dev-pool leases", o.restoreLeaseStep, "leased pool containers stay without their ssh alias and mount; zerops_lease action=status reports them unmounted"})
-		// The mate step is registered only when there is something to
-		// reconcile: the flag asks for it enabled, OR a previous `zcp init`
-		// left a unit registered that a now-off flag must remove. A
-		// container that never had mate (flag off, no unit ever created) must
-		// print no step line at all — that is the whole point of the gate,
-		// so it is skipped here rather than registered and returned from
-		// early.
-		if rt.MateEnabled || mateUnitFileExists() {
-			steps = append(steps, step{"Zerops Mate (mate)", reconcileMate, "this container stays as it is rather than reaching the state ZCP_MATE_ENABLED asks for — either nothing answers under " + mate.BasePath + "/, or a unit that should be gone is still registered"})
-		}
+		steps = append(steps, step{"Agent adapters", runContainerAdapters, "agent configuration remains incomplete"})
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
 		// Required: it is the local deliverable, and a local init is not a
 		// run.init command, so failing loudly costs no container start.
 		steps = append(steps, step{"MCP config", generateMCPConfig, ""})
+	}
+	// The Mate step runs last, after container adapters, so its start sees
+	// every preceding init step. Register it only when there is a Mate to
+	// enable or an existing unit to remove under a now-off flag.
+	if rt.InContainer && (rt.MateEnabled || mateUnitFileExists()) {
+		steps = append(steps, step{"Zerops Mate (mate)", reconcileMate, "this container stays as it is rather than reaching the state ZCP_MATE_ENABLED asks for — either nothing answers under " + mate.BasePath + "/, or a unit that should be gone is still registered"})
 	}
 
 	for _, s := range steps {
@@ -131,22 +128,7 @@ func Run(baseDir string, rt runtime.Info, opts ...Option) error {
 		fmt.Fprintf(os.Stderr, "  ! %s: %v\n    (continuing — %s)\n", s.name, err, s.degraded)
 	}
 
-	// Container-only: dispatch each per-agent adapter (Detect → Validate
-	// → ContainerInit). Claude is always-on (backward compat); every other
-	// adapter (Codex, Gemini, Antigravity, Cursor, Grok) is Detect-gated on
-	// its binary's presence. The full set lives in registeredAdapters().
 	if rt.InContainer {
-		env := adapters.Env{
-			BaseDir:       baseDir,
-			Home:          runtime.HomeDir(),
-			RT:            rt,
-			VSCodeWorkDir: vsCodeWorkDir,
-			CommandRunner: commandRunner,
-			CommandOutput: commandOutput,
-			LookPath:      adapters.DefaultLookPath,
-		}
-		runContainerAdapters(env)
-
 		// Records that this run reached the end of its step list — not that
 		// every step succeeded. nginx serves the file's body verbatim at
 		// {BasePath}/healthz, which is how a client tells "still initializing" from
