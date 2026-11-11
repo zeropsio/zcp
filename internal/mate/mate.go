@@ -638,6 +638,13 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		return Result{Action: ActionNone, From: installed, To: installed, Warning: fmt.Sprintf("keeping installed %s; the release manifest names the older %s, and an install never moves the Mate back", installed, desired.Version)}, nil
 	}
 
+	// The version that has been running is committed while its directory exists:
+	// the prune below keeps last-good, so a failed new version returns to it.
+	if instErr == nil {
+		if err := settleLegacyCopyOf(installed); err != nil {
+			return Result{}, fmt.Errorf("settle the old state copy of %s: %w", installed, err)
+		}
+	}
 	if err := StageRelease(desired); err != nil {
 		return Result{}, err
 	}

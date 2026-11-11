@@ -67,10 +67,8 @@ func PrepareStateForLaunch(progress func()) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("state before launch: %w", err)
 	}
-	lastGood, err := LastGoodVersion()
-	if errors.Is(err, fs.ErrNotExist) {
-		lastGood = ""
-	} else if err != nil {
+	lastGood, err := lastGoodOrNone()
+	if err != nil {
 		return "", fmt.Errorf("state before launch: %w", err)
 	}
 	if lastGood, err = settleLegacyCopy(BaseDir(), launching, lastGood); err != nil {
@@ -79,8 +77,32 @@ func PrepareStateForLaunch(progress func()) (string, error) {
 	return prepareState(BaseDir(), launching, lastGood, progress)
 }
 
+// lastGoodOrNone is last-good's version, empty when none is named.
+func lastGoodOrNone() (string, error) {
+	lastGood, err := LastGoodVersion()
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return lastGood, err
+}
+
+// settleLegacyCopyOf settles the old-named copy for the installed version
+// before an install replaces it: EnsureInstalled calls it ahead of staging, so
+// the version that has been running is committed while its directory still
+// exists. The install's prune then keeps it as last-good and a failed new
+// version returns to it, on the state it ran with.
+func settleLegacyCopyOf(installed string) error {
+	lastGood, err := lastGoodOrNone()
+	if err != nil {
+		return err
+	}
+	_, err = settleLegacyCopy(BaseDir(), installed, lastGood)
+	return err
+}
+
 // settleLegacyCopy is transition code for copies written under the old name
-// (`.pre-`); delete it once no Mate runs zcp <= v9.251.1. That zcp left a copy
+// (`.pre-`), run by PrepareStateForLaunch and by EnsureInstalled before an
+// install replaces the installed version; delete it once no Mate runs zcp <= v9.251.1. That zcp left a copy
 // of the version it started, never settled, so the version may have admitted
 // work since: such a copy (tagged with the version about to launch, which
 // last-good does not name) is never restored and never adopted by a claim; the

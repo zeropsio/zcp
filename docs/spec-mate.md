@@ -764,7 +764,11 @@ Transition (delete once no Mate runs zcp <= v9.251.1): that zcp named its copies
 left the copy of a version it started unsettled, so a `.pre-` copy tagged with the version about to
 launch, which `last-good` does not name, belongs to a version that has run unowned and may have
 admitted work since; it is never restored and never claimed: that version becomes `last-good` and
-the copy is removed. Any other `.pre-` copy is renamed to `.before-` and decided as above.
+the copy is removed. Any other `.pre-` copy is renamed to `.before-` and decided as above. This
+runs at two call sites: the start command, and `EnsureInstalled` before it stages a release over the
+installed version, so the installed version is made `last-good` while its directory exists and the
+install's prune keeps it. The update worker already names the installed version `last-good` before
+it activates a candidate.
 
 A failed set may be deleted, and is, by the next restore of its item (one kept, for diagnosis),
 because it never holds work a person did: a restore sets aside only the state of a version that
