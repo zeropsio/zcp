@@ -59,6 +59,25 @@ func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin,
 	return workflow.HQOrigin{}, false
 }
 
+// attachHQStateOrigins projects the current status from the last heard state.
+func attachHQStateOrigins(services []workflow.ServiceSnapshot, stateDir string, state *hq.MateState) {
+	for i := range services {
+		if services[i].HQRepo == "" {
+			continue
+		}
+		services[i].HQOrigin = nil
+		if state == nil {
+			continue
+		}
+		m, err := workflow.FindServiceMeta(stateDir, services[i].Hostname)
+		if err == nil && hqPairWired(m) {
+			if origin, ok := hqOriginIn(*state, m.HQ); ok {
+				services[i].HQOrigin = &origin
+			}
+		}
+	}
+}
+
 // hqPairOrigin points a wired pair's checkout's origin where its record says
 // the code is kept — the one writer of it once the pair is wired: on GitHub,
 // the GitHub repository, git asking only zcp for it (hq.GitHubHelperConfig);
@@ -152,6 +171,7 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 		if err != nil || !hqPairWired(m) || m.Hostname != services[i].Hostname || m.DevIsPool() {
 			continue
 		}
+		m.HQ.Origin = services[i].HQOrigin
 		wg.Add(1)
 		go func(i int, m *workflow.ServiceMeta) {
 			defer wg.Done()
@@ -204,41 +224,4 @@ func hqKeptOnGitHub(stateDir string) []string {
 			m.Hostname, m.HQ.Origin.URL, originOnGitHub(m.Hostname)))
 	}
 	return lines
-}
-
-// hqStatusOriginBound bounds status's one read of how a wired pair's code is
-// kept: status must answer promptly whether HQ does or not.
-const hqStatusOriginBound = 5 * time.Second
-
-// recordMissingHQOrigins asks HQ, once and bounded, how the code of each
-// wired pair with no record of it is kept — a pair wired before zcp recorded
-// it — and records it, so status names it. HQ not answering leaves the
-// record absent, which status names unknown.
-func recordMissingHQOrigins(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) {
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil {
-		return
-	}
-	var missing []*workflow.ServiceMeta
-	for _, m := range metas {
-		if hqPairWired(m) && m.HQ.Origin == nil {
-			missing = append(missing, m)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-	hqc, linked := openHQ(httpClient, rt)
-	if !linked {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, hqStatusOriginBound)
-	defer cancel()
-	state, err := hqc.Once().Self(ctx)
-	if err != nil {
-		return
-	}
-	for _, m := range missing {
-		recordHQOrigin(stateDir, m, state)
-	}
 }

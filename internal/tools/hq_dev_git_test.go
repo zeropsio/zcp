@@ -154,14 +154,14 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 		lab.ssh.mu.Unlock()
 		d, ok := lab.devGitDeps(ctx)
 		if len(sessions) == 1 {
-			if err := os.Remove(filepath.Join(filepath.Dir(lab.rt.HQ.ChangesPath), "state.json")); err != nil {
+			if err := os.Remove(filepath.Join(filepath.Dir(lab.rt.HQ.StatePath), "state.json")); err != nil {
 				t.Fatal(err)
 			}
 		}
 		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, started, ticks, nil, nil, func(string) {})
+	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
 
 	if sessions[2] != sessions[1] {
 		t.Errorf("a look within the wait reached the dev service %d time(s)", sessions[2]-sessions[1])
@@ -274,7 +274,7 @@ func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
 	transport.DisableKeepAlives = true
 	client.Transport = transport
 	synctest.Test(t, func(t *testing.T) {
-		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, nil, func(string) {})
+		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
 	})
 
 	if len(ssh.within) == 0 {

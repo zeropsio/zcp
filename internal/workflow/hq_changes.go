@@ -57,6 +57,8 @@ type HQChange struct {
 	AppID  string `json:"appId"`
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
+	// StateRev is the newest HQ state revision committed by a write to this change.
+	StateRev int64 `json:"stateRev,omitempty"`
 	// Branch is the branch the change is on, by its short name, as HQ named
 	// it; "" for one HQ answered without naming it.
 	Branch string `json:"branch,omitempty"`
@@ -149,6 +151,7 @@ func readHQChangeFile(path string) (HQChange, bool, error) {
 // the agent was told.
 func RecordHQChange(stateDir string, c HQChange) error {
 	return UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *HQChange, _ bool) error {
+		kept.StateRev = max(kept.StateRev, c.StateRev)
 		if c.Branch != "" {
 			kept.Branch = c.Branch
 		}
@@ -244,22 +247,41 @@ func writeHQChangeFile(path string, c *HQChange) error {
 // ForgetHQChange drops change number of appID's repo from the ledger, once HQ
 // says it is no longer open; one the ledger does not keep is no error.
 func ForgetHQChange(stateDir, appID, repo string, number int) error {
+	_, err := forgetHQChange(stateDir, appID, repo, number, nil)
+	return err
+}
+
+// ForgetHQChangeAtState forgets only if the state covers the latest recorded write.
+func ForgetHQChangeAtState(stateDir, appID, repo string, number int, rev int64) (bool, error) {
+	return forgetHQChange(stateDir, appID, repo, number, &rev)
+}
+
+func forgetHQChange(stateDir, appID, repo string, number int, rev *int64) (bool, error) {
 	path, err := hqChangePath(stateDir, appID, repo, number)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := os.Stat(filepath.Dir(path)); errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	release, err := lockHQChangeFile(hqChangeLockPath(path, "lock"), hqChangeWriteWait, nil)
 	if err != nil {
-		return fmt.Errorf("hq change #%d of %s: %w", number, repo, err)
+		return false, fmt.Errorf("hq change #%d of %s: %w", number, repo, err)
 	}
 	defer release()
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("forget hq change #%d of %s: %w", number, repo, err)
+	if rev != nil {
+		kept, found, err := readHQChangeFile(path)
+		if err != nil {
+			return false, fmt.Errorf("read change before forgetting: %w", err)
+		}
+		if !found || kept.StateRev > *rev {
+			return false, nil
+		}
 	}
-	return nil
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("forget hq change #%d of %s: %w", number, repo, err)
+	}
+	return true, nil
 }
 
 // ListHQChanges is every change the ledger keeps, by application, repository

@@ -96,31 +96,6 @@ func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, 
 	return tries, describeAwayOf(err, unconfirmed), err
 }
 
-// describeSelf is the Mate's own state as a describe reads it: once while
-// the ledger names its change (recorded), and with nothing recorded — the
-// state is then the only word on which change is open — tried as
-// describeRetry paces it while HQ is away.
-func describeSelf(ctx context.Context, hqc hq.Client, recorded bool) (hq.MateState, error) {
-	if recorded {
-		return hqc.Self(ctx)
-	}
-	var (
-		state hq.MateState
-		err   error
-	)
-	client := describeClient(hqc)
-	describeRetry.run(ctx, func() hqAnswer {
-		callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-		state, err = client.Self(callCtx)
-		cancel()
-		if describeTransient(err) {
-			return hqNotServing
-		}
-		return hqAnswered
-	})
-	return state, err
-}
-
 // hqNotReached reports whether a try HQ did not serve surely never reached
 // it: no connection made — refused, or none within the bound — or HQ's own
 // 503, a standby that names why and serves nothing.

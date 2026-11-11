@@ -52,13 +52,12 @@ func handleRelease(
 	client platform.Client,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
-	httpClient ops.HTTPDoer,
 	input WorkflowInput,
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	if rt.MateEnabled {
-		return hqReleaseHandoff(ctx, httpClient, rt, stateDir), nil, nil
+		return hqReleaseHandoff(rt, stateDir), nil, nil
 	}
 	if input.Service == "" {
 		return convertError(platform.NewPlatformError(
@@ -69,7 +68,7 @@ func handleRelease(
 	meta, err := workflow.FindServiceMeta(stateDir, input.Service)
 	// A recorded HQ repository stays HQ's outside a Mate too.
 	if hqPairWired(meta) {
-		return hqReleaseHandoff(ctx, httpClient, rt, stateDir), nil, nil
+		return hqReleaseHandoff(rt, stateDir), nil, nil
 	}
 	//nolint:nilerr // meta read failures surface as the structured adopt-required tool result, not a Go error (MCP contract)
 	if err != nil || meta == nil || !meta.IsComplete() {
@@ -284,7 +283,7 @@ func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflo
 // zerops_observe, which only a Mate has. A release takes main only, so the
 // handoff names the open changes the ledger keeps as not in it
 // (releaseOpenChangesWords).
-func hqReleaseHandoff(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) *mcp.CallToolResult {
+func hqReleaseHandoff(rt runtime.Info, stateDir string) *mcp.CallToolResult {
 	pipeline := "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate."
 	nextStep := "Tell the person: they release in Mate, from this conversation."
 	if rt.InContainer && rt.MateEnabled {
@@ -297,7 +296,7 @@ func hqReleaseHandoff(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.I
 		"pipeline": pipeline,
 		"nextStep": nextStep + " While the application has no production, Put it live on the project's card merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
 	}
-	if open := releaseOpenChangesWords(ctx, httpClient, rt, stateDir); open != "" {
+	if open := releaseOpenChangesWords(rt, stateDir); open != "" {
 		answer["openChanges"] = open
 	}
 	return jsonResult(answer)

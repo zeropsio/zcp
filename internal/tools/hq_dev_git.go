@@ -64,17 +64,13 @@ func KeepMateDevGit(ctx context.Context, env func() func(string) string, log fun
 		return
 	}
 	id := hqIdentity(rt)
-	changed, err := hq.WatchReplacedFile(ctx, id.ChangesPath)
-	if err != nil {
-		log(fmt.Sprintf("finished changes are looked for only at the service's start: %v", err))
-	}
 	stateChanged, err := id.State.Watch(ctx)
 	if err != nil {
 		log(fmt.Sprintf("the dev services' git is looked at only at the service's start and on retries: %v", err))
 	}
 	ticker := time.NewTicker(devGitLookEvery)
 	defer ticker.Stop()
-	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, changed, stateChanged, log)
+	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, stateChanged, log)
 }
 
 // liveDevGitDeps is devGitDeps from the container's live env store: the
@@ -131,7 +127,7 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 // start — the file may already hold one — and at each wake changed sends,
 // never at a tick. deps is asked for at each look; false skips the look. A
 // line goes to log when the look of its kind before did not say it.
-func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, changed, stateChanged <-chan struct{}, log func(string)) {
+func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, stateChanged <-chan struct{}, log func(string)) {
 	var (
 		settled bool
 		retry   hqPairState
@@ -180,10 +176,9 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 				return
 			}
 			look(func(d devGitDeps) { start(d, at) })
-		case <-changed:
-			look(complete)
 		case <-stateChanged:
 			look(func(d devGitDeps) {
+				complete(d)
 				if !settled || devGitStateChanged(d.rt, d.stateDir) {
 					settled, retry = false, hqPairState{}
 					start(d, time.Now())

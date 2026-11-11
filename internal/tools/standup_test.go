@@ -561,7 +561,7 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 	if appID != "" {
 		app = appID
 	}
-	var state any = map[string]any{"link": "linked", "mate": map[string]any{"projectId": "p1", "appId": app, "repos": []any{}, "changes": []any{}, "chief": nil}}
+	var state any = map[string]any{"link": "linked", "mate": map[string]any{"rev": 1, "projectId": "p1", "appId": app, "repos": []any{}, "changes": []any{}, "chief": nil}}
 	if refused {
 		state = map[string]any{"link": "not-linked", "reason": "invalid_key", "mate": nil}
 	}

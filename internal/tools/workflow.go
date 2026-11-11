@@ -644,7 +644,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "status":
 		// The pairs' records an older zcp wrote move into the change ledger.
 		_, _ = workflow.HQChanges(engine.StateDir())
-		recordMissingHQOrigins(ctx, httpClient, rt, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
 		// so the dispatcher and the envelope agree. Focus rule (§5.3/§6.2):
@@ -663,7 +662,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
 			// no longer preempts and hides develop (the old launch-recovery
 			// short-circuit ran before handleLifecycleStatus).
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer, httpClient)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		case workflow.FocusIdle: // no infra, no open work: launch recovery may take over.
 			// Mid-flight launch-production recovery: a non-terminal state file
 			// for this source project → resumable launch envelope. Read-only
@@ -679,11 +678,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				corpus, _ := workflow.LoadAtomCorpus()
 				return renderLaunchTerminalRecovery(corpus, recent), nil, nil
 			}
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer, httpClient)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		}
 		// Unreachable: ResolveLifecycle returns one of the four Focus values
 		// handled above; the compiler can't prove the switch exhaustive.
-		return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer, httpClient)
+		return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 	case "close":
 		return handleWorkSessionClose(ctx, engine, client, projectID, rt, input)
 	case "resume":
@@ -697,7 +696,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, httpClient, sshDeployer, projectID, input, stateDir, rt)
 	case "release":
-		return handleRelease(ctx, client, projectID, sshDeployer, httpClient, input, stateDir, rt)
+		return handleRelease(ctx, client, projectID, sshDeployer, input, stateDir, rt)
 	case "prod-ops":
 		return handleLaunchProdOps(ctx, projectID, client, logFetcher, input, stateDir, apiHost)
 	case "confirm-production":
@@ -1178,12 +1177,15 @@ func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm o
 // check and surfaces non-fresh / non-skipped results as a guidance line
 // so agents notice when `.env` has drifted from sources without having
 // to invoke generate-dotenv preview manually.
-func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer, httpClient ops.HTTPDoer) (*mcp.CallToolResult, any, error) {
+func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
 		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout)...)
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
+	changes, asLastRead, problems, standing, mateState := statusHQChanges(rt, engine.StateDir(), hqAddress(rt), time.Now(), true)
+	envelope.HQChanges, envelope.HQChangesAsLastRead, envelope.HQProblems, envelope.HQStateStanding = changes, asLastRead, problems, standing
+	attachHQStateOrigins(envelope.Services, engine.StateDir(), mateState)
 	// Both read the dev halves over ssh, each its own fields: beside each
 	// other, a half that does not answer holds status once, not twice.
 	var reads sync.WaitGroup
@@ -1191,7 +1193,6 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
-	envelope.HQChanges, envelope.HQChangesAsLastRead, envelope.HQProblems = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(rt), time.Now(), true)
 	if rt.MateEnabled {
 		envelope.Required = readRecipeRequired(engine.StateDir())
 	}

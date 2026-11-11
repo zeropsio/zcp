@@ -5,6 +5,7 @@ package tools
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -89,18 +90,38 @@ func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
 	lab := openedLab(t)
 	kept := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-kept"), 800, 600)
 	gone := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-pruned"), 800, 600)
-	// The fake HQ's failOn sees every request: here it only prunes, at the
-	// moment the describe reads the Mate's state, after its check.
-	lab.hq.mu.Lock()
-	lab.hq.failing, lab.hq.failOn = 1, func(r *http.Request) bool {
-		if r.URL.Path == "/api/mate/self" {
-			_ = os.Remove(filepath.Join(lab.stateDir, "pictures", gone+".png"))
-		}
-		return false
+	// The state read blocks until the prune has happened, after the quick check.
+	path := lab.rt.HQ.StatePath
+	state, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	lab.hq.mu.Unlock()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.CommandContext(t.Context(), "mkfifo", path).Run(); err != nil {
+		t.Fatal(err)
+	}
+	pruned := make(chan error, 1)
+	go func() {
+		file, openErr := os.OpenFile(path, os.O_WRONLY, 0)
+		if openErr != nil {
+			pruned <- openErr
+			return
+		}
+		defer file.Close()
+		if removeErr := os.Remove(filepath.Join(lab.stateDir, "pictures", gone+".png")); removeErr != nil {
+			pruned <- removeErr
+			return
+		}
+		_, writeErr := file.Write(state)
+		pruned <- writeErr
+	}()
 
 	text, isError := lab.describeTitled("", "", "![after]("+kept+")\n![before]("+gone+")")
+	if err := <-pruned; err != nil {
+		t.Fatal(err)
+	}
 	if !isError {
 		t.Fatalf("want a refusal, got:\n%s", text)
 	}

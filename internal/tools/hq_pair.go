@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -89,14 +88,14 @@ func appendHQPairDiscoverNote(resp *workflow.BootstrapResponse, engine *workflow
 // the person adds with Put it live in Mate. mate is
 // runtime.Info.MateEnabled. nil outside a Mate, so the classic route is
 // untouched.
-func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, mate bool) *mcp.CallToolResult {
+func hqLaunchProductionRefusal(httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, mate bool) *mcp.CallToolResult {
 	if !mate {
 		return nil
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
 		"This Mate keeps its code in HQ, where an application's production can be a Zerops project or a Git repository branch the person adds "+
 			"with Put it live in Mate — launch-production creates its own production project outside the "+
-			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, rt, stateDir))
+			"application and has no case for that. "+hqLaunchProductionNextStep(httpClient, rt, stateDir))
 }
 
 // hqLaunchProductionNextStep says what is true of THIS Mate's own
@@ -118,7 +117,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, rt 
 //
 // A Mate that cannot reach HQ at all — no key or HQ origin in its container —
 // knows none of the three, and says so.
-func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
 	var open []string
 	opened := 0
 	merged := false
@@ -126,7 +125,7 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt
 		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
 		address := ""
 		if hqc, linked := openHQ(httpClient, rt); linked {
-			self, address = lazySelf(ctx, hqc), hqc.Address()
+			self, address = lazySelf(hqc), hqc.Address()
 		}
 		var repos []changeRef
 		for _, m := range metas {

@@ -332,12 +332,23 @@ func (t changeTarget) openCandidates(state *hq.MateState, ledger []workflow.HQCh
 		return nil
 	}
 	var out []changePick
+	for _, c := range ledger {
+		if c.AppID != t.AppID || c.Repo != t.Repo || (state != nil && state.Rev >= c.StateRev) {
+			continue
+		}
+		if c.Told == nil || c.Told.State != hq.ChangeClosed {
+			out = append(out, changePick{Number: c.Number, Branch: c.Branch, Title: c.Title})
+		}
+	}
 	if state != nil {
 		if state.AppID == nil || *state.AppID != t.AppID {
-			return nil
+			return out
 		}
 		for _, c := range state.Changes {
 			if c.Repo != t.Repo || c.State != hq.ChangeOpen {
+				continue
+			}
+			if k := kept(c.Number); k != nil && state.Rev < k.StateRev {
 				continue
 			}
 			pick := changePick{Number: c.Number, Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), InState: true}
@@ -349,12 +360,6 @@ func (t changeTarget) openCandidates(state *hq.MateState, ledger []workflow.HQCh
 				pick.Title = cmp.Or(pick.Title, k.Title)
 			}
 			out = append(out, pick)
-		}
-	} else {
-		for _, c := range ledger {
-			if c.AppID == t.AppID && c.Repo == t.Repo {
-				out = append(out, changePick{Number: c.Number, Branch: c.Branch, Title: c.Title})
-			}
 		}
 	}
 	slices.SortFunc(out, func(a, b changePick) int { return cmp.Compare(a.Number, b.Number) })

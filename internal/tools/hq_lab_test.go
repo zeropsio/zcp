@@ -57,6 +57,7 @@ type fakeHQ struct {
 
 	mu    sync.Mutex
 	appID string
+	rev   int64
 	// appName is the application's name HQ answers, "" for none.
 	appName string
 	repos   map[string]bool
@@ -141,7 +142,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 func newFakeHQReady(t *testing.T) *fakeHQ {
 	t.Helper()
 	f := &fakeHQ{
-		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
+		t: t, root: t.TempDir(), appID: labApp, rev: 1, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{}, diverged: map[string]string{},
 		handed: map[string]bool{}, described: map[string]string{}, verdicts: map[string]string{}, corePushes: map[string]hq.CorePush{},
 	}
@@ -182,7 +183,7 @@ func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 	}
 	t.Cleanup(release)
 	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
-		ChangesPath: filepath.Join(dir, "changes.json")}
+		StatePath: filepath.Join(dir, "state.json")}
 }
 
 // snapshotMate writes the server's current state for the lab's Mate.
@@ -190,6 +191,7 @@ func (l *hqLab) snapshotMate(ctx context.Context) {
 	l.t.Helper()
 	l.hq.mu.Lock()
 	state := l.hq.self(ctx)
+	state["rev"] = l.hq.rev
 	l.hq.mu.Unlock()
 	if state["repos"] == nil {
 		state["repos"] = []any{}
@@ -202,8 +204,11 @@ func (l *hqLab) snapshotMate(ctx context.Context) {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	path := filepath.Join(filepath.Dir(l.rt.HQ.ChangesPath), "state.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	path := l.rt.HQ.StatePath
+	if err := os.WriteFile(path+".tmp", raw, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
 		l.t.Fatal(err)
 	}
 }
@@ -319,9 +324,11 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		writeHQJSON(w, status, map[string]string{"code": code, "reason": reason})
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if strings.HasPrefix(r.URL.Path, "/api/mate/changes") && (r.Method == http.MethodPost || r.Method == http.MethodPatch) {
+		f.rev++
+		w.Header().Set("Mate-State-Rev", strconv.FormatInt(f.rev, 10))
+	}
 	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/api/mate/self":
-		writeHQJSON(w, http.StatusOK, f.self(r.Context()))
 	case f.appID == "":
 		refuse(http.StatusForbidden, "forbidden", "not_in_app")
 	case r.Method == http.MethodGet && len(parts) == 4 && parts[1] == "apps" && parts[3] == "repos":
@@ -445,7 +452,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// self is GET /api/mate/self: the Mate's latest changes per repository of the
+// self is the link frame: the Mate's latest changes per repository of the
 // application it is in, newest first, with their heads as git has them.
 func (f *fakeHQ) self(ctx context.Context) map[string]any {
 	state := map[string]any{"projectId": labMate, "name": "Ada", "face": "face-1",
@@ -1220,6 +1227,7 @@ func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	lab.snapshotMate(t.Context())
 	return lab
 }
 
@@ -1301,12 +1309,15 @@ func (l *hqLab) devGit() ops.RelayedSSH {
 
 func (l *hqLab) wire() []string {
 	l.t.Helper()
+	l.snapshotMate(l.t.Context())
 	var opts []hqPassOption
 	if l.completion != nil {
 		opts = append(opts, withLeaseCompletion(l.completion))
 	}
 	opts = append(opts, withRecipeSchemas(l.schemas))
-	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff, opts...)
+	report := reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff, opts...)
+	l.snapshotMate(l.t.Context())
+	return report
 }
 
 // openChange puts the pair's work up as the Mate's change, "Build the app",
@@ -1332,6 +1343,7 @@ func (l *hqLab) openChange() hq.Change {
 	if out, err := l.devGit().ExecSSH(l.t.Context(), "appdev", push); err != nil {
 		l.t.Fatalf("pushing the change's branch: %v\n%s", err, out)
 	}
+	l.snapshotMate(l.t.Context())
 	return opened.Change
 }
 

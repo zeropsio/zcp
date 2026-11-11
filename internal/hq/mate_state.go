@@ -41,6 +41,15 @@ func (id Identity) ReadMateState() (MateStateDocument, error) {
 	return id.State.Read()
 }
 
+// ReadMateState returns the state the Mate's server last heard from HQ.
+func (c Client) ReadMateState() (MateState, error) {
+	doc, err := c.id.ReadMateState()
+	if err != nil {
+		return MateState{}, fmt.Errorf("read mate state: %w", err)
+	}
+	return doc.Heard()
+}
+
 // MateStateDocument is the file the server keeps from the link's last state.
 // Mate is nil before the server has heard a state.
 type MateStateDocument struct {
@@ -153,17 +162,20 @@ func decodeMateState(raw []byte, projectID string) (MateStateDocument, error) {
 	if err := json.Unmarshal(mateRaw, &required); err != nil || required == nil {
 		return MateStateDocument{}, errors.New("mate must be an object or null")
 	}
-	for _, key := range []string{"projectId", "appId", "repos", "changes", "chief"} {
+	for _, key := range []string{"rev", "projectId", "appId", "repos", "changes", "chief"} {
 		if _, ok := required[key]; !ok {
 			return MateStateDocument{}, fmt.Errorf("mate.%s is missing", key)
 		}
 	}
-	if bytes.Equal(bytes.TrimSpace(required["projectId"]), []byte("null")) || bytes.Equal(bytes.TrimSpace(required["repos"]), []byte("null")) || bytes.Equal(bytes.TrimSpace(required["changes"]), []byte("null")) {
-		return MateStateDocument{}, errors.New("mate projectId, repos and changes must not be null")
+	if bytes.Equal(bytes.TrimSpace(required["rev"]), []byte("null")) || bytes.Equal(bytes.TrimSpace(required["projectId"]), []byte("null")) || bytes.Equal(bytes.TrimSpace(required["repos"]), []byte("null")) || bytes.Equal(bytes.TrimSpace(required["changes"]), []byte("null")) {
+		return MateStateDocument{}, errors.New("mate rev, projectId, repos and changes must not be null")
 	}
 	var state MateState
 	if err := json.Unmarshal(mateRaw, &state); err != nil {
 		return MateStateDocument{}, fmt.Errorf("decode mate: %w", err)
+	}
+	if state.Rev < 0 {
+		return MateStateDocument{}, errors.New("mate.rev must not be negative")
 	}
 	if state.ProjectID == "" || (projectID != "" && state.ProjectID != projectID) {
 		return MateStateDocument{}, errors.New("mate.projectId does not name this project")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -94,9 +95,7 @@ func handleOpenChange(
 	// once (learnSettled), so a describe naming no branch never meets a
 	// change merged since the last pass.
 	keptBefore := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	state, stateErr := hqc.Once().Self(callCtx)
-	cancel()
+	state, stateErr := hqc.ReadMateState()
 	learnSettled := func() {
 		if stateErr == nil {
 			result.Landed = learnRepoLandings(ctx, stateDir, hqc.Address(), target.AppID, keptBefore, state)
@@ -113,13 +112,16 @@ func handleOpenChange(
 		}
 		handed = handedChangesIn(state, target.AppID, target.Repo)
 		for _, h := range handed {
+			if slices.ContainsFunc(keptBefore, func(c workflow.HQChange) bool { return c.Number == h.Number && c.StateRev > state.Rev }) {
+				continue
+			}
 			held := hqc.BranchOf(h.Number, h.Branch)
 			// On an HQ that keeps one open change per repository the handed
 			// change is the Mate's one, whatever branch is named.
 			if held != branch && state.OpenPerBranch {
 				continue
 			}
-			recordHQChange(stateDir, target.AppID, target.Repo, h.Number, held, titleOf(h), workflow.HQChangeFromHanded)
+			_ = recordHQChange(stateDir, target.AppID, target.Repo, h.Number, held, titleOf(h), workflow.HQChangeFromHanded, 0)
 			result.Branch, result.PullRequest = held, h.Number
 			result.PullRequestURL = hqc.ChangeURL(target.AppID, target.Repo, h.Number)
 			result.Message = sentenceOf(handedWork(route, h, target.Repo, held, !state.OpenPerBranch))
@@ -136,38 +138,11 @@ func handleOpenChange(
 		origin = target.Pair.HQ.Origin.Mode
 	}
 
-	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
-	opened, err := hqc.OpenChange(callCtx, target.Repo, title, branch)
-	cancel()
-	// HQ refuses a branch as {code, reason}: the reason names which refusal.
-	var refused *hq.RefusedError
-	switch {
-	case errors.As(err, &refused) && refused.Reason == "branch_taken":
-		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("Nothing was opened: another open change holds the branch %q in %q.", branch, target.Repo),
-			"Push this work to a branch of your own under another name and open its change from that."), WithRecoveryStatus()), nil, nil
-	case errors.As(err, &refused) && refused.Reason == "protected_ref":
-		return convertError(branchNotOwn(branch), WithRecoveryStatus()), nil, nil
-	case errors.As(err, &refused) && refused.Reason == "invalid_ref":
-		return convertError(notABranchName(branch), WithRecoveryStatus()), nil, nil
-	case errors.As(err, &refused) && refused.Reason == "too_many_open":
-		return convertError(tooManyOpen(target, branch, state, stateErr), WithRecoveryStatus()), nil, nil
-	case err != nil:
-		found, refusal := openUnanswered(ctx, hqc, target, branch, err, state, stateErr)
-		if refusal != nil {
-			return convertError(refusal, WithRecoveryStatus()), nil, nil
-		}
-		opened = found
-	}
-	learnSettled()
-	number := opened.Change.Number
-	// An open whose answer was lost and the Mate's state answered says so
-	// first (openUnanswered).
-	lostNote := ""
+	opened, lostNote, err := openChangeAtHQ(ctx, hqc, stateDir, target, title, state, stateErr, keptBefore)
 	if err != nil {
-		lostNote = fmt.Sprintf("HQ's answer to the open never arrived (%s), and the Mate's state shows change #%d open in %q: it is the change this open answers, and nothing else was opened. ",
-			hqNotServingWords(err), number, target.Repo)
+		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
+	number := opened.Change.Number
 	result.PullRequest, result.Created = number, opened.Created
 	result.PullRequestURL = hqc.ChangeURL(target.AppID, target.Repo, number)
 	// The change's branch is the one HQ names. An HQ from before changes
@@ -184,69 +159,120 @@ func handleOpenChange(
 	}
 	// The ledger keeps the change on the branch HQ names — never on the one
 	// asked for when HQ answered another.
-	recordHQChange(stateDir, target.AppID, target.Repo, number, result.Branch, titleIfCreated(opened), workflow.HQChangeFromOpen)
+	if recordErr := recordHQChange(stateDir, target.AppID, target.Repo, number, result.Branch, titleIfCreated(opened), workflow.HQChangeFromOpen, opened.StateRev); recordErr != nil {
+		return convertError(platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("HQ answered change #%d open in %q, but zcp could not record it (%v).", number, target.Repo, recordErr),
+			"Restore access to the local state directory and call open-change again; HQ answers the existing change."), WithRecoveryStatus()), nil, nil
+	}
+	learnSettled()
+	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote)
+	return jsonResult(result), nil, nil
+}
+
+// openChangeAtHQ sends the write and resolves its answer against the state
+// read before the write. A committed revision is recorded before that state
+// can be used to judge any change already in the ledger.
+func openChangeAtHQ(ctx context.Context, hqc hq.Client, stateDir string, target changeTarget, title string, state hq.MateState, stateErr error, keptBefore []workflow.HQChange) (hq.OpenedChange, string, error) {
+	branch := target.Branch
+	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+	opened, err := hqc.OpenChange(callCtx, target.Repo, title, branch)
+	cancel()
+	if err == nil {
+		return opened, "", nil
+	}
+	if opened.StateRev > 0 {
+		for i := range keptBefore {
+			c := &keptBefore[i]
+			if c.Branch != branch {
+				continue
+			}
+			if recordErr := rememberChangeRevision(stateDir, changeRef{AppID: c.AppID, Repo: c.Repo, Number: c.Number}, opened.StateRev); recordErr != nil {
+				return hq.OpenedChange{}, "", fmt.Errorf("HQ committed a write for change #%d but zcp could not record it: %w", c.Number, recordErr)
+			}
+			c.StateRev = max(c.StateRev, opened.StateRev)
+		}
+	}
+	// HQ refuses a branch as {code, reason}: the reason names which refusal.
+	var refused *hq.RefusedError
+	if opened.StateRev == 0 && errors.As(err, &refused) {
+		switch refused.Reason {
+		case "branch_taken":
+			return hq.OpenedChange{}, "", platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("Nothing was opened: another open change holds the branch %q in %q.", branch, target.Repo),
+				"Push this work to a branch of your own under another name and open its change from that.")
+		case "protected_ref":
+			return hq.OpenedChange{}, "", branchNotOwn(branch)
+		case "invalid_ref":
+			return hq.OpenedChange{}, "", notABranchName(branch)
+		case "too_many_open":
+			return hq.OpenedChange{}, "", tooManyOpen(target, branch, state, stateErr)
+		}
+	}
+	found, refusal := openUnanswered(hqc, target, branch, err, opened.StateRev, state, stateErr, keptBefore)
+	if refusal != nil {
+		return hq.OpenedChange{}, "", refusal
+	}
+	lostNote := fmt.Sprintf("HQ's answer to the open never arrived (%s), and the Mate's state shows change #%d open in %q: it is the change this open answers, and nothing else was opened. ",
+		hqNotServingWords(err), found.Change.Number, target.Repo)
+	return found, lostNote, nil
+}
+
+// openChangeWords explains the opened or existing change and where its work goes.
+func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string) string {
+	number := opened.Change.Number
+	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
 	if !opened.Created {
-		result.Message = lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
-		return jsonResult(result), nil, nil
+		return lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
 	}
 	handedNote := handedElsewhere(hqc, handed, target.Repo)
 	if origin == hq.OriginOnGitHub {
-		result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (%s, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+		return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (%s, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 			number, target.Repo, result.Branch, route.git("push origin "+result.Branch)) + handedNote
-		return jsonResult(result), nil, nil
 	}
 	push, bound := result.Branch, ""
 	if result.Branch != branch {
 		push = branch + ":" + result.Branch
 		bound = fmt.Sprintf(", not %q — this HQ binds a change to a branch of its own, as HQ did before changes were bound to the branch they name —", branch)
 	}
-	result.Message = lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + handedNote
-	return jsonResult(result), nil, nil
 }
 
 // openUnanswered decides an open HQ did not answer. HQ's own refusal, and a
 // try that surely never reached it (hqNotReached), opened nothing. Any other
 // failure — the answer timed out or the connection dropped once HQ had the
 // request, a balancer's 502 or 504, an HQ 500, an answer that did not parse
-// — cannot tell an open HQ made from one it did not, and opening is no
-// idempotent write: Filip's open on 2026-10-26 met "context deadline
-// exceeded" and said "Nothing was opened" while HQ had opened change #2. So
-// it reads the Mate's state before it answers (check-before-mutate,
-// spec-workflows.md §8 O3) and answers the change open for branch in the
-// repository as HQ answers an open (openedIn), created when the state read
-// before the open (before, unread when beforeErr is set) did not hold it.
-// Without it, whether a change was opened is unknown and the refusal says
-// so — never that nothing was opened — and that a call again is safe: HQ
-// answers the open change on a branch rather than opening a second one.
-func openUnanswered(ctx context.Context, hqc hq.Client, target changeTarget, branch string, openErr error, before hq.MateState, beforeErr error) (hq.OpenedChange, *platform.PlatformError) {
+// — cannot tell an open HQ made from one it did not. The state already read
+// for this call can answer an existing open change, but cannot prove that a
+// new one was opened. Without a change there the outcome is unknown; a retry
+// is safe because HQ answers the open change on a branch instead of opening
+// another one.
+func openUnanswered(hqc hq.Client, target changeTarget, branch string, openErr error, writeRev int64, before hq.MateState, beforeErr error, kept []workflow.HQChange) (hq.OpenedChange, *platform.PlatformError) {
 	var refused *hq.RefusedError
-	if (errors.As(openErr, &refused) && refused.Status < http.StatusInternalServerError) || hqNotReached(openErr) {
+	if writeRev == 0 && ((errors.As(openErr, &refused) && refused.Status < http.StatusInternalServerError) || hqNotReached(openErr)) {
 		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
 			fmt.Sprintf("Nothing was opened: HQ did not open a change in %q (%v).", target.Repo, openErr),
 			`Call zerops_workflow action="open-change" again; the branch you pushed stays as it is.`)
 	}
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	after, err := hqc.Once().Self(callCtx)
-	cancel()
 	again := `Call zerops_workflow action="open-change" again: HQ answers the change open on the branch if this open went through and opens it if not — never a second one. The branch you pushed stays as it is.`
-	if err != nil {
+	if beforeErr != nil {
 		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Whether a change was opened in %q is unknown: HQ's answer to the open never arrived (%s), nor the Mate's state after it (%s).",
-				target.Repo, hqNotServingWords(openErr), hqNotServingWords(err)), again)
+			fmt.Sprintf("Whether a change was opened in %q is unknown: HQ's answer to the open never arrived (%s), nor was the Mate's state available (%s).",
+				target.Repo, hqNotServingWords(openErr), hqNotServingWords(beforeErr)), again)
 	}
-	change, ok := openedIn(hqc, after, target, branch)
+	change, ok := openedIn(hqc, before, target, branch)
+	if before.Rev < writeRev {
+		ok = false
+	}
+	if ok && slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == change.Number && before.Rev < c.StateRev }) {
+		ok = false
+	}
 	if !ok {
 		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Whether a change was opened in %q is unknown: HQ's answer to the open never arrived (%s), and the Mate's state shows no change open for %q yet — the open may still land.",
+			fmt.Sprintf("Whether a change was opened in %q is unknown: HQ's answer to the open never arrived (%s), and the Mate's state does not establish a change open for %q yet — the open may still land.",
 				target.Repo, hqNotServingWords(openErr), branch), again)
 	}
-	created := false
-	if beforeErr == nil {
-		prior, held := openedIn(hqc, before, target, branch)
-		created = !held || prior.Number != change.Number
-	}
-	return hq.OpenedChange{Change: change, Created: created}, nil
+	return hq.OpenedChange{Change: change, StateRev: max(before.Rev, writeRev)}, nil
 }
 
 // openedIn is the change state holds that HQ answers an open for branch in

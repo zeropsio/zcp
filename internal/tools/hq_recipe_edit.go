@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // A tier on main of the recipe repository is the group's, and every recipe
@@ -114,9 +115,7 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 	}
 	defer release()
 
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	state, err := hqc.Once().Self(callCtx)
-	cancel()
+	state, err := hqc.ReadMateState()
 	if err != nil {
 		return none, refuse(platform.ErrAPIError, fmt.Sprintf("HQ did not answer with this Mate's state (%v).", err), "Call again; nothing changed.")
 	}
@@ -124,6 +123,9 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 		return none, refuse(platform.ErrPrerequisiteMissing, "this Mate is in no application in HQ yet, so it has no recipe repository.", "")
 	}
 	appID := *state.AppID
+	if recipeStateBehind(stateDir, appID, state) {
+		return none, refuse(platform.ErrAPIError, "the recipe is waiting for HQ's state after its last change.", "Call again once the Mate's link receives the state.")
+	}
 	result := recipeEditResult{GroupRepo: hq.RecipeRepo}
 	if url, err := hqc.RepoURL(appID, hq.RecipeRepo); err == nil {
 		result.RepoURL = url
@@ -137,7 +139,7 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 		result.Message = recipeEditOnOpen(result, titleOf(*open), branch)
 		return result, nil
 	}
-	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	opened, err := hqc.OpenChange(callCtx, hq.RecipeRepo, title, branch)
 	cancel()
 	var refused *hq.RefusedError
@@ -155,6 +157,9 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 	number := opened.Change.Number
 	result.Change, result.Created = number, opened.Created
 	result.Branch = hqc.BranchOf(number, opened.Change.Branch)
+	if err := recordHQChange(stateDir, appID, hq.RecipeRepo, number, result.Branch, opened.Change.Title, workflow.HQChangeFromOpen, opened.StateRev); err != nil {
+		return none, refuse(platform.ErrAPIError, fmt.Sprintf("HQ answered recipe change #%d open, but zcp could not record it (%v).", number, err), "Restore access to the local state directory and call again.")
+	}
 	result.ChangeURL = hqc.ChangeURL(appID, hq.RecipeRepo, number)
 	if !opened.Created {
 		result.Message = recipeEditOnOpen(result, opened.Change.Title, branch)

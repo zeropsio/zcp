@@ -13,7 +13,7 @@ import (
 
 // WatchReplacedFile wakes its caller whenever a writer puts a new version of
 // the file at path in place: the Mate's server its `state` frame's changes
-// (hq.ChangesPath), a zcp process its section of the setup status file
+// (hq.MateStatePath), a zcp process its section of the setup status file
 // (mate.StatusFilePath). The returned channel receives once each time path is
 // created or renamed into place, wakes coming while one waits folding into
 // it. Both writers replace the file by rename, so its directory is watched,

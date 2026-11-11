@@ -149,8 +149,8 @@ type leaseGroupOnHQ struct {
 // releaseCompletedLeases releases, through release, every group of leases
 // zcp holds of a repository of the application HQ holds the Mate in (appID,
 // nil for none) whose branch's change in changes — the Mate's changes there —
-// reads merged or closed (settledChangeOn), and still does in a fresh read of
-// the Mate's state in HQ — and says
+// reads merged or closed (settledChangeOn), and still does in the latest
+// state heard by the link — and says
 // what became of each in one line, "repository <name>: …", by repository and
 // branch. A group leased again after its change settled is a new start on the
 // branch and stays. Leases of another application's repository, or of a
@@ -175,12 +175,15 @@ func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID
 		released, err := release(ctx, group.repoURL, group.branch, func(leases []ops.LeaseTargetInfo) bool {
 			checked = true
 			group.leases = leases
-			readCtx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
-			state, err := readState(readCtx)
-			cancel()
+			state, err := readState(ctx)
 			// An older HQ's limited history may omit an open change.
 			if err != nil || state.AppID == nil || *state.AppID != *appID || !state.OpenPerBranch {
 				return false
+			}
+			for _, kept := range changesIn(hqChanges(stateDir), *appID, group.repo) {
+				if kept.Branch == group.branch && state.Rev < kept.StateRev {
+					return false
+				}
 			}
 			var settled bool
 			change, settled = settledChangeOn(state.Changes, group.repo, group.branch, branchOf)
@@ -346,22 +349,22 @@ func releaseOutcomeWords(outcome string) string {
 // (DP-34), run when the Mate's server put a new `state` frame's changes in
 // place (keepMateDevGit): only while zcp holds a lease of a repository on
 // this Mate's HQ, it reads the changes the link's last `state` frame brought
-// (hq.ReadMateChanges, the file the Mate's server writes) and releases what
-// releaseCompletedLeases confirms with HQ. No file, or one that cannot be
+// (the Mate's state file) and releases what releaseCompletedLeases confirms
+// against the latest file and local write revisions. No file, or one that cannot be
 // read, is no finished change.
 func followLeaseCompletion(ctx context.Context, d devGitDeps) []string {
 	if d.release == nil {
 		return nil
 	}
-	hqc, linked := openHQ(d.httpClient, d.rt)
-	if !linked || len(hqLeaseBranches(d.stateDir, hqc.Address())) == 0 {
+	hqc, err := hq.Open(nil, hqIdentity(d.rt))
+	if err != nil || len(hqLeaseBranches(d.stateDir, hqc.Address())) == 0 {
 		return nil
 	}
-	frame, err := hq.ReadMateChanges(hqIdentity(d.rt).ChangesPath)
+	frame, err := hqc.ReadMateState()
 	if err != nil {
 		return nil
 	}
-	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, hqc.Once().Self, d.release)
+	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, func(context.Context) (hq.MateState, error) { return hqc.ReadMateState() }, d.release)
 }
 
 // withRecipeSchemas shares the server schema cache with recipe conflict passes.

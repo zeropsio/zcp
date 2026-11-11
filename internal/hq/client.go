@@ -106,6 +106,10 @@ const (
 )
 
 func (c hqClient) json(ctx context.Context, method, path, authorization string, in, out any) error {
+	return c.jsonWithRevision(ctx, method, path, authorization, in, out, nil)
+}
+
+func (c hqClient) jsonWithRevision(ctx context.Context, method, path, authorization string, in, out any, rev *int64) error {
 	var body []byte
 	contentType := ""
 	if in != nil {
@@ -115,20 +119,17 @@ func (c hqClient) json(ctx context.Context, method, path, authorization string, 
 		}
 		body, contentType = raw, "application/json"
 	}
-	return c.send(ctx, method, path, authorization, contentType, body, out)
+	return c.sendWithRevision(ctx, method, path, authorization, contentType, body, out, rev)
 }
 
 // answerLimit bounds what zcp reads of an answer: a change's description is
 // up to 20000 characters, each up to four bytes of JSON-escaped UTF-8.
 const answerLimit = 1 << 20
 
-// send is one request with body of contentType ("" for none), its answer
-// decoded into out — sent again after each 503's Retry-After until
-// unavailableBudget is spent, unless the client sends each call once.
-func (c hqClient) send(ctx context.Context, method, path, authorization, contentType string, body []byte, out any) error {
+func (c hqClient) sendWithRevision(ctx context.Context, method, path, authorization, contentType string, body []byte, out any, rev *int64) error {
 	waited := time.Duration(0)
 	for {
-		wait, err := c.sendOnce(ctx, method, path, authorization, contentType, body, out)
+		wait, err := c.sendOnce(ctx, method, path, authorization, contentType, body, out, rev)
 		if wait == 0 || c.once || waited+wait > unavailableBudget {
 			return err
 		}
@@ -187,7 +188,7 @@ func (c hqClient) unanswered(caller, try context.Context, connected *atomic.Bool
 
 // sendOnce is one try; wait is how long to wait before the next, 0 when the
 // answer is final.
-func (c hqClient) sendOnce(caller context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
+func (c hqClient) sendOnce(caller context.Context, method, path, authorization, contentType string, body []byte, out any, rev *int64) (time.Duration, error) {
 	ctx, connected, release := c.bounded(caller)
 	defer release()
 	var reader io.Reader
@@ -209,12 +210,29 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	defer resp.Body.Close()
+	// An error can follow an already committed write. HQ includes its
+	// revision even then, so callers can keep the snapshot from overruling it.
+	if rev != nil {
+		header := resp.Header.Get("Mate-State-Rev")
+		if header != "" {
+			v, parseErr := strconv.ParseInt(header, 10, 64)
+			if parseErr != nil || v <= 0 {
+				return 0, fmt.Errorf("hq %s: answer has an invalid Mate-State-Rev", path)
+			}
+			*rev = v
+		} else if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+			return 0, fmt.Errorf("hq %s: answer has no Mate-State-Rev", path)
+		}
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
 	if err != nil {
 		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	// A 204 answers with nothing to decode.
 	if resp.StatusCode == http.StatusNoContent {
+		if rev != nil {
+			return 0, fmt.Errorf("hq %s: change write answered without a body", path)
+		}
 		return 0, nil
 	}
 	if resp.StatusCode != http.StatusOK {

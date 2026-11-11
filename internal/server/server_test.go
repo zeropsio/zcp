@@ -907,7 +907,7 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 			} else if tt.markIsOwn {
 				chief = `{"projectId":"p1"}`
 			}
-			hqtest.State(t, `{"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":`+chief+`}`)
+			hqtest.State(t, `{"rev":1,"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":`+chief+`}`)
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {

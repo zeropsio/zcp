@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -286,7 +287,7 @@ func TestHandleRelease_AWiredPairHandsOff(t *testing.T) {
 	t.Cleanup(func() { launchPushProofReader = prev })
 
 	ssh := &containerSSHStub{}
-	result, _, _ := handleRelease(context.Background(), nil, "", ssh, nil,
+	result, _, _ := handleRelease(context.Background(), nil, "", ssh,
 		WorkflowInput{Service: "appdev", ReleaseVersion: "v1.0.0"}, lab.stateDir, runtime.Info{InContainer: true})
 	if askedRef != "" || len(ssh.commands) != 0 {
 		t.Errorf("HQ release ran legacy preflight: ref=%q SSH=%v", askedRef, ssh.commands)
@@ -706,6 +707,7 @@ func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 				t.Fatal(err)
 			}
 			lab.hq.keepOn(tc.keep)
+			lab.snapshotMate(t.Context())
 			if tc.started {
 				lab.developStart()
 			}
@@ -727,9 +729,8 @@ func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 }
 
 // TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept: status names how a
-// wired pair's code is kept from its record; a pair with none yet — wired
-// before zcp recorded it — is asked of HQ once, bounded, and recorded. When
-// HQ does not answer, status says the way is unknown.
+// wired pair's code is kept from the last-heard state. With no state,
+// status says the way is unknown and does not change the pair record.
 func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
@@ -756,7 +757,13 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 				t.Fatal(err)
 			}
 			lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
-			lab.hq.setDown(tc.down)
+			if tc.down {
+				if err := os.Remove(lab.rt.HQ.StatePath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				lab.snapshotMate(t.Context())
+			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
 				workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
@@ -766,8 +773,8 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 			if !strings.Contains(text, tc.want) {
 				t.Errorf("status lacks %q:\n%s", tc.want, text)
 			}
-			if got := lab.meta().HQ.Origin; !tc.down && (got == nil || got.Mode != hq.OriginOnGitHub) {
-				t.Errorf("the pair's record = %+v, want github recorded", got)
+			if got := lab.meta().HQ.Origin; got != nil {
+				t.Errorf("status changed the pair record: %+v", got)
 			}
 		})
 	}
@@ -829,6 +836,7 @@ func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
 	lab.hq.mu.Lock()
 	lab.hq.reposless = true
 	lab.hq.mu.Unlock()
+	lab.snapshotMate(t.Context())
 
 	asked := lab.hq.callCount("GET /api/mate/self")
 
@@ -839,8 +847,8 @@ func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
 			t.Errorf("status lacks origin.mode=unknown:\n%s", text)
 		}
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - asked; n != 1 {
-		t.Errorf("two statuses asked HQ %d time(s), want once", n)
+	if n := lab.hq.callCount("GET /api/mate/self") - asked; n != 0 {
+		t.Errorf("two statuses asked HQ %d time(s), want none", n)
 	}
 }
 

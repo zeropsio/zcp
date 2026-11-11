@@ -210,7 +210,7 @@ func registerLeaseTool(t *testing.T, srv *mcp.Server, client platform.Client, pr
 		}
 		background.Wait()
 	})
-	registerLease(srv, deps, rt, nil)
+	registerLease(srv, deps, rt)
 	return background.Wait
 }
 

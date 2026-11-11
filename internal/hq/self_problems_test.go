@@ -1,7 +1,6 @@
 package hq
 
 import (
-	"context"
 	"reflect"
 	"testing"
 )
@@ -27,8 +26,8 @@ func TestClient_Self_Problems_DecodesHQFindingsAndOlderHQ(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client, _ := answering(t, `{"projectId":"project-1",`+tt.fields+`}`)
-			state, err := client.Self(context.Background())
+			doc, err := decodeMateState([]byte(`{"link":"linked","mate":{"rev":1,"projectId":"project-1","appId":null,"repos":[],"chief":null,`+tt.fields+`}}`), "project-1")
+			state := doc.Mate
 			if err != nil {
 				t.Fatal(err)
 			}

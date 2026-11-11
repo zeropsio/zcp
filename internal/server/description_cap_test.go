@@ -49,7 +49,7 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 	t.Cleanup(chiefHQ.Close)
 	t.Setenv("HOME", t.TempDir())
 	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
-	hqtest.State(t, `{"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
+	hqtest.State(t, `{"rev":1,"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
 
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {

@@ -44,9 +44,6 @@ type Identity struct {
 	// that resolved the project sets it; nothing else needs it, so check()
 	// does not.
 	OrgID string
-	// ChangesPath is the file the Mate's server keeps the link's last
-	// `state` frame's changes in (ChangesPath), on the same disk.
-	ChangesPath string
 	// State is the Mate server's last state and link standing.
 	State MateStateSource
 }
@@ -59,8 +56,7 @@ func IdentityFrom(getenv func(string) string) Identity {
 		Key:       strings.TrimSpace(getenv(EnvKey)),
 		ProjectID: strings.TrimSpace(getenv(EnvProjectID)),
 
-		ChangesPath: ChangesPath(),
-		State:       NewFileMateStateSource(MateStatePath(), strings.TrimSpace(getenv(EnvProjectID))),
+		State: NewFileMateStateSource(MateStatePath(), strings.TrimSpace(getenv(EnvProjectID))),
 	}
 }
 

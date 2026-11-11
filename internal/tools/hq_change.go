@@ -49,13 +49,24 @@ func changesIn(changes []workflow.HQChange, appID, repo string) []workflow.HQCha
 	return out
 }
 
-// recordHQChange keeps change number of appID's repo, on branch, in the
-// ledger. Best-effort: a call that could not write it finds the change again
-// in the Mate's state next time, which costs a call and nothing else.
-func recordHQChange(stateDir, appID, repo string, number int, branch, title, source string) {
-	_ = workflow.RecordHQChange(stateDir, workflow.HQChange{
-		AppID: appID, Repo: repo, Number: number, Branch: branch, Title: title, Source: source,
-	})
+// recordHQChange keeps change number of appID's repo, on branch, in the ledger.
+func recordHQChange(stateDir, appID, repo string, number int, branch, title, source string, rev int64) error {
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{
+		AppID: appID, Repo: repo, Number: number, Branch: branch, Title: title, Source: source, StateRev: rev,
+	}); err != nil {
+		return fmt.Errorf("record change #%d: %w", number, err)
+	}
+	return nil
+}
+
+func rememberChangeRevision(stateDir string, ref changeRef, rev int64) error {
+	if err := workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, _ bool) error {
+		c.StateRev = max(c.StateRev, rev)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("record the revision of change #%d: %w", ref.Number, err)
+	}
+	return nil
 }
 
 // hqReleasedBranch is the branch an older zcp kept a wired pair's work on in
@@ -139,7 +150,7 @@ func hqTakeHanded(stateDir string, hqc hq.Client, state hq.MateState, appID, rep
 			continue
 		}
 		branch := hqc.BranchOf(handed.Number, handed.Branch)
-		recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded)
+		_ = recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded, 0)
 		lines = append(lines, handedWork(repoDevHost(stateDir, appID, repo), handed, repo, branch, !state.OpenPerBranch))
 	}
 	return lines
@@ -183,6 +194,9 @@ const (
 // outcomeOf is what state says became of c, with the change as state names
 // it (nil when it names none).
 func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.MateChange) {
+	if state.Rev < c.StateRev {
+		return changeUnknown, nil
+	}
 	listed, oldest := 0, 0
 	for i := range state.Changes {
 		s := &state.Changes[i]
@@ -237,7 +251,10 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	if outcome == changeStillOpen || outcome == changeUnknown {
 		return ""
 	}
-	_ = workflow.ForgetHQChange(stateDir, c.AppID, c.Repo, c.Number)
+	forgot, err := workflow.ForgetHQChangeAtState(stateDir, c.AppID, c.Repo, c.Number, state.Rev)
+	if err != nil || !forgot {
+		return ""
+	}
 	switch outcome {
 	case changeMerged:
 		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
@@ -487,8 +504,9 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 	var lines []string
 	for _, c := range changes {
 		if c.AppID != app {
-			_ = workflow.ForgetHQChange(stateDir, c.AppID, c.Repo, c.Number)
-			lines = append(lines, fmt.Sprintf("change #%d in %q stays in the application it was opened in: HQ holds this Mate in another now", c.Number, c.Repo))
+			if forgot, _ := workflow.ForgetHQChangeAtState(stateDir, c.AppID, c.Repo, c.Number, state.Rev); forgot {
+				lines = append(lines, fmt.Sprintf("change #%d in %q stays in the application it was opened in: HQ holds this Mate in another now", c.Number, c.Repo))
+			}
 		}
 	}
 	for _, repo := range hqChangeRepos(stateDir, hqc.Address(), app, changes) {
@@ -505,7 +523,7 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		switch {
 		case !atStart || len(handed) > 0:
 		case state.OpenPerBranch:
-			if open := openChangesWords(openChangesOf(hqc, state, app, repo), route); open != "" {
+			if open := openChangesWords(openChangesOf(hqc, state, app, repo, kept), route); open != "" {
 				said = append(said, open)
 			}
 		case len(kept) == 1:
@@ -530,6 +548,11 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 		return ""
 	}
 	defer release()
+	current, found, err := workflow.ReadHQChange(stateDir, c.AppID, c.Repo, c.Number)
+	if err != nil || !found {
+		return ""
+	}
+	c = current
 	if line := learnChangeLanding(stateDir, address, c, state); line != "" {
 		return line
 	}
@@ -540,7 +563,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
 	if c.Told == nil || *c.Told != now {
 		_ = workflow.UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *workflow.HQChange, existed bool) error {
-			if !existed {
+			if !existed || kept.StateRev > state.Rev {
 				return workflow.ErrSkipWrite
 			}
 			kept.Told = &now
@@ -554,14 +577,22 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 // with its standing now — one this zcp never recorded too (opened by another
 // zcp, or naming no branch), since each counts toward the open changes HQ
 // keeps a Mate there. state is of appID's application.
-func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string) []workflow.HQChange {
+func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string, kept []workflow.HQChange) []workflow.HQChange {
 	var open []workflow.HQChange
 	for _, s := range state.Changes {
 		if s.Repo != repo || s.State != hq.ChangeOpen {
 			continue
 		}
+		if slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == s.Number && c.StateRev > state.Rev }) {
+			continue
+		}
 		now := standingOf(s)
 		open = append(open, workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: hqc.BranchOf(s.Number, s.Branch), Told: &now})
+	}
+	for _, c := range kept {
+		if c.StateRev > state.Rev && (c.Told == nil || c.Told.State != hq.ChangeClosed) {
+			open = append(open, c)
+		}
 	}
 	slices.SortFunc(open, func(a, b workflow.HQChange) int { return a.Number - b.Number })
 	return open
@@ -622,8 +653,8 @@ func hqChangeRepos(stateDir, address, app string, changes []workflow.HQChange) [
 // trackedSelf is lazySelf with whether a pass read the state at all: the
 // changes' turn runs only once a pair's turn asked HQ, so the pairs' backoff
 // paces it too.
-func trackedSelf(ctx context.Context, hqc hq.Client) (self func() (hq.MateState, error), read func() bool) {
-	lazy := lazySelf(ctx, hqc)
+func trackedSelf(hqc hq.Client) (self func() (hq.MateState, error), read func() bool) {
+	lazy := lazySelf(hqc)
 	asked := false
 	return func() (hq.MateState, error) {
 		asked = true

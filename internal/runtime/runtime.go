@@ -45,7 +45,7 @@ type Info struct {
 
 	// Chief is org mode: this project is the Chief's — the person's Mate for
 	// the whole organization, which reads the organization instead of acting on
-	// this project. HQ's mark decides it (GET /api/mate/self names this
+	// this project. HQ's mark decides it (the Mate's state names this
 	// project), so Detect never sets it: `zcp serve` sets it after reading
 	// the mark. It selects the org tool set in place of the single-project
 	// surface and renders the Chief's AGENTS.md section. Spec:
@@ -81,7 +81,7 @@ type Info struct {
 // Info it handed out.
 type HQLink struct {
 	Origin, ProjectID, Key string
-	ChangesPath            string
+	StatePath              string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.

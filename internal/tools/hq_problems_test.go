@@ -2,54 +2,51 @@ package tools
 
 import (
 	"encoding/json"
-	"io"
 	"maps"
-	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const actionableProblem = `{"code":"recipe_invalid","what":"The declared minimum CPU is invalid","where":{"appId":"app-1","projectId":"project-1","environment":"Production","service":"api","tier":"production","file":"production/import.yaml","repo":"group","change":7,"head":"bad-head","releaseTag":"v1.2.3","operationId":"operation-1"},"rule":{"source":"zerops-schema","code":"minimum","schemaUrl":"https://schema.example/import.json","schemaDigest":"sha256:abc","schemaPath":"/properties/minCpu/minimum","instancePath":"/services/0/minCpu"},"next":{"actor":"Mate","action":"Correct the minimum CPU and propose the corrected tier","target":"production/import.yaml"},"evidence":{"processId":"process-1","appVersionId":"version-1","logUrl":"https://logs.example/process-1"}}`
 
-// problemSelfHTTP adds protocol fields to the lab's real self response. All
-// other HQ reads and git operations keep using the existing fake HQ.
-type problemSelfHTTP struct {
-	next   ops.HTTPDoer
-	fields string
-}
-
-func (c problemSelfHTTP) Do(r *http.Request) (*http.Response, error) {
-	response, err := c.next.Do(r)
-	if err != nil || r.URL.Path != "/api/mate/self" || response.StatusCode != http.StatusOK {
-		return response, err
-	}
-	defer response.Body.Close()
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		return nil, err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(c.fields), &fields); err != nil {
-		return nil, err
-	}
-	maps.Copy(body, fields)
-	encoded, err := json.Marshal(body)
+// problemState writes the link frame the tool will read.
+func problemState(t *testing.T, lab *hqLab, fields string) {
+	t.Helper()
+	lab.snapshotMate(t.Context())
+	raw, err := os.ReadFile(lab.rt.HQ.StatePath)
 	if err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
-	response.Body = io.NopCloser(strings.NewReader(string(encoded)))
-	response.ContentLength = int64(len(encoded))
-	return response, nil
+	var doc struct {
+		Link string                     `json:"link"`
+		Mate map[string]json.RawMessage `json:"mate"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(fields), &extra); err != nil {
+		t.Fatal(err)
+	}
+	maps.Copy(doc.Mate, extra)
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lab.rt.HQ.StatePath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func problemToolResult(t *testing.T, lab *hqLab, fields string, develop bool) string {
 	t.Helper()
+	problemState(t, lab, fields)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, lab.mock, problemSelfHTTP{lab.hq.srv.Client(), fields}, labMate, nil,
+	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
 		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
 	input := map[string]any{"action": "status"}
 	if develop {
@@ -93,10 +90,7 @@ func TestHQProblems_NoOpenChange_StatusAndDevelopReportHQFinding(t *testing.T) {
 			reads := lab.hq.callCount("GET /api/mate/self")
 			text := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, develop)
 			assertActionableProblem(t, text)
-			wantReads := 1
-			if develop {
-				wantReads = 2
-			} // Existing recipe composition reads self separately.
+			wantReads := 0
 			if n := lab.hq.callCount("GET /api/mate/self") - reads; n != wantReads {
 				t.Errorf("ASSERTION: %s preserves its existing self passes, got %d", name, n)
 			}
@@ -112,12 +106,12 @@ func TestHQProblems_PresentProblems_EachStatusReadsNewFindings(t *testing.T) {
 	if strings.Contains(first, "The declared minimum CPU is invalid") {
 		t.Error("ASSERTION: the first status must not report a finding HQ has not added")
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
-		t.Errorf("ASSERTION: status reads HQ's present empty problems once, got %d", n)
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
+		t.Errorf("ASSERTION: status made a network state read to HQ's present empty problems once, got %d", n)
 	}
 	second := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, false)
 	assertActionableProblem(t, second)
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 2 {
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
 		t.Errorf("ASSERTION: two statuses with present problems read HQ twice, got %d", n)
 	}
 }
@@ -138,12 +132,12 @@ func TestHQProblems_RepositoriesWithoutProblems_EachStatusReadsNewFindings(t *te
 	if strings.Contains(first, "The declared minimum CPU is invalid") {
 		t.Error("ASSERTION: status must not invent a finding when HQ omits problems")
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
-		t.Errorf("ASSERTION: status reads HQ with repositories and omitted problems once, got %d", n)
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
+		t.Errorf("ASSERTION: status made a network state read to HQ with repositories and omitted problems once, got %d", n)
 	}
 	second := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, false)
 	assertActionableProblem(t, second)
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 2 {
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
 		t.Errorf("ASSERTION: two statuses with repositories read HQ twice despite earlier omitted problems, got %d", n)
 	}
 }

@@ -262,16 +262,17 @@ func TestAppPropose_Release_OverMCP_ProposesWhatWaitsOrSaysNothingDoes(t *testin
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/release-offer" {
 					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)
 					return
 				}
-				_, _ = w.Write([]byte(`{"projectId":"P_MATE","name":"Juno","face":"f","standupRequestedBy":null,"appId":"a1","appName":"Tea Shop","changes":[]` + tt.offer + `}`))
+				_, _ = w.Write([]byte(`{` + strings.TrimPrefix(tt.offer, ",") + `}`))
 			}))
 			defer fake.Close()
 			t.Setenv("HOME", t.TempDir())
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			hqtest.State(t, `{"rev":1,"projectId":"P_MATE","appId":"a1","appName":"Tea Shop","repos":[],"changes":[],"chief":null}`)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterAppPropose(srv, fake.Client(), "P_MATE", runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_propose_release", map[string]any{"reason": "The three changes are merged"})

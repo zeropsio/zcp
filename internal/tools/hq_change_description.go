@@ -130,7 +130,7 @@ func handleDescribeChange(
 	// The ledger is only as fresh as the last read of the Mate's state, and
 	// words are never put on a change that merged or closed in between:
 	// they were written for it, and the next change is another.
-	state, stateErr := describeSelf(ctx, hqc, known.Number != 0)
+	state, stateErr := hqc.ReadMateState()
 	var fresh *hq.MateState
 	if stateErr == nil {
 		fresh = &state
@@ -418,7 +418,13 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, r
 	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
-	if _, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit); err != nil {
+	change, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit)
+	if change.StateRev > 0 {
+		if recordErr := rememberChangeRevision(stateDir, ref, change.StateRev); recordErr != nil {
+			return fmt.Errorf("record HQ's write after edit: %w", recordErr)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	forgetChangeDescription(stateDir, ref, text)
@@ -465,6 +471,11 @@ func changeBody(ctx context.Context, hqc hq.Client, stateDir string, ref changeR
 			callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 			kept, err := hqc.Attach(callCtx, ref.Repo, ref.Number, png)
 			cancel()
+			if kept.StateRev > 0 {
+				if recordErr := rememberChangeRevision(stateDir, ref, kept.StateRev); recordErr != nil {
+					return "", fmt.Errorf("record HQ's write after attachment: %w", recordErr)
+				}
+			}
 			var refused *hq.RefusedError
 			if errors.As(err, &refused) && pictureRefused(refused) {
 				return "", fmt.Errorf("%w: HQ refused %s (%s)", errCannotAttach, id, hqRefusalWords(refused))

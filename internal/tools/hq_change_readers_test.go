@@ -43,6 +43,7 @@ func TestPoolMigrateWorkBranch_TheLedgersOneChangeOfTheRepository(t *testing.T) 
 // nothing is said; one missing from a window that is not full reads closed.
 // An HQ that keeps an open change per branch lists every open one: a missing
 // change settled, and is said no longer open — never closed without merging.
+// witness: internal/tools/hq_change.go | state.Rev < c.StateRev → state.Rev > c.StateRev
 func TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow(t *testing.T) {
 	t.Parallel()
 	app := labApp
@@ -58,7 +59,9 @@ func TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow(t *testing.T) {
 		state     hq.MateState
 		wantWords string // "" nothing said
 		wantKept  bool
+		writeRev  int64
 	}{
+		{name: "a state older than the write", state: hq.MateState{Rev: 9, AppID: &app, OpenPerBranch: true}, writeRev: 10, wantKept: true},
 		{name: "an older HQ's full window", state: hq.MateState{AppID: &app, Changes: newer(hq.MateChangesPerRepo)}, wantKept: true},
 		{name: "an older HQ's window not full", state: hq.MateState{AppID: &app, Changes: newer(3)}, wantWords: "closed without merging"},
 		{name: "an HQ that lists every open change", state: hq.MateState{AppID: &app, Changes: newer(hq.MateChangesPerRepo), OpenPerBranch: true},
@@ -68,7 +71,7 @@ func TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			stateDir := t.TempDir()
-			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 2, Branch: "pool-previews"}
+			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 2, Branch: "pool-previews", StateRev: tt.writeRev}
 			if err := workflow.RecordHQChange(stateDir, c); err != nil {
 				t.Fatal(err)
 			}

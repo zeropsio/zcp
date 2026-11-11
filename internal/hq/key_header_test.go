@@ -27,7 +27,7 @@ func TestClient_EveryCallPresentsTheKeyInTheHeaderAndNeverInTheURL(t *testing.T)
 		{"ai key", func(c Client) { _, _ = c.AIKey(ctx) }},
 		{"GitHub credential", func(c Client) { _, _ = c.GitHubCredential(ctx, "acme/shop.git") }},
 		{"recipe tier", func(c Client) { _, _ = c.RecipeTier(ctx, "mate") }},
-		{"self", func(c Client) { _, _ = c.Self(ctx) }},
+		{"release offer", func(c Client) { _, _ = c.ReleaseOffer(ctx) }},
 		{"key recheck", func(c Client) { _, _ = c.RecheckKey(ctx) }},
 	}
 	for _, tt := range routes {

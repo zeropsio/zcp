@@ -574,6 +574,7 @@ func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
 	lab.leaseOf("hqpool", 4, "fix-login")
 	lab.passReport()
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 	reads := lab.hq.callCount("GET /api/mate/self")
 
 	status := lab.status()
@@ -586,8 +587,8 @@ func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
 	if strings.Contains(status, "#1 fix-login (") {
 		t.Errorf("status names merged #1 with an open change's standing:\n%s", status)
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
-		t.Errorf("status read the Mate's state %d times, want once", n)
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
+		t.Errorf("status asked HQ %d times, want none", n)
 	}
 	if lab.kept(1) == nil {
 		t.Fatal("status forgot change #1: saying the merge, once, is the pass's")
@@ -597,10 +598,17 @@ func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
 	}
 
 	lab.hq.mergeChange("appdev", 2)
-	lab.hq.setDown(true)
+	frame, err := os.ReadFile(lab.rt.HQ.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame = []byte(strings.Replace(string(frame), `"link":"linked"`, `"link":"not-linked"`, 1))
+	if err := os.WriteFile(lab.rt.HQ.StatePath, frame, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	status = lab.status()
 
-	if !strings.Contains(status, "as last read") || !strings.Contains(status, "#2 add-signup (ready · behind main)") {
+	if !strings.Contains(status, "as HQ last sent it") || !strings.Contains(status, "link to HQ is not up") || !strings.Contains(status, "#2 add-signup (ready · behind main)") {
 		t.Errorf("with HQ down status does not name the ledger's changes as last read:\n%s", status)
 	}
 }
@@ -621,7 +629,7 @@ func TestLaunchProduction_ListsEveryOpenChangeOnce(t *testing.T) {
 		}
 	}
 
-	text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
+	text := resultText(t, hqLaunchProductionRefusal(lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 
 	if !strings.Contains(text, "appdev #1 and #2") {
 		t.Errorf("the refusal does not name appdev #1 and #2: %s", text)
@@ -675,7 +683,7 @@ func TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet(t *testing.T) {
 	lab.hq.mergeChange("appdev", 2)
 	views := []ops.LeaseView{{Alias: told, Branch: "fix-login"}, {Alias: unseen, Branch: "add-signup"}}
 
-	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt) })
+	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(lab.rt) })
 
 	for _, want := range []string{"group appdev@fix-login: change #1 merged — release this lease", "group appdev@add-signup: change #2 merged — release this lease", "or start new work from main"} {
 		if !strings.Contains(got, want) {
@@ -727,7 +735,7 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 
 	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState {
 		reads++
-		return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt)
+		return hqStateNow(lab.rt)
 	})
 
 	for _, want := range []string{"group appdev@fix-login: change #1 merged", kept, ops.LeaseReleaseBranchCall("fix-login", "", false),
@@ -779,7 +787,7 @@ func TestLeaseRelease_MergedChangeNamesTheStageCall(t *testing.T) {
 		{Alias: merged, Repo: repo, Branch: "fix-login", State: ops.LeaseStateReleased},
 		{Alias: open, Repo: repo, Branch: "add-signup", State: ops.LeaseStateReleased},
 	}
-	read := func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt) }
+	read := func() *hq.MateState { return hqStateNow(lab.rt) }
 
 	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, read)
 
@@ -817,12 +825,12 @@ func TestStatusHQChanges_OutsideAMate_AsLastRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changes, asLastRead, _ := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now(), true)
+	changes, asLastRead, problems, standing, state := statusHQChanges(runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now(), true)
 
-	if len(changes) == 0 || !asLastRead {
+	if len(changes) == 0 || !asLastRead || len(problems) != 0 || standing != "" || state != nil {
 		t.Errorf("outside a Mate status names %+v with asLastRead=%v, want the ledger's, as last read", changes, asLastRead)
 	}
-	if changes, asLastRead, _ := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now(), true); len(changes) != 0 || asLastRead {
+	if changes, asLastRead, problems, standing, state := statusHQChanges(runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now(), true); len(changes) != 0 || asLastRead || len(problems) != 0 || standing != "" || state != nil {
 		t.Errorf("with nothing to name status says %+v, asLastRead=%v", changes, asLastRead)
 	}
 }
@@ -839,7 +847,7 @@ func TestHandleRelease_NamesTheOpenChangesItLeavesOut(t *testing.T) {
 		}
 	}
 
-	result, _, _ := handleRelease(context.Background(), nil, "", nil, nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
+	result, _, _ := handleRelease(context.Background(), nil, "", nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
 
 	text := resultText(t, result)
 	for _, want := range []string{"release-person-required", "appsdev #2 and #6", "not in"} {
@@ -866,6 +874,7 @@ func (l *hqLab) release() string {
 func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
 	lab := twoOpenChanges(t)
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 	reads := lab.hq.callCount("GET /api/mate/self")
 
 	text := lab.release()
@@ -876,14 +885,16 @@ func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
 	if strings.Contains(text, "#1") {
 		t.Errorf("the handoff names merged #1 as an open change left out: %s", text)
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
-		t.Errorf("the handoff read the Mate's state %d times, want once", n)
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
+		t.Errorf("the handoff asked HQ %d times, want none", n)
 	}
 	if lab.kept(1) == nil {
 		t.Error("the handoff forgot change #1: saying the merge, once, is the pass's")
 	}
 
-	lab.hq.setDown(true)
+	if err := os.Remove(lab.rt.HQ.StatePath); err != nil {
+		t.Fatal(err)
+	}
 	text = lab.release()
 
 	if !strings.Contains(text, "as last read") || !strings.Contains(text, "#1 and #2") {

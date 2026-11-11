@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -142,9 +143,8 @@ func TestDescribeTransient(t *testing.T) {
 }
 
 // TestDescribeChange_ReadsItsChangeThroughTheRoll: with no change on record,
-// the Mate's own state names the open one — and a read of it that meets the
-// roll is tried again as the description is, never answered with "no change
-// is open".
+// The last-heard state names the open change without asking HQ. With no
+// state, its standing is unknown, never answered as no open change.
 func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 	t.Parallel()
 	isSelf := func(r *http.Request) bool { return r.URL.Path == "/api/mate/self" }
@@ -160,7 +160,12 @@ func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 			wantDescribed: true, wantText: []string{`"described":true`, `"pullRequest":1`},
 		},
 		{
-			name: "HQ stays away", hq: func(lab *hqLab) { lab.hq.srv.Close() },
+			name: "HQ stays away", hq: func(lab *hqLab) {
+				if err := os.Remove(lab.rt.HQ.StatePath); err != nil {
+					lab.t.Fatal(err)
+				}
+				lab.hq.srv.Close()
+			},
 			wantText: []string{`"described":false`, "is unknown", "describe-change again"}, wantNot: "No change is open",
 		},
 	}

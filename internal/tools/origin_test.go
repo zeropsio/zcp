@@ -30,7 +30,7 @@ func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []stri
 // it also returns the fake HQ's address.
 func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
-	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[],"chief":null`
+	body := `{"rev":1,"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[],"chief":null`
 	if repos != "" {
 		body += `,"repos":` + repos
 	}

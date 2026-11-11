@@ -14,9 +14,10 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// heldHQ is an HQ whose answer to the Mate's state waits for release, deaf
+// heldHQ is an HQ whose repository answer waits for release, deaf
 // to the caller giving up: a start pass held mid-way, as on a slow runner.
 // Every other request finds no HQ.
 type heldHQ struct {
@@ -25,7 +26,7 @@ type heldHQ struct {
 }
 
 func (h heldHQ) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Path == "/api/mate/self" {
+	if r.URL.Path == "/api/mate/repos" {
 		h.asked()
 		<-h.release
 	}
@@ -54,6 +55,14 @@ func TestServerStop_StartPassRunning_WaitsForIt(t *testing.T) {
 			// Non-parallel: t.Chdir (the state dir) and a swap of
 			// http.DefaultTransport (the HQ the start pass asks).
 			t.Chdir(t.TempDir())
+			if err := workflow.UpsertServiceMeta(stateDirFromCwd(), "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+				m.Hostname = "appdev"
+				m.BootstrappedAt = "2026-10-02"
+				m.HQ = &workflow.HQRepoRef{AppID: "a1", Repo: "appdev"}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
 			asked, release := make(chan struct{}), make(chan struct{})
 			var askOnce, releaseOnce sync.Once
 			letGo := func() { releaseOnce.Do(func() { close(release) }) }

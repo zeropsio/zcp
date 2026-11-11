@@ -15,12 +15,8 @@ func isOpenCall(r *http.Request) bool {
 }
 
 // TestOpenChange_AnswerLost_AnswersTheChangeItOpened is Filip on 2026-10-26:
-// open-change met "context deadline exceeded" waiting for HQ's answer and
-// said "Nothing was opened", yet HQ had opened change #2, which the retry
-// found. An open whose answer never arrived — HQ may have acted on it —
-// reads the Mate's state before it answers: the change open on the branch
-// is the answer, recorded as an answered open is, and a call again answers
-// that same change rather than opening another.
+// If HQ does not answer, an existing open change in the state already read
+// is the answer. A call again answers the same change.
 func TestOpenChange_AnswerLost_AnswersTheChangeItOpened(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -43,14 +39,19 @@ func TestOpenChange_AnswerLost_AnswersTheChangeItOpened(t *testing.T) {
 			if tt.perBranch {
 				lab.hq.keepOpenPerBranch()
 			}
+			first, text, isError := lab.openChangeFrom("fix-login", "Fix the login")
+			if isError || first.PullRequest != 1 {
+				t.Fatalf("open before the lost answer: %s", text)
+			}
+			lab.snapshotMate(t.Context())
 			lab.hq.loseAnswers(1, tt.status, isOpenCall)
 
 			answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login")
 
-			if isError || answer.PullRequest != 1 || answer.Branch != "fix-login" || !answer.Created {
+			if isError || answer.PullRequest != 1 || answer.Branch != "fix-login" || answer.Created {
 				t.Fatalf("want change #1 answered as opened on fix-login, got isError=%v: %s", isError, text)
 			}
-			if strings.Contains(text, "Nothing was opened") || !strings.Contains(answer.Message, "Change #1 is open") {
+			if strings.Contains(text, "Nothing was opened") || !strings.Contains(answer.Message, "HQ's answer to the open never arrived") {
 				t.Errorf("the answer does not say change #1 is open: %s", text)
 			}
 			if kept := lab.kept(1); kept == nil || kept.Branch != "fix-login" {
@@ -72,7 +73,7 @@ func TestOpenChange_AnswerLost_AnswersTheChangeItOpened(t *testing.T) {
 }
 
 // TestOpenChange_AnswerAndStateLost_SaysUnknownNeverNothing: when the open's
-// answer and the read of the Mate's state after it are both lost, whether
+// answer is lost and the state read before it lists no change, whether
 // the change was opened is unknown — never "Nothing was opened" — and the
 // answer says a call again answers the change if it was opened rather than
 // opening a second; the call again does exactly that.
@@ -81,15 +82,7 @@ func TestOpenChange_AnswerAndStateLost_SaysUnknownNeverNothing(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.keepOpenPerBranch()
-	opened := false
-	// Called with HQ's lock held, as every request is served.
-	lab.hq.loseAnswers(2, 0, func(r *http.Request) bool {
-		if isOpenCall(r) {
-			opened = true
-			return true
-		}
-		return opened && r.Method == http.MethodGet && r.URL.Path == "/api/mate/self"
-	})
+	lab.hq.loseAnswers(1, 0, isOpenCall)
 
 	_, text, isError := lab.openChangeFrom("fix-login", "Fix the login")
 

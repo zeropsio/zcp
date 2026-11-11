@@ -263,8 +263,8 @@ func (a observedApp) ProductionTier(ctx context.Context) (ops.ProductionTier, er
 	return ops.ProductionTier{Present: read.State == hq.RecipePresent, ImportYAML: read.ImportYAML, Head: read.MainHead}, nil
 }
 
-// releaseOffer is the release HQ's Mate state says waits for the person, nil
-// while it names none — nothing waits, or an HQ older than release asks — and
+// releaseOffer reads the release HQ says waits for the person, nil
+// when nothing waits, and
 // the name the ask is made under: the application's, else this project's.
 func (a observedApp) releaseOffer(ctx context.Context) (*ops.ReleaseOfferParams, string, error) {
 	client, err := a.keyed()
@@ -273,16 +273,17 @@ func (a observedApp) releaseOffer(ctx context.Context) (*ops.ReleaseOfferParams,
 	}
 	ctx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
-	state, err := client.Self(ctx)
+	o, err := client.ReleaseOffer(ctx)
 	if err != nil {
 		return nil, "", hqUnread("whether anything waits for release", err)
 	}
+	state, err := client.ReadMateState()
 	application := a.rt.ProjectName
-	if state.AppName != nil && strings.TrimSpace(*state.AppName) != "" {
+	if err == nil && state.AppName != nil && strings.TrimSpace(*state.AppName) != "" {
 		application = strings.TrimSpace(*state.AppName)
 	}
 	var offer *ops.ReleaseOfferParams
-	if o := state.ReleaseOffer; o != nil {
+	if o != nil {
 		offer = &ops.ReleaseOfferParams{Head: o.Head, Suggestion: o.Suggestion}
 	}
 	return offer, application, nil

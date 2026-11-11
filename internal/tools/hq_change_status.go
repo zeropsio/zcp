@@ -2,7 +2,6 @@ package tools
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -80,71 +79,47 @@ func hqLeaseBranches(stateDir, address string) []hqLeaseBranch {
 	return out
 }
 
-// hqChangesReadBound bounds status's and lease status's one read of the
-// Mate's state for the changes they name: each answers promptly whether HQ
-// does or not.
-const hqChangesReadBound = 5 * time.Second
-
-// hqStateNow is the Mate's own state in HQ, read once and bounded, from the
-// HQ the container rt presents itself to (hqIdentity: its environment's
-// origin, else the one the installed Mate declares); nil when the container
-// cannot address an HQ or HQ did not answer.
-func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) *hq.MateState {
-	hqc, linked := openHQ(httpClient, rt)
-	if !linked {
+// hqStateNow is the Mate's state as the link last heard it.
+func hqStateNow(rt runtime.Info) *hq.MateState {
+	doc, err := hqIdentity(rt).ReadMateState()
+	if err != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
-	defer cancel()
-	state, err := hqc.Once().Self(ctx)
+	state, err := doc.Heard()
 	if err != nil {
 		return nil
 	}
 	return &state
 }
 
-// statusHQChanges reads the Mate's state once for changes and unresolved app
-// findings, even without open changes, unless the pairs already record an
-// HQ older than repositories. Outside a Mate or while HQ cannot answer,
-// only the ledger's changes remain, labelled as last read.
-func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time, includeProblems bool) (changes []workflow.HQRepoChanges, asLastRead bool, problems []hq.Problem) {
+// statusHQChanges reads the last-heard state once for changes and unresolved
+// app findings. Without a state, only the ledger's changes remain.
+func statusHQChanges(rt runtime.Info, stateDir, address string, now time.Time, includeProblems bool) (changes []workflow.HQRepoChanges, asLastRead bool, problems []hq.Problem, standing string, state *hq.MateState) {
 	kept := hqChangesStatus(stateDir, address, now, nil)
 	// Environment observation consumes only changes and retains its no-read
 	// behavior when empty. Lifecycle status also asks for app findings.
 	if len(kept) == 0 && !includeProblems {
-		return kept, false, nil
-	}
-	if len(kept) == 0 {
-		// The origin lookup has already recorded an old HQ's unknown mode.
-		// Any pair naming a mode (or still unrecorded) keeps status fresh,
-		// whether or not that HQ includes the optional problems field.
-		metas, _ := workflow.ListServiceMetas(stateDir)
-		olderHQ := false
-		for _, m := range metas {
-			if !hqPairWired(m) {
-				continue
-			}
-			if m.HQ.Origin == nil || m.HQ.Origin.Mode != "" {
-				olderHQ = false
-				break
-			}
-			olderHQ = true
-		}
-		if olderHQ {
-			return kept, false, nil
-		}
+		return kept, false, nil, "", nil
 	}
 	if !rt.MateEnabled {
-		return kept, len(kept) > 0, nil
+		return kept, len(kept) > 0, nil, "", nil
 	}
-	state := hqStateNow(ctx, httpClient, rt)
-	if state == nil {
-		return kept, len(kept) > 0, nil
+	doc, err := hqIdentity(rt).ReadMateState()
+	if err != nil {
+		return kept, true, nil, fmt.Sprintf("The Mate's state has not been heard (%v).", err), nil
 	}
-	return hqChangesStatus(stateDir, address, now, state), false, hqStateProblems(*state)
+	standing = doc.Standing()
+	heard, err := doc.Heard()
+	if err != nil {
+		if standing == "" {
+			standing = "The Mate's state has not been heard."
+		}
+		return kept, true, nil, standing, nil
+	}
+	return hqChangesStatus(stateDir, address, now, &heard), false, hqStateProblems(heard), standing, &heard
 }
 
-// hqStateProblems forwards every HQ finding from the existing self read.
+// hqStateProblems forwards every HQ finding from the last-heard state.
 // The same finding can occur at app, change and validation level; render an
 // identical finding once, without choosing a verdict or dropping distinct ones.
 func hqStateProblems(state hq.MateState) []hq.Problem {
@@ -235,6 +210,13 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 // nil once it is not one.
 func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeLine, *workflow.HQChangeTold) {
 	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told)}
+	if c.Told != nil && c.Told.State == hq.ChangeClosed {
+		line.Labels = []string{"closed without merging"}
+	}
+	if state != nil && state.Rev < c.StateRev {
+		line.Labels = append(line.Labels, "waiting for HQ's state after this write")
+		return line, c.Told
+	}
 	if state == nil || state.AppID == nil || *state.AppID != c.AppID {
 		return line, c.Told
 	}
@@ -468,16 +450,16 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 // name, the Mate's state is read once, bounded, and a change it names merged,
 // closed or no longer listed is left out — a merge since the last pass is
 // never named as left out. The read writes nothing: the pass still says the
-// merge once, with what to do. Unread — outside a Mate, or HQ not answering —
+// merge once, with what to do. Unread — outside a Mate, or no state heard —
 // the ledger's are named as last read.
-func releaseOpenChangesWords(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+func releaseOpenChangesWords(rt runtime.Info, stateDir string) string {
 	kept := hqChanges(stateDir)
 	if len(kept) == 0 {
 		return ""
 	}
 	var state *hq.MateState
 	if rt.MateEnabled {
-		state = hqStateNow(ctx, httpClient, rt)
+		state = hqStateNow(rt)
 	}
 	byRepo := map[string][]int{}
 	var repos []string

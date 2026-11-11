@@ -53,6 +53,8 @@ type StateEnvelope struct {
 	// HQChangesAsLastRead is HQChanges being the ledger's standing as last
 	// told, HQ not answering status's read of the Mate's state.
 	HQChangesAsLastRead bool `json:"-"`
+	// HQStateStanding says when the link is down or no state was heard.
+	HQStateStanding string `json:"-"`
 	// HQProblems are HQ's findings from the same read, for prose only.
 	HQProblems []hq.Problem `json:"-"`
 	// Required are the steps a Mate's setup is not done without, each

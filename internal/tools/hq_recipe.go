@@ -139,9 +139,9 @@ type recipeOutcome struct {
 // it is. Nothing about the proposal is stored: each pass composes it anew
 // and finds the change in the Mate's state. That read is good only until
 // another pass writes, so passes run one at a time on the Mate, across every
-// zcp it runs (holdRecipePass): the second waits for the first and reads HQ
-// afresh — main carrying what the first landed, or the first's change —
-// rather than proposing onto a main the first already changed.
+// zcp it runs (holdRecipePass): the second waits for the first and reads
+// the last-heard state. A recipe write newer than that state holds the next
+// proposal until the link catches up.
 func reconcileGroupRecipe(
 	ctx context.Context,
 	client platform.Client,
@@ -167,7 +167,7 @@ func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient 
 // adopt and the agent's ask still propose it.
 func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, schemas *schema.Cache) string {
 	if hqc, linked := openHQ(httpClient, rt); linked {
-		if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
+		if state, err := hqc.ReadMateState(); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
 			return ""
 		}
 	}
@@ -463,9 +463,12 @@ func composeGroupRecipe(
 	// The Mate's state names the application, and its own change in the
 	// recipe repository when one is open: what a proposal moves forward
 	// rather than opens again.
-	state, err := hqc.Self(ctx)
+	state, err := hqc.ReadMateState()
 	if err != nil {
 		return groupRecipeComposition{}, recipeOutcome{Line: fmt.Sprintf("could not read this Mate's changes in HQ to propose the recipe (%v) — retrying on the next pass.", err)}, false
+	}
+	if recipeStateBehind(stateDir, repo.AppID, state) {
+		return groupRecipeComposition{}, recipeOutcome{Line: "the group recipe is waiting for HQ's state after its last change — retrying on the next pass."}, false
 	}
 	var outcome recipeOutcome
 	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
@@ -586,6 +589,14 @@ func openRecipeChange(state hq.MateState) *hq.MateChange {
 	return nil
 }
 
+// A recipe pass must not open or choose a proposal using state older than
+// this Mate's own write to the recipe repository.
+func recipeStateBehind(stateDir, appID string, state hq.MateState) bool {
+	return slices.ContainsFunc(changesIn(hqChanges(stateDir), appID, hq.RecipeRepo), func(c workflow.HQChange) bool {
+		return state.Rev < c.StateRev
+	})
+}
+
 // recipeWrite is what a write to the Mate's change in the recipe repository
 // did: the change that carries it (0 when none is) and the branch HQ binds it
 // to, whether this call opened it, whether anything was pushed, and — when the Mate's open change there is
@@ -660,7 +671,7 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 		return recipeWrite{}, nil
 	}
 
-	write, err := ownRecipeChange(ctx, hqc, open, title)
+	write, err := ownRecipeChange(ctx, hqc, comp.stateDir, comp.appID, open, title)
 	if err != nil || write.other != nil {
 		return write, err
 	}
@@ -712,7 +723,7 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 // title; opened when none is open; and the open one as the other change when
 // its title is another. A write goes on the branch HQ binds the change to — a
 // change handed to the Mate stays on its gone Mate's.
-func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, title string) (recipeWrite, error) {
+func ownRecipeChange(ctx context.Context, hqc hq.Client, stateDir, appID string, open *hq.MateChange, title string) (recipeWrite, error) {
 	if open != nil && open.Title != nil {
 		if *open.Title != title {
 			return recipeWrite{other: &otherRecipeChange{number: open.Number, title: *open.Title}}, nil
@@ -727,6 +738,9 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, ti
 	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title, "")
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
+	}
+	if err := recordHQChange(stateDir, appID, hq.RecipeRepo, opened.Change.Number, hqc.BranchOf(opened.Change.Number, opened.Change.Branch), opened.Change.Title, workflow.HQChangeFromOpen, opened.StateRev); err != nil {
+		return recipeWrite{}, fmt.Errorf("HQ answered recipe change #%d open, but zcp could not record it: %w", opened.Change.Number, err)
 	}
 	if !opened.Created && opened.Change.Title != title {
 		return recipeWrite{other: &otherRecipeChange{number: opened.Change.Number, title: opened.Change.Title}}, nil

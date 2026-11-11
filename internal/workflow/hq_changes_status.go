@@ -50,15 +50,18 @@ type HQBranchLine struct {
 
 // renderHQChanges is status's Changes section: one line per repository,
 // skipped when the Mate keeps no change and leases no branch in HQ, labelled
-// as last read when HQ did not answer status's read of it.
+// by whether the Mate has heard a state.
 func renderHQChanges(b *strings.Builder, env StateEnvelope) {
+	if env.HQStateStanding != "" {
+		fmt.Fprintln(b, env.HQStateStanding)
+	}
 	if len(env.HQChanges) == 0 {
 		return
 	}
 	if env.HQChangesAsLastRead {
-		fmt.Fprintln(b, "Changes (as last read — HQ did not answer now):")
+		fmt.Fprintln(b, "Changes (zcp's record; no state heard):")
 	} else {
-		fmt.Fprintln(b, "Changes:")
+		fmt.Fprintln(b, "Changes (as HQ last sent it):")
 	}
 	for _, repo := range env.HQChanges {
 		items := make([]string, 0, len(repo.Changes)+len(repo.Branches))

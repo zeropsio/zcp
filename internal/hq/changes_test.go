@@ -30,6 +30,7 @@ func answering(t *testing.T, body string) (Client, *[]hqCall) {
 		raw, _ := io.ReadAll(r.Body)
 		calls = append(calls, hqCall{r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"), r.Header.Get("Content-Type"), string(raw)})
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Mate-State-Rev", "1")
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
@@ -79,7 +80,7 @@ func TestClient_OpenChange_DecodesTheChangeHQOpenedOrHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := OpenedChange{Created: true, Change: Change{
+	want := OpenedChange{StateRev: 1, Created: true, Change: Change{
 		AppID: "0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11", Repo: "appdev", Number: 3, MateProjectID: "p-mate",
 		Title: "Add a todo list", State: ChangeOpen, OpenedAt: "2026-10-02T09:12:44.512Z",
 		UpdatedAt: "2026-10-02T09:12:44.512Z", Mergeability: "unknown",
@@ -143,8 +144,9 @@ func TestClient_Attach_SendsThePictureItselfAsAPNG(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Attachment{
-		ID:   "7f1c2a90-3d4e-4b5f-8a6b-9c0d1e2f3a4b",
-		Path: "/api/apps/0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11/changes/appdev/3/attachments/7f1c2a90-3d4e-4b5f-8a6b-9c0d1e2f3a4b",
+		StateRev: 1,
+		ID:       "7f1c2a90-3d4e-4b5f-8a6b-9c0d1e2f3a4b",
+		Path:     "/api/apps/0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11/changes/appdev/3/attachments/7f1c2a90-3d4e-4b5f-8a6b-9c0d1e2f3a4b",
 	}
 	if got != want {
 		t.Errorf("attachment = %+v, want %+v", got, want)
@@ -488,5 +490,26 @@ func TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange(t *testing.T) {
 	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/close", "Project good", "application/json", `{}`}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
+	}
+}
+
+// witness: internal/hq/changes.go | Offer *ReleaseOffer `json:"releaseOffer"` → Offer *ReleaseOffer `json:"-"`
+func TestClient_ReleaseOffer_DecodesWhatWaitsAndNone(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		body string
+		want *ReleaseOffer
+	}{
+		{`{"releaseOffer":{"head":"4444444444444444444444444444444444444444","suggestion":"v1.4.0"}}`, &ReleaseOffer{Head: "4444444444444444444444444444444444444444", Suggestion: "v1.4.0"}},
+		{`{"releaseOffer":null}`, nil},
+	} {
+		client, calls := answering(t, tt.body)
+		got, err := client.ReleaseOffer(context.Background())
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("offer = %+v, error = %v; want %+v", got, err, tt.want)
+		}
+		if len(*calls) != 1 || (*calls)[0].Path != "/api/mate/release-offer" {
+			t.Fatalf("calls = %+v, want release offer", *calls)
+		}
 	}
 }

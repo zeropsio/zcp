@@ -88,10 +88,10 @@ func hqIdentity(rt runtime.Info) hq.Identity {
 	id := liveHQIdentity()
 	if rt.HQ != nil {
 		path := hq.MateStatePath()
-		if rt.HQ.ChangesPath != "" {
-			path = filepath.Join(filepath.Dir(rt.HQ.ChangesPath), "state.json")
+		if rt.HQ.StatePath != "" {
+			path = rt.HQ.StatePath
 		}
-		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, ChangesPath: rt.HQ.ChangesPath,
+		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID,
 			State: hq.NewFileMateStateSource(path, rt.HQ.ProjectID)}
 	}
 	id.OrgID = rt.OrgID
@@ -254,7 +254,7 @@ func reconcileHQPairs(
 	sort.Slice(pending, func(i, j int) bool { return pending[i].Hostname < pending[j].Hostname })
 
 	now := time.Now().UTC()
-	self, selfRead := trackedSelf(ctx, hqc)
+	self, selfRead := trackedSelf(hqc)
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
@@ -293,7 +293,7 @@ func reconcileHQPairs(
 			if !changesDue {
 				return report
 			}
-			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, hqc.BranchOf, hqc.Once().Self, cfg.release)...)
+			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, hqc.BranchOf, func(context.Context) (hq.MateState, error) { return hqc.ReadMateState() }, cfg.release)...)
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
 			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows, cfg.schemas)...)
@@ -350,9 +350,9 @@ func passHQPair(
 	return "", false
 }
 
-// lazySelf reads the Mate's own state from HQ at most once, when first asked:
+// lazySelf reads the Mate's last-heard state at most once, when first asked:
 // one read serves every pair of a pass.
-func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
+func lazySelf(hqc hq.Client) func() (hq.MateState, error) {
 	var (
 		state hq.MateState
 		err   error
@@ -360,7 +360,7 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 	)
 	return func() (hq.MateState, error) {
 		if !read {
-			state, err = hqc.Self(ctx)
+			state, err = hqc.ReadMateState()
 			read = true
 		}
 		return state, err
@@ -471,7 +471,7 @@ func rewireHQPair(
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
-	attempt := wireHQPair(ctx, httpClient, sshDeployer, rt, stateDir, hqc, lazySelf(ctx, hqc), m, repoName)
+	attempt := wireHQPair(ctx, httpClient, sshDeployer, rt, stateDir, hqc, lazySelf(hqc), m, repoName)
 	recordHQAttempt(stateDir, m.Hostname, readHQPairState(stateDir, m.Hostname), time.Now().UTC(), attempt.line, attempt.wired)
 	return attempt
 }

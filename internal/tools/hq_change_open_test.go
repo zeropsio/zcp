@@ -30,6 +30,9 @@ func (l *hqLab) openChangeFrom(branch, title string) (changeOpenResult, string, 
 			l.t.Fatalf("answer is not JSON: %v\n%s", err, text)
 		}
 	}
+	if !res.IsError {
+		l.snapshotMate(l.t.Context())
+	}
 	return answer, text, res.IsError
 }
 
@@ -67,7 +70,8 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 		t.Errorf("the ledger keeps %+v, want change #1 on fix-login", kept)
 	}
 	hqc, _ := openHQ(lab.hq.srv.Client(), lab.rt)
-	state, err := hqc.Self(t.Context())
+	lab.snapshotMate(t.Context())
+	state, err := hqc.ReadMateState()
 	if err != nil || len(state.Changes) != 1 || state.Changes[0].Head == nil || *state.Changes[0].Head != lab.git("rev-parse", "HEAD") {
 		t.Fatalf("HQ's change does not hold the pushed branch: %+v (%v)", state.Changes, err)
 	}

@@ -156,7 +156,7 @@ func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink(t *testing.T) {
 // open.
 func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *testing.T) {
 	t.Parallel()
-	if refusal := hqLaunchProductionRefusal(context.Background(), nil, runtime.Info{}, t.TempDir(), false); refusal != nil {
+	if refusal := hqLaunchProductionRefusal(nil, runtime.Info{}, t.TempDir(), false); refusal != nil {
 		t.Fatalf("a container that is not a Mate keeps zcp's own launch-production, got %q", resultText(t, refusal))
 	}
 	tests := []struct {
@@ -188,7 +188,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 				lab.openChange()
 				tt.settle(lab)
 			}
-			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
+			text := resultText(t, hqLaunchProductionRefusal(lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 			for _, want := range tt.want {
 				if !strings.Contains(text, want) {
 					t.Errorf("the refusal misses %q: %s", want, text)
@@ -278,7 +278,7 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	if kept := lab.ledger(); len(kept) != 0 {
 		t.Fatalf("the ledger keeps %+v; want no record", kept)
 	}
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
+	text := hqLaunchProductionNextStep(lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
@@ -293,7 +293,7 @@ func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.setDown(true)
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
+	text := hqLaunchProductionNextStep(lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "Ask again") || strings.Contains(text, "none of this Mate's work") {
 		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)
 	}

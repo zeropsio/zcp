@@ -111,14 +111,12 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	for _, opt := range opts {
 		opt(&setup)
 	}
-	registerLease(srv, setup.deps, rt, setup.hq)
+	registerLease(srv, setup.deps, rt)
 }
 
-// leaseSetup is what LeaseOptions configure: the lease operations' deps, and
-// the HTTP client a status reads this Mate's HQ with (nil: never).
+// leaseSetup is what LeaseOptions configure: the lease operations' deps.
 type leaseSetup struct {
 	deps ops.LeaseDeps
-	hq   ops.HTTPDoer
 }
 
 // LeaseOption configures RegisterLease.
@@ -136,18 +134,10 @@ func WithLeaseBackground(spawn func(func())) LeaseOption {
 	}
 }
 
-// WithLeaseHQ lets a status read the Mate's own state in HQ through
-// httpClient, once, for each lease group's change (leaseGroupChanges): inside
-// a Mate only. Without it a status names them from the ledger, as last read.
-func WithLeaseHQ(httpClient ops.HTTPDoer) LeaseOption {
-	return func(s *leaseSetup) { s.hq = httpClient }
-}
-
-// registerLease is RegisterLease over deps leaseDeps wired, and hqHTTP the
-// client a status reads this Mate's HQ with (nil: never). The warm policy's
+// registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
 // creates and clones run in the background and outlive the call that started
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
-func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP ops.HTTPDoer) {
+func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
 	deps = leaseDepsIn(deps, rt)
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
 	// An acquire that starts a lease's dev servers runs the public-access
@@ -227,13 +217,13 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, PoolNotices: ops.LeasePoolPreviewNotices(ctx, deps, input.Pool), NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(rt), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, PoolNotices: ops.LeasePoolPreviewNotices(ctx, deps, input.Pool), NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(rt), views, leaseHQState(rt))), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			// The change on each released branch, as lease status names it
 			// (leaseGroupChanges): the Mate's state read once, inside a Mate.
 			releasedChanges := func(released []ops.LeaseView) string {
-				return leaseReleaseChanges(stateDir, hqAddress(rt), released, leaseHQState(ctx, hqHTTP, rt))
+				return leaseReleaseChanges(stateDir, hqAddress(rt), released, leaseHQState(rt))
 			}
 			force := false
 			if f := input.Force.Ptr(); f != nil {
@@ -273,7 +263,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 			if err != nil {
 				// A push refused as non-fast-forward names HQ's own push as
 				// its cause when it is one: the Mate's state read once.
-				err = corePushSyncRefusal(err, stateDir, hqAddress(rt), input.Lease, leaseHQState(ctx, hqHTTP, rt))
+				err = corePushSyncRefusal(err, stateDir, hqAddress(rt), input.Lease, leaseHQState(rt))
 				return convertError(withLeaseSSHStderr(err), WithMatePoolCredential(rt.MateEnabled, leaseSyncSourcePools(rt.MateEnabled, stateDir, input.Lease)...)), nil, nil
 			}
 			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view, rt.MateEnabled), Envelope: envelope(ctx)}), nil, nil
@@ -543,11 +533,10 @@ func withLeaseSSHStderr(err error) error {
 }
 
 // leaseHQState is lease status's reader of the Mate's own state in HQ, for
-// leaseGroupChanges: inside a Mate, through hqHTTP; nil — never read — with
-// no client or outside a Mate.
-func leaseHQState(ctx context.Context, hqHTTP ops.HTTPDoer, rt runtime.Info) func() *hq.MateState {
-	if hqHTTP == nil || !rt.MateEnabled {
+// leaseGroupChanges: inside a Mate; nil — never read — outside a Mate.
+func leaseHQState(rt runtime.Info) func() *hq.MateState {
+	if !rt.MateEnabled {
 		return nil
 	}
-	return func() *hq.MateState { return hqStateNow(ctx, hqHTTP, rt) }
+	return func() *hq.MateState { return hqStateNow(rt) }
 }

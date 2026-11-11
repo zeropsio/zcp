@@ -67,7 +67,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir st
 			// Existing own-project change metadata retains its native authority.
 			// This runs only AFTER Observe succeeds; it can never authorize an
 			// observation or substitute for the profile credential.
-			changes, asLastRead, _ := statusHQChanges(ctx, httpClient, rt, stateDir, hqAddress(rt), time.Now(), false)
+			changes, asLastRead, _, _, _ := statusHQChanges(rt, stateDir, hqAddress(rt), time.Now(), false)
 			var facts map[string]json.RawMessage
 			if err = json.Unmarshal(body, &facts); err == nil {
 				facts["changes"], err = json.Marshal(changes)

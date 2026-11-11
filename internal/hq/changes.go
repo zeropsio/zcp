@@ -181,6 +181,7 @@ const (
 // merged, MergedSha is the squash on `main` and LandedHead the head it
 // squashed. LandedWith is as MateChange has it.
 type Change struct {
+	StateRev      int64  `json:"-"`
 	AppID         string `json:"appId"`
 	Repo          string `json:"repo"`
 	Number        int    `json:"number"`
@@ -206,8 +207,9 @@ type Change struct {
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in
 // the repository, and whether this call opened it.
 type OpenedChange struct {
-	Change  Change `json:"change"`
-	Created bool   `json:"created"`
+	Change   Change `json:"change"`
+	Created  bool   `json:"created"`
+	StateRev int64  `json:"-"`
 }
 
 // OpenChange is the Mate's open change on branch in repo, or the next number
@@ -226,8 +228,8 @@ func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (Ope
 	if branch != "" {
 		body["branch"] = branch
 	}
-	err := c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
-		body, &opened)
+	err := c.call.jsonWithRevision(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
+		body, &opened, &opened.StateRev)
 	return opened, err
 }
 
@@ -241,7 +243,7 @@ type ChangeEdit struct {
 // EditChange retitles or describes the Mate's open change number in repo.
 func (c Client) EditChange(ctx context.Context, repo string, number int, edit ChangeEdit) (Change, error) {
 	var change Change
-	err := c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change)
+	err := c.call.jsonWithRevision(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change, &change.StateRev)
 	return change, err
 }
 
@@ -253,15 +255,16 @@ func changePath(repo string, number int) string {
 // Attachment is a picture HQ keeps for a change's description: its id, and
 // the path HQ serves it at, which a description shows after HQ's address.
 type Attachment struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	StateRev int64  `json:"-"`
 }
 
 // Attach keeps png, a PNG of at most 20 MiB, for the Mate's open change
 // number in repo.
 func (c Client) Attach(ctx context.Context, repo string, number int, png []byte) (Attachment, error) {
 	var kept Attachment
-	err := c.call.send(ctx, http.MethodPost, changePath(repo, number)+"/attachments", c.authorization(), "image/png", png, &kept)
+	err := c.call.sendWithRevision(ctx, http.MethodPost, changePath(repo, number)+"/attachments", c.authorization(), "image/png", png, &kept, &kept.StateRev)
 	return kept, err
 }
 
@@ -272,6 +275,17 @@ func (c Client) Attach(ctx context.Context, repo string, number int, png []byte)
 // (403) and one no longer open (409, reason "change_not_open").
 func (c Client) CloseChange(ctx context.Context, repo string, number int) (Change, error) {
 	var change Change
-	err := c.call.json(ctx, http.MethodPost, changePath(repo, number)+"/close", c.authorization(), struct{}{}, &change)
+	err := c.call.jsonWithRevision(ctx, http.MethodPost, changePath(repo, number)+"/close", c.authorization(), struct{}{}, &change, &change.StateRev)
 	return change, err
+}
+
+// ReleaseOffer reads what the person's application can release now.
+func (c Client) ReleaseOffer(ctx context.Context) (*ReleaseOffer, error) {
+	var answer struct {
+		Offer *ReleaseOffer `json:"releaseOffer"`
+	}
+	if err := c.call.json(ctx, http.MethodGet, "/api/mate/release-offer", c.authorization(), nil, &answer); err != nil {
+		return nil, fmt.Errorf("release offer: %w", err)
+	}
+	return answer.Offer, nil
 }

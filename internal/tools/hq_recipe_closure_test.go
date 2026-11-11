@@ -122,7 +122,7 @@ func closureStepOf(required []string) string {
 func recipeStatusText(t *testing.T, lab *hqLab) string {
 	t.Helper()
 	eng := workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil)
-	result, _, err := handleLifecycleStatus(t.Context(), eng, lab.mock, lab.rt.ProjectID, lab.rt, nil, nil)
+	result, _, err := handleLifecycleStatus(t.Context(), eng, lab.mock, lab.rt.ProjectID, lab.rt, nil)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
 	}

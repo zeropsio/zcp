@@ -168,37 +168,30 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			var environmentReads, selfReads atomic.Int32
+			var environmentReads atomic.Int32
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/mate/self" && (r.Method != http.MethodGet || r.Header.Get("Authorization") != "Project good") || r.URL.Path == "/api/mate/observe" && (r.Method != http.MethodPost || r.Header.Get("Authorization") != "Observe "+observeTestToken) {
-					t.Errorf("unexpected request method or authorization")
-				}
-				switch r.URL.Path {
-				case "/api/mate/observe":
-					environmentReads.Add(1)
-					_, _ = w.Write([]byte(observeTestWire(t, "environments", `{"appId":"a1","environments":[]}`, 200)))
-				case "/api/mate/self":
-					selfReads.Add(1)
-					if tt.status != http.StatusOK {
-						writeHQJSON(w, tt.status, map[string]any{"code": "not_active"})
-						return
-					}
-					change := map[string]any{"repo": "group", "number": 1, "branch": "setup", "state": tt.state, "head": "abc123", "ready": true, "mergeability": "clean", "behind": true}
-					if tt.landedWith > 0 {
-						change["landedWith"] = tt.landedWith
-					}
-					writeHQJSON(w, http.StatusOK, map[string]any{
-						"appId": "a1", "projectId": "P_MATE", "openPerBranch": true,
-						"changes": []map[string]any{change},
-					})
-				default:
-					t.Errorf("unexpected request %s", r.URL.Path)
+				if r.URL.Path != "/api/mate/observe" || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Observe "+observeTestToken {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
+					return
 				}
+				environmentReads.Add(1)
+				_, _ = w.Write([]byte(observeTestWire(t, "environments", `{"appId":"a1","environments":[]}`, 200)))
 			}))
 			defer fake.Close()
 			hqtest.Link(t, fake.URL, "P_MATE", "good")
 			observeTestProfile(t)
+			if tt.status == http.StatusOK {
+				change := map[string]any{"repo": "group", "number": 1, "branch": "setup", "state": tt.state, "head": "abc123", "ready": true, "mergeability": "clean", "behind": true}
+				if tt.landedWith > 0 {
+					change["landedWith"] = tt.landedWith
+				}
+				raw, err := json.Marshal(map[string]any{"rev": 1, "projectId": "P_MATE", "appId": "a1", "openPerBranch": true, "repos": []any{}, "chief": nil, "changes": []map[string]any{change}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				hqtest.State(t, string(raw))
+			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			RegisterObserve(srv, fake.Client(), "P_MATE", stateDir, runtime.Info{InContainer: true, MateEnabled: true})
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "environments"})
@@ -234,8 +227,8 @@ func TestObserve_Environments_CurrentChanges(t *testing.T) {
 			if change.Number != 1 || change.Branch != "setup" || change.Merged != tt.merged || change.LandedWith != tt.landedWith || !reflect.DeepEqual(change.Labels, tt.labels) || *got.AsLastRead != tt.unread {
 				t.Errorf("change standing = %s, want merged=%v landedWith=%d labels=%v asLastRead=%v", text, tt.merged, tt.landedWith, tt.labels, tt.unread)
 			}
-			if environmentReads.Load() != 1 || selfReads.Load() != 1 {
-				t.Errorf("reads: environments=%d self=%d, want one each", environmentReads.Load(), selfReads.Load())
+			if environmentReads.Load() != 1 {
+				t.Errorf("environment reads = %d, want 1", environmentReads.Load())
 			}
 			kept, err := workflow.ListHQChanges(stateDir)
 			if err != nil || len(kept) != 1 || kept[0].Told == nil || kept[0].Told.Ready == nil || *kept[0].Told.Ready {

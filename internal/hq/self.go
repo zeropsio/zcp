@@ -1,15 +1,10 @@
 package hq
 
-import (
-	"context"
-	"fmt"
-	"net/http"
-)
-
-// MateState is the Mate as HQ holds it (GET /api/mate/self): its record, its
+// MateState is the Mate as HQ last sent it: its record, its
 // birth, written by the client that set it up, and the application HQ holds
 // it in with its changes there.
 type MateState struct {
+	Rev       int64  `json:"rev"`
 	ProjectID string `json:"projectId"`
 	Name      string `json:"name"`
 	Face      string `json:"face"`
@@ -40,9 +35,6 @@ type MateState struct {
 	// Chief is the Chief this Mate answers to: itself if it is a registered
 	// Chief, otherwise its owner's usable Chief; nil while it has none.
 	Chief *Chief `json:"chief"`
-	// ReleaseOffer is what waits for the person's release of the Mate's
-	// application; nil while nothing waits, and from an HQ older than it.
-	ReleaseOffer *ReleaseOffer `json:"releaseOffer,omitempty"`
 }
 
 // ReleaseOffer is the release a Mate may ask its person for
@@ -250,22 +242,3 @@ const (
 	MergeClean    = "clean"
 	MergeConflict = "conflict"
 )
-
-// Self reads this Mate's state from its HQ.
-func (c Client) Self(ctx context.Context) (MateState, error) {
-	var state MateState
-	if err := c.call.json(ctx, http.MethodGet, "/api/mate/self", c.authorization(), nil, &state); err != nil {
-		return MateState{}, fmt.Errorf("mate state: %w", err)
-	}
-	return state, nil
-}
-
-// IsChief reports whether the Chief this Mate answers to is its own project,
-// that is, the Mate is a Chief: it then serves org mode (docs/spec-mate.md §2.11).
-func (c Client) IsChief(ctx context.Context) (bool, error) {
-	state, err := c.Self(ctx)
-	if err != nil {
-		return false, err
-	}
-	return state.Chief != nil && state.Chief.ProjectID == c.id.ProjectID, nil
-}

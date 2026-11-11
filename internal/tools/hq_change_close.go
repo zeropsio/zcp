@@ -61,9 +61,7 @@ func handleCloseChange(
 	}
 	result := changeCloseResult{Service: strings.TrimSpace(input.Service), Branch: target.Branch}
 
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	state, err := hqc.Once().Self(callCtx)
-	cancel()
+	state, err := hqc.ReadMateState()
 	if why := accessRefusal(err); why != "" {
 		result.Message = closeAccessRefusedWords(why)
 		return jsonResult(result), nil, nil
@@ -98,9 +96,16 @@ func handleCloseChange(
 		return refusal, nil, nil
 	}
 	defer release()
-	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
-	_, err = hqc.CloseChange(callCtx, target.Repo, pick.Number)
+	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+	closed, err := hqc.CloseChange(callCtx, target.Repo, pick.Number)
 	cancel()
+	if closed.StateRev > 0 {
+		if recordErr := recordHQChange(stateDir, target.AppID, target.Repo, pick.Number, pick.Branch, pick.Title, workflow.HQChangeFromState, closed.StateRev); recordErr != nil {
+			return convertError(platform.NewPlatformError(platform.ErrAPIError,
+				fmt.Sprintf("HQ committed a write for change #%d in %q, but zcp could not record it (%v).", pick.Number, target.Repo, recordErr),
+				"Restore access to the local state directory; the Mate's state will report the change when its link catches up."), WithRecoveryStatus()), nil, nil
+		}
+	}
 	if refusal := accessRefusal(err); refusal != "" {
 		result.Message = closeAccessRefusedWords(refusal)
 		return jsonResult(result), nil, nil
@@ -108,7 +113,6 @@ func handleCloseChange(
 	var refused *hq.RefusedError
 	switch {
 	case errors.As(err, &refused) && refused.Reason == "change_not_open":
-		_ = workflow.ForgetHQChange(stateDir, target.AppID, target.Repo, pick.Number)
 		result.Message = fmt.Sprintf("Change #%d on %q is no longer open — it merged or closed meanwhile — so nothing was closed; the next pass says what became of it.", pick.Number, target.Branch)
 		return jsonResult(result), nil, nil
 	case errors.As(err, &refused) && (refused.Status == http.StatusNotFound && refused.Reason != "change_not_found" || refused.Status == http.StatusMethodNotAllowed):
@@ -118,11 +122,26 @@ func handleCloseChange(
 		result.Message = personClosesWords(pick.Number, target.Branch, result.PullRequestURL, fmt.Sprintf("HQ refused this Mate the close (%s)", hqRefusalWords(refused)))
 		return jsonResult(result), nil, nil
 	case err != nil:
+		words := fmt.Sprintf("Nothing was closed: HQ did not close change #%d in %q (%v).", pick.Number, target.Repo, err)
+		if closed.StateRev > 0 {
+			words = fmt.Sprintf("Whether change #%d in %q closed is unknown: HQ committed a write but did not confirm its answer (%v).", pick.Number, target.Repo, err)
+		}
 		return convertError(platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Nothing was closed: HQ did not close change #%d in %q (%v).", pick.Number, target.Repo, err),
+			words,
 			`Call zerops_workflow action="close-change" again; the change and its branch stay as they are.`), WithRecoveryStatus()), nil, nil
 	}
-	_ = workflow.ForgetHQChange(stateDir, target.AppID, target.Repo, pick.Number)
+	if err := workflow.UpsertHQChange(stateDir, target.AppID, target.Repo, pick.Number, func(c *workflow.HQChange, existed bool) error {
+		if !existed {
+			c.Branch, c.Title, c.Source = pick.Branch, pick.Title, workflow.HQChangeFromState
+		}
+		c.StateRev = max(c.StateRev, closed.StateRev)
+		c.Told = &workflow.HQChangeTold{State: hq.ChangeClosed}
+		return nil
+	}); err != nil {
+		return convertError(platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("HQ closed change #%d in %q, but zcp could not record it (%v).", pick.Number, target.Repo, err),
+			"Restore access to the local state directory; the Mate's state will report the close when its link catches up."), WithRecoveryStatus()), nil, nil
+	}
 	result.Closed = true
 	result.Message = fmt.Sprintf("Change #%d on %q is closed without merging, by this Mate — the person sees it closed in the change's conversation. Its branch stays in HQ, so the work is not lost: opening the branch's change again opens a new number.", pick.Number, target.Branch)
 	if held := leasesOnBranch(stateDir, hqc.Address(), target.AppID, target.Repo, target.Branch); len(held) > 0 {
