@@ -246,8 +246,11 @@ func runUpdate(args []string) int {
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
 	checker := update.NewChecker(server.Version)
 	checker.CacheTTL = 0 // force fresh check
-	info := checker.Check(ctx)
-
+	info, err := checker.Check(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Update check failed: %v\n", err)
+		return 1
+	}
 	if !info.Available {
 		fmt.Fprintf(os.Stderr, "Already up to date (%s).\n", server.Version)
 		return 0

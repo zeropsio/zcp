@@ -38,8 +38,10 @@ func OnceWithOpts(ctx context.Context, opts OnceOpts) {
 	if opts.CacheDir != "" {
 		checker.CacheDir = opts.CacheDir
 	}
-	info := checker.Check(ctx)
-	if !info.Available {
+	// An unknown latest release leaves the binary as it is: the server
+	// starts regardless and says nothing about it.
+	info, err := checker.Check(ctx)
+	if err != nil || !info.Available {
 		return
 	}
 

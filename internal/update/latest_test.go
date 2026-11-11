@@ -108,8 +108,8 @@ func TestLatest_Fetched_CachedForTheNextReader(t *testing.T) {
 	if !ok || entry.LatestVersion != "v9.226.0" || entry.DownloadURL == "" {
 		t.Fatalf("cache = %+v (ok %v), want v9.226.0 with a download URL", entry, ok)
 	}
-	if info := c.Check(t.Context()); !info.Available || info.LatestVersion != "v9.226.0" || calls.Load() != 1 {
-		t.Errorf("Check after Latest = %+v with %d calls, want the cached v9.226.0 and one call", info, calls.Load())
+	if info, err := c.Check(t.Context()); err != nil || !info.Available || info.LatestVersion != "v9.226.0" || calls.Load() != 1 {
+		t.Errorf("Check after Latest = %+v (err %v) with %d calls, want the cached v9.226.0 and one call", info, err, calls.Load())
 	}
 }
 

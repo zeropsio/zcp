@@ -4,6 +4,7 @@ package update
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -88,7 +89,10 @@ func TestCheck_NewerVersionAvailable(t *testing.T) {
 				HTTPClient:     srv.Client(),
 			}
 
-			info := c.Check(t.Context())
+			info, err := c.Check(t.Context())
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
 			if info.Available != tt.wantAvailable {
 				t.Errorf("Available = %v, want %v", info.Available, tt.wantAvailable)
 			}
@@ -123,7 +127,10 @@ func TestCheck_CacheRespected(t *testing.T) {
 	}
 
 	// First check hits API.
-	info1 := c.Check(t.Context())
+	info1, err := c.Check(t.Context())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
 	if !info1.Available {
 		t.Fatal("first check should find update")
 	}
@@ -132,7 +139,10 @@ func TestCheck_CacheRespected(t *testing.T) {
 	}
 
 	// Second check uses cache.
-	info2 := c.Check(t.Context())
+	info2, err := c.Check(t.Context())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
 	if !info2.Available {
 		t.Fatal("cached check should still find update")
 	}
@@ -179,7 +189,10 @@ func TestCheck_CacheExpired(t *testing.T) {
 		HTTPClient:     srv.Client(),
 	}
 
-	info := c.Check(t.Context())
+	info, err := c.Check(t.Context())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
 	if !info.Available {
 		t.Fatal("should find update after cache expiry")
 	}
@@ -191,42 +204,53 @@ func TestCheck_CacheExpired(t *testing.T) {
 	}
 }
 
-func TestCheck_NetworkError_GracefulFallback(t *testing.T) {
-	t.Parallel()
-
-	c := &Checker{
-		CurrentVersion: "0.1.0",
-		GitHubAPIURL:   "http://127.0.0.1:1", // connection refused
-		CacheDir:       t.TempDir(),
-		CacheTTL:       0,
-		HTTPClient:     &http.Client{Timeout: time.Second},
-	}
-
-	info := c.Check(t.Context())
-	if info.Available {
-		t.Error("should not report available on network error")
-	}
+// recordedResponse answers every request with a recorded GitHub response.
+type recordedResponse struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
 }
 
-func TestCheck_InvalidJSON_GracefulFallback(t *testing.T) {
+func (r recordedResponse) RoundTrip(req *http.Request) (*http.Response, error) {
+	header := http.Header{}
+	for k, v := range r.Headers {
+		header.Set(k, v)
+	}
+	return &http.Response{
+		StatusCode: r.Status,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    req,
+	}, nil
+}
+
+// A person running `zcp update` while GitHub refuses the release check is
+// told the check failed, never that their version is the latest.
+// witness: internal/update/check.go | return nil, fmt.Errorf("check latest release: %w", err) → return info, nil
+func TestCheck_RateLimitedReleaseCheck_ReportsFailure(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("not json"))
-	}))
-	defer srv.Close()
-
-	c := &Checker{
-		CurrentVersion: "0.1.0",
-		GitHubAPIURL:   srv.URL,
-		CacheDir:       t.TempDir(),
-		CacheTTL:       0,
-		HTTPClient:     srv.Client(),
+	data, err := os.ReadFile(filepath.Join("testdata", "release-check-rate-limited.json"))
+	if err != nil {
+		t.Fatalf("read recording: %v", err)
+	}
+	var rec struct {
+		Value recordedResponse `json:"value"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("decode recording: %v", err)
 	}
 
-	info := c.Check(t.Context())
-	if info.Available {
-		t.Error("should not report available on invalid JSON")
+	c := &Checker{
+		CurrentVersion: "v9.250.0",
+		GitHubAPIURL:   defaultGitHubAPI,
+		CacheDir:       t.TempDir(),
+		CacheTTL:       0,
+		HTTPClient:     &http.Client{Transport: rec.Value},
+	}
+
+	info, err := c.Check(t.Context())
+	if err == nil {
+		t.Fatalf("Check = %+v with no error, want the failed release check reported", info)
 	}
 }
 
@@ -363,7 +387,10 @@ func TestCheck_DownloadBaseURL(t *testing.T) {
 		DownloadBaseURL: srv.URL + "/download",
 	}
 
-	info := c.Check(t.Context())
+	info, err := c.Check(t.Context())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
 	if !info.Available {
 		t.Fatal("should find update")
 	}

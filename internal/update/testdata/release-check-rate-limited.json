@@ -1,0 +1,14 @@
+{
+  "$provenance": {
+    "producer": "github",
+    "revision": "2026-11-11",
+    "via": "curl -si https://api.github.com/repos/zeropsio/zcp/releases/latest, unauthenticated, from a KRLS container (disposable project BKRBdbbmTAOJgxFXSocViw, since deleted) whose unauthenticated GitHub quota was spent; that container's `zcp update` from v9.250.0 had just printed 'Already up to date' while v9.251.0 was published. Repeat from any host whose unauthenticated quota is spent; only the status and the rate-limit header were kept.",
+    "schema": "GET /repos/{owner}/{repo}/releases/latest"
+  },
+  "value": {
+    "status": 403,
+    "headers": {
+      "X-RateLimit-Remaining": "0"
+    }
+  }
+}

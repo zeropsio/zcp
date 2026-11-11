@@ -59,9 +59,10 @@ func NewChecker(currentVersion string) *Checker {
 	return c
 }
 
-// Check looks for a newer ZCP version. Returns Info with Available=false
-// on any error — the MCP server should always start regardless.
-func (c *Checker) Check(ctx context.Context) *Info {
+// Check looks for a newer ZCP version. An error means the latest release
+// is unknown, never that the current version is the latest: each caller
+// decides what an unknown verdict means for it.
+func (c *Checker) Check(ctx context.Context) (*Info, error) {
 	info := &Info{CurrentVersion: c.CurrentVersion}
 
 	// Try cache first.
@@ -69,13 +70,13 @@ func (c *Checker) Check(ctx context.Context) *Info {
 		info.LatestVersion = cached.LatestVersion
 		info.DownloadURL = cached.DownloadURL
 		info.Available = isNewer(c.CurrentVersion, cached.LatestVersion)
-		return info
+		return info, nil
 	}
 
 	// Fetch from GitHub API.
 	release, err := c.fetchLatestRelease(ctx)
 	if err != nil {
-		return info
+		return nil, fmt.Errorf("check latest release: %w", err)
 	}
 
 	info.LatestVersion = release.TagName
@@ -89,7 +90,7 @@ func (c *Checker) Check(ctx context.Context) *Info {
 		DownloadURL:   info.DownloadURL,
 	})
 
-	return info
+	return info, nil
 }
 
 // downloadURL is where this platform's binary of release tag downloads from.
