@@ -52,7 +52,7 @@ func defaultHQService(context.Context) (hqService, string, error) {
 		if err != nil {
 			return mate.StateReadError(err)
 		}
-		if doc.Link != "linked" {
+		if doc.Link != hq.MateLinkLinked {
 			if doc.Reason == "" {
 				return errors.New("the Mate's link is not up")
 			}

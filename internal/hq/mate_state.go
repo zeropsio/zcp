@@ -17,6 +17,12 @@ import (
 // ErrMateStateAbsent means the server has not written a state file here.
 var ErrMateStateAbsent = errors.New("the Mate server has not written its state")
 
+// The state file's link values.
+const (
+	MateLinkLinked    = "linked"
+	MateLinkNotLinked = "not-linked"
+)
+
 // ErrMateStateUnheard means the server has not yet heard a state from HQ.
 var ErrMateStateUnheard = errors.New("the Mate server has not heard its state from HQ")
 
@@ -57,7 +63,7 @@ func (d MateStateDocument) Heard() (MateState, error) {
 
 // Standing reports when the last heard state may predate the current link.
 func (d MateStateDocument) Standing() string {
-	if d.Link == "linked" {
+	if d.Link == MateLinkLinked {
 		return ""
 	}
 	line := "The Mate's link to HQ is not up"
@@ -112,7 +118,7 @@ func (s fileMateStateSource) Read() (MateStateDocument, error) {
 		return MateStateDocument{}, fmt.Errorf("read the Mate server's lock: %w", err)
 	}
 	if !held {
-		doc.Link, doc.Reason = "not-linked", "no_server"
+		doc.Link, doc.Reason = MateLinkNotLinked, "no_server"
 	}
 	return doc, nil
 }
@@ -123,7 +129,7 @@ func decodeMateState(raw []byte, projectID string) (MateStateDocument, error) {
 		return MateStateDocument{}, fmt.Errorf("decode document: %w", err)
 	}
 	var doc MateStateDocument
-	if err := json.Unmarshal(fields["link"], &doc.Link); err != nil || (doc.Link != "linked" && doc.Link != "not-linked") {
+	if err := json.Unmarshal(fields["link"], &doc.Link); err != nil || (doc.Link != MateLinkLinked && doc.Link != MateLinkNotLinked) {
 		return MateStateDocument{}, errors.New("link must be linked or not-linked")
 	}
 	if reason, ok := fields["reason"]; ok {

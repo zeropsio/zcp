@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// witness: internal/hq/mate_state.go | doc.Link, doc.Reason = "not-linked", "no_server" → doc.Link, doc.Reason = "linked", ""
+// witness: internal/hq/mate_state.go | doc.Link, doc.Reason = MateLinkNotLinked, "no_server" → doc.Link, doc.Reason = MateLinkLinked, ""
 func TestMateState_UnheldLock_ReportsNoServer(t *testing.T) {
 	t.Parallel()
 	for _, link := range []string{"linked", "not-linked"} {
