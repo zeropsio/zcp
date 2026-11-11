@@ -622,11 +622,24 @@ id, engine/database readiness, and C-4 before the progress window passes without
 A commit without an answer is not a failed update. Once the candidate proved ready the record
 says what is true: phase `updated`, `last-good` the candidate, `commitOwed: true`. One sender
 (`mate.deliverCommit`) owns the owed signal: it POSTs commit, 5 s per request, again while a
-request runs into its deadline (the server lives and is still finishing its start), and stops
-when the server answers or nothing listens any more (its next boot reads a settled record and
-starts unfenced); then it clears `commitOwed`, and only an answered commit prunes versions. The
-rollback's signal to the restored previous version goes through the same sender, and the
-transient unit's `ExecStopPost` resends a signal a dead worker still owed.
+request runs into its deadline (the server lives and is still finishing its start), for at most
+`UpdateProgressWindow`, and stops when the server answers or nothing listens any more (its next
+boot reads a settled record and starts unfenced); then it clears `commitOwed`, and only an
+answered commit prunes versions. A server that answers no request in the window leaves the
+debt in the record and the worker ends failed. The rollback's signal to the restored previous
+version goes through the same sender, and the transient unit's `ExecStopPost` resends a signal
+a dead worker still owed (bounded again, and by the unit's stop timeout).
+
+`commitOwed` is a fact about one finished attempt and does not outlive it: only a settled record
+(`updated`, or `postponed` after a rollback: the version proved ready and `last-good` names it)
+holds it — `mate.WriteUpdateState` drops it from any other phase — a new attempt starts without
+it (`mate.WorkerUpdateState`, which every attempt's first record and the recovery restart pass),
+and recovery honours it only in a settled record; a switch whose worker died is rolled back or
+settled by its phase, never committed by a flag. A later update while a commit is still owed
+starts without the debt: the record it replaces was settled, and a settled record lifts a
+still-fenced server by itself (the server's own status watch reopens admission on `updated`,
+`postponed` or `failed`, mate `apps/server/src/zerops/ZeropsMateUpdate.ts`), so the commit POST
+is the fast path, never the only one.
 Live init, the update worker and recovery share this wait at the readiness owner. A first boot
 can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
 and the fold persists as it goes, so a later boot resumes it.

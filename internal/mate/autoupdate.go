@@ -25,8 +25,12 @@ const UpdateFailed = "failed"
 
 // UpdateState is minimal crash recovery state. last-good is the authority for
 // rollback; this record identifies an uncommitted switch and a failed release.
-// CommitOwed says the running server proved ready and boots fenced, so the
-// commit (or, after a rollback, the reopening) signal is still to reach it.
+// CommitOwed says the attempt this record describes finished: its version
+// proved ready and last-good names it (phase updated, or postponed after a
+// rollback), and the commit (or reopening) signal is still to reach that
+// fenced server. It belongs to that one attempt: only a settled record holds
+// it (WriteUpdateState), a new attempt starts without it (WorkerUpdateState),
+// and recovery honours it only in a settled record (owesCommit).
 type UpdateState struct {
 	Protocol       int    `json:"protocol"`
 	Phase          string `json:"phase"`
@@ -39,6 +43,15 @@ type UpdateState struct {
 	OldBoot        string `json:"oldBoot,omitempty"`
 	CommitOwed     bool   `json:"commitOwed,omitempty"`
 }
+
+// settled says the record's attempt finished: its version proved ready and
+// last-good names it.
+func (s UpdateState) settled() bool {
+	return s.Phase == updateUpdated || s.Phase == updatePostponed
+}
+
+// owesCommit says a finished attempt's signal is still to reach its server.
+func (s UpdateState) owesCommit() bool { return s.CommitOwed && s.settled() }
 
 func UpdateStatePath() string { return filepath.Join(Prefix(), "update.json") }
 func LastGoodLink() string    { return filepath.Join(Prefix(), "last-good") }
@@ -57,6 +70,9 @@ func ReadUpdateState() (UpdateState, error) {
 
 func WriteUpdateState(s UpdateState) error {
 	s.Protocol = 1
+	if !s.settled() {
+		s.CommitOwed = false
+	}
 	body, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("encode update state: %w", err)
@@ -245,12 +261,16 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 }
 
 // deliverCommit is the one owner of an owed commit signal: the record says the
-// version is committed (or restored) and the signal owed; it is sent again until
-// the fenced server answers or is gone. A server gone owes nothing: its next boot
-// reads a settled record and starts unfenced. The record then drops the debt, and
-// a committed update prunes its versions once the server answered.
+// version is committed (or restored) and the signal owed; it is sent again while
+// the fenced server lets a request run into its deadline, for at most
+// UpdateProgressWindow, and stops when the server answers or is gone. A server
+// gone owes nothing: its next boot reads a settled record and starts unfenced.
+// The record then drops the debt, and a committed update prunes its versions
+// once the server answered. A server that never answers leaves the debt in the
+// settled record for recovery.
 func deliverCommit(s UpdateState, commit func() error) error {
 	answered := true
+	deadline := time.Now().Add(UpdateProgressWindow)
 	for {
 		err := commit()
 		var unanswered *url.Error
@@ -265,6 +285,9 @@ func deliverCommit(s UpdateState, commit func() error) error {
 			break
 		}
 		// The request reached a server still running its start; it is sent again.
+		if time.Now().After(deadline) {
+			return fmt.Errorf("commit %s: unanswered for %s, still owed: %w", s.RunningVersion, UpdateProgressWindow, err)
+		}
 	}
 	s.CommitOwed = false
 	if err := WriteUpdateState(s); err != nil {
@@ -374,8 +397,10 @@ func linkedVersionDir(link string) (string, error) {
 	return filepath.Join(Prefix(), target), nil
 }
 
-// WorkerUpdateState binds an in-progress phase to its exact process instance.
+// WorkerUpdateState binds an in-progress phase to its exact process instance;
+// the attempt starts without an earlier attempt's owed commit.
 func WorkerUpdateState(s UpdateState) UpdateState {
+	s.CommitOwed = false
 	s.WorkerPID = os.Getpid()
 	s.WorkerStart = processStart(os.Getpid())
 	return s
@@ -441,7 +466,7 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 	if workerAlive(s) {
 		return nil
 	}
-	if s.CommitOwed {
+	if s.owesCommit() {
 		return deliverCommit(s, h.Commit)
 	}
 	if s.Phase == updateUpdated {
