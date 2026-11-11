@@ -38,7 +38,7 @@ func TestRunHQCmd_Status_NamesAddressedOriginAndUsesProjectMode(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(release)
-				state := `{"link":"linked","mate":{"projectId":"project","appId":null,"repos":[],"changes":[],"chief":null}}`
+				state := `{"link":"linked","mate":{"rev":1,"projectId":"project","appId":null,"repos":[],"changes":[],"chief":null}}`
 				if err := os.WriteFile(hq.MateStatePath(), []byte(state), 0o600); err != nil {
 					t.Fatal(err)
 				}

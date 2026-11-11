@@ -50,6 +50,9 @@ func (s UpdateState) settled() bool {
 	return s.Phase == updateUpdated || s.Phase == updatePostponed
 }
 
+// UpdateSettledPhase says phase, as `zcp mate status` reports it, ends an attempt.
+func UpdateSettledPhase(phase string) bool { return UpdateState{Phase: phase}.settled() }
+
 // owesCommit says a finished attempt's signal is still to reach its server.
 func (s UpdateState) owesCommit() bool { return s.CommitOwed && s.settled() }
 

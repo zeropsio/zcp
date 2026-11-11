@@ -793,6 +793,51 @@ full container restart using the normal operator restart, or `zcp self restart` 
 `zcp init` installs Mate. Verify `status --json` reports `updater.protocol:1` and Mate's
 loopback readiness advertises protocol 1 before leaving future updates unattended.
 
+### 2.1e The cut-off fuse
+
+A Mate updates only on its organization's word, which only its HQ link delivers, and zcp is refreshed
+only by a container boot. A release of Mate, zcp or HQ that breaks the link would cut the Mate off
+from its own repair. The fuse keeps a cut-off Mate reachable by new releases: `zcp mate fuse`, run by
+the systemd timer `zcp-mate-fuse.timer` outside the Mate server (`cmd/zcp/mate_fuse.go`).
+
+**Where.** Init's Mate step writes `/etc/systemd/system/zcp-mate-fuse.{service,timer}` wherever it
+registers the Mate's unit, reloads systemd when either changed, and enables and starts the timer:
+10 minutes after boot, then 5 minutes after each run, each with up to 2 minutes of jitter. It runs
+while the Mate's unit is down, crash-looping or fenced, and starts at boot even when `zcp init`
+fails before its Mate step. Disabling Mate (§2.1b) removes it.
+
+**Trigger: no HQ link for an hour.** The server's state file (`~/.zcp/hq/state.json`, §2.8) says
+whether the link is up now (`link`, read with the server's lock as `hq.MateStateSource` reads it); its
+`heardAt` is the last `state` frame, not the last time the link was open, so it is not used. While
+the link is up the fuse writes the time into its own record (`~/.zcp/mate/fuse.json`,
+`linkSeenAt`) and does nothing else. Otherwise the hour counts from the later of `linkSeenAt` and
+the activation of the installed Mate (`current`'s own mtime): a Mate that never linked counts from
+its install, and every install starts the hour again. The record has the timer's resolution.
+
+**Action, only when triggered.** It reads `zcp mate status --refresh` in process (the release
+manifest `EnsureInstalled` uses and zcp's latest release, §2.1a; no HQ; a release it cannot read
+is unknown and not acted on), then takes the first that applies:
+
+1. An update is in progress (updater phase other than idle, updated, postponed): nothing.
+2. A Mate release newer than the installed one and the remembered `failedVersion`
+   (`mate.AutomaticUpdateAllowed`): the attended update worker (§2.1d), with its drain, switch,
+   state transaction, readiness and rollback, whatever the organization's policy says: the drain
+   is not automatic, so the Mate does not ask the policy. A Mate that does not answer the drain
+   admitted no work and is switched, as init switches it (§2.1 step 5). A version that failed and
+   was rolled back is not tried again; the next newer one is.
+3. A newer zcp release (`zcp.behind`) the fuse has not restarted for: the running Mate drains as
+   for an attended update (a Mate that does not answer is not waited for), the fuse records the
+   release (`zcpRestartedFor`), and `zcp self restart` asks the platform for the container restart
+   that is a boot: install.sh installs the newest zcp, `zcp init` the newest Mate (§2.9 step 7).
+   A refused restart forgets the record and cancels the drain. zcp replaces itself only this way:
+   its own processes, the Mate's environment and the timer are written by init at boot.
+4. Nothing newer: nothing. No drain, no restart, no request to the Mate.
+
+**What it never does.** It never restarts a Mate for which nothing newer exists, never interrupts
+a running turn (every switch and restart first passes the Mate's drain), never reads HQ, never
+retries a failed Mate release or restarts the container twice for one zcp release, and never acts
+while the link is up.
+
 ### 2.2 The supervised process
 
 `zcp service start mate` runs `mate.ServeArgv(bin)` — never `npx` (resolving the package

@@ -50,7 +50,8 @@ func defaultMateRestartUnit(unit string) error {
 }
 
 // runMateCmd implements `zcp mate status [--json] [--refresh] [--local]` and
-// `zcp mate update [--json] [--force] [--automatic]`. args is everything after "mate".
+// `zcp mate update [--json] [--force] [--automatic]`, and `zcp mate fuse`, which
+// only its systemd timer runs (mate_fuse.go). args is everything after "mate".
 func runMateCmd(args []string) int {
 	const usage = "usage: zcp mate <status|update> [--json] [--force] [--refresh]"
 	if len(args) == 0 {
@@ -66,6 +67,8 @@ func runMateCmd(args []string) int {
 		return runMateStatus(args[1:])
 	case "update":
 		return runMateUpdate(args[1:])
+	case "fuse":
+		return runMateFuse()
 	default:
 		log.Print(usage)
 		return 1
@@ -98,6 +101,9 @@ type mateStatusResult struct {
 	Why             string             `json:"why,omitempty"`
 }
 
+// updaterIdle is the updater phase status reports while no attempt is recorded.
+const updaterIdle = "idle"
+
 // mateUpdaterStatus is the status's "updater" key (§2.1d). RollbackCompatible
 // is always true: every release rolls back with the state it found. It stays
 // while the Mate's own reader requires it (z3 contracts environment.ts).
@@ -123,8 +129,14 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 	if done {
 		return code
 	}
-	asJSON, refresh, local := flags["--json"], flags["--refresh"], flags["--local"]
+	printMateStatus(readMateStatus(zcpVersion, flags["--refresh"], flags["--local"]), flags["--json"])
+	return 0
+}
 
+// readMateStatus is the one reader behind `zcp mate status` and the cut-off
+// fuse (mate_fuse.go): the installed and latest Mate, the updater, and this
+// zcp of version zcpVersion against its latest release.
+func readMateStatus(zcpVersion string, refresh, local bool) mateStatusResult {
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
 		Minimum:   mate.MinimumMateVersion,
@@ -153,7 +165,7 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 		state, stateErr = mate.ReadOptionalUpdateState()
 	}
 	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
-	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: true, Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
+	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: true, Phase: updaterIdle, RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
 	if state.Phase != "" {
 		result.Updater.Phase = state.Phase
 		result.Updater.RunningVersion = state.RunningVersion
@@ -174,9 +186,7 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 
 	result.ZCP = zcpRelease()
 	result.RestartNeeded, result.Why = restartVerdict(result.ZCP, result.Installed, result.Latest, !local && mateWithoutUpdater(result.UpdateAvailable))
-
-	printMateStatus(result, asJSON)
-	return 0
+	return result
 }
 
 func printMateStatus(result mateStatusResult, asJSON bool) {

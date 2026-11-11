@@ -766,12 +766,22 @@ func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
 			if !asked {
 				t.Errorf("the step never asked systemd whether %s changed on disk, queries %v", unit, rig.queries)
 			}
-			reload := false
+			reloads := 0
+			fuseInstalled := false
 			for _, cmd := range rig.commands {
 				if strings.Join(cmd, " ") == "sudo systemctl daemon-reload" {
-					reload = true
+					reloads++
+				}
+				if len(cmd) > 1 && cmd[0] == "sudo" && cmd[1] == "install" && strings.Contains(cmd[len(cmd)-1], "/zcp-mate-fuse.") {
+					fuseInstalled = true
 				}
 			}
+			// The fake installer does not persist the fuse units, so installing
+			// them accounts for one reload independently of the Mate unit.
+			if fuseInstalled && reloads > 0 {
+				reloads--
+			}
+			reload := reloads > 0
 			if reload != tt.wantReload {
 				t.Errorf("daemon-reload ran = %v, want %v: %v", reload, tt.wantReload, rig.commands)
 			}

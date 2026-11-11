@@ -91,6 +91,9 @@ func disableMate() error {
 		fmt.Fprintf(os.Stderr, "    ! systemctl stop %s failed (continuing — the unit may already be stopped): %v\n", unit, err)
 	}
 
+	if err := removeMateFuse(); err != nil {
+		return err
+	}
 	fmt.Fprintf(os.Stderr, "    → removing unit zerops@%s\n", mate.UnitName)
 	if err := commandRunner("sudo", "-E", "zsc", "unit", "remove", mate.UnitName); err != nil {
 		return fmt.Errorf("zsc unit remove %s: %w", mate.UnitName, err)
@@ -383,5 +386,6 @@ func ensureMateUnit() error {
 		// A failed disable must not skip the update and env rewrite on every boot.
 		fmt.Fprintf(os.Stderr, "    ! systemctl disable %s failed (boot start may stay enabled): %v\n", unit, err)
 	}
+	ensureMateFuse()
 	return nil
 }

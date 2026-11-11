@@ -21,9 +21,9 @@ func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *te
 		wantChief  bool
 		wantStderr string
 	}{
-		{name: "a Chief naming this project is the Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-me"}}}`, wantChief: true},
-		{name: "a Chief naming another project is no Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-other"}}}`},
-		{name: "no Chief named is no Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":null}}`},
+		{name: "a Chief naming this project is the Chief", body: `{"link":"linked","mate":{"rev":1,"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-me"}}}`, wantChief: true},
+		{name: "a Chief naming another project is no Chief", body: `{"link":"linked","mate":{"rev":1,"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-other"}}}`},
+		{name: "no Chief named is no Chief", body: `{"link":"linked","mate":{"rev":1,"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":null}}`},
 		{name: "an unreadable state is no Chief, and says so", body: `{}`, wantStderr: "serving the single-project surface"},
 	}
 	for _, tt := range tests {
