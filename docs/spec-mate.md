@@ -670,8 +670,8 @@ state lock, `zcp service start mate` decides from the copy's tag, never from the
 what a start cut short left that no tag names (`~/.t3/.state-copy`, `~/.t3/.state-drop-*`) and
 finishes a restore cut short: a tagged copy beside no live `userdata` is one, and is put back
 before anything else is decided; `userdata` missing beside a failed set and no copy launches
-nothing (a person decides). Only `userdata` missing with neither is a new Mate, which launches
-on what its server creates (and is copied as an empty directory when a copy is due). Then:
+nothing (a person decides). Only `userdata` missing with neither is a new Mate: it has no state
+to copy and launches on what its server creates. Then:
 
 - a copy tagged with `last-good`: the update was committed — the copy is dropped;
 - a copy tagged with the version about to launch: that version starts again on its own state;

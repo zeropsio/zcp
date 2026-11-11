@@ -49,7 +49,8 @@ var swappedItems = []string{uploadsIndexName, stateDirName}
 // Before it decides, it finishes what a start cut short left: a tagged copy
 // beside no live state directory is a restore between its first and last
 // rename, and is finished; a failed set beside no live state directory and
-// no copy launches nothing. A failed copy or restore returns an error and the
+// no copy launches nothing; no live state directory with neither is a new
+// Mate, launched without a copy. A failed copy or restore returns an error and the
 // caller does not launch. The returned line says what was done, empty when
 // nothing was.
 func PrepareStateForLaunch() (string, error) {
@@ -93,6 +94,8 @@ func prepareState(base, launching, lastGood string) (string, error) {
 		if len(failed) > 0 {
 			return "", fmt.Errorf("state directory %s is missing beside %v: nothing is launched on an empty state", filepath.Join(base, stateDirName), failed)
 		}
+		// A Mate that has no state yet has nothing to copy: its first launch creates it.
+		return "", nil
 	}
 	switch {
 	case tag == "":
