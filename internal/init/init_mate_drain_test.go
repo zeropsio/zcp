@@ -72,7 +72,7 @@ func TestRun_Mate_InitDrain(t *testing.T) {
 					return mate.Result{Action: mate.ActionNone, From: old, To: old}, nil
 				}
 				if tc.active && opts.Activate != nil {
-					if err := opts.Activate(mate.Manifest{Version: fresh, RollbackCompatible: true, CompatibleFrom: old}); err != nil {
+					if err := opts.Activate(mate.Manifest{Version: fresh}); err != nil {
 						return mate.Result{}, err
 					}
 				}
@@ -232,7 +232,7 @@ func TestRun_Mate_ExistingSwitch_PostponesInit(t *testing.T) {
 	// non-parallel: the rig redirects HOME, installer and command seams.
 	rig := newMateRig(t)
 	rig.installBundle(t)
-	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "switching", Candidate: pinnedTestVersion, PreventRollback: true}); err != nil {
+	if err := mate.WriteUpdateState(mate.WorkerUpdateState(mate.UpdateState{Phase: "switching", Candidate: pinnedTestVersion})); err != nil {
 		t.Fatal(err)
 	}
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
@@ -276,7 +276,7 @@ func TestRun_Mate_ReadinessDecisions(t *testing.T) {
 						if opts.Activate == nil {
 							t.Fatal("running init must use the installer's activation hook")
 						}
-						if err := opts.Activate(mate.Manifest{Version: fresh, RollbackCompatible: true, CompatibleFrom: old}); err != nil {
+						if err := opts.Activate(mate.Manifest{Version: fresh}); err != nil {
 							return mate.Result{}, err
 						}
 					} else {

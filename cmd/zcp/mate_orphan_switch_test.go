@@ -101,7 +101,7 @@ func TestMateStatus_DeadSwitchWorker_LateReadiness(t *testing.T) {
 			version string
 			allowed bool
 		}{{candidateVersion, false}, {newerVersion, true}} {
-			candidate := mate.Manifest{Version: tc.version, RollbackCompatible: true, CompatibleFrom: installedVersion}
+			candidate := mate.Manifest{Version: tc.version}
 			if allowed := mate.AutomaticUpdateAllowed(status.Installed, status.Updater.FailedVersion, candidate); allowed != tc.allowed {
 				t.Fatalf("automatic admission for %s=%t, want %t", tc.version, allowed, tc.allowed)
 			}

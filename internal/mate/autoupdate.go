@@ -18,23 +18,22 @@ const (
 	updateUpdated   = "updated"
 )
 
-// UpdateFailed is the updater phase of a release that failed, and of a state
+// UpdateFailed is the updater phase `zcp mate status` reports for a state
 // that could not be read.
 const UpdateFailed = "failed"
 
 // UpdateState is minimal crash recovery state. last-good is the authority for
 // rollback; this record identifies an uncommitted switch and a failed release.
 type UpdateState struct {
-	Protocol        int    `json:"protocol"`
-	Phase           string `json:"phase"`
-	Candidate       string `json:"candidate,omitempty"`
-	Previous        string `json:"previous,omitempty"`
-	RunningVersion  string `json:"runningVersion,omitempty"`
-	FailedVersion   string `json:"failedVersion,omitempty"`
-	WorkerPID       int    `json:"workerPid,omitempty"`
-	WorkerStart     string `json:"workerStart,omitempty"`
-	OldBoot         string `json:"oldBoot,omitempty"`
-	PreventRollback bool   `json:"preventRollback,omitempty"`
+	Protocol       int    `json:"protocol"`
+	Phase          string `json:"phase"`
+	Candidate      string `json:"candidate,omitempty"`
+	Previous       string `json:"previous,omitempty"`
+	RunningVersion string `json:"runningVersion,omitempty"`
+	FailedVersion  string `json:"failedVersion,omitempty"`
+	WorkerPID      int    `json:"workerPid,omitempty"`
+	WorkerStart    string `json:"workerStart,omitempty"`
+	OldBoot        string `json:"oldBoot,omitempty"`
 }
 
 func UpdateStatePath() string { return filepath.Join(Prefix(), "update.json") }
@@ -143,24 +142,19 @@ func CommitLastGood(version string) error {
 	return dropStateCopy(BaseDir(), version)
 }
 
+// AutomaticUpdateAllowed says whether the automatic worker installs candidate
+// over installed: a release newer than both the installed one and the
+// remembered failure. Every release rolls back with the state it found.
 func AutomaticUpdateAllowed(installed, failed string, candidate Manifest) bool {
-	return RollbackAllowed(installed, candidate) && !IsDevVersion(installed) && VersionOlder(installed, candidate.Version) && (failed == "" || VersionOlder(failed, candidate.Version))
-}
-
-// RollbackAllowed proves this installed version is inside the release's
-// declared backwards-compatible range. A missing bound is not proof.
-func RollbackAllowed(installed string, candidate Manifest) bool {
-	cmp, err := compareSemver(installed, candidate.CompatibleFrom)
-	return candidate.RollbackCompatible && err == nil && cmp >= 0
+	return !IsDevVersion(installed) && VersionOlder(installed, candidate.Version) && (failed == "" || VersionOlder(failed, candidate.Version))
 }
 
 // SwitchHooks contains the effects crossing the supervisor and loopback seam.
 type SwitchHooks struct {
-	PreventRollback bool
-	Restart         func() error
-	Ready           func(version, oldBoot string) error
-	Commit          func() error
-	Cancel          func() error
+	Restart func() error
+	Ready   func(version, oldBoot string) error
+	Commit  func() error
+	Cancel  func() error
 }
 
 // SwitchUpdate runs only after the old process proved its idle admission barrier.
@@ -180,7 +174,6 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 	s.RunningVersion = installed
 	s = WorkerUpdateState(s)
 	s.OldBoot = oldBoot
-	s.PreventRollback = h.PreventRollback
 	currentDir, err := linkedVersionDir(CurrentLink())
 	if err != nil {
 		return err
@@ -223,17 +216,9 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 			return nil
 		}
 	}
+	// The restart's start command restores the state from before the
+	// candidate: last-good is about to launch and the copy is the candidate's.
 	s.FailedVersion = candidate
-	if h.PreventRollback {
-		s.Phase = UpdateFailed
-		s.RunningVersion = ""
-		s.WorkerPID = 0
-		s.WorkerStart = ""
-		if err := WriteUpdateState(s); err != nil {
-			return err
-		}
-		return fmt.Errorf("candidate %s failed readiness; incompatible release requires attended recovery", candidate)
-	}
 	if err := activate(currentDir); err != nil {
 		return fmt.Errorf("rollback to %s: %w", installed, err)
 	}
@@ -319,11 +304,8 @@ func PrepareUpdateBoot() (bool, error) {
 	if s.WorkerPID > 0 && s.WorkerStart != "" && processStart(s.WorkerPID) == s.WorkerStart {
 		return true, nil
 	}
-	if s.PreventRollback {
-		s.Phase = UpdateFailed
-		s.RunningVersion = ""
-		return true, WriteUpdateState(s)
-	}
+	// The launch that follows starts last-good, and its start command
+	// restores the state from before the candidate.
 	target, err := linkedVersionDir(LastGoodLink())
 	if err != nil {
 		return true, fmt.Errorf("boot last-good: %w", err)
@@ -390,7 +372,7 @@ func ObserveUpdateState() (UpdateState, error) {
 		s.WorkerStart = ""
 		return s, WriteUpdateState(s)
 	}
-	if s.Phase != updateSwitching || s.PreventRollback || s.WorkerPID <= 0 || s.WorkerStart == "" || workerAlive(s) || s.OldBoot == "" {
+	if s.Phase != updateSwitching || s.WorkerPID <= 0 || s.WorkerStart == "" || workerAlive(s) || s.OldBoot == "" {
 		return s, nil
 	}
 	installed, err := InstalledVersion()
@@ -443,11 +425,6 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 	if s.Phase != updateSwitching {
 		return nil
 	}
-	if s.PreventRollback {
-		s.Phase = UpdateFailed
-		s.RunningVersion = ""
-		return WriteUpdateState(s)
-	}
 	target, err := linkedVersionDir(LastGoodLink())
 	if err != nil {
 		return err
@@ -469,6 +446,8 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 		}
 		return h.Commit()
 	}
+	// The restart launches last-good, and its start command restores the
+	// state from before the candidate.
 	s.FailedVersion = s.Candidate
 	s = WorkerUpdateState(s)
 	if err := WriteUpdateState(s); err != nil {

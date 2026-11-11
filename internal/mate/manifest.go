@@ -73,15 +73,13 @@ const (
 // Manifest names one installable mate release, as published in the fork's
 // stable.json release asset (spec-mate.md §2.1c).
 type Manifest struct {
-	RollbackCompatible bool      `json:"rollbackCompatible"`
-	CompatibleFrom     string    `json:"compatibleFrom,omitempty"`
-	Version            string    `json:"version"`
-	Asset              string    `json:"asset"`
-	URL                string    `json:"url"`
-	SHA256             string    `json:"sha256"`
-	Size               int64     `json:"size"`
-	Contract           int       `json:"contract"`
-	PublishedAt        time.Time `json:"publishedAt"`
+	Version     string    `json:"version"`
+	Asset       string    `json:"asset"`
+	URL         string    `json:"url"`
+	SHA256      string    `json:"sha256"`
+	Size        int64     `json:"size"`
+	Contract    int       `json:"contract"`
+	PublishedAt time.Time `json:"publishedAt"`
 }
 
 // ManifestURL is where DesiredRelease fetches the release manifest from.

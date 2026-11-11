@@ -322,7 +322,6 @@ func switchRunningMate(candidate mate.Manifest, release func()) error {
 	}
 	var readiness mate.RestartReadiness
 	return mate.SwitchUpdate(candidate.Version, drain.BootID, mate.SwitchHooks{
-		PreventRollback: !mate.RollbackAllowed(installed, candidate),
 		Restart: func() error {
 			release()
 			readiness = mate.ObserveRestart(context.Background())

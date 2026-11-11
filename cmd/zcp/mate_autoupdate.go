@@ -129,10 +129,10 @@ func runMateUpdateWorker(args []string) int {
 		return postpone(err)
 	}
 	current, currentErr := mate.InstalledVersion()
-	if currentErr != nil || current != installed || (automatic && !mate.AutomaticUpdateAllowed(current, state.FailedVersion, desired)) {
+	if currentErr != nil || current != installed {
 		_ = mateUpdatePost("cancel")
 		if currentErr == nil {
-			currentErr = fmt.Errorf("installed version or compatibility changed while draining")
+			currentErr = fmt.Errorf("installed version changed while draining")
 		}
 		return postpone(currentErr)
 	}
@@ -141,7 +141,6 @@ func runMateUpdateWorker(args []string) int {
 
 	var readiness mate.RestartReadiness
 	err = mate.SwitchUpdate(desired.Version, drain.BootID, mate.SwitchHooks{
-		PreventRollback: !mate.RollbackAllowed(installed, desired),
 		Restart: func() error {
 			if locked {
 				unlock()

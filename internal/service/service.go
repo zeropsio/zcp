@@ -263,8 +263,8 @@ var mateLockWait = defaultMateLockWait
 
 // mateInstallBeforeStart recovers an interrupted switch or preserves the
 // installed release at or above MinimumMateVersion before launch. Supported
-// installed releases keep drain, organization hold and incompatible-release
-// confirmation. A missing or below-floor bundle refreshes the release manifest. Whatever the install
+// installed releases keep drain and organization hold. A missing or
+// below-floor bundle refreshes the release manifest. Whatever the install
 // did, a bundle still below the floor is refused: the start fails with
 // mate.BelowFloorError rather than running it. Last, with the version about
 // to launch settled, the server's state is copied, restored or released

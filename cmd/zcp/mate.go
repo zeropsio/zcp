@@ -98,7 +98,9 @@ type mateStatusResult struct {
 	Why             string             `json:"why,omitempty"`
 }
 
-// mateUpdaterStatus is the status's "updater" key (§2.1d).
+// mateUpdaterStatus is the status's "updater" key (§2.1d). RollbackCompatible
+// is always true: every release rolls back with the state it found. It stays
+// while the Mate's own reader requires it (z3 contracts environment.ts).
 type mateUpdaterStatus struct {
 	Protocol           int    `json:"protocol"`
 	RollbackCompatible bool   `json:"rollbackCompatible"`
@@ -151,14 +153,13 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 		state, stateErr = mate.ReadOptionalUpdateState()
 	}
 	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
-	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: mate.RollbackAllowed(result.Installed, desired), Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
+	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: true, Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
 	if state.Phase != "" {
 		result.Updater.Phase = state.Phase
 		result.Updater.RunningVersion = state.RunningVersion
 	}
 	if stateErr != nil {
 		result.Error = stateErr.Error()
-		result.Updater.RollbackCompatible = false
 		result.Updater.Phase = mate.UpdateFailed
 		result.Updater.RunningVersion = ""
 	}

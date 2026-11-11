@@ -416,8 +416,8 @@ One pass, in order:
 
 **An ordinary unit restart preserves an installed release at or above `MinimumMateVersion`.**
 `zcp service start mate` recovers an interrupted switch first. A supported installed version
-launches without reading the release manifest, preserving the organization's hold, idle drain
-and incompatible-release confirmation. A missing bundle or one below the floor refreshes
+launches without reading the release manifest, preserving the organization's hold and idle
+drain. A missing bundle or one below the floor refreshes
 `DesiredRelease` under the shared install lock. If the manifest is unavailable, an installed
 version keeps serving with a warning; a missing bundle cannot be installed. **Whatever the
 install did, a bundle still below the floor is neither run nor linked:** `zcp service start mate`
@@ -476,7 +476,7 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 ```json
 { "version": "0.16.0", "asset": "zerops-mate-0.16.0.tgz",
   "url": "https://github.com/zeropsio/mate/releases/download/v0.16.0/zerops-mate-0.16.0.tgz",
-  "sha256": "<64 hex>", "size": 21690443, "contract": 2, "rollbackCompatible": false, "publishedAt": "2026-10-26T18:08:45Z" }
+  "sha256": "<64 hex>", "size": 21690443, "contract": 2, "publishedAt": "2026-10-26T18:08:45Z" }
 ```
 
 `DesiredRelease()` reads `https://github.com/zeropsio/mate/releases/latest/download/stable.json`
@@ -528,11 +528,12 @@ Auto-update protocol 1 is probed before it is used.
 
 ### 2.1d Automatic updates — protocol 1
 
-The stable manifest optionally declares `rollbackCompatible: true` and `compatibleFrom`.
-The installed version must be at least that proved compatibility floor and below the candidate.
-Missing, invalid or unmet compatibility metadata means manual confirmation is required.
-`zcp mate status --json` exposes `updater` with `protocol: 1`,
-`rollbackCompatible`, `phase`, `runningVersion` and optional `failedVersion`. It describes
+Every release installs automatically where the organization's policy allows live updates: a
+rollback returns the state the candidate found (the state transaction below), so no release
+declares whether it can be rolled back. The installed version must be below the candidate.
+`zcp mate status --json` exposes `updater` with `protocol: 1`, `rollbackCompatible` (always
+`true`; the key stays while the Mate's own status reader requires it), `phase`, `runningVersion`
+and optional `failedVersion`. It describes
 only the installed version: a settled record from another running version, or a postponement
 of a release that is no longer the target, reads as `idle`, and a failure at or below the
 installed version is dropped. Any successful install outside the worker (`zcp mate update`
@@ -542,8 +543,8 @@ releases and local coordinator state, so startup need not wait on a release-sour
 
 `zcp mate update --automatic --json` acknowledges an independent systemd transient worker
 with `started: true`. The worker runs outside `zerops@mate`'s cgroup, takes the install lock,
-refreshes the manifest, and refuses a dev build, same/older version, incompatible release or
-version at or below the remembered failure. It stages and smokes the candidate without changing
+refreshes the manifest, and refuses a dev build, same/older version or version at or below the
+remembered failure. It stages and smokes the candidate without changing
 `current`, then POSTs loopback `/api/mate/update/drain` with `{version, deadlineMs:600000,
 automatic:true}`. Mate rechecks org policy and proves its engine idle behind an admission
 barrier. A deadline or refusal postpones the update and cancels that barrier; no work is stopped.
@@ -551,18 +552,18 @@ An already-running terminal process is work. Native provider resume bindings mus
 The worker's exact process identity is recorded from staging onward. An in-container status
 observation can mark staging/draining postponed only once that identity is provably gone,
 under the install lock. The transient unit's `ExecStopPost` also cancels an abandoned drain;
-for an interrupted compatible switch it restores, restarts, verifies and commits last-good.
+for an interrupted switch it restores, restarts, verifies and commits last-good.
 Neither path guesses from elapsed time. No worker retry loop is added.
 
 Decision: A dead update worker's switch settles when last-good becomes ready, so a newer release can update.
 Decision: A switch whose worker still lives, or whose restored process is not proven ready on a new boot, is never settled.
 Decision: failedVersion survives the settlement, so the failed candidate is not retried.
 
-Both ordinary and local in-container status observe an abandoned compatible switch under
+Both ordinary and local in-container status observe an abandoned switch under
 the same install lock. Only when installed/current, previous and last-good agree and the
 shared readiness proof verifies that exact version on a different nonempty boot does the
 record become postponed, with runningVersion set to last-good and worker identity cleared.
-Missing worker or old-boot identity, an incompatible switch, or an incomplete readiness/C-4
+Missing worker or old-boot identity, or an incomplete readiness/C-4
 proof leaves the switch untouched. Status probes once, bounded by one second; a later
 ordinary status can observe late readiness. It never restarts or installs a bundle.
 
@@ -626,7 +627,7 @@ readiness proof for 30 seconds (without holding the install lock) and only then 
 in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
 `mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`.
 
-A compatible candidate failing readiness returns `current` to the explicit `last-good`,
+A candidate failing readiness returns `current` to the explicit `last-good`,
 remembers the failed version before restarting, proves that version ready, and commits it.
 The resolver is never consulted to choose a rollback. Pruning preserves `last-good`.
 At boot, an unfinished switch whose recorded worker is gone returns to `last-good` before
@@ -672,10 +673,7 @@ commands that open `state.sqlite` are the server's own (`serve`, `start`), which
 launches; `mate triage` writes only a new scratch directory `userdata/triage/<instant>` and
 `mate mac` writes `~/.t3/mac`, neither read back as state; zcp writes nothing under `~/.t3`.
 
-Confirmed manual updates on protocol-capable Mates use the same drain and switch. A
-non-rollback-compatible manual release failing readiness stays on its candidate and reports
-that attended recovery is required; neither its worker nor boot launches an incompatible
-previous schema. Older Mates have no drain capability: while idle, perform one attended
+Manual updates on protocol-capable Mates use the same drain, switch and state transaction. Older Mates have no drain capability: while idle, perform one attended
 full container restart using the normal operator restart, or `zcp self restart` in the container
 (§2.9 step 7); `zcp mate status --json` names such a Mate `restartNeeded` while a newer Mate is out. `install.sh` updates zcp and
 `zcp init` installs Mate. Verify `status --json` reports `updater.protocol:1` and Mate's
@@ -3017,8 +3015,7 @@ The Mate package supplies that production origin; a development override uses
 Publish the stable Mate release before any zcp release raises the floor to it or requires its
 contract (§2.1c). The hosted client's sign-in floor also follows the published stable Mate
 release (§2.9). An installed Mate below the floor gets the new release through an attended
-update or an idle container restart; automatic updates still require the manifest's rollback
-compatibility declaration (§2.1d).
+update or an idle container restart.
 
 ### Invariants
 

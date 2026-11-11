@@ -98,7 +98,7 @@ func TestObserveUpdateState_LateLastGoodReady_Postponed(t *testing.T) {
 		if transport.readinessCalls != 1 || transport.environmentCalls != 1 {
 			t.Fatalf("proof calls: readiness=%d environment=%d, want 1/1", transport.readinessCalls, transport.environmentCalls)
 		}
-		if !mate.AutomaticUpdateAllowed("0.15.200", persisted.FailedVersion, mate.Manifest{Version: "0.15.203", RollbackCompatible: true, CompatibleFrom: "0.15.200"}) {
+		if !mate.AutomaticUpdateAllowed("0.15.200", persisted.FailedVersion, mate.Manifest{Version: "0.15.203"}) {
 			t.Fatal("settled last-good must admit the newer release 0.15.203")
 		}
 	})
@@ -120,7 +120,7 @@ func TestObserveUpdateState_Settlement_FailedVersionSurvives(t *testing.T) {
 		if persisted.Phase != "postponed" || persisted.FailedVersion != "0.15.202" {
 			t.Fatalf("failed candidate after settlement: phase=%q failedVersion=%q, want postponed/0.15.202", persisted.Phase, persisted.FailedVersion)
 		}
-		if mate.AutomaticUpdateAllowed("0.15.200", persisted.FailedVersion, mate.Manifest{Version: "0.15.202", RollbackCompatible: true, CompatibleFrom: "0.15.200"}) {
+		if mate.AutomaticUpdateAllowed("0.15.200", persisted.FailedVersion, mate.Manifest{Version: "0.15.202"}) {
 			t.Fatal("settlement must not retry failed candidate 0.15.202")
 		}
 	})
@@ -130,7 +130,7 @@ func TestObserveUpdateState_UnprovenSwitch_Unchanged(t *testing.T) {
 	t.Run("A switch whose worker still lives, or whose restored process is not proven ready on a new boot, is never settled.", func(t *testing.T) {
 		for _, scenario := range []string{
 			"live worker", "not ready", "wrong version", "old boot", "empty boot", "wrong protocol",
-			"C4 HTML", "C4 base path", "C4 timeout", "incompatible switch", "installed differs",
+			"C4 HTML", "C4 base path", "C4 timeout", "installed differs",
 			"previous differs", "last-good differs", "missing old boot", "missing worker pid", "missing worker start", "install lock held",
 		} {
 			t.Run(scenario, func(t *testing.T) {
@@ -161,8 +161,6 @@ func TestObserveUpdateState_UnprovenSwitch_Unchanged(t *testing.T) {
 					transport.environment = `{"basePath":"/"}`
 				case "C4 timeout":
 					transport.environmentStall = true
-				case "incompatible switch":
-					state.PreventRollback = true
 				case "installed differs":
 					seedInstalledVersion(t, "0.15.202")
 				case "previous differs":

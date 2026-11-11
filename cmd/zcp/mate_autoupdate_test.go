@@ -40,7 +40,7 @@ func TestMateStatus_LocalStartup_CapabilityWithoutNetwork(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("startup made %d network calls", calls.Load())
 	}
-	if result.Updater.Protocol != 1 || result.Updater.Phase != "idle" || result.Updater.RollbackCompatible {
+	if result.Updater.Protocol != 1 || result.Updater.Phase != "idle" || !result.Updater.RollbackCompatible {
 		t.Fatalf("startup capability=%+v", result.Updater)
 	}
 }
