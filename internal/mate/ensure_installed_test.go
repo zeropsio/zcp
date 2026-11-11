@@ -23,14 +23,15 @@ import (
 // desiredVersion is the version resolveDesiredRelease's stub reports —
 // standing in for whatever the real release manifest would name, since
 // these tests never reach the network for it (see newEnsureRig).
-const desiredVersion = "0.14.2"
+const desiredVersion = "0.16.155"
 
 // ensureRig gives each test a private HOME and counts how many times
 // EnsureInstalled reached the manifest/download/npm/smoke seams, so "no
 // network at all" assertions are exact rather than inferred from side
 // effects.
 type ensureRig struct {
-	home string
+	home    string
+	version string
 
 	manifestCalls int
 	downloadCalls int
@@ -44,7 +45,7 @@ type ensureRig struct {
 
 func newEnsureRig(t *testing.T) *ensureRig {
 	t.Helper()
-	rig := &ensureRig{home: t.TempDir()}
+	rig := &ensureRig{home: t.TempDir(), version: desiredVersion}
 	t.Setenv("HOME", rig.home)
 
 	mate.SetResolveDesiredRelease(func(mate.EnsureOptions) (mate.Manifest, error) {
@@ -53,8 +54,8 @@ func newEnsureRig(t *testing.T) *ensureRig {
 			return mate.Manifest{}, rig.manifestErr
 		}
 		return mate.Manifest{
-			Version:  desiredVersion,
-			URL:      "https://example.invalid/zerops-mate-" + desiredVersion + ".tgz",
+			Version:  rig.version,
+			URL:      "https://example.invalid/zerops-mate-" + rig.version + ".tgz",
 			SHA256:   strings.Repeat("a", 64),
 			Contract: mate.SupportedContract,
 		}, nil
@@ -79,7 +80,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 			_ = os.WriteFile(filepath.Join(prefix, "PARTIAL"), []byte("partial npm install"), 0o644)
 			return rig.npmErr
 		}
-		writeFakePackage(t, prefix, desiredVersion)
+		writeFakePackage(t, prefix, rig.version)
 		return nil
 	})
 	mate.SetSmokeTestInstall(func(_ context.Context, _ string) error {
@@ -566,58 +567,6 @@ func TestEnsureInstalled_BelowTheFloorWithAnUnreachableManifestKeepsTheInstalled
 	got, err := mate.EnsureInstalled(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
 	if err != nil || got.Action != mate.ActionNone || got.To != "0.15.153" {
 		t.Fatalf("result=%+v err=%v, want the installed build kept", got, err)
-	}
-}
-
-func TestEnsureInstalled_CustomActivation_StagesBeforeSwitch(t *testing.T) {
-	// non-parallel: newEnsureRig replaces installer seams and HOME.
-	for _, tc := range []struct {
-		name      string
-		postponed bool
-	}{
-		{"the staged candidate switches through its supplied lifecycle", false},
-		{"a postponed lifecycle keeps the running install unchanged", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			postponed := tc.postponed
-			rig := newEnsureRig(t)
-			seedInstalledVersion(t, "0.0.9")
-			blocked := errors.New("Mate is still busy")
-			called := false
-			_, err := mate.EnsureInstalled(mate.EnsureOptions{Activate: func(candidate mate.Manifest) error {
-				called = true
-				if version, err := mate.InstalledVersion(); err != nil || version != "0.0.9" {
-					t.Errorf("current moved before idle proof: %q, %v", version, err)
-				}
-				if rig.smokeCalls != 1 || candidate.Version != desiredVersion {
-					t.Errorf("switch must receive the smoked candidate: smoke=%d candidate=%+v", rig.smokeCalls, candidate)
-				}
-				if postponed {
-					return blocked
-				}
-				linkCurrent(t, candidate.Version)
-				return mate.WriteUpdateState(mate.UpdateState{Phase: "updated", RunningVersion: candidate.Version, OldBoot: "verified-switch"})
-			}})
-			if !called {
-				t.Fatal("installer bypassed the supplied activation lifecycle")
-			}
-			if postponed {
-				if !errors.Is(err, blocked) {
-					t.Fatalf("error=%v, want busy postponement", err)
-				}
-				if version, err := mate.InstalledVersion(); err != nil || version != "0.0.9" {
-					t.Errorf("postponed switch changed current: %q, %v", version, err)
-				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
-				state, err := mate.ReadUpdateState()
-				if err != nil || state.OldBoot != "verified-switch" {
-					t.Errorf("installer replaced the switch owner's record: %+v, %v", state, err)
-				}
-			}
-		})
 	}
 }
 

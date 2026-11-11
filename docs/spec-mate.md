@@ -332,29 +332,37 @@ now-off flag has to remove — so a container that never had mate prints not one
    (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
 5. **Running Mate.** Under the shared install lock, ask systemd whether the registered
-   unit is active. Stage and smoke a newer release while keeping `current` unchanged, then
-   use the updater's protocol-1 drain with `automatic:false`. Only a proved idle admission
-   barrier permits `mate.SwitchUpdate`: persist the switch, release the lock, request a
-   nonblocking restart, prove the exact version on a new healthy boot, and commit admission.
-   A refusal, absent protocol, or drain deadline postpones the change without restarting
-   the running Mate. Environment-only restarts use the same barrier and readiness proof.
-   An inactive unit follows the startup described in §2.1a step 7. An unchanged running version still receives the boot readiness
-   proof before advancing `last-good` (§2.1d).
-   `TestRun_Mate_InitDrain`, `TestRun_Mate_ActiveUnchanged_CommitsBootLastGood`.
+   unit is active. An active unit is never switched by init's own process: an attended `zcp init`
+   cut short (Ctrl-C, an SSH drop) would leave its switch fenced with an owner gone and nobody
+   to settle it. Init writes the environment, releases the lock, and starts the transient update
+   worker (`mate.UpdateWorkerArgv`, the one `zcp mate update` starts), with `--restart` when the
+   environment changed; the worker, whose `ExecStopPost` recovers whatever it leaves unfinished,
+   is the one owner of every switch of a running Mate (§2.1d). It installs only what an install
+   may (never the remembered failed release, never an older one, never over a dev build), stages
+   and smokes it while keeping `current` unchanged, drains with the updater's protocol-1 drain,
+   and switches through `mate.SwitchUpdate`. A refusal, absent protocol, or drain deadline
+   postpones the change without restarting the running Mate. With `--restart` and no release to
+   install, the installed version is the candidate: the same drain, switch and readiness proof.
+   An inactive unit follows the startup described in §2.1a step 7; a launch of a version
+   `last-good` does not name is settled by its launcher (§2.1d "The settle rule"). An active unit
+   whose record holds an unfinished switch is left to the switch's owner while that owner lives;
+   one whose owner is gone is restarted, never repaired in place: the repair's settled record would
+   lift a running candidate's fence, and a later start would restore over the work it admitted. The
+   restart's start repairs it while no server runs.
 
-   **A Mate that does not answer is not running.** A container restart does not boot-start the
-   unit (§2.1a step 7), so its init normally finds it inactive. When init finds the unit active or
-   activating — a boot-start link an earlier init created or failed to disable, or an attended
-   `zcp init` — it is a running Mate only if it answers: a drain that gets no HTTP answer
-   (`mate.ErrNotAnswering`: nothing listens, or the connection breaks) means none. Init then
-   activates the staged release atomically, restarts the unit and observes cold readiness (§2.1d);
-   the environment-only switch takes the same route. The Mate server answers no request before
-   command readiness, so such a server admitted no work: a crash-looping release is replaced, and a
-   healthy server still booting is restarted onto the newest release with its persisted fold
-   resuming in the new boot. A Mate that answers, even with a refusal, or that holds the drain
-   request until its deadline is drained and switched or postponed as above. Only a server reaching
-   command readiness between its refused drain and the restart could lose work admitted in that
-   moment. The verdict reads no restart counter and adds no timer.
+   **A Mate that does not answer is followed, then judged.** A container restart does not
+   boot-start the unit (§2.1a step 7), so its init normally finds it inactive. When the worker
+   finds the unit active or activating — a boot-start link an earlier init created or failed to
+   disable, or an attended `zcp init` — a drain that gets no HTTP answer (`mate.ErrNotAnswering`:
+   nothing listens, or the connection breaks) may meet a server still booting, since the server
+   answers no request before command readiness. The worker follows the running launch's boot under
+   the one boot rule (`mate.WaitRunningBoot`, §2.1d) and drains it once ready. Only no live launch on
+   record, a launch that ended, or a boot without progress for the window is no running Mate: no
+   server holds work, so the worker switches without a drain. A crash-looping or stalled release is
+   replaced, fenced and settled like any switch. A Mate that answers, even with a refusal, or that
+   holds the drain request until its deadline is drained and switched or postponed as above. Only a
+   server reaching command readiness between its last unanswered probe and the restart could lose
+   work admitted in that moment. The verdict reads no restart counter.
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
@@ -553,7 +561,14 @@ An already-running terminal process is work. Native provider resume bindings mus
 The worker's exact process identity is recorded from staging onward. An in-container status
 observation can mark staging/draining postponed only once that identity is provably gone,
 under the install lock. The transient unit's `ExecStopPost` also cancels an abandoned drain;
-for an interrupted switch it restores, restarts, verifies and commits last-good.
+for an interrupted switch it restores, restarts, verifies and commits last-good. It waits for the
+install lock as a start does (4 minutes), since the start command holds it while it decides the
+state, and the transient unit has no stop timeout (`TimeoutStopSec=infinity`): every step of
+recovery is bounded by itself, and its readiness wait follows the boot under the one boot rule. A
+worker started while the record holds an unfinished switch exits without writing the record: the
+switch has its owner, and one whose owner is gone is recovered by the worker unit's own
+`ExecStopPost` as it exits. Writing `staging` over it would let a later postponement settle the
+record on the candidate, lifting its fence while it runs uncommitted with its copy held.
 Neither path guesses from elapsed time. No worker retry loop is added.
 
 Decision: A dead update worker's switch settles when last-good becomes ready, so a newer release can update.
@@ -574,7 +589,7 @@ Decision: A candidate that is alive and still booting is never recorded as faile
 Decision: Stopping the old Mate during an update never counts as the new Mate's failure.
 Decision: An update stops waiting the moment the Mate's process exits.
 Decision: A running Mate updated by init receives the same candidate readiness window as an update worker.
-Decision: A cold boot that has not proved ready never advances last-good and is not rolled back merely because its observation window ended.
+Decision: A launch outside the worker that has not proved ready never advances last-good, and is rolled back only as a candidate is: its process gone, a reported failure, or no boot progress for the progress window.
 
 Candidate, rollback and recovery share the readiness wait. Before each restart it records the
 unit's invocation and process-start identity. Only a changed nonempty invocation ID or a
@@ -585,27 +600,39 @@ immediately, including a clean process exit. Stale exit status and the old proce
 during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
 receipts and the progress window remain authoritative.
 
-The wait's verdict comes from receipts, never from a total budget. Every 100 ms it reads the
-unit, a 1-second probe of loopback readiness and, after a restart, the boot file; together they give
-one of three states:
+**The one boot rule.** Every wait for a Mate's boot — the update worker's candidate, its rollback
+relaunch and its follow of a silent server, recovery, and the launcher's own settle —
+is `waitReady` (`internal/mate/ready.go`): alive and progressing, it keeps waiting; the process gone,
+a reported failure, or no progress for the window, it ends failed. No wait has a fixed bound on a
+boot. The verdict comes from receipts, never from a total budget. Every 100 ms it reads the unit
+(after a restart zcp requested), a 1-second probe of loopback readiness, the launch file and the
+boot file; while the unit's previous process is stopping, it observes nothing, since whatever
+answers or writes then is that process's. Together they give one of three states:
 
 - **ready** — readiness answers the exact version, a nonempty boot id other than the old one,
   `ready: true`, and C-4 holds;
 - **failed** — the unit attempt exited or failed (above); the new boot answered with another version
-  or a later boot id replaced it; the boot file reports `error` (startup failed) or a different
-  process than the one it named before;
+  or a later boot id replaced it; the launch file's process exited, or another launch replaced it;
+  the boot file of the launch's server reports `error` (startup failed);
 - **booting** — anything else: no answer, the old boot still answering, `ready: false`.
 
-While booting, the first answer of the new boot, the first boot-file receipt and every receipt whose
-`progress` grew start `UpdateProgressWindow` (2 minutes) anew; the wait ends failed only when the
-window passes without one. A release that predates the boot file (rollback, recovery to an older
-last-good) gives no progress receipts, so its whole boot has to fit one window.
+While booting, every receipt starts `UpdateProgressWindow` (2 minutes) anew: a launch receipt (the
+launcher's start, its install pass, about one a second while the state is copied, the server's
+process started), the first answer of the new boot, the first boot-file receipt and every one whose
+`progress` grew. While systemd stops the unit's previous process (`ActiveState=deactivating`) the
+window does not run: the stop timeout bounds that stretch. The wait ends failed only when the window
+passes without a receipt. So the window measures the longest single step with no receipt: zcp's
+steps before the server starts, the server's start until its first migration, and one unit of the
+server's boot work. Every release zcp launches writes the boot file: it exists from Mate v0.16.100,
+`MinimumMateVersion` is above that, and a start refuses a bundle below the floor, so no boot —
+rollback and recovery included — has to fit one window whole.
 
 The boot file is the only receipt of a boot still on its way: the server answers no HTTP request,
 readiness included, before command readiness, and a boot that folds a long history leaves its event
 loop no turn before that. zcp names it in the launch environment (`ZCP_MATE_BOOT_FILE`,
-`mate.BootFilePath`) and removes it before each restart it requests (`mate.ObserveRestart`); a cold
-boot's observation never reads it, since it may be an earlier boot's. Until command readiness the
+`mate.BootFilePath`); the launcher removes it before it starts the server (`mate.BeginLaunch`) and
+zcp before each restart it requests (`mate.ObserveRestart`), so a file there is the latest launch's
+server's. Until command readiness the
 server replaces it whole in one rename at each step, `{protocol:1, pid, progress[, error]}`:
 `progress` counts the boot's units of work (each page of events a conversation load folds) and only
 grows within a process; `error` appears once startup failed. After command readiness it is not
@@ -629,7 +656,7 @@ boot reads a settled record and starts unfenced); then it clears `commitOwed`, a
 answered commit prunes versions. A server that answers no request in the window leaves the
 debt in the record and the worker ends failed. The rollback's signal to the restored previous
 version goes through the same sender, and the transient unit's `ExecStopPost` resends a signal
-a dead worker still owed (bounded again, and by the unit's stop timeout).
+a dead worker still owed (bounded again).
 
 `commitOwed` is a fact about one finished attempt and does not outlive it: only a settled record
 (`updated`, or `postponed` after a rollback: the version proved ready and `last-good` names it)
@@ -641,20 +668,51 @@ starts without the debt: the record it replaces was settled, and a settled recor
 still-fenced server by itself (the server's own status watch reopens admission on `updated`,
 `postponed` or `failed`, mate `apps/server/src/zerops/ZeropsMateUpdate.ts`), so the commit POST
 is the fast path, never the only one.
-Live init, the update worker and recovery share this wait at the readiness owner. A first boot
+Live init, the update worker, recovery and the launcher share this wait at the readiness owner. A first boot
 can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
 and the fold persists as it goes, so a later boot resumes it.
-`zcp init` at cold boot is the other route, also taken by a unit whose Mate gave init's drain no
-answer (§2.1 step 5): after it settles an installed release it observes the same
-readiness proof for 30 seconds (without holding the install lock) and only then moves `last-good`; a Mate not ready
-in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
-`mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`.
+The launch file (`~/.zcp/mate/launch.json`, `mate.LaunchFilePath`) is the launcher's own receipt,
+`{protocol:1, pid, start, progress, server}`: the process identity of `zcp service start mate`, the
+unit's main process, how many of its steps are done, and, once started, its server's process id. Only
+that server's boot-file receipts count for the launch: a previous server that a restart is still
+ending may write one more receipt after the file was removed. That process lives exactly as long as the server
+it started, so its end is the boot's end, for a wait that follows a boot it did not restart too.
+
+**The settle rule.** Every launch of a version `last-good` does not name ends settled by one owner —
+committed (`last-good` moved, copy dropped) or rolled back (state restored) — however long its boot
+takes. A switch's owner is its update worker (also for init's switch of a running Mate) or recovery. Any other launch — init's
+install on an inactive unit, a unit start installing a missing bundle, a container restart onto a
+version never committed — is owned by its launcher: it is the process that copied the state, and it
+lives as long as the boot, so no other process is added for it. After the state decision, with a copy
+tagged with the version about to launch and no switch on record, it writes a switch record naming
+itself as the owner (`mate.ClaimLaunch`), so the server boots fenced and admits no work before it is
+settled. It follows the boot under the one boot rule (`LaunchClaim.Settle`): ready, it commits as a
+worker commits a candidate; the process gone or no progress for the window, it ends the server,
+returns `current` to `last-good` with the version remembered as failed (as a boot repair does), and
+exits; `Restart=always` starts the unit again, and that start restores the state from before the
+version. A stop the launcher is asked for (a unit stop or restart, a container shutdown) is no
+failure: once the server exited, the claim is given back, and the next launch claims again over the
+same copy. A launcher killed outright (power loss, or SIGKILL at the stop timeout of a server that
+did not end within it) leaves an abandoned switch, which the next start's boot repair returns to
+`last-good` with the version remembered as failed. A first install, with no `last-good`, has no
+copy and nothing to return to: its launcher writes no record and boots it unfenced, follows the boot
+the same way, and moves `last-good` to it once it is ready; a failed first boot leaves `last-good`
+unset, and the next launch follows it again. While a
+live worker stages or drains (a start past its lock wait), the launch cannot be fenced: it starts
+outside the transaction and its copy is dropped. Every route advances `last-good` through
+`mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`
+and drops the copy tagged with the version it commits. Recovery that finds `last-good` already
+naming the candidate (its worker stopped inside that commit) drops the copy before it settles the
+record, so no successful route leaves a copy behind for the next start to drop.
 
 A candidate failing readiness returns `current` to the explicit `last-good`,
 remembers the failed version before restarting, proves that version ready, and commits it.
 The resolver is never consulted to choose a rollback. Pruning preserves `last-good`.
 At boot, an unfinished switch whose recorded worker is gone returns to `last-good` before
-any install; a live worker owns the switch and boot skips the installer. A failed version
+any install; a live worker owns the switch and boot skips the installer. Only a start command
+and init on an inactive unit run this repair (`mate.PrepareUpdateBoot`), never an install beside
+a running server: `mate.EnsureInstalled` does not repair, and `zcp mate update` without the
+worker refuses while a switch is pending. A failed version
 is not automatically retried until a strictly newer release exists; `--force` is attended.
 There is no separate update journal or quarantine.
 
@@ -681,10 +739,18 @@ to copy and launches on what its server creates. Then:
   transaction (init's install on an inactive unit, a unit start installing a missing bundle, a
   dev push) replaced its version; the copy is dropped, since a restore would undo whatever that
   version did since it started;
-- then, with no copy and a version about to launch that `last-good` does not name: copy.
+- then, with no copy, a `last-good`, and a version about to launch that it does not name but could
+  name (not a dev build, not below `MinimumMateVersion`): copy, with a launch receipt about once a
+  second (checked after each file and each 64 MiB written, and after each file and directory
+  synced). With no `last-good` there is nothing to return to and nothing is copied; a dev build is
+  never `last-good`, so it runs outside the transaction.
 
-The copy is built in `~/.t3/.state-copy` with every file and directory synced, then renamed to
-`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. A restore renames the
+The copy is built in `~/.t3/.state-copy`; once all of it is written, every file and directory in it
+is synced in one pass (a sync right after each file waited for one log commit each, 5–8 ms a file;
+`syncfs(2)` and `sync(2)` are refused or no-ops in a Zerops container), then it is renamed to
+`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. Nothing names
+`.state-copy`, so a power loss before the sync leaves a copy no tag names, which the next start
+clears; the renames run only once the whole copy is on stable storage. A restore renames the
 live `userdata` to `userdata.failed-<version>` first, then the index (live aside, copy into
 place), and the tag into `userdata` last; from its first rename to its last no live `userdata`
 stands beside the tag, so the next start finishes it. A drop moves the tag, then the index copy,
@@ -694,13 +760,13 @@ before any of it is removed. The logs move back into the live directory.
 A failed set may be deleted, and is, by the next restore of its item (one kept, for diagnosis),
 because it never holds work a person did: a restore sets aside only the state of a version that
 ran behind the boot fence. Admission opens only by a settled record or its commit, written after
-`mate.CommitLastGood` dropped the copy, so no tag is left to restore over admitted work; a version
-started outside the transaction (init, a unit-start install, a dev push) runs with `last-good` on
-another version, and every route that launches `last-good` passes the switch's re-pointing of
-`last-good` to `current` first, which makes that tag `last-good`'s and drops it. Files are never copied back over a live directory:
+`mate.CommitLastGood` dropped the copy, so no tag is left to restore over admitted work; a copy
+stays only while its version runs fenced and its owner is going to settle it (the settle rule), and
+a version started unfenced runs with no copy of its own (a dev build, a launch with no `last-good`,
+one that could not be claimed). Files are never copied back over a live directory:
 the database runs in WAL mode, and the candidate's WAL would replay onto the old pages. A copy
 or restore that fails launches nothing: the update's readiness wait sees the unit fail and rolls
-back; the start command never writes `update.json`. `mate.CommitLastGood` drops the copy tagged
+back; the state decision never writes `update.json` (the claim after it does). `mate.CommitLastGood` drops the copy tagged
 with the version it commits, so the copy is gone before the commit request and never outlives
 the moment its server accepts writes. Measured: 41–80 MB, 0.1–0.2 s.
 
@@ -751,7 +817,8 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
   project and thread ids".
 - **A stop ends the Mate on its own terms.** `zcp service start` (`service.runCommand`, the launcher
   of every `zerops@<name>` unit) relays each SIGINT/SIGTERM it receives to its child and waits for the
-  child to exit; it never sends SIGKILL. The Mate's runtime runs its shutdown (sockets and stores
+  child to exit; it never sends SIGKILL to a server it was asked to stop (it kills only a server
+  whose claimed launch failed its boot, §2.1d "The settle rule", which admitted no work). The Mate's runtime runs its shutdown (sockets and stores
   closed). Mate's interruption-only shutdown exits 130; zcp treats that exit as successful only
   after it has successfully relayed a stop to the Mate, whatever sent the child's signal: the
   operator requested a stop, so inactive is the right result. Exit 130 before a relay, any other
@@ -869,7 +936,7 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
 see the ledger), and the release manifest is what the next `zcp init` reconciles toward (§2.1a),
-also for a Mate that crash-loops or does not answer yet (§2.1 step 5): one restart replaces a
+also for a Mate that crash-loops or whose boot ends or stalls without answering (§2.1 step 5): one restart replaces a
 broken release whenever a newer one is out.
 Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
 the bundle is not a regression under the versioned layout — it loses the whole container — and a

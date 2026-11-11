@@ -176,6 +176,7 @@ func TestEnsureInstalled_FailedVersionThreshold_Result(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unattended skips lower release", true: "attended override"}[force], func(t *testing.T) {
 			rig := newEnsureRig(t)
+			rig.version = "0.15.202"
 			seedInstalledVersion(t, "0.15.200")
 			if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", FailedVersion: "0.15.203"}); err != nil {
 				t.Fatal(err)

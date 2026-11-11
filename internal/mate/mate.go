@@ -24,7 +24,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -536,13 +535,6 @@ type Result struct {
 
 // EnsureOptions steers installation and attended update choices.
 type EnsureOptions struct {
-	// Activate, when set, switches a staged release through the caller's
-	// supervisor lifecycle. The default atomically moves current. Init uses
-	// the existing drain/switch protocol when a Mate is already running. An
-	// Activate failing with ErrNotAnswering found no running Mate and did not
-	// switch: the default activation follows, as for a stopped unit.
-	Activate func(Manifest) error
-
 	// KeepInstalled makes ordinary supervisor restarts preserve the current
 	// release after crash recovery. A first installation, or an installed
 	// build below MinimumMateVersion, still resolves the release.
@@ -598,19 +590,14 @@ func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
 //  8. Prune old version directories, always keeping the one just activated.
 //
 // Staging failures leave CurrentLink() unchanged and clean up the half-built
-// directory. A custom Activate owns switching, readiness and recovery; the
-// default activation leaves current unchanged on failure. The caller (the
+// directory; a failed activation leaves current unchanged. A running Mate is
+// never switched here: its one switch owner is the update worker. The caller (the
 // mate init step, and `zcp mate update`) turns a returned error into a degraded
-// step or a non-zero exit, never a torn install.
+// step or a non-zero exit, never a torn install. It never repairs an
+// interrupted switch: a caller with no server running runs PrepareUpdateBoot
+// first and installs nothing when it says to skip; one beside a running server
+// installs nothing while a switch is pending (PendingSwitch).
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
-	if skip, err := PrepareUpdateBoot(); skip || err != nil {
-		installed, _ := InstalledVersion()
-		if err != nil {
-			return Result{}, err
-		}
-		return Result{Action: ActionNone, From: installed, To: installed}, nil
-	}
-
 	if opts.KeepInstalled {
 		if installed, err := InstalledVersion(); err == nil && !BelowFloor(installed) {
 			return Result{Action: ActionNone, From: installed, To: installed}, nil
@@ -651,19 +638,17 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		return Result{Action: ActionNone, From: installed, To: installed, Warning: fmt.Sprintf("keeping installed %s; the release manifest names the older %s, and an install never moves the Mate back", installed, desired.Version)}, nil
 	}
 
-	switched, err := stageAndActivate(desired, opts.Activate)
-	if err != nil {
+	if err := StageRelease(desired); err != nil {
 		return Result{}, err
 	}
-	// A custom switch owns its durable state and pruning; it may have released
-	// the install lock during readiness. Do not overwrite its verified record.
-	warning := ""
-	if !switched {
-		if err := settleInstalled(desired.Version); err != nil {
-			warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
-		}
-		pruneOldVersions(desired.Version)
+	if err := activate(VersionDir(desired.Version)); err != nil {
+		return Result{}, err
 	}
+	warning := ""
+	if err := settleInstalled(desired.Version); err != nil {
+		warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
+	}
+	pruneOldVersions(desired.Version)
 
 	action := ActionUpdated
 	from := installed
@@ -672,26 +657,6 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		from = ""
 	}
 	return Result{Action: action, From: from, To: desired.Version, Warning: warning}, nil
-}
-
-// stageAndActivate installs and smoke-tests desired before asking the supplied
-// lifecycle to switch, or atomically activating it when no lifecycle is supplied
-// or the Mate the lifecycle would drain does not answer (ErrNotAnswering). It
-// reports whether the supplied lifecycle switched.
-func stageAndActivate(desired Manifest, switchRelease func(Manifest) error) (bool, error) {
-	if err := StageRelease(desired); err != nil {
-		return false, err
-	}
-	if switchRelease != nil {
-		err := switchRelease(desired)
-		if err == nil {
-			return true, nil
-		}
-		if !errors.Is(err, ErrNotAnswering) {
-			return false, fmt.Errorf("activate staged Mate: %w", err)
-		}
-	}
-	return false, activate(VersionDir(desired.Version))
 }
 
 // StageRelease downloads, installs and smokes a candidate without moving current.

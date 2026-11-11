@@ -26,7 +26,8 @@ func execUnitQuery(ctx context.Context, name string, args ...string) ([]byte, er
 }
 
 // ObserveRestart captures the old unit identity before requesting a restart and
-// removes the boot file, so every receipt in it afterwards is the new boot's.
+// removes the launch and boot files, so every receipt in them afterwards is the
+// new launch's.
 // An unavailable observation is not proof of exit: the boot's receipts and their
 // progress window still decide the result when unit state cannot be read.
 func ObserveRestart(ctx context.Context) RestartReadiness {
@@ -34,16 +35,19 @@ func ObserveRestart(ctx context.Context) RestartReadiness {
 }
 
 func observeRestart(ctx context.Context, show unitQuery) RestartReadiness {
+	_ = os.Remove(LaunchFilePath())
 	_ = os.Remove(BootFilePath())
 	return RestartReadiness{before: readReadinessUnit(ctx, show), show: show}
 }
 
 // WaitReady waits for the complete readiness proof while the restarted boot keeps
 // advancing: it fails when the unit's process exits, the new unit attempt fails, the
-// boot reports a failure or runs another version, or window passes without a
+// launch or boot reports a failure or runs another version, or window passes without a
 // receipt of boot progress. Elapsed time alone never fails a boot that advances.
 func (r RestartReadiness) WaitReady(version, oldBoot string, window time.Duration) error {
-	return waitReady(version, oldBoot, time.Now().Add(window), window, &r)
+	return waitReady(version, oldBoot, window, func() (bool, error) {
+		return checkReadinessUnit(context.Background(), r)
+	})
 }
 
 const failedUnitState = "failed"
@@ -83,15 +87,17 @@ func readReadinessUnit(ctx context.Context, show unitQuery) readinessUnitState {
 	return readinessUnitState{valid: true, mainPID: pid, active: values["ActiveState"], sub: values["SubState"], status: status, invocation: values["InvocationID"], start: start}
 }
 
-func exitedReadinessUnit(ctx context.Context, restart *RestartReadiness) error {
-	if restart == nil || !restart.before.valid {
-		return nil
+// checkReadinessUnit fails once the restarted unit attempt exited, and reports
+// stopping while the unit stops a process.
+func checkReadinessUnit(ctx context.Context, restart RestartReadiness) (bool, error) {
+	if !restart.before.valid {
+		return false, nil
 	}
 	before := restart.before
 	current := readReadinessUnit(ctx, restart.show)
 	if !current.valid {
 		// Unknown state cannot prove that a process exited.
-		return nil
+		return false, nil
 	}
 	newStart := current.start > before.start
 	newInvocation := current.invocation != "" && current.invocation != before.invocation
@@ -99,7 +105,7 @@ func exitedReadinessUnit(ctx context.Context, restart *RestartReadiness) error {
 	// A failed transition alone cannot attribute that exit to the candidate.
 	newlyFailed := current.active == failedUnitState && (newInvocation || newStart)
 	if newlyFailed || (newStart && current.mainPID == 0) || (newInvocation && current.sub == "auto-restart") {
-		return fmt.Errorf("mate unit process exited: MainPID=%d ActiveState=%s SubState=%s ExecMainStatus=%d", current.mainPID, current.active, current.sub, current.status)
+		return false, fmt.Errorf("mate unit process exited: MainPID=%d ActiveState=%s SubState=%s ExecMainStatus=%d", current.mainPID, current.active, current.sub, current.status)
 	}
-	return nil
+	return current.active == "deactivating", nil
 }

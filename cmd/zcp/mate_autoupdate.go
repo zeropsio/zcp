@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/user"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -32,25 +30,12 @@ func mateUpdateProbe() (bool, error) {
 	}
 	return true, nil
 }
-func launchMateUpdateWorker(args []string) error {
-	binary, err := os.Executable()
+
+// startMateUpdateWorker starts the transient update worker unit.
+func startMateUpdateWorker(flags ...string) error {
+	argv, err := mate.UpdateWorkerArgv(flags...)
 	if err != nil {
-		return fmt.Errorf("find updater executable: %w", err)
-	}
-	currentUser, err := user.Current()
-	if err != nil {
-		return fmt.Errorf("find updater user: %w", err)
-	}
-	argv := []string{"systemd-run", "--collect", "--unit=zcp-mate-update", "--property=Type=exec", "--property=ExecStopPost=" + strconv.Quote(binary) + " mate update --recover --worker", "--uid=" + currentUser.Uid, "--setenv=HOME=" + runtime.HomeDir()}
-	if override := os.Getenv("ZCP_MATE_MANIFEST_URL"); override != "" {
-		argv = append(argv, "--setenv=ZCP_MATE_MANIFEST_URL="+override)
-	}
-	argv = append(argv, binary, "mate", "update", "--worker")
-	if slices.Contains(args, "--automatic") {
-		argv = append(argv, "--automatic")
-	}
-	if slices.Contains(args, "--force") {
-		argv = append(argv, "--force")
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -62,6 +47,7 @@ func launchMateUpdateWorker(args []string) error {
 	}
 	return nil
 }
+
 func runMateUpdateWorker(args []string) int {
 	rt := runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath))
 	if !rt.InContainer || !rt.MateEnabled {
@@ -88,20 +74,26 @@ func runMateUpdateWorker(args []string) int {
 	if stateErr != nil {
 		return failMateUpdate(false, stateErr.Error())
 	}
+	if pending, _, err := mate.PendingSwitch(); err != nil || pending {
+		// An unfinished switch is its owner's; the worker writes nothing over
+		// it, and one whose owner is gone is recovered by this unit's
+		// ExecStopPost (mate.RecoverStoppedUpdate) as it exits.
+		return failMateUpdate(false, "an unfinished Mate switch is pending; update postponed")
+	}
+	automatic, force := slices.Contains(args, "--automatic"), slices.Contains(args, "--force")
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	desired, err := mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: true})
 	cancel()
-	if err != nil {
+	switch {
+	case err == nil && updateWanted(installed, state.FailedVersion, desired, automatic, force):
+	case slices.Contains(args, "--restart"):
+		// Init asks for a restart of the running version (its environment
+		// changed): the same drain and switch, with the installed version as
+		// the candidate.
+		desired = mate.Manifest{Version: installed}
+	case err != nil:
 		return failMateUpdate(false, err.Error())
-	}
-	automatic := slices.Contains(args, "--automatic")
-	if !slices.Contains(args, "--force") && state.FailedVersion != "" && !mate.VersionOlder(state.FailedVersion, desired.Version) {
-		return 0
-	}
-	if automatic && !mate.AutomaticUpdateAllowed(installed, state.FailedVersion, desired) {
-		return 0
-	}
-	if installed == desired.Version || mate.IsDevVersion(installed) && !slices.Contains(args, "--force") {
+	default:
 		return 0
 	}
 	state = mate.WorkerUpdateState(state)
@@ -116,21 +108,38 @@ func runMateUpdateWorker(args []string) int {
 		_ = mate.WriteUpdateState(state)
 		return failMateUpdate(false, reason.Error())
 	}
-	if err := mate.StageRelease(desired); err != nil {
-		return postpone(err)
+	// A restart of the running version has nothing to stage: it is current.
+	if desired.Version != installed {
+		if err := mate.StageRelease(desired); err != nil {
+			return postpone(err)
+		}
 	}
 	state.Phase = "draining"
 	if err := mate.WriteUpdateState(state); err != nil {
 		return failMateUpdate(false, err.Error())
 	}
 	drain, err := mate.DrainUpdate(desired.Version, automatic)
+	if errors.Is(err, mate.ErrNotAnswering) {
+		// A server answers nothing before command readiness: a silent one may
+		// be booting. It is drained once ready; only a launch that ended or
+		// stopped progressing is no running Mate, and with no server holding
+		// work the switch needs no drain.
+		if waitErr := mate.WaitRunningBoot(installed); waitErr != nil {
+			fmt.Fprintf(os.Stderr, "mate update: no running Mate to drain (%v); switching\n", waitErr)
+			drain, err = mate.UpdateReadiness{}, nil
+		} else {
+			drain, err = mate.DrainUpdate(desired.Version, automatic)
+		}
+	}
 	if err != nil {
-		_ = mateUpdatePost("cancel")
+		if !errors.Is(err, mate.ErrNotAnswering) {
+			_ = mate.PostUpdate("cancel")
+		}
 		return postpone(err)
 	}
 	current, currentErr := mate.InstalledVersion()
 	if currentErr != nil || current != installed {
-		_ = mateUpdatePost("cancel")
+		_ = mate.PostUpdate("cancel")
 		if currentErr == nil {
 			currentErr = fmt.Errorf("installed version changed while draining")
 		}
@@ -159,20 +168,40 @@ func runMateUpdateWorker(args []string) int {
 		},
 		Ready: func(version, boot string) error {
 			return readiness.WaitReady(version, boot, mate.UpdateProgressWindow)
-		}, Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
+		}, Commit: func() error { return mate.PostUpdate("commit") }, Cancel: func() error { return mate.PostUpdate("cancel") },
 	})
 	if err != nil {
 		return failMateUpdate(false, err.Error())
 	}
 	return 0
 }
-func mateUpdatePost(path string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return mate.UpdateRequest(ctx, path, []byte("{}"), nil)
+
+// updateWanted says whether the worker installs desired over installed: never
+// the installed version again; with --automatic only what
+// AutomaticUpdateAllowed allows; without --force never the remembered failed
+// release, never over a dev build and never an older release (an install
+// never moves the Mate back).
+func updateWanted(installed, failed string, desired mate.Manifest, automatic, force bool) bool {
+	switch {
+	case installed == desired.Version:
+		return false
+	case automatic && !mate.AutomaticUpdateAllowed(installed, failed, desired):
+		return false
+	case force:
+		return true
+	case failed != "" && !mate.VersionOlder(failed, desired.Version):
+		return false
+	case mate.IsDevVersion(installed) || mate.VersionOlder(desired.Version, installed):
+		return false
+	}
+	return true
 }
+
+// runMateUpdateRecovery waits for the install lock as a start does: the unit's
+// start command holds it while it decides the state, and a recovery refused
+// then would leave a fenced server with nobody to settle it.
 func runMateUpdateRecovery() int {
-	unlock, err := mate.LockInstall(0)
+	unlock, err := mate.LockInstall(mateUpdateLockWait)
 	if err != nil {
 		return failMateUpdate(false, err.Error())
 	}
@@ -201,7 +230,7 @@ func runMateUpdateRecovery() int {
 			return nil
 		},
 		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, mate.UpdateProgressWindow) },
-		Commit: func() error { return mateUpdatePost("commit") }, Cancel: func() error { return mateUpdatePost("cancel") },
+		Commit: func() error { return mate.PostUpdate("commit") }, Cancel: func() error { return mate.PostUpdate("cancel") },
 	})
 	if err != nil {
 		return failMateUpdate(false, err.Error())

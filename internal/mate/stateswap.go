@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // An update is a transaction over the server's state (§2.1d "The state
@@ -44,7 +45,14 @@ var swappedItems = []string{uploadsIndexName, stateDirName}
 //   - a copy tagged otherwise while another version is about to launch: a
 //     route outside the transaction (§2.1d) installed it — drop it;
 //   - then, with no copy and a version about to launch that last-good does
-//     not name: copy.
+//     not name but could (canBeLastGood): copy. With no last-good there is
+//     nothing to return to, so nothing is copied.
+//
+// The launcher claims and settles every launch over a copy tagged with its
+// version (ClaimLaunch); while the state is copied, progress receives a
+// receipt about once a copyReceiptInterval (checked after each file and each
+// copyReceiptBytes written, and after each file and directory synced), so a
+// long copy counts as boot progress.
 //
 // Before it decides, it finishes what a start cut short left: a tagged copy
 // beside no live state directory is a restore between its first and last
@@ -53,7 +61,7 @@ var swappedItems = []string{uploadsIndexName, stateDirName}
 // Mate, launched without a copy. A failed copy or restore returns an error and the
 // caller does not launch. The returned line says what was done, empty when
 // nothing was.
-func PrepareStateForLaunch() (string, error) {
+func PrepareStateForLaunch(progress func()) (string, error) {
 	launching, err := InstalledVersion()
 	if err != nil {
 		return "", fmt.Errorf("state before launch: %w", err)
@@ -64,10 +72,10 @@ func PrepareStateForLaunch() (string, error) {
 	} else if err != nil {
 		return "", fmt.Errorf("state before launch: %w", err)
 	}
-	return prepareState(BaseDir(), launching, lastGood)
+	return prepareState(BaseDir(), launching, lastGood, progress)
 }
 
-func prepareState(base, launching, lastGood string) (string, error) {
+func prepareState(base, launching, lastGood string, progress func()) (string, error) {
 	if err := clearStateLeftovers(base); err != nil {
 		return "", err
 	}
@@ -117,8 +125,8 @@ func prepareState(base, launching, lastGood string) (string, error) {
 		}
 		done = append(done, "dropped the copy for "+tag+", which "+launching+" replaced outside an update")
 	}
-	if launching != lastGood {
-		if err := copyState(base, launching); err != nil {
+	if lastGood != "" && launching != lastGood && canBeLastGood(launching) {
+		if err := copyState(base, launching, progress); err != nil {
 			return "", err
 		}
 		done = append(done, "copied the state before "+launching)
@@ -163,12 +171,23 @@ func stateCopyTag(base string) (string, error) {
 	}
 }
 
-// copyState builds the copy in a temporary directory, syncs it and renames
-// it into place; the state directory's rename, the tag, is the last. A copy
-// that fails leaves no space taken. prepareState has cleared the temporary
-// directory a start cut short left.
-func copyState(base, version string) (retErr error) {
+// copyState builds the copy in a temporary directory, then makes it durable
+// (syncCopy) and renames it into place; the state directory's rename, the
+// tag, is the last. Nothing names the temporary directory, so a power loss
+// before the sync ends leaves a copy no tag names, which the next start
+// clears, and the renames run only once every file and directory of the copy
+// is on stable storage. A copy that fails leaves no space taken.
+// prepareState has cleared the temporary directory a start cut short left.
+// receipt is called at most once a copyReceiptInterval.
+func copyState(base, version string, receipt func()) (retErr error) {
 	tmp := filepath.Join(base, stateCopyTemp)
+	last := time.Now()
+	progress := func() {
+		if time.Since(last) >= copyReceiptInterval {
+			last = time.Now()
+			receipt()
+		}
+	}
 	defer func() {
 		if retErr != nil {
 			_ = os.RemoveAll(tmp)
@@ -187,11 +206,11 @@ func copyState(base, version string) (retErr error) {
 		if item == stateDirName {
 			skip = stateLogsName
 		}
-		if err := copyTree(filepath.Join(base, item), filepath.Join(tmp, item), skip); err != nil {
+		if err := copyTree(filepath.Join(base, item), filepath.Join(tmp, item), skip, progress); err != nil {
 			return fmt.Errorf("copy %s: %w", item, err)
 		}
 	}
-	if err := syncDir(tmp); err != nil {
+	if err := syncCopy(tmp, progress); err != nil {
 		return err
 	}
 	for _, item := range swappedItems {
@@ -328,17 +347,17 @@ func removeMatching(pattern string) error {
 }
 
 // copyTree copies the directory src to dst, which does not exist yet, file
-// by file with each file and directory synced; the top-level entry skip is
-// left out. A missing src copies as an empty directory: the state before a
+// by file, unsynced (copyState syncs the copy once it is written); the top-level
+// entry skip is left out. A missing src copies as an empty directory: the state before a
 // first boot is no state. Symlinks are copied as links; sockets and pipes
 // are no state.
-func copyTree(src, dst, skip string) error {
+func copyTree(src, dst, skip string, progress func()) error {
 	info, err := os.Lstat(src)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.Mkdir(dst, 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", dst, err)
 		}
-		return syncDir(dst)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", src, err)
@@ -357,7 +376,7 @@ func copyTree(src, dst, skip string) error {
 		from, to := filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())
 		switch t := e.Type(); {
 		case t.IsDir():
-			if err := copyTree(from, to, ""); err != nil {
+			if err := copyTree(from, to, "", progress); err != nil {
 				return err
 			}
 		case t&fs.ModeSymlink != 0:
@@ -369,15 +388,25 @@ func copyTree(src, dst, skip string) error {
 				return fmt.Errorf("copy link %s: %w", from, err)
 			}
 		case t.IsRegular():
-			if err := copyFile(from, to); err != nil {
+			if err := copyFile(from, to, progress); err != nil {
 				return err
 			}
 		}
 	}
-	return syncDir(dst)
+	return nil
 }
 
-func copyFile(src, dst string) error {
+// copyReceiptBytes is how much of a file copyFile copies between two calls of
+// progress; copyReceiptInterval is the most often a copy writes a receipt, so
+// a copy of many small files costs no write per file.
+const (
+	copyReceiptBytes    = 64 << 20
+	copyReceiptInterval = time.Second
+)
+
+// copyFile copies src to dst in pieces of copyReceiptBytes, calling progress
+// after each.
+func copyFile(src, dst string, progress func()) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
@@ -391,18 +420,51 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy %s: %w", src, err)
-	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("sync %s: %w", dst, err)
+	for {
+		_, err := io.CopyN(out, in, copyReceiptBytes)
+		progress()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			_ = out.Close()
+			return fmt.Errorf("copy %s: %w", src, err)
+		}
 	}
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
+}
+
+// syncCopy syncs every regular file and directory under dir, in one pass
+// after the whole copy was written. A sync right after each file was written
+// waited for one log commit each, 5–8 ms a file on a Mate's disk; once
+// everything is written the same syncs cost a fraction of that (on a Zerops
+// container, 10,000 files of 600 B: 3.2 s written and synced one by one,
+// 0.5 s written plus 0.45 s synced in one pass). syncfs(2) and sync(2), one
+// call for the whole filesystem, are no option: a Zerops container's seccomp
+// profile refuses the first (EPERM) and makes the second a no-op. progress
+// is called after each sync, so the pass counts as boot progress too.
+func syncCopy(dir string, progress func()) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("sync %s: %w", path, err)
+		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("sync %s: %w", path, err)
+		}
+		defer func() { _ = f.Close() }()
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("sync %s: %w", path, err)
+		}
+		progress()
+		return nil
+	})
 }
 
 func syncDir(dir string) error {

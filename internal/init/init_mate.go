@@ -1,7 +1,6 @@
 package init
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,13 +19,6 @@ import (
 // may reach the network; production is mate.EnsureInstalled (bounded timeouts
 // throughout).
 var mateEnsureInstalled = mate.EnsureInstalled
-
-// mateWaitReady proves the installed release started healthy; package-level so tests
-// need no loopback Mate.
-var mateWaitReady = mate.WaitReady
-
-// mateBootReadyWait bounds cold observation without rolling back an unproved boot.
-const mateBootReadyWait = 30 * time.Second
 
 // defaultMateLockWait bounds init's wait on the install lock the unit's own
 // start may hold (mate.LockInstall): longer than an install's own bounds, so
@@ -121,11 +113,13 @@ func disableMate() error {
 // When no bundle is available, a first init does not register a unit whose
 // ExecStart cannot resolve and would crash-loop when started.
 func enableMate(rt runtime.Info) (retErr error) {
-	commitLastGood := false
-	// restart is set when the unit runs but its Mate does not answer
-	// (mate.ErrNotAnswering): no server admitted work, so the unit restarts
-	// onto the installed bundle and environment instead of a no-op start.
+	// restart is set for an abandoned switch under a running server: the
+	// unit's start repairs the switch while no server runs.
 	restart := false
+	// worker holds the update worker's flags when the unit runs: one owner
+	// switches a running Mate, the transient update worker, never init's own
+	// process, which an interrupted attended init would take with it.
+	var worker []string
 	// Always request a start of a usable installed bundle, even if this init
 	// step fails. The install lock is released first by the later defer; the
 	// unit's own start also needs that lock. Starting an active unit is a no-op.
@@ -147,8 +141,16 @@ func enableMate(rt runtime.Info) (retErr error) {
 			retErr = errors.Join(retErr, fmt.Errorf("%s %s: %w", verb, unit, err))
 			return
 		}
-		if commitLastGood {
-			commitBootLastGood()
+		if worker != nil {
+			fmt.Fprintf(os.Stderr, "    → starting the Mate update worker\n")
+			argv, err := mate.UpdateWorkerArgv(worker...)
+			if err == nil {
+				err = commandRunner("sudo", argv...)
+			}
+			if err != nil {
+				// A worker already running owns the update; the next init asks again.
+				fmt.Fprintf(os.Stderr, "    ! start the Mate update worker: %v\n", err)
+			}
 		}
 	}()
 	unitExisted := mateUnitFileExists()
@@ -183,43 +185,50 @@ func enableMate(rt runtime.Info) (retErr error) {
 			unitExisted = true
 		}
 	}
-	// An unfinished updater switch owns startup and readiness. Use the same
-	// recovery authority as the installer before changing its environment.
+	running, err := runningMate(unitExisted)
+	if err != nil {
+		return fmt.Errorf("determine Mate activity: %w", err)
+	}
+	// An unfinished switch owns startup and readiness. Its owner, while it
+	// lives, settles it. An abandoned one is repaired only while no server
+	// runs: in place under a running candidate the settled record would lift
+	// its fence and a later start would restore over admitted work.
+	if running {
+		pending, owned, err := mate.PendingSwitch()
+		if err != nil {
+			return fmt.Errorf("prepare Mate boot: %w", err)
+		}
+		if pending {
+			if !owned {
+				fmt.Fprintf(os.Stderr, "    (an unfinished Mate switch has no owner; restarting the unit, whose start returns it to last-good)\n")
+				restart = true
+			}
+			return nil
+		}
+		// The worker launches the candidate with the reconciled environment,
+		// and restarts the running version when only the environment changed.
+		envChanged, err := writeMateEnv(rt)
+		if err != nil {
+			return fmt.Errorf("write running Mate environment: %w", err)
+		}
+		reloadMateUnitIfChanged()
+		worker = []string{}
+		if envChanged {
+			worker = append(worker, "--restart")
+		}
+		return nil
+	}
 	if skip, err := mate.PrepareUpdateBoot(); err != nil {
 		return fmt.Errorf("prepare Mate boot: %w", err)
 	} else if skip {
 		return nil
 	}
 
-	running, err := runningMate(unitExisted)
-	if err != nil {
-		return fmt.Errorf("determine Mate activity: %w", err)
-	}
-	var envChanged bool
-	opts := mate.EnsureOptions{Refresh: true}
-	if running {
-		// The candidate must launch with the reconciled environment.
-		envChanged, err = writeMateEnv(rt)
-		if err != nil {
-			return fmt.Errorf("write running Mate environment: %w", err)
-		}
-		reloadMateUnitIfChanged()
-		opts.Activate = func(candidate mate.Manifest) error {
-			err := switchRunningMate(candidate, release)
-			if errors.Is(err, mate.ErrNotAnswering) {
-				// The installer activates the release as for a stopped unit.
-				fmt.Fprintf(os.Stderr, "    (mate does not answer; installing %s and restarting the unit)\n", candidate.Version)
-				restart = true
-			}
-			return err
-		}
-	}
-
 	// A boot reads the release manifest afresh: the cache is an hour old at
 	// most, and a restart inside that hour kept the previous Mate build for
 	// the rest of it (the owner's runs, 2026-09-17). An unreachable manifest
 	// falls back to the cache, then to what is installed.
-	result, err := mateEnsureInstalled(opts)
+	result, err := mateEnsureInstalled(mate.EnsureOptions{Refresh: true})
 	if err != nil {
 		return fmt.Errorf("ensure mate bundle: %w", err)
 	}
@@ -235,37 +244,16 @@ func enableMate(rt runtime.Info) (retErr error) {
 		return fmt.Errorf("bundle still absent after %s: %w", result.Action, err)
 	}
 
-	if !running {
-		envChanged, err = writeMateEnv(rt)
-		if err != nil {
-			return err
-		}
+	if _, err := writeMateEnv(rt); err != nil {
+		return err
 	}
 	if !unitExisted {
 		if err := ensureMateUnit(); err != nil {
 			return fmt.Errorf("register Mate unit: %w", err)
 		}
 	}
-	if !running {
-		reloadMateUnitIfChanged()
-	}
+	reloadMateUnitIfChanged()
 
-	if running && !restart && !bundleChanged(result) && envChanged {
-		err := switchRunningMate(mate.Manifest{Version: result.To}, release)
-		if errors.Is(err, mate.ErrNotAnswering) {
-			fmt.Fprintf(os.Stderr, "    (mate does not answer; restarting the unit with the new environment)\n")
-			restart = true
-		} else if err != nil {
-			return fmt.Errorf("switch Mate environment: %w", err)
-		}
-	}
-	if running && !restart {
-		// A switch proved its own readiness; an unchanged Mate proves this boot.
-		commitLastGood = !bundleChanged(result) && !envChanged
-		return nil
-	}
-
-	commitLastGood = true
 	return nil
 }
 
@@ -287,79 +275,6 @@ func runningMate(unitExists bool) (bool, error) {
 		}
 		return false, fmt.Errorf("unknown Mate unit activity %q", strings.TrimSpace(string(out)))
 	}
-}
-
-// switchRunningMate uses the updater's idle proof, durable admission fence and
-// verified switch; no init restart of a live unit bypasses that owner.
-func switchRunningMate(candidate mate.Manifest, release func()) error {
-	installed, err := mate.InstalledVersion()
-	if err != nil {
-		return fmt.Errorf("read running install: %w", err)
-	}
-	state, err := mate.ReadOptionalUpdateState()
-	if err != nil {
-		return fmt.Errorf("read init update state: %w", err)
-	}
-	state = mate.WorkerUpdateState(state)
-	state.Phase, state.Candidate, state.RunningVersion = "draining", candidate.Version, installed
-	if err := mate.WriteUpdateState(state); err != nil {
-		return fmt.Errorf("record init drain: %w", err)
-	}
-	post := func(path string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return mate.UpdateRequest(ctx, path, []byte("{}"), nil)
-	}
-	drain, err := mate.DrainUpdate(candidate.Version, false)
-	if err != nil {
-		var cancelErr error
-		if !errors.Is(err, mate.ErrNotAnswering) {
-			cancelErr = post("cancel")
-		}
-		state.Phase, state.WorkerPID, state.WorkerStart = "postponed", 0, ""
-		stateErr := mate.WriteUpdateState(state)
-		return fmt.Errorf("init Mate switch postponed: %w", errors.Join(err, cancelErr, stateErr))
-	}
-	var readiness mate.RestartReadiness
-	return mate.SwitchUpdate(candidate.Version, drain.BootID, mate.SwitchHooks{
-		Restart: func() error {
-			release()
-			readiness = mate.ObserveRestart(context.Background())
-			if err := commandRunner("sudo", "systemctl", "restart", "--no-block", "zerops@"+mate.UnitName+".service"); err != nil {
-				return fmt.Errorf("request Mate restart: %w", err)
-			}
-			return nil
-		},
-		Ready:  func(version, boot string) error { return readiness.WaitReady(version, boot, mate.UpdateProgressWindow) },
-		Commit: func() error { return post("commit") },
-		Cancel: func() error { return post("cancel") },
-	})
-}
-
-// commitBootLastGood moves last-good to the installed release once that release is
-// serving healthy, the proof the update worker also requires. A Mate that is not ready
-// in time keeps its previous last-good, and the next boot asks again.
-func commitBootLastGood() {
-	installed, err := mate.InstalledVersion()
-	if err != nil {
-		return
-	}
-	if good, err := mate.LastGoodVersion(); err == nil && good == installed {
-		return
-	}
-	if err := mateWaitReady(installed, "", time.Now().Add(mateBootReadyWait)); err != nil {
-		fmt.Fprintf(os.Stderr, "    ! mate %s not ready yet, last-good stays where it was: %v\n", installed, err)
-		return
-	}
-	if err := mate.CommitLastGood(installed); err != nil {
-		fmt.Fprintf(os.Stderr, "    ! record last-good %s: %v\n", installed, err)
-	}
-}
-
-// bundleChanged reports whether EnsureInstalled actually replaced the bytes
-// the server runs. "none" changed nothing at all — not worth a restart.
-func bundleChanged(result mate.Result) bool {
-	return result.Action == mate.ActionInstalled || result.Action == mate.ActionUpdated
 }
 
 // logMateEnsureResult prints one line naming what mateEnsureInstalled did, so a

@@ -17,12 +17,14 @@ import (
 
 const updateLoopback = "http://127.0.0.1:3773/api/mate/update/"
 
-// UpdateProgressWindow is how long a restarted Mate may go without a receipt of
-// boot progress before its wait ends as failed. Each advance it reports starts the
-// window again, so a slow boot that keeps advancing is never failed by elapsed
-// time. The window covers the stretch before a candidate first answers and a
-// whole boot of a release that predates progress receipts (rollback, recovery):
-// Eli's longest such boot measured 109 s.
+// UpdateProgressWindow is how long a Mate's boot may go without a receipt of
+// progress before its wait ends as failed. Every receipt starts the window
+// again, so a boot that keeps advancing is never failed by elapsed time: the
+// launcher's own steps (launch.json: its start, the install pass, about one a
+// second of the state copy, the server's process started), the first answer of
+// the new boot, and every boot-file receipt whose progress grew. While the unit
+// stops its previous process the window does not run: systemd's stop timeout
+// bounds that stretch.
 const UpdateProgressWindow = 2 * time.Minute
 
 // UpdateReadiness is the loopback updater API payload.
@@ -124,13 +126,6 @@ func (e *UpdateHTTPError) Error() string {
 	return fmt.Sprintf("update %s: HTTP %d", e.Path, e.Status)
 }
 
-// WaitReady observes whether version started healthy (the proof of probeReady) until
-// deadline; a boot's progress never extends it. A boot that reports its failure ends
-// the observation at once.
-func WaitReady(version, oldBoot string, deadline time.Time) error {
-	return waitReady(version, oldBoot, deadline, 0, nil)
-}
-
 // readinessVerdict is one observation of a restarted Mate.
 type readinessVerdict int
 
@@ -146,30 +141,51 @@ const (
 	verdictFailed
 )
 
-// bootReceipts follows the one new boot a wait attributes to its restart: its
-// HTTP boot id, and the process id and progress of its boot file.
+// bootReceipts follows the one boot a wait attributes to its launch: the
+// launcher's process and progress in the launch file, the HTTP boot id, and the
+// progress in the boot file of the server the launch file names.
 type bootReceipts struct {
-	boot     string
-	pid      int
-	progress int64
+	launchPID      int
+	launchProgress int64
+	server         int
+	boot           string
+	progress       int64
 }
 
-// observeFile reads the boot file a restart's new boot writes; ObserveRestart
-// removed the previous one, so any receipt there is this restart's. A missing or
-// unreadable file is no receipt.
-func (b *bootReceipts) observeFile() (readinessVerdict, bool, error) {
-	f, ok := readBootFile()
+// observeLaunch reads the launch file the launcher of the boot writes. A
+// launcher that is gone ended its server's process with it; another launcher
+// in the same wait is a later launch of the unit. ObserveRestart removed the
+// previous launch's file, so any receipt there is this launch's.
+func (b *bootReceipts) observeLaunch() (readinessVerdict, bool, error) {
+	l, ok := readLaunchFile()
 	if !ok {
 		return verdictBooting, false, nil
 	}
-	if b.pid != 0 && f.PID != b.pid {
-		return verdictFailed, false, fmt.Errorf("booting process %d was replaced by process %d", b.pid, f.PID)
+	if b.launchPID != 0 && l.PID != b.launchPID {
+		return verdictFailed, false, fmt.Errorf("launch by process %d was replaced by process %d", b.launchPID, l.PID)
+	}
+	if !l.alive() {
+		return verdictFailed, false, fmt.Errorf("launching process %d exited", l.PID)
+	}
+	advanced := b.launchPID == 0 || l.Progress > b.launchProgress
+	b.launchPID, b.launchProgress, b.server = l.PID, max(b.launchProgress, l.Progress), l.Server
+	return verdictBooting, advanced, nil
+}
+
+// observeFile reads the boot file the launch's server writes. Only a receipt
+// of the server the launch file names is this launch's: a previous server
+// still ending may write one more after its file was removed. A missing or
+// unreadable file, or another process's receipt, is no receipt.
+func (b *bootReceipts) observeFile() (readinessVerdict, bool, error) {
+	f, ok := readBootFile()
+	if !ok || b.server == 0 || f.PID != b.server {
+		return verdictBooting, false, nil
 	}
 	if f.Error != "" {
 		return verdictFailed, false, fmt.Errorf("booting process %d reported: %s", f.PID, f.Error)
 	}
-	advanced := b.pid == 0 || f.Progress > b.progress
-	b.pid, b.progress = f.PID, max(b.progress, f.Progress)
+	advanced := f.Progress > b.progress
+	b.progress = max(b.progress, f.Progress)
 	return verdictBooting, advanced, nil
 }
 
@@ -210,17 +226,31 @@ func (b *bootReceipts) observe(ctx context.Context, version, oldBoot string) (re
 	return verdictReady, advanced, nil
 }
 
-// waitReady ends ready, or failed on an attributed failure or once horizon passes.
-// With window > 0 every receipt of boot progress moves horizon to window from then.
-// Only a wait after a restart reads the boot file: a cold boot's file may be a
-// previous boot's.
-func waitReady(version, oldBoot string, horizon time.Time, window time.Duration, restart *RestartReadiness) error {
+// bootCheck reports what the wait learns about the boot's process outside its
+// receipts: err once the process ended, stopping while systemd stops the
+// unit's previous process (a stretch its stop timeout bounds).
+type bootCheck func() (stopping bool, err error)
+
+// waitReady is the one wait for a Mate's boot: it ends ready, or failed on an
+// attributed failure or once window passes without a receipt of progress.
+// Every receipt, and every observation of the previous process stopping,
+// starts the window again; while that process stops, nothing is observed.
+func waitReady(version, oldBoot string, window time.Duration, check bootCheck) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var receipts bootReceipts
+	horizon := time.Now().Add(window)
 	for {
-		if err := exitedReadinessUnit(context.Background(), restart); err != nil {
+		stopping, err := check()
+		if err != nil {
 			return fmt.Errorf("readiness for %s: %w", version, err)
+		}
+		if stopping {
+			// Whatever answers or writes while the previous process stops is
+			// that process's, never this boot's.
+			horizon = time.Now().Add(window)
+			<-ticker.C
+			continue
 		}
 		// One startup connection must not consume the whole wait; only a factual
 		// answer of the new boot decides it.
@@ -231,17 +261,21 @@ func waitReady(version, oldBoot string, horizon time.Time, window time.Duration,
 		probeCtx, probeCancel := context.WithDeadline(context.Background(), probeDeadline)
 		verdict, advanced, observation := receipts.observe(probeCtx, version, oldBoot)
 		probeCancel()
-		if restart != nil && verdict == verdictBooting {
-			fileVerdict, fileAdvanced, fileErr := receipts.observeFile()
+		for _, observeFile := range []func() (readinessVerdict, bool, error){receipts.observeLaunch, receipts.observeFile} {
+			if verdict != verdictBooting {
+				break
+			}
+			fileVerdict, fileAdvanced, fileErr := observeFile()
 			if fileVerdict == verdictFailed {
 				verdict, observation = fileVerdict, fileErr
 			}
 			advanced = advanced || fileAdvanced
 		}
-		if err := exitedReadinessUnit(context.Background(), restart); err != nil {
+		stoppingAfter, err := check()
+		if err != nil {
 			return fmt.Errorf("readiness for %s: %w", version, err)
 		}
-		if advanced && window > 0 {
+		if advanced || stoppingAfter {
 			horizon = time.Now().Add(window)
 		}
 		switch {
@@ -251,10 +285,25 @@ func waitReady(version, oldBoot string, horizon time.Time, window time.Duration,
 			return nil
 		}
 		if !time.Now().Before(horizon) {
-			return fmt.Errorf("readiness for %s: no boot progress in time: %w; last observation: %w", version, context.DeadlineExceeded, observation)
+			return fmt.Errorf("readiness for %s: no boot progress for %s: %w; last observation: %w", version, window, context.DeadlineExceeded, observation)
 		}
 		<-ticker.C
 	}
+}
+
+// WaitRunningBoot waits for the running launch's server, which gave no HTTP
+// answer, to become ready as version: a server answers nothing before command
+// readiness, so a silent server may be booting. It fails wrapping
+// ErrNotAnswering when no live launch is on record, or the launch ends or
+// stops progressing: then no server holds work.
+func WaitRunningBoot(version string) error {
+	if l, ok := readLaunchFile(); !ok || !l.alive() {
+		return fmt.Errorf("%w: no live launch of the Mate", ErrNotAnswering)
+	}
+	if err := waitReady(version, "", UpdateProgressWindow, func() (bool, error) { return false, nil }); err != nil {
+		return fmt.Errorf("%w: %w", ErrNotAnswering, err)
+	}
+	return nil
 }
 
 // probeReady is the readiness proof for a status observation of a restored

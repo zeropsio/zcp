@@ -47,9 +47,17 @@ type execConfig struct {
 	// nginx and vscode always launch.
 	guard func() error
 	// prepare runs after guard and before the binary is resolved: what the
-	// service needs on disk before it starts. A non-nil error aborts Start.
-	prepare func() error
+	// service needs on disk before it starts. A non-nil error aborts Start;
+	// the returned watch, when non-nil, follows the started process.
+	prepare func() (childWatch, error)
 }
+
+// childWatch follows a started service process in its launcher until it
+// returns; exited delivers, once the process exited, whether the launcher had
+// been asked to stop (systemd signals every process of the unit, so the child
+// may end before the relay reaches it). The launcher waits for the watch
+// before it exits.
+type childWatch func(child *os.Process, exited <-chan bool)
 
 // services returns the exec configuration of every supervised service.
 //
@@ -212,9 +220,10 @@ func mergeEnvLines(store, file []string) []string {
 
 // mateLaunchSetupThenInstall readies a launch: the status file first, then
 // the bundle.
-func mateLaunchSetupThenInstall() error {
+func mateLaunchSetupThenInstall() (childWatch, error) {
+	launch := mate.BeginLaunch()
 	mateLaunchSetup()
-	return mateInstallBeforeStart()
+	return mateInstallBeforeStart(launch)
 }
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
@@ -271,32 +280,59 @@ var mateLockWait = defaultMateLockWait
 // (mate.PrepareStateForLaunch); a failed copy or restore launches nothing.
 // The decision holds the install lock when the bounded wait took it; a
 // holder past the wait leaves it to decide without (docs/spec-mate.md §2.1d
-// "The state transaction").
-func mateInstallBeforeStart() error {
+// "The state transaction"). A launch over a copy is claimed before the server
+// starts (mate.ClaimLaunch), and the returned watch settles it once the
+// server is ready or its boot ended (§2.1d "The settle rule"). Each step is
+// a launch receipt, so the wait of whoever restarted the unit sees progress.
+func mateInstallBeforeStart(launch *mate.Launch) (childWatch, error) {
 	release, err := mate.LockInstall(mateLockWait)
+	launch.Advance()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v — starting what is installed\n", err)
 	} else {
 		defer release()
 		ensureMateBeforeStart()
+		launch.Advance()
 	}
 	if err := mate.CheckInstalledFloor(); err != nil {
-		return err
+		return nil, err
 	}
-	done, err := mate.PrepareStateForLaunch()
+	done, err := mate.PrepareStateForLaunch(launch.Advance)
 	if err != nil {
-		return fmt.Errorf("start mate: %w", err)
+		return nil, fmt.Errorf("start mate: %w", err)
 	}
 	if done != "" {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", done)
 	}
-	return nil
+	claim, claimed, err := mate.ClaimLaunch()
+	if err != nil {
+		return nil, fmt.Errorf("start mate: %w", err)
+	}
+	return func(child *os.Process, exited <-chan bool) {
+		launch.Started(child.Pid)
+		if !claimed {
+			return
+		}
+		if err := claim.Settle(child, exited); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: launch settled\n")
+	}, nil
 }
 
 // ensureMateBeforeStart is the install pass of a start, under the install
 // lock; its failures are logged, never fatal — the floor check after it
 // decides.
 func ensureMateBeforeStart() {
+	// No server runs: an interrupted switch is repaired before any install, and
+	// a live owner's switch launches as it stands.
+	if skip, err := mate.PrepareUpdateBoot(); err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: repair the unfinished switch: %v — starting what is installed\n", err)
+		return
+	} else if skip {
+		return
+	}
 	result, err := mateEnsure(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
 	switch {
 	case err != nil:
@@ -330,7 +366,9 @@ func SetMateStorePath(path string) { mateStorePath = path }
 func ResetMateStorePath()          { mateStorePath = mate.LiveEnvStorePath }
 
 // SetRunFunc overrides the run function for testing.
-func SetRunFunc(fn func(binary string, args, extraEnv []string) error) { runFunc = fn }
+func SetRunFunc(fn func(binary string, args, extraEnv []string) error) {
+	runFunc = func(binary string, args, extraEnv []string, _ childWatch) error { return fn(binary, args, extraEnv) }
+}
 
 // ResetRunFunc restores the default run function.
 func ResetRunFunc() { runFunc = runCommand }
@@ -365,8 +403,10 @@ func Start(name string) error {
 		defer release()
 	}
 
+	var watch childWatch
 	if cfg.prepare != nil {
-		if err := cfg.prepare(); err != nil {
+		var err error
+		if watch, err = cfg.prepare(); err != nil {
 			return err
 		}
 	}
@@ -402,7 +442,7 @@ func Start(name string) error {
 	fmt.Fprintf(os.Stderr, "[zcp] service %s: resolved %s → %s\n", name, cfg.binary, binary)
 	fmt.Fprintf(os.Stderr, "[zcp] service %s: args=%v\n", name, args)
 
-	err = runFunc(binary, args, extraEnv)
+	err = runFunc(binary, args, extraEnv, watch)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited with error: %v\n", name, err)
 	} else {
@@ -416,7 +456,7 @@ func Start(name string) error {
 // handler (a Mate closes its sockets and stores, nginx and code-server
 // theirs); zcp never escalates. The stop deadline belongs to the unit:
 // systemd's TimeoutStopSec, then SIGKILL of the whole cgroup.
-func runCommand(binary string, args, extraEnv []string) error {
+func runCommand(binary string, args, extraEnv []string, watch childWatch) error {
 	// Registered before Start, so a stop arriving during the launch is held
 	// for the child instead of ending zcp by the default action.
 	signals := make(chan os.Signal, 1)
@@ -439,14 +479,27 @@ func runCommand(binary string, args, extraEnv []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "[zcp] started pid %d\n", cmd.Process.Pid)
 
-	relayed := make(chan bool, 1)
+	relayed := make(chan [2]bool, 1)
 	go func() {
-		relayed <- relaySignals(signals, cmd.Process)
+		received, sent := relaySignals(signals, cmd.Process)
+		relayed <- [2]bool{received, sent}
+	}()
+	exited := make(chan bool, 1)
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		if watch != nil {
+			watch(cmd.Process, exited)
+		}
 	}()
 	err := cmd.Wait()
 	signal.Stop(signals)
 	close(signals)
-	stopRelayed := <-relayed
+	stop := <-relayed
+	stopRelayed := stop[1]
+	exited <- stop[0]
+	close(exited)
+	<-watched
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -464,10 +517,11 @@ func runCommand(binary string, args, extraEnv []string) error {
 }
 
 // relaySignals sends each signal zcp receives to the child until the channel
-// closes after the child exited. It reports whether a signal was sent.
-func relaySignals(signals <-chan os.Signal, child *os.Process) bool {
-	relayed := false
+// closes after the child exited. It reports whether a signal arrived and
+// whether one was sent.
+func relaySignals(signals <-chan os.Signal, child *os.Process) (received, relayed bool) {
 	for sig := range signals {
+		received = true
 		if err := child.Signal(sig); err != nil {
 			if !errors.Is(err, os.ErrProcessDone) {
 				fmt.Fprintf(os.Stderr, "[zcp] relay %v to pid %d: %v\n", sig, child.Pid, err)
@@ -477,7 +531,7 @@ func relaySignals(signals <-chan os.Signal, child *os.Process) bool {
 		relayed = true
 		fmt.Fprintf(os.Stderr, "[zcp] relayed %v to pid %d\n", sig, child.Pid)
 	}
-	return relayed
+	return received, relayed
 }
 
 // systemdSetTasksMax raises a unit's TasksMax via `systemctl set-property

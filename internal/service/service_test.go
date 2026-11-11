@@ -214,13 +214,20 @@ func installFakeMateBundle(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	const version = "0.1.0"
+	const version = mate.MinimumMateVersion
 	binDir := filepath.Join(home, ".zcp", "mate", "versions", version, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, mate.BinName), []byte("#!/bin/sh\n: > '"+filepath.Join(home, "help-ran")+"'\n"), 0o700); err != nil {
 		t.Fatalf("write fake mate: %v", err)
+	}
+	pkgDir := filepath.Join(filepath.Dir(binDir), mate.PackageName)
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatalf("mkdir package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"`+version+`"}`), 0o644); err != nil {
+		t.Fatalf("write package: %v", err)
 	}
 	current := filepath.Join(home, ".zcp", "mate", "current")
 	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
@@ -636,7 +643,7 @@ func TestStart_Mate_InstalledBelowFloor_RefusesToRun(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and the ensure seam.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
 	home := installFakeMateBundle(t)
-	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", "0.1.0", "node_modules", mate.PackageName)
+	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", mate.MinimumMateVersion, "node_modules", mate.PackageName)
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

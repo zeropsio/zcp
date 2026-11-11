@@ -153,13 +153,19 @@ func LastGoodVersion() (string, error) {
 // The state copy taken before version first started goes with the commit: it never
 // outlives the moment its server accepts writes (§2.1d "The state transaction").
 func CommitLastGood(version string) error {
-	if IsDevVersion(version) || VersionOlder(version, MinimumMateVersion) {
+	if !canBeLastGood(version) {
 		return nil
 	}
 	if err := replaceLink(LastGoodLink(), VersionDir(version)); err != nil {
 		return err
 	}
 	return dropStateCopy(BaseDir(), version)
+}
+
+// canBeLastGood says whether version may become last-good: never a dev build,
+// nor a release below MinimumMateVersion, a contract this zcp no longer drives.
+func canBeLastGood(version string) bool {
+	return !IsDevVersion(version) && !VersionOlder(version, MinimumMateVersion)
 }
 
 // AutomaticUpdateAllowed says whether the automatic worker installs candidate
@@ -216,21 +222,7 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 	}
 	if err := h.Restart(); err == nil {
 		if err := h.Ready(candidate, oldBoot); err == nil {
-			if err := CommitLastGood(candidate); err != nil {
-				return err
-			}
-			s.Phase = updateUpdated
-			s.RunningVersion = candidate
-			if !VersionOlder(candidate, s.FailedVersion) {
-				s.FailedVersion = ""
-			}
-			s.WorkerPID = 0
-			s.WorkerStart = ""
-			s.CommitOwed = true
-			if err := WriteUpdateState(s); err != nil {
-				return err
-			}
-			return deliverCommit(s, h.Commit)
+			return commitSwitch(s, candidate, h.Commit)
 		}
 	}
 	// The restart's start command restores the state from before the
@@ -258,6 +250,26 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 		return err
 	}
 	return deliverCommit(s, h.Commit)
+}
+
+// commitSwitch settles a switch whose candidate proved ready: last-good names
+// it, the record says updated, and the owed commit signal is delivered.
+func commitSwitch(s UpdateState, candidate string, commit func() error) error {
+	if err := CommitLastGood(candidate); err != nil {
+		return err
+	}
+	s.Phase = updateUpdated
+	s.RunningVersion = candidate
+	if !VersionOlder(candidate, s.FailedVersion) {
+		s.FailedVersion = ""
+	}
+	s.WorkerPID = 0
+	s.WorkerStart = ""
+	s.CommitOwed = true
+	if err := WriteUpdateState(s); err != nil {
+		return err
+	}
+	return deliverCommit(s, commit)
 }
 
 // deliverCommit is the one owner of an owed commit signal: the record says the
@@ -343,7 +355,9 @@ func processStart(pid int) string {
 }
 
 // PrepareUpdateBoot repairs an interrupted switch before any installer can
-// consult latest. A live worker owns readiness; its restart launches current.
+// consult latest; only a start command, or init on an inactive unit, runs it,
+// never under a running server. A live owner (an update worker, init, a
+// launcher) owns readiness; its restart launches current.
 func PrepareUpdateBoot() (bool, error) {
 	s, err := ReadUpdateState()
 	if errors.Is(err, os.ErrNotExist) {
@@ -358,32 +372,49 @@ func PrepareUpdateBoot() (bool, error) {
 	if s.WorkerPID > 0 && s.WorkerStart != "" && processStart(s.WorkerPID) == s.WorkerStart {
 		return true, nil
 	}
-	// The launch that follows starts last-good, and its start command
-	// restores the state from before the candidate.
+	return true, returnToLastGood(s)
+}
+
+// returnToLastGood ends a switch whose owner is gone while no server runs its
+// candidate: current returns to last-good and the record is settled on it,
+// the candidate remembered as failed unless last-good is the candidate. The
+// launch that follows starts last-good, and its start command restores the
+// state from before the candidate.
+func returnToLastGood(s UpdateState) error {
 	target, err := linkedVersionDir(LastGoodLink())
 	if err != nil {
-		return true, fmt.Errorf("boot last-good: %w", err)
+		return fmt.Errorf("boot last-good: %w", err)
 	}
 	if err := activate(target); err != nil {
-		return true, err
+		return err
 	}
 	goodVersion, err := installedVersionIn(target)
 	if err != nil {
-		return true, err
+		return err
 	}
 	if goodVersion == s.Candidate {
 		s.Phase = updateUpdated
-		s.RunningVersion = goodVersion
-		s.WorkerPID = 0
-		s.WorkerStart = ""
-		return true, WriteUpdateState(s)
+	} else {
+		s.FailedVersion = s.Candidate
+		s.Phase = updatePostponed
 	}
-	s.FailedVersion = s.Candidate
-	s.Phase = updatePostponed
 	s.RunningVersion = goodVersion
 	s.WorkerPID = 0
 	s.WorkerStart = ""
-	return true, WriteUpdateState(s)
+	return WriteUpdateState(s)
+}
+
+// PendingSwitch reads whether the record holds an unfinished switch, which
+// fences the server running its candidate, and whether the switch's owner
+// still lives. An owned switch is settled by its owner; an abandoned one only
+// while no server runs (PrepareUpdateBoot), never in place under a running
+// one.
+func PendingSwitch() (pending, owned bool, err error) {
+	s, err := ReadOptionalUpdateState()
+	if err != nil {
+		return false, false, err
+	}
+	return s.Phase == updateSwitching, s.Phase == updateSwitching && workerAlive(s), nil
 }
 
 func linkedVersionDir(link string) (string, error) {
@@ -496,6 +527,11 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 		return err
 	}
 	if goodVersion == s.Candidate {
+		// The worker stopped inside its commit, after last-good moved: the
+		// commit is finished here, the copy with it.
+		if err := dropStateCopy(BaseDir(), goodVersion); err != nil {
+			return err
+		}
 		s.Phase = updateUpdated
 		s.RunningVersion = goodVersion
 		s.WorkerPID = 0

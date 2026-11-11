@@ -227,8 +227,8 @@ type mateUpdateResult struct {
 // container restart. Container-only: it refuses on a local machine and when
 // ZCP_MATE_ENABLED is off, since there is nothing to update either way.
 func runMateUpdate(args []string) int {
-	// --worker and --recover are the independent worker's own (launchMateUpdateWorker).
-	flags, code, done := commandFlags("usage: zcp mate update [--json] [--force] [--automatic]", args, "--json", "--force", "--automatic", "--worker", "--recover")
+	// --worker, --recover and --restart are the independent worker's own (mate.UpdateWorkerArgv).
+	flags, code, done := commandFlags("usage: zcp mate update [--json] [--force] [--automatic]", args, "--json", "--force", "--automatic", "--worker", "--recover", "--restart")
 	if done {
 		return code
 	}
@@ -254,7 +254,13 @@ func runMateUpdate(args []string) int {
 		}
 	}
 	if supported {
-		if err := launchMateUpdateWorker(args); err != nil {
+		var workerFlags []string
+		for _, flag := range []string{"--automatic", "--force"} {
+			if flags[flag] {
+				workerFlags = append(workerFlags, flag)
+			}
+		}
+		if err := startMateUpdateWorker(workerFlags...); err != nil {
 			return failMateUpdate(asJSON, err.Error())
 		}
 		installed, _ := mate.InstalledVersion()
@@ -270,6 +276,13 @@ func runMateUpdate(args []string) int {
 		return failMateUpdate(asJSON, lockErr.Error())
 	}
 	defer release()
+	// The unit runs a server: an unfinished switch is its owner's, or the next
+	// start's to repair, never this install's.
+	if pending, _, err := mate.PendingSwitch(); err != nil {
+		return failMateUpdate(asJSON, err.Error())
+	} else if pending {
+		return failMateUpdate(asJSON, "an unfinished Mate switch is pending; update postponed")
+	}
 
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: force, Refresh: true})
 	if err != nil {
