@@ -23,7 +23,8 @@ const (
 	uploadsIndexName = "uploads-index"
 	stateCopyTemp    = ".state-copy"
 	stateDropPrefix  = ".state-drop-"
-	stateCopyInfix   = ".pre-"
+	stateCopyInfix   = ".before-"
+	legacyCopyInfix  = ".pre-"
 	stateFailedInfix = ".failed-"
 )
 
@@ -72,7 +73,51 @@ func PrepareStateForLaunch(progress func()) (string, error) {
 	} else if err != nil {
 		return "", fmt.Errorf("state before launch: %w", err)
 	}
+	if lastGood, err = settleLegacyCopy(BaseDir(), launching, lastGood); err != nil {
+		return "", err
+	}
 	return prepareState(BaseDir(), launching, lastGood, progress)
+}
+
+// settleLegacyCopy is transition code for copies written under the old name
+// (`.pre-`); delete it once no Mate runs zcp <= v9.251.1. That zcp left a copy
+// of the version it started, never settled, so the version may have admitted
+// work since: such a copy (tagged with the version about to launch, which
+// last-good does not name) is never restored and never adopted by a claim; the
+// version is made last-good and the copy removed. Any other old-named copy is
+// renamed to the current name, so the decision below treats it as it treats
+// any copy: a rollback restores it, a committed or replaced one is dropped, a
+// restore cut short is finished. A new-named copy is only ever the launcher's
+// own, so it is never touched here. It returns last-good as it stands after.
+func settleLegacyCopy(base, launching, lastGood string) (string, error) {
+	tag, err := copyTag(base, legacyCopyInfix)
+	if err != nil {
+		return lastGood, err
+	}
+	if tag == "" {
+		return lastGood, removeMatching(filepath.Join(base, uploadsIndexName+legacyCopyInfix+"*"))
+	}
+	if lastGood != "" && tag == launching && launching != lastGood {
+		if err := CommitLastGood(launching); err != nil {
+			return lastGood, err
+		}
+		if canBeLastGood(launching) {
+			lastGood = launching
+		}
+		return lastGood, dropCopy(base, tag, legacyCopyInfix)
+	}
+	for _, item := range swappedItems {
+		old := filepath.Join(base, item+legacyCopyInfix+tag)
+		if gone, err := missing(old); err != nil {
+			return lastGood, err
+		} else if gone {
+			continue
+		}
+		if err := os.Rename(old, filepath.Join(base, item+stateCopyInfix+tag)); err != nil {
+			return lastGood, fmt.Errorf("rename old state copy: %w", err)
+		}
+	}
+	return lastGood, syncDir(base)
 }
 
 func prepareState(base, launching, lastGood string, progress func()) (string, error) {
@@ -156,8 +201,10 @@ func missing(path string) (bool, error) {
 
 // stateCopyTag names the version the one copy under base is tagged with,
 // empty when there is none.
-func stateCopyTag(base string) (string, error) {
-	matches, err := filepath.Glob(filepath.Join(base, stateDirName+stateCopyInfix+"*"))
+func stateCopyTag(base string) (string, error) { return copyTag(base, stateCopyInfix) }
+
+func copyTag(base, infix string) (string, error) {
+	matches, err := filepath.Glob(filepath.Join(base, stateDirName+infix+"*"))
 	if err != nil {
 		return "", fmt.Errorf("find state copy: %w", err)
 	}
@@ -165,7 +212,7 @@ func stateCopyTag(base string) (string, error) {
 	case 0:
 		return "", nil
 	case 1:
-		return strings.TrimPrefix(filepath.Base(matches[0]), stateDirName+stateCopyInfix), nil
+		return strings.TrimPrefix(filepath.Base(matches[0]), stateDirName+infix), nil
 	default:
 		return "", fmt.Errorf("state copies %v: more than one, none is restored", matches)
 	}
@@ -300,11 +347,13 @@ func putStateBack(base, item, version string) error {
 // before any of it is removed: the tag, then the index copy, move into a new
 // trash directory, the move is synced, and only then the trash is removed. A
 // drop cut short leaves trash no tag names, which prepareState clears.
-func dropStateCopy(base, version string) error {
+func dropStateCopy(base, version string) error { return dropCopy(base, version, stateCopyInfix) }
+
+func dropCopy(base, version, infix string) error {
 	var held []string
 	for i := len(swappedItems) - 1; i >= 0; i-- {
 		item := swappedItems[i]
-		gone, err := missing(filepath.Join(base, item+stateCopyInfix+version))
+		gone, err := missing(filepath.Join(base, item+infix+version))
 		if err != nil {
 			return fmt.Errorf("drop state copy: %w", err)
 		}
@@ -320,7 +369,7 @@ func dropStateCopy(base, version string) error {
 		return fmt.Errorf("drop state copy: %w", err)
 	}
 	for _, item := range held {
-		if err := os.Rename(filepath.Join(base, item+stateCopyInfix+version), filepath.Join(trash, item)); err != nil {
+		if err := os.Rename(filepath.Join(base, item+infix+version), filepath.Join(trash, item)); err != nil {
 			return fmt.Errorf("drop state copy: %w", err)
 		}
 	}

@@ -752,7 +752,7 @@ to copy and launches on what its server creates. Then:
 The copy is built in `~/.t3/.state-copy`; once all of it is written, every file and directory in it
 is synced in one pass (a sync right after each file waited for one log commit each, 5–8 ms a file;
 `syncfs(2)` and `sync(2)` are refused or no-ops in a Zerops container), then it is renamed to
-`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. Nothing names
+`uploads-index.before-<version>` and `userdata.before-<version>`, the tag, last. Nothing names
 `.state-copy`, so a power loss before the sync leaves a copy no tag names, which the next start
 clears; the renames run only once the whole copy is on stable storage. A restore renames the
 live `userdata` to `userdata.failed-<version>` first, then the index (live aside, copy into
@@ -760,6 +760,11 @@ place), and the tag into `userdata` last; from its first rename to its last no l
 stands beside the tag, so the next start finishes it. A drop moves the tag, then the index copy,
 into a new `~/.t3/.state-drop-*`, syncs, and only then removes it: the tag stops naming the copy
 before any of it is removed. The logs move back into the live directory.
+Transition (delete once no Mate runs zcp <= v9.251.1): that zcp named its copies `.pre-<version>` and
+left the copy of a version it started unsettled, so a `.pre-` copy tagged with the version about to
+launch, which `last-good` does not name, belongs to a version that has run unowned and may have
+admitted work since; it is never restored and never claimed: that version becomes `last-good` and
+the copy is removed. Any other `.pre-` copy is renamed to `.before-` and decided as above.
 
 A failed set may be deleted, and is, by the next restore of its item (one kept, for diagnosis),
 because it never holds work a person did: a restore sets aside only the state of a version that
