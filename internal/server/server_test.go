@@ -901,6 +901,13 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 			}))
 			t.Cleanup(chiefHQ.Close)
 			hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
+			chief := `{"projectId":"chief"}`
+			if tt.noChief {
+				chief = `null`
+			} else if tt.markIsOwn {
+				chief = `{"projectId":"p1"}`
+			}
+			hqtest.State(t, `{"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":`+chief+`}`)
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {

@@ -53,7 +53,7 @@ const devGitLookEvery = 10 * time.Second
 // (keepMateDevGit) for as long as ctx lasts, and releases the leases of every
 // branch whose change in HQ is merged or closed (followLeaseCompletion,
 // docs/spec-workflows.md §8 DP-34) each time the Mate's server puts a `state`
-// frame's changes in place (watchReplacedFile): the Mate's own service runs it
+// frame's changes in place (hq.WatchReplacedFile): the Mate's own service runs it
 // beside the server it supervises. env is the container's live env store as
 // it is at each call — the unit's own environment carries neither the key nor
 // the project — and a container that is no Mate returns at once. Each line
@@ -63,13 +63,18 @@ func KeepMateDevGit(ctx context.Context, env func() func(string) string, log fun
 	if !rt.InContainer || !rt.MateEnabled {
 		return
 	}
-	changed, err := watchReplacedFile(ctx, hqIdentity(rt).ChangesPath)
+	id := hqIdentity(rt)
+	changed, err := hq.WatchReplacedFile(ctx, id.ChangesPath)
 	if err != nil {
 		log(fmt.Sprintf("finished changes are looked for only at the service's start: %v", err))
 	}
+	stateChanged, err := id.State.Watch(ctx)
+	if err != nil {
+		log(fmt.Sprintf("the dev services' git is looked at only at the service's start and on retries: %v", err))
+	}
 	ticker := time.NewTicker(devGitLookEvery)
 	defer ticker.Stop()
-	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, changed, log)
+	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, changed, stateChanged, log)
 }
 
 // liveDevGitDeps is devGitDeps from the container's live env store: the
@@ -120,13 +125,13 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 
 // keepMateDevGit keeps every wired pair's dev service on this Mate's HQ for
 // as long as ctx lasts and ticks come: the Mate's start (startDevGit) at
-// started. A start that did not settle — a dev service stopped, HQ not
-// answering — is taken again on hqAttemptDue's backoff, counted in the
-// ticks' own times. Finished changes are looked for (followLeaseCompletion) at the
+// started. A start that did not settle is taken again on a state replacement
+// or on hqAttemptDue's backoff, counted in the ticks' own times. Finished
+// changes are looked for (followLeaseCompletion) at the
 // start — the file may already hold one — and at each wake changed sends,
 // never at a tick. deps is asked for at each look; false skips the look. A
 // line goes to log when the look of its kind before did not say it.
-func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, changed <-chan struct{}, log func(string)) {
+func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, changed, stateChanged <-chan struct{}, log func(string)) {
 	var (
 		settled bool
 		retry   hqPairState
@@ -177,8 +182,45 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			look(func(d devGitDeps) { start(d, at) })
 		case <-changed:
 			look(complete)
+		case <-stateChanged:
+			look(func(d devGitDeps) {
+				if !settled || devGitStateChanged(d.rt, d.stateDir) {
+					settled, retry = false, hqPairState{}
+					start(d, time.Now())
+				}
+			})
 		}
 	}
+}
+
+// devGitStateChanged wakes a settled start only for an application or a
+// wired repository's origin that differs from its recorded value.
+func devGitStateChanged(rt runtime.Info, stateDir string) bool {
+	doc, err := hqIdentity(rt).ReadMateState()
+	if err != nil {
+		return false
+	}
+	state, err := doc.Heard()
+	if err != nil {
+		return false
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return false
+	}
+	for _, m := range metas {
+		if !hqPairWired(m) {
+			continue
+		}
+		if state.AppID == nil || *state.AppID != m.HQ.AppID {
+			return true
+		}
+		origin, ok := hqOriginIn(state, m.HQ)
+		if ok && (m.HQ.Origin == nil || *m.HQ.Origin != origin) {
+			return true
+		}
+	}
+	return false
 }
 
 // startDevGit is the Mate's start for every wired pair's dev service: a pair
@@ -198,7 +240,23 @@ func startDevGit(
 		return nil, true
 	}
 	settled = true
-	self := lazySelf(ctx, hqc)
+	var state hq.MateState
+	var stateErr error
+	read := false
+	self := func() (hq.MateState, error) {
+		if !read {
+			read = true
+			doc, err := hqIdentity(rt).ReadMateState()
+			if err == nil {
+				state, err = doc.Heard()
+				if standing := doc.Standing(); standing != "" {
+					lines = append(lines, standing)
+				}
+			}
+			stateErr = mate.StateReadError(err)
+		}
+		return state, stateErr
+	}
 	for _, hostname := range pairs {
 		line, done := withPairLocked(ctx, stateDir, hostname, func(m *workflow.ServiceMeta) (string, bool) {
 			return startPairDevGit(ctx, sshDeployer, stateDir, hqc, self, m)
@@ -241,6 +299,7 @@ func startPairDevGit(
 		say(line)
 		settled = settled && !strings.Contains(line, "could not")
 	} else {
+		say(fmt.Sprintf("the Mate's state could not be read: %v", err))
 		settled = false
 	}
 	return strings.Join(said, "; "), settled

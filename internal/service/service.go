@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
@@ -339,6 +340,13 @@ func Start(name string) error {
 		if err := cfg.guard(); err != nil {
 			return err
 		}
+	}
+	if name == mate.UnitName {
+		release, err := hq.LockMateState(hq.MateStateLockPath())
+		if err != nil {
+			return fmt.Errorf("start mate: %w", err)
+		}
+		defer release()
 	}
 
 	if cfg.prepare != nil {

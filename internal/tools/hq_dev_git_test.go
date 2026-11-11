@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +63,7 @@ func (l *hqLab) gitConfig(key string) string {
 // mateStart is the Mate's start as it reaches the pair's dev service.
 func (l *hqLab) mateStart() []string {
 	l.t.Helper()
+	l.snapshotMate(l.t.Context())
 	lines, _ := startDevGit(l.t.Context(), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
 	return lines
 }
@@ -120,7 +123,8 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 }
 
 // devGitDeps is the lab's Mate as its service reaches it.
-func (l *hqLab) devGitDeps(context.Context) (devGitDeps, bool) {
+func (l *hqLab) devGitDeps(ctx context.Context) (devGitDeps, bool) {
+	l.snapshotMate(ctx)
 	return devGitDeps{client: l.mock, httpClient: l.hq.srv.Client(), ssh: l.ssh, rt: l.rt, stateDir: l.stateDir}, true
 }
 
@@ -138,7 +142,6 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	lab.hq.answerWith(http.StatusBadGateway, "bad_gateway", 1, func(r *http.Request) bool { return r.URL.Path == "/api/mate/self" })
 	started := time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC)
 	ticks := make(chan time.Time, 2)
 	ticks <- started.Add(devGitLookEvery)
@@ -149,10 +152,16 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 		lab.ssh.mu.Lock()
 		sessions = append(sessions, len(lab.ssh.commands))
 		lab.ssh.mu.Unlock()
-		return lab.devGitDeps(ctx)
+		d, ok := lab.devGitDeps(ctx)
+		if len(sessions) == 1 {
+			if err := os.Remove(filepath.Join(filepath.Dir(lab.rt.HQ.ChangesPath), "state.json")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
+	keepMateDevGit(t.Context(), deps, started, ticks, nil, nil, func(string) {})
 
 	if sessions[2] != sessions[1] {
 		t.Errorf("a look within the wait reached the dev service %d time(s)", sessions[2]-sessions[1])
@@ -265,7 +274,7 @@ func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
 	transport.DisableKeepAlives = true
 	client.Transport = transport
 	synctest.Test(t, func(t *testing.T) {
-		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
+		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, nil, func(string) {})
 	})
 
 	if len(ssh.within) == 0 {

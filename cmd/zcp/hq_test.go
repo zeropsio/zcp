@@ -32,6 +32,17 @@ func TestRunHQCmd_Status_NamesAddressedOriginAndUsesProjectMode(t *testing.T) {
 			t.Setenv("projectId", "project")
 			t.Setenv("ZCP_API_KEY", "test-key")
 			t.Setenv(hq.EnvOrigin, "")
+			if enabled {
+				release, err := hq.LockMateState(hq.MateStateLockPath())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+				state := `{"link":"linked","mate":{"projectId":"project","appId":null,"repos":[],"changes":[],"chief":null}}`
+				if err := os.WriteFile(hq.MateStatePath(), []byte(state), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			packagePath := filepath.Join(mate.CurrentLink(), "node_modules", mate.PackageName, "package.json")
 			if err := os.MkdirAll(filepath.Dir(packagePath), 0o755); err != nil {
 				t.Fatal(err)
@@ -49,7 +60,7 @@ func TestRunHQCmd_Status_NamesAddressedOriginAndUsesProjectMode(t *testing.T) {
 			}
 			wantPath := "/api/project/self"
 			if enabled {
-				wantPath = "/api/mate/self"
+				wantPath = ""
 			}
 			if path != wantPath {
 				t.Errorf("probe path = %q, want %q", path, wantPath)

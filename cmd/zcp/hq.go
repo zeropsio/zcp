@@ -39,19 +39,27 @@ func defaultHQService(context.Context) (hqService, string, error) {
 	injectMCPEnvIfUnset(".")
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
 	id := mate.HQIdentity(lookup)
-	httpClient := &http.Client{Timeout: hqCallTimeout}
 	if !runtime.DetectFrom(lookup).MateEnabled {
+		httpClient := &http.Client{Timeout: hqCallTimeout}
 		client, err := hq.OpenProject(httpClient, id)
 		if err != nil {
 			return nil, id.Origin, fmt.Errorf("open HQ status: %w", err)
 		}
 		return func(ctx context.Context) error { _, err := client.Self(ctx); return err }, id.Origin, nil
 	}
-	client, err := hq.Open(httpClient, id)
-	if err != nil {
-		return nil, id.Origin, fmt.Errorf("open HQ status: %w", err)
-	}
-	return func(ctx context.Context) error { _, err := client.Once().Self(ctx); return err }, id.Origin, nil
+	return func(context.Context) error {
+		doc, err := id.ReadMateState()
+		if err != nil {
+			return mate.StateReadError(err)
+		}
+		if doc.Link != "linked" {
+			if doc.Reason == "" {
+				return errors.New("the Mate's link is not up")
+			}
+			return fmt.Errorf("the Mate's link is not up: %s", doc.Reason)
+		}
+		return nil
+	}, id.Origin, nil
 }
 
 // hqStatus is `zcp hq status --json`'s answer: whether HQ answers for this

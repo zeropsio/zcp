@@ -1,7 +1,7 @@
-// Tests for: tools/file_watch.go — the Mate's service wakes when the
+// Tests for: hq/file_watch.go — the Mate's service wakes when the
 // Mate's server renames a `state` frame's changes into place, including when
 // the link's directory did not exist yet as the watch began.
-package tools
+package hq
 
 import (
 	"os"
@@ -16,7 +16,7 @@ import (
 func TestWatchMateChanges_DirectoryCreatedLater_RenameWakes(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), ".zcp", "hq", "changes.json")
-	changed, err := watchReplacedFile(t.Context(), path)
+	changed, err := WatchReplacedFile(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestWatchMateChanges_EntryVanishesWhileWatched_RenameWakes(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "changes.json")
-	changed, err := watchReplacedFile(t.Context(), path)
+	changed, err := WatchReplacedFile(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,9 +39,8 @@ const (
 	// file writer used by strict HQ reads. 0.16.54 is the first rev 7
 	// release: it admits people by its own live access list and answers
 	// HQ's tokened tickets; an older Mate is refused every ticket by rev 7 HQ.
-	// 0.16.114 is the first release that draws the mirror card
-	// (docs/spec-mate.md §5.11).
-	MinimumMateVersion = "0.16.114"
+	// 0.16.154 keeps the link's Mate state in the file zcp reads (§2.8).
+	MinimumMateVersion = "0.16.154"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order

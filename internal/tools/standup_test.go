@@ -127,9 +127,7 @@ type standupHQ struct {
 	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
 	// code and reason.
 	tierRefusal *hq.RefusedError
-	// selfReads counts reads of the Mate's state; refuseSelf answers them
-	// 401, an HQ that refuses the Mate's key.
-	selfReads  int
+	// refuseSelf makes the link's last attempt a refused key.
 	refuseSelf bool
 }
 
@@ -165,7 +163,6 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 		}
 		switch path {
 		case "/api/mate/self":
-			g.selfReads++
 			if g.refuseSelf {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -498,6 +495,13 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.status = newStandupStatus(f.statusPath)
 	f.mounter = &standupMounter{}
 	f.identity = hq.Identity{Origin: f.srv.URL, OrgID: labOrg, ProjectID: "p1", Key: standupKey}
+	statePath := filepath.Join(f.root, ".zcp", "hq", "state.json")
+	release, err := hq.LockMateState(filepath.Join(filepath.Dir(statePath), "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
+	f.identity.State = hq.NewFileMateStateSource(statePath, "p1")
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")
@@ -550,6 +554,24 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 // deps supplies the same stand-up consumer used by the MCP handler.
 func (f *standupFixture) deps(t *testing.T) standupDeps {
 	t.Helper()
+	f.hq.mu.Lock()
+	appID, refused := f.hq.appID, f.hq.refuseSelf
+	f.hq.mu.Unlock()
+	var app any
+	if appID != "" {
+		app = appID
+	}
+	var state any = map[string]any{"link": "linked", "mate": map[string]any{"projectId": "p1", "appId": app, "repos": []any{}, "changes": []any{}, "chief": nil}}
+	if refused {
+		state = map[string]any{"link": "not-linked", "reason": "invalid_key", "mate": nil}
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.root, ".zcp", "hq", "state.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var client platform.Client = f.mock
 	pushes := watch.Pushes(func(context.Context) <-chan struct{} { return nil })
 	if f.importing != nil {
@@ -908,23 +930,15 @@ func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
 	}
 }
 
-// TestStandup_StartsOnlyOnceLinked_AsksHQOnce: the Mate's server sends the
-// stand-up only once its link to HQ is up, so the stand-up waits on no link:
-// an HQ that refuses the Mate's key is read once and the call refused at once,
-// never asked again on a timer.
-func TestStandup_StartsOnlyOnceLinked_AsksHQOnce(t *testing.T) {
+// A refused link without a last state cannot start a stand-up.
+// witness: internal/hq/mate_state.go | return MateState{}, fmt.Errorf("%w: %s", ErrMateStateUnheard, d.Reason) → return MateState{}, ErrMateStateUnheard
+func TestStandup_RefusedLinkWithoutState_DoesNothing(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
 	f.hq.refuseSelf = true
 	result, _ := f.run(t)
-	if !result.IsError {
+	if !result.IsError || !strings.Contains(getTextContent(t, result), "invalid_key") {
 		t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
-	}
-	f.hq.mu.Lock()
-	reads := f.hq.selfReads
-	f.hq.mu.Unlock()
-	if reads != 1 {
-		t.Errorf("HQ's /api/mate/self was read %d times; want once", reads)
 	}
 	if metas, _ := workflow.ListServiceMetas(f.stateDir); len(metas) != 0 {
 		t.Errorf("a refusal touches nothing, but %d services were adopted", len(metas))

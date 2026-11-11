@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -69,7 +70,8 @@ func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		client, err := hq.Open(httpClient, liveHQIdentity())
+		identity := liveHQIdentity()
+		client, err := hq.Open(httpClient, identity)
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be addressed, so nothing was asked: %v", err)), nil, nil
 		}
@@ -79,12 +81,16 @@ func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
 		once := client.Once()
-		state, err := once.Self(ctx)
+		doc, err := identity.ReadMateState()
+		var state hq.MateState
+		if err == nil {
+			state, err = doc.Heard()
+		}
 		if err != nil {
-			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has a remote is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
+			return observeFailure(fmt.Sprintf("The Mate's state could not be read, so whether %s already has a remote is unknown and nothing was asked: %v. Ask again later.", req.Repo, mate.StateReadError(err))), nil, nil
 		}
 		if state.AppID == nil {
-			return observeFailure("HQ holds this Mate in no application yet, so it has no repository to connect and nothing was asked."), nil, nil
+			return observeFailure(strings.TrimSpace("HQ holds this Mate in no application yet, so it has no repository to connect and nothing was asked. " + doc.Standing())), nil, nil
 		}
 		repos, err := once.AppRepos(ctx, *state.AppID)
 		if err != nil {
@@ -93,6 +99,9 @@ func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 		answer, err := mirrorAnswerOf(req, repos)
 		if err != nil {
 			return convertError(err), nil, nil
+		}
+		if standing := doc.Standing(); standing != "" {
+			answer.NextActions += " " + standing
 		}
 		return jsonResult(answer), nil, nil
 	})

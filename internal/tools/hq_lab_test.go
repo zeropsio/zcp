@@ -176,8 +176,36 @@ func newFakeHQReady(t *testing.T) *fakeHQ {
 func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), ".zcp", "hq")
+	release, err := hq.LockMateState(filepath.Join(dir, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
 	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
 		ChangesPath: filepath.Join(dir, "changes.json")}
+}
+
+// snapshotMate writes the server's current state for the lab's Mate.
+func (l *hqLab) snapshotMate(ctx context.Context) {
+	l.t.Helper()
+	l.hq.mu.Lock()
+	state := l.hq.self(ctx)
+	l.hq.mu.Unlock()
+	if state["repos"] == nil {
+		state["repos"] = []any{}
+	}
+	if changes, ok := state["changes"].([]hq.MateChange); ok && changes == nil {
+		state["changes"] = []any{}
+	}
+	state["chief"] = nil
+	raw, err := json.Marshal(map[string]any{"link": "linked", "mate": state})
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	path := filepath.Join(filepath.Dir(l.rt.HQ.ChangesPath), "state.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {

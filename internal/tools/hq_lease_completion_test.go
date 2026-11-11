@@ -760,7 +760,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		return d, ok
 	}
 	const selfRead = "GET /api/mate/self"
-	changed, err := watchReplacedFile(t.Context(), lab.rt.HQ.ChangesPath)
+	changed, err := hq.WatchReplacedFile(t.Context(), lab.rt.HQ.ChangesPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +769,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		keepMateDevGit(t.Context(), deps, start, ticks, changed, func(string) {})
+		keepMateDevGit(t.Context(), deps, start, ticks, changed, nil, func(string) {})
 	}()
 
 	// Each send returns once the look before it is over, while the look it

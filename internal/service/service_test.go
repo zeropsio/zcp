@@ -304,7 +304,8 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 		"ZCP_MATE_UPDATE_STATE_FILE=" + mate.UpdateStatePath(),
 		"ZCP_MATE_BOOT_FILE=" + mate.BootFilePath(),
 		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
-		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential")}
+		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential"),
+		"ZCP_MATE_STATE_FILE=" + filepath.Join(home, ".zcp", "hq", "state.json")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
 	}

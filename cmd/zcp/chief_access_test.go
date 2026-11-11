@@ -1,12 +1,11 @@
 // Tests for: cmd/zcp/main.go chiefAccess — `zcp serve` reads the Chief it answers to
-// from HQ at start (docs/spec-mate.md §3.11).
+// from the Mate's state at start (docs/spec-mate.md §2.11).
 package main
 
 import (
 	"bytes"
-	"context"
-	"net/http"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,36 +17,35 @@ func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *te
 	t.Parallel()
 	tests := []struct {
 		name       string
-		status     int
 		body       string
 		wantChief  bool
 		wantStderr string
 	}{
-		{name: "a Chief naming this project is the Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-me"}}`, wantChief: true},
-		{name: "a Chief naming another project is no Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-other"}}`},
-		{name: "no Chief named is no Chief", status: 200, body: `{"projectId":"p-me","chief":null}`},
-		{name: "an HQ that refuses is no Chief, and says so", status: 500, body: `{}`, wantStderr: "serving the single-project surface"},
+		{name: "a Chief naming this project is the Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-me"}}}`, wantChief: true},
+		{name: "a Chief naming another project is no Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":{"projectId":"p-other"}}}`},
+		{name: "no Chief named is no Chief", body: `{"link":"linked","mate":{"projectId":"p-me","appId":null,"repos":[],"changes":[],"chief":null}}`},
+		{name: "an unreadable state is no Chief, and says so", body: `{}`, wantStderr: "serving the single-project surface"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			var authorization, path string
-			hqServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				authorization, path = r.Header.Get("Authorization"), r.URL.Path
-				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			t.Cleanup(hqServer.Close)
-			id := hq.Identity{Origin: hqServer.URL, Key: "project-key", ProjectID: "p-me"}
+			dir := t.TempDir()
+			path := filepath.Join(dir, "state.json")
+			if err := os.WriteFile(path, []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			release, err := hq.LockMateState(filepath.Join(dir, "state.lock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+			id := hq.Identity{Key: "project-key", ProjectID: "p-me", State: hq.NewFileMateStateSource(path, "p-me")}
 			var stderr bytes.Buffer
 
-			access, chief := chiefAccess(context.Background(), hqServer.Client(), id, "api.example", &stderr)
+			access, chief := chiefAccess(id, "api.example", &stderr)
 
 			if chief != tt.wantChief {
 				t.Fatalf("chief = %v, want %v (stderr %q)", chief, tt.wantChief, stderr.String())
-			}
-			if path != "/api/mate/self" || authorization != "Project project-key" {
-				t.Errorf("read %s with %q, want GET /api/mate/self as the project", path, authorization)
 			}
 			if chief && (access != platform.OrgAccess{APIHost: "api.example", ProjectID: "p-me", Token: "project-key"}) {
 				t.Errorf("access = %+v, want the Zerops API, this project and the project key", access)
@@ -62,7 +60,7 @@ func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *te
 func TestChiefAccess_ANoIdentityContainerIsNoChiefAndSaysNothing(t *testing.T) {
 	t.Parallel()
 	var stderr bytes.Buffer
-	if _, chief := chiefAccess(context.Background(), http.DefaultClient, hq.Identity{}, "", &stderr); chief || stderr.Len() != 0 {
+	if _, chief := chiefAccess(hq.Identity{}, "", &stderr); chief || stderr.Len() != 0 {
 		t.Errorf("chief = %v, stderr = %q; want neither", chief, stderr.String())
 	}
 }

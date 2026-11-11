@@ -671,7 +671,7 @@ Only non-secret identifiers are written; a token never enters `~/.zcp/mate.env` 
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
 file is reported and mate starts anyway — diagnosable, unlike a unit that refuses to launch.
 
-Every launch adds five more on top (`mate.LaunchEnvLines`), whatever init wrote:
+Every launch adds six more on top (`mate.LaunchEnvLines`), whatever init wrote:
 
 | Key | Value |
 |---|---|
@@ -680,6 +680,7 @@ Every launch adds five more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `ZCP_MATE_BOOT_FILE` | the file a booting server reports its progress in until it accepts commands (`mate.BootFilePath`, §2.1d) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link (§3.3); zcp reads it nowhere: a dev service and a pool reach HQ's git through the relay with the project key (§6.8). It names a path, never the credential |
+| `ZCP_MATE_STATE_FILE` | the file the server keeps the Mate's state in (`hq.MateStatePath`) |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
@@ -911,7 +912,7 @@ environment instead, never a probed flag (§2.2).
   advertises `pingIntervalMs`, the Mate also closes the link after no inbound frame for three of
   those intervals; an older HQ that never advertises it does not arm that deadline (mate
   `apps/server/src/zerops/ZeropsHqLink.ts`; mate-hq `internal/matelink/link.go`).
-- **Stand-up.** Once the server sends stand-up, zcp reads HQ's self once and, if applicable, the
+- **Stand-up.** Once the server sends stand-up, zcp reads the Mate's state file and, if applicable, the
   recipe once; a refused key is returned at once, without a link-wait loop. The shared HQ client may
   retry a `503` within its bounded budget (zcp `internal/tools/standup.go`, `internal/hq/client.go`;
   mate `apps/server/src/zerops/ZeropsSetup.ts`).
@@ -958,12 +959,13 @@ file already holds for its own project and writes `not-linked`, `starting`; on e
 stops it writes `stopped`. A failed write leaves the old file. zcp only reads it, at each use, and its
 service watches it replaced, never on a timer. zcp reads `linked` only while `zcp service start mate`
 holds `~/.zcp/hq/state.lock`; with the lock free the server is not running. No file is no Mate server
-here; a file zcp cannot decode is unreadable, never empty; keys zcp does not know are ignored. zcp asks
-HQ for no part of the Mate's state, and no authorization is decided from the file. What zcp does with
+here; a file zcp cannot decode is unreadable, never empty; keys zcp does not know are ignored. Chief,
+the wired repositories' origins, the stand-up's application and link status come from this file; the
+remaining state reads still ask HQ. No authorization is decided from the file. What zcp does with
 it: §6.3,
 _Release on archive and on completion_ (mate `apps/server/src/zerops/ZeropsHqLink.ts`,
 `apps/server/src/zerops/ZeropsMateStateFile.ts`; zcp `internal/hq/mate_state.go`,
-`internal/tools/hq_dev_git.go`, `internal/tools/file_watch.go`).
+`internal/tools/hq_dev_git.go`, `internal/hq/file_watch.go`).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -2014,9 +2016,9 @@ holds as many as it has people who registered one. It lives in its own otherwise
 that person registers as their Chief in HQ; how it links, what the registration is and what it may
 read are §3.11's. zcp serves it in **org mode**.
 
-**Switching it on.** `zcp serve` reads the Mate's state from HQ at start (`GET /api/mate/self`, the
-project key in the header, §3.6); a state whose `chief` names this Mate's own project turns org mode
-on (`runtime.Info.Chief`). A registration made or lost later restarts zcp: the Mate's server restarts
+**Switching it on.** `zcp serve` reads the Mate's state at start from the file its server keeps (§2.8);
+a state whose `chief` names this Mate's own project turns org mode on (`runtime.Info.Chief`); no state
+heard is no Chief. A registration made or lost later restarts zcp: the Mate's server restarts
 it when the `chief` of its link's `state` frame changes (§3.11), so org mode follows the registration
 both ways. No service variable switches it and no credential of its own exists.
 
@@ -2103,8 +2105,7 @@ no delete, no token, no invitation and no scaling kind.
 **The reverse direction — a Mate asks its owner's Chief.** In project mode, in a Mate's
 container (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?,
 reason}` proposes the one kind a project makes outside itself, `chief.message`, only when HQ names
-its owner's Chief. The `chief` of `GET /api/mate/self` (the project key in the header, §3.6) answers it; an
-unavailable or refused read offers no tool. `POST /api/mate/chief/proposals` reads it again and
+its owner's Chief. The `chief` of the Mate's state (§2.8) answers it; no state heard offers no tool. `POST /api/mate/chief/proposals` reads it again and
 returns the offer id, binding the source project and the Chief at HQ. A person who may open the
 source Mate decides it, and only while that Chief is still theirs; HQ rechecks the binding when
 accepting a decision, including after the Chief moved. It sends nothing; org mode never registers it (the Chief does not ask itself). Its result has the same shape, from this
@@ -2750,7 +2751,7 @@ sequenceDiagram
   registered. The organisation holds as many Chiefs as it has people who registered one, each project
   one person's. The registration carries no key and no person travels in the Mate's header: HQ finds
   the live registration by the Mate's project key, and its person is the person the Chief belongs to.
-- zcp reads its Chief from its Mate state in HQ at start and serves org mode (§2.11). HQ sends the
+- zcp reads its Chief from the Mate's state file at start and serves org mode (§2.11). HQ sends the
   Mate a new `state` when the registration changes, and the Mate's server restarts zcp when its
   `chief` changes, so a Chief that loses its registration or its person's access leaves org mode and
   a newly registered one enters it. Rotation does not wait for background work; work running at
@@ -3829,7 +3830,7 @@ themselves; no token crosses the conversation.
   wire — its dev hostname (§6, `hqRepoNameOf`); and a one-line `why`. A URL carrying a credential,
   a query or a fragment is refused, and no refusal echoes the URL; an address past `owner/name`,
   a page inside the repository, is refused asking for the repository's address. No input takes a
-  token. It writes nothing and reads `GET /api/mate/self` once: `connected` (`origin`; `repo`, the
+  token. It writes nothing and reads the Mate's state (§2.8) once: `connected` (`origin`; `repo`, the
   HQ repository holding it), nothing asked, when `url` already is the origin of `repo` in HQ's
   `repos`, or else of another repository of the application, which the answer names as where the
   code comes from: in that repository's own working copy when it is one of this project's
@@ -4022,7 +4023,7 @@ token or address crosses the conversation.
 
 - **Request.** `zerops_mirror action=request` (Mate-gated, §2.0) takes `repo`, the repository in
   HQ by its name in the application — a dev hostname — and an optional one-line `why` the card
-  shows. It writes nothing. It reads `GET /api/mate/self` once for the application, then the
+  shows. It writes nothing. It reads the Mate's state (§2.8) once for the application, then the
   application's repositories with their remotes (`GET /api/apps/:appId/repos`, the project key;
   `hq.Client.AppRepos`). A `repo` the application does not have, or the recipe repository (`group`), is refused naming the ones it has;
   a Mate in no application, or an HQ that does not answer, is a failure that asks nothing. A
@@ -6145,7 +6146,7 @@ The order:
      `TestStandup_TheRuntimesAreReadAgainOnlyOnAPush`), and for whatever the import still has in
      flight on them and on the managed services;
    - reads the tier from `main` of the recipe repository of the application HQ holds the Mate in
-     (`GET /api/mate/self` for the application, `GET /api/mate/recipe/mate` for the tier);
+     (the Mate's state (§2.8) for the application, `GET /api/mate/recipe/mate` for the tier);
    - pairs the runtimes that build from the application's repositories in HQ
      (`<HQ>/git/<orgId>/<appId>/<repo>`), per repository, by zcp's naming —
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named

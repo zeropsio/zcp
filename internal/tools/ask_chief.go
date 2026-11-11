@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -22,16 +23,19 @@ type AskChiefInput struct {
 // its person's Chief for something outside the project (docs/spec-mate.md
 // §2.11). Like org mode's act tools it sends nothing; the person approves or
 // declines the card. HQ owns availability, identity and the offered proposal id.
-func RegisterAskChief(ctx context.Context, srv *mcp.Server, httpClient hq.Doer, projectID, projectName string) {
+func RegisterAskChief(srv *mcp.Server, httpClient hq.Doer, projectID, projectName string) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	client, err := hq.Open(httpClient, liveHQIdentity())
-	if err != nil || client.ProjectID() != projectID {
+	identity := liveHQIdentity()
+	if identity.ProjectID != projectID {
 		return
 	}
-	client = client.Once().Bounded(3*time.Second, 3*time.Second)
-	state, err := client.Self(ctx)
+	doc, err := identity.ReadMateState()
+	if err != nil {
+		return
+	}
+	state, err := doc.Heard()
 	if err != nil || state.Chief == nil || state.Chief.ProjectID == projectID {
 		return
 	}
@@ -46,6 +50,11 @@ func RegisterAskChief(ctx context.Context, srv *mcp.Server, httpClient hq.Doer, 
 		if err != nil {
 			return orgAnswer(proposal, err)
 		}
+		client, err := hq.Open(httpClient, liveHQIdentity())
+		if err != nil {
+			return orgAnswer(proposal, fmt.Errorf("open Chief proposal: %w", err))
+		}
+		client = client.Once().Bounded(3*time.Second, 3*time.Second)
 		id, err := client.ProposeChief(ctx)
 		if err != nil {
 			return orgAnswer(proposal, err)

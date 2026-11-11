@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -35,8 +36,8 @@ import (
 //
 // zcp answers a frame only for a host and path built from zcp-side records
 // and the call's own argv — HQ's host from the identity (any path, the Mate
-// credential), the record's HQ origin or HQ's live origin of the record's
-// repository, and URLs the argv writes literally — never from the dev
+// credential), the record's HQ origin or the origin of its repository in
+// the Mate's last state, and URLs the argv writes literally — never from the dev
 // checkout's config, which the dev service writes, and never from the
 // record's RemoteURL, written from the checkout's live origin: HQ mints a
 // token for any repository the application mounts. An allowed remote is
@@ -66,7 +67,7 @@ type BrokeredGitRelay struct {
 	// RemoteURL, never anything the checkout's config names.
 	Repos []string
 	// LiveOrigin is the record's repository when the record names no
-	// origin: HQ's live state is asked for its origin once, on the first
+	// origin: the Mate's last state is read for its origin once, on the first
 	// GitHub request none of Repos matches.
 	LiveOrigin *BrokeredGitHQRepo
 
@@ -462,8 +463,8 @@ func readBrokeredGitStdin(ctx context.Context, stdin io.Reader) ([]byte, error) 
 }
 
 // relayLockBound is how long, by the clock, a helper waits for the call's
-// lock before it answers git nothing: longer than zcp's worst-case answer
-// (5 s to connect to HQ, 30 s for its mint, 15 s for its live state).
+// lock before it answers git nothing: longer than the bounds for zcp to
+// connect to HQ and mint a credential.
 const relayLockBound = 90
 
 // relayLockPath is the call's lock: a helper holds it from writing its
@@ -1187,7 +1188,7 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			return "", ""
 		}
 		repo := strings.TrimRight(c.relay.github(), "/") + "/" + canonical
-		if !c.allows(ctx, repo) {
+		if !c.allows(repo) {
 			c.notRecorded(host, path)
 			return "", ""
 		}
@@ -1198,9 +1199,9 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 	return "", ""
 }
 
-// allows reports whether repo is the relay's, asking HQ's live state for
+// allows reports whether repo is the relay's, reading the Mate's state for
 // the record's origin once when none of Repos matches.
-func (c *relayCall) allows(ctx context.Context, repo string) bool {
+func (c *relayCall) allows(repo string) bool {
 	if c.relay.AllowsRepo(repo) {
 		return true
 	}
@@ -1208,33 +1209,28 @@ func (c *relayCall) allows(ctx context.Context, repo string) bool {
 		return false
 	}
 	c.liveRead = true
-	if origin := c.liveOrigin(ctx); origin != "" {
+	if origin := c.liveOrigin(); origin != "" {
 		c.relay.Repos = append(slices.Clone(c.relay.Repos), origin)
 		return c.relay.AllowsRepo(repo)
 	}
 	return false
 }
 
-// relayLiveConnectBound and relayLiveAnswerBound bound the read of HQ's
-// live state.
-const (
-	relayLiveConnectBound = 5 * time.Second
-	relayLiveAnswerBound  = 15 * time.Second
-)
-
-// liveOrigin is the origin HQ's live state names for the record's
+// liveOrigin is the origin the Mate's last state names for the record's
 // repository, "" when it names none or cannot be read (said once).
-func (c *relayCall) liveOrigin(ctx context.Context) string {
+func (c *relayCall) liveOrigin() string {
 	repo := c.relay.LiveOrigin
-	client, err := hq.Open(c.relay.HTTPClient, c.relay.Identity)
+	doc, err := c.relay.Identity.ReadMateState()
+	var state hq.MateState
+	if err == nil {
+		state, err = doc.Heard()
+	}
 	if err != nil {
-		c.say(fmt.Sprintf("HQ's origin of %s is unknown: %v", repo.Repo, err))
+		c.say(fmt.Sprintf("The Mate's origin of %s is unknown: %v", repo.Repo, mate.StateReadError(err)))
 		return ""
 	}
-	state, err := client.Once().Bounded(relayLiveConnectBound, relayLiveAnswerBound).Self(ctx)
-	if err != nil {
-		c.say(fmt.Sprintf("HQ's origin of %s is unknown: %v", repo.Repo, err))
-		return ""
+	if standing := doc.Standing(); standing != "" {
+		c.say(standing)
 	}
 	if state.AppID == nil || *state.AppID != repo.AppID {
 		return ""

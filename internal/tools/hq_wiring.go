@@ -87,7 +87,12 @@ func liveHQIdentity() hq.Identity {
 func hqIdentity(rt runtime.Info) hq.Identity {
 	id := liveHQIdentity()
 	if rt.HQ != nil {
-		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, ChangesPath: rt.HQ.ChangesPath}
+		path := hq.MateStatePath()
+		if rt.HQ.ChangesPath != "" {
+			path = filepath.Join(filepath.Dir(rt.HQ.ChangesPath), "state.json")
+		}
+		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, ChangesPath: rt.HQ.ChangesPath,
+			State: hq.NewFileMateStateSource(path, rt.HQ.ProjectID)}
 	}
 	id.OrgID = rt.OrgID
 	return id

@@ -1,4 +1,4 @@
-package tools
+package hq
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// watchReplacedFile wakes its caller whenever a writer puts a new version of
+// WatchReplacedFile wakes its caller whenever a writer puts a new version of
 // the file at path in place: the Mate's server its `state` frame's changes
 // (hq.ChangesPath), a zcp process its section of the setup status file
 // (mate.StatusFilePath). The returned channel receives once each time path is
@@ -23,7 +23,7 @@ import (
 // removed moves it up again. Nothing is read on a timer: a watch that loses
 // events (the kernel's queue overflowed) wakes once, so the look reads what
 // is there. The watch ends with ctx.
-func watchReplacedFile(ctx context.Context, path string) (<-chan struct{}, error) {
+func WatchReplacedFile(ctx context.Context, path string) (<-chan struct{}, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("watch %s: %w", filepath.Dir(path), err)
@@ -38,7 +38,7 @@ func watchReplacedFile(ctx context.Context, path string) (<-chan struct{}, error
 	return wake, nil
 }
 
-// fileWatch is watchReplacedFile's watch: watched is the directory it
+// fileWatch is WatchReplacedFile's watch: watched is the directory it
 // watches now, dir itself or its nearest existing ancestor.
 type fileWatch struct {
 	w         *fsnotify.Watcher

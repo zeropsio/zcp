@@ -26,6 +26,7 @@ func TestDevGit_PoolKeyingAPairWiredAtARetiredHQ_MovesOnlyTheRecord(t *testing.T
 		run  func(l *hqLab, ssh *hostLogSSH)
 	}{
 		{name: "the Mate's start", run: func(l *hqLab, ssh *hostLogSSH) {
+			l.snapshotMate(l.t.Context())
 			startDevGit(l.t.Context(), l.hq.srv.Client(), ssh, l.rt, l.stateDir)
 		}},
 		{name: "the repository pass", run: func(l *hqLab, ssh *hostLogSSH) {

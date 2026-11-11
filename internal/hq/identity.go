@@ -47,6 +47,8 @@ type Identity struct {
 	// ChangesPath is the file the Mate's server keeps the link's last
 	// `state` frame's changes in (ChangesPath), on the same disk.
 	ChangesPath string
+	// State is the Mate server's last state and link standing.
+	State MateStateSource
 }
 
 // IdentityFrom reads the identity from getenv — in a container the live env
@@ -58,6 +60,7 @@ func IdentityFrom(getenv func(string) string) Identity {
 		ProjectID: strings.TrimSpace(getenv(EnvProjectID)),
 
 		ChangesPath: ChangesPath(),
+		State:       NewFileMateStateSource(MateStatePath(), strings.TrimSpace(getenv(EnvProjectID))),
 	}
 }
 

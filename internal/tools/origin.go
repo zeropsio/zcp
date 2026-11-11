@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -58,7 +58,7 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, state
 		Name:        "zerops_origin",
 		Description: "Before a repository's code comes in, ask the person where it is kept: on GitHub, mounted in HQ as its origin, or in Mate, only followed. Writes nothing: Mate shows a card for repo, the pair's dev hostname; a message brings their pick. Never ask for a token. action=withdraw url (repo) closes an unneeded ask — not in chat.",
 		Annotations: &mcp.ToolAnnotations{Title: "Ask where a repository's code is kept", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OriginInput) (*mcp.CallToolResult, any, error) {
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in OriginInput) (*mcp.CallToolResult, any, error) {
 		if in.Action == originActionWithdraw {
 			return originWithdraw(in), nil, nil
 		}
@@ -70,20 +70,27 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, state
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		client, err := hq.Open(httpClient, liveHQIdentity())
+		identity := liveHQIdentity()
+		client, err := hq.Open(httpClient, identity)
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be addressed, so nothing was asked: %v", err)), nil, nil
 		}
 		if client.ProjectID() != projectID {
 			return observeFailure("This Mate's key belongs to another project, so nothing was asked."), nil, nil
 		}
-		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		defer cancel()
-		state, err := client.Once().Self(ctx)
-		if err != nil {
-			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
+		doc, err := identity.ReadMateState()
+		var state hq.MateState
+		if err == nil {
+			state, err = doc.Heard()
 		}
-		return jsonResult(originAnswerOf(req, state, client.Address(), orgID, stateDir)), nil, nil
+		if err != nil {
+			return observeFailure(fmt.Sprintf("The Mate's state could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, mate.StateReadError(err))), nil, nil
+		}
+		answer := originAnswerOf(req, state, client.Address(), orgID, stateDir)
+		if standing := doc.Standing(); standing != "" {
+			answer.NextActions += " " + standing
+		}
+		return jsonResult(answer), nil, nil
 	})
 }
 
@@ -121,8 +128,7 @@ func originWithdrawWords(req ops.OriginRequest) string {
 
 // originAnswerOf answers a checked request from the Mate's state in HQ:
 // connected when the asked address already is the origin of the asked
-// repository, or of another one of the application; else asked, also by an
-// HQ older than repositories in that state. hqAddress and stateDir say where
+// repository, or of another one of the application; else asked. hqAddress and stateDir say where
 // the code comes in (originFromHolder, originHost).
 func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID, stateDir string) originAnswer {
 	host := originHost(stateDir, req.Repo)

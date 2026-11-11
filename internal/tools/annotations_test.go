@@ -747,6 +747,7 @@ func TestAnnotations_AskChiefTool(t *testing.T) {
 	}))
 	t.Cleanup(chiefHQ.Close)
 	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
+	hqtest.State(t, `{"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
 
 	t.Chdir(t.TempDir())
 	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_propose_ask_chief"]

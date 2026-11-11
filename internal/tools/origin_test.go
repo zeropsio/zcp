@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,8 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// originHQ is a fake HQ answering GET /api/mate/self with repos ("" for an
-// HQ older than them); it records every other request it is sent.
+// originHQ writes the Mate's state ("" omits repos) and records HQ requests.
 func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []string) {
 	t.Helper()
 	srv, others, _ = originHQIn(t, t.TempDir(), repos)
@@ -29,7 +30,7 @@ func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []stri
 // it also returns the fake HQ's address.
 func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
-	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[]`
+	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[],"chief":null`
 	if repos != "" {
 		body += `,"repos":` + repos
 	}
@@ -37,10 +38,6 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 	var mu sync.Mutex
 	var unexpected []string
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/mate/self" && r.Header.Get("Authorization") == "Project good" {
-			_, _ = w.Write([]byte(body))
-			return
-		}
 		mu.Lock()
 		unexpected = append(unexpected, r.Method+" "+r.URL.Path)
 		mu.Unlock()
@@ -48,6 +45,17 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 	}))
 	t.Cleanup(fake.Close)
 	hqtest.Link(t, fake.URL, "P_MATE", "good")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".zcp", "hq", "state.json")
+	release, err := hq.LockMateState(filepath.Join(filepath.Dir(path), "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
+	if err := os.WriteFile(path, []byte(`{"link":"linked","mate":`+body+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	RegisterOrigin(srv, fake.Client(), "P_MATE", labOrg, stateDir)
 	return srv, func() []string {
@@ -316,14 +324,13 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	}
 }
 
-// An older HQ without repos asks: nothing says which origin is connected.
-func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
+// A state without repos cannot establish where code is kept.
+// witness: internal/hq/mate_state.go | if _, ok := required[key]; !ok { → if _, ok := required[key]; !ok && key != "repos" {
+func TestOriginRequest_StateWithoutRepos_Refuses(t *testing.T) {
 	older, _ := originHQ(t, "")
-
-	answer, text := originAnswerTo(t, older, "https://github.com/acme/app")
-
-	if answer.Requested == nil || answer.Connected != nil {
-		t.Errorf("an older HQ: want requested, got: %s", text)
+	result := callTool(t, older, "zerops_origin", map[string]any{"action": "request", "url": "https://github.com/acme/app", "repo": "appdev"})
+	if text := getTextContent(t, result); !result.IsError || !strings.Contains(text, "unreadable") {
+		t.Errorf("a state without repos must be unreadable: %s", text)
 	}
 }
 

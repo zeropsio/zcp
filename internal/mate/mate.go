@@ -815,7 +815,7 @@ const EnvHQGitCredential = hq.EnvGitCredential
 // top of the live env store and the identity contract: its public prefix, the
 // status file it reads a new Mate's setup from (status.go), the update
 // coordinator state, the file it reports its boot progress in (BootFilePath),
-// and the file it keeps its Git credential in.
+// and the files it keeps its Git credential and last state in.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
@@ -823,6 +823,7 @@ func LaunchEnvLines() []string {
 		"ZCP_MATE_BOOT_FILE=" + BootFilePath(),
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
 		EnvHQGitCredential + "=" + hq.GitCredentialPath(),
+		"ZCP_MATE_STATE_FILE=" + hq.MateStatePath(),
 	}
 }
 

@@ -108,6 +108,7 @@ func TestLaunchEnvLines(t *testing.T) {
 		"ZCP_MATE_BOOT_FILE=/home/zerops/.zcp/mate/boot.json",
 		"ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json",
 		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=/home/zerops/.zcp/hq/git-credential",
+		"ZCP_MATE_STATE_FILE=/home/zerops/.zcp/hq/state.json",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("LaunchEnvLines() = %q, want %q", got, want)

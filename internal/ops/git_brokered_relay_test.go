@@ -791,8 +791,7 @@ type relayMint struct{ path, access string }
 // relayLab is a fake HQ and a GitHub stand-in. HQ serves git under /git/
 // behind `mate:<project key>`, mints a token for any repository the stand-in
 // holds (as HQ mints for any repository the application mounts), and names
-// the record's repository origin in /api/mate/self; the stand-in serves each
-// repository behind the tokens HQ minted for it.
+// the stand-in serves each repository behind the tokens HQ minted for it.
 type relayLab struct {
 	hq, gh *httptest.Server
 	root   string
@@ -804,8 +803,6 @@ type relayLab struct {
 	tokenUse   map[string]int    // token → requests the stand-in accepted with it
 	challenges int               // 401s the stand-in answered
 	sawAuth    []string          // every Authorization header either server saw
-	selfOrigin string            // /api/mate/self: the origin of relayLabAppID's appdev
-	selfAsked  int
 
 	tokenAccess map[string]string // token → the access it was minted with
 	readOnly    map[string]bool   // repository key → connected with a person's token
@@ -893,8 +890,6 @@ func newRelayLab(t *testing.T) *relayLab {
 		switch {
 		case r.URL.Path == "/api/mate/git-credential":
 			l.serveMint(t, w, r)
-		case r.URL.Path == "/api/mate/self":
-			l.serveSelf(w, r)
 		case strings.HasPrefix(r.URL.Path, "/git/"):
 			if user, pass, ok := r.BasicAuth(); !ok || user != hq.GitUser || pass != relayLabKey {
 				w.Header().Set("WWW-Authenticate", `Basic realm="hq"`)
@@ -1014,23 +1009,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
-}
-
-func (l *relayLab) serveSelf(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Project "+relayLabKey {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	l.mu.Lock()
-	l.selfAsked++
-	origin := l.selfOrigin
-	l.mu.Unlock()
-	appID := relayLabAppID
-	state := hq.MateState{ProjectID: "p1", AppID: &appID, Repos: []hq.MateRepo{{Name: "appdev"}}}
-	if origin != "" {
-		state.Repos[0].Origin = &hq.RepoOrigin{URL: origin, Mode: hq.OriginOnGitHub}
-	}
-	writeJSON(w, state)
 }
 
 // minted is every token HQ was asked for so far.
@@ -1409,7 +1387,7 @@ func TestBrokeredGit_Relay_FetchByURLInArgv_Answered(t *testing.T) {
 }
 
 // TestBrokeredGit_Relay_NoRecordedOrigin_AnswersHQsLiveOriginReadOnce: while
-// the record names no origin, the first GitHub request reads HQ's live state
+// the record names no origin, the first GitHub request reads the Mate's state
 // for the record's repository once; its origin is answered for every lazy
 // fetch, anything else declined.
 func TestBrokeredGit_Relay_NoRecordedOrigin_AnswersHQsLiveOriginReadOnce(t *testing.T) {
@@ -1422,18 +1400,25 @@ func TestBrokeredGit_Relay_NoRecordedOrigin_AnswersHQsLiveOriginReadOnce(t *test
 			other, _ := l.repo(t, true, "acme/other")
 			checkout := l.checkout(t, url)
 			l.git(t, checkout, "remote", "add", "evil", other)
-			l.mu.Lock()
-			l.selfOrigin = url
-			l.mu.Unlock()
+			path := filepath.Join(t.TempDir(), "state.json")
+			release, err := hq.LockMateState(filepath.Join(filepath.Dir(path), "state.lock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+			appID := relayLabAppID
+			state := hq.MateState{ProjectID: "p1", AppID: &appID, Repos: []hq.MateRepo{{Name: "appdev", Origin: &hq.RepoOrigin{URL: url, Mode: hq.OriginOnGitHub}}}, Changes: []hq.MateChange{}}
+			raw, err := json.Marshal(map[string]any{"link": "linked", "mate": state})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			relay := l.relay()
+			relay.Identity.State = hq.NewFileMateStateSource(path, "p1")
 			relay.LiveOrigin = &BrokeredGitHQRepo{AppID: relayLabAppID, Repo: "appdev"}
 			l.run(t, sh, checkout, relay, "", "log", "-p", "--format=%H").mustSucceed(t, "log -p")
-			l.mu.Lock()
-			asked := l.selfAsked
-			l.mu.Unlock()
-			if asked != 1 {
-				t.Errorf("HQ's live state read %d times in the call, want once", asked)
-			}
 			if mints := l.minted(); len(mints) != 1 || mints[0].path != "acme/shop" {
 				t.Errorf("HQ minted %+v, want one token for the live origin", mints)
 			}

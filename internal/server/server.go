@@ -198,7 +198,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
-		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
+		tools.RegisterAskChief(s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
 	}
 
 	// Dev servers run under each dev service's supervisor now; the keeper

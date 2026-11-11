@@ -333,8 +333,8 @@ func isRelayedGit(rt runtime.Info, target gitTarget) bool {
 
 // brokeredGitRelayFor is what a relayed call to meta's pair answers from:
 // the Mate's identity — HQ's host, any path — the record's HQ origin, which
-// zcp writes from HQ's own state, or, while the record names none, HQ's live
-// origin of the record's repository; and the URLs args write literally.
+// zcp writes from HQ's own state, or, while the record names none, the origin
+// of its repository in the Mate's last state; and the URLs args write literally.
 // Never the record's RemoteURL, written from the checkout's live origin. A
 // lease no wired pair's record names (meta nil, or one wired to no HQ
 // repository) answers from the identity and args alone.

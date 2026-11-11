@@ -205,10 +205,17 @@ type standupSource struct {
 func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *standupProgress) (standupSource, *mcp.CallToolResult) {
 	const fallback = "Nothing was touched. Carry on with zcp's own tools: zerops_discover, then adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\", then deploy each dev half and its stage."
 	progress.say("reading the group's recipe")
-	state, err := hqc.Self(ctx)
+	doc, err := d.identity().ReadMateState()
+	var state hq.MateState
+	if err == nil {
+		state, err = doc.Heard()
+	}
 	if err != nil {
 		return standupSource{}, standupRefusal(platform.ErrAPIError,
-			fmt.Sprintf("Could not read which application HQ holds this Mate in: %v.", err), fallback)
+			fmt.Sprintf("Could not read which application holds this Mate: %v.", mate.StateReadError(err)), fallback)
+	}
+	if standing := doc.Standing(); standing != "" {
+		progress.say(standing)
 	}
 	inNoApplication := standupRefusal(platform.ErrPrerequisiteMissing,
 		"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.", fallback)
