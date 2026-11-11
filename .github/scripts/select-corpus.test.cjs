@@ -19,7 +19,7 @@ async function select(runs = [run], artifacts = [artifact], coverage = jobs) {
     if (method === 'runs') {
       assert.equal(params.workflow_id, 'ci.yml');
       assert.equal(params.head_sha, sha);
-      assert.equal(params.status, 'success');
+      assert.equal(params.status, undefined);
       return runs;
     }
     assert.equal(params.run_id, 12);

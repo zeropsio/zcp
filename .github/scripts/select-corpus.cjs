@@ -4,6 +4,8 @@
 // run checks out its merge commit, so the name records the commit it checked.
 const CORPUS = /^knowledge-v1-([a-f0-9]{40})-(\d+)-(\d+)-([a-f0-9]{64})$/;
 
+// The verdict is read from each run itself, never from the listing's status filter: that
+// index can lag the runs, and a release then waits on a run that is not its proof.
 function isOwnGreenRun(run, repo) {
   return run.head_repository?.full_name === `${repo.owner}/${repo.repo}` &&
     run.status === 'completed' && run.conclusion === 'success';
@@ -41,7 +43,7 @@ async function attemptVerdict(github, repo, run) {
 
 async function selectCorpus(github, repo, sha) {
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    ...repo, workflow_id: 'ci.yml', head_sha: sha, status: 'success', per_page: 100,
+    ...repo, workflow_id: 'ci.yml', head_sha: sha, per_page: 100,
   });
   for (const run of runs) {
     if (!isFullCIRun(run, repo, sha) || !isOwnGreenRun(run, repo)) continue;
@@ -70,7 +72,7 @@ async function selectTreeCorpus(github, repo, sha, tree) {
   });
   for (const pull of pulls) {
     const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-      ...repo, workflow_id: 'ci.yml', event: 'pull_request', head_sha: pull.head.sha, status: 'success', per_page: 100,
+      ...repo, workflow_id: 'ci.yml', event: 'pull_request', head_sha: pull.head.sha, per_page: 100,
     });
     for (const run of runs) {
       if (run.event !== 'pull_request' || run.head_sha !== pull.head.sha || !isOwnGreenRun(run, repo)) continue;
