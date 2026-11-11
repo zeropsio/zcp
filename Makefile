@@ -142,7 +142,7 @@ _release:
 	echo "Tagging $$NEXT ($$COMMITS commits since $${LATEST:-no previous tag})..."; \
 	git tag -a "$$NEXT" -m "Release $$NEXT"; \
 	echo "Pushing..."; \
-	git push origin HEAD "$$NEXT"; \
+	git push origin HEAD "$$NEXT" || { echo "ERROR: push failed, aborting release."; exit 1; }; \
 	echo "Done: $$NEXT pushed. GitHub Actions will build and publish."
 
 ########
