@@ -1011,6 +1011,12 @@ environment instead, never a probed flag (§2.2).
   not by an hourly idle-link sweep (mate-hq `internal/projectkeys/keys.go`,
   `internal/projectkeys/resolve.go`, `internal/matelink/link.go`; mate
   `apps/server/src/zerops/ZeropsMateAccessList.ts`, `apps/server/src/zerops/ZeropsConnections.ts`).
+- **Person hint.** On an admitted link the Mate sends `{"type":"person-changed","userId":<non-empty string>}`
+  when its own access list's raw rows move for a known person: organisation role, membership status or
+  presence, or this project's own role. A first read, an unchanged reread, a Chief opener move and a failed
+  read hint nobody; a move while no link is admitted is lost, never replayed. The frame carries no role or
+  verdict: HQ re-reads Zerops itself to confirm, so the hint is best-effort (mate
+  `apps/server/src/zerops/ZeropsHqLink.ts`, `packages/shared/src/mateLink.ts`; mate-hq `spec/protocol.md`).
 - **Link.** The Mate dials HQ over native IPv6 only, then reconnects with backoff after the link
   ends. HQ sends JSON `{"type":"ping"}` and the Mate answers JSON `{"type":"pong"}`; HQ closes a
   silent link `4408`, counting any received application frame as liveness. When a state frame first
