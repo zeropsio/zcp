@@ -74,6 +74,10 @@ const (
 	// zerops@mate.service. Same primitive as the sshfs mounts.
 	UnitName = "mate"
 
+	// KeepUnitName names the keep job's systemd units (docs/spec-mate.md
+	// §2.1d): the template service zcp-mate-fuse@<way>.service and its timer.
+	KeepUnitName = "zcp-mate-fuse"
+
 	// UnitFilePath is where `zsc unit create` writes the unit file. Its
 	// presence is how `zcp init` tells "already registered" from "first boot"
 	// — `zsc unit` has only create and remove, no idempotent upsert.
@@ -194,8 +198,8 @@ const (
 // the step degrades when it expires.
 const installTimeout = 3 * time.Minute
 
-// smokeTimeout bounds the post-stage probes EnsureInstalled runs before it lets
-// a newly staged version go live: `mate --version` plus the native-addon import.
+// smokeTimeout bounds the post-stage probes StageRelease runs before a staged
+// version may go live: `mate --version` plus the native-addon import.
 // Two node startups.
 const smokeTimeout = 15 * time.Second
 
@@ -209,7 +213,7 @@ func Prefix() string { return filepath.Join(runtime.HomeDir(), ".zcp", "mate") }
 
 // VersionsDir holds one complete npm-install prefix per mate version ever
 // activated on this container, each directory named for the npm package
-// version it carries. EnsureInstalled stages a new release into its own
+// version it carries. StageRelease stages a new release into its own
 // directory here before anything points at it — that is what keeps a failed
 // or partial install from ever touching the version that was working.
 func VersionsDir() string { return filepath.Join(Prefix(), "versions") }
@@ -220,8 +224,8 @@ func VersionsDir() string { return filepath.Join(Prefix(), "versions") }
 // disturbing whichever version is currently live.
 func VersionDir(version string) string { return filepath.Join(VersionsDir(), version) }
 
-// CurrentLink is the symlink that names the live version. EnsureInstalled
-// repoints it atomically (build under a temp name, os.Rename onto this path),
+// CurrentLink is the symlink that names the version the unit starts. The start
+// job repoints it atomically (build under a temp name, os.Rename onto this path),
 // so an interrupted activation can never leave it dangling or half-written.
 // It is the ONLY thing BinPath() resolves through — nothing outside this
 // package should ever read a VersionDir() path directly.
@@ -240,7 +244,7 @@ func packageIn(dir string) string { return filepath.Join(dir, "node_modules", Pa
 
 // BinPath is the bundle's entry point — what a supervised `mate serve` runs.
 // It always resolves through CurrentLink(), so it names whichever version
-// EnsureInstalled last activated, with no version check and no network in the
+// the start job last activated, with no version check and no network in the
 // common case: that is what keeps a warm restart off the network, and what
 // makes the hand-delivered dev build (eval/scripts/mate-dev-push.sh, which
 // repoints CurrentLink() itself) and a fetched release one code path.
@@ -272,12 +276,8 @@ func InstallArgs(prefix, tarballPath string) []string {
 // before anything else ever reads it. The caller owns removing the file via
 // the returned cleanup, called whether or not err is nil (a mismatch still
 // leaves the corrupt download behind unless cleaned up here).
-//
-// Package-level so EnsureInstalled's tests can substitute a fake tarball with
-// no real HTTP round trip; production is defaultDownloadVerified.
-var downloadVerified = defaultDownloadVerified
 
-func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error) {
+func downloadVerified(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("build mate release request: %w", err)
@@ -321,12 +321,8 @@ func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseUR
 // prefix. npm still resolves the tarball's runtime dependencies from its
 // registry; downloading the package itself does not make this install
 // offline-capable.
-//
-// Package-level so tests can stub it without a real npm on PATH; production
-// is defaultNpmInstallTarball.
-var npmInstallTarball = defaultNpmInstallTarball
 
-func defaultNpmInstallTarball(ctx context.Context, prefix, tarballPath string) error {
+func npmInstallTarball(ctx context.Context, prefix, tarballPath string) error {
 	args := InstallArgs(prefix, tarballPath)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is built from package constants plus a caller-controlled prefix/tarball path
 	cmd.Stdout = os.Stderr
@@ -351,7 +347,7 @@ func NativeAddonProbeArgs() []string {
 }
 
 // smokeTestInstall confirms a freshly staged install both executes and can open
-// its native addons, before EnsureInstalled lets it go live.
+// its native addons, before it may go live.
 //
 // `<bin> --version` proves the entry point runs and everything it imports
 // STATICALLY resolves. It says nothing about node-pty — the PTY behind every
@@ -362,12 +358,8 @@ func NativeAddonProbeArgs() []string {
 // and fail the first time somebody opened a terminal. Both halves run here so
 // that failure lands on the staging directory, which is discarded, instead of on
 // CurrentLink().
-//
-// Package-level so tests can stub it without a real mate install; production is
-// defaultSmokeTestInstall.
-var smokeTestInstall = defaultSmokeTestInstall
 
-func defaultSmokeTestInstall(ctx context.Context, versionDir string) error {
+func smokeTestInstall(ctx context.Context, versionDir string) error {
 	bin := binIn(versionDir)
 	if err := exec.CommandContext(ctx, bin, "--version").Run(); err != nil {
 		return fmt.Errorf("%s --version: %w", bin, err)
@@ -407,8 +399,7 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 // carrying a "-", e.g. "0.1.0-dev.a1b2c3" (the tag
 // eval/scripts/mate-dev-push.sh builds: <package version>-dev.<git sha>). That
 // is what distinguishes a hand-pushed dev build from a tagged release:
-// EnsureInstalled keeps one unless forced or its base release is below
-// MinimumMateVersion.
+// VersionToRun keeps one unless its base release is below MinimumMateVersion.
 func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
 
 // BelowFloor reports whether v, a release or a dev build, is older than
@@ -428,18 +419,6 @@ type BelowFloorError struct {
 
 func (e *BelowFloorError) Error() string {
 	return fmt.Sprintf("installed mate %s is below the minimum %s this zcp drives", e.Installed, e.Minimum)
-}
-
-// CheckInstalledFloor is the single refusal for the version floor, read by
-// every path that runs or links the Mate (service start, init) and mirrored
-// by `zcp mate status`: nil unless the installed bundle is readable and below
-// MinimumMateVersion. An unreadable version is not a refusal — a missing
-// bundle fails on its own where it is needed.
-func CheckInstalledFloor() error {
-	if installed, err := InstalledVersion(); err == nil && BelowFloor(installed) {
-		return &BelowFloorError{Installed: installed, Minimum: MinimumMateVersion}
-	}
-	return nil
 }
 
 // InstalledVersion reads the version CurrentLink() resolves to, from npm's
@@ -499,193 +478,29 @@ func HQIdentity(getenv func(string) string) hq.Identity {
 	return id
 }
 
-// Action names what EnsureInstalled did, so the one caller that logs it
-// (enableMate, `zcp mate update`) can print a single honest line without
-// re-deriving what happened from Result's other fields.
-type Action string
-
-const (
-	// ActionNone: nothing changed. Either the desired version was already
-	// live (nothing downloaded), or a dev build is being kept.
-	ActionNone Action = "none"
-	// ActionInstalled: nothing usable was live before; the desired release
-	// is now live.
-	ActionInstalled Action = "installed"
-	// ActionUpdated: a different version was live; the desired release
-	// replaced it.
-	ActionUpdated Action = "updated"
-)
-
-// Result reports what EnsureInstalled did. From is the version that was live
-// before (empty for ActionInstalled, which starts from nothing usable). For
-// ActionNone, From and To are both the version that stayed live.
-type Result struct {
-	Action Action
-	From   string
-	To     string
-
-	// Warning is set when EnsureInstalled succeeded without changing
-	// anything, but noticed something worth a log line: today, only an
-	// unreachable release manifest with an installed version already
-	// serving (MD-10) — Action stays ActionNone with From==To, and the
-	// caller logs Warning instead of the ordinary "already current"
-	// line, without treating it as a degrade.
-	Warning string
-}
-
-// EnsureOptions steers installation and attended update choices.
-type EnsureOptions struct {
-	// KeepInstalled makes ordinary supervisor restarts preserve the current
-	// release after crash recovery. A first installation, or an installed
-	// build below MinimumMateVersion, still resolves the release.
-	KeepInstalled bool
-
-	// Force, when true, lets a dev build be replaced. Default false: a
-	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) at or above
-	// MinimumMateVersion is never silently
-	// clobbered by a routine container boot or an unqualified `zcp mate
-	// update` — only an explicit --force does that.
-	Force bool
-
-	// Refresh bypasses the release-manifest cache, forcing a fresh fetch
-	// (see DesiredRelease/ManifestOptions). `zcp mate update` always sets
-	// it; a routine `zcp init` does not, so a warm restart reaches the
-	// manifest at most hourly.
-	Refresh bool
-}
-
-// resolveDesiredRelease fetches the manifest EnsureInstalled converges
-// toward. Package-level so tests can stub the network fetch without a real
-// HTTP round trip; production is defaultResolveDesiredRelease.
-var resolveDesiredRelease = defaultResolveDesiredRelease
-
-func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), manifestFetchTimeout)
-	defer cancel()
-	return DesiredRelease(ctx, http.DefaultClient, ManifestOptions{Refresh: opts.Refresh})
-}
-
-// EnsureInstalled converges the installed mate bundle toward the current
-// release manifest (DesiredRelease), or leaves it alone, in one pass:
-//
-//  1. Resolve the desired release. An unreachable/invalid manifest with
-//     something already installed keeps that version serving (ActionNone,
-//     Warning set) rather than degrading — MD-10. With nothing installed
-//     it is a hard failure: there is no registry-package fallback.
-//  2. Read the installed and desired versions. Equal ⇒ ActionNone, having
-//     made no npm/download call at all — this is what keeps a warm restart
-//     off the network beyond the (cached) manifest check.
-//  3. The installed version is a dev build at or above MinimumMateVersion and
-//     opts.Force is false ⇒ ActionNone, keeping the dev build. A build below
-//     the floor is replaced like any release.
-//  4. The desired release is older than the installed one and opts.Force is
-//     false ⇒ ActionNone, Warning set: an install never moves the Mate back.
-//     Only the update transaction's own rollback returns to last-good, and it
-//     calls activate itself (autoupdate.go), never through here; Force
-//     (a dev push) names the exact build wanted, so it may go back.
-//  5. Stage the desired release into its own VersionDir() (clearing any
-//     partial leftover there first).
-//  6. Smoke-test the staged binary.
-//  7. Activate it atomically (repoint CurrentLink()).
-//  8. Prune old version directories, always keeping the one just activated.
-//
-// Staging failures leave CurrentLink() unchanged and clean up the half-built
-// directory; a failed activation leaves current unchanged. A running Mate is
-// never switched here: its one switch owner is the update worker. The caller (the
-// mate init step, and `zcp mate update`) turns a returned error into a degraded
-// step or a non-zero exit, never a torn install. It never repairs an
-// interrupted switch: a caller with no server running runs PrepareUpdateBoot
-// first and installs nothing when it says to skip; one beside a running server
-// installs nothing while a switch is pending (PendingSwitch).
-func EnsureInstalled(opts EnsureOptions) (Result, error) {
-	if opts.KeepInstalled {
-		if installed, err := InstalledVersion(); err == nil && !BelowFloor(installed) {
-			return Result{Action: ActionNone, From: installed, To: installed}, nil
-		}
-	}
-
-	desired, manifestErr := resolveDesiredRelease(opts)
-	installed, instErr := InstalledVersion()
-
-	if manifestErr != nil {
-		if instErr == nil {
-			warning := fmt.Sprintf("mate release manifest unreachable, keeping installed %s: %v", installed, manifestErr)
-			if VersionOlder(installed, MinimumMateVersion) {
-				warning += fmt.Sprintf(" — %s is below the minimum %s this zcp drives, and is replaced once the manifest answers", installed, MinimumMateVersion)
-			}
-			return Result{
-				Action:  ActionNone,
-				From:    installed,
-				To:      installed,
-				Warning: warning,
-			}, nil
-		}
-		return Result{}, fmt.Errorf("resolve desired mate release: %w", manifestErr)
-	}
-
-	state, _ := ReadUpdateState()
-	if !opts.Force && state.FailedVersion != "" && !VersionOlder(state.FailedVersion, desired.Version) && instErr == nil {
-		return Result{Action: ActionNone, From: installed, To: installed, Warning: "keeping last-good; waiting for a release newer than the failed version"}, nil
-	}
-	if instErr == nil && installed == desired.Version {
-		return Result{Action: ActionNone, From: installed, To: installed}, nil
-	}
-	if instErr == nil && IsDevVersion(installed) && !opts.Force && !BelowFloor(installed) {
-		return Result{Action: ActionNone, From: installed, To: installed}, nil
-	}
-
-	if instErr == nil && !opts.Force && VersionOlder(desired.Version, installed) {
-		return Result{Action: ActionNone, From: installed, To: installed, Warning: fmt.Sprintf("keeping installed %s; the release manifest names the older %s, and an install never moves the Mate back", installed, desired.Version)}, nil
-	}
-
-	// The version that has been running is committed while its directory exists:
-	// the prune below keeps last-good, so a failed new version returns to it.
-	if instErr == nil {
-		if err := settleLegacyCopyOf(installed); err != nil {
-			return Result{}, fmt.Errorf("settle the old state copy of %s: %w", installed, err)
-		}
-	}
-	if err := StageRelease(desired); err != nil {
-		return Result{}, err
-	}
-	if err := activate(VersionDir(desired.Version)); err != nil {
-		return Result{}, err
-	}
-	warning := ""
-	if err := settleInstalled(desired.Version); err != nil {
-		warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
-	}
-	pruneOldVersions(desired.Version)
-
-	action := ActionUpdated
-	from := installed
-	if instErr != nil {
-		action = ActionInstalled
-		from = ""
-	}
-	return Result{Action: action, From: from, To: desired.Version, Warning: warning}, nil
-}
-
-// StageRelease downloads, installs and smokes a candidate without moving current.
-func StageRelease(desired Manifest) error {
-	versionDir := VersionDir(desired.Version)
-	if current, err := linkedVersionDir(CurrentLink()); err == nil && filepath.Clean(current) == filepath.Clean(versionDir) {
-		return fmt.Errorf("cannot stage over the live Mate directory")
-	}
-	if good, err := linkedVersionDir(LastGoodLink()); err == nil && filepath.Clean(good) == filepath.Clean(versionDir) {
-		version, err := installedVersionIn(good)
-		if err != nil {
-			return fmt.Errorf("last-good install: %w", err)
-		}
-		if version != desired.Version {
-			return fmt.Errorf("last-good package version mismatch")
-		}
+// StageRelease makes versions/<version> a complete, smoke-tested install of
+// release, without moving current. A directory that already holds the version
+// and passes the smoke test is kept, so the keep job's download and the start
+// job's share one; otherwise the release's tarball is downloaded into it
+// afresh, which needs release.URL. The directory current or last-good names is
+// never replaced. Any failure removes the half-built directory.
+func StageRelease(release Manifest) error {
+	versionDir := VersionDir(release.Version)
+	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
 		ctx, cancel := context.WithTimeout(context.Background(), smokeTimeout)
-		defer cancel()
-		if err := smokeTestInstall(ctx, good); err != nil {
-			return fmt.Errorf("last-good smoke: %w", err)
+		err := smokeTestInstall(ctx, versionDir)
+		cancel()
+		if err == nil {
+			return nil
 		}
-		return nil
+	}
+	for _, link := range []string{CurrentLink(), LastGoodLink()} {
+		if dir, err := linkedVersionDir(link); err == nil && filepath.Clean(dir) == filepath.Clean(versionDir) {
+			return fmt.Errorf("%s fails its smoke test and is what %s names; not replaced", versionDir, filepath.Base(link))
+		}
+	}
+	if release.URL == "" {
+		return fmt.Errorf("mate %s is not downloaded, and the release list does not name it", release.Version)
 	}
 	if err := os.RemoveAll(versionDir); err != nil {
 		return fmt.Errorf("clear partial %s: %w", versionDir, err)
@@ -693,7 +508,7 @@ func StageRelease(desired Manifest) error {
 
 	installCtx, installCancel := context.WithTimeout(context.Background(), installTimeout)
 	defer installCancel()
-	if err := InstallRelease(installCtx, http.DefaultClient, desired.URL, desired.SHA256, versionDir); err != nil {
+	if err := InstallRelease(installCtx, http.DefaultClient, release.URL, release.SHA256, versionDir); err != nil {
 		_ = os.RemoveAll(versionDir)
 		return err
 	}
@@ -803,13 +618,12 @@ const EnvHQGitCredential = hq.EnvGitCredential
 
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix, the
-// status file it reads a new Mate's setup from (status.go), the update
-// coordinator state, the file it reports its boot progress in (BootFilePath),
-// and the files it keeps its Git credential and last state in.
+// status file it reads a new Mate's setup from (status.go), the file it reports
+// its boot progress in (BootFilePath), and the files it keeps its Git
+// credential and last state in.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
-		"ZCP_MATE_UPDATE_STATE_FILE=" + UpdateStatePath(),
 		"ZCP_MATE_BOOT_FILE=" + BootFilePath(),
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
 		EnvHQGitCredential + "=" + hq.GitCredentialPath(),

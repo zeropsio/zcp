@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -10,9 +12,9 @@ import (
 	"github.com/zeropsio/zcp/internal/update"
 )
 
-// A container restart is the whole update of a Mate (docs/spec-mate.md §2.9):
+// A container restart is the whole update of zcp (docs/spec-mate.md §2.9):
 // the zcp service's run.initCommands install the latest zcp release
-// (install.sh), then `zcp init` installs the stable Mate. `zcp mate status`
+// (install.sh), then the Mate's start job starts the version to run. `zcp mate status`
 // says when one would change something — restartNeeded and why — and
 // `zcp self restart` is how the Mate server asks for one.
 
@@ -75,6 +77,26 @@ func mateWithoutUpdater(updateAvailable bool) bool {
 	}
 	supported, err := mateUpdateProbe()
 	return err == nil && !supported
+}
+
+// mateUpdateProbe asks the running Mate's loopback readiness whether it speaks
+// updater protocol 1. Exactly 404 is "endpoint absent" (false); any other
+// failure or protocol is an error, never a guess.
+func mateUpdateProbe() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var r mate.UpdateReadiness
+	if err := mate.UpdateRequest(ctx, "readiness", nil, &r); err != nil {
+		var status *mate.UpdateHTTPError
+		if errors.As(err, &status) && status.Status == http.StatusNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("cannot prove Mate update capability: %w", err)
+	}
+	if r.Protocol != 1 {
+		return false, fmt.Errorf("unknown Mate updater protocol %d", r.Protocol)
+	}
+	return true, nil
 }
 
 // restartVerdict is whether a container restart would change this container,

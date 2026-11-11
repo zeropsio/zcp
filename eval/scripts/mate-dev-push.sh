@@ -24,7 +24,7 @@
 #   MATE_PREFIX         npm prefix on the container mate lives under. Each version
 #                     gets its own dir under $MATE_PREFIX/versions/; a dev push
 #                     lands at versions/dev and repoints $MATE_PREFIX/current at
-#                     it — the same versioned layout mate.EnsureInstalled uses
+#                     it — the same versioned layout the start job uses
 #                     (default: /home/zerops/.zcp/mate →
 #                     $MATE_PREFIX/current/node_modules/.bin/mate)
 #   MATE_UNIT           systemd unit `zcp init mate` creates (default: zerops@mate)
@@ -190,9 +190,8 @@ NODE
     && npm install --no-audit --no-fund --loglevel=error ./zerops-mate-dev.tgz"
 
   # Activate: repoint $MATE_PREFIX/current at versions/dev, the same relative
-  # symlink mate.EnsureInstalled's own activation produces. `zcp mate update` (or
-  # the next `zcp init`) sees this dev build through the normal path and, with
-  # no --force, keeps it if its base meets MinimumMateVersion.
+  # symlink the start job's own activation produces. The start job and the keep
+  # job keep a dev build in current as long as its base meets MinimumMateVersion.
   remote "cd '$MATE_PREFIX' && ln -sfn versions/dev current"
 
   # Both the CLI bundle and npm package must report the validated dev version.

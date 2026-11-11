@@ -9,8 +9,8 @@
 //
 // Runs ON the e2e container (make e2e-deploy), which must have Mate enabled
 // (a registered zerops@mate unit). The unit's ExecStart is the container's own
-// `zcp service start mate`, so the argv and launch environment are that zcp
-// build's; this tree's install path runs in the test process. It leaves the
+// `zcp service start mate`, so the argv, launch environment and start job are
+// that zcp build's; this tree's download path runs in the test process. It leaves the
 // release under test installed and serving, or, when red, installed and not
 // serving.
 //
@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +60,7 @@ func TestMateInstall_Release_Serves(t *testing.T) {
 	}
 
 	// A stopped unit cannot restart into a half-removed install, and its own
-	// pre-start install cannot race this one.
+	// start job cannot race this one.
 	if out, err := exec.Command("sudo", "systemctl", "stop", mateUnit).CombinedOutput(); err != nil {
 		t.Fatalf("stop step: %v: %s", err, out)
 	}
@@ -70,35 +69,36 @@ func TestMateInstall_Release_Serves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lock step: %v", err)
 	}
-	// A last-good link naming the release's own directory makes the install
-	// reuse it without a download.
-	if target, err := os.Readlink(mate.LastGoodLink()); err == nil && filepath.Base(target) == release.Version {
-		removePath(t, mate.LastGoodLink())
-	}
-	removePath(t, mate.VersionDir("dev"))
+	// Nothing installed, nothing came up, nothing failed: the unit's start job
+	// starts the release the release list (refreshed above) names.
+	removePath(t, mate.LastGoodLink())
+	removePath(t, mate.FailedVersionPath())
 	removePath(t, mate.CurrentLink())
-	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: true, Refresh: true})
+	removePath(t, mate.VersionDir("dev"))
+	removePath(t, mate.VersionDir(release.Version))
+	err = mate.StageRelease(release)
 	unlock()
 	if err != nil {
 		t.Fatalf("install step: %v", err)
 	}
-	if result.Action != mate.ActionInstalled || result.To != release.Version {
-		t.Fatalf("install step: %+v, want %s installed", result, release.Version)
-	}
-	if installed, err := mate.InstalledVersion(); err != nil || installed != release.Version {
-		t.Fatalf("install step: current names %q (%v), want %s", installed, err, release.Version)
-	}
 
-	readiness := mate.ObserveRestart(context.Background())
 	if out, err := exec.Command("sudo", "systemctl", "start", "--no-block", mateUnit).CombinedOutput(); err != nil {
 		t.Fatalf("start step: %v: %s", err, out)
 	}
-	if err := readiness.WaitReady(release.Version, "", mate.UpdateProgressWindow); err != nil {
-		t.Fatalf("health step (%s progress window): %v", mate.UpdateProgressWindow, err)
+	// The start job names last-good once the release answers on the local
+	// port with its version.
+	deadline := time.Now().Add(2 * mate.BootWindow)
+	for {
+		if v, _ := mate.LastGoodVersion(); v == release.Version {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("health step: last-good does not name %s after %s", release.Version, 2*mate.BootWindow)
+		}
+		time.Sleep(time.Second)
 	}
-	// Boot advances last-good once the installed release serves; so does this.
-	if err := mate.CommitLastGood(release.Version); err != nil {
-		t.Fatalf("last-good step: %v", err)
+	if running, there := mate.ServerThere(mate.BootWindow); !there || running != release.Version {
+		t.Fatalf("health step: the local port answers %q (there %v), want %s", running, there, release.Version)
 	}
 }
 

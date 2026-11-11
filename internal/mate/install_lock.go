@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// The install lock is held across a bundle install and whatever must not race
-// it. Two processes install a Mate's bundle: `zcp service start mate`, the
-// unit's own start, which runs at boot on its own, and `zcp init`, which runs
-// alongside it. Each takes this lock around EnsureInstalled, so whichever runs
-// first installs the release and the other finds nothing to do: the server
-// starts once, on the new release, and `zcp init` has nothing to restart.
+// The install lock is held by the one process that may change which Mate
+// runs: the unit's start job (`zcp service start mate`) from its download until
+// it judged the launched version, or a keep run (`zcp mate fuse`) from its
+// look at the server until it asks for a restart. Both take it without
+// waiting: a keep run that finds it held does nothing; a start that finds it
+// held starts current as it is.
 //
 // It is an flock on a file under Prefix(): the kernel releases it when its
 // holder exits, however it exits, so a lock nobody holds — a file left on

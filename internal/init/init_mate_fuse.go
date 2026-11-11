@@ -7,24 +7,30 @@ import (
 	"os/user"
 	"path/filepath"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// The cut-off fuse's timer (docs/spec-mate.md §2.1e): systemd runs `zcp mate
-// fuse` every few minutes with jitter, independent of the Mate's own unit, so it
-// runs while that unit is down, crash-looping or fenced. Enabled, so systemd
-// starts it at boot even when `zcp init` fails before its Mate step.
+// The keep job's units (docs/spec-mate.md §2.1d): systemd runs `zcp mate fuse`
+// every few minutes with jitter, independent of the Mate's own unit, so it runs
+// while that unit is down or crash-looping. The service is a template whose
+// instance is the way it asks the Mate: `automatic` (the timer's, and the
+// server's own automatic update) or `attended` (a person's or an operator's
+// `zcp mate update`). The timer is enabled, so systemd starts it at boot even
+// when `zcp init` fails before its Mate step. The names stay those of the
+// cut-off fuse the keep job replaced: a renamed timer would leave the old one
+// enabled on every running container.
 const (
-	mateFuseName = "zcp-mate-fuse"
+	mateFuseName = mate.KeepUnitName
 	mateFuseDir  = "/etc/systemd/system"
 )
 
-// ensureMateFuse writes the fuse's service and timer, reloads systemd when either
-// changed, and enables and starts the timer. A failure is a named line, never a
-// stop: the Mate runs without its fuse.
+// ensureMateFuse writes the keep job's service and timer, reloads systemd when
+// either changed, and enables and starts the timer. A failure is a named line,
+// never a stop: the Mate runs without its keep job.
 func ensureMateFuse() {
 	if err := installMateFuse(); err != nil {
-		fmt.Fprintf(os.Stderr, "    ! Mate cut-off fuse not installed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "    ! Mate keep job not installed: %v\n", err)
 	}
 }
 
@@ -38,11 +44,11 @@ func installMateFuse() error {
 		return fmt.Errorf("find user: %w", err)
 	}
 	units := map[string]string{
-		mateFuseName + ".service": "[Unit]\nDescription=zcp: update a Mate cut off from HQ for an hour\n\n" +
+		mateFuseName + "@.service": "[Unit]\nDescription=zcp: keep the Mate on the newest version that works (%i)\n\n" +
 			"[Service]\nType=oneshot\nUser=" + me.Uid + "\nEnvironment=HOME=" + runtime.HomeDir() + "\n" +
-			"ExecStart=" + bin + " mate fuse\nTimeoutStartSec=20min\n",
-		mateFuseName + ".timer": "[Unit]\nDescription=zcp: Mate cut-off fuse\n\n" +
-			"[Timer]\nOnBootSec=10min\nOnUnitInactiveSec=5min\nRandomizedDelaySec=2min\n\n" +
+			"ExecStart=" + bin + " mate fuse --%i\nTimeoutStartSec=20min\n",
+		mateFuseName + ".timer": "[Unit]\nDescription=zcp: Mate keep job\n\n" +
+			"[Timer]\nOnBootSec=10min\nOnUnitInactiveSec=5min\nRandomizedDelaySec=2min\nUnit=" + mateFuseName + "@automatic.service\n\n" +
 			"[Install]\nWantedBy=timers.target\n",
 	}
 	changed := false
@@ -88,7 +94,7 @@ func removeMateFuse() error {
 	if err := commandRunner("sudo", "systemctl", "disable", "--now", mateFuseName+".timer"); err != nil {
 		fmt.Fprintf(os.Stderr, "    ! systemctl disable %s.timer failed (continuing): %v\n", mateFuseName, err)
 	}
-	if err := commandRunner("sudo", "rm", "-f", timer, filepath.Join(mateFuseDir, mateFuseName+".service")); err != nil {
+	if err := commandRunner("sudo", "rm", "-f", timer, filepath.Join(mateFuseDir, mateFuseName+"@.service")); err != nil {
 		return fmt.Errorf("remove %s units: %w", mateFuseName, err)
 	}
 	if err := commandRunner("sudo", "systemctl", "daemon-reload"); err != nil {

@@ -16,44 +16,15 @@ import (
 	"github.com/zeropsio/zcp/internal/update"
 )
 
-// restartTimeout bounds the unit restart. `systemctl restart` blocks until
-// the unit reports started, and mate's own startup is a node process — generous
-// enough not to fail a healthy start, short enough that a wedged unit does
-// not hang the command indefinitely.
-const restartTimeout = 60 * time.Second
-
 // statusManifestTimeout bounds `zcp mate status`'s manifest fetch — a small
 // JSON file, same budget as the manifest resolver's own internal timeout.
 const statusManifestTimeout = 5 * time.Second
 
-// mateUnitFilePath is where `zsc unit create` lands the mate unit — same check
-// internal/init uses to tell "already registered" from "first boot".
-// Package-level so a test can point it at a temp path instead of /usr/lib.
-var mateUnitFilePath = mate.UnitFilePath
-
-// mateRestartUnit restarts the supervised mate unit so a freshly activated
-// version is actually picked up without a container restart. Package-level
-// so tests can stub the shell-out.
-var mateRestartUnit = defaultMateRestartUnit
-
-// mateUpdateLockWait bounds `zcp mate update`'s wait on the install lock:
-// longer than an install's own bounds, so a live install is waited out.
-const mateUpdateLockWait = 4 * time.Minute
-
-func defaultMateRestartUnit(unit string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "sudo", "systemctl", "restart", unit)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runMateCmd implements `zcp mate status [--json] [--refresh] [--local]` and
-// `zcp mate update [--json] [--force] [--automatic]`, and `zcp mate fuse`, which
-// only its systemd timer runs (mate_fuse.go). args is everything after "mate".
+// runMateCmd implements `zcp mate status [--json] [--refresh] [--local]`,
+// `zcp mate update [--json] [--automatic]`, and `zcp mate fuse`, the keep job
+// its systemd units run (mate_fuse.go). args is everything after "mate".
 func runMateCmd(args []string) int {
-	const usage = "usage: zcp mate <status|update> [--json] [--force] [--refresh]"
+	const usage = "usage: zcp mate <status|update> [--json] [--refresh] [--automatic]"
 	if len(args) == 0 {
 		log.Print(usage)
 		return 1
@@ -68,7 +39,7 @@ func runMateCmd(args []string) int {
 	case "update":
 		return runMateUpdate(args[1:])
 	case "fuse":
-		return runMateFuse()
+		return runMateFuse(args[1:])
 	default:
 		log.Print(usage)
 		return 1
@@ -101,18 +72,14 @@ type mateStatusResult struct {
 	Why             string             `json:"why,omitempty"`
 }
 
-// updaterIdle is the updater phase status reports while no attempt is recorded.
-const updaterIdle = "idle"
-
-// mateUpdaterStatus is the status's "updater" key (§2.1d). RollbackCompatible
-// is always true: every release rolls back with the state it found. It stays
-// while the Mate's own reader requires it (z3 contracts environment.ts).
+// mateUpdaterStatus is the status's "updater" key (§2.1d), in the shape the
+// Mate server reads: protocol 1, phase "idle" (zcp keeps no update in
+// progress), the version current names, and a failed version newer than it.
 type mateUpdaterStatus struct {
-	Protocol           int    `json:"protocol"`
-	RollbackCompatible bool   `json:"rollbackCompatible"`
-	Phase              string `json:"phase"`
-	RunningVersion     string `json:"runningVersion"`
-	FailedVersion      string `json:"failedVersion,omitempty"`
+	Protocol       int    `json:"protocol"`
+	Phase          string `json:"phase"`
+	RunningVersion string `json:"runningVersion"`
+	FailedVersion  string `json:"failedVersion,omitempty"`
 }
 
 // runMateStatus answers what zcp knows about the installed and latest mate
@@ -123,7 +90,6 @@ func runMateStatus(args []string) int { return runMateStatusFor(args, server.Ver
 
 // runMateStatusFor is runMateStatus for a zcp of version zcpVersion.
 // --refresh bypasses both release caches; --local uses cached releases.
-// In-container status also observes abandoned update work via loopback.
 func runMateStatusFor(args []string, zcpVersion string) int {
 	flags, code, done := commandFlags("usage: zcp mate status [--json] [--refresh] [--local]", args, "--json", "--refresh", "--local")
 	if done {
@@ -133,18 +99,23 @@ func runMateStatusFor(args []string, zcpVersion string) int {
 	return 0
 }
 
-// readMateStatus is the one reader behind `zcp mate status` and the cut-off
-// fuse (mate_fuse.go): the installed and latest Mate, the updater, and this
-// zcp of version zcpVersion against its latest release.
+// readMateStatus is the one reader behind `zcp mate status`: the installed
+// and latest Mate, the version to run, and this zcp of version zcpVersion
+// against its latest release.
 func readMateStatus(zcpVersion string, refresh, local bool) mateStatusResult {
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
 		Minimum:   mate.MinimumMateVersion,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if installed, err := mate.InstalledVersion(); err == nil {
-		result.Installed = installed
-		result.BelowFloor = mate.BelowFloor(installed)
+	versions := mate.ReadVersions()
+	result.Installed = versions.Current
+	if result.Installed != "" {
+		result.BelowFloor = mate.BelowFloor(result.Installed)
+		result.Updater = &mateUpdaterStatus{Protocol: 1, Phase: "idle", RunningVersion: result.Installed}
+		if mate.VersionOlder(result.Installed, versions.Failed) {
+			result.Updater.FailedVersion = versions.Failed
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
@@ -153,34 +124,16 @@ func readMateStatus(zcpVersion string, refresh, local bool) mateStatusResult {
 	var desired mate.Manifest
 	var err error
 	if local {
-		desired, _ = mate.CachedRelease()
+		desired, _ = mate.ReleaseList()
 	} else {
 		desired, err = mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
-	}
-	var state mate.UpdateState
-	var stateErr error
-	if runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
-		state, stateErr = mate.ObserveUpdateState()
-	} else {
-		state, stateErr = mate.ReadOptionalUpdateState()
-	}
-	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
-	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: true, Phase: updaterIdle, RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
-	if state.Phase != "" {
-		result.Updater.Phase = state.Phase
-		result.Updater.RunningVersion = state.RunningVersion
-	}
-	if stateErr != nil {
-		result.Error = stateErr.Error()
-		result.Updater.Phase = mate.UpdateFailed
-		result.Updater.RunningVersion = ""
 	}
 	if err != nil {
 		result.Error = err.Error()
 	} else {
 		result.Latest = desired.Version
 		if result.Installed != "" {
-			result.UpdateAvailable = mate.VersionOlder(result.Installed, desired.Version)
+			result.UpdateAvailable = mate.VersionOlder(result.Installed, mate.VersionToRun(versions, desired.Version))
 		}
 	}
 
@@ -224,28 +177,24 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 type mateUpdateResult struct {
 	Action    string `json:"action"`
 	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
 	Restarted bool   `json:"restarted"`
 	Error     string `json:"error,omitempty"`
 	Started   bool   `json:"started,omitempty"`
 }
 
-// runMateUpdate refreshes the release manifest, runs the same EnsureInstalled
-// pass the init step runs, and — only when the pass actually activated a
-// different bundle AND the supervised unit is registered on this container —
-// restarts it so the update takes effect without waiting for the next
-// container restart. Container-only: it refuses on a local machine and when
-// ZCP_MATE_ENABLED is off, since there is nothing to update either way.
+// runMateUpdate runs the keep job now (mate_fuse.go), outside the Mate server
+// that may be calling it: the server's call returns at once while the keep job
+// asks it whether it may restart, which can take the drain's ten minutes.
+// Without --automatic the keep job asks without the organization's policy (a
+// person's or an operator's update); with it, with the policy. A start or
+// another keep run holding the install lock is reported, not waited for.
+// Container-only, with ZCP_MATE_ENABLED on.
 func runMateUpdate(args []string) int {
-	// --worker, --recover and --restart are the independent worker's own (mate.UpdateWorkerArgv).
-	flags, code, done := commandFlags("usage: zcp mate update [--json] [--force] [--automatic]", args, "--json", "--force", "--automatic", "--worker", "--recover", "--restart")
+	flags, code, done := commandFlags("usage: zcp mate update [--json] [--automatic]", args, "--json", "--automatic")
 	if done {
 		return code
 	}
-	if flags["--worker"] {
-		return runMateUpdateWorker(args)
-	}
-	force, asJSON := flags["--force"], flags["--json"]
+	asJSON := flags["--json"]
 
 	rt := runtime.Detect()
 	if !rt.InContainer {
@@ -254,95 +203,37 @@ func runMateUpdate(args []string) int {
 	if !rt.MateEnabled {
 		return failMateUpdate(asJSON, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
 	}
-
-	supported := flags["--automatic"]
-	if !supported {
-		var probeErr error
-		supported, probeErr = mateUpdateProbe()
-		if probeErr != nil {
-			return failMateUpdate(asJSON, probeErr.Error())
-		}
-	}
-	if supported {
-		var workerFlags []string
-		for _, flag := range []string{"--automatic", "--force"} {
-			if flags[flag] {
-				workerFlags = append(workerFlags, flag)
-			}
-		}
-		if err := startMateUpdateWorker(workerFlags...); err != nil {
-			return failMateUpdate(asJSON, err.Error())
-		}
-		installed, _ := mate.InstalledVersion()
-		printMateUpdateResult(mateUpdateResult{Action: "none", From: installed, Started: true}, asJSON)
-		return 0
-	}
-
-	// The install and the restart run under the install lock the unit's own
-	// start takes (mate.LockInstall): the start this restart causes waits,
-	// then finds nothing to install. A held lock postpones another update.
-	release, lockErr := mate.LockInstall(mateUpdateLockWait)
-	if lockErr != nil {
-		return failMateUpdate(asJSON, lockErr.Error())
-	}
-	defer release()
-	// The unit runs a server: an unfinished switch is its owner's, or the next
-	// start's to repair, never this install's.
-	if pending, _, err := mate.PendingSwitch(); err != nil {
-		return failMateUpdate(asJSON, err.Error())
-	} else if pending {
-		return failMateUpdate(asJSON, "an unfinished Mate switch is pending; update postponed")
-	}
-
-	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: force, Refresh: true})
+	unlock, err := mate.LockInstall(0)
 	if err != nil {
-		return failMateUpdate(asJSON, err.Error())
+		return failMateUpdate(asJSON, "the Mate is starting or another update is asking it; try again shortly")
 	}
+	unlock()
 
-	out := mateUpdateResult{Action: string(result.Action), From: result.From, To: result.To, Error: result.Warning}
-	exitCode := 0
-
-	if unit := "zerops@" + mate.UnitName + ".service"; bundleActivated(result.Action) {
-		if _, statErr := os.Stat(mateUnitFilePath); statErr == nil {
-			// A unit is registered on this container — restart it so the
-			// activation just staged takes effect without waiting for the
-			// next container restart. No unit registered means nothing to
-			// restart: a following `zcp init` (or the next boot) creates
-			// one against whatever EnsureInstalled just activated.
-			if !asJSON {
-				fmt.Fprintf(os.Stderr, "restarting %s...\n", unit)
-			}
-			if err := mateRestartUnit(unit); err != nil {
-				out.Error = fmt.Sprintf("systemctl restart %s: %v", unit, err)
-				exitCode = 1
-			} else {
-				out.Restarted = true
-			}
-		}
+	way := "attended"
+	if flags["--automatic"] {
+		way = "automatic"
 	}
-
-	printMateUpdateResult(out, asJSON)
-	return exitCode
-}
-
-// bundleActivated reports whether EnsureInstalled actually replaced the
-// bytes the server runs — the one case `zcp mate update` restarts the unit
-// for.
-func bundleActivated(action mate.Action) bool {
-	return action == mate.ActionInstalled || action == mate.ActionUpdated
+	unit := mate.KeepUnitName + "@" + way + ".service"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sudo", "systemctl", "start", "--no-block", unit)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return failMateUpdate(asJSON, fmt.Sprintf("start %s: %v", unit, err))
+	}
+	installed, _ := mate.InstalledVersion()
+	printMateUpdateResult(mateUpdateResult{Action: "none", From: installed, Started: true}, asJSON)
+	return 0
 }
 
 func failMateUpdate(asJSON bool, reason string) int {
-	printMateUpdateResult(mateUpdateResult{Action: string(mate.ActionNone), Error: reason}, asJSON)
+	printMateUpdateResult(mateUpdateResult{Action: "none", Error: reason}, asJSON)
 	return 1
 }
 
-// printMateUpdateResult prints the final result exactly once, in either
-// form: --json emits the mateUpdateResult as one JSON line to stdout,
-// otherwise a human line naming what EnsureInstalled did (or the error) goes
-// to stderr, mirroring the line the init step logs
-// (internal/init/init_mate.go's logMateEnsureResult) — the two are the same
-// seam, run from two different callers.
+// printMateUpdateResult prints the result exactly once: --json emits it as one
+// JSON line to stdout, otherwise one human line goes to stderr.
 func printMateUpdateResult(result mateUpdateResult, asJSON bool) {
 	if asJSON {
 		data, err := json.Marshal(result)
@@ -357,16 +248,5 @@ func printMateUpdateResult(result mateUpdateResult, asJSON bool) {
 		log.Printf("mate update: %s", result.Error)
 		return
 	}
-	if result.Started {
-		fmt.Fprintln(os.Stderr, "mate: update worker started; outcome pending (zcp mate status)")
-		return
-	}
-	switch mate.Action(result.Action) {
-	case mate.ActionNone:
-		fmt.Fprintf(os.Stderr, "mate: already at %s, nothing to do\n", result.To)
-	case mate.ActionInstalled:
-		fmt.Fprintf(os.Stderr, "mate: installed %s\n", result.To)
-	case mate.ActionUpdated:
-		fmt.Fprintf(os.Stderr, "mate: updated %s -> %s\n", result.From, result.To)
-	}
+	fmt.Fprintln(os.Stderr, "mate: keep job started; it restarts the Mate once the Mate agrees (zcp mate status)")
 }

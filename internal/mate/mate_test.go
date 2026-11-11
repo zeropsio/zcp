@@ -104,7 +104,6 @@ func TestLaunchEnvLines(t *testing.T) {
 	got := mate.LaunchEnvLines()
 	want := []string{
 		"T3CODE_BASE_PATH=/mate",
-		"ZCP_MATE_UPDATE_STATE_FILE=/home/zerops/.zcp/mate/update.json",
 		"ZCP_MATE_BOOT_FILE=/home/zerops/.zcp/mate/boot.json",
 		"ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json",
 		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=/home/zerops/.zcp/hq/git-credential",

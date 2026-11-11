@@ -2,12 +2,13 @@ package service_test
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/service"
@@ -207,7 +208,7 @@ func TestList_ReturnsAllServices(t *testing.T) {
 
 // installFakeMateBundle lays down a bundle that looks exactly like an
 // `npm install --prefix ~/.zcp/mate/versions/<v> zerops-mate@<version>` result —
-// activated via mate.CurrentLink() the way mate.EnsureInstalled leaves it — with a
+// activated via mate.CurrentLink() the way the start job leaves it — with a
 // `mate` that leaves a help-ran marker in HOME if anything runs it. Returns HOME.
 func installFakeMateBundle(t *testing.T) string {
 	t.Helper()
@@ -233,11 +234,14 @@ func installFakeMateBundle(t *testing.T) string {
 	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
 		t.Fatalf("symlink current: %v", err)
 	}
-	// The release is what is installed: no network, nothing to change.
-	service.SetMateEnsureFunc(func(mate.EnsureOptions) (mate.Result, error) {
-		return mate.Result{Action: mate.ActionNone, From: version, To: version}, nil
-	})
-	t.Cleanup(service.ResetMateEnsureFunc)
+	// The release list zcp holds, fresh, names what is installed: the start job
+	// reaches no network and has nothing to change.
+	cache := `{"fetchedAt":"` + time.Now().UTC().Format(time.RFC3339) + `","manifest":{"version":"` + version +
+		`","asset":"zerops-mate.tgz","url":"https://example.invalid/zerops-mate.tgz","sha256":"` + strings.Repeat("0", 64) +
+		`","size":1,"contract":` + strconv.Itoa(mate.SupportedContract) + `,"publishedAt":"2026-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(home, ".zcp", "mate", "manifest.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write release list: %v", err)
+	}
 	return home
 }
 
@@ -308,7 +312,6 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 		t.Fatalf("Start(mate): %v", err)
 	}
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
-		"ZCP_MATE_UPDATE_STATE_FILE=" + mate.UpdateStatePath(),
 		"ZCP_MATE_BOOT_FILE=" + mate.BootFilePath(),
 		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
 		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential"),
@@ -564,109 +567,5 @@ func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
 	}
 	if !ran {
 		t.Error("mate must launch when the store cannot be read")
-	}
-}
-
-// TestStart_Mate_InstallsBeforeItStarts: a Mate's unit starts at boot before
-// `zcp init` updates its bundle, so it served the old release and was
-// restarted onto the new one — two starts, ~10 s down each. It now brings the
-// bundle to the release under the install lock `zcp init` shares, then starts
-// what is installed: whichever of the two runs first installs and the other
-// finds nothing to do. Nothing it meets ever keeps the server down: a failed
-// install or a lock held past the wait starts what is installed.
-func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
-	t.Setenv("ZCP_MATE_ENABLED", "1")
-	tests := []struct {
-		name       string
-		ensureErr  error
-		lockedAway bool
-		wantEnsure bool
-	}{
-		{name: "the release is installed under the lock, then started", wantEnsure: true},
-		{name: "an install that fails still starts what is installed", ensureErr: errors.New("registry down"), wantEnsure: true},
-		{name: "a lock held past the wait starts what is installed", lockedAway: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			installFakeMateBundle(t)
-			if tt.lockedAway {
-				service.SetMateLockWait(0)
-				t.Cleanup(service.ResetMateLockWait)
-				release, err := mate.LockInstall(0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(release)
-			}
-			var order []string
-			service.SetMateEnsureFunc(func(opts mate.EnsureOptions) (mate.Result, error) {
-				if _, err := mate.LockInstall(0); !errors.Is(err, mate.ErrInstallLockBusy) {
-					t.Errorf("the install ran without the lock held: %v", err)
-				}
-				if !opts.Refresh {
-					t.Error("a start reads the release manifest afresh, as a boot does")
-				}
-				order = append(order, "ensure")
-				return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: "0.1.0"}, tt.ensureErr
-			})
-			service.SetRunFunc(func(string, []string, []string) error {
-				if release, err := mate.LockInstall(0); err == nil {
-					release()
-				} else if !tt.lockedAway {
-					t.Error("the server started with the install lock still held")
-				}
-				order = append(order, "run")
-				return nil
-			})
-			t.Cleanup(service.ResetRunFunc)
-
-			if err := service.Start("mate"); err != nil {
-				t.Fatalf("Start(mate): %v", err)
-			}
-			want := []string{"run"}
-			if tt.wantEnsure {
-				want = []string{"ensure", "run"}
-			}
-			if !slices.Equal(order, want) {
-				t.Errorf("order = %v, want %v", order, want)
-			}
-		})
-	}
-}
-
-// TestStart_Mate_InstalledBelowFloor_RefusesToRun: whatever the install step
-// reported (here an unreachable manifest keeping the installed bundle), a
-// bundle below MinimumMateVersion is not started — the server is the one that
-// links to HQ, and this zcp does not drive a release that old.
-func TestStart_Mate_InstalledBelowFloor_RefusesToRun(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and the ensure seam.
-	t.Setenv("ZCP_MATE_ENABLED", "1")
-	home := installFakeMateBundle(t)
-	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", mate.MinimumMateVersion, "node_modules", mate.PackageName)
-	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"0.16.40"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	service.SetMateEnsureFunc(func(mate.EnsureOptions) (mate.Result, error) {
-		return mate.Result{Action: mate.ActionNone, From: "0.16.40", To: "0.16.40", Warning: "mate release manifest unreachable"}, nil
-	})
-	ran := false
-	service.SetRunFunc(func(string, []string, []string) error {
-		ran = true
-		return nil
-	})
-	t.Cleanup(service.ResetRunFunc)
-
-	err := service.Start("mate")
-
-	var below *mate.BelowFloorError
-	if !errors.As(err, &below) || below.Installed != "0.16.40" {
-		t.Fatalf("Start(mate) = %v, want a below-floor refusal naming 0.16.40", err)
-	}
-	if ran {
-		t.Error("the server must not start from a bundle below the floor")
 	}
 }

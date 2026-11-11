@@ -105,9 +105,10 @@ type manifestCacheEntry struct {
 // ManifestOptions steers DesiredRelease's one behavioural choice: whether
 // the on-disk cache may answer instead of a network fetch.
 type ManifestOptions struct {
-	// Refresh bypasses the cache and always fetches fresh. `zcp mate update`
-	// always sets it; `zcp init` and `zcp mate status` do not, so a warm
-	// restart or a routine status check reach the network at most hourly.
+	// Refresh bypasses the cache and always fetches fresh: the keep job sets it
+	// for a server that is not there, `zcp mate status --refresh` on request.
+	// The start job and a routine status check reach the network at most
+	// hourly.
 	Refresh bool
 }
 
@@ -161,8 +162,7 @@ func validateManifest(m Manifest) error {
 	return nil
 }
 
-// DesiredRelease is the release EnsureInstalled converges this container
-// toward: the fork's current stable release, read from ManifestURL()
+// DesiredRelease is the release list's one release: the fork's current stable release, read from ManifestURL()
 // (spec-mate.md §2.1c) rather than a version compiled into zcp. There is no
 // registry-package fallback — an unreachable or invalid manifest is
 // returned as an error and the caller decides how to degrade (MD-10).
@@ -176,9 +176,7 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 	m, err := fetchManifest(ctx, client, ManifestURL(), "")
 	if err != nil {
 		// A refresh that could not reach the manifest keeps what the last one
-		// read, while that is fresh: a boot asks for a refresh so a release
-		// published inside the hour is not missed (init_mate.go), and a
-		// restart with the network down must not lose the release it had.
+		// read, while that is fresh.
 		if opts.Refresh {
 			if cached, ok := readManifestCache(); ok {
 				return cached, nil
@@ -245,21 +243,28 @@ func fetchManifest(ctx context.Context, client *http.Client, url, githubToken st
 }
 
 // readManifestCache is the cached manifest while it is fresh and still valid
-// for this build: an earlier zcp validated it against its own floor and
-// contract, which may not be this one's.
+// for this build.
 func readManifestCache() (Manifest, bool) {
+	m, fetchedAt, ok := readManifestCacheEntry()
+	if !ok || time.Since(fetchedAt) > manifestCacheTTL {
+		return Manifest{}, false
+	}
+	return m, true
+}
+
+// readManifestCacheEntry is the cached manifest whatever its age, while it is
+// still valid for this build: an earlier zcp validated it against its own floor
+// and contract, which may not be this one's.
+func readManifestCacheEntry() (Manifest, time.Time, bool) {
 	data, err := os.ReadFile(manifestCachePath())
 	if err != nil {
-		return Manifest{}, false
+		return Manifest{}, time.Time{}, false
 	}
 	var entry manifestCacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return Manifest{}, false
+	if err := json.Unmarshal(data, &entry); err != nil || validateManifest(entry.Manifest) != nil {
+		return Manifest{}, time.Time{}, false
 	}
-	if time.Since(entry.FetchedAt) > manifestCacheTTL || validateManifest(entry.Manifest) != nil {
-		return Manifest{}, false
-	}
-	return entry.Manifest, true
+	return entry.Manifest, entry.FetchedAt, true
 }
 
 func writeManifestCache(m Manifest) {
@@ -321,5 +326,9 @@ func parseSemver(v string) (string, error) {
 	return prefixed, nil
 }
 
-// CachedRelease reads only the existing resolver cache, without network IO.
-func CachedRelease() (Manifest, bool) { return readManifestCache() }
+// ReleaseList is the release list zcp holds, without network IO: the cached
+// manifest whatever its age, while it is valid for this build.
+func ReleaseList() (Manifest, bool) {
+	m, _, ok := readManifestCacheEntry()
+	return m, ok
+}

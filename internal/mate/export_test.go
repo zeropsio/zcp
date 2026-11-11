@@ -3,47 +3,9 @@
 // builds.
 package mate
 
-import (
-	"context"
-	"net/http"
-)
-
-// EnsureInstalled seam overrides — tests stub these so the download, npm
-// install and post-stage probe steps never touch a real network, npm binary,
-// or mate install.
-
-func SetDownloadVerified(fn func(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error)) {
-	downloadVerified = fn
-}
-func ResetDownloadVerified() { downloadVerified = defaultDownloadVerified }
-
-func SetNpmInstallTarball(fn func(ctx context.Context, prefix, tarballPath string) error) {
-	npmInstallTarball = fn
-}
-func ResetNpmInstallTarball() { npmInstallTarball = defaultNpmInstallTarball }
-
-func SetSmokeTestInstall(fn func(ctx context.Context, versionDir string) error) {
-	smokeTestInstall = fn
-}
-func ResetSmokeTestInstall() { smokeTestInstall = defaultSmokeTestInstall }
-
-// DefaultSmokeTestInstall exposes the real probe so a test can run it against a
-// staged directory instead of only stubbing it away.
-var DefaultSmokeTestInstall = defaultSmokeTestInstall
-
-// SetResolveDesiredRelease/ResetResolveDesiredRelease let EnsureInstalled's
-// tests substitute a fixed desired release instead of reaching the real
-// release-manifest network fetch.
-func SetResolveDesiredRelease(fn func(opts EnsureOptions) (Manifest, error)) {
-	resolveDesiredRelease = fn
-}
-func ResetResolveDesiredRelease() { resolveDesiredRelease = defaultResolveDesiredRelease }
+// DefaultSmokeTestInstall exposes the probe so a test can run it against a
+// staged directory.
+var DefaultSmokeTestInstall = smokeTestInstall
 
 // CarriesParts exposes carriesParts to the external test package.
 var CarriesParts = carriesParts
-
-// ObserveRestartWith is ObserveRestart with the unit-properties query served
-// in process, so a long readiness wait does not start a process per tick.
-func ObserveRestartWith(ctx context.Context, show func(ctx context.Context, name string, args ...string) ([]byte, error)) RestartReadiness {
-	return observeRestart(ctx, show)
-}

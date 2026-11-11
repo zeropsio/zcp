@@ -1,6 +1,6 @@
 // Tests for: `zcp mate status` and `zcp mate update` (cmd/zcp/mate.go) —
-// the two CLI entry points that share mate.DesiredRelease/EnsureInstalled
-// with the init step (spec-mate.md §2.1a, §2.9, invariant MD-17).
+// the CLI entry points over mate.DesiredRelease and the versions the
+// container holds (spec-mate.md §2.1a, §2.9, invariant MD-17).
 //
 // NOT parallel — every test redirects HOME, PATH, ZCP_MATE_MANIFEST_URL and
 // the container-detection env vars, all process-global via t.Setenv.
@@ -9,7 +9,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,7 +109,7 @@ func manifestServerForVersion(t *testing.T, version string) {
 }
 
 // seedInstalledBundle lays down what a completed `npm install --prefix` at
-// version leaves behind, and activates it — matching what EnsureInstalled
+// version leaves behind, and activates it — matching what the start job
 // itself produces, so a test can start from "already installed" without
 // running a real install.
 func seedInstalledBundle(t *testing.T, home, version string) {
@@ -131,7 +130,7 @@ func seedInstalledBundle(t *testing.T, home, version string) {
 }
 
 // writeFakeInstallTools puts a fake npm and node on PATH so a real
-// EnsureInstalled pass (download real, over loopback; npm install and the
+// install (download real, over loopback; npm install and the
 // native-addon smoke probe fake) can stage and activate manifestVersion without a
 // real npm registry or Node runtime. npm writes exactly what
 // mate.InstalledVersion()/BinPath() expect to find; node exits 0
@@ -329,146 +328,6 @@ func TestRunMateUpdate_RefusesWhenMateDisabled(t *testing.T) {
 	}
 }
 
-func TestRunMateUpdate_AlreadyUpToDate_NoRestart(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	containerEnv(t)
-	seedInstalledBundle(t, home, manifestVersion)
-	manifestAndTarballServer(t)
-
-	unitPath := filepath.Join(t.TempDir(), "zerops@mate.service")
-	if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {
-		t.Fatalf("seed unit file: %v", err)
-	}
-	origUnitPath := mateUnitFilePath
-	mateUnitFilePath = unitPath
-	t.Cleanup(func() { mateUnitFilePath = origUnitPath })
-
-	restarted := false
-	origRunner := mateRestartUnit
-	mateRestartUnit = func(string) error { restarted = true; return nil }
-	t.Cleanup(func() { mateRestartUnit = origRunner })
-
-	if got := runMateCmd([]string{"update"}); got != 0 {
-		t.Fatalf("runMateCmd(update) = %d, want 0", got)
-	}
-	if restarted {
-		t.Error("nothing changed, so no restart must be attempted")
-	}
-}
-
-func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	containerEnv(t)
-	manifestAndTarballServer(t)
-	writeFakeInstallTools(t)
-	// ZCP_MATE_MANIFEST_URL and PATH are both set via t.Setenv above; the
-	// container env vars must survive the PATH overwrite, which they do
-	// since containerEnv used t.Setenv itself (independent keys).
-
-	unitPath := filepath.Join(t.TempDir(), "zerops@mate.service")
-	if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {
-		t.Fatalf("seed unit file: %v", err)
-	}
-	origUnitPath := mateUnitFilePath
-	mateUnitFilePath = unitPath
-	t.Cleanup(func() { mateUnitFilePath = origUnitPath })
-
-	// The install and the restart run under the install lock the unit's own
-	// start takes, so the start this restart causes finds nothing to install.
-	var restartedUnit string
-	heldAtRestart := false
-	origRunner := mateRestartUnit
-	mateRestartUnit = func(unit string) error {
-		restartedUnit = unit
-		release, err := mate.LockInstall(0)
-		if err == nil {
-			release()
-		}
-		heldAtRestart = errors.Is(err, mate.ErrInstallLockBusy)
-		return nil
-	}
-	t.Cleanup(func() { mateRestartUnit = origRunner })
-
-	stdout := captureStdout(t, func() {
-		if got := runMateCmd([]string{"update", "--json"}); got != 0 {
-			t.Fatalf("runMateCmd(update --json) = %d, want 0", got)
-		}
-	})
-
-	if want := "zerops@mate.service"; restartedUnit != want {
-		t.Errorf("restarted unit = %q, want %q", restartedUnit, want)
-	}
-	if !heldAtRestart {
-		t.Error("the restart must be issued with the install lock held")
-	}
-	if release, err := mate.LockInstall(0); err != nil {
-		t.Errorf("the update must release the install lock: %v", err)
-	} else {
-		release()
-	}
-	var got struct {
-		Action    string `json:"action"`
-		To        string `json:"to"`
-		Restarted bool   `json:"restarted"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
-		t.Fatalf("unmarshal update JSON %q: %v", stdout, err)
-	}
-	if got.Action != string(mate.ActionInstalled) || got.To != manifestVersion || !got.Restarted {
-		t.Errorf("update result = %+v, want action=installed to=%s restarted=true", got, manifestVersion)
-	}
-}
-
-func TestRunMateUpdate_NoUnitFile_SkipsRestart(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	containerEnv(t)
-	manifestAndTarballServer(t)
-	writeFakeInstallTools(t)
-
-	origUnitPath := mateUnitFilePath
-	mateUnitFilePath = filepath.Join(t.TempDir(), "no-such-unit.service")
-	t.Cleanup(func() { mateUnitFilePath = origUnitPath })
-
-	restarted := false
-	origRunner := mateRestartUnit
-	mateRestartUnit = func(string) error { restarted = true; return nil }
-	t.Cleanup(func() { mateRestartUnit = origRunner })
-
-	if got := runMateCmd([]string{"update"}); got != 0 {
-		t.Fatalf("runMateCmd(update) = %d, want 0", got)
-	}
-	if restarted {
-		t.Error("no unit file present must mean no restart attempt")
-	}
-}
-
-func TestRunMateUpdate_RestartFailure_ReturnsNonZero(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	containerEnv(t)
-	manifestAndTarballServer(t)
-	writeFakeInstallTools(t)
-
-	unitPath := filepath.Join(t.TempDir(), "zerops@mate.service")
-	if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {
-		t.Fatalf("seed unit file: %v", err)
-	}
-	origUnitPath := mateUnitFilePath
-	mateUnitFilePath = unitPath
-	t.Cleanup(func() { mateUnitFilePath = origUnitPath })
-
-	origRunner := mateRestartUnit
-	mateRestartUnit = func(string) error { return os.ErrPermission }
-	t.Cleanup(func() { mateRestartUnit = origRunner })
-
-	if got := runMateCmd([]string{"update"}); got != 1 {
-		t.Errorf("runMateCmd(update) = %d, want 1 when the restart fails", got)
-	}
-}
-
 // Milo, 2026-10-09: after a manual update the descriptor still described the
 // automatic updater's postponement on a version two releases back.
 func TestRunMateStatus_AfterAManualUpdate_ReportsNoOlderAttempt(t *testing.T) {
@@ -476,7 +335,7 @@ func TestRunMateStatus_AfterAManualUpdate_ReportsNoOlderAttempt(t *testing.T) {
 	t.Setenv("HOME", home)
 	seedInstalledBundle(t, home, manifestVersion)
 	manifestAndTarballServer(t)
-	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", Candidate: "0.13.9", RunningVersion: "0.13.8", FailedVersion: "0.13.1"}); err != nil {
+	if err := os.WriteFile(mate.FailedVersionPath(), []byte("0.13.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout := captureStdout(t, func() {

@@ -90,7 +90,7 @@ func services() map[string]execConfig {
 		},
 		// mate (Zerops Mate) — the agent server nginx publishes under
 		// mate.BasePath on the container's existing 8080 origin. It runs the
-		// bundle `zcp init` installed into the prefix, never `npx`: resolving
+		// bundle its start job installed into the prefix, never `npx`: resolving
 		// the package at every container start cost 58 s on an image-fresh
 		// container, and it is what a hand-delivered dev build replaces.
 		"mate": {
@@ -98,7 +98,7 @@ func services() map[string]execConfig {
 			argsFn:     mate.ServeArgv,
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
-			prepare:    mateLaunchSetupThenInstall,
+			prepare:    mateStartJob,
 			// The unit's default TasksMax is 300; one software-WebGL Chromium
 			// takes 90-150 tasks, so 2-3 agent browsers plus Claude Code exhaust it
 			// (fork EAGAIN, agent SIGABRT mid-turn). 1600 fits 6 browsers (~900
@@ -218,12 +218,26 @@ func mergeEnvLines(store, file []string) []string {
 	return append(merged, file...)
 }
 
-// mateLaunchSetupThenInstall readies a launch: the status file first, then
-// the bundle.
-func mateLaunchSetupThenInstall() (childWatch, error) {
-	launch := mate.BeginLaunch()
+// mateStartJob is the Mate unit's start job (docs/spec-mate.md §2.1a): the
+// status file and the dev services' git first, then the version to run
+// (mate.BeginStart). The returned watch judges whether the launched server
+// came up (mate.Start.Judge); one that did not ends this process with it, so
+// systemd starts the unit again.
+func mateStartJob() (childWatch, error) {
 	mateLaunchSetup()
-	return mateInstallBeforeStart(launch)
+	start, err := mate.BeginStart(func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: "+format+"\n", args...)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start mate: %w", err)
+	}
+	return func(child *os.Process, exited <-chan bool) {
+		if err := start.Judge(child, exited); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: mate %s is up\n", start.Version())
+	}, nil
 }
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
@@ -259,105 +273,6 @@ func keepMateDevGit(env func() func(string) string) {
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
-// mateEnsure brings the installed bundle to the release; package-level so
-// tests stub the network.
-var mateEnsure = mate.EnsureInstalled
-
-// defaultMateLockWait bounds the wait for `zcp init`'s install: longer than
-// an install's own bounds (the manifest fetch, the download and npm install,
-// the smoke test), so a live install is waited out and a hung one is not.
-const defaultMateLockWait = 4 * time.Minute
-
-var mateLockWait = defaultMateLockWait
-
-// mateInstallBeforeStart recovers an interrupted switch or preserves the
-// installed release at or above MinimumMateVersion before launch. Supported
-// installed releases keep drain and organization hold. A missing or
-// below-floor bundle refreshes the release manifest. Whatever the install
-// did, a bundle still below the floor is refused: the start fails with
-// mate.BelowFloorError rather than running it. Last, with the version about
-// to launch settled, the server's state is copied, restored or released
-// (mate.PrepareStateForLaunch); a failed copy or restore launches nothing.
-// The decision holds the install lock when the bounded wait took it; a
-// holder past the wait leaves it to decide without (docs/spec-mate.md §2.1d
-// "The state transaction"). A launch over a copy is claimed before the server
-// starts (mate.ClaimLaunch), and the returned watch settles it once the
-// server is ready or its boot ended (§2.1d "The settle rule"). Each step is
-// a launch receipt, so the wait of whoever restarted the unit sees progress.
-func mateInstallBeforeStart(launch *mate.Launch) (childWatch, error) {
-	release, err := mate.LockInstall(mateLockWait)
-	launch.Advance()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v — starting what is installed\n", err)
-	} else {
-		defer release()
-		ensureMateBeforeStart()
-		launch.Advance()
-	}
-	if err := mate.CheckInstalledFloor(); err != nil {
-		return nil, err
-	}
-	done, err := mate.PrepareStateForLaunch(launch.Advance)
-	if err != nil {
-		return nil, fmt.Errorf("start mate: %w", err)
-	}
-	if done != "" {
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", done)
-	}
-	claim, claimed, err := mate.ClaimLaunch()
-	if err != nil {
-		return nil, fmt.Errorf("start mate: %w", err)
-	}
-	return func(child *os.Process, exited <-chan bool) {
-		launch.Started(child.Pid)
-		if !claimed {
-			return
-		}
-		if err := claim.Settle(child, exited); err != nil {
-			fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
-			return
-		}
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: launch settled\n")
-	}, nil
-}
-
-// ensureMateBeforeStart is the install pass of a start, under the install
-// lock; its failures are logged, never fatal — the floor check after it
-// decides.
-func ensureMateBeforeStart() {
-	// No server runs: an interrupted switch is repaired before any install, and
-	// a live owner's switch launches as it stands.
-	if skip, err := mate.PrepareUpdateBoot(); err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: repair the unfinished switch: %v — starting what is installed\n", err)
-		return
-	} else if skip {
-		return
-	}
-	result, err := mateEnsure(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
-	switch {
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: bring the bundle to the release: %v — starting what is installed\n", err)
-	case result.Warning != "":
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", result.Warning)
-	case result.Action == mate.ActionUpdated:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: updated mate %s -> %s before starting\n", result.From, result.To)
-	case result.Action == mate.ActionInstalled:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed mate %s before starting\n", result.To)
-	}
-}
-
-// SetMateEnsureFunc stubs the install a mate start runs; for tests.
-func SetMateEnsureFunc(fn func(mate.EnsureOptions) (mate.Result, error)) { mateEnsure = fn }
-
-// ResetMateEnsureFunc restores the real install.
-func ResetMateEnsureFunc() { mateEnsure = mate.EnsureInstalled }
-
-// SetMateLockWait bounds a mate start's wait on the install lock; for tests.
-func SetMateLockWait(d time.Duration) { mateLockWait = d }
-
-// ResetMateLockWait restores the default wait.
-func ResetMateLockWait() { mateLockWait = defaultMateLockWait }
-
 var runFunc = runCommand
 
 // SetMateStorePath / ResetMateStorePath point the guard's live-env-store lookup at
