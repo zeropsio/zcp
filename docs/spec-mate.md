@@ -87,25 +87,28 @@ Every fact has one owner and one path to the client:
 Touchpoints between mate and zcp, closed list:
 
 - the envelope carried in tool results (§1);
-- `zcp` argv, a closed list (MA-6): `zcp mate status` / `zcp mate update` (§2.9 MU-2), `zcp studio
+- the Mate's lifecycle (§2.1): zcp starts the server with its configuration (§2.3, §2.8) and stops
+  it; asks it "may I restart you now?" on its loopback updater (§2.1d: yes stops intake and, without a
+  restart, reopens after a bound; not now); and observes its process, its boot file
+  (`ZCP_MATE_BOOT_FILE`) and its version on the local port (§2.1a). The server refuses to start on
+  state a newer version wrote; zcp never reads or touches its state;
+- `zcp` argv the server runs, a closed list (MA-6): `zcp mate status` (what is installed and
+  available, for the screen) / `zcp mate update` (a person's "update now", §2.9 MU-2), `zcp studio
   console serve`, the loopback data console the mate server hosts and brokers (§5.7), `zcp version`,
   `zcp lease release` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35) and
-  `zcp self restart` (§2.9 step 7, MU-4). The mate server runs no other `zcp` argv; the agent
-  sign-in flag it writes through the Zerops API (§8.1);
-- `zcp init` installing and supervising the mate unit, and the contract that goes with it (§2.8);
+  `zcp self restart` (§2.9 step 7, MU-4); the agent sign-in flag it writes through the Zerops API
+  (§8.1);
 - the agent-browser daemon's published stream port, `~/.agent-browser/default.stream`, on
   localhost — read by the mate server, never written by it, unknown to zcp as a mate concern;
 - two conventions mate reads: the `ZCP_AGENT_OAUTH_*` / `ZCP_AGENT_TOKEN_*` flags and `ZCP_API_KEY`
   values, and the presence of `MATE_SETUP`, in the platform env store (§8.1, §3.5, C-7; the marker
   checks variable names only: mate `apps/server/src/zerops/zeropsSetupMarker.ts`), and the
   `/var/www/<host>` sshfs layout (§6.1);
-- the Mate's Git credential file the mate server writes and zcp reads (§3.3, §10.10);
-- `~/.zcp/hq/observe-credential`, written by the Mate and read by zcp for Observe (§2.8; mate
-  `apps/server/src/zerops/ZeropsObserveCredentialFile.ts`, zcp `internal/hq/observe_credential.go`);
-- `~/.zcp/hq/state.json`, written by the Mate and read by zcp: the Mate's state as its link last
-  heard it, and whether the link is up (§2.8; mate `apps/server/src/zerops/ZeropsMateStateFile.ts`,
-  zcp `internal/hq/mate_state.go`); and `~/.zcp/hq/state.lock`, held by `zcp service start mate`
-  while it supervises the server.
+- files the Mate writes and zcp reads: its Git credential file (§3.3, §10.10);
+  `~/.zcp/hq/observe-credential` for Observe (§2.8; mate `ZeropsObserveCredentialFile.ts`, zcp
+  `internal/hq/observe_credential.go`); `~/.zcp/hq/state.json`, its state as its link last heard it
+  and whether the link is up (§2.8; mate `ZeropsMateStateFile.ts`, zcp `internal/hq/mate_state.go`);
+  and `~/.zcp/hq/state.lock`, held by `zcp service start mate` while it supervises the server.
 
 Anything else is a violation and needs this section changed first.
 
@@ -306,165 +309,124 @@ flag off means
 `zcp init` is the reconciler for all of it, and it converges **both** directions: turning the flag
 off and restarting is a supported operation, not a state zcp only knows how to enter.
 
-### 2.1 The init step — a reconcile, and an update lifecycle
+### 2.1 Three jobs — prepare, start, keep
 
-`zcp init` gains a container-only step, **Zerops Mate (mate)**, as the last init step, after Agent adapters. It is
-**registered only when there is something to reconcile** — `MateEnabled`, or a leftover unit file a
-now-off flag has to remove — so a container that never had mate prints not one extra line (§2.0).
+zcp has three small jobs for the Mate, and one owner per decision:
 
-**Enabled** (`reconcileMate` → `enableMate`):
+| Job | Runs | Does |
+|---|---|---|
+| prepare | `zcp init`, once per container boot | writes the server's configuration, creates the unit and the keep job's timer, starts the unit; installs and repairs nothing |
+| start | `zcp service start mate`, the unit's command, at every start of the unit | the only installer and the only writer of `current`, `last-good` and the failed version: starts the version to run and judges whether it came up (§2.1a) |
+| keep | `zcp mate fuse`, the timer every 5 minutes, and `zcp mate update` at once | decides when the Mate restarts, nothing else (§2.1d) |
+
+**Prepare** is init's last step, **Zerops Mate (mate)**, after Agent adapters. It is registered only
+when there is something to reconcile — `MateEnabled`, or a leftover unit file a now-off flag has to
+remove — so a container that never had mate prints not one extra line (§2.0). Enabled
+(`reconcileMate` → `enableMate`):
 
 1. **Refuse without a project.** `runtime.Info.ProjectID` empty ⇒ degrade — a non-empty project id
    is the sole signal the server binds to a Zerops project.
-2. **Bundle** — `mate.EnsureInstalled` (below) in full.
-3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
-4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create --enable=false --start=false mate
-   "zcp service start mate"`, then `sudo systemctl disable zerops@mate.service`. Existing units
-   are also disabled on every enabled init; a failed disable is a named line, not a stop.
-   If a supported bundle is already installed, init writes its environment and registers the unit
-   before attempting the update, so an update failure can still start that bundle.
-   Then, when systemd says the unit's file changed on disk since it loaded it
-   (`systemctl show --property=NeedDaemonReload --value zerops@mate.service` answers `yes` — what it
-   warns "run 'systemctl daemon-reload'" about), `sudo systemctl daemon-reload` before any start or
-   restart, whether or not one follows, so this start and every later one runs the definition on
-   disk; an unchanged unit is never reloaded, and a reload that fails is a named line, not a degrade.
-   `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
-   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
+2. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3. The server reads it
+   at its next start.
+3. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create --enable=false --start=false mate
+   "zcp service start mate"`; every enabled init then runs `sudo systemctl disable
+   zerops@mate.service` (a failed disable is a named line, not a stop) and writes the keep job's units
+   (§2.1d). When systemd says the unit's file changed on disk since it loaded it (`systemctl show
+   --property=NeedDaemonReload --value zerops@mate.service` answers `yes`), `sudo systemctl
+   daemon-reload` before the start; an unchanged unit is never reloaded
+   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`). `eval/scripts/mate-dev-push.sh` reloads by
+   the same rule before its own restart.
+4. **Start.** `sudo systemctl start --no-block zerops@mate.service`, requested even when the step
+   failed, provided a unit is registered: starting an active unit is a no-op, so a running Mate is
+   never restarted by init.
 
-5. **Running Mate.** Under the shared install lock, ask systemd whether the registered
-   unit is active. An active unit is never switched by init's own process: an attended `zcp init`
-   cut short (Ctrl-C, an SSH drop) would leave its switch fenced with an owner gone and nobody
-   to settle it. Init writes the environment, releases the lock, and starts the transient update
-   worker (`mate.UpdateWorkerArgv`, the one `zcp mate update` starts), with `--restart` when the
-   environment changed; the worker, whose `ExecStopPost` recovers whatever it leaves unfinished,
-   is the one owner of every switch of a running Mate (§2.1d). It installs only what an install
-   may (never the remembered failed release, never an older one, never over a dev build), stages
-   and smokes it while keeping `current` unchanged, drains with the updater's protocol-1 drain,
-   and switches through `mate.SwitchUpdate`. A refusal, absent protocol, or drain deadline
-   postpones the change without restarting the running Mate. With `--restart` and no release to
-   install, the installed version is the candidate: the same drain, switch and readiness proof.
-   An inactive unit follows the startup described in §2.1a step 7; a launch of a version
-   `last-good` does not name is settled by its launcher (§2.1d "The settle rule"). An active unit
-   whose record holds an unfinished switch is left to the switch's owner while that owner lives;
-   one whose owner is gone is restarted, never repaired in place: the repair's settled record would
-   lift a running candidate's fence, and a later start would restore over the work it admitted. The
-   restart's start repairs it while no server runs.
+The step is **best-effort** (`step.degraded`): `zcp init` is a `run.init` command, and mate must
+never take a container start down with it. The unit file's presence, not a `zsc unit` upsert (there
+is none), is the idempotency check.
 
-   **A Mate that does not answer is followed, then judged.** A container restart does not
-   boot-start the unit (§2.1a step 7), so its init normally finds it inactive. When the worker
-   finds the unit active or activating — a boot-start link an earlier init created or failed to
-   disable, or an attended `zcp init` — a drain that gets no HTTP answer (`mate.ErrNotAnswering`:
-   nothing listens, or the connection breaks) may meet a server still booting, since the server
-   answers no request before command readiness. The worker follows the running launch's boot under
-   the one boot rule (`mate.WaitRunningBoot`, §2.1d) and drains it once ready. Only no live launch on
-   record, a launch that ended, or a boot without progress for the window is no running Mate: no
-   server holds work, so an attended worker switches without a drain. An automatic worker postpones
-   without the server's policy. A crash-looping or stalled release is
-   replaced, fenced and settled like any switch. A Mate that answers, even with a refusal, or that
-   holds the drain request until its deadline is drained and switched or postponed as above. Only a
-   server reaching command readiness between its last unanswered probe and the restart could lose
-   work admitted in that moment. The verdict reads no restart counter.
+### 2.1a The start job — the version to run
 
-The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
-dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
-command, and mate must never take a container start down with it. When no bundle is available, init
-registers no new unit: an unresolvable ExecStart would crash-loop when started. The unit file's
-presence, not a `zsc unit` upsert (there is none), is the idempotency check.
-
-### 2.1a The update lifecycle — `mate.EnsureInstalled`
-
-Each version is its own complete npm prefix, and a symlink names the live one:
+Each version is its own complete npm prefix, and links name the live one and the last one that came up:
 
 ```
-~/.zcp/mate/versions/0.1.0/node_modules/.bin/mate
 ~/.zcp/mate/versions/0.2.0/node_modules/.bin/mate
-~/.zcp/mate/current -> versions/0.2.0        # relative target
+~/.zcp/mate/versions/0.3.0/node_modules/.bin/mate
+~/.zcp/mate/current   -> versions/0.3.0        # relative target, what the unit starts
+~/.zcp/mate/last-good -> versions/0.2.0        # the newest version that came up under this zcp
+~/.zcp/mate/failed-version                     # text: the newest version that did not come up
+~/.zcp/mate/manifest.json                      # the release list zcp holds (§2.1c)
 BinPath() = ~/.zcp/mate/current/node_modules/.bin/mate
 ```
 
-`InstalledVersion()` reads `current/node_modules/zerops-mate/package.json` — **npm's own record**,
-never a side file zcp would have to keep honest. `DesiredRelease()` answers `{Version, URL,
-SHA256, Contract}` — read from the release manifest (§2.1c), never compiled in.
+`InstalledVersion()` reads `current/node_modules/zerops-mate/package.json` — npm's own record. These
+are the only durable facts: two links, one failed version, the downloaded versions, the release
+list. There are no phases and no "update in progress" record: whatever a crash or a container
+restart interrupts, the next start does what every start does.
 
-One pass, in order:
+**The version to run** (`mate.VersionToRun`) is one function, read by the start job and by the keep
+job: the release the release list names when it is newer than `last-good` and newer than the failed
+version; otherwise `last-good`. It is never older than `last-good`, so a release list that goes
+backwards changes nothing. A dev build in `current` (`0.1.0-dev.<sha>`, what
+`eval/scripts/mate-dev-push.sh` installs) at or above `MinimumMateVersion` is kept as it is.
 
-1. **Compare.** Resolve the release manifest (§2.1c). Installed == desired ⇒ done, with no
-   tarball download or npm call.
-2. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
-   `eval/scripts/mate-dev-push.sh` tags) is never replaced by the manifest's release unless `Force`,
-   unless the release it was cut from is below `MinimumMateVersion`: a build below the floor is
-   replaced like any release, and a supervisor restart (`KeepInstalled`) refreshes the manifest for
-   it instead of keeping it. The protection is now a stated rule rather than an accident of which
-   files happen to exist.
-3. **Stage** into a fresh `versions/<desired>`: one `GET` to the manifest's `url`, streamed to a
-   temporary file while its SHA-256 is computed and compared with the manifest's `sha256`. A
-   mismatch reports both digests and **never invokes npm** — this is an integrity check against a
-   damaged download, not a trust boundary (§2.1c). Only a matching tarball reaches
-   `npm install --prefix versions/<desired> …`. npm still resolves the package's
-   dependencies from its registry, so this is not an offline install. Download and npm share one
-   3-minute deadline.
-4. **Smoke** the staged install: `mate --version`, then the native-addon probe run **from the
-   installed package's directory** (`node_modules/zerops-mate`), where the server resolves its own
-   runtime imports — a bundled dependency (node-pty since 0.8.1) lives in the package's own
-   `node_modules` and is invisible from the prefix root.
-5. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
-   `current`, so an interrupted activation leaves either the old link or the new one, never a
-   half-written one.
-6. **Prune** to the live and last-good version directories; if these name only one version,
-   keep the newest other directory too. Neither live nor last-good is removed.
+**The start job** (`mate.BeginStart`, `Start.Judge`), at every start of the unit, takes the install
+lock without waiting and:
 
-**Any failure in 3–5 returns before the rename**, removing the half-built version directory, so
-`current` still names the version that was working — the guarantee the whole layout exists for.
+1. **Picks.** One bounded attempt to refresh the release list when its copy is older than the cache
+   time (§2.1c), and to download the version to run unless the keep job already has; on any error it
+   starts `current` as it is. The network never stops a start; only a first install without network
+   fails, and systemd retries. A lock the keep job holds starts `current` as it is.
+2. **Installs** (`mate.StageRelease`) into `versions/<v>`: one `GET` to the manifest's `url`, streamed
+   to a temporary file while its SHA-256 is compared with the manifest's `sha256` — a mismatch reports
+   both digests and never invokes npm; this is an integrity check against a damaged download, not a
+   trust boundary (§2.1c). Then `npm install --prefix versions/<v> …` (npm still resolves the
+   package's dependencies from its registry), and the smoke: `mate --version`, then the native-addon
+   probe run from the installed package's directory, where the server resolves its runtime imports.
+   An existing directory of that version that passes the smoke is kept. A failure removes the
+   half-built directory; `current` and `last-good` directories are never replaced.
+3. **Switches** `current` atomically: the symlink is built under a temporary name and renamed onto
+   `current`. A version below `MinimumMateVersion` is never started (`mate.BelowFloorError`; `zcp
+   mate status --json` reports it as `belowFloor` beside `minimum`).
+4. **Launches and judges.** "Up" is the process this start launched answering the loopback updater
+   readiness (§2.1d) with its version; whether it is idle plays no part. Every advance of the server's
+   boot file (`ZCP_MATE_BOOT_FILE`, `{pid, progress, error}`) restarts the boot window
+   (`mate.BootWindow`, 2 minutes), so a boot that keeps advancing is never judged by elapsed time.
+   - Up → `last-good` names the version (never a dev build, nor one below the floor), a failed
+     version it reached is forgotten, and old version directories are pruned to `current` and
+     `last-good` (the newest other one is kept when these name one version).
+   - A version newer than `last-good` that is not up → it is ended, remembered as the failed
+     version, `current` returns to `last-good`, and the job exits non-zero; systemd starts the unit
+     again and the same job starts `last-good`. The switch back never targets a `last-good` below
+     **0.16.178**, the first release that refuses to start on state written by a newer version: below
+     it the newer version stays, and systemd retries it.
+   - `last-good` itself, a dev build or a first install not up → nothing is written or switched; the
+     job exits non-zero and systemd keeps retrying. A newer release in the list is picked by the next
+     start.
+   - A stop the launcher was asked for is no verdict.
 
-7. **Start the unit at the end of init's Mate step**, which runs after all other init steps,
-   including the container adapters, with the installed bundle and env contract. The unit is not
-   enabled for a systemd boot start. Init requests an idempotent, nonblocking start even
-   when the Mate step fails, provided an installed bundle meets the floor. A running unit is left
-   running; changes to its bundle or env use the existing update switch (§2.1 step 5, §2.1d),
-   and a unit whose Mate does not answer is restarted instead (§2.1 step 5).
+The server's rule that makes this safe: it refuses to start on state written by a newer version
+(mate 0f1db9f6cf). A change of stored shape is the server's own migration. zcp never reads, copies,
+moves or restores the server's state.
 
-**An ordinary unit restart preserves an installed release at or above `MinimumMateVersion`.**
-`zcp service start mate` recovers an interrupted switch first. A supported installed version
-launches without reading the release manifest, preserving the organization's hold and idle
-drain. A missing bundle or one below the floor refreshes
-`DesiredRelease` under the shared install lock. If the manifest is unavailable, an installed
-version keeps serving with a warning; a missing bundle cannot be installed. **Whatever the
-install did, a bundle still below the floor is neither run nor linked:** `zcp service start mate`
-fails and `zcp init` registers no unit and writes no env contract (`mate.CheckInstalledFloor`,
-`mate.BelowFloorError`); `zcp mate status --json` reports it as `belowFloor` beside `minimum`.
-The last step before every launch is the state transaction's (§2.1d).
+**`zcp mate status --json`** answers `{installed, minimum, belowFloor, latest, contract,
+updateAvailable, updater, zcp, restartNeeded, why}` — the one reader of "is there a newer mate" in the
+whole product. `installed` is `current`; `updateAvailable` is `current` older than the version to
+run; `updater` is `{protocol: 1, phase: "idle", runningVersion: current, failedVersion}` while a
+Mate is installed, with `failedVersion` only when it is newer than `current` (zcp keeps no update in
+progress, so the phase is always `idle`). `--local` reads only the release list zcp holds.
 
-The explicitly attended full-container `zcp init` operation retains its existing release
-convergence, including the one full restart that brings an older Mate onto this updater. It must
-be performed while idle. The unit and init share the install lock; a busy lock postpones updates,
-and startup can still serve the installed version after its bounded lock wait. Normal subsequent
-updates use the separate worker described below. The manual CLI chooses that worker only after
-an exact protocol-1 capability response. An explicit HTTP 404 proves an older endpoint absent
-and retains the attended legacy path; transport failure, another status, invalid JSON, or an
-unknown protocol postpones without changing the installation. An inactive or unreachable Mate
-is updated by a container restart (§2.1 step 5), never by a guessed legacy capability.
-
-**`zcp mate update [--force] [--json]`** runs the identical pass from the CLI and then restarts
-`zerops@mate` when the unit is registered, so an update needs no container restart. It is what the
-web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
-`{installed, minimum, belowFloor, latest, contract, updateAvailable}` from the same resolver, using the manifest cache
-(§2.1c) — the one reader of "is there a newer mate" in the whole product.
-
-The same status says whether a container restart, which installs both halves (§2.9 step 7), would
-change anything. **`zcp: {installed, latest, behind}`**, always present, is this binary (its
-version in `installed`) against the zcp release `install.sh` installs (GitHub's `releases/latest`
-for `zeropsio/zcp`), read through zcp's own update cache (`~/.cache/zcp/update.json`) with the
-manifest's one-hour TTL, beside the manifest read; `--refresh` asks the release source, `--local`
-reads only the cache. `latest` is `""` while that release is unknown (offline, rate-limited, nothing
-cached under `--local`), never guessed, and for a build no release names (a dev or git-describe
-build), which never reaches the network: a restart would replace it. Only a release older than a
-known `latest` reads `behind: true`. **`restartNeeded`** is always
-present, and **`why`**, one line for a person, only when it is true: zcp is behind ("zcp v9.226.0 is
-out; a restart installs it"), or the running Mate answered its loopback updater readiness with
-exactly 404 — older than protocol 1, §2.1d — while a newer Mate is out, which the restart installs.
-The Mate is asked only in an enabled Mate container (elsewhere 3773 is an ordinary user port), only
-when `updateAvailable`, and never under `--local`; any other answer is no reason. The text status
-adds one line when zcp is behind, or names the restart when only the Mate needs it.
+The same status says whether a container restart would change anything. **`zcp: {installed, latest,
+behind}`**, always present, is this binary against the zcp release `install.sh` installs (GitHub's
+`releases/latest` for `zeropsio/zcp`), read through zcp's own update cache (`~/.cache/zcp/update.json`)
+with the manifest's one-hour TTL; `--refresh` asks the release source, `--local` reads only the cache.
+`latest` is `""` while that release is unknown, never guessed, and for a build no release names (a dev
+or git-describe build), which never reaches the network. Only a release older than a known `latest`
+reads `behind: true`. **`restartNeeded`** is always present, and **`why`**, one line for a person,
+only when it is true: zcp is behind, or the running Mate answered its loopback updater readiness with
+exactly 404 — older than protocol 1 — while a newer Mate is out. The Mate is asked only in an enabled
+Mate container (elsewhere 3773 is an ordinary user port), only when `updateAvailable`, and never under
+`--local`. The text status adds one line when zcp is behind, or names the restart when only the Mate
+needs it.
 
 ### 2.1b Disabling — the reverse direction
 
@@ -493,11 +455,11 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 the rollback lever: mark the bad release as pre-release, re-mark the previous one as latest). The
 answer is cached on disk with a 1-hour TTL (`~/.zcp/mate/manifest.json`, the same shape as zcp's
 own `internal/update` cache) so a warm restart and `zcp mate status` reach the network at most
-hourly; `zcp mate update` always refreshes. An unreachable manifest with a mate already installed is
-**not** a failure: the installed version keeps serving and the step logs the miss. With nothing
-installed it degrades like any other install failure (MD-1).
+hourly; the keep job refreshes it for a server that is not there. An unreachable manifest is **not**
+a failure: the start job starts `current` and logs the miss. With nothing installed the start fails
+and systemd retries.
 
-- An install never moves the installed Mate back: a manifest that names an older release than the installed one keeps the installed version with a warning (only `Force`, a dev push, or the update transaction's own rollback goes back).
+- A release list never moves the Mate back: the version to run is never older than `last-good` (§2.1a); only a dev push goes back.
 - Private manifests selected by `ZCP_MATE_MANIFEST_URL` may name a full, unprefixed semantic
   prerelease version. Version checks preserve SemVer precedence: a prerelease of the minimum
   release is below that release, numeric prerelease identifiers compare numerically, and build
@@ -536,317 +498,58 @@ asks for. A 0.16.114 prerelease sorts below the stable floor and cannot authoriz
 be published before zcp releases.
 Auto-update protocol 1 is probed before it is used.
 
-### 2.1d Automatic updates — protocol 1
+### 2.1d The keep job — `zcp mate fuse`
 
-Every release installs automatically where the organization's policy allows live updates: a
-rollback returns the state the candidate found (the state transaction below), so no release
-declares whether it can be rolled back. The installed version must be below the candidate.
-`zcp mate status --json` exposes `updater` with `protocol: 1`, `rollbackCompatible` (always
-`true`; the key stays while the Mate's own status reader requires it), `phase`, `runningVersion`
-and optional `failedVersion`. It describes
-only the installed version: a settled record from another running version, or a postponement
-of a release that is no longer the target, reads as `idle`, and a failure at or below the
-installed version is dropped. Any successful install outside the worker (`zcp mate update`
-without the worker, `zcp init`) replaces the record. The existing
-manifest resolver remains the only version reader. `status --local --json` reads cached
-releases and local coordinator state, so startup need not wait on a release-source request.
+The keep job decides when the Mate restarts, nothing else. It runs outside the Mate server as the
+systemd template service `zcp-mate-fuse@<way>.service` (`cmd/zcp/mate_fuse.go`): its timer
+`zcp-mate-fuse.timer` runs `zcp-mate-fuse@automatic` 10 minutes after boot, then 5 minutes after each
+run, each with up to 2 minutes of jitter; `zcp mate update` starts `zcp-mate-fuse@attended` (or
+`@automatic` with `--automatic`) at once. Prepare writes both under `/etc/systemd/system`, reloads
+systemd when either changed, and enables and starts the timer, so it runs while the Mate's unit is
+down or crash-looping and starts at boot even when `zcp init` fails before its Mate step. Disabling
+Mate (§2.1b) removes them. The names are those of the cut-off fuse it replaced: a renamed timer would
+leave the old one enabled on every running container.
 
-`zcp mate update --automatic --json` acknowledges an independent systemd transient worker
-with `started: true`. The worker runs outside `zerops@mate`'s cgroup, takes the install lock,
-refreshes the manifest, and refuses a dev build, same/older version or version at or below the
-remembered failure. It stages and smokes the candidate without changing
-`current`, then POSTs loopback `/api/mate/update/drain` with `{version, deadlineMs:600000,
-automatic:true}`. Mate rechecks org policy and proves its engine idle behind an admission
-barrier. A deadline or refusal postpones the update and cancels that barrier; no work is stopped.
-An already-running terminal process is work. Native provider resume bindings must survive.
-The worker's exact process identity is recorded from staging onward. An in-container status
-observation can mark staging/draining postponed only once that identity is provably gone,
-under the install lock. The transient unit's `ExecStopPost` also cancels an abandoned drain;
-for an interrupted switch it restores, restarts, verifies and commits last-good. It waits for the
-install lock as a start does (4 minutes), since the start command holds it while it decides the
-state, and the transient unit has no stop timeout (`TimeoutStopSec=infinity`): every step of
-recovery is bounded by itself, and its readiness wait follows the boot under the one boot rule. A
-worker started while the record holds an unfinished switch exits without writing the record: the
-switch has its owner, and one whose owner is gone is recovered by the worker unit's own
-`ExecStopPost` as it exits. Writing `staging` over it would let a later postponement settle the
-record on the candidate, lifting its fence while it runs uncommitted with its copy held.
-Neither path guesses from elapsed time. No worker retry loop is added.
-An attended worker (without `--automatic`) whose drain gets no answer follows the silent launch
-first (§2.1 step 5); if no server remains to hold work, it switches without a drain. An automatic
-one postpones without an answer, since only an answering Mate knows its organization's policy.
+Each run takes the install lock without waiting: while a start job installs or judges a boot, or
+another keep run asks, it does nothing. Then the first that applies:
 
-Decision: A dead update worker's switch settles when last-good becomes ready, so a newer release can update.
-Decision: A switch whose worker still lives, or whose restored process is not proven ready on a new boot, is never settled.
-Decision: failedVersion survives the settlement, so the failed candidate is not retried.
+1. **Server not there** → the release list is read fresh and the unit restarted; its start job starts
+   the version to run. "Not there" = the unit is not running (`systemctl is-active` says `inactive`
+   or `failed`), or the server neither answers the loopback readiness nor advances its boot file
+   within the boot window. A booting, installing or busy server is never "not there".
+2. **The version to run differs from the running one** → it is downloaded (idempotent), and the
+   server is asked "may I restart you now?". Yes → the unit restarts; its start job starts the
+   version to run. Not now → the next run. A failed release is never the version to run, so it causes
+   no restarts.
+3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
+   records the release (`zcpRestartedFor` in `~/.zcp/mate/fuse.json`) and `zcp self restart` asks the
+   platform for the container restart that is a boot: install.sh installs the newest zcp, the start
+   job the newest Mate (§2.9 step 7). A refused restart forgets the record; an accepted one that does
+   not end the process within 5 minutes (the Mate server's own grace) cancels the question and keeps
+   the record: one attempt per release.
+4. Otherwise nothing: no question, no restart.
 
-Both ordinary and local in-container status observe an abandoned switch under
-the same install lock. Only when installed/current, previous and last-good agree and the
-shared readiness proof verifies that exact version on a different nonempty boot does the
-record become postponed, with runningVersion set to last-good and worker identity cleared.
-Missing worker or old-boot identity, or an incomplete readiness/C-4
-proof leaves the switch untouched. Status probes once, bounded by one second; a later
-ordinary status can observe late readiness. It never restarts or installs a bundle.
+**The question** is the server's loopback updater (`http://127.0.0.1:3773/api/mate/update/`,
+protocol 1): `GET readiness` answers `{protocol: 1, version, bootId, ready}` once the server reached
+command readiness; `POST drain` with `{version, deadlineMs: 600000, automatic}` answers `drained`
+once it stopped taking work. An automatic question leaves the server open and waits up to 10 minutes
+for it to be idle and quiet, under the organization's policy; a person's question stops intake at
+once. Not now (a refusal, the deadline, no answer) is followed by `POST cancel`, which reopens what
+the question closed; a yes whose restart never comes is reopened the same way, and the server
+reopens by itself after its own bound. A keep run is not started again while one is waiting, so a
+busy Mate is never closed by being asked.
 
-Decision: A Mate whose process exits during an update is rolled back without waiting for the deadline.
-Decision: A Mate whose process is still running is waited for until it is ready, reports a failure, or makes no boot progress for the progress window.
-Decision: A candidate that is alive and still booting is never recorded as failedVersion because time passed; only an attributed failure or no boot progress for the progress window fails it.
-Decision: Stopping the old Mate during an update never counts as the new Mate's failure.
-Decision: An update stops waiting the moment the Mate's process exits.
-Decision: A running Mate updated by init receives the same candidate readiness window as an update worker.
-Decision: A launch outside the worker that has not proved ready never advances last-good, and is rolled back only as a candidate is: its process gone, a reported failure, or no boot progress for the progress window.
+**Cut off from HQ.** The server's state file (`~/.zcp/hq/state.json`, §2.8) says whether the link
+is up now. While it is, the keep job writes the time into `fuse.json` (`linkSeenAt`). After an hour
+without the link — counted from the later of `linkSeenAt` and `current`'s own mtime, so a Mate that
+never linked counts from its start — the timer's question is asked without the organization's
+policy; work is still protected.
 
-Candidate, rollback and recovery share the readiness wait. Before each restart it records the
-unit's invocation and process-start identity. Only a changed nonempty invocation ID or a
-process-start timestamp strictly newer than the snapshot identifies a candidate attempt.
-A new process with MainPID zero, a candidate attempt in failed state, or a new unit
-invocation that entered auto-restart ends the wait
-immediately, including a clean process exit. Stale exit status and the old process stopping
-during a nonblocking restart do not prove the new process exited. An unreadable unit state cannot prove exit; the existing
-receipts and the progress window remain authoritative.
-
-**The one boot rule.** Every wait for a Mate's boot — the update worker's candidate, its rollback
-relaunch and its follow of a silent server, recovery, and the launcher's own settle —
-is `waitReady` (`internal/mate/ready.go`): alive and progressing, it keeps waiting; the process gone,
-a reported failure, or no progress for the window, it ends failed. No wait has a fixed bound on a
-boot. The verdict comes from receipts, never from a total budget. Every 100 ms it reads the unit
-(after a restart zcp requested), a 1-second probe of loopback readiness, the launch file and the
-boot file; while the unit's previous process is stopping, it observes nothing, since whatever
-answers or writes then is that process's. Together they give one of three states:
-
-- **ready** — readiness answers the exact version, a nonempty boot id other than the old one,
-  `ready: true`, and C-4 holds;
-- **failed** — the unit attempt exited or failed (above); the new boot answered with another version
-  or a later boot id replaced it; the launch file's process exited, or another launch replaced it;
-  the boot file of the launch's server reports `error` (startup failed);
-- **booting** — anything else: no answer, the old boot still answering, `ready: false`.
-
-While booting, every receipt starts `UpdateProgressWindow` (2 minutes) anew: a launch receipt (the
-launcher's start, its install pass, about one a second while the state is copied, the server's
-process started), the first answer of the new boot, the first boot-file receipt and every one whose
-`progress` grew. While systemd stops the unit's previous process (`ActiveState=deactivating`) the
-window does not run: the stop timeout bounds that stretch. The wait ends failed only when the window
-passes without a receipt. So the window measures the longest single step with no receipt: zcp's
-steps before the server starts, the server's start until its first migration, and one unit of the
-server's boot work. Every release zcp launches writes the boot file: it exists from Mate v0.16.100,
-`MinimumMateVersion` is above that, and a start refuses a bundle below the floor, so no boot —
-rollback and recovery included — has to fit one window whole.
-
-The boot file is the only receipt of a boot still on its way: the server answers no HTTP request,
-readiness included, before command readiness, and a boot that folds a long history leaves its event
-loop no turn before that. zcp names it in the launch environment (`ZCP_MATE_BOOT_FILE`,
-`mate.BootFilePath`); the launcher removes it before it starts the server (`mate.BeginLaunch`) and
-zcp before each restart it requests (`mate.ObserveRestart`), so a file there is the latest launch's
-server's. Until command readiness the
-server replaces it whole in one rename at each step, `{protocol:1, pid, progress[, error]}`:
-`progress` counts the boot's units of work (each page of events a conversation load folds) and only
-grows within a process; `error` appears once startup failed. After command readiness it is not
-written (mate `apps/server/src/spi/serverCommandReadiness.ts`, `apps/server/src/zerops/mateBootFile.ts`;
-zcp `internal/mate/ready.go`).
-
-The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
-worker process identity, last proved running version and remembered failure), syncs them, and
-atomically moves `current`. Only then is the lock released and a nonblocking unit restart
-requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` path and keeps
-admission fenced. Readiness must prove protocol 1, the exact version, a different nonempty boot
-id, engine/database readiness, and C-4 before the progress window passes without a receipt. POST
-`/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
-
-A commit without an answer is not a failed update. Once the candidate proved ready the record
-says what is true: phase `updated`, `last-good` the candidate, `commitOwed: true`. One sender
-(`mate.deliverCommit`) owns the owed signal: it POSTs commit, 5 s per request, again while a
-request runs into its deadline (the server lives and is still finishing its start), for at most
-`UpdateProgressWindow`, and stops when the server answers or nothing listens any more (its next
-boot reads a settled record and starts unfenced); then it clears `commitOwed`, and only an
-answered commit prunes versions. A server that answers no request in the window leaves the
-debt in the record and the worker ends failed. The rollback's signal to the restored previous
-version goes through the same sender, and the transient unit's `ExecStopPost` resends a signal
-a dead worker still owed (bounded again).
-
-`commitOwed` is a fact about one finished attempt and does not outlive it: only a settled record
-(`updated`, or `postponed` after a rollback: the version proved ready and `last-good` names it)
-holds it — `mate.WriteUpdateState` drops it from any other phase — a new attempt starts without
-it (`mate.WorkerUpdateState`, which every attempt's first record and the recovery restart pass),
-and recovery honours it only in a settled record; a switch whose worker died is rolled back or
-settled by its phase, never committed by a flag. A later update while a commit is still owed
-starts without the debt: the record it replaces was settled, and a settled record lifts a
-still-fenced server by itself (the server's own status watch reopens admission on `updated`,
-`postponed` or `failed`, mate `apps/server/src/zerops/ZeropsMateUpdate.ts`), so the commit POST
-is the fast path, never the only one.
-Live init, the update worker, recovery and the launcher share this wait at the readiness owner. A first boot
-can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
-and the fold persists as it goes, so a later boot resumes it.
-The launch file (`~/.zcp/mate/launch.json`, `mate.LaunchFilePath`) is the launcher's own receipt,
-`{protocol:1, pid, start, progress, server}`: the process identity of `zcp service start mate`, the
-unit's main process, how many of its steps are done, and, once started, its server's process id. Only
-that server's boot-file receipts count for the launch: a previous server that a restart is still
-ending may write one more receipt after the file was removed. That process lives exactly as long as the server
-it started, so its end is the boot's end, for a wait that follows a boot it did not restart too.
-
-**The settle rule.** Every launch of a version `last-good` does not name ends settled by one owner —
-committed (`last-good` moved, copy dropped) or rolled back (state restored) — however long its boot
-takes. A switch's owner is its update worker (also for init's switch of a running Mate) or recovery. Any other launch — init's
-install on an inactive unit, a unit start installing a missing bundle, a container restart onto a
-version never committed — is owned by its launcher: it is the process that copied the state, and it
-lives as long as the boot, so no other process is added for it. After the state decision, with a copy
-tagged with the version about to launch and no switch on record, it writes a switch record naming
-itself as the owner (`mate.ClaimLaunch`), so the server boots fenced and admits no work before it is
-settled. It follows the boot under the one boot rule (`LaunchClaim.Settle`): ready, it commits as a
-worker commits a candidate; the process gone or no progress for the window, it ends the server,
-returns `current` to `last-good` with the version remembered as failed (as a boot repair does), and
-exits; `Restart=always` starts the unit again, and that start restores the state from before the
-version. A stop the launcher is asked for (a unit stop or restart, a container shutdown) is no
-failure: once the server exited, the claim is given back, and the next launch claims again over the
-same copy. A launcher killed outright (power loss, or SIGKILL at the stop timeout of a server that
-did not end within it) leaves an abandoned switch, which the next start's boot repair returns to
-`last-good` with the version remembered as failed. A first install, with no `last-good`, has no
-copy and nothing to return to: its launcher writes no record and boots it unfenced, follows the boot
-the same way, and moves `last-good` to it once it is ready; a failed first boot leaves `last-good`
-unset, and the next launch follows it again. While a
-live worker stages or drains (a start past its lock wait), the launch cannot be fenced: it starts
-outside the transaction and its copy is dropped. Every route advances `last-good` through
-`mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`
-and drops the copy tagged with the version it commits. Recovery that finds `last-good` already
-naming the candidate (its worker stopped inside that commit) drops the copy before it settles the
-record, so no successful route leaves a copy behind for the next start to drop.
-
-A candidate failing readiness returns `current` to the explicit `last-good`,
-remembers the failed version before restarting, proves that version ready, and commits it.
-The resolver is never consulted to choose a rollback. Pruning preserves `last-good`.
-At boot, an unfinished switch whose recorded worker is gone returns to `last-good` before
-any install; a live worker owns the switch and boot skips the installer. Only a start command
-and init on an inactive unit run this repair (`mate.PrepareUpdateBoot`), never an install beside
-a running server: `mate.EnsureInstalled` does not repair, and `zcp mate update` without the
-worker refuses while a switch is pending. A failed version
-is not automatically retried until a strictly newer release exists; `--force` is attended.
-There is no separate update journal or quarantine.
-
-**The state transaction.** A rollback returns the state the candidate found, not only its code:
-SQL and engine migrations and engine snapshots run before readiness, and the previous version
-would start on what the candidate migrated. The swapped set is `~/.t3/userdata` without `logs`,
-plus `~/.t3/uploads-index`. Not swapped: `uploads`, `worktrees`, `caches`, the provider homes,
-`/var/www`, and zcp's own files (`update.json`, `current`, `last-good` carry the switch and the
-failed version); under the Mate's boot fence a candidate touches none of them before commit
-(mate `apps/server/src/mateUpdateBoot.ts`). As the last step before every launch, holding the
-state lock, `zcp service start mate` decides from the copy's tag, never from the update phase
-(boot repair has already left the phase by then; `mate.PrepareStateForLaunch`). First it clears
-what a start cut short left that no tag names (`~/.t3/.state-copy`, `~/.t3/.state-drop-*`) and
-finishes a restore cut short: a tagged copy beside no live `userdata` is one, and is put back
-before anything else is decided; `userdata` missing beside a failed set and no copy launches
-nothing (a person decides). Only `userdata` missing with neither is a new Mate: it has no state
-to copy and launches on what its server creates. Then:
-
-- a copy tagged with `last-good`: the update was committed — the copy is dropped;
-- a copy tagged with the version about to launch: that version starts again on its own state;
-- a copy tagged otherwise while `last-good` is about to launch — every rollback (the worker's,
-  recovery's, boot repair's) launches `last-good` — restores it;
-- a copy tagged otherwise while another version is about to launch: a route outside the
-  transaction (init's install on an inactive unit, a unit start installing a missing bundle, a
-  dev push) replaced its version; the copy is dropped, since a restore would undo whatever that
-  version did since it started;
-- then, with no copy, a `last-good`, and a version about to launch that it does not name but could
-  name (not a dev build, not below `MinimumMateVersion`): copy, with a launch receipt about once a
-  second (checked after each file and each 64 MiB written, and after each file and directory
-  synced). With no `last-good` there is nothing to return to and nothing is copied; a dev build is
-  never `last-good`, so it runs outside the transaction.
-
-The copy is built in `~/.t3/.state-copy`; once all of it is written, every file and directory in it
-is synced in one pass (a sync right after each file waited for one log commit each, 5–8 ms a file;
-`syncfs(2)` and `sync(2)` are refused or no-ops in a Zerops container), then it is renamed to
-`uploads-index.before-<version>` and `userdata.before-<version>`, the tag, last. Nothing names
-`.state-copy`, so a power loss before the sync leaves a copy no tag names, which the next start
-clears; the renames run only once the whole copy is on stable storage. A restore renames the
-live `userdata` to `userdata.failed-<version>` first, then the index (live aside, copy into
-place), and the tag into `userdata` last; from its first rename to its last no live `userdata`
-stands beside the tag, so the next start finishes it. A drop moves the tag, then the index copy,
-into a new `~/.t3/.state-drop-*`, syncs, and only then removes it: the tag stops naming the copy
-before any of it is removed. The logs move back into the live directory.
-Transition (delete once no Mate runs zcp <= v9.251.1): that zcp named its copies `.pre-<version>` and
-left the copy of a version it started unsettled, so a `.pre-` copy tagged with the version about to
-launch, which `last-good` does not name, belongs to a version that has run unowned and may have
-admitted work since; it is never restored and never claimed: that version becomes `last-good` and
-the copy is removed. Any other `.pre-` copy is renamed to `.before-` and decided as above. This
-runs at two call sites: the start command, and `EnsureInstalled` before it stages a release over the
-installed version, so the installed version is made `last-good` while its directory exists and the
-install's prune keeps it. The update worker already names the installed version `last-good` before
-it activates a candidate.
-
-A failed set may be deleted, and is, by the next restore of its item (one kept, for diagnosis),
-because it never holds work a person did: a restore sets aside only the state of a version that
-ran behind the boot fence. Admission opens only by a settled record or its commit, written after
-`mate.CommitLastGood` dropped the copy, so no tag is left to restore over admitted work; a copy
-stays only while its version runs fenced and its owner is going to settle it (the settle rule), and
-a version started unfenced runs with no copy of its own (a dev build, a launch with no `last-good`,
-one that could not be claimed). Files are never copied back over a live directory:
-the database runs in WAL mode, and the candidate's WAL would replay onto the old pages. A copy
-or restore that fails launches nothing: the update's readiness wait sees the unit fail and rolls
-back; the state decision never writes `update.json` (the claim after it does). `mate.CommitLastGood` drops the copy tagged
-with the version it commits, so the copy is gone before the commit request and never outlives
-the moment its server accepts writes. Measured: 41–80 MB, 0.1–0.2 s.
-
-The decision holds the install lock when the start's bounded wait (4 minutes) took it. A holder
-past the wait leaves it to decide without, so `current` and `last-good` may move under it; that
-loses no state: a writer of `current` (an install, a switch, a rollback) restarts the unit or
-leaves the next start to decide again, at worst launching a version the decision did not copy
-for (state carried forward, as outside the transaction), and `mate.CommitLastGood` moves
-`last-good` only to the version running, which the decision reads as keep or as drop alike.
-
-Nothing else writes the swapped set while the start command decides: the server and every
-process it started (provider CLIs, terminals) left with its unit's cgroup; the `mate` CLI's only
-commands that open `state.sqlite` are the server's own (`serve`, `start`), which zcp's unit alone
-launches; `mate triage` writes only a new scratch directory `userdata/triage/<instant>` and
-`mate mac` writes `~/.t3/mac`, neither read back as state; zcp writes nothing under `~/.t3`.
-
-Manual updates on protocol-capable Mates use the same drain, switch and state transaction. Older Mates have no drain capability: while idle, perform one attended
-full container restart using the normal operator restart, or `zcp self restart` in the container
-(§2.9 step 7); `zcp mate status --json` names such a Mate `restartNeeded` while a newer Mate is out. `install.sh` updates zcp and
-`zcp init` installs Mate. Verify `status --json` reports `updater.protocol:1` and Mate's
-loopback readiness advertises protocol 1 before leaving future updates unattended.
-
-### 2.1e The cut-off fuse
-
-A Mate updates only on its organization's word, which only its HQ link delivers, and zcp is refreshed
-only by a container boot. A release of Mate, zcp or HQ that breaks the link would cut the Mate off
-from its own repair. The fuse keeps a cut-off Mate reachable by new releases: `zcp mate fuse`, run by
-the systemd timer `zcp-mate-fuse.timer` outside the Mate server (`cmd/zcp/mate_fuse.go`).
-
-**Where.** Init's Mate step writes `/etc/systemd/system/zcp-mate-fuse.{service,timer}` wherever it
-registers the Mate's unit, reloads systemd when either changed, and enables and starts the timer:
-10 minutes after boot, then 5 minutes after each run, each with up to 2 minutes of jitter. It runs
-while the Mate's unit is down, crash-looping or fenced, and starts at boot even when `zcp init`
-fails before its Mate step. Disabling Mate (§2.1b) removes it.
-
-**Trigger: no HQ link for an hour.** The server's state file (`~/.zcp/hq/state.json`, §2.8) says
-whether the link is up now (`link`, read with the server's lock as `hq.MateStateSource` reads it); its
-`heardAt` is the last `state` frame, not the last time the link was open, so it is not used. While
-the link is up the fuse writes the time into its own record (`~/.zcp/mate/fuse.json`,
-`linkSeenAt`) and does nothing else. Otherwise the hour counts from the later of `linkSeenAt` and
-the activation of the installed Mate (`current`'s own mtime): a Mate that never linked counts from
-its install, and every install starts the hour again. The record has the timer's resolution.
-
-**Action, only when triggered.** It reads `zcp mate status --refresh` in process (the release
-manifest `EnsureInstalled` uses and zcp's latest release, §2.1a; no HQ; a release it cannot read
-is unknown and not acted on), then takes the first that applies:
-
-1. An update is in progress (updater phase other than idle, updated, postponed): nothing.
-2. A Mate release newer than the installed one and the remembered `failedVersion`
-   (`mate.AutomaticUpdateAllowed`): the attended update worker (§2.1d), with its drain, switch,
-   state transaction, readiness and rollback, whatever the organization's policy says: the drain
-   is not automatic, so the Mate does not ask the policy. A Mate that does not answer the drain
-   admitted no work and is switched, as init switches it (§2.1 step 5). A version that failed and
-   was rolled back is not tried again; the next newer one is.
-3. A newer zcp release (`zcp.behind`) the fuse has not restarted for: the running Mate drains as
-   for an attended update (a Mate that does not answer is not waited for), the fuse records the
-   release (`zcpRestartedFor`), and `zcp self restart` asks the platform for the container restart
-   that is a boot: install.sh installs the newest zcp, `zcp init` the newest Mate (§2.9 step 7).
-   A refused restart forgets the record and cancels the drain; an accepted one that does not end the
-   process within 5 minutes (the Mate server's own grace) cancels the drain and keeps the record. zcp replaces itself only this way:
-   its own processes, the Mate's environment and the timer are written by init at boot.
-4. Nothing newer: nothing. No drain, no restart, no request to the Mate.
-
-**What it never does.** It never restarts a Mate for which nothing newer exists, never interrupts
-a running turn (every switch and restart first passes the Mate's drain), never reads HQ, never
-retries a failed Mate release or restarts the container twice for one zcp release, and never acts
-while the link is up.
+**`zcp mate update [--automatic] [--json]`** runs the keep job now and answers at once
+`{action: "none", from: <installed>, restarted: false, started: true}`, outside the Mate server that
+may be calling it: the question can take the drain's 10 minutes. Without `--automatic` it asks
+without the policy (a person's or an operator's update); with it, with the policy. A held install
+lock is reported (`error`, exit 1), never waited for.
 
 ### 2.2 The supervised process
 
@@ -877,7 +580,7 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
 - **A stop ends the Mate on its own terms.** `zcp service start` (`service.runCommand`, the launcher
   of every `zerops@<name>` unit) relays each SIGINT/SIGTERM it receives to its child and waits for the
   child to exit; it never sends SIGKILL to a server it was asked to stop (it kills only a server
-  whose claimed launch failed its boot, §2.1d "The settle rule", which admitted no work). The Mate's runtime runs its shutdown (sockets and stores
+  whose launch did not come up, §2.1a, which admitted no work). The Mate's runtime runs its shutdown (sockets and stores
   closed). Mate's interruption-only shutdown exits 130; zcp treats that exit as successful only
   after it has successfully relayed a stop to the Mate, whatever sent the child's signal: the
   operator requested a stop, so inactive is the right result. Exit 130 before a relay, any other
@@ -985,7 +688,7 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 | | restart | redeploy | disable (§2.1b) |
 |---|---|---|---|
 | `~/.zcp/mate/versions/*` (the bundles) | kept | lost | **kept — deliberately** |
-| `~/.zcp/mate/current` (the live link) | kept | lost | kept (points at a version nothing runs) |
+| `~/.zcp/mate/current`, `last-good`, `failed-version` | kept | lost | kept (`current` points at a version nothing runs) |
 | `~/.t3` (threads, sessions, auth) | kept | **lost — recreated empty** | kept |
 | `~/.zcp/mate.env` | kept (rewritten anyway) | rewritten by the new container's init | removed |
 | `zerops@mate` unit | kept | lost, re-created by init | **stopped and removed** |
@@ -994,9 +697,8 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 | container id | unchanged | changes | unchanged |
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
-see the ledger), and the release manifest is what the next `zcp init` reconciles toward (§2.1a),
-also for a Mate that crash-loops or whose boot ends or stalls without answering (§2.1 step 5): one restart replaces a
-broken release whenever a newer one is out.
+see the ledger), and every start of the Mate's unit starts the newest version that works (§2.1a): a
+release that does not come up is replaced by `last-good`, and a newer one is picked by the next start.
 Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
 the bundle is not a regression under the versioned layout — it loses the whole container — and a
 **disable** keeping it is what makes re-enabling free.
@@ -1234,22 +936,22 @@ Mate release artifact contains the server and no web client (C-6).
 
 | ID | Invariant |
 |---|---|
-| MD-1 | The init step never fails the container start, degrading instead — for any install, download, integrity or unit-removal failure. `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_NoProjectID_Degrades`, `TestRun_MateDisabled_UnitRemoveFails_Degrades`. |
+| MD-1 | The init step never fails the container start, degrading instead — for a missing project or a unit-removal failure; it installs nothing. `TestRun_Mate_NoProjectID_Degrades`, `TestRun_MateDisabled_UnitRemoveFails_Degrades`. |
 | MD-2 | `ServeArgv` carries no flag whose support depends on the installed bundle, and no launch runs `serve --help`; the public prefix rides `T3CODE_BASE_PATH` on every launch. `TestServeArgv`, `TestStart_Mate_Argv`, `TestStart_Mate_BasePathRidesTheEnv`. |
 | MD-3 | The env contract carries only non-secret identifiers; an absent `ZCP_MATE_ALLOWED_ORIGINS` leaves that key unwritten. `TestEnvLines`, `TestRun_Mate_WritesEnvContract`, `TestRun_Mate_WritesAllowedOrigins_WhenConfigured`. |
 | MD-4 | With the flag ON, `/mate/` and `/mate/healthz` render outside the cookie gate and code-server's `/proxy/3773/`/`/absproxy/3773/` are closed. `TestRunNginx_MateOutsideCookieGate`, `TestRunNginx_ClosesCodeServerProxyDoorToMate`. |
 | MD-5 | `{BasePath}/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Mate_DegradedStepStillMarksInitComplete`. |
-| MD-6 | A local (non-container) `zcp init` installs no bundle, writes no env file, leaves no marker. `TestRun_NoMate_OutsideContainer`. |
+| MD-6 | A local (non-container) `zcp init` writes no env file and leaves no marker. `TestRun_NoMate_OutsideContainer`. |
 | MD-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
-| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start. A change to the environment of a running Mate uses the update switch (§2.1 step 5, §2.1d). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`, `TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin`. |
+| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start; a changed environment reaches a running Mate at its next start. `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`, `TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin`. |
 | MD-9 | `{BasePath}/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/mate/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
-| MD-10 | The desired release comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest keeps an installed mate serving — one below the floor named so in the warning, though never run or linked (`CheckInstalledFloor`) — and degrades only a first install. Download, integrity, and npm failures register the same degraded init outcome; init registers no unit when no supported bundle is available. `TestDesiredRelease_*`, `TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_ManifestUnreachable_KeepsInstalled`, `TestCheckInstalledFloor`, `TestStart_Mate_InstalledBelowFloor_RefusesToRun`, `TestRun_Mate_InstalledBelowFloor_DegradesWithoutLinking`, `TestRunMateStatus_JSON_ReportsTheFloor`. |
+| MD-10 | The release list comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest starts `current`; a version below the floor is never started. `TestDesiredRelease_*`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRunMateStatus_JSON_ReportsTheFloor`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
-| MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions need no tarball download or npm call, and an installed semver prerelease (a hand-pushed dev build) at or above `MinimumMateVersion` is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
-| MD-15 | See §2.1a step 7 for init unit startup. Ordinary supervisor starts recover an interrupted switch and preserve an installed release at or above `MinimumMateVersion`; a missing or below-floor bundle refreshes the release manifest. First installation and attended container init use the shared install lock. `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
+| MD-13 | A version is installed into its own directory, smoke-tested, and only then made `current` by an atomic symlink rename; any failure leaves `current` as it was. The start job is the only installer and the only writer of `current`, `last-good` and the failed version; the start job and the keep job read one version to run (`mate.VersionToRun`), never older than `last-good`; an installed dev build at or above `MinimumMateVersion` is kept (§2.1a). |
+| MD-15 | Prepare installs nothing and never restarts a running Mate; the start job holds the install lock from its download until its verdict, and a keep run that finds the lock held does nothing (§2.1, §2.1a, §2.1d). `TestLockInstall`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
-| MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
+| MD-17 | `zcp mate status --json` reads `DesiredRelease()` and the versions the container holds and never installs; `zcp mate update` starts the keep job and answers at once; both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
 
 ### 2.8a Monorepo: dev servers, stages, the receipt (C-8…C-12)
 
@@ -2153,9 +1855,10 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    version it left. `bootId` is a value of the server process, new at every start and never
    persisted, optional on the wire — older servers send none — and not part of the zcp↔mate
    contract (C-1…C-12): zcp neither writes nor reads it. Running threads stop; the client says so before
-   the click. `zcp mate update` replaces only the Mate and restarts no container. When zcp itself is
-   behind (`zcp.behind`, §2.1a) the update is a container restart instead: the Mate drains its work,
-   then runs `zcp self restart --json` (step 7).
+   the click. `zcp mate update` starts the keep job (§2.1d), which asks the Mate and restarts its unit
+   onto the version to run, or, when only zcp is behind, the container. When zcp itself is
+   behind (`zcp.behind`, §2.1a) the server's own update is a container restart instead: the Mate
+   drains its work, then runs `zcp self restart --json` (step 7).
 5. **One check: Check for updates.** The status behind the line is cache-served twice over —
    zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
    is invisible for up to two hours. The Mate menu therefore always offers "Check for updates"
@@ -2169,9 +1872,9 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    without it the Data surface shows one line ("This Mate doesn't include the data console yet")
    with the update line and verb from step 3–4 beside it, instead of a defect from an older server.
 7. **A restart is the update.** A container restart installs both halves: the zcp service's
-   `run.initCommands` run `install.sh` (the latest zcp release), then `zcp init` (the stable Mate,
-   §2.1a, §2.1c), then `zcp init nginx`. The Mate unit is not boot-started: `zcp init`'s Mate step
-   starts it once, at the end. zcp says when one would change something:
+   `run.initCommands` run `install.sh` (the latest zcp release), then `zcp init`, then `zcp init
+   nginx`. The Mate unit is not boot-started: `zcp init`'s Mate step starts it once, at the end, and
+   its start job starts the newest Mate that works (§2.1a, §2.1c). zcp says when one would change something:
    `zcp mate status --json` answers `zcp: {installed, latest, behind}`, `restartNeeded` and `why`
    (§2.1a), and the server relays them. The Mate server owns the idle check and the trigger: with
    `restartNeeded` true it drains its work, then runs **`zcp self restart --json`**. zcp owns
