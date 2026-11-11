@@ -618,6 +618,15 @@ requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` pat
 admission fenced. Readiness must prove protocol 1, the exact version, a different nonempty boot
 id, engine/database readiness, and C-4 before the progress window passes without a receipt. POST
 `/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
+
+A commit without an answer is not a failed update. Once the candidate proved ready the record
+says what is true: phase `updated`, `last-good` the candidate, `commitOwed: true`. One sender
+(`mate.deliverCommit`) owns the owed signal: it POSTs commit, 5 s per request, again while a
+request runs into its deadline (the server lives and is still finishing its start), and stops
+when the server answers or nothing listens any more (its next boot reads a settled record and
+starts unfenced); then it clears `commitOwed`, and only an answered commit prunes versions. The
+rollback's signal to the restored previous version goes through the same sender, and the
+transient unit's `ExecStopPost` resends a signal a dead worker still owed.
 Live init, the update worker and recovery share this wait at the readiness owner. A first boot
 can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
 and the fold persists as it goes, so a later boot resumes it.

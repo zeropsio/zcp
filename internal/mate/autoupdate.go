@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,8 @@ const UpdateFailed = "failed"
 
 // UpdateState is minimal crash recovery state. last-good is the authority for
 // rollback; this record identifies an uncommitted switch and a failed release.
+// CommitOwed says the running server proved ready and boots fenced, so the
+// commit (or, after a rollback, the reopening) signal is still to reach it.
 type UpdateState struct {
 	Protocol       int    `json:"protocol"`
 	Phase          string `json:"phase"`
@@ -34,6 +37,7 @@ type UpdateState struct {
 	WorkerPID      int    `json:"workerPid,omitempty"`
 	WorkerStart    string `json:"workerStart,omitempty"`
 	OldBoot        string `json:"oldBoot,omitempty"`
+	CommitOwed     bool   `json:"commitOwed,omitempty"`
 }
 
 func UpdateStatePath() string { return filepath.Join(Prefix(), "update.json") }
@@ -206,14 +210,11 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 			}
 			s.WorkerPID = 0
 			s.WorkerStart = ""
+			s.CommitOwed = true
 			if err := WriteUpdateState(s); err != nil {
 				return err
 			}
-			if err := h.Commit(); err != nil {
-				return fmt.Errorf("open admission after verified update: %w", err)
-			}
-			pruneOldVersions(candidate)
-			return nil
+			return deliverCommit(s, h.Commit)
 		}
 	}
 	// The restart's start command restores the state from before the
@@ -236,11 +237,41 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 	s.RunningVersion = installed
 	s.WorkerPID = 0
 	s.WorkerStart = ""
+	s.CommitOwed = true
 	if err := WriteUpdateState(s); err != nil {
 		return err
 	}
-	if err := h.Commit(); err != nil {
-		return fmt.Errorf("commit rollback: %w", err)
+	return deliverCommit(s, h.Commit)
+}
+
+// deliverCommit is the one owner of an owed commit signal: the record says the
+// version is committed (or restored) and the signal owed; it is sent again until
+// the fenced server answers or is gone. A server gone owes nothing: its next boot
+// reads a settled record and starts unfenced. The record then drops the debt, and
+// a committed update prunes its versions once the server answered.
+func deliverCommit(s UpdateState, commit func() error) error {
+	answered := true
+	for {
+		err := commit()
+		var unanswered *url.Error
+		if err == nil {
+			break
+		}
+		if !errors.As(err, &unanswered) {
+			return fmt.Errorf("commit %s: %w", s.RunningVersion, err)
+		}
+		if !unanswered.Timeout() {
+			answered = false
+			break
+		}
+		// The request reached a server still running its start; it is sent again.
+	}
+	s.CommitOwed = false
+	if err := WriteUpdateState(s); err != nil {
+		return err
+	}
+	if answered && s.Phase == updateUpdated {
+		pruneOldVersions(s.RunningVersion)
 	}
 	return nil
 }
@@ -410,8 +441,11 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 	if workerAlive(s) {
 		return nil
 	}
+	if s.CommitOwed {
+		return deliverCommit(s, h.Commit)
+	}
 	if s.Phase == updateUpdated {
-		return h.Commit()
+		return nil
 	}
 	if s.Phase == "staging" || s.Phase == "draining" || s.Phase == updatePostponed {
 		s.Phase = updatePostponed
@@ -441,10 +475,11 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 		s.RunningVersion = goodVersion
 		s.WorkerPID = 0
 		s.WorkerStart = ""
+		s.CommitOwed = true
 		if err := WriteUpdateState(s); err != nil {
 			return err
 		}
-		return h.Commit()
+		return deliverCommit(s, h.Commit)
 	}
 	// The restart launches last-good, and its start command restores the
 	// state from before the candidate.
@@ -463,10 +498,11 @@ func RecoverStoppedUpdate(h SwitchHooks) error {
 	s.RunningVersion = goodVersion
 	s.WorkerPID = 0
 	s.WorkerStart = ""
+	s.CommitOwed = true
 	if err := WriteUpdateState(s); err != nil {
 		return err
 	}
-	return h.Commit()
+	return deliverCommit(s, h.Commit)
 }
 
 // ReadOptionalUpdateState treats only absence as an empty initial state.
