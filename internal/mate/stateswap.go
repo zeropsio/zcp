@@ -21,12 +21,14 @@ const (
 	stateLogsName    = "logs"
 	uploadsIndexName = "uploads-index"
 	stateCopyTemp    = ".state-copy"
+	stateDropPrefix  = ".state-drop-"
 	stateCopyInfix   = ".pre-"
 	stateFailedInfix = ".failed-"
 )
 
 // swappedItems are the swapped set's names under BaseDir(). The state
-// directory comes last: its copy is the tag, made last and removed last.
+// directory comes last: its copy is the tag, made last by a copy, put back
+// last by a restore and moved away first by a drop.
 var swappedItems = []string{uploadsIndexName, stateDirName}
 
 // PrepareStateForLaunch is the last step before every launch of the server,
@@ -40,12 +42,16 @@ var swappedItems = []string{uploadsIndexName, stateDirName}
 //   - a copy tagged otherwise while last-good is about to launch: a rollback —
 //     restore it;
 //   - a copy tagged otherwise while another version is about to launch: a
-//     route outside the transaction installed it (§2.1d) — drop it;
+//     route outside the transaction (§2.1d) installed it — drop it;
 //   - then, with no copy and a version about to launch that last-good does
 //     not name: copy.
 //
-// A failed copy or restore returns an error and the caller does not launch.
-// The returned line says what was done, empty when nothing was.
+// Before it decides, it finishes what a start cut short left: a tagged copy
+// beside no live state directory is a restore between its first and last
+// rename, and is finished; a failed set beside no live state directory and
+// no copy launches nothing. A failed copy or restore returns an error and the
+// caller does not launch. The returned line says what was done, empty when
+// nothing was.
 func PrepareStateForLaunch() (string, error) {
 	launching, err := InstalledVersion()
 	if err != nil {
@@ -61,11 +67,33 @@ func PrepareStateForLaunch() (string, error) {
 }
 
 func prepareState(base, launching, lastGood string) (string, error) {
+	if err := clearStateLeftovers(base); err != nil {
+		return "", err
+	}
 	tag, err := stateCopyTag(base)
 	if err != nil {
 		return "", err
 	}
 	var done []string
+	liveMissing, err := missing(filepath.Join(base, stateDirName))
+	if err != nil {
+		return "", err
+	}
+	if tag != "" && liveMissing {
+		if err := restoreState(base, tag); err != nil {
+			return "", err
+		}
+		done = append(done, "finished the restore of the state from before "+tag)
+		tag = ""
+	} else if tag == "" && liveMissing {
+		failed, err := filepath.Glob(filepath.Join(base, stateDirName+stateFailedInfix+"*"))
+		if err != nil {
+			return "", fmt.Errorf("find failed state: %w", err)
+		}
+		if len(failed) > 0 {
+			return "", fmt.Errorf("state directory %s is missing beside %v: nothing is launched on an empty state", filepath.Join(base, stateDirName), failed)
+		}
+	}
 	switch {
 	case tag == "":
 	case tag == lastGood:
@@ -95,6 +123,26 @@ func prepareState(base, launching, lastGood string) (string, error) {
 	return strings.Join(done, "; "), nil
 }
 
+// clearStateLeftovers removes what a start cut short left that no tag names:
+// a copy still being built and a dropped copy still being removed.
+func clearStateLeftovers(base string) error {
+	if err := os.RemoveAll(filepath.Join(base, stateCopyTemp)); err != nil {
+		return fmt.Errorf("clear state copy: %w", err)
+	}
+	return removeMatching(filepath.Join(base, stateDropPrefix+"*"))
+}
+
+func missing(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	return false, nil
+}
+
 // stateCopyTag names the version the one copy under base is tagged with,
 // empty when there is none.
 func stateCopyTag(base string) (string, error) {
@@ -114,12 +162,10 @@ func stateCopyTag(base string) (string, error) {
 
 // copyState builds the copy in a temporary directory, syncs it and renames
 // it into place; the state directory's rename, the tag, is the last. A copy
-// that fails leaves no space taken.
+// that fails leaves no space taken. prepareState has cleared the temporary
+// directory a start cut short left.
 func copyState(base, version string) (retErr error) {
 	tmp := filepath.Join(base, stateCopyTemp)
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clear state copy: %w", err)
-	}
 	defer func() {
 		if retErr != nil {
 			_ = os.RemoveAll(tmp)
@@ -130,7 +176,7 @@ func copyState(base, version string) (retErr error) {
 	if err := removeMatching(filepath.Join(base, uploadsIndexName+stateCopyInfix+"*")); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
+	if err := os.Mkdir(tmp, 0o700); err != nil {
 		return fmt.Errorf("create state copy: %w", err)
 	}
 	for _, item := range swappedItems {
@@ -159,35 +205,40 @@ func copyState(base, version string) (retErr error) {
 	return nil
 }
 
-// restoreState puts the copy tagged version back by two renames per item:
-// the live item aside (one kept, for diagnosis), the copy into its place.
-// Every step can run again: a start cut short between them is finished by
-// the next, since the tag goes last.
+// restoreState puts the copy tagged version back by renames: the live state
+// directory aside first, then the index (live aside, copy into place), the
+// tag into the live state directory last. From the first rename to the last
+// no live state directory stands beside the tag, which is how prepareState
+// knows a restore cut short and finishes it; each step skips what an earlier
+// run already did. Files are never copied back over a live directory.
+//
+// A live item set aside replaces the item's previous failed set: a failed set
+// holds the state of a version that ran behind the boot fence, which admits
+// no work, so the copy put back holds all the work a person did (§2.1d).
 func restoreState(base, version string) error {
+	if err := setStateAside(base, stateDirName, version); err != nil {
+		return err
+	}
 	for _, item := range swappedItems {
-		saved := filepath.Join(base, item+stateCopyInfix+version)
-		if _, err := os.Lstat(saved); errors.Is(err, fs.ErrNotExist) {
+		if item == stateDirName {
 			continue
-		} else if err != nil {
-			return fmt.Errorf("restore %s: %w", item, err)
 		}
-		live := filepath.Join(base, item)
-		if _, err := os.Lstat(live); err == nil {
-			if err := removeMatching(filepath.Join(base, item+stateFailedInfix+"*")); err != nil {
-				return err
-			}
-			if err := os.Rename(live, filepath.Join(base, item+stateFailedInfix+version)); err != nil {
-				return fmt.Errorf("restore %s: set the failed state aside: %w", item, err)
-			}
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("restore %s: %w", item, err)
-		}
-		if err := os.Rename(saved, live); err != nil {
-			return fmt.Errorf("restore %s: %w", item, err)
-		}
-		if err := syncDir(base); err != nil {
+		saved, err := missing(filepath.Join(base, item+stateCopyInfix+version))
+		if err != nil {
 			return err
 		}
+		if saved {
+			continue
+		}
+		if err := setStateAside(base, item, version); err != nil {
+			return err
+		}
+		if err := putStateBack(base, item, version); err != nil {
+			return err
+		}
+	}
+	if err := putStateBack(base, stateDirName, version); err != nil {
+		return err
 	}
 	// The logs are no state: they stay with the live directory.
 	failedLogs := filepath.Join(base, stateDirName+stateFailedInfix+version, stateLogsName)
@@ -198,14 +249,66 @@ func restoreState(base, version string) error {
 	return nil
 }
 
-// dropStateCopy removes the copy tagged version, the tag last.
+// setStateAside renames the live item to its failed set for version, when
+// there is a live item.
+func setStateAside(base, item, version string) error {
+	live := filepath.Join(base, item)
+	gone, err := missing(live)
+	if err != nil || gone {
+		return err
+	}
+	if err := removeMatching(filepath.Join(base, item+stateFailedInfix+"*")); err != nil {
+		return err
+	}
+	if err := os.Rename(live, filepath.Join(base, item+stateFailedInfix+version)); err != nil {
+		return fmt.Errorf("restore %s: set the failed state aside: %w", item, err)
+	}
+	return syncDir(base)
+}
+
+// putStateBack renames the item's copy tagged version into the live item.
+func putStateBack(base, item, version string) error {
+	if err := os.Rename(filepath.Join(base, item+stateCopyInfix+version), filepath.Join(base, item)); err != nil {
+		return fmt.Errorf("restore %s: %w", item, err)
+	}
+	return syncDir(base)
+}
+
+// dropStateCopy removes the copy tagged version. The tag stops naming it
+// before any of it is removed: the tag, then the index copy, move into a new
+// trash directory, the move is synced, and only then the trash is removed. A
+// drop cut short leaves trash no tag names, which prepareState clears.
 func dropStateCopy(base, version string) error {
-	for _, item := range swappedItems {
-		if err := os.RemoveAll(filepath.Join(base, item+stateCopyInfix+version)); err != nil {
+	var held []string
+	for i := len(swappedItems) - 1; i >= 0; i-- {
+		item := swappedItems[i]
+		gone, err := missing(filepath.Join(base, item+stateCopyInfix+version))
+		if err != nil {
+			return fmt.Errorf("drop state copy: %w", err)
+		}
+		if !gone {
+			held = append(held, item)
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	trash, err := os.MkdirTemp(base, stateDropPrefix+"*")
+	if err != nil {
+		return fmt.Errorf("drop state copy: %w", err)
+	}
+	for _, item := range held {
+		if err := os.Rename(filepath.Join(base, item+stateCopyInfix+version), filepath.Join(trash, item)); err != nil {
 			return fmt.Errorf("drop state copy: %w", err)
 		}
 	}
-	return syncDir(base)
+	if err := syncDir(base); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(trash); err != nil {
+		return fmt.Errorf("drop state copy: %w", err)
+	}
+	return nil
 }
 
 func removeMatching(pattern string) error {

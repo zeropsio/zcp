@@ -664,9 +664,13 @@ plus `~/.t3/uploads-index`. Not swapped: `uploads`, `worktrees`, `caches`, the p
 `/var/www`, and zcp's own files (`update.json`, `current`, `last-good` carry the switch and the
 failed version); under the Mate's boot fence a candidate touches none of them before commit
 (mate `apps/server/src/mateUpdateBoot.ts`). As the last step before every launch, holding the
-state lock and the install lock, `zcp service start mate` decides from the copy's tag, never
-from the update phase (boot repair has already left the phase by then;
-`mate.PrepareStateForLaunch`):
+state lock, `zcp service start mate` decides from the copy's tag, never from the update phase
+(boot repair has already left the phase by then; `mate.PrepareStateForLaunch`). First it clears
+what a start cut short left that no tag names (`~/.t3/.state-copy`, `~/.t3/.state-drop-*`) and
+finishes a restore cut short: a tagged copy beside no live `userdata` is one, and is put back
+before anything else is decided; `userdata` missing beside a failed set and no copy launches
+nothing (a person decides). Only `userdata` missing with neither is a new Mate, which launches
+on what its server creates (and is copied as an empty directory when a copy is due). Then:
 
 - a copy tagged with `last-good`: the update was committed — the copy is dropped;
 - a copy tagged with the version about to launch: that version starts again on its own state;
@@ -679,10 +683,20 @@ from the update phase (boot repair has already left the phase by then;
 - then, with no copy and a version about to launch that `last-good` does not name: copy.
 
 The copy is built in `~/.t3/.state-copy` with every file and directory synced, then renamed to
-`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. A restore is two
-renames per item: the live item to `<item>.failed-<version>` (one kept, for diagnosis), the copy
-into its place; the tag goes last, so a start cut short between them is finished by the next.
-The logs move back into the live directory. Files are never copied back over a live directory:
+`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. A restore renames the
+live `userdata` to `userdata.failed-<version>` first, then the index (live aside, copy into
+place), and the tag into `userdata` last; from its first rename to its last no live `userdata`
+stands beside the tag, so the next start finishes it. A drop moves the tag, then the index copy,
+into a new `~/.t3/.state-drop-*`, syncs, and only then removes it: the tag stops naming the copy
+before any of it is removed. The logs move back into the live directory.
+
+A failed set may be deleted, and is, by the next restore of its item (one kept, for diagnosis),
+because it never holds work a person did: a restore sets aside only the state of a version that
+ran behind the boot fence. Admission opens only by a settled record or its commit, written after
+`mate.CommitLastGood` dropped the copy, so no tag is left to restore over admitted work; a version
+started outside the transaction (init, a unit-start install, a dev push) runs with `last-good` on
+another version, and every route that launches `last-good` passes the switch's re-pointing of
+`last-good` to `current` first, which makes that tag `last-good`'s and drops it. Files are never copied back over a live directory:
 the database runs in WAL mode, and the candidate's WAL would replay onto the old pages. A copy
 or restore that fails launches nothing: the update's readiness wait sees the unit fail and rolls
 back; the start command never writes `update.json`. `mate.CommitLastGood` drops the copy tagged
