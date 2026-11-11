@@ -358,7 +358,8 @@ now-off flag has to remove — so a container that never had mate prints not one
    answers no request before command readiness. The worker follows the running launch's boot under
    the one boot rule (`mate.WaitRunningBoot`, §2.1d) and drains it once ready. Only no live launch on
    record, a launch that ended, or a boot without progress for the window is no running Mate: no
-   server holds work, so the worker switches without a drain. A crash-looping or stalled release is
+   server holds work, so an attended worker switches without a drain. An automatic worker postpones
+   without the server's policy. A crash-looping or stalled release is
    replaced, fenced and settled like any switch. A Mate that answers, even with a refusal, or that
    holds the drain request until its deadline is drained and switched or postponed as above. Only a
    server reaching command readiness between its last unanswered probe and the restart could lose
@@ -570,6 +571,9 @@ switch has its owner, and one whose owner is gone is recovered by the worker uni
 `ExecStopPost` as it exits. Writing `staging` over it would let a later postponement settle the
 record on the candidate, lifting its fence while it runs uncommitted with its copy held.
 Neither path guesses from elapsed time. No worker retry loop is added.
+An attended worker (without `--automatic`) whose drain gets no answer follows the silent launch
+first (§2.1 step 5); if no server remains to hold work, it switches without a drain. An automatic
+one postpones without an answer, since only an answering Mate knows its organization's policy.
 
 Decision: A dead update worker's switch settles when last-good becomes ready, so a newer release can update.
 Decision: A switch whose worker still lives, or whose restored process is not proven ready on a new boot, is never settled.

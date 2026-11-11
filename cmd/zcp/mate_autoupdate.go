@@ -122,11 +122,13 @@ func runMateUpdateWorker(args []string) int {
 	if errors.Is(err, mate.ErrNotAnswering) {
 		// A server answers nothing before command readiness: a silent one may
 		// be booting. It is drained once ready; only a launch that ended or
-		// stopped progressing is no running Mate, and with no server holding
-		// work the switch needs no drain.
+		// stopped progressing is no running Mate. An attended switch needs no
+		// drain then; an automatic switch still needs the server's policy.
 		if waitErr := mate.WaitRunningBoot(installed); waitErr != nil {
-			fmt.Fprintf(os.Stderr, "mate update: no running Mate to drain (%v); switching\n", waitErr)
-			drain, err = mate.UpdateReadiness{}, nil
+			if !automatic {
+				fmt.Fprintf(os.Stderr, "mate update: no running Mate to drain (%v); switching\n", waitErr)
+				drain, err = mate.UpdateReadiness{}, nil
+			}
 		} else {
 			drain, err = mate.DrainUpdate(desired.Version, automatic)
 		}
