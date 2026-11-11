@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -283,12 +285,56 @@ func mateInstallBeforeStart() error {
 	if err := mate.CheckInstalledFloor(); err != nil {
 		return err
 	}
+	if err := mateUnitAlone(); err != nil {
+		return fmt.Errorf("start mate: %w", err)
+	}
 	done, err := mate.PrepareStateForLaunch()
 	if err != nil {
 		return fmt.Errorf("start mate: %w", err)
 	}
 	if done != "" {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", done)
+	}
+	return nil
+}
+
+// mateUnitAlone refuses the state decision while a process of the unit's
+// previous run is still in its control group. systemd stops the unit by
+// signalling its whole group (KillMode=control-group) but starts the next run
+// even when a process survived the final SIGKILL ("Found left-over process
+// ... Ignoring"), and such a process may still write the state the decision
+// copies or renames; the start fails and systemd's restart asks again. A
+// start outside the unit's group (by hand) has no previous run to wait for.
+func mateUnitAlone() error {
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read own control group: %w", err)
+	}
+	var group string
+	for line := range strings.Lines(string(raw)) {
+		if path, ok := strings.CutPrefix(strings.TrimSpace(line), "0::"); ok {
+			group = path
+		}
+	}
+	if group == "" || filepath.Base(group) != "zerops@"+mate.UnitName+".service" {
+		return nil
+	}
+	procs, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", group, "cgroup.procs"))
+	if err != nil {
+		return fmt.Errorf("read the unit's processes: %w", err)
+	}
+	self := strconv.Itoa(os.Getpid())
+	var left []string
+	for pid := range strings.FieldsSeq(string(procs)) {
+		if pid != self {
+			left = append(left, pid)
+		}
+	}
+	if len(left) > 0 {
+		return fmt.Errorf("processes %s of the unit's previous run are still in its control group: the state is not touched until they are gone", strings.Join(left, ", "))
 	}
 	return nil
 }

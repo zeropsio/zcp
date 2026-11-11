@@ -711,7 +711,12 @@ for (state carried forward, as outside the transaction), and `mate.CommitLastGoo
 `last-good` only to the version running, which the decision reads as keep or as drop alike.
 
 Nothing else writes the swapped set while the start command decides: the server and every
-process it started (provider CLIs, terminals) left with its unit's cgroup; the `mate` CLI's only
+process it started (provider CLIs, terminals) left with its unit's cgroup. `KillMode=control-group`
+(read on Fern: SIGTERM to the whole group, SIGKILL after `TimeoutStopSec` 90 s, no `ExecStopPost`)
+does not by itself ensure that: systemd starts the next run even when a process survived the final
+SIGKILL, logging "Found left-over process … Ignoring". The start command therefore decides only
+when its own control group holds no process but itself, and otherwise launches nothing, so
+systemd's restart asks again. The `mate` CLI's only
 commands that open `state.sqlite` are the server's own (`serve`, `start`), which zcp's unit alone
 launches; `mate triage` writes only a new scratch directory `userdata/triage/<instant>` and
 `mate mac` writes `~/.t3/mac`, neither read back as state; zcp writes nothing under `~/.t3`.
