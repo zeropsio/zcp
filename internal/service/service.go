@@ -269,7 +269,9 @@ var mateLockWait = defaultMateLockWait
 // mate.BelowFloorError rather than running it. Last, with the version about
 // to launch settled, the server's state is copied, restored or released
 // (mate.PrepareStateForLaunch); a failed copy or restore launches nothing.
-// The install lock keeps current and last-good still while that decides.
+// The decision holds the install lock when the bounded wait took it; a
+// holder past the wait leaves it to decide without (docs/spec-mate.md §2.1d
+// "The state transaction").
 func mateInstallBeforeStart() error {
 	release, err := mate.LockInstall(mateLockWait)
 	if err != nil {

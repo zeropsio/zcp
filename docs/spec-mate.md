@@ -703,6 +703,13 @@ back; the start command never writes `update.json`. `mate.CommitLastGood` drops 
 with the version it commits, so the copy is gone before the commit request and never outlives
 the moment its server accepts writes. Measured: 41–80 MB, 0.1–0.2 s.
 
+The decision holds the install lock when the start's bounded wait (4 minutes) took it. A holder
+past the wait leaves it to decide without, so `current` and `last-good` may move under it; that
+loses no state: a writer of `current` (an install, a switch, a rollback) restarts the unit or
+leaves the next start to decide again, at worst launching a version the decision did not copy
+for (state carried forward, as outside the transaction), and `mate.CommitLastGood` moves
+`last-good` only to the version running, which the decision reads as keep or as drop alike.
+
 Nothing else writes the swapped set while the start command decides: the server and every
 process it started (provider CLIs, terminals) left with its unit's cgroup; the `mate` CLI's only
 commands that open `state.sqlite` are the server's own (`serve`, `start`), which zcp's unit alone
