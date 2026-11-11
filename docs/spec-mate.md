@@ -102,8 +102,10 @@ Touchpoints between mate and zcp, closed list:
 - the Mate's Git credential file the mate server writes and zcp reads (§3.3, §10.10);
 - `~/.zcp/hq/observe-credential`, written by the Mate and read by zcp for Observe (§2.8; mate
   `apps/server/src/zerops/ZeropsObserveCredentialFile.ts`, zcp `internal/hq/observe_credential.go`);
-- `~/.zcp/hq/changes.json`, written by the Mate and read by zcp for completed changes (§2.8; mate
-  `apps/server/src/zerops/ZeropsChangesFile.ts`, zcp `internal/tools/hq_dev_git.go`).
+- `~/.zcp/hq/state.json`, written by the Mate and read by zcp: the Mate's state as its link last
+  heard it, and whether the link is up (§2.8; mate `apps/server/src/zerops/ZeropsMateStateFile.ts`,
+  zcp `internal/hq/mate_state.go`); and `~/.zcp/hq/state.lock`, held by `zcp service start mate`
+  while it supervises the server.
 
 Anything else is a violation and needs this section changed first.
 
@@ -945,16 +947,22 @@ starting a turn and provider login do not establish the context (§3.3, §3.6; m
 `apps/web/src/zerops/useObserveAuthorization.ts`,
 `packages/client-runtime/src/data/projections/observeAuthorization.ts`).
 
-The Mate's changes reach zcp the same way, through a file, never a call: on every `state` frame of
-its link the Mate's server writes `~/.zcp/hq/changes.json` (under the container's home), replacing it
-whole in one rename with exactly the frame's `MateChanges` (`packages/shared/src/hqChanges.ts`):
-`{ "appId": string|null, "appName": string|null, "changes": MateChange[], "openPerBranch"?: true }`,
-each change as the frame carries it, never a credential. A failed write leaves the old file. zcp only
-reads it — at its service's start and, while the directory watch works, each time the file is created
-or renamed into place, never on a timer; no file, or one it cannot read, is no finished change. The
-file stays across link loss without a freshness marker. What zcp does with it: §6.3,
+The Mate's state reaches zcp the same way, through a file, never a call. The Mate's server keeps
+`~/.zcp/hq/state.json` at the path its launch environment names (`ZCP_MATE_STATE_FILE`, §2.3), replaced
+whole in one rename: `{ "link": "linked"|"not-linked", "reason"?: string, "heardAt": string|null,
+"mate": object|null }`. A server whose launch names no file writes none, and the server hands the
+variable to nothing it spawns. `mate` is the `mate` of the link's last `state` frame exactly as HQ
+sent it, taken from the raw frame, never a credential. At its start the server keeps the `mate` the
+file already holds for its own project and writes `not-linked`, `starting`; on every `state` it writes
+`linked`; when the link ends or is refused it writes `not-linked` with why and keeps `mate`; when it
+stops it writes `stopped`. A failed write leaves the old file. zcp only reads it, at each use, and its
+service watches it replaced, never on a timer. zcp reads `linked` only while `zcp service start mate`
+holds `~/.zcp/hq/state.lock`; with the lock free the server is not running. No file is no Mate server
+here; a file zcp cannot decode is unreadable, never empty; keys zcp does not know are ignored. zcp asks
+HQ for no part of the Mate's state, and no authorization is decided from the file. What zcp does with
+it: §6.3,
 _Release on archive and on completion_ (mate `apps/server/src/zerops/ZeropsHqLink.ts`,
-`apps/server/src/zerops/ZeropsChangesFile.ts`; zcp `internal/hq/mate_changes.go`,
+`apps/server/src/zerops/ZeropsMateStateFile.ts`; zcp `internal/hq/mate_state.go`,
 `internal/tools/hq_dev_git.go`, `internal/tools/file_watch.go`).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
