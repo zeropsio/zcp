@@ -423,6 +423,7 @@ version keeps serving with a warning; a missing bundle cannot be installed. **Wh
 install did, a bundle still below the floor is neither run nor linked:** `zcp service start mate`
 fails and `zcp init` registers no unit and writes no env contract (`mate.CheckInstalledFloor`,
 `mate.BelowFloorError`); `zcp mate status --json` reports it as `belowFloor` beside `minimum`.
+The last step before every launch is the state transaction's (§2.1d).
 
 The explicitly attended full-container `zcp init` operation retains its existing release
 convergence, including the one full restart that brings an older Mate onto this updater. It must
@@ -632,6 +633,44 @@ At boot, an unfinished switch whose recorded worker is gone returns to `last-goo
 any install; a live worker owns the switch and boot skips the installer. A failed version
 is not automatically retried until a strictly newer release exists; `--force` is attended.
 There is no separate update journal or quarantine.
+
+**The state transaction.** A rollback returns the state the candidate found, not only its code:
+SQL and engine migrations and engine snapshots run before readiness, and the previous version
+would start on what the candidate migrated. The swapped set is `~/.t3/userdata` without `logs`,
+plus `~/.t3/uploads-index`. Not swapped: `uploads`, `worktrees`, `caches`, the provider homes,
+`/var/www`, and zcp's own files (`update.json`, `current`, `last-good` carry the switch and the
+failed version); under the Mate's boot fence a candidate touches none of them before commit
+(mate `apps/server/src/mateUpdateBoot.ts`). As the last step before every launch, holding the
+state lock and the install lock, `zcp service start mate` decides from the copy's tag, never
+from the update phase (boot repair has already left the phase by then;
+`mate.PrepareStateForLaunch`):
+
+- a copy tagged with `last-good`: the update was committed — the copy is dropped;
+- a copy tagged with the version about to launch: that version starts again on its own state;
+- a copy tagged otherwise while `last-good` is about to launch — every rollback (the worker's,
+  recovery's, boot repair's) launches `last-good` — restores it;
+- a copy tagged otherwise while another version is about to launch: a route outside the
+  transaction (init's install on an inactive unit, a unit start installing a missing bundle, a
+  dev push) replaced its version; the copy is dropped, since a restore would undo whatever that
+  version did since it started;
+- then, with no copy and a version about to launch that `last-good` does not name: copy.
+
+The copy is built in `~/.t3/.state-copy` with every file and directory synced, then renamed to
+`uploads-index.pre-<version>` and `userdata.pre-<version>`, the tag, last. A restore is two
+renames per item: the live item to `<item>.failed-<version>` (one kept, for diagnosis), the copy
+into its place; the tag goes last, so a start cut short between them is finished by the next.
+The logs move back into the live directory. Files are never copied back over a live directory:
+the database runs in WAL mode, and the candidate's WAL would replay onto the old pages. A copy
+or restore that fails launches nothing: the update's readiness wait sees the unit fail and rolls
+back; the start command never writes `update.json`. `mate.CommitLastGood` drops the copy tagged
+with the version it commits, so the copy is gone before the commit request and never outlives
+the moment its server accepts writes. Measured: 41–80 MB, 0.1–0.2 s.
+
+Nothing else writes the swapped set while the start command decides: the server and every
+process it started (provider CLIs, terminals) left with its unit's cgroup; the `mate` CLI's only
+commands that open `state.sqlite` are the server's own (`serve`, `start`), which zcp's unit alone
+launches; `mate triage` writes only a new scratch directory `userdata/triage/<instant>` and
+`mate mac` writes `~/.t3/mac`, neither read back as state; zcp writes nothing under `~/.t3`.
 
 Confirmed manual updates on protocol-capable Mates use the same drain and switch. A
 non-rollback-compatible manual release failing readiness stays on its candidate and reports

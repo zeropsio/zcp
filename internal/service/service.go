@@ -264,23 +264,37 @@ var mateLockWait = defaultMateLockWait
 // mateInstallBeforeStart recovers an interrupted switch or preserves the
 // installed release at or above MinimumMateVersion before launch. Supported
 // installed releases keep drain, organization hold and incompatible-release
-// confirmation. A missing or below-floor bundle refreshes the release manifest.
-// Whatever the install did, a bundle still below the floor is refused: the
-// start fails with mate.BelowFloorError rather than running it.
+// confirmation. A missing or below-floor bundle refreshes the release manifest. Whatever the install
+// did, a bundle still below the floor is refused: the start fails with
+// mate.BelowFloorError rather than running it. Last, with the version about
+// to launch settled, the server's state is copied, restored or released
+// (mate.PrepareStateForLaunch); a failed copy or restore launches nothing.
+// The install lock keeps current and last-good still while that decides.
 func mateInstallBeforeStart() error {
-	ensureMateBeforeStart()
-	return mate.CheckInstalledFloor()
-}
-
-// ensureMateBeforeStart is the install pass of a start; its failures are
-// logged, never fatal — the floor check after it decides.
-func ensureMateBeforeStart() {
 	release, err := mate.LockInstall(mateLockWait)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v — starting what is installed\n", err)
-		return
+	} else {
+		defer release()
+		ensureMateBeforeStart()
 	}
-	defer release()
+	if err := mate.CheckInstalledFloor(); err != nil {
+		return err
+	}
+	done, err := mate.PrepareStateForLaunch()
+	if err != nil {
+		return fmt.Errorf("start mate: %w", err)
+	}
+	if done != "" {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", done)
+	}
+	return nil
+}
+
+// ensureMateBeforeStart is the install pass of a start, under the install
+// lock; its failures are logged, never fatal — the floor check after it
+// decides.
+func ensureMateBeforeStart() {
 	result, err := mateEnsure(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
 	switch {
 	case err != nil:

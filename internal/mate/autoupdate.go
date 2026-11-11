@@ -131,11 +131,16 @@ func LastGoodVersion() (string, error) {
 // (the update worker and `zcp init` at boot): the caller has proved version started
 // healthy under this zcp. A dev build, or a release below MinimumMateVersion (a contract
 // this zcp no longer drives), is never a rollback target and leaves last-good unchanged.
+// The state copy taken before version first started goes with the commit: it never
+// outlives the moment its server accepts writes (§2.1d "The state transaction").
 func CommitLastGood(version string) error {
 	if IsDevVersion(version) || VersionOlder(version, MinimumMateVersion) {
 		return nil
 	}
-	return replaceLink(LastGoodLink(), VersionDir(version))
+	if err := replaceLink(LastGoodLink(), VersionDir(version)); err != nil {
+		return err
+	}
+	return dropStateCopy(BaseDir(), version)
 }
 
 func AutomaticUpdateAllowed(installed, failed string, candidate Manifest) bool {
