@@ -390,7 +390,7 @@ func Start(name string) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited with error: %v\n", name, err)
 	} else {
-		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited cleanly (code 0)\n", name)
+		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited cleanly\n", name)
 	}
 	return err
 }
@@ -423,20 +423,24 @@ func runCommand(binary string, args, extraEnv []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "[zcp] started pid %d\n", cmd.Process.Pid)
 
-	relayed := make(chan struct{})
+	relayed := make(chan bool, 1)
 	go func() {
-		defer close(relayed)
-		relaySignals(signals, cmd.Process)
+		relayed <- relaySignals(signals, cmd.Process)
 	}()
 	err := cmd.Wait()
 	signal.Stop(signals)
 	close(signals)
-	<-relayed
+	stopRelayed := <-relayed
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			fmt.Fprintf(os.Stderr, "[zcp] pid %d exited: code=%d state=%s\n",
 				cmd.Process.Pid, exitErr.ExitCode(), exitErr.ProcessState)
+			// Mate's interruption-only Effect shutdown exits 130, including on SIGTERM.
+			// After a requested stop, inactive is right regardless of the signal's source.
+			if binary == mate.BinPath() && stopRelayed && exitErr.ExitCode() == 130 {
+				return nil
+			}
 		}
 		return fmt.Errorf("%s exited: %w", args[0], err)
 	}
@@ -444,8 +448,9 @@ func runCommand(binary string, args, extraEnv []string) error {
 }
 
 // relaySignals sends each signal zcp receives to the child until the channel
-// closes after the child exited.
-func relaySignals(signals <-chan os.Signal, child *os.Process) {
+// closes after the child exited. It reports whether a signal was sent.
+func relaySignals(signals <-chan os.Signal, child *os.Process) bool {
+	relayed := false
 	for sig := range signals {
 		if err := child.Signal(sig); err != nil {
 			if !errors.Is(err, os.ErrProcessDone) {
@@ -453,8 +458,10 @@ func relaySignals(signals <-chan os.Signal, child *os.Process) {
 			}
 			continue
 		}
+		relayed = true
 		fmt.Fprintf(os.Stderr, "[zcp] relayed %v to pid %d\n", sig, child.Pid)
 	}
+	return relayed
 }
 
 // systemdSetTasksMax raises a unit's TasksMax via `systemctl set-property

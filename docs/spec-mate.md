@@ -653,7 +653,11 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
 - **A stop ends the Mate on its own terms.** `zcp service start` (`service.runCommand`, the launcher
   of every `zerops@<name>` unit) relays each SIGINT/SIGTERM it receives to its child and waits for the
   child to exit; it never sends SIGKILL. The Mate's runtime runs its shutdown (sockets and stores
-  closed). The deadline is the unit's: systemd's `TimeoutStopSec` (90 s on a Zerops container),
+  closed). Mate's interruption-only shutdown exits 130; zcp treats that exit as successful only
+  after it has successfully relayed a stop to the Mate, whatever sent the child's signal: the
+  operator requested a stop, so inactive is the right result. Exit 130 before a relay, any other
+  nonzero exit and termination by a signal remain errors. The deadline is the unit's: systemd's
+  `TimeoutStopSec` (90 s on a Zerops container),
   then SIGKILL to the cgroup. An update's `systemctl restart` (§2.1d) thus stops a drained Mate cleanly.
 
 ### 2.3 The environment contract
