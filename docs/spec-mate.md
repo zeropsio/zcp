@@ -308,7 +308,7 @@ off and restarting is a supported operation, not a state zcp only knows how to e
 
 ### 2.1 The init step — a reconcile, and an update lifecycle
 
-`zcp init` gains a container-only step, **Zerops Mate (mate)**, after the SSH-config step. It is
+`zcp init` gains a container-only step, **Zerops Mate (mate)**, as the last init step, after Agent adapters. It is
 **registered only when there is something to reconcile** — `MateEnabled`, or a leftover unit file a
 now-off flag has to remove — so a container that never had mate prints not one extra line (§2.0).
 
@@ -320,7 +320,7 @@ now-off flag has to remove — so a container that never had mate prints not one
 3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
 4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create --enable=false --start=false mate
    "zcp service start mate"`, then `sudo systemctl disable zerops@mate.service`. Existing units
-   are also disabled on every enabled init.
+   are also disabled on every enabled init; a failed disable is a named line, not a stop.
    If a supported bundle is already installed, init writes its environment and registers the unit
    before attempting the update, so an update failure can still start that bundle.
    Then, when systemd says the unit's file changed on disk since it loaded it
@@ -338,7 +338,7 @@ now-off flag has to remove — so a container that never had mate prints not one
    nonblocking restart, prove the exact version on a new healthy boot, and commit admission.
    A refusal, absent protocol, or drain deadline postpones the change without restarting
    the running Mate. Environment-only restarts use the same barrier and readiness proof.
-   An inactive unit follows the startup described in §2.1c. An unchanged running version still receives the boot readiness
+   An inactive unit follows the startup described in §2.1a step 7. An unchanged running version still receives the boot readiness
    proof before advancing `last-good` (§2.1d).
    `TestRun_Mate_InitDrain`, `TestRun_Mate_ActiveUnchanged_CommitsBootLastGood`.
 
@@ -397,7 +397,7 @@ One pass, in order:
    including the container adapters, with the installed bundle and env contract. The unit is not
    enabled for a systemd boot start. Init requests an idempotent, nonblocking start even
    when the Mate step fails, provided an installed bundle meets the floor. A running unit is left
-   running; changes to its bundle or env use the existing update switch (§2.9).
+   running; changes to its bundle or env use the existing update switch (§2.1 step 5, §2.1d).
 
 **An ordinary unit restart preserves an installed release at or above `MinimumMateVersion`.**
 `zcp service start mate` recovers an interrupted switch first. A supported installed version
@@ -1010,13 +1010,13 @@ Mate release artifact contains the server and no web client (C-6).
 | MD-5 | `{BasePath}/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Mate_DegradedStepStillMarksInitComplete`. |
 | MD-6 | A local (non-container) `zcp init` installs no bundle, writes no env file, leaves no marker. `TestRun_NoMate_OutsideContainer`. |
 | MD-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
-| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start. A change to the environment of a running Mate uses the update switch (§2.9). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`, `TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin`. |
+| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start. A change to the environment of a running Mate uses the update switch (§2.1 step 5, §2.1d). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`, `TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin`. |
 | MD-9 | `{BasePath}/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/mate/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
 | MD-10 | The desired release comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest keeps an installed mate serving — one below the floor named so in the warning, though never run or linked (`CheckInstalledFloor`) — and degrades only a first install. Download, integrity, and npm failures register the same degraded init outcome; init registers no unit when no supported bundle is available. `TestDesiredRelease_*`, `TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_ManifestUnreachable_KeepsInstalled`, `TestCheckInstalledFloor`, `TestStart_Mate_InstalledBelowFloor_RefusesToRun`, `TestRun_Mate_InstalledBelowFloor_DegradesWithoutLinking`, `TestRunMateStatus_JSON_ReportsTheFloor`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
 | MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions need no tarball download or npm call, and an installed semver prerelease (a hand-pushed dev build) at or above `MinimumMateVersion` is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
-| MD-15 | See §2.1c for init unit startup. Ordinary supervisor starts recover an interrupted switch and preserve an installed release at or above `MinimumMateVersion`; a missing or below-floor bundle refreshes the release manifest. First installation and attended container init use the shared install lock. `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
+| MD-15 | See §2.1a step 7 for init unit startup. Ordinary supervisor starts recover an interrupted switch and preserve an installed release at or above `MinimumMateVersion`; a missing or below-floor bundle refreshes the release manifest. First installation and attended container init use the shared install lock. `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
 | MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
 
@@ -1939,7 +1939,8 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    with the update line and verb from step 3–4 beside it, instead of a defect from an older server.
 7. **A restart is the update.** A container restart installs both halves: the zcp service's
    `run.initCommands` run `install.sh` (the latest zcp release), then `zcp init` (the stable Mate,
-   §2.1a, §2.1c), then `zcp init nginx`. zcp says when one would change something:
+   §2.1a, §2.1c), then `zcp init nginx`. The Mate unit is not boot-started: `zcp init`'s Mate step
+   starts it once, at the end. zcp says when one would change something:
    `zcp mate status --json` answers `zcp: {installed, latest, behind}`, `restartNeeded` and `why`
    (§2.1a), and the server relays them. The Mate server owns the idle check and the trigger: with
    `restartNeeded` true it drains its work, then runs **`zcp self restart --json`**. zcp owns

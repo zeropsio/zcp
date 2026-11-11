@@ -126,6 +126,9 @@ func enableMate(rt runtime.Info) (retErr error) {
 	// step fails. The install lock is released first by the later defer; the
 	// unit's own start also needs that lock. Starting an active unit is a no-op.
 	defer func() {
+		if !mateUnitFileExists() {
+			return
+		}
 		installed, err := mate.InstalledVersion()
 		if err != nil || mate.BelowFloor(installed) {
 			return
@@ -442,7 +445,8 @@ func ensureMateUnit() error {
 	}
 	unit := "zerops@" + mate.UnitName + ".service"
 	if err := commandRunner("sudo", "systemctl", "disable", unit); err != nil {
-		return fmt.Errorf("disable boot start for %s: %w", unit, err)
+		// A failed disable must not skip the update and env rewrite on every boot.
+		fmt.Fprintf(os.Stderr, "    ! systemctl disable %s failed (boot start may stay enabled): %v\n", unit, err)
 	}
 	return nil
 }
