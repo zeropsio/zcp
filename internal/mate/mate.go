@@ -586,11 +586,16 @@ func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
 //  3. The installed version is a dev build at or above MinimumMateVersion and
 //     opts.Force is false ⇒ ActionNone, keeping the dev build. A build below
 //     the floor is replaced like any release.
-//  4. Stage the desired release into its own VersionDir() (clearing any
+//  4. The desired release is older than the installed one and opts.Force is
+//     false ⇒ ActionNone, Warning set: an install never moves the Mate back.
+//     Only the update transaction's own rollback returns to last-good, and it
+//     calls activate itself (autoupdate.go), never through here; Force
+//     (a dev push) names the exact build wanted, so it may go back.
+//  5. Stage the desired release into its own VersionDir() (clearing any
 //     partial leftover there first).
-//  5. Smoke-test the staged binary.
-//  6. Activate it atomically (repoint CurrentLink()).
-//  7. Prune old version directories, always keeping the one just activated.
+//  6. Smoke-test the staged binary.
+//  7. Activate it atomically (repoint CurrentLink()).
+//  8. Prune old version directories, always keeping the one just activated.
 //
 // Staging failures leave CurrentLink() unchanged and clean up the half-built
 // directory. A custom Activate owns switching, readiness and recovery; the
@@ -640,6 +645,10 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	}
 	if instErr == nil && IsDevVersion(installed) && !opts.Force && !BelowFloor(installed) {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
+	}
+
+	if instErr == nil && !opts.Force && VersionOlder(desired.Version, installed) {
+		return Result{Action: ActionNone, From: installed, To: installed, Warning: fmt.Sprintf("keeping installed %s; the release manifest names the older %s, and an install never moves the Mate back", installed, desired.Version)}, nil
 	}
 
 	switched, err := stageAndActivate(desired, opts.Activate)

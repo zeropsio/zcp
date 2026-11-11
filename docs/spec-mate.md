@@ -488,6 +488,7 @@ hourly; `zcp mate update` always refreshes. An unreachable manifest with a mate 
 **not** a failure: the installed version keeps serving and the step logs the miss. With nothing
 installed it degrades like any other install failure (MD-1).
 
+- An install never moves the installed Mate back: a manifest that names an older release than the installed one keeps the installed version with a warning (only `Force`, a dev push, or the update transaction's own rollback goes back).
 - Private manifests selected by `ZCP_MATE_MANIFEST_URL` may name a full, unprefixed semantic
   prerelease version. Version checks preserve SemVer precedence: a prerelease of the minimum
   release is below that release, numeric prerelease identifiers compare numerically, and build
