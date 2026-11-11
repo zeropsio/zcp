@@ -22,13 +22,13 @@ import (
 )
 
 // zcpReleaseServer is the zcp release source (GitHub's releases/latest, as
-// ZCP_UPDATE_URL overrides it) answering tag; an empty tag answers 403, as a
-// rate-limited GitHub does. It counts the asks.
+// ZCP_UPDATE_URL overrides it) redirecting to tag; an empty tag answers 403,
+// as a refusing GitHub does. It counts the asks.
 func zcpReleaseServer(t *testing.T, tag string) *atomic.Int32 {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/zeropsio/zcp/releases/latest" {
+		if r.URL.Path != "/latest" {
 			http.NotFound(w, r)
 			return
 		}
@@ -37,8 +37,7 @@ func zcpReleaseServer(t *testing.T, tag string) *atomic.Int32 {
 			http.Error(w, "API rate limit exceeded", http.StatusForbidden)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": tag})
+		http.Redirect(w, r, "/tag/"+tag, http.StatusFound)
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("ZCP_UPDATE_URL", srv.URL)

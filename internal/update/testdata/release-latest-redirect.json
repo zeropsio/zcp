@@ -1,0 +1,26 @@
+{
+  "$provenance": {
+    "producer": "github",
+    "revision": "2026-11-11",
+    "via": "curl -sI against https://github.com/zeropsio/zcp/releases plus each key below (/latest, an asset v9.251.1 ships, an asset it does not), unauthenticated, from the laptop while v9.251.1 was the newest release; only the status and the Location header (its query string cut) were kept. Repeat with the same three requests from any host and compare.",
+    "schema": "HEAD https://github.com/{owner}/{repo}/releases/<key>, keyed by the path below the releases page"
+  },
+  "value": {
+    "/latest": {
+      "status": 302,
+      "headers": {
+        "Location": "https://github.com/zeropsio/zcp/releases/tag/v9.251.1"
+      }
+    },
+    "/download/v9.251.1/zcp-devsup-linux-amd64": {
+      "status": 302,
+      "headers": {
+        "Location": "https://release-assets.githubusercontent.com/github-production-release-asset/1137066987/2f5be17b-4275-4bdd-8acf-9af46fb24ba9"
+      }
+    },
+    "/download/v9.251.1/zcp-devsup-nope": {
+      "status": 404,
+      "headers": {}
+    }
+  }
+}

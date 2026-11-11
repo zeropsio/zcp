@@ -5,7 +5,6 @@ package update
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,9 +29,8 @@ func TestOnce_DevVersion_Skips(t *testing.T) {
 func TestOnce_NoUpdate_Returns(t *testing.T) {
 	// Cannot use t.Parallel() — t.Setenv modifies process environment.
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v0.1.0"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v0.1.0", http.StatusFound)
 	}))
 	defer srv.Close()
 	t.Setenv("ZCP_UPDATE_URL", srv.URL)
@@ -61,9 +59,8 @@ func TestOnce_UpdateAvailable_AppliesWithoutShutdown(t *testing.T) {
 
 	newBinary := []byte("#!/bin/sh\necho v2\n")
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/zeropsio/zcp/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v99.0.0"})
+	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v99.0.0", http.StatusFound)
 	})
 	mux.HandleFunc("/download/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(newBinary)
@@ -114,9 +111,8 @@ func TestOnce_NotWritable_Skips(t *testing.T) {
 	}
 	// Cannot use t.Parallel() — t.Setenv modifies process environment.
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v99.0.0"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v99.0.0", http.StatusFound)
 	}))
 	defer srv.Close()
 	t.Setenv("ZCP_UPDATE_URL", srv.URL)
@@ -153,9 +149,8 @@ func TestOnce_NotWritable_Skips(t *testing.T) {
 func TestOnce_ContextCancelled_NoUpdate(t *testing.T) {
 	// Cannot use t.Parallel() — t.Setenv modifies process environment.
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v99.0.0"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v99.0.0", http.StatusFound)
 	}))
 	defer srv.Close()
 	t.Setenv("ZCP_UPDATE_URL", srv.URL)

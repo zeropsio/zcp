@@ -1,6 +1,7 @@
 // Package update provides self-update functionality for the ZCP binary.
-// It checks GitHub releases for newer versions and can download + replace
-// the running binary before the MCP server starts.
+// It reads the newest GitHub release from the releases/latest redirect, as
+// install.sh does, and can download + replace the running binary before the
+// MCP server starts.
 package update
 
 import (
@@ -8,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -17,11 +20,11 @@ import (
 )
 
 const (
-	defaultGitHubAPI = "https://api.github.com/repos/zeropsio/zcp/releases/latest"
-	defaultCacheTTL  = 24 * time.Hour
-	checkTimeout     = 5 * time.Second
-	cacheFileName    = "update.json"
-	osWindows        = "windows"
+	defaultReleasesURL = "https://github.com/zeropsio/zcp/releases"
+	defaultCacheTTL    = 24 * time.Hour
+	checkTimeout       = 5 * time.Second
+	cacheFileName      = "update.json"
+	osWindows          = "windows"
 )
 
 // Info holds the result of an update check.
@@ -34,27 +37,30 @@ type Info struct {
 
 // Checker performs version checks against GitHub releases.
 type Checker struct {
-	CurrentVersion  string
-	GitHubAPIURL    string
-	DownloadBaseURL string // override download URL base (testing/private deployments)
-	CacheDir        string
-	CacheTTL        time.Duration
-	HTTPClient      *http.Client
+	CurrentVersion string
+	// ReleasesURL is a GitHub releases page: <ReleasesURL>/latest redirects
+	// to <ReleasesURL>/tag/<tag> of the newest release, and a release's
+	// asset downloads from <ReleasesURL>/download/<tag>/<asset>. Neither is
+	// the REST API, whose unauthenticated quota a shared egress spends.
+	ReleasesURL string
+	CacheDir    string
+	CacheTTL    time.Duration
+	HTTPClient  *http.Client
 }
 
 // NewChecker creates a Checker with default settings.
-// If ZCP_UPDATE_URL is set, it overrides both the API and download base URLs.
+// ZCP_UPDATE_URL, when set, replaces the releases page (testing/private
+// deployments).
 func NewChecker(currentVersion string) *Checker {
 	c := &Checker{
 		CurrentVersion: currentVersion,
-		GitHubAPIURL:   defaultGitHubAPI,
+		ReleasesURL:    defaultReleasesURL,
 		CacheDir:       defaultCacheDir(),
 		CacheTTL:       defaultCacheTTL,
 		HTTPClient:     &http.Client{Timeout: checkTimeout},
 	}
 	if base := os.Getenv("ZCP_UPDATE_URL"); base != "" {
-		c.GitHubAPIURL = base + "/repos/zeropsio/zcp/releases/latest"
-		c.DownloadBaseURL = base + "/download"
+		c.ReleasesURL = base
 	}
 	return c
 }
@@ -73,20 +79,19 @@ func (c *Checker) Check(ctx context.Context) (*Info, error) {
 		return info, nil
 	}
 
-	// Fetch from GitHub API.
-	release, err := c.fetchLatestRelease(ctx)
+	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("check latest release: %w", err)
 	}
 
-	info.LatestVersion = release.TagName
-	info.DownloadURL = c.downloadURL(release.TagName)
-	info.Available = isNewer(c.CurrentVersion, release.TagName)
+	info.LatestVersion = tag
+	info.DownloadURL = c.downloadURL(tag)
+	info.Available = isNewer(c.CurrentVersion, tag)
 
 	// Write cache (best-effort).
 	c.writeCache(cacheEntry{
 		CheckedAt:     time.Now(),
-		LatestVersion: release.TagName,
+		LatestVersion: tag,
 		DownloadURL:   info.DownloadURL,
 	})
 
@@ -95,37 +100,34 @@ func (c *Checker) Check(ctx context.Context) (*Info, error) {
 
 // downloadURL is where this platform's binary of release tag downloads from.
 func (c *Checker) downloadURL(tag string) string {
-	if c.DownloadBaseURL != "" {
-		return fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, tag, assetName(runtime.GOOS, runtime.GOARCH))
-	}
-	return buildDownloadURL(tag, runtime.GOOS, runtime.GOARCH)
+	return c.assetURL(tag, assetName(runtime.GOOS, runtime.GOARCH))
 }
 
-type githubRelease struct {
-	TagName string `json:"tag_name"` //nolint:tagliatelle // GitHub API uses snake_case
-	Assets  []struct {
-		Name string `json:"name"`
-	} `json:"assets"`
+// assetURL is where asset of release tag downloads from.
+func (c *Checker) assetURL(tag, asset string) string {
+	return fmt.Sprintf("%s/download/%s/%s", c.ReleasesURL, tag, asset)
 }
 
 // LatestAssetURL is the download URL of asset in the newest published
 // release, "" when that release does not ship it. It reads the release
 // afresh: the update cache holds no asset list.
 func (c *Checker) LatestAssetURL(ctx context.Context, asset string) (string, error) {
-	release, err := c.fetchLatestRelease(ctx)
+	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, a := range release.Assets {
-		if a.Name != asset {
-			continue
-		}
-		if c.DownloadBaseURL != "" {
-			return fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, release.TagName, asset), nil
-		}
-		return fmt.Sprintf("https://github.com/zeropsio/zcp/releases/download/%s/%s", release.TagName, asset), nil
+	u := c.assetURL(tag, asset)
+	status, _, err := c.head(ctx, u)
+	if err != nil {
+		return "", fmt.Errorf("probe release asset: %w", err)
 	}
-	return "", nil
+	switch {
+	case status == http.StatusNotFound:
+		return "", nil
+	case status < http.StatusBadRequest:
+		return u, nil
+	}
+	return "", fmt.Errorf("release asset %s answered %d", u, status)
 }
 
 type cacheEntry struct {
@@ -134,31 +136,44 @@ type cacheEntry struct {
 	DownloadURL   string    `json:"downloadUrl"`
 }
 
-func (c *Checker) fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
+// fetchLatestTag is the tag <ReleasesURL>/latest redirects to.
+func (c *Checker) fetchLatestTag(ctx context.Context) (string, error) {
+	status, location, err := c.head(ctx, c.ReleasesURL+"/latest")
+	if err != nil {
+		return "", fmt.Errorf("fetch release: %w", err)
+	}
+	if status < 300 || status >= 400 {
+		return "", fmt.Errorf("releases/latest answered %d, not a redirect", status)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("releases/latest redirect: %w", err)
+	}
+	dir, tag := path.Split(loc.Path)
+	if path.Base(dir) != "tag" || tag == "" {
+		return "", fmt.Errorf("releases/latest redirects to %s, which names no release tag", loc)
+	}
+	return tag, nil
+}
+
+// head is the status and Location header a HEAD request for target answers,
+// without following a redirect: a redirect is the answer itself.
+func (c *Checker) head(ctx context.Context, target string) (int, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.GitHubAPIURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return 0, "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := c.HTTPClient.Do(req)
+	client := *c.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch release: %w", err)
+		return 0, "", fmt.Errorf("head %s: %w", target, err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github API returned %d", resp.StatusCode)
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("decode release: %w", err)
-	}
-	return &release, nil
+	return resp.StatusCode, resp.Header.Get("Location"), nil
 }
 
 func (c *Checker) readCache() (*cacheEntry, bool) {
@@ -261,9 +276,4 @@ func assetName(goos, goarch string) string {
 		return "zcp-win-x64.exe"
 	}
 	return fmt.Sprintf("zcp-%s-%s", goos, goarch)
-}
-
-// buildDownloadURL constructs the GitHub release asset URL for a given tag and platform.
-func buildDownloadURL(tag, goos, goarch string) string {
-	return fmt.Sprintf("https://github.com/zeropsio/zcp/releases/download/%s/%s", tag, assetName(goos, goarch))
 }

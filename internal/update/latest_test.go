@@ -6,7 +6,6 @@
 package update
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -44,20 +43,19 @@ func TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown(t *testing.T) {
 			t.Parallel()
 
 			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if tt.sourceTag == "" {
 					http.Error(w, "rate limited", http.StatusForbidden)
 					return
 				}
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(githubRelease{TagName: tt.sourceTag})
+				http.Redirect(w, r, "/tag/"+tt.sourceTag, http.StatusFound)
 			}))
 			defer srv.Close()
 
 			c := &Checker{
 				CurrentVersion: "v9.220.0",
-				GitHubAPIURL:   srv.URL,
+				ReleasesURL:    srv.URL,
 				CacheDir:       t.TempDir(),
 				CacheTTL:       time.Hour,
 				HTTPClient:     srv.Client(),
@@ -80,6 +78,29 @@ func TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown(t *testing.T) {
 	}
 }
 
+// A container whose shared egress spent GitHub's API quota still learns the
+// newest release, so `zcp mate status` tells a behind zcp: the release is
+// read from the releases/latest redirect install.sh follows, never the API.
+// witness: internal/update/check.go | client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse } → client.CheckRedirect = nil
+func TestLatest_RecordedRedirect_NamesTheNewestRelease(t *testing.T) {
+	t.Parallel()
+
+	c := &Checker{
+		CurrentVersion: "v9.250.0",
+		ReleasesURL:    defaultReleasesURL,
+		CacheDir:       t.TempDir(),
+		CacheTTL:       time.Hour,
+		HTTPClient:     &http.Client{Transport: recordedReleasesPage(t, defaultReleasesURL)},
+	}
+	got, err := c.Latest(t.Context(), LatestOptions{Refresh: true})
+	if err != nil || got != "v9.251.1" {
+		t.Fatalf("Latest() = %q, %v; want v9.251.1", got, err)
+	}
+	if !Behind(c.CurrentVersion, got) {
+		t.Errorf("Behind(%q, %q) = false, want a behind zcp", c.CurrentVersion, got)
+	}
+}
+
 // A release Latest fetched is cached the way Check caches one, download URL
 // included, so the self-update path reading the same file finds a usable
 // entry, and the next status reads it without the network.
@@ -87,16 +108,15 @@ func TestLatest_Fetched_CachedForTheNextReader(t *testing.T) {
 	t.Parallel()
 
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v9.226.0"})
+		http.Redirect(w, r, "/tag/v9.226.0", http.StatusFound)
 	}))
 	defer srv.Close()
 
 	c := &Checker{
 		CurrentVersion: "v9.220.0",
-		GitHubAPIURL:   srv.URL,
+		ReleasesURL:    srv.URL,
 		CacheDir:       t.TempDir(),
 		CacheTTL:       time.Hour,
 		HTTPClient:     srv.Client(),

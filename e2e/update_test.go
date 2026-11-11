@@ -15,7 +15,6 @@ package e2e_test
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,9 +58,8 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 	// Mock HTTP server serving GitHub API and download endpoints.
 	asset := fmt.Sprintf("zcp-%s-%s", runtime.GOOS, runtime.GOARCH)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/zeropsio/zcp/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v99.0.0"})
+	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v99.0.0", http.StatusFound)
 	})
 	mux.HandleFunc("/download/v99.0.0/"+asset, func(w http.ResponseWriter, _ *http.Request) {
 		// http.ServeFile needs a non-nil *Request (it dereferences r.URL and
@@ -179,9 +177,8 @@ func TestE2E_AsyncUpdate_NoUpdate(t *testing.T) {
 
 	// Mock HTTP server returns the same version.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/zeropsio/zcp/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v99.0.0"})
+	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/v99.0.0", http.StatusFound)
 	})
 	mockSrv := httptest.NewServer(mux)
 	defer mockSrv.Close()

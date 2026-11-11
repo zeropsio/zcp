@@ -34,10 +34,7 @@ func (c *Checker) Latest(ctx context.Context, opts LatestOptions) (string, error
 		}
 	}
 
-	release, err := c.fetchLatestRelease(ctx)
-	if err == nil && release.TagName == "" {
-		err = errors.New("the release names no tag")
-	}
+	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
 		if opts.Refresh {
 			if cached, ok := c.readCache(); ok && cached.LatestVersion != "" {
@@ -49,10 +46,10 @@ func (c *Checker) Latest(ctx context.Context, opts LatestOptions) (string, error
 
 	c.writeCache(cacheEntry{
 		CheckedAt:     time.Now(),
-		LatestVersion: release.TagName,
-		DownloadURL:   c.downloadURL(release.TagName),
+		LatestVersion: tag,
+		DownloadURL:   c.downloadURL(tag),
 	})
-	return release.TagName, nil
+	return tag, nil
 }
 
 // IsRelease reports whether v names a published release: major.minor.patch,

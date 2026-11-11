@@ -71,19 +71,15 @@ func TestCheck_NewerVersionAvailable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				resp := githubRelease{TagName: tt.latestTag}
-				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(resp); err != nil {
-					t.Errorf("encode response: %v", err)
-				}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/tag/"+tt.latestTag, http.StatusFound)
 			}))
 			defer srv.Close()
 
 			cacheDir := t.TempDir()
 			c := &Checker{
 				CurrentVersion: tt.currentVersion,
-				GitHubAPIURL:   srv.URL,
+				ReleasesURL:    srv.URL,
 				CacheDir:       cacheDir,
 				CacheTTL:       0, // force fresh check
 				HTTPClient:     srv.Client(),
@@ -107,20 +103,16 @@ func TestCheck_CacheRespected(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		resp := githubRelease{TagName: "v0.2.0"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Errorf("encode response: %v", err)
-		}
+		http.Redirect(w, r, "/tag/"+"v0.2.0", http.StatusFound)
 	}))
 	defer srv.Close()
 
 	cacheDir := t.TempDir()
 	c := &Checker{
 		CurrentVersion: "0.1.0",
-		GitHubAPIURL:   srv.URL,
+		ReleasesURL:    srv.URL,
 		CacheDir:       cacheDir,
 		CacheTTL:       time.Hour,
 		HTTPClient:     srv.Client(),
@@ -155,13 +147,9 @@ func TestCheck_CacheExpired(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		resp := githubRelease{TagName: "v0.2.0"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Errorf("encode response: %v", err)
-		}
+		http.Redirect(w, r, "/tag/"+"v0.2.0", http.StatusFound)
 	}))
 	defer srv.Close()
 
@@ -183,7 +171,7 @@ func TestCheck_CacheExpired(t *testing.T) {
 
 	c := &Checker{
 		CurrentVersion: "0.1.0",
-		GitHubAPIURL:   srv.URL,
+		ReleasesURL:    srv.URL,
 		CacheDir:       cacheDir,
 		CacheTTL:       time.Hour,
 		HTTPClient:     srv.Client(),
@@ -223,6 +211,38 @@ func (r recordedResponse) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// releasesPage answers a request below base with the response recorded at
+// the same path below GitHub's releases page, anything else with 404.
+type releasesPage struct {
+	base      string
+	responses map[string]recordedResponse
+}
+
+func (p releasesPage) RoundTrip(req *http.Request) (*http.Response, error) {
+	if rest, ok := strings.CutPrefix(req.URL.String(), p.base); ok {
+		if rec, found := p.responses[rest]; found {
+			return rec.RoundTrip(req)
+		}
+	}
+	return recordedResponse{Status: http.StatusNotFound}.RoundTrip(req)
+}
+
+// recordedReleasesPage serves testdata/release-latest-redirect.json below base.
+func recordedReleasesPage(t *testing.T, base string) releasesPage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "release-latest-redirect.json"))
+	if err != nil {
+		t.Fatalf("read recording: %v", err)
+	}
+	var rec struct {
+		Value map[string]recordedResponse `json:"value"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("decode recording: %v", err)
+	}
+	return releasesPage{base: base, responses: rec.Value}
+}
+
 // A person running `zcp update` while GitHub refuses the release check is
 // told the check failed, never that their version is the latest.
 // witness: internal/update/check.go | return nil, fmt.Errorf("check latest release: %w", err) → return info, nil
@@ -242,7 +262,7 @@ func TestCheck_RateLimitedReleaseCheck_ReportsFailure(t *testing.T) {
 
 	c := &Checker{
 		CurrentVersion: "v9.250.0",
-		GitHubAPIURL:   defaultGitHubAPI,
+		ReleasesURL:    defaultReleasesURL,
 		CacheDir:       t.TempDir(),
 		CacheTTL:       0,
 		HTTPClient:     &http.Client{Transport: rec.Value},
@@ -333,7 +353,8 @@ func TestDownloadURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := buildDownloadURL(tt.tag, tt.goos, tt.arch)
+			c := &Checker{ReleasesURL: defaultReleasesURL}
+			got := c.assetURL(tt.tag, assetName(tt.goos, tt.arch))
 			if got != tt.want {
 				t.Errorf("got %s, want %s", got, tt.want)
 			}
@@ -369,22 +390,17 @@ func TestAssetName(t *testing.T) {
 func TestCheck_DownloadBaseURL(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := githubRelease{TagName: "v0.3.0"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Errorf("encode response: %v", err)
-		}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/tag/"+"v0.3.0", http.StatusFound)
 	}))
 	defer srv.Close()
 
 	c := &Checker{
-		CurrentVersion:  "0.1.0",
-		GitHubAPIURL:    srv.URL,
-		CacheDir:        t.TempDir(),
-		CacheTTL:        0,
-		HTTPClient:      srv.Client(),
-		DownloadBaseURL: srv.URL + "/download",
+		CurrentVersion: "0.1.0",
+		ReleasesURL:    srv.URL,
+		CacheDir:       t.TempDir(),
+		CacheTTL:       0,
+		HTTPClient:     srv.Client(),
 	}
 
 	info, err := c.Check(t.Context())
@@ -405,34 +421,30 @@ func TestNewChecker_ZCPUpdateURL(t *testing.T) {
 	t.Setenv("ZCP_UPDATE_URL", "http://mock.local")
 
 	c := NewChecker("0.1.0")
-	if c.GitHubAPIURL != "http://mock.local/repos/zeropsio/zcp/releases/latest" {
-		t.Errorf("GitHubAPIURL = %q, want mock URL", c.GitHubAPIURL)
-	}
-	if c.DownloadBaseURL != "http://mock.local/download" {
-		t.Errorf("DownloadBaseURL = %q, want mock download URL", c.DownloadBaseURL)
+	if c.ReleasesURL != "http://mock.local" {
+		t.Errorf("ReleasesURL = %q, want mock URL", c.ReleasesURL)
 	}
 }
 
+// A dev setup's install line names the zcp-devsup of the newest release when
+// that release ships it, and no line when it does not.
+// witness: internal/update/check.go | case status == http.StatusNotFound: → case status == http.StatusGone:
 func TestLatestAssetURL(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, body, base, want string
+		name, asset, base, want string
 	}{
-		{name: "the newest release ships it", body: `{"tag_name":"v9.300.0","assets":[{"name":"zcp-linux-amd64"},{"name":"zcp-devsup-linux-amd64"}]}`,
-			want: "https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64"},
-		{name: "the newest release does not", body: `{"tag_name":"v9.209.0","assets":[{"name":"zcp-linux-amd64"}]}`},
-		{name: "a private deployment's download base", body: `{"tag_name":"v9.300.0","assets":[{"name":"zcp-devsup-linux-amd64"}]}`,
-			base: "https://mirror.example/download", want: "https://mirror.example/download/v9.300.0/zcp-devsup-linux-amd64"},
+		{name: "the newest release ships it", asset: "zcp-devsup-linux-amd64", base: defaultReleasesURL,
+			want: "https://github.com/zeropsio/zcp/releases/download/v9.251.1/zcp-devsup-linux-amd64"},
+		{name: "the newest release does not", asset: "zcp-devsup-nope", base: defaultReleasesURL},
+		{name: "a private deployment's download base", asset: "zcp-devsup-linux-amd64", base: "https://mirror.example",
+			want: "https://mirror.example/download/v9.251.1/zcp-devsup-linux-amd64"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			defer srv.Close()
-			c := &Checker{GitHubAPIURL: srv.URL, DownloadBaseURL: tt.base, HTTPClient: srv.Client()}
-			got, err := c.LatestAssetURL(t.Context(), "zcp-devsup-linux-amd64")
+			c := &Checker{ReleasesURL: tt.base, HTTPClient: &http.Client{Transport: recordedReleasesPage(t, tt.base)}}
+			got, err := c.LatestAssetURL(t.Context(), tt.asset)
 			if err != nil || got != tt.want {
 				t.Errorf("= %q, %v; want %q", got, err, tt.want)
 			}
