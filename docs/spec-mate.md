@@ -342,6 +342,20 @@ now-off flag has to remove — so a container that never had mate prints not one
    proof before advancing `last-good` (§2.1d).
    `TestRun_Mate_InitDrain`, `TestRun_Mate_ActiveUnchanged_CommitsBootLastGood`.
 
+   **A Mate that does not answer is not running.** A container restart does not boot-start the
+   unit (§2.1a step 7), so its init normally finds it inactive. When init finds the unit active or
+   activating — a boot-start link an earlier init created or failed to disable, or an attended
+   `zcp init` — it is a running Mate only if it answers: a drain that gets no HTTP answer
+   (`mate.ErrNotAnswering`: nothing listens, or the connection breaks) means none. Init then
+   activates the staged release atomically, restarts the unit and observes cold readiness (§2.1d);
+   the environment-only switch takes the same route. The Mate server answers no request before
+   command readiness, so such a server admitted no work: a crash-looping release is replaced, and a
+   healthy server still booting is restarted onto the newest release with its persisted fold
+   resuming in the new boot. A Mate that answers, even with a refusal, or that holds the drain
+   request until its deadline is drained and switched or postponed as above. Only a server reaching
+   command readiness between its refused drain and the restart could lose work admitted in that
+   moment. The verdict reads no restart counter and adds no timer.
+
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
 command, and mate must never take a container start down with it. When no bundle is available, init
@@ -397,7 +411,8 @@ One pass, in order:
    including the container adapters, with the installed bundle and env contract. The unit is not
    enabled for a systemd boot start. Init requests an idempotent, nonblocking start even
    when the Mate step fails, provided an installed bundle meets the floor. A running unit is left
-   running; changes to its bundle or env use the existing update switch (§2.1 step 5, §2.1d).
+   running; changes to its bundle or env use the existing update switch (§2.1 step 5, §2.1d),
+   and a unit whose Mate does not answer is restarted instead (§2.1 step 5).
 
 **An ordinary unit restart preserves an installed release at or above `MinimumMateVersion`.**
 `zcp service start mate` recovers an interrupted switch first. A supported installed version
@@ -417,7 +432,7 @@ updates use the separate worker described below. The manual CLI chooses that wor
 an exact protocol-1 capability response. An explicit HTTP 404 proves an older endpoint absent
 and retains the attended legacy path; transport failure, another status, invalid JSON, or an
 unknown protocol postpones without changing the installation. An inactive or unreachable Mate
-needs attended recovery, never a guessed legacy capability.
+is updated by a container restart (§2.1 step 5), never by a guessed legacy capability.
 
 **`zcp mate update [--force] [--json]`** runs the identical pass from the CLI and then restarts
 `zerops@mate` when the unit is registered, so an update needs no container restart. It is what the
@@ -604,7 +619,8 @@ id, engine/database readiness, and C-4 before the progress window passes without
 Live init, the update worker and recovery share this wait at the readiness owner. A first boot
 can be long for a reason that is not a fault: Eli's first boot of a release folds 34,850 events,
 and the fold persists as it goes, so a later boot resumes it.
-`zcp init` at cold boot is the other route: after it settles an installed release it observes the same
+`zcp init` at cold boot is the other route, also taken by a unit whose Mate gave init's drain no
+answer (§2.1 step 5): after it settles an installed release it observes the same
 readiness proof for 30 seconds (without holding the install lock) and only then moves `last-good`; a Mate not ready
 in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
 `mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`.
@@ -771,7 +787,9 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 | container id | unchanged | changes | unchanged |
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
-see the ledger), and the release manifest is what the next `zcp init` reconciles toward (§2.1a).
+see the ledger), and the release manifest is what the next `zcp init` reconciles toward (§2.1a),
+also for a Mate that crash-loops or does not answer yet (§2.1 step 5): one restart replaces a
+broken release whenever a newer one is out.
 Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
 the bundle is not a regression under the versioned layout — it loses the whole container — and a
 **disable** keeping it is what makes re-enabling free.

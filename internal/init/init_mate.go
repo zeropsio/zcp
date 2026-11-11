@@ -122,6 +122,10 @@ func disableMate() error {
 // ExecStart cannot resolve and would crash-loop when started.
 func enableMate(rt runtime.Info) (retErr error) {
 	commitLastGood := false
+	// restart is set when the unit runs but its Mate does not answer
+	// (mate.ErrNotAnswering): no server admitted work, so the unit restarts
+	// onto the installed bundle and environment instead of a no-op start.
+	restart := false
 	// Always request a start of a usable installed bundle, even if this init
 	// step fails. The install lock is released first by the later defer; the
 	// unit's own start also needs that lock. Starting an active unit is a no-op.
@@ -134,9 +138,13 @@ func enableMate(rt runtime.Info) (retErr error) {
 			return
 		}
 		unit := "zerops@" + mate.UnitName + ".service"
-		fmt.Fprintf(os.Stderr, "    → ensuring %s is running\n", unit)
-		if err := commandRunner("sudo", "systemctl", "start", "--no-block", unit); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("start %s: %w", unit, err))
+		verb, line := "start", "ensuring "+unit+" is running"
+		if restart {
+			verb, line = "restart", "restarting "+unit
+		}
+		fmt.Fprintf(os.Stderr, "    → %s\n", line)
+		if err := commandRunner("sudo", "systemctl", verb, "--no-block", unit); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("%s %s: %w", verb, unit, err))
 			return
 		}
 		if commitLastGood {
@@ -197,7 +205,13 @@ func enableMate(rt runtime.Info) (retErr error) {
 		}
 		reloadMateUnitIfChanged()
 		opts.Activate = func(candidate mate.Manifest) error {
-			return switchRunningMate(candidate, release)
+			err := switchRunningMate(candidate, release)
+			if errors.Is(err, mate.ErrNotAnswering) {
+				// The installer activates the release as for a stopped unit.
+				fmt.Fprintf(os.Stderr, "    (mate does not answer; installing %s and restarting the unit)\n", candidate.Version)
+				restart = true
+			}
+			return err
 		}
 	}
 
@@ -236,14 +250,18 @@ func enableMate(rt runtime.Info) (retErr error) {
 		reloadMateUnitIfChanged()
 	}
 
-	if running {
-		if !bundleChanged(result) && envChanged {
-			if err := switchRunningMate(mate.Manifest{Version: result.To}, release); err != nil {
-				return fmt.Errorf("switch Mate environment: %w", err)
-			}
-		} else if !bundleChanged(result) {
-			commitLastGood = true
+	if running && !restart && !bundleChanged(result) && envChanged {
+		err := switchRunningMate(mate.Manifest{Version: result.To}, release)
+		if errors.Is(err, mate.ErrNotAnswering) {
+			fmt.Fprintf(os.Stderr, "    (mate does not answer; restarting the unit with the new environment)\n")
+			restart = true
+		} else if err != nil {
+			return fmt.Errorf("switch Mate environment: %w", err)
 		}
+	}
+	if running && !restart {
+		// A switch proved its own readiness; an unchanged Mate proves this boot.
+		commitLastGood = !bundleChanged(result) && !envChanged
 		return nil
 	}
 
@@ -294,7 +312,10 @@ func switchRunningMate(candidate mate.Manifest, release func()) error {
 	}
 	drain, err := mate.DrainUpdate(candidate.Version, false)
 	if err != nil {
-		cancelErr := post("cancel")
+		var cancelErr error
+		if !errors.Is(err, mate.ErrNotAnswering) {
+			cancelErr = post("cancel")
+		}
 		state.Phase, state.WorkerPID, state.WorkerStart = "postponed", 0, ""
 		stateErr := mate.WriteUpdateState(state)
 		return fmt.Errorf("init Mate switch postponed: %w", errors.Join(err, cancelErr, stateErr))

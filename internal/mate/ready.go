@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -75,8 +77,16 @@ func UpdateRequest(ctx context.Context, path string, body []byte, out *UpdateRea
 	return nil
 }
 
+// ErrNotAnswering is a drain that got no HTTP answer at all: nothing listened or
+// the connection broke. A Mate server answers no request before command
+// readiness, so a server that does not answer has admitted no work in its boot:
+// it is no running Mate to drain. A request that ran into its deadline reached a
+// server that may hold work, so it is not this verdict.
+var ErrNotAnswering = errors.New("mate does not answer")
+
 // DrainUpdate asks the running Mate to prove idle behind its admission barrier.
-// The caller cancels on failure and switches only after this proof succeeds.
+// The caller cancels on failure and switches only after this proof succeeds; a
+// failure wrapping ErrNotAnswering has no barrier to cancel.
 func DrainUpdate(version string, automatic bool) (UpdateReadiness, error) {
 	body, err := json.Marshal(struct {
 		Version    string `json:"version"`
@@ -90,6 +100,12 @@ func DrainUpdate(version string, automatic bool) (UpdateReadiness, error) {
 	defer cancel()
 	var drain UpdateReadiness
 	if err := UpdateRequest(ctx, "drain", body, &drain); err != nil {
+		// net/http reports a request that got no response as *url.Error; an
+		// answer it could not use (a status, a payload) is not one.
+		var unanswered *url.Error
+		if errors.As(err, &unanswered) && !unanswered.Timeout() {
+			return drain, fmt.Errorf("drain Mate update: %w: %w", ErrNotAnswering, err)
+		}
 		return drain, fmt.Errorf("drain Mate update: %w", err)
 	}
 	if drain.Protocol != 1 || !drain.Drained || drain.BootID == "" {
