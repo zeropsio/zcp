@@ -58,10 +58,15 @@ func newRecipeLab(t *testing.T) *hqLab {
 	return lab
 }
 
-// proposeRecipe is one pass of the recipe reconcile over the lab.
+// proposeRecipe is one pass of the recipe reconcile over the lab, between
+// states the Mate's server heard: HQ's before the pass, and the one after
+// the pass's own writes.
 func (l *hqLab) proposeRecipe(client platform.Client) recipeOutcome {
 	l.t.Helper()
-	return groupRecipeOutcome(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, l.schemas)
+	l.snapshotMate(l.t.Context())
+	outcome := groupRecipeOutcome(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, l.schemas)
+	l.snapshotMate(l.t.Context())
+	return outcome
 }
 
 // recipeBranch is the branch of the Mate's change number in the recipe
@@ -326,6 +331,7 @@ func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
 				}
 				tt.settle(lab.hq)
 			}
+			lab.snapshotMate(t.Context())
 
 			line := GroupRecipeAtStart(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 
@@ -441,6 +447,7 @@ func TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline(t *testing.T) {
 			tree := lab.hq.git(t.Context(), lab.hq.repoDir(labApp, hq.RecipeRepo), "rev-parse", recipeBranch(1)+"^{tree}")
 			lab.hq.mergeChange(hq.RecipeRepo, 1)
 			tt.settle(lab, tree)
+			lab.snapshotMate(t.Context())
 
 			// The project changed shape since: a reason to propose zcp's own
 			// tiers anew, unless a person declined the recipe.
@@ -697,6 +704,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 				tt.setup(lab)
 			}
 			handle := func() *mcp.CallToolResult {
+				lab.snapshotMate(t.Context())
 				res, typed, err := handleGroupRecipe(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir, lab.schemas)
 				if err != nil || typed != nil {
 					t.Fatalf("handleGroupRecipe: %v, typed %v", err, typed)

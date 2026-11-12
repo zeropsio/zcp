@@ -21,7 +21,9 @@ func (l *hqLab) chooseMateOnly(choice map[string]bool) *mcp.CallToolResult {
 	l.t.Helper()
 	engine := workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil)
 	input := WorkflowInput{Action: "group-recipe", MateOnly: choice}
+	l.snapshotMate(l.t.Context())
 	result, _, _ := handleWorkflowAction(l.t.Context(), labMate, engine, mateOwnRecipeClient(), l.hq.srv.Client(), l.schemas, nil, input, l.stateDir, "zcp", nil, nil, l.rt, "")
+	l.snapshotMate(l.t.Context())
 	return result
 }
 

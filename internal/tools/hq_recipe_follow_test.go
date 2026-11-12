@@ -327,8 +327,10 @@ func (l *hqLab) followRecipe(client platform.Client, tool string) []string {
 		defer mu.Unlock()
 		said = append(said, line)
 	}, 0, time.Second)
+	l.snapshotMate(l.t.Context())
 	f.Watch(tool, nil)(false)
 	wg.Wait()
+	l.snapshotMate(l.t.Context())
 	mu.Lock()
 	defer mu.Unlock()
 	return said

@@ -53,13 +53,16 @@ func newScalingLab(t *testing.T) *hqLab {
 		t.Fatalf("the first recipe was not proposed: %+v", outcome)
 	}
 	lab.hq.mergeChange(hq.RecipeRepo, 1)
+	lab.snapshotMate(t.Context())
 	return lab
 }
 
 // proposeScaling is the agent's group-recipe scaling=host over the lab.
 func (l *hqLab) proposeScaling(client platform.Client, host string) (*hqScalingAnswer, string) {
 	l.t.Helper()
+	l.snapshotMate(l.t.Context())
 	result, _, _ := handleGroupRecipeScaling(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir, host, l.schemas)
+	l.snapshotMate(l.t.Context())
 	text := getTextContent(l.t, result)
 	if result.IsError {
 		return nil, text

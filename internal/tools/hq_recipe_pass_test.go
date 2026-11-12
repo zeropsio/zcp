@@ -77,6 +77,7 @@ func TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == recipePush {
 			landOnce.Do(func() {
 				lab.hq.mergeChange(hq.RecipeRepo, 1)
+				lab.snapshotMate(t.Context())
 				close(landed)
 			})
 		}

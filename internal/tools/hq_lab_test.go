@@ -485,7 +485,8 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 			change.CorePush = &push
 		}
 		if f.perBranch {
-			ready := head != nil && f.described[key] == *head
+			// HQ counts a recipe change ready without a description.
+			ready := head != nil && (f.described[key] == *head || c.Repo == hq.RecipeRepo)
 			behind := c.Behind
 			change.Ready, change.Mergeability, change.Behind, change.UpdatedAt = &ready, c.Mergeability, &behind, c.UpdatedAt
 		}

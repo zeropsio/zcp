@@ -32,8 +32,10 @@ type recipeEditAnswer struct {
 // no change), the text, and whether it is a refusal.
 func (l *hqLab) editRecipe(client platform.Client, branch, title string) (*recipeEditAnswer, string, bool) {
 	l.t.Helper()
+	l.snapshotMate(l.t.Context())
 	result, _, _ := handleGroupRecipeAction(l.t.Context(), client, l.hq.srv.Client(), l.rt, l.stateDir,
 		WorkflowInput{Action: "group-recipe", Branch: branch, Title: title}, l.schemas)
+	l.snapshotMate(l.t.Context())
 	text := getTextContent(l.t, result)
 	if result.IsError {
 		return nil, text, true
