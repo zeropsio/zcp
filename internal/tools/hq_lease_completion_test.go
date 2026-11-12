@@ -703,10 +703,12 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		t.Fatalf("open: %s", text)
 	}
 	lab.leaseOf("hqpool", 4, "fix-login")
+	lab.stateFrame()
 	fake := &fakeBranchRelease{t: t, stateDir: lab.stateDir}
 	released := make(chan struct{}, 4)
-	deps := func(ctx context.Context) (devGitDeps, bool) {
-		d, ok := lab.devGitDeps(ctx)
+	// The service's looks write no frame: only the server does.
+	deps := func(context.Context) (devGitDeps, bool) {
+		d := devGitDeps{client: lab.mock, httpClient: lab.hq.srv.Client(), ssh: lab.ssh, rt: lab.rt, stateDir: lab.stateDir}
 		d.release = func(ctx context.Context, repo, branch string, confirm func([]ops.LeaseTargetInfo) bool) (ops.LeaseChange, error) {
 			accepted := false
 			result, err := fake.release(ctx, repo, branch, func(leases []ops.LeaseTargetInfo) bool {
@@ -718,7 +720,7 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 			}
 			return result, err
 		}
-		return d, ok
+		return d, true
 	}
 	const selfRead = "GET /api/mate/self"
 	changed, err := hq.WatchReplacedFile(t.Context(), lab.rt.HQ.StatePath)
