@@ -276,6 +276,10 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	if meta.CodeVolume == nil {
 		meta.CodeVolume = existing.CodeVolume
 	}
+	// A pool-keyed pair recorded again keeps the dev service it moved from.
+	if meta.DevPool != nil && meta.DevPool.MigratedFrom == nil && existing.DevPool != nil {
+		meta.DevPool.MigratedFrom = existing.DevPool.MigratedFrom
+	}
 	for _, s := range existing.Stages {
 		if s.SetupName != "" {
 			meta.SetStageSetup(s.Hostname, s.SetupName)

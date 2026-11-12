@@ -443,6 +443,24 @@ func adoptPairingChoice(devHost, stageHost, devType, stageType string, deps []De
 // dev service among them: folding it into this pair would leave two metas for
 // one runtime, which the pair-keyed invariant forbids (E8).
 func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
+	return adoptPair(stateDir, target, date, nil)
+}
+
+// AdoptPoolPair records a part's dev pool and its stage as the pair keyed by
+// the pool (docs/spec-workflows.md §13 PM-10) — target.Runtime.DevHostname
+// the pool, its one stage the part's — the shape the pool migration's re-key
+// leaves, marked by DevPool with the pool's service id and no dev service it
+// was moved from: a part a Mate's stand-up read from its recipe as its pool
+// and stage. AdoptPair's record and refusals otherwise; a pair recorded
+// complete keeps what it earned since.
+func AdoptPoolPair(stateDir string, target BootstrapTarget, poolServiceID, date string) error {
+	if n := len(target.Runtime.StageRefs()); n != 1 {
+		return fmt.Errorf("adopt pool pair: %q pairs with %d stages; a part's dev pool pairs with its one stage", target.Runtime.DevHostname, n)
+	}
+	return adoptPair(stateDir, target, date, &DevPoolRef{ServiceID: poolServiceID})
+}
+
+func adoptPair(stateDir string, target BootstrapTarget, date string, devPool *DevPoolRef) error {
 	rt := target.Runtime
 	stages := rt.StageRefs()
 	if rt.DevHostname == "" || len(stages) == 0 {
@@ -466,6 +484,7 @@ func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 	meta := targetMeta(target, rt.DevHostname, topology.PlanModeStandard, stages, "", date)
 	meta.PrimarySetupName = rt.PrimarySetupName
 	meta.Stages = slices.Clone(stages)
+	meta.DevPool = devPool
 	if err := writeTargetMeta(stateDir, target, meta); err != nil {
 		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
 	}
