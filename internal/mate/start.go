@@ -146,11 +146,15 @@ func (s *Start) down(cause error) error {
 	if !s.switchesBack() {
 		return fmt.Errorf("%s did not come up: %w; nothing switched", s.version, cause)
 	}
-	if err := writeFailedVersion(s.version); err != nil {
-		return errors.Join(fmt.Errorf("%s did not come up: %w", s.version, cause), err)
-	}
+	// The switch back does not wait on the record: a failed version that
+	// could not be written still returns current to last-good, so the next
+	// start runs last-good rather than the version that did not come up.
+	recordErr := writeFailedVersion(s.version)
 	if err := activate(VersionDir(s.lastGood)); err != nil {
-		return errors.Join(fmt.Errorf("%s did not come up: %w", s.version, cause), err)
+		return errors.Join(fmt.Errorf("%s did not come up: %w", s.version, cause), recordErr, err)
+	}
+	if recordErr != nil {
+		return errors.Join(fmt.Errorf("%s did not come up: %w; %s starts next", s.version, cause, s.lastGood), recordErr)
 	}
 	return fmt.Errorf("%s did not come up: %w; %s starts next", s.version, cause, s.lastGood)
 }
