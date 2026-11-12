@@ -212,6 +212,7 @@ func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
 		t.Fatalf("the first open: %s", text)
 	}
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 	lab.pushFromMain("add-signup", map[string]string{"signup.js": "the signup\n"})
 
 	answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup")
@@ -298,6 +299,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 			lab.wire()
 			if tc.origin != nil {
 				lab.hq.keepOn(*tc.origin)
+				lab.snapshotMate(t.Context())
 			}
 			lab.snapshotMate(t.Context())
 			lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})

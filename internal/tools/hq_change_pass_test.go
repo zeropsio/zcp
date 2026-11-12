@@ -522,6 +522,7 @@ func TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot(t *testing.T) 
 	if err != nil || !opened.Created {
 		t.Fatalf("open the default change: %+v (%v)", opened, err)
 	}
+	lab.snapshotMate(t.Context())
 
 	text := lab.developStart()
 
@@ -681,6 +682,7 @@ func TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet(t *testing.T) {
 		t.Fatalf("the pass did not tell #1's merge and forget it:\n%s", report)
 	}
 	lab.hq.mergeChange("appdev", 2)
+	lab.snapshotMate(t.Context())
 	views := []ops.LeaseView{{Alias: told, Branch: "fix-login"}, {Alias: unseen, Branch: "add-signup"}}
 
 	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(lab.rt) })
@@ -712,6 +714,7 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	kept := lab.leaseOf("apipool", 4, "fix-login")
 	other := lab.leaseOf("webpool", 5, "add-signup")
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
 		t.Fatal("the lab's Mate is not linked")
@@ -769,6 +772,7 @@ func TestLeaseRelease_MergedChangeNamesTheStageCall(t *testing.T) {
 	merged := lab.leaseOf("webpool", 4, "fix-login")
 	open := lab.leaseOf("webpool", 5, "add-signup")
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
 		t.Fatal("the lab's Mate is not linked")

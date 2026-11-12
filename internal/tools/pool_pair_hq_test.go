@@ -162,8 +162,12 @@ func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 			arrange: func(*testing.T, *hqLab) {},
 		},
 		{
-			name:     "HQ holds the Mate in another application",
-			arrange:  func(_ *testing.T, lab *hqLab) { lab.hq.moveMate("app-2") },
+			name: "HQ holds the Mate in another application",
+			arrange: func(t *testing.T, lab *hqLab) {
+				t.Helper()
+				lab.hq.moveMate("app-2")
+				lab.snapshotMate(t.Context())
+			},
 			wantLine: testPool,
 		},
 	}

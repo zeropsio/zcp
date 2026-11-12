@@ -187,6 +187,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 				lab.write(map[string]string{"index.js": "the app\n"})
 				lab.openChange()
 				tt.settle(lab)
+				lab.snapshotMate(t.Context())
 			}
 			text := resultText(t, hqLaunchProductionRefusal(lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 			for _, want := range tt.want {
@@ -275,6 +276,7 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	lab.write(map[string]string{"index.js": "the app\n"})
 	lab.openChange()
 	lab.hq.merge()
+	lab.snapshotMate(t.Context())
 	if kept := lab.ledger(); len(kept) != 0 {
 		t.Fatalf("the ledger keeps %+v; want no record", kept)
 	}
@@ -287,12 +289,15 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	}
 }
 
-// An unavailable authority is unknown, never evidence that no work landed.
+// An unavailable authority is unknown, never evidence that no work landed:
+// the Mate's server holds no state from HQ.
 func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
 	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
-	lab.hq.setDown(true)
+	if err := os.Remove(lab.rt.HQ.StatePath); err != nil {
+		t.Fatal(err)
+	}
 	text := hqLaunchProductionNextStep(lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "Ask again") || strings.Contains(text, "none of this Mate's work") {
 		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)

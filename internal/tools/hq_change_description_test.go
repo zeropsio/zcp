@@ -120,6 +120,7 @@ func TestDescribeChange(t *testing.T) {
 				t.Helper()
 				lab := openedLab(t)
 				lab.hq.merge()
+				lab.snapshotMate(t.Context())
 				return lab
 			},
 			wantText: []string{`"described":false`, "#1 is merged", "not written"},
@@ -130,6 +131,7 @@ func TestDescribeChange(t *testing.T) {
 				t.Helper()
 				lab := openedLab(t)
 				lab.hq.close(1)
+				lab.snapshotMate(t.Context())
 				return lab
 			},
 			wantText: []string{`"described":false`, "closed without merging", "not written"},

@@ -135,6 +135,7 @@ func TestDevGit_APoolsDefaultRepositoryFollowsItsPair(t *testing.T) {
 		lab.wire()
 		writePoolDefault(t, lab.stateDir, "webpool", lab.git("remote", "get-url", "origin"))
 		lab.hq.moveMate("app-2")
+		lab.snapshotMate(t.Context())
 
 		lab.developStart()
 

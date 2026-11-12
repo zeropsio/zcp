@@ -56,6 +56,7 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			})
 			number := lab.hq.handOver("appdev", "Fix the login", tc.branch, tc.work)
+			lab.snapshotMate(t.Context())
 
 			text := lab.developStart()
 

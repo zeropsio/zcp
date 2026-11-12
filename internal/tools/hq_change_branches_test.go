@@ -401,6 +401,7 @@ func twoOpenChanges(t *testing.T) *hqLab {
 	if answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup"); isError || !answer.Created {
 		t.Fatalf("open add-signup: %s", text)
 	}
+	lab.snapshotMate(t.Context())
 	return lab
 }
 
@@ -413,6 +414,7 @@ func TestHandedChange_AnotherBranchOpensItsOwnChange(t *testing.T) {
 	lab.hq.keepOpenPerBranch()
 	lab.wire()
 	number := lab.hq.handOver("appdev", "Fix the login", "fix-login", map[string]string{"login.js": "half a fix\n"})
+	lab.snapshotMate(t.Context())
 
 	answer, text, isError := lab.openChangeFrom("other-work", "Other work")
 
@@ -443,6 +445,7 @@ func TestHandedChange_AnotherBranchOpensItsOwnChange(t *testing.T) {
 func TestDescribeChange_ALandedChangeNamesTheOneStillOpen(t *testing.T) {
 	lab := twoOpenChanges(t)
 	lab.hq.mergeChange("appdev", 1)
+	lab.snapshotMate(t.Context())
 
 	text, isError := lab.describe("", describedWords)
 

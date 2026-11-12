@@ -29,6 +29,7 @@ func TestStatus_ReadyChangeNamesHQMergeability(t *testing.T) {
 				}
 			}
 			lab.hq.mu.Unlock()
+			lab.snapshotMate(t.Context())
 
 			got := lab.status()
 			want := "#2 add-signup (" + tt.want + ")"
