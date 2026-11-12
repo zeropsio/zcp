@@ -164,11 +164,13 @@ func TestDivergedWords_RunsGitInTheService(t *testing.T) {
 
 // TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit: a repository only
 // pairs keyed by dev pools hold is realigned in a lease, whose own git over
-// ssh has no credential for GitHub: the fetch of GitHub's default branch
-// goes through `zcp git <alias>`, which answers it with a read token, and
-// the rest runs in the lease as its git always does.
+// ssh holds no credential for GitHub or for HQ's address: the fetch of
+// GitHub's default branch, the fetch of HQ's `main` and the push to HQ all
+// go through `zcp git <alias>`, which answers GitHub with a read token and
+// HQ with the Mate's credential, and the branch is cut and merged the same
+// way — nothing of it over ssh.
 //
-// witness: internal/tools/hq_github_mirror.go | route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef), → route.git("fetch "+github+" +HEAD:"+gitHubTipRef),
+// witness: internal/tools/hq_github_mirror.go | route.relayed("push "+address+" "+realignBranch), realignBranch) → route.git("push "+address+" "+realignBranch), realignBranch)
 func TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
@@ -184,20 +186,23 @@ func TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	address := "https://hq.example/git/" + labOrg + "/" + labApp + "/appdev.git"
 
 	words := divergedWords(stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z")
 
 	for _, want := range []string{
 		"in a lease of the dev pool webpool",
 		"`zcp git <alias> fetch " + github + " +HEAD:refs/remotes/github/default`",
-		"`ssh <alias> \"cd /var/www && git checkout -b realign-github refs/remotes/github/default && git merge refs/remotes/hq/main\"`",
+		"`zcp git <alias> fetch " + address + " +main:refs/remotes/hq/main`",
+		"`zcp git <alias> checkout -b realign-github refs/remotes/github/default && zcp git <alias> merge refs/remotes/hq/main`",
+		"`zcp git <alias> push " + address + " realign-github`",
 	} {
 		if !strings.Contains(words, want) {
 			t.Errorf("the realignment lacks %q: %s", want, words)
 		}
 	}
-	if never := "git fetch " + github; strings.Contains(words, "&& "+never) || strings.Contains(words, "\"cd /var/www && "+never) {
-		t.Errorf("the realignment fetches GitHub over ssh, where no credential answers it: %s", words)
+	if strings.Contains(words, "ssh <alias>") {
+		t.Errorf("the realignment runs git over ssh in the lease, where no credential answers GitHub or HQ's address: %s", words)
 	}
 }
 

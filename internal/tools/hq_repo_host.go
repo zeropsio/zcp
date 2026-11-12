@@ -104,8 +104,9 @@ func (r repoRoute) git(cmds ...string) string {
 }
 
 // relayed is cmds run one after another through `zcp git`, in a lease too —
-// by its alias — for git that asks for a GitHub repository: zcp answers it
-// there with a read token, which a lease's own git over ssh has none for.
+// by its alias — for git that names a repository by its address: zcp answers
+// it there, GitHub with a read token and HQ with the Mate's credential, and
+// a lease's own git over ssh holds a credential for neither address.
 func (r repoRoute) relayed(cmds ...string) string {
 	at := r.host
 	if r.leased() {

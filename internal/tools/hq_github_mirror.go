@@ -138,11 +138,13 @@ func mirroredWords(name string) string {
 // GitHub and pushes it, which the realignment reads (a branch HQ did not
 // make there it never pushes) — opened as a change and merged in Mate; HQ
 // squash-merges its pull request on GitHub and moves `main` onto that
-// squash. Its git runs where the repository's git runs (repoDevHost). The
+// squash. Its git runs where the repository's git runs (repoDevHost), every
+// command of it through `zcp git` — in a lease by its alias, whose own git
+// over ssh holds no credential for GitHub or for HQ's address. The
 // checkout's origin is HQ, whose `main` no longer is GitHub's, so GitHub's
-// tip is fetched by its address through `zcp git` — in a lease too — which
-// answers a URL in a fetch's argv with a read token; the fetch and the push
-// of HQ name its address, answered with the Mate's credential.
+// tip is fetched by its address, which zcp answers in a fetch's argv with a
+// read token; the fetch and the push of HQ name its address, answered with
+// the Mate's credential.
 func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since string) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
@@ -158,9 +160,9 @@ func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since stri
 		"Never push to GitHub — HQ alone does — and never force-push.",
 		since, route.where(),
 		route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef),
-		route.git("fetch "+address+" +main:refs/remotes/hq/main"),
-		route.git("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
-		route.git("push "+address+" "+realignBranch), realignBranch)
+		route.relayed("fetch "+address+" +main:refs/remotes/hq/main"),
+		route.relayed("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
+		route.relayed("push "+address+" "+realignBranch), realignBranch)
 }
 
 // gitHubTipRef is where the realignment keeps GitHub's default branch as
