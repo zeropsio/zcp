@@ -22,9 +22,15 @@ const (
 	// standupDevelopment is every dev half standing with the stages queued
 	// for the next call.
 	standupDevelopment = "development"
+	// standupPoolsRecorded is every pair the stand-up builds standing (or
+	// none in the tier) and every part's dev pool recorded with its stage:
+	// the pools' images and their stages are the model's to build, from a
+	// lease of each pool.
+	standupPoolsRecorded = "pools-recorded"
 
 	// Roles.
 	standupRoleDev           = "dev"
+	standupRoleDevPool       = "dev pool"
 	standupRoleStage         = "stage"
 	standupRoleManaged       = "managed"
 	standupRolePlatformBuild = "built by the platform"
@@ -95,8 +101,18 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		Tier:      hq.RecipeTierPaths[hq.RecipeTierMate] + "@" + hqBase,
 	}
 	stood, devs, queued := 0, 0, 0
+	var pools, recorded []string
 	names := make([]string, 0, len(pairs))
 	for _, sp := range pairs {
+		if sp.pair.DevPool {
+			resp.Services = append(resp.Services, standupPoolService(sp, live), standupPoolStageService(sp, live))
+			names = append(names, sp.pair.Dev.Hostname+"→"+sp.pair.FirstStage().Hostname)
+			pools = append(pools, sp.pair.Dev.Hostname)
+			if sp.failed == "" {
+				recorded = append(recorded, sp.pair.Dev.Hostname)
+			}
+			continue
+		}
 		resp.Services = append(resp.Services, standupDevService(sp))
 		if cv := sp.codeVolume; cv != nil {
 			for _, ds := range cv.devServices {
@@ -121,25 +137,127 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		resp.Services = append(resp.Services, standupSkippedService(s, live[s.Hostname]))
 	}
 
+	containers := len(pairs) - len(pools)
 	switch {
-	case stood == len(pairs):
+	case containers == 0 && len(recorded) == len(pools):
+		resp.StandUp = standupPoolsRecorded
+		resp.Next = "Nothing was deployed: every part's dev half is its dev pool. " + standupPoolsNext
+	case containers == 0:
+		resp.StandUp = standupPartial
+		if len(recorded) == 0 {
+			resp.StandUp = standupFailed
+		}
+		resp.Next = fmt.Sprintf("The stand-up stopped short: %d of %d parts' dev pools are recorded. Each service's next step names the call for what failed; "+
+			"once a cause is fixed, zerops_standup continues from where it stopped and skips what is done. ", len(recorded), len(pools)) + standupPoolsNext
+	case stood == containers:
 		resp.StandUp = standupReady
 		resp.Next = "Every pair stands: each dev half runs main's code, and each stage runs main as this Mate's preview. " +
 			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person this Mate's preview is up, with its address — a preview with test data, never \"stage\" or \"online\". " +
 			"Nothing was committed, pushed or proposed."
-	case devs == len(pairs) && stood+queued == len(pairs):
+	case devs == containers && stood+queued == containers:
 		resp.StandUp = standupDevelopment
 		resp.Next = standupDevelopmentNext
 	case devs == 0 && stood == 0:
 		resp.StandUp = standupFailed
-		resp.Next = standupStoppedNext(stood, len(pairs), queued)
+		resp.Next = standupStoppedNext(stood, containers, queued)
 	default:
 		resp.StandUp = standupPartial
-		resp.Next = standupStoppedNext(stood, len(pairs), queued)
+		resp.Next = standupStoppedNext(stood, containers, queued)
+	}
+	if containers > 0 && len(pools) > 0 {
+		switch {
+		case len(recorded) < len(pools) && (resp.StandUp == standupReady || resp.StandUp == standupDevelopment):
+			resp.StandUp = standupPartial
+			resp.Next = standupStoppedNext(stood, containers, queued)
+		case resp.StandUp == standupReady:
+			resp.StandUp = standupPoolsRecorded
+		}
+		if len(recorded) > 0 {
+			resp.Next += " The parts whose dev half is a dev pool were recorded, nothing of them deployed: " + standupPoolsNext
+		}
 	}
 	resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
-		stood, len(pairs), devs, len(pairs), src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
+		stood, containers, devs, containers, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
+	if len(pools) > 0 {
+		resp.Message += fmt.Sprintf(" %d of %d parts' dev pools are recorded with their stages (%s); no pool's image and none of their stages were built by this call.",
+			len(recorded), len(pools), strings.Join(recorded, ", "))
+	}
 	return resp
+}
+
+// standupPoolsNext is the model's way on for the parts whose dev half is a
+// dev pool: each service's next step names the calls.
+const standupPoolsNext = "Each pool and its stage are built from a lease of the pool, in the order each one's next step gives: " +
+	"lease a container of the pool on main, deploy the pool's image from that lease and roll it out, deploy the stage from the same lease, then release the lease. " +
+	"zerops_lease action=\"acquire\" pools=[…] branch=\"main\" leases one container of every pool in one call. " +
+	"Until then a pool has no image of the repository and its stage waits for its first deploy (READY_TO_DEPLOY): tell the person the parts are recorded, never that their development or preview is up. " +
+	"From then on, work on a part goes through zerops_workflow action=\"start\" workflow=\"develop\" scope=[\"<pool>\"]."
+
+// standupPoolService is a part's dev pool after the stand-up: recorded as the
+// pair's key, and its image — built or not, as the platform reads it — with
+// the calls that build it from a lease.
+func standupPoolService(sp *standupPair, live map[string]*platform.ServiceStack) standupService {
+	p := sp.pair
+	pool := p.Dev.Hostname
+	s := standupService{
+		Hostname: pool, Role: standupRoleDevPool, Pair: p.FirstStage().Hostname,
+		Repository: sp.repository, Setup: p.Dev.Setup,
+		Adopted: sp.adopted, Wired: sp.wired, Failed: sp.failed,
+	}
+	if sp.failed != "" {
+		s.Next = sp.next
+		return s
+	}
+	if svc := live[pool]; svc != nil && svc.HasDeployedCode() {
+		s.Deploy = &standupDeploy{Status: standupAlreadyDeployed}
+		s.Next = fmt.Sprintf("Its image is built. Lease a container of it for each branch you work on: %s.", standupPoolAcquire(sp))
+		return s
+	}
+	s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: "a pool's image is deployed from a lease of it, never by the stand-up"}
+	s.Next = fmt.Sprintf("Its image is not built yet. Lease a container of it on main: %s; "+
+		"deploy its image from that lease: zerops_deploy sourceService=\"<the lease's alias>\" targetService=%q setup=%q sha=\"origin/main\"; "+
+		"then roll it out: zerops_lease action=\"rollout\" pool=%q — the next acquire starts on the image. "+
+		"The deploy fails naming what is missing when the repository's zerops.yaml has no setup %q that starts zcp-devsup: fix that on a branch and propose it.",
+		standupPoolAcquire(sp), pool, p.Dev.Setup, pool, p.Dev.Setup)
+	return s
+}
+
+// standupPoolStageService is a pool pair's stage after the stand-up: it is
+// built from a held lease of the pool, never by the stand-up.
+func standupPoolStageService(sp *standupPair, live map[string]*platform.ServiceStack) standupService {
+	p := sp.pair
+	pool, stage := p.Dev.Hostname, p.FirstStage()
+	s := standupService{
+		Hostname: stage.Hostname, Role: standupRoleStage, Pair: pool,
+		Repository: sp.repository, Setup: stage.Setup, Adopted: sp.adopted,
+	}
+	switch svc := live[stage.Hostname]; {
+	case sp.failed != "" && sp.failedHost == stage.Hostname:
+		s.Failed = sp.failed
+		s.Next = sp.next
+	case sp.failed != "":
+		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: pool + " was not recorded, and the stage is built from a lease of it"}
+		s.Next = sp.next
+	case svc != nil && svc.HasDeployedCode():
+		s.Deploy = &standupDeploy{Status: standupAlreadyDeployed}
+		s.Next = fmt.Sprintf("Verify it: zerops_verify serviceHostname=%q. It is this Mate's preview of %s's part.", stage.Hostname, pool)
+	default:
+		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: "a pool pair's stage is deployed from a held lease of the pool, never by the stand-up"}
+		s.Next = fmt.Sprintf("Deploy it from a lease of %s on main (%s): zerops_deploy sourceService=\"<the lease's alias>\" targetService=%q setup=%q, then verify it: zerops_verify serviceHostname=%q. "+
+			"Release the lease once the pool's image and this stage are deployed: zerops_lease action=\"release\" lease=\"<the lease's alias>\".",
+			pool, standupPoolAcquire(sp), stage.Hostname, stage.Setup, stage.Hostname)
+	}
+	return s
+}
+
+// standupPoolAcquire is the call that leases a container of the pair's pool
+// on main, naming the repository on the pool's first acquire.
+func standupPoolAcquire(sp *standupPair) string {
+	repo := sp.remote
+	if repo == "" {
+		repo = sp.pair.Repository
+	}
+	return fmt.Sprintf("zerops_lease action=\"acquire\" pool=%q repo=%q branch=\"main\"", sp.pair.Dev.Hostname, repo)
 }
 
 // standupCallAgain is the next step of a half the call left undecided.
@@ -305,6 +423,10 @@ func standupSkippedService(s workflow.MateTierSkip, svc *platform.ServiceStack) 
 		out.Role = standupRoleNotStoodUp
 		out.Failed = standupSkipReason(s)
 		out.Next = "The stand-up leaves it as it is. If the task needs it, adopt it by hand: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"."
+	case workflow.MateTierSkipPool:
+		out.Role = standupRoleNotStoodUp
+		out.Failed = standupSkipReason(s)
+		out.Next = "The stand-up leaves it as it is: a Swarm pool is no runtime to adopt. Leave it to the app that calls its orchestrator; if it is a part's dev pool, its stage must be named like it in the recipe (`apipool` beside `apistage`)."
 	}
 	return out
 }
@@ -317,7 +439,9 @@ func standupSkipReason(s workflow.MateTierSkip) string {
 	case workflow.MateTierSkipForeign:
 		return "it builds from " + s.Source + ", a repository of another application than this Mate's, which HQ neither gives nor joins it"
 	case workflow.MateTierSkipUnpaired:
-		return "it builds from " + s.Source + " with no partner by zcp's naming — a stage half ends in `stage`, and its dev half is the repository's other runtime or the one named like it"
+		return "it builds from " + s.Source + " with no partner by zcp's naming — a stage half ends in `stage`, and its dev half is the repository's other runtime, the one named like it, or its part's dev pool named like it (`apistage` → `apipool`)"
+	case workflow.MateTierSkipPool:
+		return "it is a Swarm pool no stage of the tier pairs with — a part's dev pool is named like its stage (`apistage` → `apipool`), and a pool no stage takes is infrastructure an app uses"
 	case workflow.MateTierSkipManaged, workflow.MateTierSkipPlatformBuild:
 	}
 	return string(s.Reason)

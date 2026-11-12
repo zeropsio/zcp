@@ -806,13 +806,91 @@ func TestStandup_HQMigrationDecisions(t *testing.T) {
 		f := newStandupFixture(t)
 		f.hq.tier = strings.ReplaceAll(strings.ReplaceAll(standupTierTemplate, "HQ", formerHQ), "/git/app-1/", "/git/another-app/")
 		result, _ := f.run(t)
-		if !result.IsError || !strings.Contains(getTextContent(t, result), "no dev/stage pair") {
+		if !result.IsError || !strings.Contains(getTextContent(t, result), "names no pair built from the application's repositories") {
 			t.Fatalf("foreign application's recipe must be refused: %s", getTextContent(t, result))
 		}
 		if len(f.hq.asked) != 0 || len(f.ssh.pushes()) != 0 || len(f.mounter.mounted) != 0 {
 			t.Errorf("foreign recipe touched a runtime: asked=%v pushes=%v mounted=%v", f.hq.asked, f.ssh.pushes(), f.mounter.mounted)
 		}
 	})
+}
+
+// A monorepo whose every part is its own dev pool beside its stage (a Mate's
+// tier composed from a pooled project, no dev service anywhere): each part is
+// recorded as the pair keyed by its pool, with its repository in HQ, and
+// nothing touches a pool's containers or deploys — the answer names the
+// lease that builds each pool's image and its stage.
+// witness: internal/workflow/mate_tier.go | if pool, ok := partPool(m.svc, repo, pools); ok { → if pool, ok := partPool(m.svc, repo, pools); false && ok {
+func TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.hq.repos = []string{"mono"}
+	f.hq.tier = strings.ReplaceAll(`services:
+  - hostname: apipool
+    type: swarm@1
+    minContainers: 0
+    maxContainers: 3
+  - hostname: apistage
+    type: nodejs@22
+    buildFromGit: HQ/git/app-1/mono.git
+    zeropsSetup: api
+  - hostname: webpool
+    type: swarm@1
+    minContainers: 0
+    maxContainers: 3
+  - hostname: webstage
+    type: static@1.0
+    buildFromGit: HQ/git/app-1/mono.git
+    zeropsSetup: web
+  - hostname: db
+    type: postgresql@17
+    mode: NON_HA
+`, "HQ", f.srv.URL)
+	pool := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}
+	runtimeType := func(v string) platform.ServiceTypeInfo {
+		return platform.ServiceTypeInfo{ServiceStackTypeVersionName: v, ServiceStackTypeCategoryName: "USER"}
+	}
+	f.services = []platform.ServiceStack{
+		{ID: "svc-zcp", Name: "zcp", Status: statusActive, ServiceStackTypeInfo: runtimeType("zcp@1")},
+		{ID: "svc-apipool", Name: "apipool", Status: statusActive, ServiceStackTypeInfo: pool},
+		{ID: "svc-apistage", Name: "apistage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: runtimeType("nodejs@22")},
+		{ID: "svc-webpool", Name: "webpool", Status: statusActive, ServiceStackTypeInfo: pool},
+		{ID: "svc-webstage", Name: "webstage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: runtimeType("static@1.0")},
+		{ID: "svc-db", Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "STANDARD"}},
+	}
+	f.mock.WithServices(f.services)
+
+	result, body := f.run(t)
+	if result.IsError || body.StandUp != standupPoolsRecorded {
+		t.Fatalf("a tier of pool/stage pairs must stand up as recorded pools: %s", getTextContent(t, result))
+	}
+	for _, part := range []struct{ pool, stage, stageSetup string }{{"apipool", "apistage", "api"}, {"webpool", "webstage", "web"}} {
+		meta, err := workflow.ReadServiceMeta(f.stateDir, part.pool)
+		if err != nil || meta == nil || !meta.DevIsPool() || meta.DevPool.ServiceID != "svc-"+part.pool || !meta.IsComplete() ||
+			len(meta.Stages) != 1 || meta.Stages[0].Hostname != part.stage || meta.HQ == nil || meta.HQ.AppID != "app-1" || meta.HQ.Repo != "mono" {
+			t.Errorf("%s not recorded as the pair keyed by its pool with %s and its repository: meta=%+v err=%v", part.pool, part.stage, meta, err)
+		}
+		poolNext := body.service(t, part.pool)
+		if poolNext.Role != standupRoleDevPool || !strings.Contains(poolNext.Next, `zerops_lease action="acquire" pool="`+part.pool+`"`) ||
+			!strings.Contains(poolNext.Next, `targetService="`+part.pool+`"`) || poolNext.Deploy == nil || poolNext.Deploy.Status != standupNotDeployed {
+			t.Errorf("%s must say its image is not built and name the lease that builds it: %+v", part.pool, poolNext)
+		}
+		stage := body.service(t, part.stage)
+		if stage.Deploy == nil || stage.Deploy.Status != standupNotDeployed || !strings.Contains(stage.Next, `targetService="`+part.stage+`" setup="`+part.stageSetup+`"`) {
+			t.Errorf("%s must be left for a deploy from a lease of %s: %+v", part.stage, part.pool, stage)
+		}
+	}
+	for _, call := range f.ssh.commands {
+		if slices.Contains([]string{"apipool", "apistage", "webpool", "webstage"}, call.host) {
+			t.Errorf("a pool pair's stand-up ran ssh on %s: %s", call.host, call.cmd)
+		}
+	}
+	if len(f.ssh.pushes()) != 0 || len(f.mounter.mounted) != 0 {
+		t.Errorf("a pool pair's stand-up deployed or mounted: pushes=%v mounted=%v", f.ssh.pushes(), f.mounter.mounted)
+	}
+	if len(f.hq.asked) != 0 {
+		t.Errorf("a pool pair's stand-up asked HQ to make a repository: %v", f.hq.asked)
+	}
 }
 
 // TestStandup_ASecondCallContinuesAndSkipsWhatIsDone: nothing is adopted,

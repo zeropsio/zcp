@@ -15,20 +15,22 @@ import (
 )
 
 // A Mate's tier is the recipe repository's `0 — AI Agent/import.yaml`: the
-// whole project a Mate of the application is, every runtime a dev/stage pair
-// built from one of the application's repositories in HQ, beside the managed
+// whole project a Mate of the application is, every part a pair — a stage
+// built from one of the application's repositories in HQ beside its dev half,
+// a dev service built from the same repository or the part's dev pool
+// (`<part>pool`, docs/spec-workflows.md §13 PM-10) — beside the managed
 // services they share and whatever the platform builds from a public
-// repository. A new Mate's browser imports it with the dev halves empty and
-// the stage halves waiting for their first deploy; zcp's stand-up reads the
-// same file to know which pairs to adopt, wire and deploy. This file is that
-// read — pure, no I/O.
+// repository. A new Mate's browser imports it with the dev halves empty, the
+// pools without a container and the stage halves waiting for their first
+// deploy; zcp's stand-up reads the same file to know which pairs to adopt,
+// wire and deploy. This file is that read — pure, no I/O.
 
 // ErrMateTierUnreadable is a tier that is not a services document at all.
 var ErrMateTierUnreadable = errors.New("the AI Agent tier does not read as an import")
 
-// ErrMateTierNoPairs is a tier that reads but names no dev/stage pair built
-// from the application's repositories — nothing a Mate could stand up.
-var ErrMateTierNoPairs = errors.New("the AI Agent tier names no dev/stage pair built from the application's repositories")
+// ErrMateTierNoPairs is a tier that reads but names no pair built from the
+// application's repositories, of either kind — nothing a Mate could stand up.
+var ErrMateTierNoPairs = errors.New("the AI Agent tier names no pair built from the application's repositories: no stage beside a dev service built from its repository, nor beside its part's dev pool (`<part>pool` beside `<part>stage`)")
 
 // MateTierRuntime is one half of a pair as the tier declares it.
 type MateTierRuntime struct {
@@ -44,10 +46,10 @@ type MateTierRuntime struct {
 	Envs map[string]string
 }
 
-// MateTierPair is a dev/stage pair built from one of the application's
-// repositories: one dev half and a stage per part (docs/spec-mate.md
-// §2.8a.4) — for a pair zcp already records as variant B also the further
-// dev services that share its code volume (§2.8a.4a).
+// MateTierPair is a pair built from one of the application's repositories:
+// one dev half and a stage per part (docs/spec-mate.md §2.8a.4) — for a pair
+// zcp already records as variant B also the further dev services that share
+// its code volume (§2.8a.4a) — or a part's dev pool and its one stage.
 type MateTierPair struct {
 	// Repository is the halves' buildFromGit, canonical
 	// (topology.CanonicalRepoURL).
@@ -65,6 +67,12 @@ type MateTierPair struct {
 	// DevServices are a recorded variant-B pair's further dev services, in
 	// the tier's order.
 	DevServices []MateTierRuntime
+	// DevPool marks a pair whose dev half is its part's dev pool (a Swarm
+	// pool, `swarm@1`): a pool-keyed pair (docs/spec-workflows.md §13 PM-10)
+	// with exactly one stage. Dev is the pool then — no container zcp may
+	// ssh, mount, check out into or deploy from; its Setup is the one its
+	// image builds with.
+	DevPool bool
 }
 
 // FirstStage is the pair's first stage.
@@ -101,6 +109,11 @@ const (
 	// partner: no stage half, no dev half, or more than one candidate for
 	// either.
 	MateTierSkipUnpaired MateTierSkipReason = "unpaired"
+	// MateTierSkipPool is a Swarm pool no stage of the tier pairs with: no
+	// `<part>stage` built from an application repository beside it, or one
+	// already paired with a dev service — infrastructure an app uses, or a
+	// pool whose part has no stage.
+	MateTierSkipPool MateTierSkipReason = "pool"
 )
 
 // MateTierSkip is a service of the tier the stand-up leaves as it is.
@@ -137,8 +150,13 @@ type MateTier struct {
 // (IsStageHostname). A repository with one other runtime is one pair: that
 // runtime is the dev half and every stage is one of its stages, a part each
 // (docs/spec-mate.md §2.8a.4). Otherwise each stage pairs with the runtime
-// named like it (`apistage` → `apidev` or `api`). A runtime that fits no pair
-// is skipped by name, never guessed at.
+// named like it (`apistage` → `apidev` or `api`). A stage left without a dev
+// half pairs with its part's dev pool (partPool): the Swarm pool named after
+// it (`apistage` → `apipool`, the name pool-migrate gives a part's pool),
+// which the tier writes with no build — a pool's image is deployed from a
+// lease, never by an import (the group recipe's pool entry). A pool is never
+// a container half, whatever it builds from. A runtime that fits no pair is
+// skipped by name, never guessed at.
 //
 // zcp sets up no new code volume (§2.8a.4a), so a tier's local-storage
 // service is a managed service like any other. recorded are the metas zcp
@@ -161,14 +179,11 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 		return MateTier{}, fmt.Errorf("%w: it declares no services", ErrMateTierUnreadable)
 	}
 
-	type candidate struct {
-		svc   recipeImportService
-		index int
-	}
 	var (
 		tier    MateTier
 		skipped = map[int]MateTierSkip{}
-		byRepo  = map[string][]candidate{}
+		byRepo  = map[string][]tierService{}
+		pools   = map[string]tierService{}
 		order   []string
 		volumes []string
 	)
@@ -189,6 +204,11 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 		source := topology.CanonicalRepoURL(svc.BuildFromGit.URL)
 		skip := MateTierSkip{Hostname: hostname, Type: svc.Type, Source: source}
 		switch {
+		case topology.IsPoolType(svc.Type):
+			// A part's dev pool pairs with its stage below; any other pool
+			// stays as it is.
+			skip.Reason = MateTierSkipPool
+			pools[hostname] = tierService{svc: svc, index: i}
 		case source == "" && topology.IsManagedService(svc.Type):
 			skip.Reason = MateTierSkipManaged
 		case source == "":
@@ -206,7 +226,7 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 			if _, seen := byRepo[source]; !seen {
 				order = append(order, source)
 			}
-			byRepo[source] = append(byRepo[source], candidate{svc: svc, index: i})
+			byRepo[source] = append(byRepo[source], tierService{svc: svc, index: i})
 			continue
 		}
 		skipped[i] = skip
@@ -234,9 +254,19 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 			tier.Pairs = append(tier.Pairs, pair)
 		}
 		for _, m := range members {
-			if unpaired[m.svc.Hostname] {
-				skipped[m.index] = MateTierSkip{Hostname: m.svc.Hostname, Type: m.svc.Type, Reason: MateTierSkipUnpaired, Source: repo}
+			if !unpaired[m.svc.Hostname] {
+				continue
 			}
+			if pool, ok := partPool(m.svc, repo, pools); ok {
+				delete(pools, pool.svc.Hostname)
+				delete(skipped, pool.index)
+				tier.Pairs = append(tier.Pairs, MateTierPair{
+					Repository: repo, RepoName: name, DevPool: true,
+					Dev: mateTierRuntime(pool.svc), Stages: []MateTierRuntime{mateTierRuntime(m.svc)},
+				})
+				continue
+			}
+			skipped[m.index] = MateTierSkip{Hostname: m.svc.Hostname, Type: m.svc.Type, Reason: MateTierSkipUnpaired, Source: repo}
 		}
 	}
 
@@ -264,6 +294,34 @@ func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) 
 	}
 	tier.ProjectEnvs = vaultAndLegacyEnvs(doc.Project.Vault, doc.Project.EnvVariables)
 	return tier, nil
+}
+
+// tierService is a service of the tier and its place in the tier's order.
+type tierService struct {
+	svc   recipeImportService
+	index int
+}
+
+// poolHostnameSuffix is how zcp names a part's dev pool: `<stem>pool`, the
+// stem its stage is named by (pool-migrate's own naming).
+const poolHostnameSuffix = "pool"
+
+// partPool is the dev pool of the part whose stage is stage, a runtime of
+// repo no dev service took: the tier's Swarm pool named after the stage
+// (`apistage` → `apipool`) that builds nothing or builds from repo. false
+// for a runtime that is no stage, or when the tier holds no such pool.
+func partPool(stage recipeImportService, repo string, pools map[string]tierService) (tierService, bool) {
+	if !IsStageHostname(stage.Hostname) {
+		return tierService{}, false
+	}
+	pool, ok := pools[strings.TrimSuffix(stage.Hostname, stageHostnameSuffix)+poolHostnameSuffix]
+	if !ok {
+		return tierService{}, false
+	}
+	if source := topology.CanonicalRepoURL(pool.svc.BuildFromGit.URL); source != "" && source != repo {
+		return tierService{}, false
+	}
+	return pool, true
 }
 
 // repositoryPair is one pair of a repository's runtimes.
