@@ -28,7 +28,8 @@ import (
 //  2. The version to run (mate.VersionToRun) differs from the running one: it is
 //     downloaded, and the server is asked whether it may restart now. Yes: the
 //     unit restarts. An --attended run reads the release list fresh for this;
-//     an automatic one uses the copy zcp holds for the cache time.
+//     an automatic one uses the copy zcp holds for the cache time. A version
+//     that cannot be staged fails the run, after step 3.
 //  3. A newer zcp is out: the same question. Yes: the container restarts, once
 //     per zcp release. An --attended run reads zcp's latest release fresh too.
 //
@@ -97,8 +98,17 @@ func runMateFuse(args []string) int {
 	attended := flags["--attended"]
 	release, err := mate.HeldRelease(context.Background(), attended)
 	logReleaseList(release, err, attended)
+	// A Mate release that cannot be staged still lets the zcp step run: a newer
+	// zcp is what repairs a staging defect, and where nobody can reach the
+	// container this run is the only way it arrives. The run still fails.
+	unstaged := ""
 	if run := mate.VersionToRun(mate.ReadVersions(), release.Version); run != "" && run != running {
-		return restartForMate(unlock, running, run, release, automatic)
+		if err := stageMate(run, release); err != nil {
+			fmt.Fprintf(os.Stderr, "mate keep: stage Mate %s: %v; checking zcp all the same\n", run, err)
+			unstaged = run
+		} else {
+			return restartForMate(unlock, running, run, automatic)
+		}
 	}
 
 	// The same for zcp's own release, bounded as a status read.
@@ -106,7 +116,14 @@ func runMateFuse(args []string) int {
 	defer cancel()
 	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{Refresh: attended})()
 	if zcp.Behind && rec.ZCPRestartedFor != zcp.Latest {
-		return restartForZCP(unlock, rec, zcp, running, automatic, lookup)
+		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
+			return code
+		}
+		return 1
+	}
+	if unstaged != "" {
+		fmt.Fprintf(os.Stderr, "mate keep: Mate %s keeps running, %s is not staged; zcp %s (latest %q)\n", running, unstaged, zcp.Installed, zcp.Latest)
+		return 1
 	}
 	fmt.Fprintf(os.Stderr, "mate keep: Mate %s runs the version to run; zcp %s (latest %q)\n", running, zcp.Installed, zcp.Latest)
 	return 0
@@ -174,18 +191,19 @@ func restartAbsentMate(unlock func(), why string) int {
 	return 0
 }
 
-// restartForMate downloads run and restarts the unit once the running server
-// agrees; its start job then starts run.
-func restartForMate(unlock func(), running, run string, release mate.Manifest, automatic bool) int {
+// stageMate downloads run into its version directory, within InstallTimeout.
+func stageMate(run string, release mate.Manifest) error {
 	if run != release.Version {
 		release = mate.Manifest{Version: run}
 	}
-	stageCtx, cancel := context.WithTimeout(context.Background(), mate.InstallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mate.InstallTimeout)
 	defer cancel()
-	if err := mate.StageRelease(stageCtx, release, mate.ReplaceFailing); err != nil {
-		fmt.Fprintf(os.Stderr, "mate keep: stage Mate %s: %v\n", run, err)
-		return 1
-	}
+	return mate.StageRelease(ctx, release, mate.ReplaceFailing)
+}
+
+// restartForMate restarts the unit for the staged run once the running server
+// agrees; its start job then starts run.
+func restartForMate(unlock func(), running, run string, automatic bool) int {
 	if !askRestart(run, automatic) {
 		return 0
 	}
