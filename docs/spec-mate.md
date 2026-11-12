@@ -376,10 +376,10 @@ lock without waiting and:
 
 1. **Picks.** One bounded attempt to refresh the release list when its copy is older than the cache
    time (§2.1c), and to download the version to run unless the keep job already has; on any error it
-   starts `current` as it is. The refresh and the download share one deadline
+   starts `current` as it is. The refresh, the download and its smoke (step 2) share one deadline
    (`mate.StartStageTimeout`, one minute, against about 8 s for a normal download and npm install on a
-   Mate container) when `current` exists; a download that does not finish in it is left to the keep
-   job (`mate.InstallTimeout`, three minutes). A first install has the three minutes. The network never stops a start; only a first install without network
+   Mate container) when `current` exists; what does not finish in it is left to the keep
+   job (`mate.InstallTimeout`, three minutes, the same three for its download and smoke). A first install has the three minutes. The network never stops a start; only a first install without network
    fails, and systemd retries. A lock the keep job holds starts `current` as it is.
 2. **Installs** (`mate.StageRelease`) into `versions/<v>`: one `GET` to the manifest's `url`, streamed
    to a temporary file while its SHA-256 is compared with the manifest's `sha256` — a mismatch reports
@@ -387,7 +387,9 @@ lock without waiting and:
    trust boundary (§2.1c). Then `npm install --prefix versions/<v> …` (npm still resolves the
    package's dependencies from its registry), and the smoke: `mate --version`, then the native-addon
    probe run from the installed package's directory, where the server resolves its runtime imports.
-   An existing directory of that version that passes the smoke is kept; one that fails it is
+   The smoke has no clock of its own, only the caller's deadline: a container over its cgroup's
+   `memory.high` (the granted RAM less the minimum free RAM, which the autoscaler raises in steps)
+   stalls every process, so its duration says nothing about the install. An existing directory of that version that passes the smoke is kept; one that fails it is
    downloaded afresh by the keep job, while the start job leaves it as it is and starts `current` (a
    smoke test can time out under boot load on a version keep already verified). A failure removes the
    half-built directory; `current` and `last-good` directories are never replaced.

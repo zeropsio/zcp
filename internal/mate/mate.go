@@ -191,17 +191,13 @@ const (
 	InitMarkerPath = InitMarkerDir + "/init-complete"
 )
 
-// InstallTimeout bounds one release download and npm install where nothing
-// else waits on it: the keep job, and a start with nothing installed yet.
-// Measured live before release delivery: 55 s for the 198-package dependency
-// install, 58 s cold end to end; three minutes leaves headroom for a slow
-// registry. A start that has current uses StartStageTimeout instead.
+// InstallTimeout bounds one release download, npm install and smoke test
+// where nothing else waits on it: the keep job, and a start with nothing
+// installed yet. Measured live before release delivery: 55 s for the
+// 198-package dependency install, 58 s cold end to end; three minutes leaves
+// headroom for a slow registry. A start that has current uses
+// StartStageTimeout instead.
 const InstallTimeout = 3 * time.Minute
-
-// smokeTimeout bounds the post-stage probes StageRelease runs before a staged
-// version may go live: `mate --version` plus the native-addon import.
-// Two node startups.
-const smokeTimeout = 15 * time.Second
 
 // Prefix is the npm prefix mate lives under. It lives under the service user's
 // home so it survives a container restart (a redeploy replaces the container
@@ -358,6 +354,15 @@ func NativeAddonProbeArgs() []string {
 // and fail the first time somebody opened a terminal. Both halves run here so
 // that failure lands on the staging directory, which is discarded, instead of on
 // CurrentLink().
+//
+// It runs under the caller's deadline, never a clock of its own: how long it
+// takes says nothing about the install. Zerops throttles a container whose
+// memory is over its cgroup's memory.high (the granted RAM less the minimum
+// free RAM, raised by the autoscaler in steps about 10-20 s apart), and then
+// every process in it stalls. Measured on a 2-core Mate container
+// (2026-11-12): `mate --version` takes 1.2-3.1 s unthrottled and made no
+// progress in 60 s over memory.high; on a first boot memory.high started at
+// 128 MiB and took 36 s to reach 896 MiB.
 
 func smokeTestInstall(ctx context.Context, versionDir string) error {
 	bin := binIn(versionDir)
@@ -380,7 +385,8 @@ func smokeTestInstall(ctx context.Context, versionDir string) error {
 
 // InstallRelease downloads one release tarball, verifies its SHA-256, then
 // npm-installs it into prefix. The caller owns ctx; the production caller
-// bounds the download and npm together (InstallTimeout, StartStageTimeout).
+// bounds the download, npm and the smoke test together (InstallTimeout,
+// StartStageTimeout).
 func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256, prefix string) error {
 	if err := os.MkdirAll(prefix, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", prefix, err)
@@ -495,16 +501,13 @@ const (
 // and passes the smoke test is kept, so the keep job's download and the start
 // job's share one; one that fails it is replaced only under ReplaceFailing.
 // Otherwise the release's tarball is downloaded into it afresh, which needs
-// release.URL; ctx bounds the download and npm install, while each smoke test
-// keeps its own smokeTimeout. The directory current
-// or last-good names is never replaced. Any failure removes the half-built
-// directory.
+// release.URL; ctx bounds the download, the npm install and every smoke test
+// together. The directory current or last-good names is never replaced. Any
+// failure removes the half-built directory.
 func StageRelease(ctx context.Context, release Manifest, replace Replacing) error {
 	versionDir := VersionDir(release.Version)
 	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
-		smokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), smokeTimeout)
-		err := smokeTestInstall(smokeCtx, versionDir)
-		cancel()
+		err := smokeTestInstall(ctx, versionDir)
 		if err == nil {
 			return nil
 		}
@@ -529,9 +532,7 @@ func StageRelease(ctx context.Context, release Manifest, replace Replacing) erro
 		return err
 	}
 
-	smokeCtx, smokeCancel := context.WithTimeout(context.WithoutCancel(ctx), smokeTimeout)
-	defer smokeCancel()
-	if err := smokeTestInstall(smokeCtx, versionDir); err != nil {
+	if err := smokeTestInstall(ctx, versionDir); err != nil {
 		_ = os.RemoveAll(versionDir)
 		return fmt.Errorf("smoke test %s: %w", versionDir, err)
 	}

@@ -14,10 +14,10 @@ import (
 // a boot that keeps advancing is never judged by elapsed time.
 const BootWindow = 2 * time.Minute
 
-// StartStageTimeout bounds a start's release-list refresh plus download and
-// npm install together when current exists: how long the network may delay
-// starting the Mate. A download that does not finish in it is left to the
-// keep job, which has InstallTimeout, and the start runs current. Measured on
+// StartStageTimeout bounds a start's release-list refresh, download, npm
+// install and smoke test together when current exists: how long staging a
+// newer version may delay starting the Mate. One that does not finish in it is
+// left to the keep job, which has InstallTimeout, and the start runs current. Measured on
 // a Mate container (2 vCPU, 0.16.179, 2026-11-12): tarball 0.2 s, npm install
 // 5.9 s with npm's cache and 8.2 s without; a minute is seven times that.
 const StartStageTimeout = time.Minute
@@ -63,9 +63,10 @@ func BeginStart(logf func(format string, args ...any)) (*Start, error) {
 
 // switchToVersionToRun points current at the version to run, downloading it
 // when keep has not; a failure leaves current as it was. The release list's
-// refresh and the download share one deadline: StartStageTimeout when current
-// exists, so the network delays a start only that long and a download that
-// does not finish is left to the keep job; InstallTimeout for a first install.
+// refresh, the download and the smoke test share one deadline:
+// StartStageTimeout when current exists, so staging delays a start only that
+// long and what does not finish is left to the keep job; InstallTimeout for a
+// first install.
 func switchToVersionToRun(logf func(format string, args ...any)) {
 	bound := StartStageTimeout
 	if ReadVersions().Current == "" {
