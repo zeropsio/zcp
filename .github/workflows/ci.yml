@@ -103,6 +103,7 @@ jobs:
       # Static witness lines and drop trailers for the event's range (the
       # pre-push check, scripts/witness-check.sh); no test runs here.
       # A new ref, a dispatch or a tag has no usable before-SHA: its range starts at main.
+      # A cancelled main push's commits are not checked here; the pre-push hook is the gate.
       - name: Witness lines
         env:
           EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
