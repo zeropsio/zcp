@@ -30,7 +30,7 @@ import (
 //     unit restarts. An --attended run reads the release list fresh for this;
 //     an automatic one uses the copy zcp holds for the cache time.
 //  3. A newer zcp is out: the same question. Yes: the container restarts, once
-//     per zcp release.
+//     per zcp release. An --attended run reads zcp's latest release fresh too.
 //
 // --automatic asks with the organization's policy, unless the Mate has had no
 // HQ link for an hour; --attended (a person's or an operator's update) asks
@@ -101,9 +101,10 @@ func runMateFuse(args []string) int {
 		return restartForMate(unlock, running, run, release, automatic)
 	}
 
+	// The same for zcp's own release, bounded as a status read.
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{})()
+	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{Refresh: attended})()
 	if zcp.Behind && rec.ZCPRestartedFor != zcp.Latest {
 		return restartForZCP(unlock, rec, zcp, running, automatic, lookup)
 	}

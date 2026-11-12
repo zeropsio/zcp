@@ -536,7 +536,8 @@ another keep run asks, it does nothing. Then the first that applies:
 3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
    records the release (`zcpRestartedFor` in `~/.zcp/mate/fuse.json`) and `zcp self restart` asks the
    platform for the container restart that is a boot: install.sh installs the newest zcp, the start
-   job the newest Mate (§2.9 step 7). A refused restart forgets the record; an accepted one that does
+   job the newest Mate (§2.9 step 7). An attended run reads zcp's latest release fresh (bounded as
+   a status read), an automatic run uses zcp's update cache for its hour. A refused restart forgets the record; an accepted one that does
    not end the process within 5 minutes (the Mate server's own grace) cancels the question and keeps
    the record: one attempt per release.
 4. Otherwise nothing: no question, no restart.
