@@ -177,13 +177,6 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 
 	m, err := fetchManifest(ctx, client, ManifestURL(), "")
 	if err != nil {
-		// A refresh that could not reach the manifest keeps what the last one
-		// read, while that is fresh.
-		if opts.Refresh {
-			if cached, ok := readManifestCache(); ok {
-				return cached, nil
-			}
-		}
 		return Manifest{}, err
 	}
 

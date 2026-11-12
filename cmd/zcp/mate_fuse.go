@@ -96,12 +96,7 @@ func runMateFuse(args []string) int {
 	// one on the copy zcp holds for the cache time.
 	attended := flags["--attended"]
 	release, err := mate.HeldRelease(context.Background(), attended)
-	switch {
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "mate keep: release list: %v\n", err)
-	case attended:
-		fmt.Fprintf(os.Stderr, "mate keep: release list read fresh: Mate %s\n", release.Version)
-	}
+	logReleaseList(release, err, attended)
 	if run := mate.VersionToRun(mate.ReadVersions(), release.Version); run != "" && run != running {
 		return restartForMate(unlock, running, run, release, automatic)
 	}
@@ -138,6 +133,19 @@ func cutOff(rec *mateFuseRecord, projectID string) bool {
 	return true
 }
 
+// logReleaseList says what answered the release list: a fresh read (logged for
+// a refresh), or, when the read failed, its error and the copy zcp holds.
+func logReleaseList(release mate.Manifest, err error, refresh bool) {
+	switch {
+	case err != nil && release.Version != "":
+		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v; the copy zcp holds answers: Mate %s\n", err, release.Version)
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v; zcp holds no copy\n", err)
+	case refresh:
+		fmt.Fprintf(os.Stderr, "mate keep: release list read fresh: Mate %s\n", release.Version)
+	}
+}
+
 // mateUnitRunning says systemd runs the Mate's unit: active, starting,
 // reloading or stopping. An answer it cannot read counts as running, so only
 // systemd's own word restarts it.
@@ -155,9 +163,8 @@ func mateUnitRunning() bool {
 // works. A server that is not there holds no work to ask about.
 func restartAbsentMate(unlock func(), why string) int {
 	fmt.Fprintf(os.Stderr, "mate keep: the Mate is not there (%s); restarting it\n", why)
-	if _, err := mate.HeldRelease(context.Background(), true); err != nil {
-		fmt.Fprintf(os.Stderr, "mate keep: release list: %v\n", err)
-	}
+	release, err := mate.HeldRelease(context.Background(), true)
+	logReleaseList(release, err, true)
 	unlock()
 	if err := restartMateUnit(); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: %v\n", err)
