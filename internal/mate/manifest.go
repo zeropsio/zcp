@@ -83,9 +83,11 @@ type Manifest struct {
 }
 
 // ManifestURL is where DesiredRelease fetches the release manifest from.
-// ZCP_MATE_MANIFEST_URL overrides it — tests and private deploys.
+// ZCP_MATE_MANIFEST_URL overrides it — tests and private deploys — read
+// through the live env store (LiveLookup), so status, the start job and the
+// keep job read one value whatever environment systemd or the server gave them.
 func ManifestURL() string {
-	if v := strings.TrimSpace(os.Getenv(manifestURLEnvOverride)); v != "" {
+	if v := strings.TrimSpace(LiveLookup(LiveEnvStorePath)(manifestURLEnvOverride)); v != "" {
 		return v
 	}
 	return defaultManifestURL
