@@ -928,6 +928,41 @@ func TestBrokeredGit_Allowlist_FromRecordsAndArgvURLsOnly(t *testing.T) {
 	}
 }
 
+// TestBrokeredGitRelayFor_OnlyAnOriginKeptOnGitHub_IsTheMirror: the one
+// GitHub repository a refused push is pointed to origin for is the record's
+// origin where the person keeps the code on GitHub, which HQ mirrors; a
+// repository only followed, one HQ alone keeps and a URL in argv are none.
+//
+// witness: cmd/zcp/git.go | if meta.HQ.Origin.Mode == hq.OriginOnGitHub { → if meta.HQ.Origin.Mode != "" {
+func TestBrokeredGitRelayFor_OnlyAnOriginKeptOnGitHub_IsTheMirror(t *testing.T) {
+	t.Parallel()
+	const origin = "https://github.com/acme/shop"
+	id := hq.Identity{Origin: "https://hq.example", Key: "key-FAKE", ProjectID: "p1"}
+	args, err := ops.ParseBrokeredGitArgs([]string{"push", "https://github.com/acme/lib", "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name   string
+		origin *workflow.HQOrigin
+		want   string
+	}{
+		{"kept on GitHub", &workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: origin}, origin},
+		{"followed", &workflow.HQOrigin{Mode: hq.OriginFollowed, URL: origin}, ""},
+		{"in HQ alone", &workflow.HQOrigin{Mode: workflow.HQOriginNone}, ""},
+		{"not read yet", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			meta := hqWiredMeta()
+			meta.HQ.Origin = tt.origin
+			if got := brokeredGitRelayFor(meta, id, nil, args).Mirror; got != tt.want {
+				t.Errorf("relay mirror = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRunGitCmd_HQIdentityReadOnlyForRelayedCalls: the Mate's HQ identity —
 // the live env store, the installed Mate's package — is read only for a
 // call that is relayed, once.

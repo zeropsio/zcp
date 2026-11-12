@@ -335,6 +335,8 @@ func isRelayedGit(rt runtime.Info, target gitTarget) bool {
 // the Mate's identity — HQ's host, any path — the record's HQ origin, which
 // zcp writes from HQ's own state, or, while the record names none, the origin
 // of its repository in the Mate's last state; and the URLs args write literally.
+// A record's origin the person keeps the code on is the relay's Mirror, the
+// one GitHub repository a refused push is pointed to origin for.
 // Never the record's RemoteURL, written from the checkout's live origin. A
 // lease no wired pair's record names (meta nil, or one wired to no HQ
 // repository) answers from the identity and args alone.
@@ -344,6 +346,9 @@ func brokeredGitRelayFor(meta *workflow.ServiceMeta, id hq.Identity, httpClient 
 	case meta == nil || meta.HQ == nil || meta.HQ.Repo == "":
 	case meta.HQ.Origin != nil && meta.HQ.Origin.URL != "":
 		relay.Repos = append(relay.Repos, meta.HQ.Origin.URL)
+		if meta.HQ.Origin.Mode == hq.OriginOnGitHub {
+			relay.Mirror = meta.HQ.Origin.URL
+		}
 	default:
 		relay.LiveOrigin = &ops.BrokeredGitHQRepo{AppID: meta.HQ.AppID, Repo: meta.HQ.Repo}
 	}

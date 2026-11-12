@@ -72,6 +72,12 @@ type BrokeredGitRelay struct {
 	// origin: the Mate's last state is read for its origin once, on the first
 	// GitHub request none of Repos matches.
 	LiveOrigin *BrokeredGitHQRepo
+	// Mirror is the GitHub repository HQ mirrors the record's repository to
+	// — its HQ origin when the person keeps the code on GitHub — "" for
+	// none: a push refused for it is told the push that does reach it, to
+	// origin; one refused for any other repository is told none
+	// (gitHubPushRefused).
+	Mirror string
 
 	// githubOrigin is where the tokens HQ mints are good, https://github.com
 	// when empty; a test points it at a stand-in.
@@ -1098,20 +1104,30 @@ func newRelayCall(relay BrokeredGitRelay, host string, push bool, stderr io.Writ
 
 // gitHubPushRefused is what a push is told when git asks, inside it, for a
 // GitHub repository the relay answers reads for (repo, as host/owner/name):
-// nothing is asked of HQ, and the words name the push that does reach
-// GitHub — the branch to the checkout's origin, its repository in HQ, whose
-// mirror puts the change's branch on GitHub and opens its pull request —
+// nothing is asked of HQ. For the repository HQ mirrors the pair's code to
+// (mirror) the words name the push that does reach it — the branch to the
+// checkout's origin, its repository in HQ, whose mirror puts the change's
+// branch on GitHub and opens its pull request, unless GitHub already holds a
+// branch of that name HQ did not put there, which HQ never pushes on to —
 // and, for a checkout an older zcp pointed at GitHub that no pass moved yet,
-// the pass that moves it. A read git starts inside a push is refused with it: zcp cannot tell it from
-// the push's own request, and a checkout whose origin is HQ fetches nothing
-// from GitHub while it pushes.
-func gitHubPushRefused(host, repo string) string {
-	return fmt.Sprintf("this push asked for %s, which zcp git answers for reads only and never inside a push, so no token was asked for it: a Mate never pushes to GitHub — HQ alone does. "+
+// the pass that moves it. For any other repository — a URL in argv, one only
+// followed — nothing of HQ's pushes there, and the words say so and name no
+// push. A read git starts inside a push is refused with it: zcp cannot tell
+// it from the push's own request, and a checkout whose origin is HQ fetches
+// nothing from GitHub while it pushes.
+func gitHubPushRefused(host, repo string, mirror bool) string {
+	refused := fmt.Sprintf("this push asked for %s, which zcp git answers for reads only and never inside a push, so no token was asked for it: ", repo)
+	if !mirror {
+		return refused + fmt.Sprintf("zcp gives a Mate no token that pushes to GitHub. HQ pushes there itself, but only to the repository it mirrors %s's code to, and %s is not it",
+			host, repo)
+	}
+	return refused + fmt.Sprintf("a Mate never pushes to GitHub — HQ alone does. "+
 		"Push the branch to origin, its repository in HQ (`zcp git %s push origin <branch>`), and open its change "+
 		"(`zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`): "+
-		"HQ puts the change's branch on GitHub and opens its pull request there. GitHub's default branch moves only by a merge. "+
+		"HQ puts the change's branch on GitHub and opens its pull request there — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name. "+
+		"GitHub's default branch moves only by a merge. "+
 		"Should origin itself still name GitHub — status's `checkoutOrigin` says so — develop's start points it at HQ: start develop, then push",
-		repo, host)
+		host)
 }
 
 // relaySayCap bounds how many distinct lines one call says, so code in the
@@ -1204,7 +1220,7 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			return "", ""
 		}
 		if c.push {
-			c.say(gitHubPushRefused(c.host, host+"/"+canonical))
+			c.say(gitHubPushRefused(c.host, host+"/"+canonical, brokeredGitRepoKey(repo) == brokeredGitRepoKey(c.relay.Mirror)))
 			return "", ""
 		}
 		return c.cached(ctx, brokeredGitRepoKey(repo), "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+canonical+"\n", host+"/"+canonical)
@@ -1231,7 +1247,8 @@ func (c *relayCall) allows(repo string) bool {
 }
 
 // liveOrigin is the origin the Mate's last state names for the record's
-// repository, "" when it names none or cannot be read (said once).
+// repository, "" when it names none or cannot be read (said once); one the
+// person keeps the code on is the call's Mirror too.
 func (c *relayCall) liveOrigin() string {
 	repo := c.relay.LiveOrigin
 	doc, err := c.relay.Identity.ReadMateState()
@@ -1251,6 +1268,9 @@ func (c *relayCall) liveOrigin() string {
 	}
 	for _, r := range state.Repos {
 		if r.Name == repo.Repo && r.Origin != nil {
+			if r.Origin.Mode == hq.OriginOnGitHub {
+				c.relay.Mirror = r.Origin.URL
+			}
 			return r.Origin.URL
 		}
 	}

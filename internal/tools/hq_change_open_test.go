@@ -282,7 +282,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 			want: []string{
 				"Change #1 is open in \"appdev\" for the branch \"fix-login\": push the work there (`zcp git appdev push origin fix-login`) — never force-push",
 				`action="describe-change"`,
-				"Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described",
+				"Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change",
 				"open none of your own and never push to GitHub",
 				"the person merges it in Mate",
 			},

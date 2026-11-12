@@ -3164,12 +3164,14 @@ func (l *relayLab) assertAccesses(t *testing.T, want ...string) {
 
 // accessLab is a lab with a partial clone of acme/shop whose origin is the
 // GitHub stand-in — a checkout an older zcp pointed there — and the relay
-// its record names.
+// its record names, acme/shop the repository HQ mirrors the pair's code to.
 func accessLab(t *testing.T) (*relayLab, relayHistory, string, BrokeredGitRelay) {
 	t.Helper()
 	l := newRelayLab(t)
 	url, h := l.repo(t, true, "acme/shop")
-	return l, h, l.checkout(t, url), l.relay(url)
+	relay := l.relay(url)
+	relay.Mirror = url
+	return l, h, l.checkout(t, url), relay
 }
 
 // TestBrokeredGit_Access_NonPushCallAsksRead: every token a call that is no
@@ -3219,6 +3221,7 @@ func TestBrokeredGit_Relay_PushToGitHub_RefusedWithoutAskingHQ(t *testing.T) {
 				for _, want := range []string{
 					"zcp git: this push asked for ", "/acme/shop, which zcp git answers for reads only and never inside a push, so no token was asked for it",
 					"HQ alone does", "`zcp git appdev push origin <branch>`", `action="open-change"`,
+					"HQ puts the change's branch on GitHub and opens its pull request there — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name",
 					"GitHub's default branch moves only by a merge",
 					"Should origin itself still name GitHub — status's `checkoutOrigin` says so — develop's start points it at HQ",
 				} {
@@ -3239,6 +3242,59 @@ func TestBrokeredGit_Relay_PushToGitHub_RefusedWithoutAskingHQ(t *testing.T) {
 			}
 			l.run(t, sh, checkout, relay, "", "fetch", "origin").mustSucceed(t, "a fetch after the refused pushes")
 			l.assertAccesses(t, "read")
+		})
+	}
+}
+
+// TestBrokeredGit_Relay_PushToAGitHubRepositoryHQDoesNotMirror_ToldNoPushToOrigin:
+// a push that asks for a GitHub repository the call answers reads for, but
+// HQ does not mirror the pair's code to — another repository by its URL in
+// argv, or the pair's origin where it is only followed — is refused with no
+// token asked, and is not told to push to origin: nothing HQ does would
+// carry that push to it.
+//
+// witness: internal/ops/git_brokered_relay.go | if !mirror { → if false {
+func TestBrokeredGit_Relay_PushToAGitHubRepositoryHQDoesNotMirror_ToldNoPushToOrigin(t *testing.T) {
+	t.Parallel()
+	for _, sh := range relayShellsFor(t) {
+		t.Run(shellName(sh), func(t *testing.T) {
+			t.Parallel()
+			l, _, checkout, mirrored := accessLab(t)
+			other, _ := l.repo(t, true, "acme/other")
+			l.commitFiles(t, checkout, "work", map[string]string{"app.txt": "mate's work\n"})
+			byURL := l.relay(mirrored.Mirror, other)
+			byURL.Mirror = mirrored.Mirror
+			for _, tc := range []struct {
+				name  string
+				relay BrokeredGitRelay
+				args  []string
+				repo  string
+			}{
+				{"another repository by its URL", byURL, []string{"push", other, "HEAD:refs/heads/feature"}, "/acme/other"},
+				{"the pair's origin, only followed", l.relay(mirrored.Mirror), []string{"push", "origin", "HEAD:refs/heads/feature"}, "/acme/shop"},
+			} {
+				run := l.run(t, sh, checkout, tc.relay, "", tc.args...)
+				if run.code == 0 || run.err != nil {
+					t.Errorf("%s: exit %d, err %v; want git failing on a declined credential", tc.name, run.code, run.err)
+				}
+				for _, want := range []string{
+					tc.repo + ", which zcp git answers for reads only and never inside a push, so no token was asked for it: zcp gives a Mate no token that pushes to GitHub",
+					"HQ pushes there itself, but only to the repository it mirrors appdev's code to, and ",
+					tc.repo + " is not it",
+				} {
+					if !strings.Contains(run.stderr, want) {
+						t.Errorf("%s: stderr = %q, want %q in it", tc.name, run.stderr, want)
+					}
+				}
+				for _, never := range []string{"push origin <branch>", "open-change", "HQ puts the change's branch on GitHub"} {
+					if strings.Contains(run.stderr, never) {
+						t.Errorf("%s: stderr says %q of a repository HQ does not mirror: %q", tc.name, never, run.stderr)
+					}
+				}
+			}
+			if minted := l.minted(); len(minted) != 0 {
+				t.Errorf("HQ was asked for %+v, want no token asked for a push", minted)
+			}
 		})
 	}
 }

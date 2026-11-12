@@ -234,7 +234,7 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 	// alone pushes to GitHub.
 	mirrored := ""
 	if origin == hq.OriginOnGitHub {
-		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described, so open none of your own and never push to GitHub, and the person merges it in Mate."
+		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and the person merges it in Mate."
 	}
 	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + mirrored + handedNote
