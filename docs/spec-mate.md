@@ -1598,7 +1598,8 @@ up exactly as before.
   - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
     repository, one runtime that is no stage is the dev half of every stage the repository builds
     (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,
-    each dev service holding its own checkout. The pair's stages put the one named like the dev half
+    each dev service holding its own checkout, else with its part's dev pool named like it
+    (`apistage` → `apipool`). The pair's stages put the one named like the dev half
     first, then the tier's order (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
     `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
     `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
@@ -6215,8 +6216,14 @@ The order:
      (`<HQ>/git/<orgId>/<appId>/<repo>`), per repository, by zcp's naming —
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named
      like it — with each half's `zeropsSetup` (else its hostname) and the pair's priority, the
-     higher of its halves'; managed services and public builds are skipped, and so, by name, is a
-     runtime with no partner or another application's repository (`workflow.ParseMateTier`).
+     higher of its halves'. A stage no dev runtime takes pairs with its part's dev pool: the tier's
+     Swarm pool named after it (`apistage` → `apipool`, the name pool-migrate gives a part's pool),
+     written with no build (or one from the stage's repository) as the group recipe writes a part's
+     pool (§10.10); a pool is never a container half, and one no stage takes is skipped as `pool`.
+     Managed services and public builds are skipped, and so, by name, is a runtime with no partner
+     or another application's repository (`workflow.ParseMateTier`). A tier with no pair of either
+     kind is refused, its error naming both kinds and every service with its reason
+     (`TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool`).
      A legacy HTTPS reference whose exact path is `/git/<appId>/<repo>` and names this
      Mate's own application identifies that repository regardless of the HQ host or port
      it names; stand-up reads and wires the repository through the current HQ. Only this
@@ -6230,7 +6237,14 @@ The order:
    - adopts each pair exactly as the adopt route records it, plus the tier's setups
      (`workflow.AdoptPair`), mounts the dev half and wires it, through the reconcile's own wiring, to
      the repository of the recipe's name in HQ — refused first when HQ does not have that
-     repository (git's own `info/refs` answering not found), since HQ makes what it is asked for;
+     repository (git's own `info/refs` answering not found), since HQ makes what it is asked for.
+     A part's dev pool and its stage are recorded as the pair keyed by the pool, the shape the pool
+     migration's re-key leaves (docs/spec-workflows.md §13 PM-10; `workflow.AdoptPoolPair`:
+     `devPool` with the pool's service id, no `migratedFrom`), and its repository in HQ is recorded
+     on it over no ssh — the HQ record, the remote and `main` as the wiring records them, after the
+     same existence check — since a pool holds no checkout of its own and each lease checks its
+     branch out from the repository (DP-16). Nothing of such a pair is mounted, checked out,
+     deployed or waited on as running: a pool has no container until a lease asks for one;
    - deploys each half as soon as what it needs stands, at most five at once, over two calls. What
      orders the halves is what each build reads of the others, read from each half's own setup in
      its pair's zerops.yaml as the recipe writer reads it: a storefront's stage build pre-rendering
@@ -6255,7 +6269,15 @@ The order:
      `zerops_dev_server` call with the port its dev setup declares (`not started`; `unread` when the
      supervisor did not answer);
    - answers one entry per service: adopted, wired, deployed with its URL, queued, or failed with
-     zcp's failure classification, the dev server's state, and the model's next step.
+     zcp's failure classification, the dev server's state, and the model's next step. A pool pair's
+     pool says whether its image is built (the platform's active app version) and, while not, names
+     the lease of the pool on `main` (`zerops_lease action="acquire" pool=<pool> repo=<its repository
+     in HQ> branch="main"`), the deploy of the pool's image from that lease
+     (`zerops_deploy sourceService=<alias> targetService=<pool> setup=<pool's setup> sha="origin/main"`,
+     DP-14's bake) and its rollout; its stage names its deploy from the same lease and the lease's
+     release. A tier whose every pair the stand-up builds stands — or holds none — with every pool
+     pair recorded answers `pools-recorded`, which never reads as a running development or preview:
+     no pool's image and no such stage is built by the stand-up.
 8. The model starts the dev servers, verifies, and tells the person development is up, with each dev
     half's address.
 9. It calls `zerops_standup` again in the same turn, which builds the stages and waits for them. A
@@ -6290,8 +6312,8 @@ The model is the backup:
 
 - A refusal before anything is touched — HQ refusing the key or not answering it, no application (HQ's state saying
   none, or HQ refusing the tier `mate_not_in_app`), no tier on `main`, a tier past HQ's read bound
-  (`413 too_large`), a tier that does not read or holds no pair — is an error result naming the
-  adopt route.
+  (`413 too_large`), a tier that does not read or holds no pair of either kind (dev/stage or
+  pool/stage) — is an error result naming the adopt route.
 - A pair that cannot be stood up — a runtime still missing after the wait (its next step is the
   `zerops_import` of the tier's entry, shaped as the browser imports it), a dev half not running, a
   repository not in HQ, a checkout refused — stops alone; a failed build skips its stage; a
