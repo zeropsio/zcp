@@ -527,7 +527,8 @@ another keep run asks, it does nothing. Then the first that applies:
 2. **The version to run differs from the running one** → it is downloaded (idempotent), and the
    server is asked "may I restart you now?". Yes → the unit restarts; its start job starts the
    version to run. Not now → the next run. A failed release is never the version to run, so it causes
-   no restarts.
+   no restarts. An attended run reads the release list fresh for this (on an error, the copy zcp
+   holds); an automatic run uses the copy zcp holds for its hour.
 3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
    records the release (`zcpRestartedFor` in `~/.zcp/mate/fuse.json`) and `zcp self restart` asks the
    platform for the container restart that is a boot: install.sh installs the newest zcp, the start

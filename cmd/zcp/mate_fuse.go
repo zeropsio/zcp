@@ -27,7 +27,8 @@ import (
 //     restarted; its start job starts the version to run.
 //  2. The version to run (mate.VersionToRun) differs from the running one: it is
 //     downloaded, and the server is asked whether it may restart now. Yes: the
-//     unit restarts.
+//     unit restarts. An --attended run reads the release list fresh for this;
+//     an automatic one uses the copy zcp holds for the cache time.
 //  3. A newer zcp is out: the same question. Yes: the container restarts, once
 //     per zcp release.
 //
@@ -91,9 +92,15 @@ func runMateFuse(args []string) int {
 		return 0
 	}
 
-	release, err := mate.HeldRelease(context.Background(), false)
-	if err != nil {
+	// An attended run decides on the release list as it is now; an automatic
+	// one on the copy zcp holds for the cache time.
+	attended := flags["--attended"]
+	release, err := mate.HeldRelease(context.Background(), attended)
+	switch {
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "mate keep: release list: %v\n", err)
+	case attended:
+		fmt.Fprintf(os.Stderr, "mate keep: release list read fresh: Mate %s\n", release.Version)
 	}
 	if run := mate.VersionToRun(mate.ReadVersions(), release.Version); run != "" && run != running {
 		return restartForMate(unlock, running, run, release, automatic)
