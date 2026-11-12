@@ -902,6 +902,10 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 			return leaseGuardResult{}, err
 		}
 	}
+	if w.unpushed > 0 && mainHoldsUnpushed(ctx, d.SSH, rec.alias()) {
+		guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
+		w.unpushed = 0
+	}
 	if w.any() {
 		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, onHQ)
 	}
@@ -914,6 +918,48 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // repository on the Mate's HQ, through the relayed session it runs in.
 func leaseGuardFetchCommand() string {
 	return "GIT_TERMINAL_PROMPT=0 git -C " + shellQuote(LeaseWorkDir) + " fetch -q --prune origin"
+}
+
+// leaseMainHoldsMark is the last line leaseMainHoldsCommand prints where
+// origin's main already holds every unpushed commit's change.
+const leaseMainHoldsMark = "main-holds-them"
+
+// leaseMainHoldsCommand asks whether origin's main already holds what the
+// checkout's unpushed commits change: for each local branch tip and HEAD
+// that reaches a commit origin's branches do not, the change from its merge
+// base with main to the tip must reverse-apply cleanly onto main's tree. A
+// change merged as a squash or a rebase keeps its content, not its commits,
+// so counted by commit it reads as work a release would lose, and HQ's
+// merge pass — which releases through this guard — could never release it.
+// Main later changing those lines again, or a tip with no history in common
+// with main, reads as not held: never a release of work main lacks. It reads
+// only: the index it applies against is a temporary file, never the
+// checkout's, and nothing in /var/www moves.
+func leaseMainHoldsCommand() string {
+	g := leaseGitRead + shellQuote(LeaseWorkDir)
+	return "main=refs/remotes/origin/main; " +
+		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || main=refs/remotes/origin/master; " +
+		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || exit 0; " +
+		"tmp=$(mktemp -d) || exit 0; trap 'rm -rf \"$tmp\"' EXIT; " +
+		"for tip in $( (" + g + " rev-parse -q --verify HEAD; " + g + " for-each-ref --format='%(objectname)' refs/heads) 2>/dev/null | sort -u); do " +
+		"[ \"$(" + g + " rev-list --count \"$tip\" --not --remotes=origin)\" = 0 ] && continue; " +
+		"mb=$(" + g + " merge-base \"$main\" \"$tip\") || exit 0; " +
+		g + " diff --binary \"$mb\" \"$tip\" > \"$tmp/change\" || exit 0; " +
+		"[ -s \"$tmp/change\" ] || continue; " +
+		"GIT_INDEX_FILE=\"$tmp/index\" " + g + " read-tree \"$main\" || exit 0; " +
+		"GIT_INDEX_FILE=\"$tmp/index\" " + g + " apply --cached --check --reverse \"$tmp/change\" >/dev/null 2>&1 || exit 0; " +
+		"done; echo " + leaseMainHoldsMark
+}
+
+// mainHoldsUnpushed runs leaseMainHoldsCommand in the lease's container: true
+// only where it printed its mark — any failure to tell reads as not held.
+func mainHoldsUnpushed(ctx context.Context, ssh SSHDeployer, alias string) bool {
+	out, err := ssh.ExecSSH(ctx, alias, leaseMainHoldsCommand())
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(out))
+	return len(fields) > 0 && fields[len(fields)-1] == leaseMainHoldsMark
 }
 
 // compareWithOrigin counts the commits on no remote branch (w.unpushed) again
