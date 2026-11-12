@@ -85,7 +85,13 @@ func switchToVersionToRun(logf func(format string, args ...any)) {
 	if run != release.Version {
 		release = Manifest{Version: run}
 	}
-	if err := StageRelease(ctx, release, KeepFailing); err != nil {
+	// With nothing installed there is no current to start instead, so a broken
+	// download left by an interrupted first install is replaced, not kept.
+	replacing := KeepFailing
+	if v.Current == "" {
+		replacing = ReplaceFailing
+	}
+	if err := StageRelease(ctx, release, replacing); err != nil {
 		logf("install %s: %v; starting current %q", run, err, v.Current)
 		return
 	}
