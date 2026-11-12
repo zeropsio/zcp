@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,13 +23,13 @@ import (
 // the install lock without waiting, so it does nothing while a start job
 // installs or judges a boot, or while another run asks. Then, in order:
 //
-//  1. The server is not there: the release list is read fresh and the unit is
-//     restarted; its start job starts the version to run.
-//  2. The version to run (mate.VersionToRun) differs from the running one: it is
+//  1. The server is not there: the unit is restarted; its start job reads the
+//     release list and starts the version to run.
+//  2. The version to run (mate.VersionToRun), from the release list read from
+//     its source on every run, differs from the running one: it is
 //     downloaded, and the server is asked whether it may restart now. Yes: the
-//     unit restarts. An --attended run reads the release list fresh for this;
-//     an automatic one uses the copy zcp holds for the cache time. A version
-//     that cannot be staged fails the run, after step 3.
+//     unit restarts. A version that cannot be staged fails the run, after
+//     step 3.
 //  3. A newer zcp is out: the same question. Yes: the container restarts, once
 //     per zcp release. An --attended run reads zcp's latest release fresh too.
 //
@@ -85,11 +86,10 @@ func runMateFuse(args []string) int {
 		return 0
 	}
 
-	// An attended run decides on the release list as it is now; an automatic
-	// one on the copy zcp holds for the cache time.
-	attended := flags["--attended"]
-	release, err := mate.HeldRelease(context.Background(), attended)
-	logReleaseList(release, err, attended)
+	release, err := mate.DesiredRelease(context.Background(), http.DefaultClient)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v\n", err)
+	}
 	// A Mate release that cannot be staged still lets the zcp step run: a newer
 	// zcp is what repairs a staging defect, and where nobody can reach the
 	// container this run is the only way it arrives. The run still fails.
@@ -106,7 +106,7 @@ func runMateFuse(args []string) int {
 	// The same for zcp's own release, bounded as a status read.
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{Refresh: attended})()
+	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{Refresh: flags["--attended"]})()
 	if zcp.Behind && rec.ZCPRestartedFor != zcp.Latest {
 		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
 			return code
@@ -121,19 +121,6 @@ func runMateFuse(args []string) int {
 	return 0
 }
 
-// logReleaseList says what answered the release list: a fresh read (logged for
-// a refresh), or, when the read failed, its error and the copy zcp holds.
-func logReleaseList(release mate.Manifest, err error, refresh bool) {
-	switch {
-	case err != nil && release.Version != "":
-		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v; the copy zcp holds answers: Mate %s\n", err, release.Version)
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v; zcp holds no copy\n", err)
-	case refresh:
-		fmt.Fprintf(os.Stderr, "mate keep: release list read fresh: Mate %s\n", release.Version)
-	}
-}
-
 // mateUnitRunning says systemd runs the Mate's unit: active, starting,
 // reloading or stopping. An answer it cannot read counts as running, so only
 // systemd's own word restarts it.
@@ -146,13 +133,11 @@ func mateUnitRunning() bool {
 	return state != inactive && state != failed
 }
 
-// restartAbsentMate restarts a unit whose server is not there, after reading
-// the release list fresh, so its start job starts the newest version that
-// works. A server that is not there holds no work to ask about.
+// restartAbsentMate restarts a unit whose server is not there; its start job
+// reads the release list and starts the newest version that works. A server
+// that is not there holds no work to ask about.
 func restartAbsentMate(unlock func(), why string) int {
 	fmt.Fprintf(os.Stderr, "mate keep: the Mate is not there (%s); restarting it\n", why)
-	release, err := mate.HeldRelease(context.Background(), true)
-	logReleaseList(release, err, true)
 	unlock()
 	if err := restartMateUnit(); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: %v\n", err)

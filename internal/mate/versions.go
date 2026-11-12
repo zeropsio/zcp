@@ -12,7 +12,7 @@ import (
 // (docs/spec-mate.md §2.1a). Every fact lives under Prefix(): `current` names
 // the version the unit starts, `last-good` the newest version that came up
 // under this zcp, `failed-version` the newest version that did not, versions/<v>
-// the downloaded versions, and manifest.json the release list. The start job
+// the downloaded versions, and manifest.json the release list as last read. The start job
 // (Start) is the one writer of the two links and the failed version.
 
 // SwitchBackMinimum is the first Mate release that refuses to start on state a
@@ -49,7 +49,7 @@ func ReadVersions() Versions {
 
 // VersionToRun is the one answer to "which Mate runs", read by the start job
 // that launches it and by the keep job that restarts for it: the release the
-// release list names (latest, "" when zcp holds none) when it is newer than
+// release list names (latest, "" when the list was not read) when it is newer than
 // last-good, newer than the failed version and not older than current;
 // otherwise current, or last-good when current is missing or older. It never
 // moves current back: a release list that is missing or goes backwards

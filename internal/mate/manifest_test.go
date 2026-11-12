@@ -1,5 +1,5 @@
 // Tests for: internal/mate's release manifest resolver (DesiredRelease) —
-// the fork's stable.json, fetched, validated and cached, replacing a version
+// the fork's stable.json, fetched and validated on every call, replacing a version
 // pinned into zcp (spec-mate.md §2.1c, invariant MD-10).
 //
 // NOT parallel — every path here is derived from HOME (see runtime.HomeDir,
@@ -12,11 +12,8 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 )
@@ -52,38 +49,6 @@ func manifestServer(t *testing.T, handler http.HandlerFunc) *http.Client {
 	return client
 }
 
-func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	var requests int
-	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		_, _ = w.Write(validManifestJSON(t, nil))
-	})
-
-	got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
-	if err != nil {
-		t.Fatalf("DesiredRelease(): %v", err)
-	}
-	if got.Version != mate.MinimumMateVersion || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version %s contract %d", got, mate.MinimumMateVersion, mate.SupportedContract)
-	}
-	if requests != 1 {
-		t.Fatalf("expected exactly one fetch, got %d", requests)
-	}
-
-	// A second call within the TTL must answer from the cache alone.
-	again, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
-	if err != nil {
-		t.Fatalf("DesiredRelease() (cached): %v", err)
-	}
-	if again != got {
-		t.Errorf("cached DesiredRelease() = %+v, want %+v", again, got)
-	}
-	if requests != 1 {
-		t.Errorf("a cache hit must reach no network at all, got %d requests", requests)
-	}
-}
-
 func TestDesiredRelease_SemanticVersions_PreserveTheReleaseFloor(t *testing.T) {
 	// Preserve the regression titles while arranging valid candidates around
 	// the current floor. TestVersionOlder keeps the original numeric controls.
@@ -111,7 +76,7 @@ func TestDesiredRelease_SemanticVersions_PreserveTheReleaseFloor(t *testing.T) {
 			client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write(validManifestJSON(t, map[string]any{"version": tt.version}))
 			})
-			got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+			got, err := mate.DesiredRelease(context.Background(), client)
 			if (err == nil) != tt.allowed {
 				t.Fatalf("DesiredRelease(%q) error = %v, allowed = %v", tt.version, err, tt.allowed)
 			}
@@ -122,38 +87,19 @@ func TestDesiredRelease_SemanticVersions_PreserveTheReleaseFloor(t *testing.T) {
 	}
 }
 
-func TestDesiredRelease_Refresh_BypassesCache(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	var requests int
-	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		_, _ = w.Write(validManifestJSON(t, nil))
-	})
-
-	if _, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{}); err != nil {
-		t.Fatalf("DesiredRelease(): %v", err)
-	}
-	if _, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{Refresh: true}); err != nil {
-		t.Fatalf("DesiredRelease(Refresh): %v", err)
-	}
-	if requests != 2 {
-		t.Errorf("Refresh must bypass the cache, got %d requests, want 2", requests)
-	}
-}
-
 func TestDesiredRelease_UnreachableManifest_ReturnsError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	})
 
-	if _, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{}); err == nil {
+	if _, err := mate.DesiredRelease(context.Background(), client); err == nil {
 		t.Fatal("DesiredRelease(): expected an error for an unreachable manifest")
 	}
 }
 
 // TestDesiredRelease_RefusesInvalidManifest is MD-10's validation table:
-// every field DesiredRelease checks before trusting or caching a manifest.
+// every field DesiredRelease checks before trusting or recording a manifest.
 func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -216,7 +162,7 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 				_, _ = w.Write(validManifestJSON(t, tt.overrides))
 			})
 
-			_, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+			_, err := mate.DesiredRelease(context.Background(), client)
 			if err == nil {
 				t.Fatalf("DesiredRelease(): expected a validation error for %s", tt.name)
 			}
@@ -227,58 +173,13 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 	}
 }
 
-// TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted: the cache holds what
-// an earlier zcp validated against its own floor. A manifest below this
-// build's MinimumMateVersion is not answered from it — not within the TTL,
-// and not as a refresh's fallback with the manifest unreachable.
-func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	var stale map[string]any
-	if err := json.Unmarshal(validManifestJSON(t, map[string]any{"version": "0.12.3"}), &stale); err != nil {
-		t.Fatal(err)
-	}
-	cache, err := json.Marshal(map[string]any{"fetchedAt": time.Now().UTC(), "manifest": stale})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(mate.Prefix(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mate.Prefix(), "manifest.json"), cache, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	reachable := true
-	var requests int
-	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		if !reachable {
-			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
-			return
-		}
-		_, _ = w.Write(validManifestJSON(t, nil))
-	})
-
-	reachable = false
-	if got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{Refresh: true}); err == nil {
-		t.Fatalf("an unreachable manifest must not fall back to a cache below the minimum, got %+v", got)
-	}
-	reachable = true
-	got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
-	if err != nil {
-		t.Fatalf("DesiredRelease(): %v", err)
-	}
-	if got.Version != mate.MinimumMateVersion || requests != 2 {
-		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched %s, never the cached 0.12.3", got.Version, requests, mate.MinimumMateVersion)
-	}
-}
-
 func TestDesiredRelease_ContractMismatch_NamesBothNumbers(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(validManifestJSON(t, map[string]any{"contract": 1}))
 	})
 
-	_, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+	_, err := mate.DesiredRelease(context.Background(), client)
 	if err == nil {
 		t.Fatal("DesiredRelease(): expected a contract-mismatch error")
 	}
@@ -288,28 +189,6 @@ func TestDesiredRelease_ContractMismatch_NamesBothNumbers(t *testing.T) {
 	}
 	if mismatch.Manifest != 1 || mismatch.Supported != mate.SupportedContract {
 		t.Errorf("ContractMismatchError = %+v, want Manifest=1 Supported=%d", mismatch, mate.SupportedContract)
-	}
-}
-
-// TestDesiredRelease_InvalidManifestNeverCached: a manifest that fails
-// validation must not poison the cache — the next call, even without
-// Refresh, must fetch again rather than serve the refused payload.
-func TestDesiredRelease_InvalidManifestNeverCached(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	var requests int
-	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		_, _ = w.Write(validManifestJSON(t, map[string]any{"contract": 99}))
-	})
-
-	if _, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{}); err == nil {
-		t.Fatal("DesiredRelease(): expected the first call to refuse")
-	}
-	if _, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{}); err == nil {
-		t.Fatal("DesiredRelease(): expected the second call to refuse too")
-	}
-	if requests != 2 {
-		t.Errorf("a refused manifest must not be cached, got %d requests, want 2", requests)
 	}
 }
 

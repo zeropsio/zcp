@@ -54,8 +54,8 @@ const mateVerbStatus = "status"
 
 // mateStatusResult is `zcp mate status --json`'s answer (spec-mate.md
 // §2.1a, MD-17): what zcp knows about the installed and latest mate release,
-// from the same resolver DesiredRelease() and the manifest cache — never a
-// fresh install — and about this zcp against its latest release, with
+// from the same resolver DesiredRelease() (LastReadRelease() under --local) —
+// never a fresh install — and about this zcp against its latest release, with
 // whether a container restart would change either (§2.9).
 type mateStatusResult struct {
 	Installed       string             `json:"installed"`
@@ -124,9 +124,9 @@ func readMateStatus(zcpVersion string, refresh, local bool) mateStatusResult {
 	var desired mate.Manifest
 	var err error
 	if local {
-		desired, _ = mate.ReleaseList()
+		desired, _ = mate.LastReadRelease()
 	} else {
-		desired, err = mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
+		desired, err = mate.DesiredRelease(ctx, http.DefaultClient)
 	}
 	if err != nil {
 		result.Error = err.Error()

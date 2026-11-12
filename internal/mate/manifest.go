@@ -62,12 +62,7 @@ const (
 	// nowhere near InstallTimeout's budget for the tarball + npm install.
 	manifestFetchTimeout = 5 * time.Second
 
-	// manifestCacheTTL bounds how long a fetched-and-validated manifest is
-	// trusted without asking again — a warm restart and `zcp mate status`
-	// reach the network at most this often.
-	manifestCacheTTL = time.Hour
-
-	manifestCacheFileName = "manifest.json"
+	lastReadFileName = "manifest.json"
 )
 
 // Manifest names one installable mate release, as published in the fork's
@@ -93,27 +88,9 @@ func ManifestURL() string {
 	return defaultManifestURL
 }
 
-// manifestCachePath is where DesiredRelease caches the last fetched,
-// already-validated manifest: ~/.zcp/mate/manifest.json, the same shape as
-// zcp's own internal/update cache (a fetch timestamp plus the payload,
-// TTL-gated).
-func manifestCachePath() string { return filepath.Join(Prefix(), manifestCacheFileName) }
-
-type manifestCacheEntry struct {
-	FetchedAt time.Time `json:"fetchedAt"`
-	Manifest  Manifest  `json:"manifest"`
-}
-
-// ManifestOptions steers DesiredRelease's one behavioural choice: whether
-// the on-disk cache may answer instead of a network fetch.
-type ManifestOptions struct {
-	// Refresh bypasses the cache and always fetches fresh, returning the fetch
-	// error when that fails: the keep job sets it for a server that is not
-	// there and for every attended run, `zcp mate status --refresh` on request.
-	// The start job, an automatic keep run and a routine status check reach
-	// the network at most hourly.
-	Refresh bool
-}
+// lastReadPath is where DesiredRelease records the manifest it last read and
+// validated: ~/.zcp/mate/manifest.json. Only LastReadRelease reads it.
+func lastReadPath() string { return filepath.Join(Prefix(), lastReadFileName) }
 
 // ContractMismatchError reports a manifest declaring a contract number this
 // zcp build does not know — refused before any download (spec-mate.md
@@ -141,7 +118,7 @@ func (e *VersionTooOldError) Error() string {
 var sha256HexPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
 // validateManifest checks a freshly fetched manifest before it is trusted or
-// cached (spec-mate.md §2.1c "what zcp checks, and what it does not"): the
+// recorded (spec-mate.md §2.1c "what zcp checks, and what it does not"): the
 // contract this build knows, a version floor, a well-formed digest, and an
 // https URL. There is no deeper trust chain than this — see the spec section
 // for why.
@@ -165,17 +142,12 @@ func validateManifest(m Manifest) error {
 	return nil
 }
 
-// DesiredRelease is the release list's one release: the fork's current stable release, read from ManifestURL()
-// (spec-mate.md §2.1c) rather than a version compiled into zcp. There is no
-// registry-package fallback — an unreachable or invalid manifest is
-// returned as an error and the caller decides how to degrade (MD-10).
-func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptions) (Manifest, error) {
-	if !opts.Refresh {
-		if cached, ok := readManifestCache(); ok {
-			return cached, nil
-		}
-	}
-
+// DesiredRelease is the release list's one release: the fork's current stable
+// release, read from ManifestURL() on every call (spec-mate.md §2.1c) rather
+// than a version compiled into zcp or a copy read earlier. There is no
+// fallback — an unreachable or invalid manifest is returned as an error and
+// the caller decides how to degrade (MD-10).
+func DesiredRelease(ctx context.Context, client *http.Client) (Manifest, error) {
 	m, err := fetchManifest(ctx, client, ManifestURL(), "")
 	if err != nil {
 		return Manifest{}, err
@@ -185,12 +157,12 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 		return Manifest{}, err
 	}
 
-	writeManifestCache(m)
+	writeLastRead(m)
 	return m, nil
 }
 
 // CheckPublishedRelease gates a zcp release on the Mate already published to
-// the canonical stable channel. Release authorization never uses a local cache
+// the canonical stable channel. Release authorization never uses the last read
 // or the installation URL override: neither proves what new containers fetch.
 // A non-empty githubToken signs the request in: anonymous github.com downloads
 // from runners can connect and never answer. net/http drops the header when the
@@ -238,40 +210,32 @@ func fetchManifest(ctx context.Context, client *http.Client, url, githubToken st
 	return m, nil
 }
 
-// readManifestCache is the cached manifest while it is fresh and still valid
-// for this build.
-func readManifestCache() (Manifest, bool) {
-	m, fetchedAt, ok := readManifestCacheEntry()
-	if !ok || time.Since(fetchedAt) > manifestCacheTTL {
-		return Manifest{}, false
-	}
-	return m, true
-}
-
-// readManifestCacheEntry is the cached manifest whatever its age, while it is
-// still valid for this build: an earlier zcp validated it against its own floor
-// and contract, which may not be this one's.
-func readManifestCacheEntry() (Manifest, time.Time, bool) {
-	data, err := os.ReadFile(manifestCachePath())
-	if err != nil {
-		return Manifest{}, time.Time{}, false
-	}
-	var entry manifestCacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil || validateManifest(entry.Manifest) != nil {
-		return Manifest{}, time.Time{}, false
-	}
-	return entry.Manifest, entry.FetchedAt, true
-}
-
-func writeManifestCache(m Manifest) {
-	data, err := json.Marshal(manifestCacheEntry{FetchedAt: time.Now(), Manifest: m})
+// writeLastRead records m for LastReadRelease, best effort: written under a
+// temporary name of its own and renamed, so a reader sees the old record or
+// the new one, never a part of either.
+func writeLastRead(m Manifest) {
+	data, err := json.Marshal(m)
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(manifestCachePath()), 0o755); err != nil {
+	dir := filepath.Dir(lastReadPath())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	_ = os.WriteFile(manifestCachePath(), data, 0o600)
+	tmp, err := os.CreateTemp(dir, filepath.Base(lastReadPath())+".*")
+	if err != nil {
+		return
+	}
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), lastReadPath())
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // compareSemver compares full, unprefixed semantic versions, including
@@ -322,9 +286,19 @@ func parseSemver(v string) (string, error) {
 	return prefixed, nil
 }
 
-// ReleaseList is the release list zcp holds, without network IO: the cached
-// manifest whatever its age, while it is valid for this build.
-func ReleaseList() (Manifest, bool) {
-	m, _, ok := readManifestCacheEntry()
-	return m, ok
+// LastReadRelease is the manifest DesiredRelease last read, without network
+// IO, while it is valid for this build: an earlier zcp validated it against
+// its own floor and contract. Only `zcp mate status --local` answers from it,
+// for a reader that must not wait on the network (spec-mate.md §2.1c); no
+// decision about which version runs reads it.
+func LastReadRelease() (Manifest, bool) {
+	data, err := os.ReadFile(lastReadPath())
+	if err != nil {
+		return Manifest{}, false
+	}
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil || validateManifest(m) != nil {
+		return Manifest{}, false
+	}
+	return m, true
 }

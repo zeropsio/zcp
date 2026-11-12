@@ -103,7 +103,7 @@ func (f fakeFetcher) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-// non-parallel: HOME determines the installation manifest cache.
+// non-parallel: HOME determines where the last-read release is recorded.
 func TestRun_UnreachablePublishedMate_CachedReleaseDoesNotAuthorizePublishing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	body, err := json.Marshal(mate.Manifest{Version: mate.MinimumMateVersion, Contract: 2,
@@ -114,14 +114,14 @@ func TestRun_UnreachablePublishedMate_CachedReleaseDoesNotAuthorizePublishing(t 
 	client := &http.Client{Transport: fakeFetcher(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
 	})}
-	if _, err := mate.DesiredRelease(t.Context(), client, mate.ManifestOptions{Refresh: true}); err != nil {
-		t.Fatalf("populate installation cache: %v", err)
+	if _, err := mate.DesiredRelease(t.Context(), client); err != nil {
+		t.Fatalf("record a read release: %v", err)
 	}
 	client.Transport = fakeFetcher(func(_ *http.Request) (*http.Response, error) {
 		return nil, errors.New("offline")
 	})
 	var output bytes.Buffer
 	if got := run(t.Context(), client, "", &output); got != 1 || !strings.Contains(output.String(), "offline") {
-		t.Fatalf("cached install cannot authorize publishing: exit=%d output=%q", got, output.String())
+		t.Fatalf("a last-read release cannot authorize publishing: exit=%d output=%q", got, output.String())
 	}
 }

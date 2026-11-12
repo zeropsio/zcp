@@ -354,7 +354,7 @@ Each version is its own complete npm prefix, and links name the live one and the
 ~/.zcp/mate/current   -> versions/0.3.0        # relative target, what the unit starts
 ~/.zcp/mate/last-good -> versions/0.2.0        # the newest version that came up under this zcp
 ~/.zcp/mate/failed-version                     # text: the newest version that did not come up
-~/.zcp/mate/manifest.json                      # the release list zcp holds (§2.1c)
+~/.zcp/mate/manifest.json                      # the release list as last read, for status --local (§2.1c)
 BinPath() = ~/.zcp/mate/current/node_modules/.bin/mate
 ```
 
@@ -374,9 +374,9 @@ zcp left) runs and is judged; only that verdict returns it to `last-good`, never
 **The start job** (`mate.BeginStart`, `Start.Judge`), at every start of the unit, takes the install
 lock without waiting and:
 
-1. **Picks.** One bounded attempt to refresh the release list when its copy is older than the cache
-   time (§2.1c), and to download the version to run unless the keep job already has; on any error it
-   starts `current` as it is. The refresh, the download and its smoke (step 2) share one deadline
+1. **Picks.** One bounded read of the release list from its source (§2.1c), and a download of the
+   version to run unless the keep job already has; on any error it starts `current` as it is. The
+   read, the download and its smoke (step 2) share one deadline
    (`mate.StartStageTimeout`, one minute, against about 8 s for a normal download and npm install on a
    Mate container) when `current` exists; what does not finish in it is left to the keep
    job (`mate.InstallTimeout`, three minutes, the same three for its download and smoke). A first install has the three minutes. The network never stops a start; only a first install without network
@@ -430,7 +430,10 @@ updateAvailable, updater, zcp, restartNeeded, why}` — the one reader of "is th
 whole product. `installed` is `current`; `updateAvailable` is `current` older than the version to
 run; `updater` is `{protocol: 1, phase: "idle", runningVersion: current, failedVersion}` while a
 Mate is installed, with `failedVersion` only when it is newer than `current` (zcp keeps no update in
-progress, so the phase is always `idle`). `--local` reads only the release list zcp holds.
+progress, so the phase is always `idle`). Every status reads the release list from its source;
+`--local` answers without a network call, from the release list as zcp last read it (§2.1c), for
+the Mate server's own read at its boot, which must not wait on the network. `--refresh` is accepted
+and changes nothing: the Mate server still passes it.
 
 The same status says whether a container restart would change anything. **`zcp: {installed, latest,
 behind}`**, always present, is this binary against the zcp release `install.sh` installs (GitHub's
@@ -469,14 +472,15 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 
 `DesiredRelease()` reads `https://github.com/zeropsio/mate/releases/latest/download/stable.json`
 (GitHub's own "latest release" redirect; a release marked *pre-release* is never "latest", which is
-the rollback lever: mark the bad release as pre-release, re-mark the previous one as latest). The
-answer is cached on disk with a 1-hour TTL (`~/.zcp/mate/manifest.json`, the same shape as zcp's
-own `internal/update` cache) so a warm restart and `zcp mate status` reach the network at most
-hourly; the keep job refreshes it for a server that is not there and on every attended run, and a
-refresh that cannot read it says so (the keep job logs the error and decides on the copy zcp holds;
-`zcp mate status --refresh` reports the error). An unreachable manifest is **not**
-a failure: the start job starts `current` and logs the miss. With nothing installed the start fails
-and systemd retries.
+the rollback lever: mark the bad release as pre-release, re-mark the previous one as latest). Every
+decision reads it when it decides: each start job, each keep run (every 5–7 minutes) and each
+`zcp mate status` makes one plain download of that file, bounded by 5 s; no copy answers in its
+place. A read that fails says so and decides on no release list: the start job starts `current`
+and logs the miss (with nothing installed the start fails and systemd retries), the keep job logs
+the error and knows no newer release, and `zcp mate status` reports the error. So a restart the keep
+job made for a release returns on the running version when the start job's own read fails; the
+keep job asks again on its next run. Each successful read is
+recorded in `~/.zcp/mate/manifest.json`, which only `zcp mate status --local` reads (§2.1a).
 
 - A release list never moves the Mate back: the version to run is never older than `last-good` (§2.1a); only a dev push goes back.
 - Private manifests selected by `ZCP_MATE_MANIFEST_URL` may name a full, unprefixed semantic
@@ -490,7 +494,7 @@ and systemd retries.
 | Check | Rule |
 |---|---|
 | `contract` | must equal `mate.SupportedContract` (today `2` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
-| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.114, the first release that draws the mirror card (§5.11); 0.16.54 was the first rev 7 release, which admits people by its own live access list and answers HQ's tokened tickets). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.114, the first release that draws the mirror card (§5.11); 0.16.54 was the first rev 7 release, which admits people by its own live access list and answers HQ's tokened tickets). A manifest below it is refused, and so is a recorded one under `status --local`: the record holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
 **There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub
@@ -511,7 +515,7 @@ releasing a zcp that raises `MinimumMateVersion` or changes `SupportedContract`.
 release target and the release workflow fetch the published stable manifest and refuse to
 publish unless its version reaches the floor and its contract equals `SupportedContract`.
 The release check uses the canonical stable channel, never a container's manifest override
-or cache. An older zcp ignores additive manifest metadata; no new `serve` flag is passed.
+or recorded read. An older zcp ignores additive manifest metadata; no new `serve` flag is passed.
 The floor is 0.16.114, the first Mate that draws the mirror card (§5.11); rev 7 HQ (0.16.54) refuses every ticket an older Mate
 asks for. A 0.16.114 prerelease sorts below the stable floor and cannot authorize publication. The supporting stable manifest must
 be published before zcp releases.
@@ -532,15 +536,15 @@ every running container.
 Each run takes the install lock without waiting: while a start job installs or judges a boot, or
 another keep run asks, it does nothing. Then the first that applies:
 
-1. **Server not there** → the release list is read fresh and the unit restarted; its start job starts
+1. **Server not there** → the unit is restarted; its start job reads the release list and starts
    the version to run. "Not there" = the unit is not running (`systemctl is-active` says `inactive`
    or `failed`), or the server neither answers the loopback readiness nor advances its boot file
    within the boot window. A booting, installing or busy server is never "not there".
 2. **The version to run differs from the running one** → it is downloaded (idempotent), and the
    server is asked "may I restart you now?". Yes → the unit restarts; its start job starts the
    version to run. Not now → the next run. A failed release is never the version to run, so it causes
-   no restarts. An attended run reads the release list fresh for this (on an error, the copy zcp
-   holds); an automatic run uses the copy zcp holds for its hour. A version that cannot be staged
+   no restarts. Every run reads the release list from its source for this; a run whose read fails
+   knows no newer release. A version that cannot be staged
    fails the run without skipping step 3: a newer zcp is what repairs a staging defect, and in a
    container nobody can reach the keep job is the only automatic way it arrives.
 3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
@@ -563,7 +567,7 @@ reopens by itself after its own bound. A keep run is not started again while one
 busy Mate is never closed by being asked.
 
 **Without HQ.** The organization's policy holds whether or not the Mate has a link to HQ; a start of
-the Mate brings the newest version that works.
+the Mate starts the version to run (§2.1a).
 
 **`zcp mate update [--automatic] [--json]`** runs the keep job now and answers at once
 `{action: "none", from: <installed>, restarted: false, started: true}`, outside the Mate server that
@@ -717,7 +721,7 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 | container id | unchanged | changes | unchanged |
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
-see the ledger), and every start of the Mate's unit starts the newest version that works (§2.1a): a
+see the ledger), and every start of the Mate's unit starts the version to run (§2.1a): a
 release that does not come up is replaced by `last-good`, and a newer one is picked by the next start.
 Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
 the bundle is not a regression under the versioned layout — it loses the whole container — and a
@@ -971,7 +975,7 @@ Mate release artifact contains the server and no web client (C-6).
 | MD-13 | A version is installed into its own directory, smoke-tested, and only then made `current` by an atomic symlink rename; any failure leaves `current` as it was. The start job is the only installer and the only writer of `current`, `last-good` and the failed version; the start job and the keep job read one version to run (`mate.VersionToRun`), never older than `last-good`; an installed dev build at or above `MinimumMateVersion` is kept (§2.1a). |
 | MD-15 | Prepare installs nothing and never restarts a running Mate; the start job holds the install lock from its download until its verdict, and a keep run that finds the lock held does nothing (§2.1, §2.1a, §2.1d). `TestLockInstall`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
-| MD-17 | `zcp mate status --json` reads `DesiredRelease()` and the versions the container holds and never installs; `zcp mate update` starts the keep job and answers at once; both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
+| MD-17 | `zcp mate status --json` reads `DesiredRelease()` and the versions the container holds and never installs; `zcp mate update` starts the keep job and answers at once; both answer JSON a caller can act on without parsing prose; every status but `--local` reads the release source (§2.1a). `TestMateStatus_*`, `TestMateUpdate_*`. |
 
 ### 2.8a Monorepo: dev servers, stages, the receipt (C-8…C-12)
 
@@ -1879,12 +1883,12 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    onto the version to run, or, when only zcp is behind, the container. When zcp itself is
    behind (`zcp.behind`, §2.1a) the server's own update is a container restart instead: the Mate
    drains its work, then runs `zcp self restart --json` (step 7).
-5. **One check: Check for updates.** The status behind the line is cache-served twice over —
-   zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
-   is invisible for up to two hours. The Mate menu therefore always offers "Check for updates"
+5. **One check: Check for updates.** The status behind the line is the server's last read of it —
+   the server re-reads status hourly — so a release just published is invisible for up to an hour.
+   The Mate menu therefore always offers "Check for updates"
    wherever `capabilities.mateUpdate` is true; it calls `zerops.mate.checkUpdate` (read scope,
-   never operate), whose handler runs `zcp mate status --json --refresh` — the same reader with
-   the manifest cache bypassed — stores the answer as the descriptor's `update` and returns it, so
+   never operate), whose handler runs `zcp mate status --json --refresh` — the same reader, which
+   reads the release source on every call — stores the answer as the descriptor's `update` and returns it, so
    the line and the verb repaint at once. The client still compares nothing (MU-1).
 6. **Capabilities gate every Zerops RPC.** A surface that needs a server-side feature reads it
    from the descriptor's `capabilities` and never sends the RPC when the flag is absent — the
@@ -1894,7 +1898,7 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 7. **A restart is the update.** A container restart installs both halves: the zcp service's
    `run.initCommands` run `install.sh` (the latest zcp release), then `zcp init`, then `zcp init
    nginx`. The Mate unit is not boot-started: `zcp init`'s Mate step starts it once, at the end, and
-   its start job starts the newest Mate that works (§2.1a, §2.1c). zcp says when one would change something:
+   its start job starts the version to run (§2.1a, §2.1c). zcp says when one would change something:
    `zcp mate status --json` answers `zcp: {installed, latest, behind}`, `restartNeeded` and `why`
    (§2.1a), and the server relays them. The Mate server owns the idle check and the trigger: with
    `restartNeeded` true it drains its work, then runs **`zcp self restart --json`**. zcp owns

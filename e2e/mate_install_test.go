@@ -54,7 +54,7 @@ func TestMateInstall_Release_Serves(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	release, err := mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: true})
+	release, err := mate.DesiredRelease(ctx, http.DefaultClient)
 	if err != nil {
 		t.Fatalf("manifest step: %v", err)
 	}

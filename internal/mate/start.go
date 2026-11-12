@@ -14,7 +14,7 @@ import (
 // a boot that keeps advancing is never judged by elapsed time.
 const BootWindow = 2 * time.Minute
 
-// StartStageTimeout bounds a start's release-list refresh, download, npm
+// StartStageTimeout bounds a start's release-list read, download, npm
 // install and smoke test together when current exists: how long staging a
 // newer version may delay starting the Mate. One that does not finish in it is
 // left to the keep job, which has InstallTimeout, and the start runs current. Measured on
@@ -34,7 +34,7 @@ type Start struct {
 
 // BeginStart readies the start job's launch. Under the install lock, taken
 // without waiting, it makes current name the version to run: one bounded
-// attempt to refresh the release list and to download that version, and on
+// read of the release list from its source and a download of that version, and on
 // any error it keeps current as it is. A lock held by a keep run means the
 // keep job is asking or downloading: current launches as it is, the verdict
 // is still this start's. It fails only when nothing is installed or what is
@@ -63,7 +63,7 @@ func BeginStart(logf func(format string, args ...any)) (*Start, error) {
 
 // switchToVersionToRun points current at the version to run, downloading it
 // when keep has not; a failure leaves current as it was. The release list's
-// refresh, the download and the smoke test share one deadline:
+// read, the download and the smoke test share one deadline:
 // StartStageTimeout when current exists, so staging delays a start only that
 // long and what does not finish is left to the keep job; InstallTimeout for a
 // first install.
@@ -74,7 +74,7 @@ func switchToVersionToRun(logf func(format string, args ...any)) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
-	release, err := HeldRelease(ctx, false)
+	release, err := DesiredRelease(ctx, http.DefaultClient)
 	if err != nil {
 		logf("release list: %v", err)
 	}
@@ -262,17 +262,4 @@ func ServerThere(window time.Duration) (version string, there bool) {
 		}
 		<-ticker.C
 	}
-}
-
-// HeldRelease is the release list zcp holds: refreshed once, bounded by
-// manifestFetchTimeout and ctx, when refresh asks for it or the copy is older
-// than the cache time. On any error it is the copy zcp holds whatever its age
-// (a zero Manifest when there is none), with the error.
-func HeldRelease(ctx context.Context, refresh bool) (Manifest, error) {
-	release, err := DesiredRelease(ctx, http.DefaultClient, ManifestOptions{Refresh: refresh})
-	if err != nil {
-		held, _ := ReleaseList()
-		return held, err
-	}
-	return release, nil
 }

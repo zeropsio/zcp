@@ -67,16 +67,7 @@ const manifestVersion = mate.MinimumMateVersion
 // doc comment).
 func manifestAndTarballServer(t *testing.T) {
 	t.Helper()
-	manifestServerForVersion(t, manifestVersion)
-}
-
-// manifestServerForVersion is manifestAndTarballServer generalized to an
-// arbitrary version, so a test can seed the on-disk manifest cache at one
-// version and then point ZCP_MATE_MANIFEST_URL at a server answering a
-// different one — proving --refresh bypasses the cache rather than merely
-// exercising the happy path.
-func manifestServerForVersion(t *testing.T, version string) {
-	t.Helper()
+	version := manifestVersion
 	body := []byte("fake mate release tarball for " + version)
 	digest := fmt.Sprintf("%x", sha256.Sum256(body))
 	asset := "zerops-mate-" + version + ".tgz"
@@ -226,55 +217,6 @@ func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 	}
 	if got.Error != "" {
 		t.Errorf("status.Error = %q, want empty", got.Error)
-	}
-}
-
-func TestRunMateStatus_Refresh_BypassesManifestCache(t *testing.T) {
-	var major, minor, patch int
-	if _, err := fmt.Sscanf(manifestVersion, "%d.%d.%d", &major, &minor, &patch); err != nil {
-		t.Fatalf("parse manifest fixture version: %v", err)
-	}
-	newerVersion := fmt.Sprintf("%d.%d.%d", major, minor, patch+1)
-	tests := []struct {
-		name       string
-		args       []string
-		wantLatest string
-	}{
-		{"no refresh: reports the warm cache", []string{"status", "--json"}, manifestVersion},
-		{"--refresh: bypasses the cache", []string{"status", "--json", "--refresh"}, newerVersion},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			seedInstalledBundle(t, home, "0.14.0")
-
-			// Warm the manifest cache at the supported floor.
-			manifestServerForVersion(t, manifestVersion)
-			if got := runMateCmd([]string{"status", "--json"}); got != 0 {
-				t.Fatalf("warm cache: runMateCmd(status --json) = %d, want 0", got)
-			}
-
-			// Point the manifest URL at a server answering a newer version —
-			// only --refresh should reach it; a warm cache answers the floor.
-			manifestServerForVersion(t, newerVersion)
-
-			stdout := captureStdout(t, func() {
-				if got := runMateCmd(tt.args); got != 0 {
-					t.Fatalf("runMateCmd(%v) = %d, want 0", tt.args, got)
-				}
-			})
-
-			var got struct {
-				Latest string `json:"latest"`
-			}
-			if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
-				t.Fatalf("unmarshal status JSON %q: %v", stdout, err)
-			}
-			if got.Latest != tt.wantLatest {
-				t.Errorf("status.Latest = %q, want %q", got.Latest, tt.wantLatest)
-			}
-		})
 	}
 }
 
