@@ -73,6 +73,6 @@ func TestLeaseRelease_CommitsMainHoldsByContent_Released(t *testing.T) {
 		t.Parallel()
 		hf := mainHoldsFixture(t, false)
 		_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
-		assertRefusedAndKept(t, hf, err)
+		_ = assertRefusedAndKept(t, hf, err)
 	})
 }
