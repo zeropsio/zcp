@@ -50,19 +50,21 @@ func ReadVersions() Versions {
 // VersionToRun is the one answer to "which Mate runs", read by the start job
 // that launches it and by the keep job that restarts for it: the release the
 // release list names (latest, "" when zcp holds none) when it is newer than
-// last-good and newer than the failed version; otherwise last-good. It is
-// never older than last-good, so a release list that goes backwards changes
-// nothing. A dev build at or above MinimumMateVersion in current is kept as it
-// is (eval/scripts/mate-dev-push.sh). With neither a release nor last-good it
-// is current, "" when nothing is installed.
+// last-good, newer than the failed version and not older than current;
+// otherwise current, or last-good when current is missing or older. It never
+// moves current back: a release list that is missing or goes backwards
+// changes nothing, and a current newer than last-good runs and is judged by
+// its start, whose verdict alone returns it to last-good (Start.down). A dev
+// build at or above MinimumMateVersion in current is kept as it is
+// (eval/scripts/mate-dev-push.sh). "" when nothing is installed.
 func VersionToRun(v Versions, latest string) string {
 	if IsDevVersion(v.Current) && !BelowFloor(v.Current) {
 		return v.Current
 	}
-	if latest != "" && newerThan(latest, v.LastGood) && newerThan(latest, v.Failed) {
+	if latest != "" && newerThan(latest, v.LastGood) && newerThan(latest, v.Failed) && !VersionOlder(latest, v.Current) {
 		return latest
 	}
-	if v.LastGood != "" {
+	if v.Current == "" || VersionOlder(v.Current, v.LastGood) {
 		return v.LastGood
 	}
 	return v.Current

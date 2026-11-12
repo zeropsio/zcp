@@ -364,9 +364,11 @@ list. There are no phases and no "update in progress" record: whatever a crash o
 restart interrupts, the next start does what every start does.
 
 **The version to run** (`mate.VersionToRun`) is one function, read by the start job and by the keep
-job: the release the release list names when it is newer than `last-good` and newer than the failed
-version; otherwise `last-good`. It is never older than `last-good`, so a release list that goes
-backwards changes nothing. A dev build in `current` (`0.1.0-dev.<sha>`, what
+job: the release the release list names when it is newer than `last-good`, newer than the failed
+version and not older than `current`; otherwise `current`, or `last-good` when `current` is missing or
+older. It never moves `current` back: a release list that is missing or goes backwards changes
+nothing, and a `current` newer than `last-good` (a start that was cut short, or an update the previous
+zcp left) runs and is judged; only that verdict returns it to `last-good`, never below 0.16.178 (step 4). A dev build in `current` (`0.1.0-dev.<sha>`, what
 `eval/scripts/mate-dev-push.sh` installs) at or above `MinimumMateVersion` is kept as it is.
 
 **The start job** (`mate.BeginStart`, `Start.Judge`), at every start of the unit, takes the install
