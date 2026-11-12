@@ -9,3 +9,7 @@ var DefaultSmokeTestInstall = smokeTestInstall
 
 // CarriesParts exposes carriesParts to the external test package.
 var CarriesParts = carriesParts
+
+// PruneOldVersions exposes pruneOldVersions, which Start.up runs once a
+// version came up.
+var PruneOldVersions = pruneOldVersions

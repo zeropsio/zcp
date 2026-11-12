@@ -2,7 +2,9 @@ package service_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -567,5 +569,141 @@ func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
 	}
 	if !ran {
 		t.Error("mate must launch when the store cannot be read")
+	}
+}
+
+// holdRelease makes the release list zcp holds, fresh, name version, with a
+// download URL nothing answers.
+func holdRelease(t *testing.T, home, version string) {
+	t.Helper()
+	cache := `{"fetchedAt":"` + time.Now().UTC().Format(time.RFC3339) + `","manifest":{"version":"` + version +
+		`","asset":"zerops-mate.tgz","url":"https://127.0.0.1:1/zerops-mate.tgz","sha256":"` + strings.Repeat("0", 64) +
+		`","size":1,"contract":` + strconv.Itoa(mate.SupportedContract) + `,"publishedAt":"2026-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(home, ".zcp", "mate", "manifest.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write release list: %v", err)
+	}
+}
+
+// stageVersion lays down versions/<version> as the keep job's download leaves
+// it: an entry point and the native addons the smoke test imports.
+func stageVersion(t *testing.T, version string) {
+	t.Helper()
+	dir := mate.VersionDir(version)
+	pkgDir := filepath.Join(dir, "node_modules", mate.PackageName)
+	for _, addon := range []string{"node-pty", "msgpackr-extract"} {
+		addonDir := filepath.Join(pkgDir, "node_modules", addon)
+		if err := os.MkdirAll(addonDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(addonDir, "package.json"), []byte(`{"name":"`+addon+`","main":"index.js"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(addonDir, "index.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"`+version+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "node_modules", ".bin", mate.BinName)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho "+version+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStart_Mate_InstallsBeforeItStarts: a Mate's unit starts the version to
+// run, not what happens to be installed: under the install lock, which it
+// holds until its verdict, the start job makes current name it before it
+// launches the server. Nothing it meets keeps the server down: a download
+// that fails, or a lock the keep job holds, starts current as it is.
+// witness: internal/mate/start.go | 		switchToVersionToRun(logf) → 		logf("not switched")
+func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	const next = "0.16.180"
+	tests := []struct {
+		name        string
+		staged      bool
+		lockedAway  bool
+		wantRunning string
+	}{
+		{name: "the version to run becomes current under the lock, then starts", staged: true, wantRunning: next},
+		{name: "a download that fails starts current", wantRunning: mate.MinimumMateVersion},
+		{name: "a lock the keep job holds starts current", staged: true, lockedAway: true, wantRunning: mate.MinimumMateVersion},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.staged {
+				if _, err := exec.LookPath("node"); err != nil {
+					t.Skip("node is not on PATH; the smoke test of a staged version cannot run")
+				}
+			}
+			home := installFakeMateBundle(t)
+			holdRelease(t, home, next)
+			if tt.staged {
+				stageVersion(t, next)
+			}
+			if tt.lockedAway {
+				release, err := mate.LockInstall(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+			}
+			var running string
+			service.SetRunFunc(func(string, []string, []string) error {
+				running, _ = mate.InstalledVersion()
+				if _, err := mate.LockInstall(0); !errors.Is(err, mate.ErrInstallLockBusy) {
+					t.Errorf("the server started with the install lock free: %v", err)
+				}
+				return nil
+			})
+			t.Cleanup(service.ResetRunFunc)
+
+			if err := service.Start("mate"); err != nil {
+				t.Fatalf("Start(mate): %v", err)
+			}
+			if running != tt.wantRunning {
+				t.Errorf("started %q, want %q", running, tt.wantRunning)
+			}
+		})
+	}
+}
+
+// TestStart_Mate_InstalledBelowFloor_RefusesToRun: with no release list to
+// move it on (an unreachable manifest keeps what is installed), a bundle below
+// MinimumMateVersion is not started — the server is the one that links to HQ,
+// and this zcp does not drive a release that old.
+// witness: internal/mate/start.go | 	if BelowFloor(v.Current) { → 	if BelowFloor(v.LastGood) {
+func TestStart_Mate_InstalledBelowFloor_RefusesToRun(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	t.Setenv("ZCP_MATE_MANIFEST_URL", "http://127.0.0.1:1/stable.json") // nothing listens here
+	home := installFakeMateBundle(t)
+	if err := os.Remove(filepath.Join(home, ".zcp", "mate", "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", mate.MinimumMateVersion, "node_modules", mate.PackageName)
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"0.16.40"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	service.SetRunFunc(func(string, []string, []string) error {
+		ran = true
+		return nil
+	})
+	t.Cleanup(service.ResetRunFunc)
+
+	err := service.Start("mate")
+
+	var below *mate.BelowFloorError
+	if !errors.As(err, &below) || below.Installed != "0.16.40" {
+		t.Fatalf("Start(mate) = %v, want a below-floor refusal naming 0.16.40", err)
+	}
+	if ran {
+		t.Error("the server must not start from a bundle below the floor")
 	}
 }
