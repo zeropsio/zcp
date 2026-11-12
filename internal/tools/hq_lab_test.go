@@ -285,6 +285,35 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 	f.api(w, r)
 }
 
+// committedWrite answers a change write: only one HQ commits moves the
+// revision and names it in Mate-State-Rev — a refusal commits nothing.
+// f.mu is held.
+type committedWrite struct {
+	http.ResponseWriter
+	f       *fakeHQ
+	written bool
+}
+
+func (w *committedWrite) WriteHeader(status int) {
+	if !w.written && status < http.StatusMultipleChoices {
+		w.f.rev++
+		w.Header().Set("Mate-State-Rev", strconv.FormatInt(w.f.rev, 10))
+	}
+	w.written = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *committedWrite) Write(body []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(body)
+	if err != nil {
+		return n, fmt.Errorf("answer a change write: %w", err)
+	}
+	return n, nil
+}
+
 func writeHQJSON(w http.ResponseWriter, status int, body any) {
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -325,8 +354,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if strings.HasPrefix(r.URL.Path, "/api/mate/changes") && (r.Method == http.MethodPost || r.Method == http.MethodPatch) {
-		f.rev++
-		w.Header().Set("Mate-State-Rev", strconv.FormatInt(f.rev, 10))
+		w = &committedWrite{ResponseWriter: w, f: f}
 	}
 	switch {
 	case f.appID == "":
