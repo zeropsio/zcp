@@ -329,7 +329,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 // witness: internal/hq/mate_state.go | if _, ok := required[key]; !ok { → if _, ok := required[key]; !ok && key != "repos" {
 func TestOriginRequest_StateWithoutRepos_Refuses(t *testing.T) {
 	older, _ := originHQ(t, "")
-	result := callTool(t, older, "zerops_origin", map[string]any{"action": "request", "url": "https://github.com/acme/app", "repo": "appdev"})
+	result := callTool(t, older, "zerops_origin", map[string]any{"action": "request", "url": "https://github.com/acme/app", "repo": "appdev", "why": "to deliver finished work back"})
 	if text := getTextContent(t, result); !result.IsError || !strings.Contains(text, "unreadable") {
 		t.Errorf("a state without repos must be unreadable: %s", text)
 	}
