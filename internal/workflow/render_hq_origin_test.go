@@ -92,11 +92,11 @@ func TestRenderStatus_ChangesBlockPerRepository(t *testing.T) {
 
 	out := RenderStatus(Response{Envelope: env})
 
-	want := "Changes:\n  - HQ appsdev: #2 pool-previews (ready · behind main) — leases hqpool-3, boxpool-5; #6 badge (draft) — leases hqpool-4; #7 mate/p-mate/7; branch build-stamp — leases webpool-2: no change yet\n"
+	want := "Changes (as HQ last sent it):\n  - HQ appsdev: #2 pool-previews (ready · behind main) — leases hqpool-3, boxpool-5; #6 badge (draft) — leases hqpool-4; #7 mate/p-mate/7; branch build-stamp — leases webpool-2: no change yet\n"
 	if !strings.Contains(out, want) {
 		t.Errorf("status lacks\n%s\ngot\n%s", want, out)
 	}
-	if out := RenderStatus(Response{Envelope: StateEnvelope{Phase: PhaseIdle}}); strings.Contains(out, "Changes:") {
+	if out := RenderStatus(Response{Envelope: StateEnvelope{Phase: PhaseIdle}}); strings.Contains(out, "Changes (") {
 		t.Errorf("status with no change names a Changes section:\n%s", out)
 	}
 }
