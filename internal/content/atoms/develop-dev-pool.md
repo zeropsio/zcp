@@ -186,7 +186,12 @@ leases are keyed by branch, so they never meet.
   A branch whose lockfile differs declares its incremental install as
   `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
   acquire runs it after the checkout, before the dev servers start, and
-  reports it; a failed one leaves the lease held.
+  reports it; a failed one leaves the lease held. One that ran a minute or
+  longer means the image is behind `main`'s dependencies and every acquire
+  installs them again — the acquire says so: once your change is open,
+  deploy the pool from `main`
+  (`zerops_deploy sourceService="<alias>" targetService="<pool>" sha="origin/main"`)
+  and roll it out, so the next acquire starts in seconds.
 - Import the pool with `minContainers: 0`. Containers Zerops creates for the
   minimum cannot be reset, so releasing one deletes it (the release says
   so). The pool's warm container takes their place: after each acquire or

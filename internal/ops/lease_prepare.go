@@ -31,6 +31,12 @@ const leasePrepareTimeout = 5 * time.Minute
 // carries.
 const leasePrepareOutputLines = 20
 
+// leasePrepareSlow is how long a prepare command that succeeded may take
+// before the acquire says the pool's image is behind: on an image that holds
+// the branch's dependencies the incremental install takes seconds, so a
+// minute of it means every acquire of the pool installs them again.
+const leasePrepareSlow = time.Minute
+
 // LeasePrepare is what the repository's prepare command did after an
 // acquire's checkout.
 type LeasePrepare struct {
@@ -59,6 +65,9 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
 		v.Prepare, note = runLeasePrepare(ctx, d.SSH, alias, read.declaration.Prepare, secrets)
+		if note == "" {
+			note = staleImageNote(v.Pool, alias, v.Prepare)
+		}
 	}
 	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
 	r.log = scrubSecrets(r.log, secrets)
@@ -83,6 +92,24 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 	}
 	v.Note = joinNotes(v.Note, note, wireNote, scrubSecrets(leaseSupervisorNote(alias, r, err), secrets), refused)
 	return supervised
+}
+
+// staleImageNote is what an acquire says when the repository's prepare
+// command succeeded but took leasePrepareSlow or longer: the pool's image
+// most likely holds older dependencies than the branch, so each acquire pays
+// the install again, and a deploy of the pool from main followed by a rollout
+// bakes the current ones (DP-14). "" for a prepare that failed or was quick.
+func staleImageNote(pool, alias string, p *LeasePrepare) string {
+	if p == nil || !p.OK || p.Millis < leasePrepareSlow.Milliseconds() {
+		return ""
+	}
+	took := (time.Duration(p.Millis) * time.Millisecond).Round(time.Second)
+	return fmt.Sprintf("the repository's prepare command took %s — pool %s's image most likely holds older dependencies than this branch, so every acquire installs them again. "+
+		"Tell the person the wait was that install and carry on with the work. Once its change is open, bake main's dependencies into the image: "+
+		"zerops_deploy sourceService=%q targetService=%q sha=\"origin/main\", then zerops_lease action=rollout pool=%q — "+
+		"a held lease keeps its version, the next acquire starts on the new image. "+
+		"When the pool was already deployed from the main this branch was cut from, the command itself is what takes long: say that instead and deploy nothing",
+		took, pool, alias, pool, pool)
 }
 
 // leaseSecrets are the secrets zcp holds that every process of a pool
