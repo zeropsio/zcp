@@ -292,7 +292,7 @@ func stillOpenWords(target changeTarget, state hq.MateState) string {
 	}
 	named := make([]string, 0, len(open))
 	for _, c := range open {
-		named = append(named, fmt.Sprintf("#%d with zerops_workflow action=\"describe-change\" branch=%q", c.Number, c.Branch))
+		named = append(named, fmt.Sprintf("#%d with zerops_workflow action=\"describe-change\" branch=%q description=\"…\"", c.Number, c.Branch))
 	}
 	return " If they are for a change still open, name its branch: " + strings.Join(named, ", or ") + "."
 }

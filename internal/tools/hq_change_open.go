@@ -130,7 +130,7 @@ func handleOpenChange(
 			} else {
 				result.Message += " Nothing else was opened: a Mate has one open change per repository."
 			}
-			result.Message += ` Write what it does and how you checked it with zerops_workflow action="describe-change"; the person reviews it by that.`
+			result.Message += ` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); the person reviews it by that.`
 			learnSettled()
 			return jsonResult(result), nil, nil
 		}
@@ -236,7 +236,7 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 	if origin == hq.OriginOnGitHub {
 		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and the person merges it in Mate."
 	}
-	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); the person reviews it by that.",
 		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + mirrored + handedNote
 }
 
@@ -344,7 +344,7 @@ func titleIfCreated(opened hq.OpenedChange) string {
 func answeredOpenChange(route repoRoute, hqc hq.Client, repo, branch, held string, number int) string {
 	switch held {
 	case branch:
-		return fmt.Sprintf("Change #%d on %q is already open: it stays; push to it (%s), never force-pushing, and describe it again with zerops_workflow action=\"describe-change\" branch=%q once the push is ready — a push that moves it makes it a draft until then.",
+		return fmt.Sprintf("Change #%d on %q is already open: it stays; push to it (%s), never force-pushing, and describe it again with zerops_workflow action=\"describe-change\" branch=%q description=\"…\" once the push is ready — a push that moves it makes it a draft until then.",
 			number, branch, route.git("push origin "+branch), branch)
 	case "":
 		return fmt.Sprintf("Change #%d is already open in %q, and a Mate has one open change per repository: it stays. Push this work to its branch, or open its change once #%d is merged or closed.",

@@ -451,7 +451,7 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 	if label == "" || label == standingLabel(told) {
 		return ""
 	}
-	describe := fmt.Sprintf("describe it again (zerops_workflow action=\"describe-change\" branch=%q)", branch)
+	describe := fmt.Sprintf("describe it again (zerops_workflow action=\"describe-change\" branch=%q description=\"…\")", branch)
 	where, sync := route.checkedOut(branch), ""
 	if len(leases) > 0 {
 		route = route.inLease(leases[0])
@@ -471,7 +471,7 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, %s, check it works there, push it (%s)%s, and %s; or leave it, and the person merges it on top of what it was not checked with",
 			number, branch, clean, where, merge, push, sync, describe)
 	}
-	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q) — the person is asked to review it only then",
+	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q description=\"…\") — the person is asked to review it only then",
 		number, branch, branch)
 }
 

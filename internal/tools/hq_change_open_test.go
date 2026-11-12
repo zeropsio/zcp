@@ -290,7 +290,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 		},
 		{
 			name:    "kept in HQ",
-			message: "Change #1 is open in \"appdev\" for the branch \"fix-login\": push the work there (`zcp git appdev push origin fix-login`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+			message: "Change #1 is open in \"appdev\" for the branch \"fix-login\": push the work there (`zcp git appdev push origin fix-login`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); the person reviews it by that.",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
