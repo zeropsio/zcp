@@ -37,13 +37,12 @@ func TestOnce_NoUpdate_Returns(t *testing.T) {
 
 	var logBuf syncBuffer
 
-	// Use OnceWithOpts with isolated CacheDir to prevent stale cache from
-	// other test runs (e.g., v99.0.0 from TestOnce_UpdateAvailable) causing
-	// a false "updated" log.
+	// Use OnceWithOpts with an isolated RecordDir so the last-read record
+	// lands in the test's own directory, not the user's.
 	OnceWithOpts(t.Context(), OnceOpts{
 		CurrentVersion: "0.1.0",
 		LogOutput:      &logBuf,
-		CacheDir:       t.TempDir(),
+		RecordDir:      t.TempDir(),
 	})
 
 	if strings.Contains(logBuf.String(), "updated") {
@@ -81,7 +80,7 @@ func TestOnce_UpdateAvailable_AppliesWithoutShutdown(t *testing.T) {
 		CurrentVersion: "0.1.0",
 		LogOutput:      &logBuf,
 		BinaryPath:     binaryPath,
-		CacheDir:       t.TempDir(),
+		RecordDir:      t.TempDir(),
 	})
 
 	// Binary should be replaced on disk.
@@ -133,7 +132,7 @@ func TestOnce_NotWritable_Skips(t *testing.T) {
 		CurrentVersion: "0.1.0",
 		LogOutput:      &logBuf,
 		BinaryPath:     binaryPath,
-		CacheDir:       t.TempDir(),
+		RecordDir:      t.TempDir(),
 	})
 
 	// Binary should NOT be replaced.
@@ -170,7 +169,7 @@ func TestOnce_ContextCancelled_NoUpdate(t *testing.T) {
 		CurrentVersion: "0.1.0",
 		LogOutput:      &logBuf,
 		BinaryPath:     binaryPath,
-		CacheDir:       t.TempDir(),
+		RecordDir:      t.TempDir(),
 	})
 
 	// Binary should NOT be replaced (context was cancelled before download).

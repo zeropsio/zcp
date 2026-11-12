@@ -430,15 +430,18 @@ updateAvailable, updater, zcp, restartNeeded, why}` — the one reader of "is th
 whole product. `installed` is `current`; `updateAvailable` is `current` older than the version to
 run; `updater` is `{protocol: 1, phase: "idle", runningVersion: current, failedVersion}` while a
 Mate is installed, with `failedVersion` only when it is newer than `current` (zcp keeps no update in
-progress, so the phase is always `idle`). Every status reads the release list from its source;
-`--local` answers without a network call, from the release list as zcp last read it (§2.1c), for
-the Mate server's own read at its boot, which must not wait on the network. `--refresh` is accepted
-and changes nothing: the Mate server still passes it.
+progress, so the phase is always `idle`). Every status reads both releases from their sources;
+`--local` answers without a network call, from the releases as zcp last read them (the release list
+in `~/.zcp/mate/manifest.json`, §2.1c; zcp's latest in `~/.cache/zcp/update.json`, which reads as
+unknown when it is older than the installed zcp), for the Mate server's own read at its boot, which
+must not wait on the network. `--refresh` is accepted and
+changes nothing: the Mate server still passes it.
 
 The same status says whether a container restart would change anything. **`zcp: {installed, latest,
 behind}`**, always present, is this binary against the zcp release `install.sh` installs (GitHub's
-`releases/latest` for `zeropsio/zcp`), read through zcp's own update cache (`~/.cache/zcp/update.json`)
-with the manifest's one-hour TTL; `--refresh` asks the release source, `--local` reads only the cache.
+`releases/latest` for `zeropsio/zcp`), read from that redirect on every status: one `HEAD` of
+`https://github.com/zeropsio/zcp/releases/latest`, bounded by 5 s, not the REST API and its
+per-address quota. The self-update (`zcp update`, and `zcp serve` at its start) reads it the same way.
 `latest` is `""` while that release is unknown, never guessed, and for a build no release names (a dev
 or git-describe build), which never reaches the network. Only a release older than a known `latest`
 reads `behind: true`. **`restartNeeded`** is always present, and **`why`**, one line for a person,
@@ -550,8 +553,8 @@ another keep run asks, it does nothing. Then the first that applies:
 3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
    records the release (`zcpRestartedFor` in `~/.zcp/mate/fuse.json`) and `zcp self restart` asks the
    platform for the container restart that is a boot: install.sh installs the newest zcp, the start
-   job the newest Mate (§2.9 step 7). An attended run reads zcp's latest release fresh (bounded as
-   a status read), an automatic run uses zcp's update cache for its hour. A refused restart forgets the record; an accepted one that does
+   job the newest Mate (§2.9 step 7). Every run reads zcp's latest release from its source (bounded
+   as a status read). A refused restart forgets the record; an accepted one that does
    not end the process within 5 minutes (the Mate server's own grace) cancels the question and keeps
    the record: one attempt per release.
 4. Otherwise nothing: no question, no restart.
@@ -1937,7 +1940,7 @@ never repeatedly restarts on an uncertain response. No manually paired fallback 
 | MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field, and an update's outcome reads only the descriptor's version and `bootId` for equality with those it was pressed with. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
-| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with `{"error":"…"}` and restarts nothing, plus `"refused":true` only when the restart certainly did not happen (no container, key or client, or the platform's 4xx) — never for a timeout, a dropped connection or a 5xx, which say the restart is unconfirmed. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite`, `TestCLIDispatch_SelfIsAVerb`. |
+| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with `{"error":"…"}` and restarts nothing, plus `"refused":true` only when the restart certainly did not happen (no container, key or client, or the platform's 4xx) — never for a timeout, a dropped connection or a 5xx, which say the restart is unconfirmed. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite`, `TestCLIDispatch_SelfIsAVerb`. |
 
 ### 2.10 A paired Mac — Mate's mechanism, zcp's guidance
 

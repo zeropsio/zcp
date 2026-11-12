@@ -14,7 +14,6 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
-	"github.com/zeropsio/zcp/internal/update"
 )
 
 // `zcp mate fuse` is the keep job (docs/spec-mate.md §2.1d): it decides when the
@@ -30,8 +29,8 @@ import (
 //     downloaded, and the server is asked whether it may restart now. Yes: the
 //     unit restarts. A version that cannot be staged fails the run, after
 //     step 3.
-//  3. A newer zcp is out: the same question. Yes: the container restarts, once
-//     per zcp release. An --attended run reads zcp's latest release fresh too.
+//  3. A newer zcp is out, read from its source on every run: the same question.
+//     Yes: the container restarts, once per zcp release.
 //
 // --automatic asks with the organization's policy, whether or not the Mate has
 // an HQ link; --attended (a person's or an operator's update) asks without it.
@@ -106,7 +105,7 @@ func runMateFuse(args []string) int {
 	// The same for zcp's own release, bounded as a status read.
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	zcp := startZCPReleaseLookup(ctx, server.Version, update.LatestOptions{Refresh: flags["--attended"]})()
+	zcp := startZCPReleaseLookup(ctx, server.Version, false)()
 	if zcp.Behind && rec.ZCPRestartedFor != zcp.Latest {
 		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
 			return code

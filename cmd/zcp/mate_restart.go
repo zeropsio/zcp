@@ -18,12 +18,6 @@ import (
 // says when one would change something — restartNeeded and why — and
 // `zcp self restart` is how the Mate server asks for one.
 
-// zcpReleaseCacheTTL is how long `zcp mate status` trusts a cached zcp
-// release: the Mate manifest's hour (§2.1c), so a status reaches either
-// release source at most hourly. The file is the self-update's cache
-// (internal/update), which trusts an entry for a day.
-const zcpReleaseCacheTTL = time.Hour
-
 // zcpReleaseStatus is `zcp mate status --json`'s "zcp" key, always present:
 // this binary against the release install.sh installs, the tag GitHub's
 // releases/latest names. Latest is "" while that release is unknown, and
@@ -34,13 +28,14 @@ type zcpReleaseStatus struct {
 	Behind    bool   `json:"behind"`
 }
 
-// startZCPReleaseLookup starts reading the latest zcp release beside the
-// manifest read and returns the wait for the "zcp" key. Latest stays "" when
-// the release is unknown (offline, rate-limited, nothing cached under
-// --local), and for a build no release names (update.IsRelease): a dev build
-// is compared with nothing and never sent to the network, since a restart
-// would replace it.
-func startZCPReleaseLookup(ctx context.Context, installed string, opts update.LatestOptions) func() zcpReleaseStatus {
+// startZCPReleaseLookup starts reading the latest zcp release from its source
+// beside the manifest read and returns the wait for the "zcp" key; local
+// answers from the release last read instead, without a network call. Latest
+// stays "" when the release is unknown (offline, refused, nothing read yet
+// under local), and for a build no release names (update.IsRelease): a dev
+// build is compared with nothing and never sent to the network, since a
+// restart would replace it.
+func startZCPReleaseLookup(ctx context.Context, installed string, local bool) func() zcpReleaseStatus {
 	if installed == "" {
 		installed = "dev"
 	}
@@ -50,10 +45,11 @@ func startZCPReleaseLookup(ctx context.Context, installed string, opts update.La
 	done := make(chan zcpReleaseStatus, 1)
 	go func() {
 		checker := update.NewChecker(installed)
-		checker.CacheTTL = zcpReleaseCacheTTL
-		latest, err := checker.Latest(ctx, opts)
-		if err != nil {
-			latest = ""
+		var latest string
+		if local {
+			latest, _ = checker.LastReadLatest()
+		} else if tag, err := checker.Latest(ctx); err == nil {
+			latest = tag
 		}
 		done <- zcpReleaseStatus{Installed: installed, Latest: latest, Behind: update.Behind(installed, latest)}
 	}()

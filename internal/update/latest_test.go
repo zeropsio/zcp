@@ -1,5 +1,5 @@
 // Tests for: internal/update — Checker.Latest, the newest published release
-// as `zcp mate status` reads it (cache first, --refresh, --local), and
+// as `zcp mate status` reads it from its source, and
 // Behind/IsRelease, which tell a release build that a restart would replace
 // from a build nobody publishes.
 
@@ -7,76 +7,8 @@ package update
 
 import (
 	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
-	"time"
 )
-
-func TestLatest_CacheRefreshAndCacheOnly_AnswersOrUnknown(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		cached    string        // tag a cache entry holds before the call ("" = no entry)
-		cacheAge  time.Duration // how old that entry is
-		sourceTag string        // tag the release source answers ("" = it fails)
-		opts      LatestOptions
-		want      string
-		wantErr   bool
-		wantCalls int32
-	}{
-		{"fresh cache answers without the network", "v9.226.0", time.Minute, "v9.227.0", LatestOptions{}, "v9.226.0", false, 0},
-		{"stale cache asks the release source", "v9.226.0", 2 * time.Hour, "v9.227.0", LatestOptions{}, "v9.227.0", false, 1},
-		{"no cache asks the release source", "", 0, "v9.227.0", LatestOptions{}, "v9.227.0", false, 1},
-		{"refresh skips a fresh cache", "v9.226.0", time.Minute, "v9.227.0", LatestOptions{Refresh: true}, "v9.227.0", false, 1},
-		{"refresh that fails keeps a fresh cache", "v9.226.0", time.Minute, "", LatestOptions{Refresh: true}, "v9.226.0", false, 1},
-		{"refresh that fails with a stale cache is unknown", "v9.226.0", 2 * time.Hour, "", LatestOptions{Refresh: true}, "", true, 1},
-		{"source failing with nothing cached is unknown", "", 0, "", LatestOptions{}, "", true, 1},
-		{"cache only reads a fresh cache", "v9.226.0", time.Minute, "v9.227.0", LatestOptions{CacheOnly: true}, "v9.226.0", false, 0},
-		{"cache only never reaches the network", "", 0, "v9.227.0", LatestOptions{CacheOnly: true}, "", true, 0},
-		{"cache only ignores a stale cache", "v9.226.0", 2 * time.Hour, "v9.227.0", LatestOptions{CacheOnly: true}, "", true, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				if tt.sourceTag == "" {
-					http.Error(w, "rate limited", http.StatusForbidden)
-					return
-				}
-				http.Redirect(w, r, "/tag/"+tt.sourceTag, http.StatusFound)
-			}))
-			defer srv.Close()
-
-			c := &Checker{
-				CurrentVersion: "v9.220.0",
-				ReleasesURL:    srv.URL,
-				CacheDir:       t.TempDir(),
-				CacheTTL:       time.Hour,
-				HTTPClient:     srv.Client(),
-			}
-			if tt.cached != "" {
-				c.writeCache(cacheEntry{CheckedAt: time.Now().Add(-tt.cacheAge), LatestVersion: tt.cached, DownloadURL: "https://example.com/cached"})
-			}
-
-			got, err := c.Latest(t.Context(), tt.opts)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Latest() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Errorf("Latest() = %q, want %q", got, tt.want)
-			}
-			if n := calls.Load(); n != tt.wantCalls {
-				t.Errorf("release source asked %d times, want %d", n, tt.wantCalls)
-			}
-		})
-	}
-}
 
 // A container whose shared egress spent GitHub's API quota still learns the
 // newest release, so `zcp mate status` tells a behind zcp: the release is
@@ -88,48 +20,15 @@ func TestLatest_RecordedRedirect_NamesTheNewestRelease(t *testing.T) {
 	c := &Checker{
 		CurrentVersion: "v9.250.0",
 		ReleasesURL:    defaultReleasesURL,
-		CacheDir:       t.TempDir(),
-		CacheTTL:       time.Hour,
+		RecordDir:      t.TempDir(),
 		HTTPClient:     &http.Client{Transport: recordedReleasesPage(t, defaultReleasesURL)},
 	}
-	got, err := c.Latest(t.Context(), LatestOptions{Refresh: true})
+	got, err := c.Latest(t.Context())
 	if err != nil || got != "v9.251.1" {
 		t.Fatalf("Latest() = %q, %v; want v9.251.1", got, err)
 	}
 	if !Behind(c.CurrentVersion, got) {
 		t.Errorf("Behind(%q, %q) = false, want a behind zcp", c.CurrentVersion, got)
-	}
-}
-
-// A release Latest fetched is cached the way Check caches one, download URL
-// included, so the self-update path reading the same file finds a usable
-// entry, and the next status reads it without the network.
-func TestLatest_Fetched_CachedForTheNextReader(t *testing.T) {
-	t.Parallel()
-
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Redirect(w, r, "/tag/v9.226.0", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	c := &Checker{
-		CurrentVersion: "v9.220.0",
-		ReleasesURL:    srv.URL,
-		CacheDir:       t.TempDir(),
-		CacheTTL:       time.Hour,
-		HTTPClient:     srv.Client(),
-	}
-	if _, err := c.Latest(t.Context(), LatestOptions{}); err != nil {
-		t.Fatalf("Latest() error = %v", err)
-	}
-	entry, ok := c.readCache()
-	if !ok || entry.LatestVersion != "v9.226.0" || entry.DownloadURL == "" {
-		t.Fatalf("cache = %+v (ok %v), want v9.226.0 with a download URL", entry, ok)
-	}
-	if info, err := c.Check(t.Context()); err != nil || !info.Available || info.LatestVersion != "v9.226.0" || calls.Load() != 1 {
-		t.Errorf("Check after Latest = %+v (err %v) with %d calls, want the cached v9.226.0 and one call", info, err, calls.Load())
 	}
 }
 

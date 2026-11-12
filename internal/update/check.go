@@ -21,9 +21,8 @@ import (
 
 const (
 	defaultReleasesURL = "https://github.com/zeropsio/zcp/releases"
-	defaultCacheTTL    = 24 * time.Hour
 	checkTimeout       = 5 * time.Second
-	cacheFileName      = "update.json"
+	lastReadFileName   = "update.json"
 	osWindows          = "windows"
 )
 
@@ -43,9 +42,10 @@ type Checker struct {
 	// asset downloads from <ReleasesURL>/download/<tag>/<asset>. Neither is
 	// the REST API, whose unauthenticated quota a shared egress spends.
 	ReleasesURL string
-	CacheDir    string
-	CacheTTL    time.Duration
-	HTTPClient  *http.Client
+	// RecordDir holds the record of the latest release last read, which only
+	// LastReadLatest reads.
+	RecordDir  string
+	HTTPClient *http.Client
 }
 
 // NewChecker creates a Checker with default settings.
@@ -55,8 +55,7 @@ func NewChecker(currentVersion string) *Checker {
 	c := &Checker{
 		CurrentVersion: currentVersion,
 		ReleasesURL:    defaultReleasesURL,
-		CacheDir:       defaultCacheDir(),
-		CacheTTL:       defaultCacheTTL,
+		RecordDir:      defaultRecordDir(),
 		HTTPClient:     &http.Client{Timeout: checkTimeout},
 	}
 	if base := os.Getenv("ZCP_UPDATE_URL"); base != "" {
@@ -65,19 +64,12 @@ func NewChecker(currentVersion string) *Checker {
 	return c
 }
 
-// Check looks for a newer ZCP version. An error means the latest release
-// is unknown, never that the current version is the latest: each caller
-// decides what an unknown verdict means for it.
+// Check looks for a newer ZCP version, reading the release source on every
+// call. An error means the latest release is unknown, never that the current
+// version is the latest: each caller decides what an unknown verdict means
+// for it.
 func (c *Checker) Check(ctx context.Context) (*Info, error) {
 	info := &Info{CurrentVersion: c.CurrentVersion}
-
-	// Try cache first.
-	if cached, ok := c.readCache(); ok {
-		info.LatestVersion = cached.LatestVersion
-		info.DownloadURL = cached.DownloadURL
-		info.Available = isNewer(c.CurrentVersion, cached.LatestVersion)
-		return info, nil
-	}
 
 	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
@@ -87,14 +79,6 @@ func (c *Checker) Check(ctx context.Context) (*Info, error) {
 	info.LatestVersion = tag
 	info.DownloadURL = c.downloadURL(tag)
 	info.Available = isNewer(c.CurrentVersion, tag)
-
-	// Write cache (best-effort).
-	c.writeCache(cacheEntry{
-		CheckedAt:     time.Now(),
-		LatestVersion: tag,
-		DownloadURL:   info.DownloadURL,
-	})
-
 	return info, nil
 }
 
@@ -109,8 +93,7 @@ func (c *Checker) assetURL(tag, asset string) string {
 }
 
 // LatestAssetURL is the download URL of asset in the newest published
-// release, "" when that release does not ship it. It reads the release
-// afresh: the update cache holds no asset list.
+// release, "" when that release does not ship it.
 func (c *Checker) LatestAssetURL(ctx context.Context, asset string) (string, error) {
 	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
@@ -130,13 +113,13 @@ func (c *Checker) LatestAssetURL(ctx context.Context, asset string) (string, err
 	return "", fmt.Errorf("release asset %s answered %d", u, status)
 }
 
-type cacheEntry struct {
-	CheckedAt     time.Time `json:"checkedAt"`
-	LatestVersion string    `json:"latestVersion"`
-	DownloadURL   string    `json:"downloadUrl"`
+// lastRead is the record of the latest release last read.
+type lastRead struct {
+	LatestVersion string `json:"latestVersion"`
 }
 
-// fetchLatestTag is the tag <ReleasesURL>/latest redirects to.
+// fetchLatestTag is the tag <ReleasesURL>/latest redirects to, recorded for
+// LastReadLatest.
 func (c *Checker) fetchLatestTag(ctx context.Context) (string, error) {
 	status, location, err := c.head(ctx, c.ReleasesURL+"/latest")
 	if err != nil {
@@ -153,6 +136,7 @@ func (c *Checker) fetchLatestTag(ctx context.Context) (string, error) {
 	if path.Base(dir) != "tag" || tag == "" {
 		return "", fmt.Errorf("releases/latest redirects to %s, which names no release tag", loc)
 	}
+	c.writeLastRead(tag)
 	return tag, nil
 }
 
@@ -176,44 +160,58 @@ func (c *Checker) head(ctx context.Context, target string) (int, string, error) 
 	return resp.StatusCode, resp.Header.Get("Location"), nil
 }
 
-func (c *Checker) readCache() (*cacheEntry, bool) {
-	if c.CacheTTL == 0 {
-		return nil, false
-	}
-
-	data, err := os.ReadFile(c.cachePath())
+// LastReadLatest is the latest release the source last named, without
+// network IO. Only `zcp mate status --local` answers from it, for a reader
+// that must not wait on the network; no decision reads it. A record older
+// than this zcp was read before this zcp was installed, so it says nothing
+// about the latest release and reads as none.
+func (c *Checker) LastReadLatest() (string, bool) {
+	data, err := os.ReadFile(c.lastReadPath())
 	if err != nil {
-		return nil, false
+		return "", false
 	}
-
-	var entry cacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, false
+	var entry lastRead
+	if err := json.Unmarshal(data, &entry); err != nil || entry.LatestVersion == "" {
+		return "", false
 	}
-
-	if time.Since(entry.CheckedAt) > c.CacheTTL {
-		return nil, false
+	if compareSemver(entry.LatestVersion, c.CurrentVersion) < 0 {
+		return "", false
 	}
-
-	return &entry, true
+	return entry.LatestVersion, true
 }
 
-func (c *Checker) writeCache(entry cacheEntry) {
-	data, err := json.Marshal(entry)
+// writeLastRead records tag for LastReadLatest, best effort: written under a
+// temporary name of its own and renamed, so a reader sees the old record or
+// the new one, never a part of either.
+func (c *Checker) writeLastRead(tag string) {
+	data, err := json.Marshal(lastRead{LatestVersion: tag})
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(c.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(c.RecordDir, 0o755); err != nil {
 		return
 	}
-	_ = os.WriteFile(c.cachePath(), data, 0o600)
+	tmp, err := os.CreateTemp(c.RecordDir, lastReadFileName+".*")
+	if err != nil {
+		return
+	}
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), c.lastReadPath())
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
-func (c *Checker) cachePath() string {
-	return filepath.Join(c.CacheDir, cacheFileName)
+func (c *Checker) lastReadPath() string {
+	return filepath.Join(c.RecordDir, lastReadFileName)
 }
 
-func defaultCacheDir() string {
+func defaultRecordDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "/" {
 		return filepath.Join(os.TempDir(), "zcp-cache")

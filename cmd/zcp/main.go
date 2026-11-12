@@ -245,7 +245,6 @@ func runUpdate(args []string) int {
 
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
 	checker := update.NewChecker(server.Version)
-	checker.CacheTTL = 0 // force fresh check
 	info, err := checker.Check(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Update check failed: %v\n", err)
@@ -466,7 +465,7 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel)
 
 	// Silent background update — completely invisible to LLM.
-	// Checks GitHub (24h cache), downloads if newer. Binary is replaced on disk
+	// Checks GitHub, downloads if newer. Binary is replaced on disk
 	// but the running server is NOT restarted — new version activates on next start.
 	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
 		go update.Once(ctx, server.Version, os.Stderr)

@@ -1,4 +1,4 @@
-// Tests for: internal/update/check.go — version check and cache logic.
+// Tests for: internal/update/check.go — version check against the releases page.
 
 package update
 
@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestCheck_NewerVersionAvailable(t *testing.T) {
@@ -76,12 +75,11 @@ func TestCheck_NewerVersionAvailable(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			cacheDir := t.TempDir()
+			recordDir := t.TempDir()
 			c := &Checker{
 				CurrentVersion: tt.currentVersion,
 				ReleasesURL:    srv.URL,
-				CacheDir:       cacheDir,
-				CacheTTL:       0, // force fresh check
+				RecordDir:      recordDir,
 				HTTPClient:     srv.Client(),
 			}
 
@@ -99,100 +97,6 @@ func TestCheck_NewerVersionAvailable(t *testing.T) {
 	}
 }
 
-func TestCheck_CacheRespected(t *testing.T) {
-	t.Parallel()
-
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		http.Redirect(w, r, "/tag/"+"v0.2.0", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	cacheDir := t.TempDir()
-	c := &Checker{
-		CurrentVersion: "0.1.0",
-		ReleasesURL:    srv.URL,
-		CacheDir:       cacheDir,
-		CacheTTL:       time.Hour,
-		HTTPClient:     srv.Client(),
-	}
-
-	// First check hits API.
-	info1, err := c.Check(t.Context())
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if !info1.Available {
-		t.Fatal("first check should find update")
-	}
-	if calls != 1 {
-		t.Fatalf("expected 1 API call, got %d", calls)
-	}
-
-	// Second check uses cache.
-	info2, err := c.Check(t.Context())
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if !info2.Available {
-		t.Fatal("cached check should still find update")
-	}
-	if calls != 1 {
-		t.Fatalf("expected still 1 API call (cached), got %d", calls)
-	}
-}
-
-func TestCheck_CacheExpired(t *testing.T) {
-	t.Parallel()
-
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		http.Redirect(w, r, "/tag/"+"v0.2.0", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	cacheDir := t.TempDir()
-
-	// Write an expired cache entry.
-	entry := cacheEntry{
-		CheckedAt:     time.Now().Add(-2 * time.Hour),
-		LatestVersion: "v0.1.5",
-		DownloadURL:   "https://example.com/old",
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, cacheFileName), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	c := &Checker{
-		CurrentVersion: "0.1.0",
-		ReleasesURL:    srv.URL,
-		CacheDir:       cacheDir,
-		CacheTTL:       time.Hour,
-		HTTPClient:     srv.Client(),
-	}
-
-	info, err := c.Check(t.Context())
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if !info.Available {
-		t.Fatal("should find update after cache expiry")
-	}
-	if calls != 1 {
-		t.Fatalf("expected 1 API call after cache expiry, got %d", calls)
-	}
-	if info.LatestVersion != "v0.2.0" {
-		t.Errorf("expected v0.2.0, got %s", info.LatestVersion)
-	}
-}
-
-// recordedResponse answers every request with a recorded GitHub response.
 type recordedResponse struct {
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
@@ -263,8 +167,7 @@ func TestCheck_RateLimitedReleaseCheck_ReportsFailure(t *testing.T) {
 	c := &Checker{
 		CurrentVersion: "v9.250.0",
 		ReleasesURL:    defaultReleasesURL,
-		CacheDir:       t.TempDir(),
-		CacheTTL:       0,
+		RecordDir:      t.TempDir(),
 		HTTPClient:     &http.Client{Transport: rec.Value},
 	}
 
@@ -398,8 +301,7 @@ func TestCheck_DownloadBaseURL(t *testing.T) {
 	c := &Checker{
 		CurrentVersion: "0.1.0",
 		ReleasesURL:    srv.URL,
-		CacheDir:       t.TempDir(),
-		CacheTTL:       0,
+		RecordDir:      t.TempDir(),
 		HTTPClient:     srv.Client(),
 	}
 

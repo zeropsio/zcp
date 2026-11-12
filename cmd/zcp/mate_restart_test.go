@@ -110,10 +110,10 @@ func checkRestart(t *testing.T, got mateStatusJSON, wantRestart bool, wantWhy st
 }
 
 // TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest: status always
-// reports this zcp, against the release install.sh installs read through the
-// same hourly cache the Mate manifest has — refreshed by --refresh, the only
-// source for --local. An unknown release reads latest "" and behind false,
-// and a dev build is compared with nothing.
+// reports this zcp, against the release install.sh installs, read from its
+// source on every status; --local answers from the release an earlier status
+// read. An unknown release reads latest "" and behind false, and a dev build
+// is compared with nothing.
 func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 	type zcpWant struct {
 		installed, latest string
@@ -122,7 +122,7 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 	tests := []struct {
 		name        string
 		installed   string   // this zcp's version
-		cached      string   // the release an earlier status cached ("" = none)
+		lastRead    string   // the release an earlier status read ("" = none)
 		source      string   // what the release source answers now ("" = it fails)
 		args        []string // after "status"
 		wantZCP     zcpWant
@@ -130,17 +130,13 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 		wantWhy     string
 		wantCalls   int32 // asks of the release source by this status
 	}{
-		{"cached latest above installed", "v9.220.0", "v9.226.0", "", []string{"--json"},
-			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
-		{"cached latest equal to installed", "v9.226.0", "v9.226.0", "", []string{"--json"},
-			zcpWant{"v9.226.0", "v9.226.0", false}, false, "", 0},
 		{"latest unknown", "v9.220.0", "", "", []string{"--json"},
 			zcpWant{"v9.220.0", "", false}, false, "", 1},
 		{"refresh asks the release source", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--refresh"},
 			zcpWant{"v9.220.0", "v9.227.0", true}, true, "zcp v9.227.0 is out; a restart installs it", 1},
-		{"local reads only the cache", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--local"},
+		{"local reads only the last read", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--local"},
 			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
-		{"local with nothing cached is unknown", "v9.220.0", "", "v9.227.0", []string{"--json", "--local"},
+		{"local with nothing read is unknown", "v9.220.0", "", "v9.227.0", []string{"--json", "--local"},
 			zcpWant{"v9.220.0", "", false}, false, "", 0},
 		{"dev build is compared with nothing", "dev", "v9.226.0", "v9.227.0", []string{"--json"},
 			zcpWant{"dev", "", false}, false, "", 0},
@@ -150,8 +146,8 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("serviceId", "")
 			manifestAndTarballServer(t)
-			if tt.cached != "" {
-				zcpReleaseServer(t, tt.cached)
+			if tt.lastRead != "" {
+				zcpReleaseServer(t, tt.lastRead)
 				captureStdout(t, func() { runMateStatusFor([]string{"--json"}, "v1.0.0") })
 			}
 			calls := zcpReleaseServer(t, tt.source)
@@ -243,8 +239,8 @@ func TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater(t *testing.T)
 			http.DefaultTransport = readinessTransport{tt.status, tt.body, tt.err, &probes, old}
 			t.Cleanup(func() { http.DefaultTransport = old })
 
-			// A first status warms both caches, so --local has a manifest
-			// and a release to read.
+			// A first status reads both releases, so --local has a manifest
+			// and a release to answer from.
 			captureStdout(t, func() { runMateStatusFor([]string{"--json"}, tt.zcp) })
 			probes.Store(0)
 

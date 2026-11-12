@@ -2,53 +2,20 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// LatestOptions steers how Latest reaches the release source.
-type LatestOptions struct {
-	// Refresh asks the release source even while the cache is fresh; a
-	// source that fails then keeps the fresh cached answer.
-	Refresh bool
-	// CacheOnly reads the cache alone and never reaches the network.
-	CacheOnly bool
-}
-
 // Latest is the newest published zcp release: the tag GitHub's
-// releases/latest names, which is the release install.sh installs. A fresh
-// cache entry (CacheTTL) answers without the network; otherwise the release
-// source does, and its answer is cached for the next reader, Check included.
-// An error means the release is unknown (offline, rate-limited, nothing
-// fresh cached under CacheOnly), and the caller never guesses one.
-func (c *Checker) Latest(ctx context.Context, opts LatestOptions) (string, error) {
-	if !opts.Refresh || opts.CacheOnly {
-		if cached, ok := c.readCache(); ok && cached.LatestVersion != "" {
-			return cached.LatestVersion, nil
-		}
-		if opts.CacheOnly {
-			return "", errors.New("latest zcp release: nothing fresh is cached")
-		}
-	}
-
+// releases/latest names, which is the release install.sh installs, read from
+// that source on every call. An error means the release is unknown
+// (offline, refused), and the caller never guesses one.
+func (c *Checker) Latest(ctx context.Context) (string, error) {
 	tag, err := c.fetchLatestTag(ctx)
 	if err != nil {
-		if opts.Refresh {
-			if cached, ok := c.readCache(); ok && cached.LatestVersion != "" {
-				return cached.LatestVersion, nil
-			}
-		}
 		return "", fmt.Errorf("latest zcp release: %w", err)
 	}
-
-	c.writeCache(cacheEntry{
-		CheckedAt:     time.Now(),
-		LatestVersion: tag,
-		DownloadURL:   c.downloadURL(tag),
-	})
 	return tag, nil
 }
 

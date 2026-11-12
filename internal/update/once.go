@@ -9,12 +9,12 @@ import (
 )
 
 // OnceOpts configures the Once update function.
-// BinaryPath and CacheDir override defaults for testing.
+// BinaryPath and RecordDir override defaults for testing.
 type OnceOpts struct {
 	CurrentVersion string
 	LogOutput      io.Writer
 	BinaryPath     string // empty = use os.Executable()
-	CacheDir       string // empty = use default cache dir
+	RecordDir      string // empty = the default directory of the last-read record
 }
 
 // Once checks for an update and applies it (replaces the binary on disk).
@@ -35,8 +35,8 @@ func OnceWithOpts(ctx context.Context, opts OnceOpts) {
 	}
 
 	checker := NewChecker(opts.CurrentVersion)
-	if opts.CacheDir != "" {
-		checker.CacheDir = opts.CacheDir
+	if opts.RecordDir != "" {
+		checker.RecordDir = opts.RecordDir
 	}
 	// An unknown latest release leaves the binary as it is: the server
 	// starts regardless and says nothing about it.
