@@ -478,13 +478,26 @@ func HQIdentity(getenv func(string) string) hq.Identity {
 	return id
 }
 
+// Replacing says what StageRelease does with a directory that holds the
+// version but fails its smoke test.
+type Replacing bool
+
+const (
+	// ReplaceFailing downloads it afresh: the keep job, which has the time.
+	ReplaceFailing Replacing = true
+	// KeepFailing leaves it as it is and fails: the start job, whose smoke
+	// test can time out under boot load on a version keep already verified.
+	KeepFailing Replacing = false
+)
+
 // StageRelease makes versions/<version> a complete, smoke-tested install of
 // release, without moving current. A directory that already holds the version
 // and passes the smoke test is kept, so the keep job's download and the start
-// job's share one; otherwise the release's tarball is downloaded into it
-// afresh, which needs release.URL. The directory current or last-good names is
-// never replaced. Any failure removes the half-built directory.
-func StageRelease(release Manifest) error {
+// job's share one; one that fails it is replaced only under ReplaceFailing.
+// Otherwise the release's tarball is downloaded into it afresh, which needs
+// release.URL. The directory current or last-good names is never replaced.
+// Any failure removes the half-built directory.
+func StageRelease(release Manifest, replace Replacing) error {
 	versionDir := VersionDir(release.Version)
 	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
 		ctx, cancel := context.WithTimeout(context.Background(), smokeTimeout)
@@ -492,6 +505,9 @@ func StageRelease(release Manifest) error {
 		cancel()
 		if err == nil {
 			return nil
+		}
+		if replace == KeepFailing {
+			return fmt.Errorf("%s fails its smoke test: %w; left for the keep job", versionDir, err)
 		}
 	}
 	for _, link := range []string{CurrentLink(), LastGoodLink()} {

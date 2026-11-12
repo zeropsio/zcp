@@ -68,7 +68,7 @@ func switchToVersionToRun(logf func(format string, args ...any)) {
 	if run != release.Version {
 		release = Manifest{Version: run}
 	}
-	if err := StageRelease(release); err != nil {
+	if err := StageRelease(release, KeepFailing); err != nil {
 		logf("install %s: %v; starting current %q", run, err, v.Current)
 		return
 	}

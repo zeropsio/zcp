@@ -165,7 +165,7 @@ func restartForMate(unlock func(), running, run string, release mate.Manifest, a
 	if run != release.Version {
 		release = mate.Manifest{Version: run}
 	}
-	if err := mate.StageRelease(release); err != nil {
+	if err := mate.StageRelease(release, mate.ReplaceFailing); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: download Mate %s: %v\n", run, err)
 		return 1
 	}

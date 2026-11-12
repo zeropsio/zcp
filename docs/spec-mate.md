@@ -384,7 +384,9 @@ lock without waiting and:
    trust boundary (§2.1c). Then `npm install --prefix versions/<v> …` (npm still resolves the
    package's dependencies from its registry), and the smoke: `mate --version`, then the native-addon
    probe run from the installed package's directory, where the server resolves its runtime imports.
-   An existing directory of that version that passes the smoke is kept. A failure removes the
+   An existing directory of that version that passes the smoke is kept; one that fails it is
+   downloaded afresh by the keep job, while the start job leaves it as it is and starts `current` (a
+   smoke test can time out under boot load on a version keep already verified). A failure removes the
    half-built directory; `current` and `last-good` directories are never replaced.
 3. **Switches** `current` atomically: the symlink is built under a temporary name and renamed onto
    `current`. A version below `MinimumMateVersion` is never started (`mate.BelowFloorError`; `zcp
