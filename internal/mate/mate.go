@@ -491,8 +491,8 @@ type Replacing bool
 const (
 	// ReplaceFailing downloads it afresh: the keep job, which has the time.
 	ReplaceFailing Replacing = true
-	// KeepFailing leaves it as it is and fails: the start job, whose smoke
-	// test can time out under boot load on a version keep already verified.
+	// KeepFailing leaves it as it is and fails: the start job, which leaves
+	// the download to the keep job and starts current.
 	KeepFailing Replacing = false
 )
 
@@ -504,12 +504,20 @@ const (
 // release.URL; ctx bounds the download, the npm install and every smoke test
 // together. The directory current or last-good names is never replaced. Any
 // failure removes the half-built directory.
+//
+// Only a smoke test that ran to its end and failed makes an install failing:
+// one ctx ended says nothing about it, so the complete install is left as it
+// is under either Replacing for the next run to smoke again, and nothing is
+// downloaded on the expired ctx.
 func StageRelease(ctx context.Context, release Manifest, replace Replacing) error {
 	versionDir := VersionDir(release.Version)
 	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
 		err := smokeTestInstall(ctx, versionDir)
 		if err == nil {
 			return nil
+		}
+		if ctx.Err() != nil {
+			return smokeCut(ctx, versionDir)
 		}
 		if replace == KeepFailing {
 			return fmt.Errorf("%s fails its smoke test: %w; left for the keep job", versionDir, err)
@@ -533,11 +541,21 @@ func StageRelease(ctx context.Context, release Manifest, replace Replacing) erro
 	}
 
 	if err := smokeTestInstall(ctx, versionDir); err != nil {
+		if ctx.Err() != nil {
+			return smokeCut(ctx, versionDir)
+		}
 		_ = os.RemoveAll(versionDir)
 		return fmt.Errorf("smoke test %s: %w", versionDir, err)
 	}
 
 	return nil
+}
+
+// smokeCut is StageRelease's error for a smoke test ctx ended before it
+// finished. It names the deadline, not the kill os/exec reports for the child
+// (the same words an out-of-memory kill produces).
+func smokeCut(ctx context.Context, versionDir string) error {
+	return fmt.Errorf("the deadline ended the smoke test of %s before it finished; left as it is: %w", versionDir, context.Cause(ctx))
 }
 
 // activate atomically repoints CurrentLink() at versionDir: build a

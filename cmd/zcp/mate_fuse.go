@@ -175,7 +175,7 @@ func restartForMate(unlock func(), running, run string, release mate.Manifest, a
 	stageCtx, cancel := context.WithTimeout(context.Background(), mate.InstallTimeout)
 	defer cancel()
 	if err := mate.StageRelease(stageCtx, release, mate.ReplaceFailing); err != nil {
-		fmt.Fprintf(os.Stderr, "mate keep: download Mate %s: %v\n", run, err)
+		fmt.Fprintf(os.Stderr, "mate keep: stage Mate %s: %v\n", run, err)
 		return 1
 	}
 	if !askRestart(run, automatic) {

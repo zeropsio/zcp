@@ -390,9 +390,11 @@ lock without waiting and:
    The smoke has no clock of its own, only the caller's deadline: a container over its cgroup's
    `memory.high` (the granted RAM less the minimum free RAM, which the autoscaler raises in steps)
    stalls every process, so its duration says nothing about the install. An existing directory of that version that passes the smoke is kept; one that fails it is
-   downloaded afresh by the keep job, while the start job leaves it as it is and starts `current` (a
-   smoke test can time out under boot load on a version keep already verified). A failure removes the
-   half-built directory; `current` and `last-good` directories are never replaced.
+   downloaded afresh by the keep job, while the start job leaves it as it is and starts `current`.
+   Only a smoke that ran to its end and failed counts: one the deadline cut leaves the complete
+   install as it is in both jobs, downloads nothing, and its error names the deadline; the next run
+   smokes it again (a first install whose smoke is cut still fails, and systemd retries). A failure
+   removes the half-built directory; `current` and `last-good` directories are never replaced.
 3. **Switches** `current` atomically: the symlink is built under a temporary name and renamed onto
    `current`. A version below `MinimumMateVersion` is never started (`mate.BelowFloorError`; `zcp
    mate status --json` reports it as `belowFloor` beside `minimum`).
