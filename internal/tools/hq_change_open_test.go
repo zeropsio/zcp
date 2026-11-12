@@ -263,10 +263,11 @@ func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
 	}
 }
 
-// In a repository whose code is kept on GitHub, the change's pull request is
-// HQ's: the answer says HQ opens it on GitHub from the agent's branch and the
-// person merges it in Mate, and records the way the code is kept. Where HQ
-// keeps the code, the answer is as it always was.
+// In a repository whose code is kept on GitHub, the work is pushed to origin,
+// HQ, like any other, and the change's pull request is HQ's: the answer adds
+// that HQ alone pushes to GitHub, puts the agent's branch there and opens its
+// pull request, and the person merges it in Mate, and records the way the
+// code is kept. Where HQ keeps the code, the answer is as it always was.
 func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
@@ -279,11 +280,11 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 		{
 			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
 			want: []string{
-				`Change #1 is open in "appdev" for the branch "fix-login"`,
-				"HQ opens its pull request on GitHub from that branch",
-				"the person merges it in Mate",
-				"`zcp git appdev push origin fix-login`",
+				"Change #1 is open in \"appdev\" for the branch \"fix-login\": push the work there (`zcp git appdev push origin fix-login`) — never force-push",
 				`action="describe-change"`,
+				"Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described",
+				"open none of your own and never push to GitHub",
+				"the person merges it in Mate",
 			},
 		},
 		{
@@ -298,6 +299,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 			if tc.origin != nil {
 				lab.hq.keepOn(*tc.origin)
 			}
+			lab.snapshotMate(t.Context())
 			lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
 
 			answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login")

@@ -92,10 +92,11 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 		"Mate asks where the code of appdev is kept — on GitHub at https://github.com/zeropsio/mate, or in Mate, only following it",
 		"Never ask for a token in the chat",
 		"Either way take the code from HQ first: " + originFromHQ("appdev"),
-		"Kept on GitHub: ZCP points the checkout's origin at GitHub, never a second remote; work on it in its dev service, where zcp answers git for GitHub: `zcp git appdev fetch origin`",
+		"Kept on GitHub: the checkout's origin is its repository in HQ, which mirrors GitHub both ways — ZCP keeps it there: never point origin at GitHub and never add GitHub as a remote. Work on it in its dev service as on any repository: `zcp git appdev fetch origin`",
 		"a branch of your own (`zcp git appdev checkout -b <branch> origin/main`)",
 		"`zcp git appdev push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\"",
-		"HQ opens its pull request on GitHub from that branch and the person merges it in Mate",
+		"HQ puts that branch on GitHub and opens its pull request there, and the person merges it in Mate",
+		"Never push to GitHub — HQ alone does, and `zcp git` refuses it",
 		"Never push `main` and never force-push",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed — in its dev service: `zcp git appdev remote add upstream https://github.com/zeropsio/mate && zcp git appdev remote set-url --push upstream no_push && zcp git appdev fetch upstream`",
 		"take its new work in on a branch of your own with `zcp git appdev merge upstream/main`",
@@ -278,7 +279,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 		"never ask for a token",
 		originFromHQ("appdev"),
 		"HQ does not say which way the person keeps it: ask them in one sentence",
-		"Kept on GitHub: ZCP points the checkout's origin at GitHub",
+		"Kept on GitHub: the checkout's origin is its repository in HQ",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
@@ -336,48 +337,33 @@ func TestOriginRequest_StateWithoutRepos_Refuses(t *testing.T) {
 
 // The same origin connected under a repository that is no service of this
 // project — a sibling Mate's — names no host for it: its code is fetched from
-// HQ into the asked repository.
+// HQ into the asked repository, also when the person keeps that repository's
+// code on GitHub — HQ's `main` is GitHub's default branch while the two
+// follow each other — and never from GitHub's address.
 func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ(t *testing.T) {
-	srv, _, address := originHQIn(t, t.TempDir(),
-		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
+	for _, held := range []string{
+		`{"name":"web","origin":{"url":"https://github.com/acme/app"}}`,
+		`{"name":"web","origin":{"url":"https://github.com/acme/app","mode":"github"}}`,
+	} {
+		srv, _, address := originHQIn(t, t.TempDir(), `[{"name":"appdev"},`+held+`]`)
 
-	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
+		answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
 
-	if answer.Requested != nil || answer.Connected == nil || answer.Connected.Repo != "web" {
-		t.Fatalf("want connected, held by web: %s", text)
-	}
-	if strings.Contains(answer.NextActions, "ssh web") {
-		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
-	}
-	want := originTake("appdev", "fetch "+address+"/git/"+labOrg+"/a1/web.git main")
-	if !strings.Contains(answer.NextActions, want) {
-		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
-	}
-}
-
-// The same origin connected under a sibling Mate's repository whose code the
-// person keeps on GitHub is fetched from GitHub, where that code is, through
-// zcp's GitHub helper.
-func TestOriginRequest_OriginKeptOnGitHubUnderAnotherProjectsRepository_FetchesItFromGitHub(t *testing.T) {
-	srv, _, address := originHQIn(t, t.TempDir(),
-		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app","mode":"github"}}]`)
-
-	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
-
-	if answer.Connected == nil || answer.Connected.Repo != "web" {
-		t.Fatalf("want connected, held by web: %s", text)
-	}
-	want := originTake("appdev", "fetch https://github.com/acme/app main")
-	if !strings.Contains(answer.NextActions, want) {
-		t.Errorf("nextActions lacks the fetch from GitHub %s: %s", want, answer.NextActions)
-	}
-	// The fetch names GitHub's address in its argv, which zcp answers: no
-	// helper of zcp's own is written into the checkout for it.
-	if strings.Contains(answer.NextActions, hq.GitHubHelperConfig) {
-		t.Errorf("nextActions writes zcp's GitHub helper: %s", answer.NextActions)
-	}
-	if strings.Contains(answer.NextActions, address) {
-		t.Errorf("nextActions fetches from HQ code kept on GitHub: %s", answer.NextActions)
+		if answer.Requested != nil || answer.Connected == nil || answer.Connected.Repo != "web" {
+			t.Fatalf("want connected, held by web: %s", text)
+		}
+		if strings.Contains(answer.NextActions, "ssh web") {
+			t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
+		}
+		want := originTake("appdev", "fetch "+address+"/git/"+labOrg+"/a1/web.git main")
+		if !strings.Contains(answer.NextActions, want) {
+			t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
+		}
+		for _, never := range []string{"fetch https://github.com/acme/app", hq.GitHubHelperConfig} {
+			if strings.Contains(answer.NextActions, never) {
+				t.Errorf("nextActions says %q: %s", never, answer.NextActions)
+			}
+		}
 	}
 }
 
@@ -388,7 +374,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 		mode        string
 		want, never string
 	}{
-		{mode: "github", want: "Kept on GitHub: ZCP points the checkout's origin at GitHub", never: "Kept in Mate"},
+		{mode: "github", want: "Kept on GitHub: the checkout's origin is its repository in HQ", never: "Kept in Mate"},
 		{mode: "follow", want: "Kept in Mate: HQ stays the origin and GitHub is only followed", never: "Kept on GitHub"},
 	}
 	for _, tt := range tests {

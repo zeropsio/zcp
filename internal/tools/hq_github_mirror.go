@@ -15,6 +15,9 @@ import (
 // `main` to GitHub's default branch while GitHub is behind, pushes each open
 // change's head to its branch there, opens its pull request once it is
 // described, and squash-merges it there when the person merges it in Mate.
+// HQ alone pushes to GitHub: the checkout's origin is the repository in HQ
+// (hqPairOrigin), and `zcp git` answers GitHub for reads only
+// (docs/spec-mate.md §6.8).
 // A Mate that syncs GitHub by hand — Filip on flip.studio cherry-picked
 // every merged change onto GitHub's master in a clone of its own, as its
 // memory said to — fights that follow: a commit on GitHub's default branch
@@ -110,7 +113,7 @@ func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.Rep
 			lines = append(lines, mirroredWords(now.Mirror))
 		}
 		if now.DivergedSince != "" && now.DivergedSince != told.DivergedSince {
-			lines = append(lines, divergedWords(stateDir, hqc, app, repo, now.DivergedSince))
+			lines = append(lines, divergedWords(stateDir, hqc, app, repo, remote.URL, now.DivergedSince))
 		}
 		*told = now
 		return nil
@@ -121,23 +124,26 @@ func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.Rep
 // mirroredWords is the pass's line for a repository HQ mirrors to GitHub
 // now, name its GitHub repository as owner/name.
 func mirroredWords(name string) string {
-	return fmt.Sprintf("HQ mirrors it to GitHub now (%s), through the organisation's GitHub app: stop pushing to GitHub's default branch yourself, "+
-		"and drop any note of your own that says to sync GitHub after a merge — HQ pushes `main` there itself, "+
-		"and a merged change reaches GitHub as its pull request, squash-merged there. "+
+	return fmt.Sprintf("HQ mirrors it to GitHub now (%s), through the organisation's GitHub app, and alone pushes there: "+
+		"its checkout's origin stays its repository in HQ, and `zcp git` refuses a push to GitHub. "+
+		"Drop any note of your own that says to push to GitHub or to sync it after a merge — HQ pushes `main` to GitHub's default branch itself, "+
+		"puts each open change's branch there and opens its pull request, and a merged change reaches GitHub as that pull request, squash-merged there. "+
 		"Work still goes on a branch of your own, pushed to origin, its change opened with open-change.", name)
 }
 
 // divergedWords is the pass's line for a repository whose GitHub default
-// branch and HQ's `main` diverged since since, with the one change that
-// brings them back in step: a branch from GitHub's tip with HQ's `main`
-// merged in, pushed to HQ — so HQ makes its branch on GitHub and pushes it,
-// which the realignment reads (a branch HQ did not make there it never
-// pushes) — opened as a change and merged in Mate; HQ squash-merges its pull
-// request on GitHub and moves `main` onto that squash. Its git runs where the
-// repository's git runs (repoDevHost): the checkout's origin is GitHub, which
-// zcp answers for the record's origin, and the fetch and push name HQ's
-// address in their argv, which zcp answers with the Mate's credential.
-func divergedWords(stateDir string, hqc hq.Client, app, repo, since string) string {
+// branch, at the address github, and HQ's `main` diverged since since, with
+// the one change that brings them back in step: a branch from GitHub's tip
+// with HQ's `main` merged in, pushed to HQ — so HQ makes its branch on
+// GitHub and pushes it, which the realignment reads (a branch HQ did not
+// make there it never pushes) — opened as a change and merged in Mate; HQ
+// squash-merges its pull request on GitHub and moves `main` onto that
+// squash. Its git runs where the repository's git runs (repoDevHost). The
+// checkout's origin is HQ, whose `main` no longer is GitHub's, so GitHub's
+// tip is fetched by its address through `zcp git` — in a lease too — which
+// answers a URL in a fetch's argv with a read token; the fetch and the push
+// of HQ name its address, answered with the Mate's credential.
+func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since string) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
 		address = "<its repository's address in HQ>"
@@ -145,16 +151,21 @@ func divergedWords(stateDir string, hqc hq.Client, app, repo, since string) stri
 	route := repoDevHost(stateDir, app, repo)
 	return fmt.Sprintf("GitHub's default branch and HQ's `main` have diverged (since %s): neither holds the other, so HQ's follow moves neither. "+
 		"One change brings them back in step — a branch holding both, which the person merges in Mate: HQ squash-merges its pull request on GitHub and moves `main` onto that squash. "+
-		"Make it %s, its origin GitHub: %s, "+
+		"Make it %s: take GitHub's default branch by its address, which zcp answers with a read token (%s), and HQ's `main` (%s), "+
 		"then %s — resolve any conflict so the branch keeps what both sides should, and commit — "+
 		"then push it to HQ, never to GitHub (%s: HQ makes its branch on GitHub and pushes it, which the realignment needs), "+
 		"open its change with zerops_workflow action=\"open-change\" branch=%q title=\"Bring HQ and GitHub back in step\" and describe it. "+
-		"Never push GitHub's default branch and never force-push.",
+		"Never push to GitHub — HQ alone does — and never force-push.",
 		since, route.where(),
-		route.git("fetch origin", "remote set-head origin --auto", "fetch "+address+" +main:refs/remotes/hq/main"),
-		route.git("checkout -b "+realignBranch+" origin/HEAD", "merge refs/remotes/hq/main"),
+		route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef),
+		route.git("fetch "+address+" +main:refs/remotes/hq/main"),
+		route.git("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
 		route.git("push "+address+" "+realignBranch), realignBranch)
 }
+
+// gitHubTipRef is where the realignment keeps GitHub's default branch as
+// fetched by its address: no remote names GitHub in a checkout.
+const gitHubTipRef = "refs/remotes/github/default"
 
 // gitHubRepoName is a GitHub repository's address as owner/name, the
 // address itself when it names none.

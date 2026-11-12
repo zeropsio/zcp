@@ -225,17 +225,19 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 		return lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
 	}
 	handedNote := handedElsewhere(hqc, handed, target.Repo)
-	if origin == hq.OriginOnGitHub {
-		return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (%s, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
-			number, target.Repo, result.Branch, route.git("push origin "+result.Branch)) + handedNote
-	}
 	push, bound := result.Branch, ""
 	if result.Branch != branch {
 		push = branch + ":" + result.Branch
 		bound = fmt.Sprintf(", not %q — this HQ binds a change to a branch of its own, as HQ did before changes were bound to the branch they name —", branch)
 	}
+	// On GitHub too, the work is pushed to origin, HQ, like any other: HQ
+	// alone pushes to GitHub.
+	mirrored := ""
+	if origin == hq.OriginOnGitHub {
+		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described, so open none of your own and never push to GitHub, and the person merges it in Mate."
+	}
 	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
-		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + handedNote
+		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + mirrored + handedNote
 }
 
 // openUnanswered decides an open HQ did not answer. HQ's own refusal, and a

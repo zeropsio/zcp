@@ -41,7 +41,7 @@ func TestHQRepositoryAddress_WithoutOrganisation_IsReportedNotSkipped(t *testing
 		{"kept in HQ, organisation known", "org-1", workflow.HQOriginNone, "https://hq.example/git/org-1/a1/appdev.git", nil},
 		{"kept in HQ, organisation unknown", "", workflow.HQOriginNone, "", hq.ErrNoOrganisation},
 		{"followed, organisation unknown", "", hq.OriginFollowed, "", hq.ErrNoOrganisation},
-		{"kept on GitHub needs no organisation", "", hq.OriginOnGitHub, "https://github.com/o/r", nil},
+		{"kept on GitHub, organisation unknown", "", hq.OriginOnGitHub, "", hq.ErrNoOrganisation},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -49,6 +49,37 @@ func TestHQRepositoryAddress_WithoutOrganisation_IsReportedNotSkipped(t *testing
 			got, err := hqPairOriginTarget(hqc.Address(), hqc.OrgID(), orgPair(tt.mode))
 			if !errors.Is(err, tt.wantErr) || got != tt.want {
 				t.Fatalf("hqPairOriginTarget = %q, %v; want %q, %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestHQPairOriginTarget_EveryWayTheCodeIsKept_IsItsRepositoryInHQ: a wired
+// pair's checkout's origin is its repository in HQ whichever way HQ says the
+// person keeps the code — on GitHub too, which HQ mirrors and alone pushes
+// to — and is left alone only while the record does not say.
+//
+// witness: internal/tools/hq_origin_kept.go | case hq.OriginOnGitHub, hq.OriginFollowed, workflow.HQOriginNone: → case hq.OriginFollowed, workflow.HQOriginNone:
+func TestHQPairOriginTarget_EveryWayTheCodeIsKept_IsItsRepositoryInHQ(t *testing.T) {
+	t.Parallel()
+	const inHQ = "https://hq.example/git/org-1/a1/appdev.git"
+	hqc := orgClient(t, "org-1")
+	for _, tt := range []struct {
+		name string
+		pair *workflow.ServiceMeta
+		want string
+	}{
+		{"kept on GitHub", orgPair(hq.OriginOnGitHub), inHQ},
+		{"followed", orgPair(hq.OriginFollowed), inHQ},
+		{"in HQ alone", orgPair(workflow.HQOriginNone), inHQ},
+		{"an HQ that does not say", orgPair(""), ""},
+		{"not read yet", &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: "a1", Repo: "appdev"}}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := hqPairOriginTarget(hqc.Address(), hqc.OrgID(), tt.pair)
+			if err != nil || got != tt.want {
+				t.Fatalf("hqPairOriginTarget = %q, %v; want %q", got, err, tt.want)
 			}
 		})
 	}

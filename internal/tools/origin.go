@@ -49,9 +49,9 @@ type originAnswer struct {
 
 // RegisterOrigin registers zerops_origin: a Mate's agent asks the person
 // where the code of a repository it came from is kept (docs/spec-mate.md
-// §5.10) — on GitHub, which HQ mounts through its GitHub App and the
-// checkout's origin becomes, or in Mate, HQ's git staying the origin and the
-// repository only followed. Like zerops_env action="request" it writes
+// §5.10) — on GitHub, which HQ mounts through its GitHub App and mirrors
+// both ways, or in Mate, the repository only followed. Either way HQ's git
+// is the checkout's origin. Like zerops_env action="request" it writes
 // nothing; Mate draws the card and the person picks in HQ.
 func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
@@ -141,7 +141,7 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 		}
 		return originAnswer{Connected: connected,
 			NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that repository, %s, never from the asked address, and never ask for a token: %s.",
-				req.URL, holder, req.Repo, holder, originFromHolder(req.Repo, holder, origin, state, hqAddress, orgID, stateDir))}
+				req.URL, holder, req.Repo, holder, originFromHolder(req.Repo, holder, state, hqAddress, orgID, stateDir))}
 	}
 	if !ops.IsGitHubRepository(req.URL) {
 		return originAnswer{
@@ -162,7 +162,8 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 // repository in HQ: HQ follows GitHub and takes the repository's `main` from
 // it in place of the one initial commit HQ made `main` with, so `main` starts
 // as GitHub's own and its history gains no commit of HQ's. The agent's own
-// setup follows as an ordinary change, which HQ merges on GitHub by squash.
+// setup follows as an ordinary change, pushed to HQ, which HQ merges on
+// GitHub by squash.
 const originMainFromGitHub = "Connected, HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`: never clone it in and merge it, and never merge HQ's initial commit into its history; " +
 	"your own setup goes in after it, as an ordinary change on a branch cut from that `main` — on GitHub a pull request, merged by squash."
 
@@ -181,7 +182,7 @@ func originAsItsOwnBranch(host, onto string) string {
 
 // inDevService is cmds — each a git command's arguments — run one after
 // another in host's dev service through `zcp git`, which runs git in the
-// checkout zcp's record names and answers it for HQ and GitHub
+// checkout zcp's record names and answers it for HQ and, to read, GitHub
 // (docs/spec-mate.md §6.8): one command line in backticks, stopping at the
 // first that fails.
 func inDevService(host string, cmds ...string) string {
@@ -205,14 +206,19 @@ func originKept(req ops.OriginRequest, mode, host string) string {
 }
 
 // originOnGitHub is how a repository whose code is kept on GitHub is worked
-// on in host's dev service: its origin is GitHub — the wiring points it there
-// (hqPairOrigin), never a second remote — and zcp answers git there for it
-// (`zcp git`); work goes on a branch of the agent's own, pushed to origin,
-// and its change is opened after the push. HQ opens the branch's pull request
-// and the person merges it in Mate, so the agent's own pull request is never
-// where the work ends.
+// on in host's dev service: as every other. Its checkout's origin is its
+// repository in HQ, which mirrors GitHub both ways — the wiring keeps it
+// there (hqPairOrigin), never GitHub, never a second remote; work goes on a
+// branch of the agent's own, pushed to origin, and its change is opened
+// after the push. HQ alone pushes to GitHub: it puts the change's branch
+// there and opens its pull request, the person merges it in Mate, and `zcp
+// git` refuses a push to GitHub (docs/spec-mate.md §6.8) — so neither the
+// agent's own pull request nor its own push there is where the work ends.
 func originOnGitHub(host string) string {
-	return fmt.Sprintf("ZCP points the checkout's origin at GitHub, never a second remote; work on it in its dev service, where zcp answers git for GitHub: %s, a branch of your own (%s), commit, %s, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: HQ opens its pull request on GitHub from that branch and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. Never push `main` and never force-push: `main` moves only by a merge.",
+	return fmt.Sprintf("the checkout's origin is its repository in HQ, which mirrors GitHub both ways — ZCP keeps it there: never point origin at GitHub and never add GitHub as a remote. "+
+		"Work on it in its dev service as on any repository: %s, a branch of your own (%s), commit, %s, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: "+
+		"HQ puts that branch on GitHub and opens its pull request there, and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. "+
+		"Never push to GitHub — HQ alone does, and `zcp git` refuses it. Never push `main` and never force-push: `main` moves only by a merge, and GitHub's default branch with it.",
 		inDevService(host, "fetch origin"), inDevService(host, "checkout -b <branch> origin/main"), inDevService(host, "push origin <branch>"))
 }
 
@@ -305,16 +311,12 @@ func originTake(host, fetch string) string {
 // a pair's checkout: into holder's own, when it is one of this project's
 // services; else, since an HQ repository of the application can belong to a
 // sibling Mate's project and name no host here, fetched into the asked
-// repository's — from GitHub when the person keeps holder's code there, else
-// from HQ.
-func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateState, hqAddress, orgID, stateDir string) string {
+// repository's from HQ — also when the person keeps holder's code on GitHub:
+// HQ's `main` is GitHub's default branch while the two follow each other,
+// under the one name `main`, and the Mate's own credential answers it.
+func originFromHolder(repo, holder string, state hq.MateState, hqAddress, orgID, stateDir string) string {
 	if meta, err := workflow.FindServiceMeta(stateDir, holder); err == nil && meta != nil {
 		return originFromHQ(meta.Hostname)
-	}
-	host := originHost(stateDir, repo)
-	if origin.Mode == hq.OriginOnGitHub {
-		// GitHub's address in the fetch's own argv is what zcp answers.
-		return originTake(host, "fetch "+origin.URL+" main")
 	}
 	appID := ""
 	if state.AppID != nil {
@@ -324,5 +326,5 @@ func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateSt
 	if err != nil {
 		return "(HQ's address for it cannot be built: " + err.Error() + ")"
 	}
-	return originTake(host, "fetch "+holderURL+" main")
+	return originTake(originHost(stateDir, repo), "fetch "+holderURL+" main")
 }

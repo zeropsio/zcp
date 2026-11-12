@@ -63,7 +63,8 @@ type ServiceMeta struct {
 	CloseDeployModeConfirmed bool                     `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
 	GitPushState             topology.GitPushState    `json:"gitPushState,omitempty"`
 	// RemoteURL caches `git remote get-url origin`; a pair wired to HQ keeps
-	// its repository in HQ here even while origin is GitHub (HQ.Origin).
+	// its repository in HQ here, also where the person keeps the code on
+	// GitHub (HQ.Origin): the checkout's origin is HQ either way.
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
 	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	// TrackedRef is the ref a target consumes — what stage or prod is built

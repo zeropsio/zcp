@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // flipOnGitHub is flip.studio's GitHub repository, connected through the
@@ -54,9 +56,10 @@ func TestHQPass_GitHubMirror_SaidOnceWhenHQMirrorsTheRepository(t *testing.T) {
 			}
 			for _, want := range []string{
 				`repository "appdev": `,
-				"stop pushing to GitHub's default branch yourself",
-				"drop any note of your own",
-				"a merged change reaches GitHub as its pull request",
+				"and alone pushes there: its checkout's origin stays its repository in HQ, and `zcp git` refuses a push to GitHub",
+				"Drop any note of your own that says to push to GitHub or to sync it after a merge",
+				"puts each open change's branch there and opens its pull request",
+				"a merged change reaches GitHub as that pull request",
 			} {
 				if !strings.Contains(report, want) {
 					t.Errorf("the pass misses %q:\n%s", want, report)
@@ -91,9 +94,9 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 		`repository "appdev": `,
 		"have diverged",
 		"since 2026-10-28T10:00:00.000Z",
-		"zcp git appdev remote set-head origin --auto",
+		"zcp git appdev fetch " + flipOnGitHub.URL + " +HEAD:refs/remotes/github/default",
 		"+main:refs/remotes/hq/main",
-		"zcp git appdev checkout -b realign-github origin/HEAD",
+		"zcp git appdev checkout -b realign-github refs/remotes/github/default",
 		"zcp git appdev merge refs/remotes/hq/main",
 		"zcp git appdev push " + lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git realign-github",
 		`action="open-change" branch="realign-github"`,
@@ -103,7 +106,7 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 			t.Errorf("the pass misses %q:\n%s", want, report)
 		}
 	}
-	for _, never := range []string{"--force", "rebase", "allow-unrelated-histories"} {
+	for _, never := range []string{"--force", "rebase", "allow-unrelated-histories", "origin/HEAD", "set-head"} {
 		if strings.Contains(report, never) {
 			t.Errorf("the pass names %q:\n%s", never, report)
 		}
@@ -122,12 +125,14 @@ func TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment(t *testing.T) 
 }
 
 // TestDivergedWords_RunsGitInTheService: the realignment is git in the
-// repository's dev service through `zcp git <host>` — its origin is GitHub,
-// which zcp answers for the record's origin, and the push names HQ's address
-// in its argv, which zcp answers with the Mate's credential — never in the
-// agent's own shell on the mount.
+// repository's dev service through `zcp git <host>` — its origin is HQ, so
+// GitHub's default branch is fetched by GitHub's address, which zcp answers
+// with a read token for a URL in a fetch's argv, and the fetch and the push
+// of HQ name HQ's address, which zcp answers with the Mate's credential —
+// never in the agent's own shell on the mount, and never a push to GitHub.
 func TestDivergedWords_RunsGitInTheService(t *testing.T) {
 	t.Parallel()
+	const github = "https://github.com/acme/app"
 	lab := newHQLab(t)
 	lab.wire()
 	hqc, linked := openHQ(lab.hq.srv.Client(), lab.rt)
@@ -136,22 +141,63 @@ func TestDivergedWords_RunsGitInTheService(t *testing.T) {
 	}
 	address := lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git"
 
-	words := divergedWords(lab.stateDir, hqc, labApp, "appdev", "2026-10-28T10:00:00.000Z")
+	words := divergedWords(lab.stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z")
 
 	for _, want := range []string{
 		"in its dev service appdev",
-		"`zcp git appdev fetch origin && zcp git appdev remote set-head origin --auto && zcp git appdev fetch " + address + " +main:refs/remotes/hq/main`",
-		"`zcp git appdev checkout -b realign-github origin/HEAD && zcp git appdev merge refs/remotes/hq/main`",
+		"`zcp git appdev fetch " + github + " +HEAD:refs/remotes/github/default`",
+		"`zcp git appdev fetch " + address + " +main:refs/remotes/hq/main`",
+		"`zcp git appdev checkout -b realign-github refs/remotes/github/default && zcp git appdev merge refs/remotes/hq/main`",
 		"`zcp git appdev push " + address + " realign-github`",
+		"Never push to GitHub — HQ alone does — and never force-push",
 	} {
 		if !strings.Contains(words, want) {
 			t.Errorf("the realignment lacks %q: %s", want, words)
 		}
 	}
-	for _, never := range []string{"own shell", "mounted checkout", "(`git ", "`git "} {
+	for _, never := range []string{"own shell", "mounted checkout", "(`git ", "`git ", "origin/HEAD", "push " + github} {
 		if strings.Contains(words, never) {
 			t.Errorf("the realignment says %q: %s", never, words)
 		}
+	}
+}
+
+// TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit: a repository only
+// pairs keyed by dev pools hold is realigned in a lease, whose own git over
+// ssh has no credential for GitHub: the fetch of GitHub's default branch
+// goes through `zcp git <alias>`, which answers it with a read token, and
+// the rest runs in the lease as its git always does.
+//
+// witness: internal/tools/hq_github_mirror.go | route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef), → route.git("fetch "+github+" +HEAD:"+gitHubTipRef),
+func TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit(t *testing.T) {
+	t.Parallel()
+	const github = "https://github.com/acme/app"
+	hqc, err := hq.Open(http.DefaultClient, hq.Identity{Origin: "https://hq.example", Key: "k", ProjectID: labMate, OrgID: labOrg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "webpool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+		BootstrapSession: "test", BootstrappedAt: "2026-10-02", GitPushState: topology.GitPushConfigured,
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"}, DevPool: &workflow.DevPoolRef{ServiceID: "svc-webpool"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	words := divergedWords(stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z")
+
+	for _, want := range []string{
+		"in a lease of the dev pool webpool",
+		"`zcp git <alias> fetch " + github + " +HEAD:refs/remotes/github/default`",
+		"`ssh <alias> \"cd /var/www && git checkout -b realign-github refs/remotes/github/default && git merge refs/remotes/hq/main\"`",
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the realignment lacks %q: %s", want, words)
+		}
+	}
+	if never := "git fetch " + github; strings.Contains(words, "&& "+never) || strings.Contains(words, "\"cd /var/www && "+never) {
+		t.Errorf("the realignment fetches GitHub over ssh, where no credential answers it: %s", words)
 	}
 }
 

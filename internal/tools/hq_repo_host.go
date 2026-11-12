@@ -12,8 +12,8 @@ import (
 // A Mate's agent runs every git command for a repository of its HQ in a dev
 // service, never on the sshfs mount (docs/spec-mate.md §6.8): `zcp git
 // <host>` in the dev service of the repository's pair, where zcp answers git
-// for HQ and GitHub, and over ssh in a lease where a dev pool holds the
-// repository's checkouts, as a lease's git always ran. The words zcp gives
+// for HQ and, to read, for GitHub, and over ssh in a lease where a dev pool
+// holds the repository's checkouts, as a lease's git always ran. The words zcp gives
 // about a change name that place, read here from zcp's own records alone.
 
 // repoRoute is where the agent runs git for one repository of this Mate's HQ
@@ -101,6 +101,20 @@ func (r repoRoute) git(cmds ...string) string {
 	}
 	prefix := "zcp git " + host + " "
 	return "`" + prefix + strings.Join(cmds, " && "+prefix) + "`"
+}
+
+// relayed is cmds run one after another through `zcp git`, in a lease too —
+// by its alias — for git that asks for a GitHub repository: zcp answers it
+// there with a read token, which a lease's own git over ssh has none for.
+func (r repoRoute) relayed(cmds ...string) string {
+	at := r.host
+	if r.leased() {
+		at = r.lease
+		if at == "" {
+			at = "<alias>"
+		}
+	}
+	return repoRoute{host: at}.git(cmds...)
 }
 
 // where names the place r runs git.

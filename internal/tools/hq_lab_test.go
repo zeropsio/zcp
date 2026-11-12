@@ -567,13 +567,6 @@ func (f *fakeHQ) keepOn(origin hq.RepoOrigin) {
 	f.origins["appdev"] = origin
 }
 
-// keepInHQ disconnects appdev's origin: HQ alone keeps its code.
-func (f *fakeHQ) keepInHQ() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.origins, "appdev")
-}
-
 // window is the Mate's changes its state lists, newest first per
 // repository: on an HQ that keeps an open change per branch every open one
 // and the newest hq.MateChangesPerRepo settled ones; on today's HQ the newest

@@ -370,8 +370,8 @@ func lazySelf(hqc hq.Client) func() (hq.MateState, error) {
 // keepHQPairCurrent is one wired pair's turn of a pass: moved off an HQ the
 // Mate no longer links to (moveFromRetiredHQ), wired again in the
 // application HQ holds the Mate in now, if that moved, how its code is kept
-// (recordHQOrigin) and so where its checkout's origin points (hqPairOrigin),
-// and its `main` against HQ's (hqPairMain). Its repository's changes are the
+// (recordHQOrigin), its checkout's origin on its repository in HQ
+// (hqPairOrigin), and its `main` against HQ's (hqPairMain). Its repository's changes are the
 // pass's turn after the pairs' (hqChangesPass). wired is whether the pass
 // wired it again.
 func keepHQPairCurrent(
@@ -581,7 +581,7 @@ type hqWiringOutcome struct {
 // wireHQPair gives one pair its repository in HQ: the repository repoName in
 // the application HQ holds the Mate in (made if new), git-push to it, the
 // checkout on a `main` descending from the repository's, the HQ record, and
-// the checkout's origin where the person keeps the code (hqPairOrigin) —
+// the checkout's origin left on it alone (hqPairOrigin) —
 // nothing builds from the repository on the Mate's side: Core deploys the
 // application's environments from its commits. repoName is the pair's dev
 // hostname for a pair zcp
@@ -689,8 +689,9 @@ func wireHQPair(
 	if previous != "" && !sameGitRepository(previous, remote) {
 		ops.MovePoolDefaultRepos(stateDir, previous, remote)
 	}
-	// git-push-setup pointed origin at HQ; where the person keeps the code on
-	// GitHub, the wiring points it there last.
+	// git-push-setup pointed origin at HQ, keeping the origin it replaced as a
+	// remote of its own: read how the code is kept, so the wiring drops that
+	// remote when it names the GitHub repository HQ mirrors (hqPairOrigin).
 	if state, err := self(); err == nil {
 		recordHQOrigin(stateDir, m, state)
 	}

@@ -548,11 +548,12 @@ func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T
 
 // TestDevelopStart_SaysHowEachRepositorysCodeIsKept: develop's start reads
 // from HQ how each wired pair's repository's code is kept and records it, so
-// status names it (origin.mode). A repository kept on GitHub is worked on
-// through its checkout's origin, which is GitHub — set there, never a second
-// remote — and its change is opened after the push: HQ opens its pull request
-// and the person merges it in Mate. A repository HQ alone keeps is worked on
-// as before.
+// status names it (origin.mode). A repository kept on GitHub is worked on as
+// every other, through its checkout's origin, which is its repository in HQ —
+// never GitHub, never a second remote — and its change is opened after the
+// push: HQ alone pushes to GitHub, opens its pull request there, and the
+// person merges it in Mate. A repository HQ alone keeps is worked on as
+// before.
 func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
@@ -567,10 +568,14 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
 			record: workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: github},
 			want: []string{
-				"origin.mode=github", "origin=" + github, "its checkout's origin is GitHub",
-				"`zcp git appdev fetch origin`", "`zcp git appdev push origin <branch>`", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
+				"origin.mode=github", "origin=" + github,
+				"appdev: its code is on GitHub at " + github + ", which HQ mirrors, and its checkout's origin is its repository in HQ",
+				"never point origin at GitHub and never add GitHub as a remote",
+				"`zcp git appdev fetch origin`", "`zcp git appdev push origin <branch>`", `action="open-change"`,
+				"HQ puts that branch on GitHub and opens its pull request there", "merges it in Mate",
+				"Never push to GitHub — HQ alone does, and `zcp git` refuses it",
 			},
-			never: []string{"remote add", "set-url origin", "--fill", "own shell", "never over ssh"},
+			never: []string{"remote add", "set-url origin", "--fill", "own shell", "never over ssh", "its checkout's origin is GitHub"},
 		},
 		{
 			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
@@ -596,6 +601,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 			if tc.origin != nil {
 				lab.hq.keepOn(*tc.origin)
 			}
+			lab.snapshotMate(t.Context())
 
 			text := lab.developStart()
 
@@ -616,73 +622,101 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 	}
 }
 
-// TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept: the wiring is
-// the one writer of a wired pair's `origin`. Kept on GitHub, origin is the
-// GitHub repository, git asking only zcp for it; kept in HQ or followed, it
-// is HQ's repository — and it follows the person's pick when it changes.
-// There is never a second remote, and HQ is still reached at its own address.
-func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
+// TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ: an older zcp pointed
+// the checkout of a pair kept on GitHub at the GitHub repository, with a
+// helper answering github.com. The pass points its origin back at its
+// repository in HQ — the one remote — and says so once, with how the work
+// goes on: fetch origin, push the branch to origin, HQ alone pushing to
+// GitHub — and only on to branches it put there, so work on a branch this
+// container pushed to GitHub is finished on a new branch, as a new change. The helper lines stay as they were, the agent's branch stays
+// checked out, and HQ is still reached at its own address.
+//
+// witness: internal/tools/hq_origin_kept.go | if [ "$cur" != %s ]; then → if [ "$cur" = %s ]; then
+func TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
 	lab := newHQLab(t)
 	lab.wire()
 	hqOrigin := lab.git("remote", "get-url", "origin")
 	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.snapshotMate(t.Context())
 	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
 	lab.git("checkout", "-q", "-b", "fix-login")
 	lab.git("update-ref", "refs/heads/main",
 		lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", lab.git("mktree"), "-m", "zcp init"))
-
-	lab.developStart()
-
-	if got := lab.git("remote", "get-url", "origin"); got != github {
-		t.Errorf("kept on GitHub, origin = %q, want %q", got, github)
+	lab.git("remote", "set-url", "origin", github)
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+hq.GitHubHelperConfig); err != nil {
+		t.Fatalf("write the older zcp's helper: %v\n%s", err, out)
 	}
-	if got := lab.git("config", "--get-all", "credential.https://github.com.helper"); !strings.Contains(got, "!zcp hq git-credential") {
-		t.Errorf("git does not ask zcp for GitHub: %q", got)
+	helper := lab.git("config", "--get-all", "credential.https://github.com.helper")
+
+	said := lab.developStart()
+
+	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
+		t.Errorf("origin = %q, want its repository in HQ %q", got, hqOrigin)
 	}
 	if got := lab.git("remote"); got != "origin" {
 		t.Errorf("remotes = %q, want origin alone", got)
 	}
+	for _, want := range []string{
+		"its checkout's origin is its repository in HQ now (" + hqOrigin + "), no longer GitHub",
+		"its code is still on GitHub at " + github + ", which HQ mirrors both ways and alone pushes to",
+		"`zcp git appdev fetch origin`", "`zcp git appdev push origin <branch>`",
+		"A branch you pushed to GitHub yourself is not carried on there: HQ pushes on only to branches it put on GitHub",
+		"Finish such work on a new branch (`zcp git appdev checkout -b <new branch>`) pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded",
+		"a branch not pushed anywhere yet, and a change whose branch HQ put on GitHub, go on as they are",
+		"`zcp git` refuses a push to GitHub",
+	} {
+		if !strings.Contains(said, want) {
+			t.Errorf("develop's start lacks %q:\n%s", want, said)
+		}
+	}
+	if got := lab.git("config", "--get-all", "credential.https://github.com.helper"); got != helper {
+		t.Errorf("the helper an older zcp wrote = %q, want it left as it was %q", got, helper)
+	}
 	if got, want := lab.git("rev-parse", "main"), lab.remoteHead("main"); got != want {
 		t.Errorf("HQ was not reached at its own address: main is %s, want HQ's %s", got, want)
 	}
-
-	lab.hq.keepInHQ()
-	lab.developStart()
-
-	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
-		t.Errorf("kept in HQ again, origin = %q, want HQ's %q", got, hqOrigin)
-	}
 	if got := lab.git("branch", "--show-current"); got != "fix-login" {
 		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+	if again := lab.developStart(); strings.Contains(again, "no longer GitHub") {
+		t.Errorf("the next start says the move again:\n%s", again)
 	}
 }
 
 // TestStatus_SaysWhatTheCheckoutsOriginIsNow: status names the wired pair's
 // checkout's origin as it is now, read from the checkout, beside how HQ says
-// its code is kept. While the wiring has not pointed origin where HQ's way
-// keeps it — a pair wired before zcp moved origin — status says the move is
-// pending and where develop's start points it; once moved, it says none.
+// its code is kept. While it is not its repository in HQ — a checkout an
+// older zcp pointed at GitHub — status says the move is pending and where
+// develop's start points it; once moved, and for a checkout never pointed
+// away, it says none.
 func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
 	for _, tc := range []struct {
-		name    string
-		keep    hq.RepoOrigin
-		started bool
-		want    func(hqOrigin string) []string
-		never   []string
+		name string
+		keep hq.RepoOrigin
+		// onGitHub is a checkout an older zcp pointed at GitHub.
+		onGitHub bool
+		started  bool
+		want     func(hqOrigin string) []string
+		never    []string
 	}{
 		{
-			name: "kept on GitHub before develop's start moves origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			name: "kept on GitHub, pointed there by an older zcp", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub}, onGitHub: true,
 			want: func(hqOrigin string) []string {
-				return []string{"origin.mode=github", "checkoutOrigin=" + hqOrigin + " (pending: develop's start points it at " + github + ")"}
+				return []string{"origin.mode=github", "checkoutOrigin=" + github + " (pending: develop's start points it at " + hqOrigin + ")"}
 			},
 		},
 		{
-			name: "kept on GitHub once develop's start moved origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub}, started: true,
-			want:  func(string) []string { return []string{"origin.mode=github", "checkoutOrigin=" + github} },
+			name: "kept on GitHub once develop's start moved origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub}, onGitHub: true, started: true,
+			want:  func(hqOrigin string) []string { return []string{"origin.mode=github", "checkoutOrigin=" + hqOrigin} },
+			never: []string{"(pending: develop's start points it at"},
+		},
+		{
+			name: "kept on GitHub, HQ the origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			want:  func(hqOrigin string) []string { return []string{"origin.mode=github", "checkoutOrigin=" + hqOrigin} },
 			never: []string{"(pending: develop's start points it at"},
 		},
 		{
@@ -708,6 +742,9 @@ func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 			}
 			lab.hq.keepOn(tc.keep)
 			lab.snapshotMate(t.Context())
+			if tc.onGitHub {
+				lab.git("remote", "set-url", "origin", github)
+			}
 			if tc.started {
 				lab.developStart()
 			}
@@ -781,20 +818,20 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 }
 
 // TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote: a pair kept on
-// GitHub whose git-push an older zcp left broken is wired again; the wiring
-// keeps the origin it replaces as a remote of its own, which here is GitHub's
-// — the very origin the pass points the checkout back at. The pass leaves
-// origin alone, never a second remote naming GitHub.
+// GitHub, its checkout pointed there by an older zcp, whose git-push that zcp
+// left broken is wired again; the wiring keeps the origin it replaces as a
+// remote of its own, which here is the GitHub repository HQ mirrors. The
+// pass drops it: origin is its repository in HQ, never a second remote
+// naming GitHub.
 func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
 	lab := newHQLab(t)
 	lab.wire()
+	hqOrigin := lab.git("remote", "get-url", "origin")
 	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
-	lab.developStart()
-	if got := lab.git("remote", "get-url", "origin"); got != github {
-		t.Fatalf("kept on GitHub, origin = %q, want %q", got, github)
-	}
+	lab.snapshotMate(t.Context())
+	lab.git("remote", "set-url", "origin", github)
 	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
 		meta.GitPushState = topology.GitPushBroken
 		return nil
@@ -807,8 +844,8 @@ func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) 
 	if got := lab.meta().GitPushState; got != topology.GitPushConfigured {
 		t.Fatalf("the pair was not wired again: git-push %q", got)
 	}
-	if got := lab.git("remote", "get-url", "origin"); got != github {
-		t.Errorf("origin = %q, want %q", got, github)
+	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
+		t.Errorf("origin = %q, want its repository in HQ %q", got, hqOrigin)
 	}
 	if got := lab.git("remote"); got != "origin" {
 		t.Errorf("remotes = %q, want origin alone", got)

@@ -6,8 +6,9 @@ import (
 
 // BuildMainSyncCommand checks a wired pair's local `main` against the
 // repository's `main` in HQ, fetched from repoURL — HQ's address, never
-// `origin`: in a checkout kept on GitHub, origin is GitHub, which only the
-// Mate's own shell can answer. HQ's `main` follows GitHub's there.
+// `origin`: a checkout an older zcp pointed at GitHub keeps that origin until
+// a pass moves it. Where the person keeps the code on GitHub, HQ's `main`
+// follows GitHub's default branch.
 //
 // A checkout wired before branches of the agent's own kept zcp's seed — one
 // parentless commit of the empty tree, unrelated to HQ's history — as its

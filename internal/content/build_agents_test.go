@@ -701,7 +701,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"Never push `main` and never force-push",
 		"`zcp git <host> checkout main && zcp git <host> fetch origin && zcp git <host> merge --ff-only origin/main`",
 		"`zcp git <host> push origin <branch>`",
-		"its git runs through `zcp git <host>` like any other",
+		"for a fetch from a repository on GitHub with the read token HQ mints for that call",
 		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
 		// Current change status must come from a fresh owning read, including
@@ -715,12 +715,17 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"If the fresh read fails or says \"as last read\"",
 		"say the current status is unknown and when it was last seen",
 		"never repeat the old state as current",
-		// A repository kept on GitHub: GitHub is origin, and its change is
+		// A repository kept on GitHub is worked on like any other: HQ is its
+		// checkout's origin, HQ alone pushes to GitHub, and its change is
 		// opened after the push — HQ's pull request, merged in Mate.
 		"`origin.mode=github`",
-		"which ZCP points there, never a second remote",
-		"HQ opens its pull request on GitHub",
-		"merges it in Mate",
+		"is worked on like any other: its checkout's origin is its repository in HQ too, never GitHub, and no second remote names GitHub",
+		"a checkout an older ZCP pointed at GitHub is moved back by develop's start",
+		"A branch you pushed to GitHub yourself before that move is not carried on there by a push to origin",
+		"finish that work on a new branch pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded",
+		"HQ alone pushes to GitHub",
+		"a push of your own to GitHub is refused: `zcp git` answers GitHub only for fetches",
+		"merges the change in Mate",
 		// A monorepo is one repository: never a dev service per part, each
 		// of which would be a pair asking HQ for a repository of its own.
 		"a repository of several parts stays one repository",
@@ -1231,9 +1236,10 @@ func TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand(t *testing.T) {
 		t.Fatalf("BuildAgentsMD: %v", err)
 	}
 	for _, want := range []string{
-		"HQ mirrors such a repository to GitHub itself",
-		"never sync GitHub by hand",
+		"HQ alone pushes to GitHub: it mirrors such a repository itself",
+		"Never sync GitHub by hand",
 		"nor copy a merged change onto it",
+		"GitHub's default branch moves only by that merge",
 		"a merged change reaches GitHub as its pull request",
 		"the one change that brings them back in step",
 	} {
@@ -1245,7 +1251,7 @@ func TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAgentsMD: %v", err)
 	}
-	if strings.Contains(plain, "never sync GitHub by hand") {
+	if strings.Contains(plain, "sync GitHub by hand") {
 		t.Error("a plain container's AGENTS.md speaks of HQ's GitHub mirror")
 	}
 }

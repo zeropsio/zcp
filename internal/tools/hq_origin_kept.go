@@ -78,16 +78,22 @@ func attachHQStateOrigins(services []workflow.ServiceSnapshot, stateDir string, 
 	}
 }
 
-// hqPairOrigin points a wired pair's checkout's origin where its record says
-// the code is kept — the one writer of it once the pair is wired: on GitHub,
-// the GitHub repository, git asking only zcp for it (hq.GitHubHelperConfig);
-// in HQ or followed, its repository in HQ. A record that does not say leaves
-// origin as it is. Never a second remote: what zcp needs of HQ it reaches at
-// HQ's own address (ops.BuildMainSyncCommand). The line says a move, "" for
-// none; a repository's address that cannot be built is said, not skipped.
-// A pair keyed by its dev pool has no checkout to point — the pool's
-// hostname answers from a random container, possibly someone's lease — so
-// nothing moves: a lease's origin is the repository it checks out.
+// hqPairOrigin points a wired pair's checkout's origin at its repository in
+// HQ — the one writer of it once the pair is wired — however the record says
+// its code is kept: in HQ, followed, or on GitHub, which HQ mirrors both
+// ways and alone pushes to. A checkout an older zcp pointed at GitHub moves
+// here; the helper that zcp wrote into it for github.com stays
+// (hq.GitHubHelperConfig), where it brings a read token and nothing more. A
+// record that does not say leaves origin as it is. Never a second remote:
+// what zcp needs of GitHub it reaches by its address (divergedWords). The
+// line says a move — off GitHub, with how the work goes on: HQ pushes on
+// only to branches it put on GitHub, so work on a branch this container
+// pushed there itself is finished under a new branch name, as a new change
+// — "" for none; a repository's address that cannot be built is said, not
+// skipped. A pair
+// keyed by its dev pool has no checkout to point — the pool's hostname
+// answers from a random container, possibly someone's lease — so nothing
+// moves: a lease's origin is the repository it checks out.
 func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
 	if m.DevIsPool() {
 		return ""
@@ -99,41 +105,62 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 	if url == "" {
 		return ""
 	}
-	helper := ""
-	if m.HQ.Origin.Mode == hq.OriginOnGitHub {
-		helper = hq.GitHubHelperConfig + " && "
-	}
 	// Wiring again keeps the origin it replaces as a remote of its own
-	// (ops.BuildGitOriginSyncCommand); one naming where origin points is a
-	// second remote of the same repository, and goes.
+	// (ops.BuildGitOriginSyncCommand); one naming where origin points, or the
+	// GitHub repository HQ mirrors, is a second remote of the same
+	// repository, and goes.
+	second := []string{url}
+	mirrored := m.HQ.Origin.Mode == hq.OriginOnGitHub && m.HQ.Origin.URL != ""
+	if mirrored {
+		second = append(second, m.HQ.Origin.URL)
+	}
+	var drop strings.Builder
+	for _, same := range second {
+		fmt.Fprintf(&drop, `{ [ "$(git remote get-url %s 2>/dev/null)" != %s ] || git remote remove %s 2>/dev/null || true; } && `,
+			ops.KeptOriginRemote, ops.ShellQuote(same), ops.KeptOriginRemote)
+	}
 	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, fmt.Sprintf(
-		`cd %s && %s{ [ "$(git remote get-url %s 2>/dev/null)" != %s ] || git remote remove %s 2>/dev/null || true; } && cur=$(git remote get-url origin 2>/dev/null || true); if [ "$cur" != %s ]; then { git remote set-url origin %s 2>/dev/null || git remote add origin %s; } && echo %s; fi`,
-		ops.ShellQuote(hqPairWorkingDir(m)), helper, ops.KeptOriginRemote, ops.ShellQuote(url), ops.KeptOriginRemote,
+		`cd %s && %scur=$(git remote get-url origin 2>/dev/null || true); if [ "$cur" != %s ]; then { git remote set-url origin %s 2>/dev/null || git remote add origin %s; } && echo %s "$cur"; fi`,
+		ops.ShellQuote(hqPairWorkingDir(m)), drop.String(),
 		ops.ShellQuote(url), ops.ShellQuote(url), ops.ShellQuote(url), originMovedMarker))
+	was, moved := originMovedFrom(string(out))
 	switch {
 	case err != nil:
-		return fmt.Sprintf("its checkout's origin could not be pointed at %s, where its code is kept (%v) — retrying on the next pass", url, err)
-	case !strings.Contains(string(out), originMovedMarker):
+		return fmt.Sprintf("its checkout's origin could not be pointed at its repository in HQ, %s (%v) — retrying on the next pass", url, err)
+	case !moved:
 		return ""
-	case helper != "":
-		return fmt.Sprintf("its code is kept on GitHub, so its checkout's origin is %s now: fetch and push it in its dev service through `zcp git %s`, which zcp answers for GitHub", url, m.Hostname)
+	case mirrored && sameGitRepository(was, m.HQ.Origin.URL):
+		route := repoRoute{host: m.Hostname}
+		return fmt.Sprintf("its checkout's origin is its repository in HQ now (%s), no longer GitHub: its code is still on GitHub at %s, which HQ mirrors both ways and alone pushes to. "+
+			"Take HQ's refs in first (%s), then push your branch to origin (%s) — HQ puts a change's branch on GitHub and opens its pull request. "+
+			"A branch you pushed to GitHub yourself is not carried on there: HQ pushes on only to branches it put on GitHub, so that branch's pull request stops following once you push it to origin. "+
+			"Finish such work on a new branch (%s) pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded; "+
+			"a branch not pushed anywhere yet, and a change whose branch HQ put on GitHub, go on as they are. "+
+			"`zcp git` refuses a push to GitHub, and GitHub's default branch moves only by a merge",
+			url, m.HQ.Origin.URL, route.git("fetch origin"), route.git("push origin <branch>"), route.git("checkout -b <new branch>"))
 	}
-	return fmt.Sprintf("its code is kept in HQ, so its checkout's origin is its repository there again (%s)", url)
+	return fmt.Sprintf("its checkout's origin is its repository in HQ again (%s)", url)
+}
+
+// originMovedFrom reads what hqPairOrigin's command said: whether it moved
+// origin, and the address origin had before, "" for none.
+func originMovedFrom(out string) (was string, moved bool) {
+	_, rest, moved := strings.Cut(out, originMovedMarker)
+	was, _, _ = strings.Cut(rest, "\n")
+	return strings.TrimSpace(was), moved
 }
 
 // hqPairOriginTarget is where the wiring points a wired pair's checkout's
-// origin (hqPairOrigin) by its record of how the code is kept: on GitHub, the
-// GitHub repository; in HQ or followed, its repository at the HQ at address.
-// "" when the record does not say, or HQ's address is unknown;
-// hq.ErrNoOrganisation where HQ's repository is the target and orgID is empty.
+// origin (hqPairOrigin): its repository at the HQ at address, however its
+// record says the code is kept — in HQ, followed, or on GitHub, which HQ
+// mirrors. "" when the record does not say, or HQ's address is unknown;
+// hq.ErrNoOrganisation when orgID is empty.
 func hqPairOriginTarget(address, orgID string, m *workflow.ServiceMeta) (string, error) {
 	if m.HQ.Origin == nil {
 		return "", nil
 	}
 	switch m.HQ.Origin.Mode {
-	case hq.OriginOnGitHub:
-		return m.HQ.Origin.URL, nil
-	case hq.OriginFollowed, workflow.HQOriginNone:
+	case hq.OriginOnGitHub, hq.OriginFollowed, workflow.HQOriginNone:
 		if address == "" {
 			return "", nil
 		}
@@ -148,7 +175,8 @@ const hqCheckoutOriginBound = 5 * time.Second
 
 // attachHQCheckoutOrigin reads, on each wired pair's dev half, its checkout's
 // origin as it is now, and where the wiring points it when that differs
-// (hqPairOriginTarget): status names what git pushes to, never only what the
+// (hqPairOriginTarget) — a checkout an older zcp pointed at GitHub, until a
+// pass moves it to HQ: status names what git pushes to, never only what the
 // record says it will be. Container only; a read that fails, or does not
 // answer within hqCheckoutOriginBound, leaves the half without it. It writes
 // only these two fields of services, so it runs beside attachRepoStatus. A
@@ -199,16 +227,18 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 	wg.Wait()
 }
 
-// originMovedMarker is what hqPairOrigin's command says when it moved origin.
+// originMovedMarker is what hqPairOrigin's command says when it moved origin,
+// before the address origin had (originMovedFrom).
 const originMovedMarker = "ZCP_ORIGIN_MOVED"
 
-// hqKeptOnGitHub is, per wired pair whose code its record says is kept on
-// GitHub, the line that tells develop's start how it is worked on: its
-// checkout's origin is GitHub (hqPairOrigin points it there), so the agent
-// pushes its branch to origin and opens its change. A pair kept in HQ, or
-// followed, is worked on as every other. A pair keyed by its dev pool has no
-// checkout for the line to name — its work is checked out in a lease of the
-// pool — so it gets none.
+// hqKeptOnGitHub is, per wired pair whose code its record says is on GitHub
+// — connected through the organisation's GitHub app, HQ mirroring it — the
+// line that tells develop's start how it is worked on: its checkout's origin
+// is its repository in HQ, as every pair's, so the agent pushes its branch to
+// origin and opens its change, and HQ alone pushes to GitHub
+// (originOnGitHub). A pair kept in HQ, or followed, gets none. A pair keyed
+// by its dev pool has no checkout for the line to name — its work is checked
+// out in a lease of the pool — so it gets none.
 func hqKeptOnGitHub(stateDir string) []string {
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
@@ -220,7 +250,7 @@ func hqKeptOnGitHub(stateDir string) []string {
 		if !hqPairWired(m) || m.DevIsPool() || m.HQ.Origin == nil || m.HQ.Origin.Mode != hq.OriginOnGitHub {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%s: its code is kept on GitHub at %s, and its checkout's origin is GitHub: %s",
+		lines = append(lines, fmt.Sprintf("%s: its code is on GitHub at %s, which HQ mirrors, and its checkout's origin is its repository in HQ: %s",
 			m.Hostname, m.HQ.Origin.URL, originOnGitHub(m.Hostname)))
 	}
 	return lines
