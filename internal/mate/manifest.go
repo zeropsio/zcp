@@ -107,10 +107,11 @@ type manifestCacheEntry struct {
 // ManifestOptions steers DesiredRelease's one behavioural choice: whether
 // the on-disk cache may answer instead of a network fetch.
 type ManifestOptions struct {
-	// Refresh bypasses the cache and always fetches fresh: the keep job sets it
-	// for a server that is not there, `zcp mate status --refresh` on request.
-	// The start job and a routine status check reach the network at most
-	// hourly.
+	// Refresh bypasses the cache and always fetches fresh, returning the fetch
+	// error when that fails: the keep job sets it for a server that is not
+	// there and for every attended run, `zcp mate status --refresh` on request.
+	// The start job, an automatic keep run and a routine status check reach
+	// the network at most hourly.
 	Refresh bool
 }
 

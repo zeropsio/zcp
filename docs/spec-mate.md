@@ -466,7 +466,9 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 the rollback lever: mark the bad release as pre-release, re-mark the previous one as latest). The
 answer is cached on disk with a 1-hour TTL (`~/.zcp/mate/manifest.json`, the same shape as zcp's
 own `internal/update` cache) so a warm restart and `zcp mate status` reach the network at most
-hourly; the keep job refreshes it for a server that is not there. An unreachable manifest is **not**
+hourly; the keep job refreshes it for a server that is not there and on every attended run, and a
+refresh that cannot read it says so (the keep job logs the error and decides on the copy zcp holds;
+`zcp mate status --refresh` reports the error). An unreachable manifest is **not**
 a failure: the start job starts `current` and logs the miss. With nothing installed the start fails
 and systemd retries.
 
