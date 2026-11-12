@@ -720,7 +720,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		// opened after the push — HQ's pull request, merged in Mate.
 		"`origin.mode=github`",
 		"is worked on like any other: its checkout's origin is its repository in HQ too, never GitHub, and no second remote names GitHub",
-		"a checkout an older ZCP pointed at GitHub is moved back by develop's start",
+		"a checkout an older ZCP pointed at GitHub is moved back by ZCP, at the Mate's start or develop's start",
 		"A branch you pushed to GitHub yourself before that move is not carried on there by a push to origin",
 		"finish that work on a new branch pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded",
 		"HQ alone pushes to GitHub",

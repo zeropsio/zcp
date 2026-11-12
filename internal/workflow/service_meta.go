@@ -210,6 +210,18 @@ type HQRepoRef struct {
 	// kept; nil until zcp read it from an HQ that names its repositories.
 	// Recorded so status names it without asking HQ.
 	Origin *HQOrigin `json:"origin,omitempty"`
+	// OriginMoved is a move of the checkout's origin off GitHub the agent was
+	// not told of yet: the pass that moves it records it — the Mate's start,
+	// whose lines reach only its log, as much as develop's — and develop's
+	// start says it once and clears it. nil for none.
+	OriginMoved *HQOriginMoved `json:"originMoved,omitempty"`
+}
+
+// HQOriginMoved is a checkout's origin moved off GitHub: From is the GitHub
+// repository it named, To its repository in HQ, where it points now.
+type HQOriginMoved struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // HQOrigin is how a repository's code is kept: Mode is the origin's mode as

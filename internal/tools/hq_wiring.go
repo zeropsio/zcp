@@ -399,7 +399,7 @@ func keepHQPairCurrent(
 	}
 	recordHQOrigin(stateDir, m, state)
 	lines := []string{}
-	for _, line := range []string{moved, hqPairOrigin(ctx, sshDeployer, hqc, m), hqPairMain(ctx, sshDeployer, httpClient, rt, hqc, m)} {
+	for _, line := range []string{moved, hqPairOrigin(ctx, sshDeployer, stateDir, hqc, m), hqPairMain(ctx, sshDeployer, httpClient, rt, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -700,7 +700,7 @@ func wireHQPair(
 	if left != 0 {
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
 	}
-	if kept := hqPairOrigin(ctx, sshDeployer, hqc, m); kept != "" {
+	if kept := hqPairOrigin(ctx, sshDeployer, stateDir, hqc, m); kept != "" {
 		line += "; " + kept
 	}
 	return hqWiringOutcome{line: line, wired: true}

@@ -221,7 +221,8 @@ func devGitStateChanged(rt runtime.Info, stateDir string) bool {
 // startDevGit is the Mate's start for every wired pair's dev service: a pair
 // wired at an HQ the Mate no longer links to is moved to the current one
 // (moveFromRetiredHQ), and origin is its repository in HQ, moved there from
-// GitHub where an older zcp pointed it (hqPairOrigin). settled is false when a pair could not be brought there —
+// GitHub where an older zcp pointed it (hqPairOrigin) — a move develop's
+// start tells the agent, since nothing said here reaches it. settled is false when a pair could not be brought there —
 // HQ or the dev service not answering — so the caller tries again.
 func startDevGit(
 	ctx context.Context,
@@ -290,7 +291,7 @@ func startPairDevGit(
 	}
 	if state, err := self(); err == nil {
 		recordHQOrigin(stateDir, m, state)
-		line := hqPairOrigin(ctx, sshDeployer, hqc, m)
+		line := hqPairOrigin(ctx, sshDeployer, stateDir, hqc, m)
 		say(line)
 		settled = settled && !strings.Contains(line, "could not")
 	} else {

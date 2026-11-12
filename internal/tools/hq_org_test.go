@@ -92,7 +92,7 @@ func TestHQPairLines_WithoutOrganisation_NameTheCause(t *testing.T) {
 	// No ssh deployer: a pass that reaches for the checkout has gone past the
 	// address it could not build.
 	for name, line := range map[string]string{
-		"origin": hqPairOrigin(t.Context(), nil, hqc, m),
+		"origin": hqPairOrigin(t.Context(), nil, t.TempDir(), hqc, m),
 		"main":   hqPairMain(t.Context(), nil, nil, runtime.Info{}, hqc, m),
 	} {
 		if !strings.Contains(line, hq.ErrNoOrganisation.Error()) {

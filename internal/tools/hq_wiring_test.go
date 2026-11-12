@@ -685,6 +685,63 @@ func TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ(t *testing.T) {
 	}
 }
 
+// TestMateStart_MovesACheckoutOffGitHub_DevelopStartTellsItOnce: a zcp update
+// restarts the container, and the Mate's own start — whose lines reach only
+// its log — moves the checkout an older zcp pointed at GitHub before any
+// develop start runs. The move is kept on the pair's record, so the next
+// develop start, finding origin on HQ already, still tells the agent what
+// becomes of a branch its container pushed to GitHub — once: the start
+// after says nothing of it.
+//
+// witness: internal/tools/workflow.go | report.lines = append(report.lines, tellHQOriginMoved(stateDir)...) →
+func TestMateStart_MovesACheckoutOffGitHub_DevelopStartTellsItOnce(t *testing.T) {
+	t.Parallel()
+	const github = "https://github.com/acme/app"
+	lab := newHQLab(t)
+	lab.wire()
+	hqOrigin := lab.git("remote", "get-url", "origin")
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.git("remote", "set-url", "origin", github)
+
+	logged := strings.Join(lab.mateStart(), "\n")
+
+	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
+		t.Fatalf("the Mate's start left origin at %q, want its repository in HQ %q", got, hqOrigin)
+	}
+	if strings.Contains(logged, "no longer GitHub") {
+		t.Errorf("the Mate's start said the move to its log alone, where no agent reads it:\n%s", logged)
+	}
+	want := workflow.HQOriginMoved{From: github, To: hqOrigin}
+	if got := lab.meta().HQ.OriginMoved; got == nil || *got != want {
+		t.Fatalf("the pair's record of the move = %+v, want %+v kept for develop's start", got, want)
+	}
+
+	said := lab.developStart()
+
+	for _, want := range []string{
+		"appdev: its checkout's origin is its repository in HQ now (" + hqOrigin + "), no longer GitHub",
+		"A branch you pushed to GitHub yourself is not carried on there: HQ pushes on only to branches it put on GitHub",
+		"Finish such work on a new branch (`zcp git appdev checkout -b <new branch>`) pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded",
+	} {
+		if !strings.Contains(said, want) {
+			t.Errorf("develop's start lacks %q:\n%s", want, said)
+		}
+	}
+	if n := strings.Count(said, "no longer GitHub"); n != 1 {
+		t.Errorf("develop's start says the move %d times, want once:\n%s", n, said)
+	}
+	if got := lab.meta().HQ.OriginMoved; got != nil {
+		t.Errorf("the move is still on the pair's record once told: %+v", got)
+	}
+	if again := lab.developStart(); strings.Contains(again, "no longer GitHub") {
+		t.Errorf("the next develop start says the move again:\n%s", again)
+	}
+}
+
 // TestStatus_SaysWhatTheCheckoutsOriginIsNow: status names the wired pair's
 // checkout's origin as it is now, read from the checkout, beside how HQ says
 // its code is kept. While it is not its repository in HQ — a checkout an
@@ -822,7 +879,7 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 // left broken is wired again; the wiring keeps the origin it replaces as a
 // remote of its own, which here is the GitHub repository HQ mirrors. The
 // pass drops it: origin is its repository in HQ, never a second remote
-// naming GitHub.
+// naming GitHub — and the agent is told of that move as of any other.
 func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"
@@ -839,7 +896,7 @@ func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	lab.developStart()
+	said := lab.developStart()
 
 	if got := lab.meta().GitPushState; got != topology.GitPushConfigured {
 		t.Fatalf("the pair was not wired again: git-push %q", got)
@@ -849,6 +906,9 @@ func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) 
 	}
 	if got := lab.git("remote"); got != "origin" {
 		t.Errorf("remotes = %q, want origin alone", got)
+	}
+	if want := "its checkout's origin is its repository in HQ now (" + hqOrigin + "), no longer GitHub"; !strings.Contains(said, want) {
+		t.Errorf("develop's start lacks %q:\n%s", want, said)
 	}
 }
 
