@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,6 +62,8 @@ func TestCloseChange_OwnByBranch(t *testing.T) {
 	if c := lab.hq.change(1); c.State != hq.ChangeOpen {
 		t.Errorf("closing #2 closed #1: %+v", c)
 	}
+	// The ledger forgets the close once the Mate hears HQ's state after it.
+	lab.passReport()
 	if got := branchesOf(lab.ledger()); got != "#1@fix-login" {
 		t.Errorf("ledger = %s, want #1@fix-login", got)
 	}
@@ -163,17 +167,23 @@ func closeCalls(f *fakeHQ) int {
 }
 
 // TestCloseChange_RefusedKey_SaysSoAndNoRetry: HQ answering this Mate's
-// state 401 key_refused is a known answer, not HQ silent — close-change
+// close 401 key_refused is a known answer, not HQ silent — close-change
 // names the refused key, closes nothing and advises no retry, since asking
-// again closes nothing until the key is renewed. Run in-process: HQ's
-// answer is the 401 {"code":"key_refused"} it gives every call of a revoked
-// key.
-// witness: internal/tools/hq_change_close.go | if why := accessRefusal(err); why != "" { → if why := ""; why != "" {
+// again closes nothing until the key is renewed. Run in-process: the Mate's
+// state names its change open on the branch, and HQ's answer is the 401
+// {"code":"key_refused"} it gives every call of a revoked key.
+// witness: internal/tools/hq_change_close.go | if refusal := accessRefusal(err); refusal != "" { → if refusal := ""; refusal != "" {
 func TestCloseChange_RefusedKey_SaysSoAndNoRetry(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	writeWiredPair(t, stateDir, "appdev", "appdev")
-	rt := runtime.Info{OrgID: labOrg, HQ: &runtime.HQLink{Origin: "https://hq.example.invalid", ProjectID: labMate, Key: labKey}}
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	mate := `{"rev":1,"projectId":"` + labMate + `","appId":"` + labApp + `","repos":[],"chief":null,"openPerBranch":true,` +
+		`"changes":[{"repo":"appdev","number":1,"title":"Fix the login","state":"open","branch":"fix-login","head":null,"mergedSha":null,"landedHead":null}]}`
+	if err := os.WriteFile(statePath, []byte(`{"link":"linked","mate":`+mate+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Info{OrgID: labOrg, HQ: &runtime.HQLink{Origin: "https://hq.example.invalid", ProjectID: labMate, Key: labKey, StatePath: statePath}}
 	refusing := refusingDoer{status: http.StatusUnauthorized, body: `{"code":"key_refused"}`}
 
 	res, _, err := handleCloseChange(context.Background(), refusing, rt, stateDir, WorkflowInput{Branch: "fix-login"})
