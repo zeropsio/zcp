@@ -59,7 +59,7 @@ const (
 	manifestURLEnvOverride = "ZCP_MATE_MANIFEST_URL"
 
 	// manifestFetchTimeout bounds the manifest GET — one small JSON file,
-	// nowhere near installTimeout's budget for the tarball + npm install.
+	// nowhere near InstallTimeout's budget for the tarball + npm install.
 	manifestFetchTimeout = 5 * time.Second
 
 	// manifestCacheTTL bounds how long a fetched-and-validated manifest is

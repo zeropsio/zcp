@@ -191,12 +191,12 @@ const (
 	InitMarkerPath = InitMarkerDir + "/init-complete"
 )
 
-// installTimeout bounds all release-download and npm work on the container's
-// boot path. Measured live before release delivery: 55 s for the 198-package
-// dependency install, 58 s cold end to end. Three minutes leaves headroom for
-// a slow registry without stalling a service start behind a hung connection —
-// the step degrades when it expires.
-const installTimeout = 3 * time.Minute
+// InstallTimeout bounds one release download and npm install where nothing
+// else waits on it: the keep job, and a start with nothing installed yet.
+// Measured live before release delivery: 55 s for the 198-package dependency
+// install, 58 s cold end to end; three minutes leaves headroom for a slow
+// registry. A start that has current uses StartStageTimeout instead.
+const InstallTimeout = 3 * time.Minute
 
 // smokeTimeout bounds the post-stage probes StageRelease runs before a staged
 // version may go live: `mate --version` plus the native-addon import.
@@ -380,7 +380,7 @@ func smokeTestInstall(ctx context.Context, versionDir string) error {
 
 // InstallRelease downloads one release tarball, verifies its SHA-256, then
 // npm-installs it into prefix. The caller owns ctx; the production caller
-// applies installTimeout to both the download and npm.
+// bounds the download and npm together (InstallTimeout, StartStageTimeout).
 func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256, prefix string) error {
 	if err := os.MkdirAll(prefix, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", prefix, err)
@@ -495,13 +495,15 @@ const (
 // and passes the smoke test is kept, so the keep job's download and the start
 // job's share one; one that fails it is replaced only under ReplaceFailing.
 // Otherwise the release's tarball is downloaded into it afresh, which needs
-// release.URL. The directory current or last-good names is never replaced.
-// Any failure removes the half-built directory.
-func StageRelease(release Manifest, replace Replacing) error {
+// release.URL; ctx bounds the download and npm install, while each smoke test
+// keeps its own smokeTimeout. The directory current
+// or last-good names is never replaced. Any failure removes the half-built
+// directory.
+func StageRelease(ctx context.Context, release Manifest, replace Replacing) error {
 	versionDir := VersionDir(release.Version)
 	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
-		ctx, cancel := context.WithTimeout(context.Background(), smokeTimeout)
-		err := smokeTestInstall(ctx, versionDir)
+		smokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), smokeTimeout)
+		err := smokeTestInstall(smokeCtx, versionDir)
 		cancel()
 		if err == nil {
 			return nil
@@ -522,14 +524,12 @@ func StageRelease(release Manifest, replace Replacing) error {
 		return fmt.Errorf("clear partial %s: %w", versionDir, err)
 	}
 
-	installCtx, installCancel := context.WithTimeout(context.Background(), installTimeout)
-	defer installCancel()
-	if err := InstallRelease(installCtx, http.DefaultClient, release.URL, release.SHA256, versionDir); err != nil {
+	if err := InstallRelease(ctx, http.DefaultClient, release.URL, release.SHA256, versionDir); err != nil {
 		_ = os.RemoveAll(versionDir)
 		return err
 	}
 
-	smokeCtx, smokeCancel := context.WithTimeout(context.Background(), smokeTimeout)
+	smokeCtx, smokeCancel := context.WithTimeout(context.WithoutCancel(ctx), smokeTimeout)
 	defer smokeCancel()
 	if err := smokeTestInstall(smokeCtx, versionDir); err != nil {
 		_ = os.RemoveAll(versionDir)

@@ -91,7 +91,7 @@ func runMateFuse(args []string) int {
 		return 0
 	}
 
-	release, err := mate.HeldRelease(false)
+	release, err := mate.HeldRelease(context.Background(), false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: release list: %v\n", err)
 	}
@@ -148,7 +148,7 @@ func mateUnitRunning() bool {
 // works. A server that is not there holds no work to ask about.
 func restartAbsentMate(unlock func(), why string) int {
 	fmt.Fprintf(os.Stderr, "mate keep: the Mate is not there (%s); restarting it\n", why)
-	if _, err := mate.HeldRelease(true); err != nil {
+	if _, err := mate.HeldRelease(context.Background(), true); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: release list: %v\n", err)
 	}
 	unlock()
@@ -165,7 +165,9 @@ func restartForMate(unlock func(), running, run string, release mate.Manifest, a
 	if run != release.Version {
 		release = mate.Manifest{Version: run}
 	}
-	if err := mate.StageRelease(release, mate.ReplaceFailing); err != nil {
+	stageCtx, cancel := context.WithTimeout(context.Background(), mate.InstallTimeout)
+	defer cancel()
+	if err := mate.StageRelease(stageCtx, release, mate.ReplaceFailing); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: download Mate %s: %v\n", run, err)
 		return 1
 	}

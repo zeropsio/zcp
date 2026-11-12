@@ -76,7 +76,9 @@ func TestMateInstall_Release_Serves(t *testing.T) {
 	removePath(t, mate.CurrentLink())
 	removePath(t, mate.VersionDir("dev"))
 	removePath(t, mate.VersionDir(release.Version))
-	err = mate.StageRelease(release, mate.ReplaceFailing)
+	stageCtx, cancelStage := context.WithTimeout(context.Background(), mate.InstallTimeout)
+	err = mate.StageRelease(stageCtx, release, mate.ReplaceFailing)
+	cancelStage()
 	unlock()
 	if err != nil {
 		t.Fatalf("install step: %v", err)

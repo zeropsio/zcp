@@ -14,6 +14,14 @@ import (
 // a boot that keeps advancing is never judged by elapsed time.
 const BootWindow = 2 * time.Minute
 
+// StartStageTimeout bounds a start's release-list refresh plus download and
+// npm install together when current exists: how long the network may delay
+// starting the Mate. A download that does not finish in it is left to the
+// keep job, which has InstallTimeout, and the start runs current. Measured on
+// a Mate container (2 vCPU, 0.16.179, 2026-11-12): tarball 0.2 s, npm install
+// 5.9 s with npm's cache and 8.2 s without; a minute is seven times that.
+const StartStageTimeout = time.Minute
+
 // Start is one run of the start job, `zcp service start mate` (docs/spec-mate.md
 // §2.1a): the version it launches and its hold on the install lock until it
 // decided whether that version came up. The start job is the only installer
@@ -54,9 +62,18 @@ func BeginStart(logf func(format string, args ...any)) (*Start, error) {
 }
 
 // switchToVersionToRun points current at the version to run, downloading it
-// when keep has not; a failure leaves current as it was.
+// when keep has not; a failure leaves current as it was. The release list's
+// refresh and the download share one deadline: StartStageTimeout when current
+// exists, so the network delays a start only that long and a download that
+// does not finish is left to the keep job; InstallTimeout for a first install.
 func switchToVersionToRun(logf func(format string, args ...any)) {
-	release, err := HeldRelease(false)
+	bound := StartStageTimeout
+	if ReadVersions().Current == "" {
+		bound = InstallTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	release, err := HeldRelease(ctx, false)
 	if err != nil {
 		logf("release list: %v", err)
 	}
@@ -68,7 +85,7 @@ func switchToVersionToRun(logf func(format string, args ...any)) {
 	if run != release.Version {
 		release = Manifest{Version: run}
 	}
-	if err := StageRelease(release, KeepFailing); err != nil {
+	if err := StageRelease(ctx, release, KeepFailing); err != nil {
 		logf("install %s: %v; starting current %q", run, err, v.Current)
 		return
 	}
@@ -240,13 +257,11 @@ func ServerThere(window time.Duration) (version string, there bool) {
 	}
 }
 
-// HeldRelease is the release list zcp holds: refreshed once, bounded, when
-// refresh asks for it or the copy is older than the cache time. On any error
-// it is the copy zcp holds whatever its age (a zero Manifest when there is
-// none), with the error.
-func HeldRelease(refresh bool) (Manifest, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), manifestFetchTimeout)
-	defer cancel()
+// HeldRelease is the release list zcp holds: refreshed once, bounded by
+// manifestFetchTimeout and ctx, when refresh asks for it or the copy is older
+// than the cache time. On any error it is the copy zcp holds whatever its age
+// (a zero Manifest when there is none), with the error.
+func HeldRelease(ctx context.Context, refresh bool) (Manifest, error) {
 	release, err := DesiredRelease(ctx, http.DefaultClient, ManifestOptions{Refresh: refresh})
 	if err != nil {
 		held, _ := ReleaseList()

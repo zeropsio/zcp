@@ -376,7 +376,10 @@ lock without waiting and:
 
 1. **Picks.** One bounded attempt to refresh the release list when its copy is older than the cache
    time (§2.1c), and to download the version to run unless the keep job already has; on any error it
-   starts `current` as it is. The network never stops a start; only a first install without network
+   starts `current` as it is. The refresh and the download share one deadline
+   (`mate.StartStageTimeout`, one minute, against about 8 s for a normal download and npm install on a
+   Mate container) when `current` exists; a download that does not finish in it is left to the keep
+   job (`mate.InstallTimeout`, three minutes). A first install has the three minutes. The network never stops a start; only a first install without network
    fails, and systemd retries. A lock the keep job holds starts `current` as it is.
 2. **Installs** (`mate.StageRelease`) into `versions/<v>`: one `GET` to the manifest's `url`, streamed
    to a temporary file while its SHA-256 is compared with the manifest's `sha256` — a mismatch reports
