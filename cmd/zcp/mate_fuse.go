@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
@@ -33,13 +32,8 @@ import (
 //  3. A newer zcp is out: the same question. Yes: the container restarts, once
 //     per zcp release. An --attended run reads zcp's latest release fresh too.
 //
-// --automatic asks with the organization's policy, unless the Mate has had no
-// HQ link for an hour; --attended (a person's or an operator's update) asks
-// without it.
-
-// mateFuseCutoff is how long the Mate goes without an HQ link before the keep
-// job asks it without the organization's policy.
-const mateFuseCutoff = time.Hour
+// --automatic asks with the organization's policy, whether or not the Mate has
+// an HQ link; --attended (a person's or an operator's update) asks without it.
 
 // mateFuseRestartGrace is how long the keep job waits, after the platform
 // accepted the container restart, for the restart to end this process. It
@@ -51,12 +45,10 @@ var mateFuseRestartGrace = 5 * time.Minute
 // mateUnit is the Mate's systemd unit.
 const mateUnit = "zerops@" + mate.UnitName + ".service"
 
-// mateFuseRecord is the keep job's own memory: when it last saw the link up, and
-// the zcp release it already restarted the container for (one attempt per
-// release).
+// mateFuseRecord is the keep job's own memory: the zcp release it already
+// restarted the container for (one attempt per release).
 type mateFuseRecord struct {
-	LinkSeenAt      time.Time `json:"linkSeenAt,omitzero"`
-	ZCPRestartedFor string    `json:"zcpRestartedFor,omitempty"`
+	ZCPRestartedFor string `json:"zcpRestartedFor,omitempty"`
 }
 
 func mateFuseRecordPath() string { return filepath.Join(mate.Prefix(), "fuse.json") }
@@ -79,7 +71,7 @@ func runMateFuse(args []string) int {
 	defer unlock()
 
 	rec := readMateFuseRecord()
-	automatic := !flags["--attended"] && !cutOff(&rec, rt.ProjectID)
+	automatic := !flags["--attended"]
 
 	if !mateUnitRunning() {
 		return restartAbsentMate(unlock, "the unit is not running")
@@ -127,28 +119,6 @@ func runMateFuse(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "mate keep: Mate %s runs the version to run; zcp %s (latest %q)\n", running, zcp.Installed, zcp.Latest)
 	return 0
-}
-
-// cutOff notes the HQ link when it is up and says whether the Mate has gone an
-// hour without it. The hour counts from the later of the link last seen up and
-// the activation of current: a Mate that never linked counts from its start.
-func cutOff(rec *mateFuseRecord, projectID string) bool {
-	now := time.Now().UTC()
-	doc, err := hq.NewFileMateStateSource(hq.MateStatePath(), projectID).Read()
-	if err == nil && doc.Link == hq.MateLinkLinked {
-		rec.LinkSeenAt = now
-		_ = writeMateFuseRecord(*rec)
-		return false
-	}
-	since := rec.LinkSeenAt
-	if info, err := os.Lstat(mate.CurrentLink()); err == nil && info.ModTime().After(since) {
-		since = info.ModTime().UTC()
-	}
-	if since.IsZero() || now.Sub(since) < mateFuseCutoff {
-		return false
-	}
-	fmt.Fprintf(os.Stderr, "mate keep: no HQ link since %s; asking without the organization's policy\n", since.Format(time.RFC3339))
-	return true
 }
 
 // logReleaseList says what answered the release list: a fresh read (logged for

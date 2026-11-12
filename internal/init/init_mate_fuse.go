@@ -17,9 +17,8 @@ import (
 // instance is the way it asks the Mate: `automatic` (the timer's, and the
 // server's own automatic update) or `attended` (a person's or an operator's
 // `zcp mate update`). The timer is enabled, so systemd starts it at boot even
-// when `zcp init` fails before its Mate step. The names stay those of the
-// cut-off fuse the keep job replaced: a renamed timer would leave the old one
-// enabled on every running container.
+// when `zcp init` fails before its Mate step. The names stay "fuse": a renamed
+// timer would leave the old one enabled on every running container.
 const (
 	mateFuseName = mate.KeepUnitName
 	mateFuseDir  = "/etc/systemd/system"

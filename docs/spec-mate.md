@@ -526,8 +526,8 @@ run, each with up to 2 minutes of jitter; `zcp mate update` starts `zcp-mate-fus
 `@automatic` with `--automatic`) at once. Prepare writes both under `/etc/systemd/system`, reloads
 systemd when either changed, and enables and starts the timer, so it runs while the Mate's unit is
 down or crash-looping and starts at boot even when `zcp init` fails before its Mate step. Disabling
-Mate (§2.1b) removes them. The names are those of the cut-off fuse it replaced: a renamed timer would
-leave the old one enabled on every running container.
+Mate (§2.1b) removes them. The names stay "fuse": a renamed timer would leave the old one enabled on
+every running container.
 
 Each run takes the install lock without waiting: while a start job installs or judges a boot, or
 another keep run asks, it does nothing. Then the first that applies:
@@ -562,11 +562,8 @@ the question closed; a yes whose restart never comes is reopened the same way, a
 reopens by itself after its own bound. A keep run is not started again while one is waiting, so a
 busy Mate is never closed by being asked.
 
-**Cut off from HQ.** The server's state file (`~/.zcp/hq/state.json`, §2.8) says whether the link
-is up now. While it is, the keep job writes the time into `fuse.json` (`linkSeenAt`). After an hour
-without the link — counted from the later of `linkSeenAt` and `current`'s own mtime, so a Mate that
-never linked counts from its start — the timer's question is asked without the organization's
-policy; work is still protected.
+**Without HQ.** The organization's policy holds whether or not the Mate has a link to HQ; a start of
+the Mate brings the newest version that works.
 
 **`zcp mate update [--automatic] [--json]`** runs the keep job now and answers at once
 `{action: "none", from: <installed>, restarted: false, started: true}`, outside the Mate server that
