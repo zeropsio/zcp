@@ -29,7 +29,7 @@ type devPoolStart struct {
 
 // classifyDevPoolStart reads a develop start's scope against the project's
 // live services. A pool counts unless a pair is keyed by it — that one keeps
-// its own refusal (devPoolInScope). A scope naming only pools gets their loop
+// its scope stands for its pair's stage (devPoolScope). A scope naming only pools gets their loop
 // whatever else the project holds; with no scope, a project whose only
 // runtimes are pools and that zcp holds no record of gets the loop of every
 // pool. Pools named beside other hosts are refused naming the lease once zcp

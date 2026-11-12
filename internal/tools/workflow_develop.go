@@ -140,11 +140,14 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 
 	runtimes := developRuntimes(metas)
 	runtimeMetas, hasLocalOnly := runtimes.metas, runtimes.hasLocalOnly
-	// Before any other answer about the runtimes: a scope naming the pool is
-	// refused by name, even where the pool's pair is all there is.
-	if refusal := devPoolInScope(input.Scope, runtimes.devPools); refusal != nil {
+	// Before any other answer about the runtimes: a scope naming the pool a
+	// pair is keyed by stands for that pair's stage, said in one line above
+	// the briefing; a pool that keys no stage is refused by name.
+	poolScope, refusal := devPoolScope(input.Scope, runtimes.devPools)
+	if refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
+	input.Scope = poolScope.scope
 	if len(runtimeMetas) == 0 {
 		if hasLocalOnly {
 			// Local-only project: services may exist on Zerops but none is
@@ -254,7 +257,8 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return errResult, nil, nil
 	}
 
-	return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
+	result, structured, err := renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
+	return withLeadNote(result, poolScope.note), structured, err
 }
 
 // developRuntimeList is develop's runtime list: the services a scope may
@@ -309,26 +313,55 @@ func developRuntimes(metas []*workflow.ServiceMeta) developRuntimeList {
 	return out
 }
 
-// devPoolInScope refuses a develop scope naming a pool its pair is keyed by
-// (docs/spec-workflows.md §13 PM-10): develop deploys and verifies the
-// services it names, and nothing deploys from or verifies the pool itself —
-// its stage deploys from a lease of it. Nil when the scope names none.
-func devPoolInScope(scope []string, devPools map[string]*workflow.ServiceMeta) *platform.PlatformError {
+// devPoolScopeResult is a develop scope with each pool a pair is keyed by
+// put as that pair's stages, and the line that says so; note is "" where the
+// scope named no such pool.
+type devPoolScopeResult struct {
+	scope []string
+	note  string
+}
+
+// devPoolScope reads a develop scope naming a pool its pair is keyed by
+// (docs/spec-workflows.md §13 PM-10) as naming that pair's stage: develop
+// deploys and verifies the services it names, and nothing deploys from or
+// verifies the pool itself — its stage deploys from a lease of it. A start is
+// the agent's first call on a task, and the pool is the name it sees for the
+// part, so the scope is taken as meant and the briefing's first line says
+// how the pool is worked on. A pool that keys no stage leaves nothing
+// develop deploys, and is refused by name.
+func devPoolScope(scope []string, devPools map[string]*workflow.ServiceMeta) (devPoolScopeResult, *platform.PlatformError) {
+	out := devPoolScopeResult{scope: make([]string, 0, len(scope))}
+	var lines []string
 	for _, h := range scope {
 		m := devPools[h]
 		if m == nil {
+			out.scope = appendMissing(out.scope, h)
 			continue
 		}
 		stages := m.StageHostnames()
-		stagePart := "it keys no stage, so the pair has nothing develop deploys: its work is the lease's"
-		if len(stages) > 0 {
-			stagePart = fmt.Sprintf("scope the pair's stage instead — scope=%s — which deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q", workflow.ListArg(stages), stages[0])
+		if len(stages) == 0 {
+			return devPoolScopeResult{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("scope names %s, a dev pool that keys no stage: develop deploys and verifies no pool — its containers are leased, one per branch — so the pair has nothing develop deploys", h),
+				fmt.Sprintf("Work in a lease of it (%s): its work is the lease's.", poolPairLeaseAcquire(m, "<branch>")))
 		}
-		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("scope names %s, the dev pool its pair is keyed by: develop deploys and verifies no pool — its containers are leased, one per branch", h),
-			fmt.Sprintf("Work in a lease of it (%s), and %s.", poolPairLeaseAcquire(m, "<branch>"), stagePart))
+		out.scope = appendMissing(out.scope, stages...)
+		lines = append(lines, fmt.Sprintf("%s is the dev pool of %s, so this session works on %s. Do the work in a lease of %s — %s — and deploy %s from it: zerops_deploy sourceService=\"<alias>\" targetService=%q.",
+			h, workflow.ListArg(stages), workflow.ListArg(stages), h, poolPairLeaseAcquire(m, "<branch>"), stages[0], stages[0]))
 	}
-	return nil
+	out.note = strings.Join(lines, "\n")
+	return out, nil
+}
+
+// withLeadNote puts note as the first line of a text result; the result as it
+// was where note is empty or the result holds no text.
+func withLeadNote(result *mcp.CallToolResult, note string) *mcp.CallToolResult {
+	if note == "" || result == nil || len(result.Content) == 0 {
+		return result
+	}
+	if text, ok := result.Content[0].(*mcp.TextContent); ok {
+		text.Text = note + "\n\n" + text.Text
+	}
+	return result
 }
 
 // mateStandUpStages is the stage half of every standard pair in scope that a

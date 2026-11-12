@@ -197,20 +197,21 @@ func TestGitPush_PoolDevHalf_RefusedBeforeSSH(t *testing.T) {
 	}
 }
 
-// TestDevelop_PoolDevHalf_NotARuntimeOfTheScope: develop's runtime list is
-// the services it deploys and verifies; the pool keying a pair is none —
-// its stage deploys from a lease of it — so a scope naming the pool is
-// refused by name, pointing at the stage and a lease, and the stage alone
-// opens the session.
-func TestDevelop_PoolDevHalf_NotARuntimeOfTheScope(t *testing.T) {
+// TestDevelop_PoolDevHalf_ScopeStandsForItsStage: develop's runtime list is
+// the services it deploys and verifies; the pool keying a pair is none — its
+// stage deploys from a lease of it — so a scope naming the pool opens the
+// session on its stage, and the briefing's first line names the pool, the
+// stage and the lease.
+// witness: internal/tools/workflow_develop.go | input.Scope = poolScope.scope → input.Scope = append([]string(nil), input.Scope...)
+func TestDevelop_PoolDevHalf_ScopeStandsForItsStage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		scope   []string
-		refused bool
+		name  string
+		scope []string
+		noted bool
 	}{
-		{name: "the pool", scope: []string{testPool}, refused: true},
-		{name: "the pool and its stage", scope: []string{testPool, "appstage"}, refused: true},
+		{name: "the pool", scope: []string{testPool}, noted: true},
+		{name: "the pool and its stage", scope: []string{testPool, "appstage"}, noted: true},
 		{name: "the stage", scope: []string{"appstage"}},
 	}
 	for _, tt := range tests {
@@ -227,57 +228,61 @@ func TestDevelop_PoolDevHalf_NotARuntimeOfTheScope(t *testing.T) {
 				t.Fatalf("handleDevelopBriefing: %v", err)
 			}
 			text := extractText(result)
+			if result.IsError {
+				t.Fatalf("scope %v refused: %s", tt.scope, text)
+			}
 			ws, _ := workflow.CurrentWorkSession(stateDir)
-			if !tt.refused {
-				if result.IsError {
-					t.Fatalf("scope %v refused: %s", tt.scope, text)
-				}
-				if ws == nil || !slices.Equal(ws.Services, []string{"appstage"}) {
-					t.Errorf("session services = %+v, want [appstage]", ws)
-				}
-				return
+			if ws == nil || !slices.Equal(ws.Services, []string{"appstage"}) {
+				t.Errorf("session services = %+v, want [appstage]", ws)
 			}
-			if !result.IsError {
-				t.Fatalf("scope %v naming the pool opened a session: %s", tt.scope, text)
-			}
+			first, _, _ := strings.Cut(text, "\n")
 			for _, want := range []string{testPool, "appstage", "zerops_lease"} {
-				if !strings.Contains(text, want) {
-					t.Errorf("the refusal does not name %q: %s", want, text)
+				if got := strings.Contains(first, want); got != tt.noted {
+					t.Errorf("first line names %q = %v, want %v: %s", want, got, tt.noted, first)
 				}
-			}
-			if ws != nil {
-				t.Errorf("a refused scope opened a session: %+v", ws)
 			}
 		})
 	}
 }
 
-// TestDevPoolInScope_SeveralStages_ScopeRenderedAsAList: the refusal of a
-// scope naming a pool keyed by a pair of several stages names the stages to
-// scope instead as one list, written the way the tool call takes it.
-func TestDevPoolInScope_SeveralStages_ScopeRenderedAsAList(t *testing.T) {
+// TestDevPoolScope_ItsStages: a scope naming a pool keyed by a pair stands
+// for all of the pair's stages, named in the note as one list the way the
+// tool call takes it; a pool that keys no stage is refused.
+// witness: internal/tools/workflow_develop.go | out.scope = appendMissing(out.scope, stages...) → out.scope = appendMissing(out.scope, h)
+func TestDevPoolScope_ItsStages(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
 		stages []topology.StageRef
-		want   string
+		scope  []string
+		list   string
 	}{
-		{name: "one stage", stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, want: `scope=["appstage"]`},
-		{name: "two stages", stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "webstage", SetupName: "web"}}, want: `scope=["apistage","webstage"]`},
+		{name: "one stage", stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, scope: []string{"appstage"}, list: `["appstage"]`},
+		{name: "two stages", stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "webstage", SetupName: "web"}}, scope: []string{"apistage", "webstage"}, list: `["apistage","webstage"]`},
+		{name: "no stage"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			m := &workflow.ServiceMeta{Hostname: testPool, Stages: tt.stages}
-			perr := devPoolInScope([]string{testPool}, map[string]*workflow.ServiceMeta{testPool: m})
-			if perr == nil {
-				t.Fatal("a scope naming the pool was not refused")
+			got, perr := devPoolScope([]string{testPool}, map[string]*workflow.ServiceMeta{testPool: m})
+			if tt.scope == nil {
+				if perr == nil {
+					t.Fatalf("a pool keying no stage was not refused: %+v", got)
+				}
+				return
 			}
-			if !strings.Contains(perr.Suggestion, tt.want) {
-				t.Errorf("the refusal does not name %s: %s", tt.want, perr.Suggestion)
+			if perr != nil {
+				t.Fatalf("refused: %v", perr)
 			}
-			if strings.Contains(perr.Suggestion, `\"`) {
-				t.Errorf("the refusal carries an escaped quote: %s", perr.Suggestion)
+			if !slices.Equal(got.scope, tt.scope) {
+				t.Errorf("scope = %v, want %v", got.scope, tt.scope)
+			}
+			if !strings.Contains(got.note, tt.list) {
+				t.Errorf("the note does not name %s: %s", tt.list, got.note)
+			}
+			if strings.Contains(got.note, `\"`) {
+				t.Errorf("the note carries an escaped quote: %s", got.note)
 			}
 		})
 	}

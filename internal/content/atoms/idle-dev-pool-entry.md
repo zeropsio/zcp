@@ -26,8 +26,10 @@ one of two things — tell which before you touch it:
     branch that spans several parts. `repo` is needed on a pool's first
     acquire only.
   - `zerops_workflow action="start" workflow="develop" intent="{task-description}" scope=["<pool>"]`
-    answers with the whole loop — work, commit and push, sync, release — and
-    opens no develop session: nothing deploys or verifies a pool itself.
+    answers with the whole loop — work, commit and push, sync, release. For
+    a pool a stage is paired with, it opens the session on that stage, which
+    deploys from your lease; for any other pool it opens none: nothing
+    deploys or verifies a pool itself.
 - **Infrastructure an app uses.** The app calls its orchestrator with
   `${<pool>_API_TOKEN}`. Leave it to the app: a lease takes one of its
   containers away from it.
