@@ -312,95 +312,40 @@ func accessHQ(t *testing.T, status int, body string) (*httptest.Server, *[]strin
 
 const githubShopRequest = "protocol=https\nhost=github.com\npath=acme/shop.git\n\n"
 
-// TestGitHubCredentialFor_SendsAccess: a token asked for read, write or
-// workflows carries that access on HQ's query; none asked sends none.
-func TestGitHubCredentialFor_SendsAccess(t *testing.T) {
+// TestAnswerGit_GitHubRepository_AsksHQForAReadToken: a GitHub repository's
+// token is asked of HQ with access=read, once, whoever asks — the client, or
+// AnswerGit for `zcp hq git-credential` and a relayed `zcp git` call — and
+// never with none, which HQ once answered with a token that could push.
+//
+// witness: internal/hq/gitcredential.go | "access": {gitHubAccessRead} → "access": {"write"}
+func TestAnswerGit_GitHubRepository_AsksHQForAReadToken(t *testing.T) {
 	t.Parallel()
-	for _, access := range []string{GitHubAccessRead, GitHubAccessWrite, GitHubAccessWorkflows, ""} {
-		srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEaccess"}`)
-		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
-		client, err := Open(srv.Client(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := client.GitHubCredentialFor(context.Background(), "acme/shop.git", access)
-		if err != nil || got.Password != "ghs_FAKEaccess" {
-			t.Errorf("GitHubCredentialFor(%q) = %v, %v", access, got.Username, err)
-		}
-		want := access
-		if access == "" {
-			want = "<none>"
-		}
-		if len(*asked) != 1 || (*asked)[0] != want {
-			t.Errorf("GitHubCredentialFor(%q) asked HQ with access %q, want %q", access, *asked, want)
-		}
-		answer, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), access)
-		if err != nil || answer.Password != "ghs_FAKEaccess" {
-			t.Errorf("AnswerGitFor(%q) = %v", access, err)
-		}
-		if len(*asked) != 2 || (*asked)[1] != want {
-			t.Errorf("AnswerGitFor(%q) asked HQ with access %q, want %q", access, *asked, want)
-		}
+	tests := []struct {
+		name string
+		ask  func(id Identity, httpClient Doer) (GitAnswer, error)
+	}{
+		{"the client", func(id Identity, httpClient Doer) (GitAnswer, error) {
+			client, err := Open(httpClient, id)
+			if err != nil {
+				return GitAnswer{}, err
+			}
+			return client.GitHubCredential(context.Background(), "acme/shop.git")
+		}},
+		{"git's credential request", func(id Identity, httpClient Doer) (GitAnswer, error) {
+			return AnswerGit(context.Background(), strings.NewReader(githubShopRequest), id, httpClient)
+		}},
 	}
-}
-
-// TestGitHubCredentialFor_BadAccess_Declined: HQ refusing the access asked
-// (400 bad_access) is a decline naming it — never a password.
-func TestGitHubCredentialFor_BadAccess_Declined(t *testing.T) {
-	t.Parallel()
-	srv, asked := accessHQ(t, http.StatusBadRequest, `{"code":"git_credential_refused","reason":"bad_access"}`)
-	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
-	client, err := Open(srv.Client(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.GitHubCredentialFor(context.Background(), "acme/shop.git", GitHubAccessRead); !refusedAs(err, "git_credential_refused") {
-		t.Errorf("GitHubCredentialFor = %v, want HQ's refusal", err)
-	}
-	got, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), GitHubAccessRead)
-	var declined *DeclinedError
-	if !errors.As(err, &declined) || !strings.Contains(declined.Reason, "bad_access") || got.Password != "" {
-		t.Errorf("AnswerGitFor = %q, %v; want a decline naming bad_access", got.Password, err)
-	}
-	if len(*asked) != 2 {
-		t.Errorf("HQ asked %d times, want once per call", len(*asked))
-	}
-}
-
-// TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt: a push to a
-// remote HQ keeps connected with a person's token (409 read_only_remote) is
-// declined saying the repository is read-only for this Mate — and HQ is not
-// asked again with another access.
-func TestGitHubCredentialFor_ReadOnlyRemote_DeclinedNamingIt(t *testing.T) {
-	t.Parallel()
-	for _, access := range []string{GitHubAccessWrite, GitHubAccessWorkflows} {
-		srv, asked := accessHQ(t, http.StatusConflict, `{"code":"git_credential_refused","reason":"read_only_remote"}`)
-		id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
-		got, err := AnswerGitFor(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client(), access)
-		var declined *DeclinedError
-		if !errors.As(err, &declined) || got.Password != "" {
-			t.Fatalf("AnswerGitFor(%s) = %q, %v; want a decline", access, got.Password, err)
-		}
-		if !strings.Contains(declined.Reason, "read-only for this Mate") || !strings.Contains(declined.Reason, "github.com/acme/shop.git") {
-			t.Errorf("AnswerGitFor(%s) reason = %q, want it to name the repository as read-only for this Mate", access, declined.Reason)
-		}
-		if !slices.Equal(*asked, []string{access}) {
-			t.Errorf("HQ asked with %q, want once with %q and no retry", *asked, access)
-		}
-	}
-}
-
-// TestAnswerGit_StillSendsNoAccess: the `zcp hq git-credential` fallback
-// asks HQ for today's token, with no access on the query.
-func TestAnswerGit_StillSendsNoAccess(t *testing.T) {
-	t.Parallel()
-	srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEbroad"}`)
-	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}
-	got, err := AnswerGit(context.Background(), strings.NewReader(githubShopRequest), id, srv.Client())
-	if err != nil || got.Password != "ghs_FAKEbroad" {
-		t.Fatalf("AnswerGit = %v", err)
-	}
-	if !slices.Equal(*asked, []string{"<none>"}) {
-		t.Errorf("AnswerGit asked HQ with access %q, want none", *asked)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv, asked := accessHQ(t, http.StatusOK, `{"username":"x-access-token","password":"ghs_FAKEread"}`)
+			got, err := tt.ask(Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret"}, srv.Client())
+			if err != nil || got.Password != "ghs_FAKEread" {
+				t.Fatalf("answer = %q, %v; want HQ's token", got.Password, err)
+			}
+			if !slices.Equal(*asked, []string{"read"}) {
+				t.Errorf("HQ was asked with access %q, want read, once", *asked)
+			}
+		})
 	}
 }

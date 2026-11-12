@@ -117,7 +117,7 @@ func isHQGitCredential(args []string) bool {
 
 // runHQGitCredential answers git's credential protocol: `get` prints what
 // hq.AnswerGit answers for the request on stdin — the identity's project key
-// under HQ's git user for the HQ the identity names, the token HQ mints
+// under HQ's git user for the HQ the identity names, the read token HQ mints
 // at this call for a repository on GitHub — and declines with nothing on
 // stdout and exit 1 otherwise, saying why on stderr when there is a reason a
 // person can act on; `store` and `erase` keep nothing — the link and HQ are the

@@ -20,11 +20,13 @@ const GitUser = "mate"
 const GitHubHost = "github.com"
 
 // GitHubHelperConfig is the git configuration that has `zcp hq git-credential`
-// answer github.com: git names the repository to a helper only with
-// useHttpPath, and HQ mints a token for one repository at a time. The empty
-// helper first clears every helper the machine or the person configured, so
-// none answers github.com ahead of it or keeps the minted token; running it
-// again changes nothing.
+// answer github.com for a read: git names the repository to a helper only
+// with useHttpPath, and HQ mints a token for one repository at a time. The
+// empty helper first clears every helper the machine or the person
+// configured, so none answers github.com ahead of it or keeps the minted
+// token; running it again changes nothing. No pass writes it: a checkout's
+// origin is its repository in HQ, and a checkout an older zcp wrote it into
+// keeps it, where it brings a read token and nothing more.
 const GitHubHelperConfig = "git config --replace-all credential.https://github.com.helper '' && git config --add credential.https://github.com.helper '!zcp hq git-credential' && git config credential.https://github.com.useHttpPath true"
 
 // gitHubAnswerBound is how long the helper waits on HQ minting a GitHub
@@ -80,10 +82,13 @@ func readGitRequest(request io.Reader) gitRequest {
 // helper's stdin; `zcp hq git-credential`) for the Mate that id names:
 //   - HQ itself, by its scheme, host and port, gets the Mate's project key
 //     under GitUser (hqAnswer);
-//   - a repository on https://github.com gets the token HQ mints for this
-//     Mate and that repository at this moment (Client.GitHubCredential) —
-//     never kept, never written anywhere but git's pipe;
+//   - a repository on https://github.com gets the read token HQ mints for
+//     this Mate and that repository at this moment (Client.GitHubCredential)
+//     — never kept, never written anywhere but git's pipe. It reads and
+//     never pushes: HQ alone pushes to GitHub;
 //   - any other remote is declined.
+//
+// A relayed `zcp git` call answers each of its requests with it too.
 func AnswerGit(ctx context.Context, request io.Reader, id Identity, httpClient Doer) (GitAnswer, error) {
 	req := readGitRequest(request)
 	if isHQ(req, id.Origin) {
@@ -130,17 +135,22 @@ func isHQ(req gitRequest, address string) bool {
 	return strings.EqualFold(req.protocol, hq.Scheme) && hostPort(req.host, req.protocol) == hostPort(hq.Host, hq.Scheme)
 }
 
-// GitHubCredential is the token HQ mints for this Mate, at this call, for the
-// GitHub repository repo (`<owner>/<repo>[.git]`, as git names it): one with
-// write to a repository HQ mounts through its GitHub App, a read-only one for
-// a repository the Mate only follows when HQ holds one. Never cached: each
-// fetch and push asks again.
+// gitHubAccessRead is the one access zcp asks a GitHub token for (mate-hq
+// protocol S17a): a Mate's container fetches from GitHub and never pushes
+// there — HQ alone does, so no token that can write ever reaches it.
+const gitHubAccessRead = "read"
+
+// GitHubCredential is the read token HQ mints for this Mate, at this call,
+// for the GitHub repository repo (`<owner>/<repo>[.git]`, as git names it): a
+// repository HQ mounts through its GitHub App, or one the Mate only follows
+// when HQ holds a read token for it. Asked with access=read, so the token
+// can fetch and nothing else. Never cached: each call asks again.
 func (c Client) GitHubCredential(ctx context.Context, repo string) (GitAnswer, error) {
 	var out struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	query := url.Values{"host": {GitHubHost}, "path": {repo}}
+	query := url.Values{"host": {GitHubHost}, "path": {repo}, "access": {gitHubAccessRead}}
 	if err := c.call.json(ctx, http.MethodGet, "/api/mate/git-credential?"+query.Encode(), c.authorization(), nil, &out); err != nil {
 		return GitAnswer{}, err
 	}
@@ -148,81 +158,6 @@ func (c Client) GitHubCredential(ctx context.Context, repo string) (GitAnswer, e
 		return GitAnswer{}, errors.New("HQ answered with no password")
 	}
 	return GitAnswer{Username: out.Username, Password: out.Password}, nil
-}
-
-// The access a token HQ mints for a GitHub repository carries, as the call
-// asking needs it (mate-hq protocol S17a): read to fetch, write to push, and
-// workflows to push commits that touch .github/workflows/ — which the caller
-// checks before it pushes, as HQ cannot when it mints.
-const (
-	GitHubAccessRead      = "read"
-	GitHubAccessWrite     = "write"
-	GitHubAccessWorkflows = "workflows"
-)
-
-// GitHubCredentialFor is GitHubCredential carrying access on HQ's query —
-// GitHubAccessRead, GitHubAccessWrite or GitHubAccessWorkflows — so the
-// token carries no more; "" asks as GitHubCredential does, with none.
-func (c Client) GitHubCredentialFor(ctx context.Context, repo, access string) (GitAnswer, error) {
-	var out struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	query := url.Values{"host": {GitHubHost}, "path": {repo}}
-	if access != "" {
-		query.Set("access", access)
-	}
-	if err := c.call.json(ctx, http.MethodGet, "/api/mate/git-credential?"+query.Encode(), c.authorization(), nil, &out); err != nil {
-		return GitAnswer{}, err
-	}
-	if out.Password == "" {
-		return GitAnswer{}, errors.New("HQ answered with no password")
-	}
-	return GitAnswer{Username: out.Username, Password: out.Password}, nil
-}
-
-// AnswerGitFor is AnswerGit for a relayed `zcp git` call, asking HQ for a
-// GitHub token carrying access (GitHubCredentialFor). HQ itself is answered
-// as AnswerGit answers it (hqAnswer) — access means nothing for HQ's own git. HQ
-// refusing the access (bad_access) or a push to a repository connected with
-// a person's token (read_only_remote) is a decline naming it, never retried
-// with another access. AnswerGit, the `zcp hq git-credential` fallback, asks
-// with none.
-func AnswerGitFor(ctx context.Context, request io.Reader, id Identity, httpClient Doer, access string) (GitAnswer, error) {
-	req := readGitRequest(request)
-	if isHQ(req, id.Origin) {
-		return hqAnswer(id)
-	}
-	if !strings.EqualFold(req.protocol, "https") || hostPort(req.host, "https") != GitHubHost {
-		return GitAnswer{}, &DeclinedError{}
-	}
-	if req.path == "" {
-		return GitAnswer{}, &DeclinedError{Reason: "git named no repository on github.com, and HQ answers for one repository at a time"}
-	}
-	client, err := Open(httpClient, id)
-	if err != nil {
-		return GitAnswer{}, &DeclinedError{Reason: fmt.Sprintf("%v, so nothing mints a token for github.com/%s", err, req.path)}
-	}
-	answer, err := client.Once().Bounded(hqConnectBound, gitHubAnswerBound).GitHubCredentialFor(ctx, req.path, access)
-	if err != nil {
-		return GitAnswer{}, &DeclinedError{Reason: gitHubAccessRefusal(err, req.path)}
-	}
-	return answer, nil
-}
-
-// gitHubAccessRefusal is gitHubRefusal knowing the refusals only an access
-// asked for brings.
-func gitHubAccessRefusal(err error, repo string) string {
-	var refused *RefusedError
-	if errors.As(err, &refused) {
-		switch refused.Reason {
-		case "read_only_remote":
-			return fmt.Sprintf("github.com/%s is read-only for this Mate: HQ keeps it connected with a person's token and alone pushes there, so this push cannot be answered", repo)
-		case "bad_access":
-			return fmt.Sprintf("HQ refused the token access zcp asked for github.com/%s (bad_access)", repo)
-		}
-	}
-	return gitHubRefusal(err, repo)
 }
 
 // GitHubAPIOrigin is GitHub's REST API, where a token's holder revokes it.

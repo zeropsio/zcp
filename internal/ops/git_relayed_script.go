@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -16,7 +15,7 @@ import (
 // container as relayed sessions (docs/spec-mate.md §6.8): every git the
 // script starts — a lazy fetch of a partial clone included — asks zcp for
 // its credential over the session, and zcp answers HQ's own origin with the
-// Mate's project key (hq.AnswerGitFor) from Relay. No credential is stored
+// Mate's project key (hq.AnswerGit) from Relay. No credential is stored
 // in the container, put in argv or in the script: the container's git holds
 // it in memory for the request only. Its ExecSSH returns what an
 // SSHDeployer's does — the script's stdout and stderr, an
@@ -44,9 +43,9 @@ func (r RelayedSSH) ExecSSH(ctx context.Context, hostname, command string) ([]by
 		out bytes.Buffer
 	)
 	combined := lockedWriter{mu: &mu, w: &out}
-	// A script names no git argv to decide GitHub access from: every token
-	// it is given reads.
-	call := newRelayCall(r.Relay, hostname, func(context.Context) string { return hq.GitHubAccessRead }, combined)
+	// A script is zcp's own and no `git push` call: a GitHub token it is
+	// given reads, like every other.
+	call := newRelayCall(r.Relay, hostname, false, combined)
 	exit, err := runRelayedSession(ctx, r.SSH, hostname, buildRelayedScriptCommand(command, nonce, brokeredGitSchemes(r.Relay.Identity.Origin)), nonce, call, nil, combined)
 	mu.Lock()
 	output := out.Bytes()

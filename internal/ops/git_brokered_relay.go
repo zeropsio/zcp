@@ -42,9 +42,11 @@ import (
 // record's RemoteURL, written from the checkout's live origin: HQ mints a
 // token for any repository the application mounts. An allowed remote is
 // answered as often as git asks within the call, from one token per
-// (repository, access) per call. GIT_ALLOW_PROTOCOL, the TLS and proxy
-// settings (which a URL-specific key in the checkout's config outranks) and
-// the environment scrub are guardrails, not the boundary.
+// repository per call — for GitHub a read token, always: a Mate's container
+// never pushes to GitHub, HQ alone does, so a push is answered for HQ only
+// (relayCall.answer). GIT_ALLOW_PROTOCOL, the TLS and proxy settings (which a
+// URL-specific key in the checkout's config outranks) and the environment
+// scrub are guardrails, not the boundary.
 
 // BrokeredGitHQRepo is a repository in HQ: the application and its name, as
 // zcp's record of a wired pair holds them.
@@ -57,11 +59,11 @@ type BrokeredGitHQRepo struct {
 // every value zcp's own: the record lookups are the caller's.
 type BrokeredGitRelay struct {
 	// Identity is the Mate's: HQ's origin, answered for any path with its
-	// project key (hq.AnswerGitFor), the key HQ also mints with.
+	// project key (hq.AnswerGit), the key HQ also mints with.
 	Identity hq.Identity
 	// HTTPClient reaches HQ.
 	HTTPClient hq.Doer
-	// Repos are the repositories on GitHub the call answers for: the
+	// Repos are the repositories on GitHub the call answers a read for: the
 	// record's HQ origin (zcp writes it from HQ's own state) and the URLs the
 	// call's argv writes literally (BrokeredGitArgvURLs). Never the record's
 	// RemoteURL, never anything the checkout's config names.
@@ -1070,12 +1072,10 @@ type relayCall struct {
 	relay  BrokeredGitRelay
 	host   string
 	stderr io.Writer
-	// decideAccess decides what every GitHub token the call obtains
-	// carries (brokeredGitAccess); it runs once, on the call's first GitHub
-	// request, and access keeps its answer — a call only HQ answers never
-	// decides one.
-	decideAccess func(ctx context.Context) string
-	access       string
+	// push is a call whose subcommand is push: GitHub is answered for reads
+	// alone, so a request of it there is refused, said, with no token asked
+	// (gitHubPushRefused).
+	push bool
 
 	answers  map[string]relayAnswer
 	said     map[string]bool
@@ -1092,16 +1092,26 @@ type relayAnswer struct{ user, password string }
 // minted for (host/path, as git named it) — what a failed revoke names.
 type relayMinted struct{ repo, token string }
 
-func newRelayCall(relay BrokeredGitRelay, host string, decideAccess func(context.Context) string, stderr io.Writer) *relayCall {
-	return &relayCall{relay: relay, host: host, decideAccess: decideAccess, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
+func newRelayCall(relay BrokeredGitRelay, host string, push bool, stderr io.Writer) *relayCall {
+	return &relayCall{relay: relay, host: host, push: push, stderr: stderr, answers: map[string]relayAnswer{}, said: map[string]bool{}}
 }
 
-// gitHubAccess is the call's access, decided on first use.
-func (c *relayCall) gitHubAccess(ctx context.Context) string {
-	if c.access == "" {
-		c.access = c.decideAccess(ctx)
-	}
-	return c.access
+// gitHubPushRefused is what a push is told when git asks, inside it, for a
+// GitHub repository the relay answers reads for (repo, as host/owner/name):
+// nothing is asked of HQ, and the words name the push that does reach
+// GitHub — the branch to the checkout's origin, its repository in HQ, whose
+// mirror puts the change's branch on GitHub and opens its pull request —
+// and, for a checkout an older zcp pointed at GitHub that no pass moved yet,
+// the pass that moves it. A read git starts inside a push is refused with it: zcp cannot tell it from
+// the push's own request, and a checkout whose origin is HQ fetches nothing
+// from GitHub while it pushes.
+func gitHubPushRefused(host, repo string) string {
+	return fmt.Sprintf("this push asked for %s, which zcp git answers for reads only and never inside a push, so no token was asked for it: a Mate never pushes to GitHub — HQ alone does. "+
+		"Push the branch to origin, its repository in HQ (`zcp git %s push origin <branch>`), and open its change "+
+		"(`zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`): "+
+		"HQ puts the change's branch on GitHub and opens its pull request there. GitHub's default branch moves only by a merge. "+
+		"Should origin itself still name GitHub — status's `checkoutOrigin` says so — develop's start points it at HQ: start develop, then push",
+		repo, host)
 }
 
 // relaySayCap bounds how many distinct lines one call says, so code in the
@@ -1170,13 +1180,14 @@ func gitHubPathPart(s string) bool {
 }
 
 // answer answers one request: HQ by its scheme and host, any path, with the
-// project key (once per call); GitHub for a repository the relay
-// allows, with the token HQ mints for it (once per call, reused); anything
-// else declined, said once.
+// project key (once per call); GitHub for a repository the relay allows,
+// with the read token HQ mints for it (once per call, reused) — never in a
+// push, which is refused in words and asks HQ for nothing
+// (gitHubPushRefused); anything else declined, said once.
 func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (string, string) {
 	switch {
 	case sameOrigin(protocol, host, c.relay.Identity.Origin):
-		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "", "")
+		return c.cached(ctx, "hq", fmt.Sprintf("protocol=%s\nhost=%s\n", protocol, host), "")
 	case sameOrigin(protocol, host, c.relay.github()):
 		if path == "-" {
 			c.say(fmt.Sprintf("git named no repository on %s, and zcp git answers %s only for a repository it names", host, host))
@@ -1192,8 +1203,11 @@ func (c *relayCall) answer(ctx context.Context, protocol, host, path string) (st
 			c.notRecorded(host, path)
 			return "", ""
 		}
-		access := c.gitHubAccess(ctx)
-		return c.cached(ctx, brokeredGitRepoKey(repo)+" "+access, "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+canonical+"\n", host+"/"+canonical, access)
+		if c.push {
+			c.say(gitHubPushRefused(c.host, host+"/"+canonical))
+			return "", ""
+		}
+		return c.cached(ctx, brokeredGitRepoKey(repo), "protocol="+httpsScheme+"\nhost="+hq.GitHubHost+"\npath="+canonical+"\n", host+"/"+canonical)
 	}
 	c.notRecorded(host, path)
 	return "", ""
@@ -1246,13 +1260,13 @@ func (c *relayCall) liveOrigin() string {
 // cached answers request (git's credential attributes, as hq.AnswerGit
 // reads them) once per key per call, a decline included, saying a
 // declined one's reason once. A token obtained for a GitHub repository
-// (minted names it, "" for HQ) carries access and is kept to be revoked
-// when the call ends.
-func (c *relayCall) cached(ctx context.Context, key, request, minted, access string) (string, string) {
+// (minted names it, "" for HQ) is a read token, kept to be revoked when the
+// call ends.
+func (c *relayCall) cached(ctx context.Context, key, request, minted string) (string, string) {
 	if a, ok := c.answers[key]; ok {
 		return a.user, a.password
 	}
-	got, err := hq.AnswerGitFor(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient, access)
+	got, err := hq.AnswerGit(ctx, strings.NewReader(request+"\n"), c.relay.Identity, c.relay.HTTPClient)
 	var a relayAnswer
 	if err == nil {
 		a = relayAnswer{user: got.Username, password: got.Password}
@@ -1355,8 +1369,9 @@ func openRelayPipes(stdout io.Writer, nonce string) (relayPipes, error) {
 // anything runs — and forwarded only when the argv asks git to read it
 // (BrokeredGitReadsStdin). No credential is printed, put in argv, or kept
 // past the call: each GitHub token it minted is revoked when it ends, also
-// when ctx stopped it. Every GitHub token carries only what the call needs
-// (brokeredGitAccess). The call ends when git does: on the script's done
+// when ctx stopped it. Every GitHub token is a read token, and a push is
+// answered none: its request for GitHub is refused in words, nothing asked
+// of HQ (gitHubPushRefused). The call ends when git does: on the script's done
 // marker zcp answers nothing more, closes descriptor 3, revokes at once, and
 // returns the exit code the marker carries; with no marker (ssh dropped or
 // killed) the exit code is ssh's. git's stdout passes through relayStdout,
@@ -1382,7 +1397,7 @@ func RunBrokeredGitRelayed(ctx context.Context, ssh SSHStdioRunner, host, dir st
 		return -1, fmt.Errorf("%w: %w", ErrBrokeredGitSetup, err)
 	}
 	command := buildRelayedGitCommand(dir, args, nonce, forward, brokeredGitAllowProtocol(args, relay.Identity.Origin))
-	call := newRelayCall(relay, host, func(ctx context.Context) string { return brokeredGitAccess(ctx, ssh, host, dir, args, relay) }, stderr)
+	call := newRelayCall(relay, host, args.Subcommand == "push", stderr)
 	var forwarded []byte
 	if forward {
 		// One write, so nothing can come between the length and the bytes.
@@ -1464,269 +1479,4 @@ func runRelayedSession(ctx context.Context, ssh SSHStdioRunner, host, command, n
 		return exit, fmt.Errorf("ssh to %s failed (exit %d): the message above is ssh's own, not git's answer", host, exit)
 	}
 	return exit, nil
-}
-
-// brokeredGitAccess is the access every GitHub token of the call carries,
-// decided once from its argv when GitHub first asks — access means nothing
-// for HQ's own git, so a push only HQ answers runs no check: read for any
-// call that is no push — the lazy fetches inside it included; for a push,
-// write, or workflows when a commit it would send touches
-// .github/workflows/ or what it sends cannot be resolved
-// (brokeredGitPushAccess). A push a hook or alias starts inside a call that
-// is no push gets read, and GitHub refuses it.
-func brokeredGitAccess(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay) string {
-	if args.Subcommand != "push" {
-		return hq.GitHubAccessRead
-	}
-	return brokeredGitPushAccess(ctx, ssh, host, dir, args, relay)
-}
-
-// brokeredGitPushPlan is what a push's argv says it sends: the repository
-// it names ("" for the default) and each refspec's source (none for a push
-// naming no refspec), or unresolvable when zcp cannot tell the commits it
-// sends.
-type brokeredGitPushPlan struct {
-	remote       string
-	srcs         []string
-	unresolvable bool
-}
-
-// pushUnresolvableFlags are push options whose sent commits zcp does not
-// resolve: every branch or ref, tags, a force, a deletion.
-var pushUnresolvableFlags = map[string]bool{
-	"--all": true, "--branches": true, "--mirror": true, "--tags": true, "--follow-tags": true,
-	"--force": true, "--force-if-includes": true, "--delete": true, "--prune": true, "--repo": true,
-}
-
-// pushValueOptions are push options whose value is the next argument.
-var pushValueOptions = map[string]bool{"--push-option": true, "--receive-pack": true, "--exec": true}
-
-// planBrokeredGitPush reads a push's argv (`git push [<options>]
-// [<repository> [<refspec>...]]`): a forced refspec (`+…`), a deletion (an
-// empty source), a pattern, a negative refspec, the `tag <name>` form, a
-// source that reads as an option, and the options pushUnresolvableFlags
-// names — short ones in a cluster too — are unresolvable.
-func planBrokeredGitPush(args BrokeredGitArgs) brokeredGitPushPlan {
-	unresolvable := brokeredGitPushPlan{unresolvable: true}
-	var positional []string
-	rest := args.Rest
-	for i := 0; i < len(rest); i++ {
-		a := rest[i]
-		long, _, _ := strings.Cut(a, "=")
-		switch {
-		case a == "--":
-			positional = append(positional, rest[i+1:]...)
-			i = len(rest)
-		case pushUnresolvableFlags[long], strings.HasPrefix(a, "--force-with-lease"):
-			return unresolvable
-		case pushValueOptions[a]:
-			i++
-		case strings.HasPrefix(a, "--"):
-		case strings.HasPrefix(a, "-") && len(a) > 1:
-			for j := 1; j < len(a); j++ {
-				switch a[j] {
-				case 'f', 'd':
-					return unresolvable
-				case 'o':
-					if j == len(a)-1 {
-						i++
-					}
-					j = len(a)
-				}
-			}
-		default:
-			positional = append(positional, a)
-		}
-	}
-	var plan brokeredGitPushPlan
-	if len(positional) == 0 {
-		return plan
-	}
-	plan.remote = positional[0]
-	for _, spec := range positional[1:] {
-		src, _, _ := strings.Cut(spec, ":")
-		if spec == "tag" || src == "" || strings.HasPrefix(spec, "+") || strings.HasPrefix(spec, "^") ||
-			strings.HasPrefix(src, "-") || strings.Contains(spec, "*") {
-			return unresolvable
-		}
-		plan.srcs = append(plan.srcs, src)
-	}
-	return plan
-}
-
-// localMainRef is local main, which zcp keeps on HQ's main.
-const localMainRef = "refs/heads/main"
-
-// brokeredGitPushConfigKeys is the config a push's check reads, as `git
-// config --get-regexp` matches keys — section and variable lower-cased, a
-// remote's name as written.
-const brokeredGitPushConfigKeys = `^(push\.(followtags|default)|remote\..+\.(push|mirror))$`
-
-// brokeredGitPushConfig is what the checkout's config and the call's -c
-// say about what a push sends: push.followTags, push.default, the remotes
-// with a remote.<name>.push refspec, and remote.<name>.mirror of each.
-// unreadable is a value git itself refuses, which fails the push.
-type brokeredGitPushConfig struct {
-	followTags  bool
-	pushDefault string
-	pushSpecs   map[string]bool
-	mirror      map[string]bool
-	unreadable  bool
-}
-
-// parseBrokeredGitPushConfig reads `git config -z --get-regexp` output:
-// `<key>\n<value>` NUL-terminated, a key with no value alone. A later value
-// of a key replaces an earlier one, as for git.
-func parseBrokeredGitPushConfig(out string) brokeredGitPushConfig {
-	cfg := brokeredGitPushConfig{pushSpecs: map[string]bool{}, mirror: map[string]bool{}}
-	for entry := range strings.SplitSeq(out, "\x00") {
-		if entry == "" {
-			continue
-		}
-		key, value, hasValue := strings.Cut(entry, "\n")
-		readBool := func() bool {
-			b, ok := gitConfigBool(value, hasValue)
-			cfg.unreadable = cfg.unreadable || !ok
-			return b
-		}
-		remote, isRemote := strings.CutPrefix(key, "remote.")
-		switch {
-		case key == "push.followtags":
-			cfg.followTags = readBool()
-		case key == "push.default":
-			cfg.pushDefault = value
-			cfg.unreadable = cfg.unreadable || !hasValue
-		case isRemote && strings.HasSuffix(remote, ".push"):
-			cfg.pushSpecs[strings.TrimSuffix(remote, ".push")] = true
-		case isRemote && strings.HasSuffix(remote, ".mirror"):
-			cfg.mirror[strings.TrimSuffix(remote, ".mirror")] = readBool()
-		}
-	}
-	return cfg
-}
-
-// sendsCurrentBranch reports whether push.default makes a push naming no
-// refspec send the current branch alone: unset (simple), simple, current,
-// upstream or tracking — never matching (every branch of the same name on
-// the remote), nothing, or a value git refuses.
-func (c brokeredGitPushConfig) sendsCurrentBranch() bool {
-	switch c.pushDefault {
-	case "", "simple", "current", "upstream", "tracking":
-		return true
-	}
-	return false
-}
-
-// gitConfigBool is a boolean config value as git reads it: no value, true,
-// yes, on or a non-zero integer is true; false, no, off, an empty value or
-// zero is false; ok is false for anything else, which git refuses.
-func gitConfigBool(value string, hasValue bool) (b, ok bool) {
-	lower := strings.ToLower(value)
-	switch {
-	case !hasValue, slices.Contains([]string{"true", "yes", "on"}, lower):
-		return true, true
-	case slices.Contains([]string{"false", "no", "off", ""}, lower):
-		return false, true
-	}
-	n, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return false, false
-	}
-	return n != 0, true
-}
-
-// pushCheckCommitCap is how many commits the workflows check reads at
-// most: more is unresolvable.
-const pushCheckCommitCap = 1000
-
-// brokeredGitPushAccess is a push's access: write, or workflows when a
-// commit the push would send touches .github/workflows/ or what it sends
-// cannot be resolved — never less than today's token. The check runs when
-// GitHub first asks during the push, before any token is minted, as relayed
-// read calls in the same checkout with the push's -C and -c (it only reads,
-// so it runs beside the waiting push): the config that decides what a push
-// sends is read first (brokeredGitPushConfig) — push.followTags set, the
-// pushed remote's remote.<name>.mirror set, and for a push naming no
-// refspec push.default=matching or the pushed remote's remote.<name>.push
-// are unresolvable; any other push naming no refspec sends the current
-// branch to @{push}; the commits the remote lacks are
-// `rev-list <src>… --not --remotes=<remote>`, or `--not refs/heads/main`
-// when the remote has no tracking refs at all (zcp keeps local main on HQ's
-// main), else every commit of the sources; more than 1000 is unresolvable;
-// each is read by `diff-tree --root -m --no-commit-id -r --name-only
-// --no-renames -- .github/workflows/` — commits and trees only, which a
-// blob:none clone holds. Any check that fails is unresolvable.
-func brokeredGitPushAccess(ctx context.Context, ssh SSHStdioRunner, host, dir string, args BrokeredGitArgs, relay BrokeredGitRelay) string {
-	plan := planBrokeredGitPush(args)
-	if plan.unresolvable {
-		return hq.GitHubAccessWorkflows
-	}
-	check := func(stdin string, gitArgs ...string) (string, int, bool) {
-		var stdout bytes.Buffer
-		code, err := RunBrokeredGitRelayed(ctx, ssh, host, dir, BrokeredGitArgs{
-			Config: args.Config, Dir: args.Dir, Subcommand: gitArgs[0], Rest: gitArgs[1:],
-		}, relay, strings.NewReader(stdin), &stdout, io.Discard)
-		return stdout.String(), code, err == nil
-	}
-	out, code, ok := check("", "config", "-z", "--get-regexp", brokeredGitPushConfigKeys)
-	if !ok || code > 1 {
-		return hq.GitHubAccessWorkflows
-	}
-	cfg := parseBrokeredGitPushConfig(out)
-	srcs, remote := plan.srcs, plan.remote
-	if cfg.unreadable || cfg.followTags || len(srcs) == 0 && !cfg.sendsCurrentBranch() {
-		return hq.GitHubAccessWorkflows
-	}
-	if len(srcs) == 0 {
-		out, code, ok := check("", "rev-parse", "--symbolic-full-name", "HEAD", "@{push}")
-		lines := strings.Fields(out)
-		if !ok || code != 0 || len(lines) != 2 || !strings.HasPrefix(lines[0], "refs/heads/") || !strings.HasPrefix(lines[1], "refs/remotes/") {
-			return hq.GitHubAccessWorkflows
-		}
-		srcs = []string{lines[0]}
-		if remote == "" {
-			remote, _, _ = strings.Cut(strings.TrimPrefix(lines[1], "refs/remotes/"), "/")
-		}
-		if cfg.pushSpecs[remote] {
-			return hq.GitHubAccessWorkflows
-		}
-	}
-	if cfg.mirror[remote] {
-		return hq.GitHubAccessWorkflows
-	}
-	patterns := []string{localMainRef}
-	named := remote != "" && !strings.ContainsAny(remote, "/:*?[\\") && !strings.HasPrefix(remote, "-")
-	if named {
-		patterns = append(patterns, "refs/remotes/"+remote+"/")
-	}
-	out, code, ok = check("", append([]string{"for-each-ref", "--format=%(refname)"}, patterns...)...)
-	if !ok || code != 0 {
-		return hq.GitHubAccessWorkflows
-	}
-	var tracking, localMain bool
-	for ref := range strings.FieldsSeq(out) {
-		tracking = tracking || named && strings.HasPrefix(ref, "refs/remotes/"+remote+"/")
-		localMain = localMain || ref == localMainRef
-	}
-	revList := append([]string{"rev-list", fmt.Sprintf("--max-count=%d", pushCheckCommitCap+1)}, srcs...)
-	switch {
-	case tracking:
-		revList = append(revList, "--not", "--remotes="+remote)
-	case localMain:
-		revList = append(revList, "--not", localMainRef)
-	}
-	out, code, ok = check("", revList...)
-	commits := strings.Fields(out)
-	if !ok || code != 0 || len(commits) > pushCheckCommitCap {
-		return hq.GitHubAccessWorkflows
-	}
-	if len(commits) == 0 {
-		return hq.GitHubAccessWrite
-	}
-	out, code, ok = check(strings.Join(commits, "\n")+"\n",
-		"diff-tree", "--stdin", "--root", "-m", "--no-commit-id", "-r", "--name-only", "--no-renames", "--", ".github/workflows/")
-	if !ok || code != 0 || strings.TrimSpace(out) != "" {
-		return hq.GitHubAccessWorkflows
-	}
-	return hq.GitHubAccessWrite
 }
