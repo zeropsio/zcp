@@ -40,7 +40,7 @@ func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *tes
 	}))
 	defer fakeHQ.Close()
 	hqtest.Link(t, fakeHQ.URL, "proj-1", "fixture")
-	hqtest.State(t, `{"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":null}`)
+	hqtest.State(t, `{"rev":1,"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":null}`)
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "beviro-wren"}).

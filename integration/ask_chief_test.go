@@ -45,7 +45,7 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 	}))
 	t.Cleanup(chiefHQ.Close)
 	hqtest.Link(t, chiefHQ.URL, "proj-1", "fixture")
-	hqtest.State(t, `{"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
+	hqtest.State(t, `{"rev":1,"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
 
 	// Non-parallel: t.Chdir rebases the state dir server.New derives.
 	t.Chdir(t.TempDir())
