@@ -9,7 +9,7 @@ Read private tooling/access policy in `CLAUDE.local.md` when present; worktrees 
 Map only. Authority: tests → code → specs → this map. Homes:
 
 - Behavior → test + spec; mechanism → code/doc-comment; design → `docs/spec-*.md`, promoted before citing.
-- Platform facts → `../zerops-docs/` or live, never training data; recipe gotchas → `internal/knowledge/recipes/<slug>.md`; universal mechanics → `internal/content/atoms/`.
+- Platform facts → the Zerops documentation (`zeropsio/docs`, <https://docs.zerops.io>) or live, never training data; recipe gotchas → `internal/knowledge/recipes/<slug>.md`; universal mechanics → `internal/content/atoms/`.
 - Disciplines → the shared rules, this repository's own in `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`.
 - `plans/` is a local, untracked scratch directory for whoever uses it, never authoritative.
 
@@ -33,7 +33,7 @@ Read the home before changes:
 - `docs/spec-oss-port-flow.md` — foreign OSS porting gate.
 - `docs/spec-dataconsole.md` — data surfaces/write authority/families/fidelity/install.
 - `docs/spec-dataconsole-testing.md` — proof coverage/matrix/live lanes/versions.
-- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; `zcp git` in the dev service, relayed credentials (§6.8); trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`; private HQ architecture → `zeropsio/mate-hq:docs/architecture/README.md` when available.
+- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; `zcp git` in the dev service, relayed credentials (§6.8); trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `zeropsio/mate:docs/internals/zerops/`; private HQ architecture → `zeropsio/mate-hq:docs/architecture/README.md` when available.
 - `docs/spec-telemetry.md` — ingest/trusted IP.
 - `schema.URLs` — ZCP_API_HOST-derived live schemas (`schema.CanonicalAPIHost` for dev); `internal/platform/errors.go` — error catalog.
 
@@ -51,7 +51,7 @@ Admission, level and removal: the shared rules, §4. `scripts/check-witness.go` 
 
 - `make setup` — dev tools and git hooks.
 - `make check-changed` — witness lines and native lint of affected packages from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
-- CI runs build (all platforms), `go vet` (default and build-tagged) and lint, no test. Pre-push runs only the static witness checks. `make lint-fast` and `make lint-local` are manual all-package lint.
+- CI runs build (all platforms), `go vet` (default and build-tagged), lint and the static witness check, no test. Pre-push runs only the static witness checks. `make lint-fast` and `make lint-local` are manual all-package lint.
 - Knowledge sync (gitignored markdown, pull before build): `zcp sync pull recipes [<slug>]` / `pull guides`; `zcp sync push recipes <slug> [--dry-run]` / `push guides` → GitHub PR; `zcp sync cache-clear [<slug>]`; `zcp sync recipe {create-repo,push-app,publish,export}`. Loop: pull → edit → push → merge → cache-clear → pull. Config: `.sync.yaml`, `.env STRAPI_API_TOKEN`.
 
 ## How to work

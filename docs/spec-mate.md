@@ -26,7 +26,7 @@ when that document is available.
   connection rather than the sshfs mount; multi-repo diff, the checkpoint refs a start sweeps — §6.
 - The fork — Zerops Mate is a hard fork of T3 Code: frozen upstream base, four zones (import / port /
   owned / owned product), the adapter SPI between ported drivers and owned code, the upstream
-  intake ritual — §7 (rules and measurements live in the fork: `../z3/docs/internals/zerops/`).
+  intake ritual — §7 (rules and measurements live in the fork: `zeropsio/mate:docs/internals/zerops/`).
 - Agent authorization — the agent CLI signs in from inside mate: a self-verified agent-auth feed,
   the platform flag written by the mate server through the Zerops API, server-driven login sessions
   whose parsed prompts (URL, device code) reach the client as actions, and sign-out — §8.
@@ -1357,7 +1357,7 @@ retired dev service, so this snapshot is where the part's pool shows beside its 
   `stageHostname`) pairs those stages with the pool: a tier or recipe naming a dev that still stands
   wins, then the envelope, then the stem — so a tier naming the retired dev yields to the envelope.
   Such a stage is never a checkout row, and the pool (no checkout of its own) is not one either; the
-  pairing comes from the thread's own last envelope (z3 `poolPairsIn`, `useThreadPoolPairs`). A preview's address is its Zerops subdomain and the commit a preview runs is
+  pairing comes from the thread's own last envelope (Mate's `poolPairsIn`, `useThreadPoolPairs`). A preview's address is its Zerops subdomain and the commit a preview runs is
   the receipt's (§2.8a.6), so neither rides here.
 
 ```json
@@ -1843,7 +1843,7 @@ on it and never blocks.
   file strictly against the contract shapes, asserts the values, and marshals today's single-pair
   envelope from `workflow.StateEnvelope` byte for byte. The lane that emits a shape switches its
   case to render through the real handler (`docs/spec-testing-architecture.md`).
-- z3: a byte copy in `packages/client-runtime/src/zerops/fixtures/zcp/` with `SOURCE.json`
+- Mate: a byte copy in `packages/client-runtime/src/zerops/fixtures/zcp/` with `SOURCE.json`
   `{zcpCommit, files: {name: sha256}}`, refreshed only by `scripts/sync-zcp-fixtures.ts` (copies from
   `../zcp`, rewrites `SOURCE.json`). `zcpFixtures.test.ts` recomputes every hash — a hand edit of the
   copy fails — and decodes every file through Mate's consumers (the envelope schema, the card
@@ -3021,7 +3021,7 @@ birth worker that drove it from any page (`birth/birthStore.ts`, `birth/birthWor
 `mate:birth:<projectId>`), with its `tags`, `registry`, `harden` and `health` steps — is not in the
 rebuild; the press below took its place (pass 28). `provisioning.ts`'s wait (`awaiting-container` →
 `awaiting-settled` → `hardening` → `awaiting-health`) and its tests still stand, and nothing drives
-it at z3 `7cd89a21a6`.
+it at `zeropsio/mate` `7cd89a21a6`.
 
 A Mate is born by **the press**: every step that needs the person's rights, run in the foreground
 before _Add_ returns, so nothing after it needs a browser (`matePress.ts:1-17`). Its steps are the
@@ -3282,9 +3282,8 @@ streams deliver ordinary changes, including operations initiated by agents, CLI 
 REST establishes baselines, hydrates details and repairs observations. There is no general query
 cache, SWR, TTL freshness layer or per-event refetch path.
 
-The detailed contracts live in the fork's
-[architecture decision](../../z3/docs/internals/zerops/platform-data-architecture.md) and
-[consistency contract](../../z3/docs/internals/zerops/platform-data-consistency.md). They fix
+The detailed contracts live in the fork's client data rules,
+`zeropsio/mate:docs/internals/zerops/data-layer.md`. They fix
 source-aware admission, terminating recovery, separate entity/membership/access semantics and
 explicit `observing` health without claiming source order, replay or lossless reconnect. Effect
 scopes own one receiver per demanded organization, multiplexed interests, bounded ingress/repair,
@@ -4294,7 +4293,7 @@ fails toward doing nothing rather than toward silently changing behaviour a test
 ### 6.4 Checkpoints — removed; what a turn changed is in git (2026-10-19)
 
 Git is the record of what a turn changed: nothing per turn is captured, no checkpoint ref is
-written, nothing is reverted (z3 `412c115c3a`, migration 062). Diff shows what each of the
+written, nothing is reverted (`zeropsio/mate` `412c115c3a`, migration 062). Diff shows what each of the
 conversation's repositories has that `main` does not — files not committed (tracked and untracked,
 not ignored) and commits not on `main`, or not pushed when the checkout is on `main` — read by the
 dev service's own git over SSH, never by git on the mount (`ZeropsGitCommitDiff.test.ts`, "are read
@@ -4610,7 +4609,7 @@ the real script against real git under `/bin/sh` and, where installed, dash and 
 Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag
 `upstream-base-2026-08-28`). Upstream is never merged or rebased again; what is still taken from it is
 taken in two ways, and everything else is owned. The rules, the measurements behind them and the
-freeze checklist live in the fork — `../z3/docs/internals/zerops/fork.md` (rules), `spi.md` (the
+freeze checklist live in the fork — `zeropsio/mate:docs/internals/zerops/fork.md` (rules), `spi.md` (the
 adapter contract), `intake.md` (last-reviewed upstream SHA + decisions), `compat.md` (ported SHA ×
 CLI versions) — and the fork's `AGENTS.md` is the map. This section records the decision and the
 invariants zcp relies on.
@@ -5027,7 +5026,7 @@ key from zcp's own env store, captured at first boot (ledger 2026-09-16).
 
 ### 10.8 HQ
 
-**The shared project** (§10.1), `mate-hq-prod` (`BUBslDB4Qs22uBme88B4Lw`), hosts Core,
+**The shared project** (§10.1) hosts Core,
 its Postgres and a volume for the bare repositories at `https://mate-hq.zerops.io` for every
 organization. Only the leading Core answers; a standby, or a Zerops HQ cannot read, answers
 `503` with `Retry-After`, which every caller takes for "try again". Core's API is JSON over HTTP;
