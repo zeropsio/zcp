@@ -85,19 +85,24 @@ async function selectTreeCorpus(github, repo, sha, tree) {
   return null;
 }
 
-// Release consumes CI's verdict; absence of proof must never start a second CI.
+// Release consumes CI's verdict: it waits for the newest full CI run of the commit and
+// fails on its failure. No listed run fails too, so a run the listing does not show yet
+// never gets a duplicate check. A newer push to main cancels the older runs (ci.yml
+// concurrency): a cancelled run is no verdict, and null makes the release check it in full.
 async function requireCorpus(github, repo, sha, wait = ms => new Promise(resolve => setTimeout(resolve, ms))) {
   const proof = await selectCorpus(github, repo, sha);
   if (proof) return proof;
-  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+  const runs = (await github.paginate(github.rest.actions.listWorkflowRuns, {
     ...repo, workflow_id: 'ci.yml', head_sha: sha, per_page: 100,
-  });
-  let run = runs.find(item => isFullCIRun(item, repo, sha) && item.status !== 'completed');
-  while (run && run.status !== 'completed') {
+  })).filter(item => isFullCIRun(item, repo, sha));
+  let run = runs.find(item => item.status !== 'completed') ?? runs[0];
+  if (!run) throw new Error(`No full CI run for ${sha}`);
+  while (run.status !== 'completed') {
     await wait(15000);
     ({ data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: run.id }));
   }
-  if (run && run.conclusion !== 'success') throw new Error(`CI verdict for ${sha}: ${run.conclusion}`);
+  if (run.conclusion === 'cancelled') return null;
+  if (run.conclusion !== 'success') throw new Error(`CI verdict for ${sha}: ${run.conclusion}`);
   const completedProof = await selectCorpus(github, repo, sha);
   if (!completedProof) throw new Error(`No green full CI proof for ${sha}`);
   return completedProof;

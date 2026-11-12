@@ -21,6 +21,12 @@ permissions:
   contents: read
   actions: read
 
+# Only the newest main push needs a verdict: it cancels older main runs, queued or running.
+# Every other run (pull request, dispatch, wt/keys, a release's call) has a group of its own.
+concurrency:
+  group: ci-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   knowledge:
     uses: ./.github/workflows/knowledge.yml

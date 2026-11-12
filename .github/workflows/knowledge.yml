@@ -3,7 +3,7 @@ name: Prepare knowledge
 on:
   workflow_call:
     inputs:
-      # Release: require the exact commit's green verdict, waiting if CI runs.
+      # Release: require the exact commit's green verdict, waiting if CI runs; a cancelled run checks in full.
       reuse-ci:
         type: boolean
         default: false
