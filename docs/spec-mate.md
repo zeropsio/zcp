@@ -390,10 +390,16 @@ lock without waiting and:
    The smoke has no clock of its own, only the caller's deadline: a container over its cgroup's
    `memory.high` (the granted RAM less the minimum free RAM, which the autoscaler raises in steps)
    stalls every process, so its duration says nothing about the install. An existing directory of that version that passes the smoke is kept; one that fails it is
-   downloaded afresh by the keep job, while the start job leaves it as it is and starts `current`.
-   Only a smoke that ran to its end and failed counts: one the deadline cut leaves the complete
-   install as it is in both jobs, downloads nothing, and its error names the deadline; the next run
-   smokes it again (a first install whose smoke is cut still fails, and systemd retries). A failure
+   downloaded afresh by the keep job and by a first install, while the start job with a `current`
+   leaves it as it is and starts `current`.
+   Only a smoke that ran to its end and failed counts: one the deadline cut downloads nothing and
+   its error names the deadline. An install just downloaded stays, because its smoke had only what
+   the download left of the deadline. An existing directory, whose smoke had the whole deadline,
+   stays under the start job with a `current`, for the keep job to smoke again; the keep job and a
+   first install, which have `InstallTimeout`, remove it unless `current` or `last-good` names it,
+   so the next run downloads it afresh: an install whose smoke hangs on every run is replaced on
+   the second run, and a slow download never becomes a download on every run (a first install
+   whose smoke is cut still fails, and systemd retries). A failure
    removes the half-built directory; `current` and `last-good` directories are never replaced.
 3. **Switches** `current` atomically: the symlink is built under a temporary name and renamed onto
    `current`. A version below `MinimumMateVersion` is never started (`mate.BelowFloorError`; `zcp

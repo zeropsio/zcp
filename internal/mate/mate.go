@@ -489,10 +489,11 @@ func HQIdentity(getenv func(string) string) hq.Identity {
 type Replacing bool
 
 const (
-	// ReplaceFailing downloads it afresh: the keep job, which has the time.
+	// ReplaceFailing downloads it afresh: the keep job and a first install,
+	// which have the time.
 	ReplaceFailing Replacing = true
-	// KeepFailing leaves it as it is and fails: the start job, which leaves
-	// the download to the keep job and starts current.
+	// KeepFailing leaves it as it is and fails: the start job with a current,
+	// which leaves the download to the keep job and starts current.
 	KeepFailing Replacing = false
 )
 
@@ -505,10 +506,14 @@ const (
 // together. The directory current or last-good names is never replaced. Any
 // failure removes the half-built directory.
 //
-// Only a smoke test that ran to its end and failed makes an install failing:
-// one ctx ended says nothing about it, so the complete install is left as it
-// is under either Replacing for the next run to smoke again, and nothing is
-// downloaded on the expired ctx.
+// Only a smoke test that ran to its end and failed makes an install failing.
+// One ctx ended says nothing about it, and nothing is downloaded on the
+// expired ctx. An install just downloaded is left as it is, because its smoke
+// test had only what the download left of ctx. An existing directory, whose
+// smoke test had all of ctx, is left as it is under KeepFailing and removed
+// under ReplaceFailing for the next run to download afresh: an install whose
+// smoke test hangs on every run is replaced on the second run, and a slow
+// download never turns into a download on every run.
 func StageRelease(ctx context.Context, release Manifest, replace Replacing) error {
 	versionDir := VersionDir(release.Version)
 	if version, err := installedVersionIn(versionDir); err == nil && version == release.Version {
@@ -517,16 +522,14 @@ func StageRelease(ctx context.Context, release Manifest, replace Replacing) erro
 			return nil
 		}
 		if ctx.Err() != nil {
-			return smokeCut(ctx, versionDir)
+			return smokeCut(ctx, versionDir, replace)
 		}
 		if replace == KeepFailing {
 			return fmt.Errorf("%s fails its smoke test: %w; left for the keep job", versionDir, err)
 		}
 	}
-	for _, link := range []string{CurrentLink(), LastGoodLink()} {
-		if dir, err := linkedVersionDir(link); err == nil && filepath.Clean(dir) == filepath.Clean(versionDir) {
-			return fmt.Errorf("%s fails its smoke test and is what %s names; not replaced", versionDir, filepath.Base(link))
-		}
+	if link := linkNaming(versionDir); link != "" {
+		return fmt.Errorf("%s fails its smoke test and is what %s names; not replaced", versionDir, link)
 	}
 	if release.URL == "" {
 		return fmt.Errorf("mate %s is not downloaded, and the release list does not name it", release.Version)
@@ -542,7 +545,7 @@ func StageRelease(ctx context.Context, release Manifest, replace Replacing) erro
 
 	if err := smokeTestInstall(ctx, versionDir); err != nil {
 		if ctx.Err() != nil {
-			return smokeCut(ctx, versionDir)
+			return smokeCut(ctx, versionDir, KeepFailing)
 		}
 		_ = os.RemoveAll(versionDir)
 		return fmt.Errorf("smoke test %s: %w", versionDir, err)
@@ -551,11 +554,32 @@ func StageRelease(ctx context.Context, release Manifest, replace Replacing) erro
 	return nil
 }
 
-// smokeCut is StageRelease's error for a smoke test ctx ended before it
-// finished. It names the deadline, not the kill os/exec reports for the child
-// (the same words an out-of-memory kill produces).
-func smokeCut(ctx context.Context, versionDir string) error {
-	return fmt.Errorf("the deadline ended the smoke test of %s before it finished; left as it is: %w", versionDir, context.Cause(ctx))
+// smokeCut ends StageRelease after a smoke test ctx ended before it finished:
+// under ReplaceFailing the install is removed for the next run to download
+// afresh, unless current or last-good names it; under KeepFailing, which is
+// also how an install just downloaded is treated, it is left as it is. Its
+// error names the deadline, not the kill os/exec reports for the child (the
+// same words an out-of-memory kill produces).
+func smokeCut(ctx context.Context, versionDir string, replace Replacing) error {
+	left := "left as it is"
+	if replace == ReplaceFailing && linkNaming(versionDir) == "" {
+		if err := os.RemoveAll(versionDir); err != nil {
+			return fmt.Errorf("the deadline ended the smoke test of %s before it finished; remove it: %w", versionDir, err)
+		}
+		left = "removed, the next run downloads it afresh"
+	}
+	return fmt.Errorf("the deadline ended the smoke test of %s before it finished; %s: %w", versionDir, left, context.Cause(ctx))
+}
+
+// linkNaming is the name of the link, current or last-good, that names
+// versionDir, or "" when neither does.
+func linkNaming(versionDir string) string {
+	for _, link := range []string{CurrentLink(), LastGoodLink()} {
+		if dir, err := linkedVersionDir(link); err == nil && filepath.Clean(dir) == filepath.Clean(versionDir) {
+			return filepath.Base(link)
+		}
+	}
+	return ""
 }
 
 // activate atomically repoints CurrentLink() at versionDir: build a
