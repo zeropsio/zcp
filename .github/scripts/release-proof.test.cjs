@@ -96,12 +96,19 @@ for (const status of ['in_progress', 'queued', 'waiting', 'pending', 'requested'
   });
 }
 
-for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped', 'neutral', 'action_required']) {
+for (const conclusion of ['failure', 'timed_out', 'skipped', 'neutral', 'action_required']) {
   test(`Release blocks a ${conclusion} CI verdict`, async () => {
     await assert.rejects(release({ runs: [{ ...run, status: 'in_progress', conclusion: null }],
       updates: [{ ...run, conclusion }] }), /CI.*proof|CI.*verdict/);
   });
 }
+
+test('Release checks a commit in full itself when its CI run was cancelled', async () => {
+  const result = await release({ runs: [{ ...run, status: 'in_progress', conclusion: null }],
+    updates: [{ ...run, conclusion: 'cancelled' }] });
+  assert.deepEqual(result.outputs, {}, 'no reused archive, so build and lint run in the release');
+  assert.deepEqual(result.reads, ['completed']);
+});
 
 for (const [scenario, options] of Object.entries({
   'no exact-SHA CI': { runs: [] },

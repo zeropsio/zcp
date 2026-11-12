@@ -203,7 +203,7 @@ case — no pull request, a red, unfinished or forked run, another tree, a commi
 GitHub no longer returns, a missing archive — runs full CI.
 Decision: A push to main whose tree already passed CI on its pull request reuses that verdict instead of running CI again.
 
-Decision: A tree without a green verdict is always checked in full; a release still requires a green verdict for its exact commit.
+Decision: A tree without a green verdict is always checked in full; a release still requires a green verdict for its exact commit, or checks that commit in full itself when its CI run was cancelled.
 
 A release can reuse a retained archive only from successful CI on the exact
 checked-out source commit in this repository, triggered by a push or manual
@@ -212,10 +212,11 @@ attempt, or with that attempt's preparation having verified a reused verdict.
 It verifies the digest before reusing acceptance and before each build.
 Decision: Releasing a commit whose CI already passed does not rerun its checks; releasing a commit whose CI is still running waits for that run's verdict instead of starting another.
 
-Decision: A commit without a green CI verdict is never released.
+Decision: A commit without a green CI verdict is never released unless the release checked it in full itself.
 
-Missing proof, a failed/cancelled CI verdict, expired/unavailable artifacts, and
-digest mismatches block release. Normal CI prepares and validates its own archive;
+Missing proof, a failed CI verdict, expired/unavailable artifacts, and digest
+mismatches block release. A cancelled CI run (a newer push to main cancels the
+older runs) is no verdict: the release checks the commit in full itself. Normal CI prepares and validates its own archive;
 release binaries use the archive from the successful CI run. Release jobs set up Go
 without its cache.
 Decision: A release build that cannot restore its Go cache builds without it rather than waiting.
