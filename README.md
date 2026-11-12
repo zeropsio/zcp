@@ -221,6 +221,10 @@ Bootstrap sessions survive process restart and can be reattached via `route=resu
 
 ## Development
 
+Every change follows the engineering rules this repository shares with Zerops Mate and HQ:
+[`zeropsio/mate:docs/engineering-rules.md`](https://github.com/zeropsio/mate/blob/main/docs/engineering-rules.md).
+[`AGENTS.md`](AGENTS.md) is the repository map for coding agents.
+
 ```bash
 go build -o bin/zcp ./cmd/zcp    # Build
 go vet ./...                     # Vet

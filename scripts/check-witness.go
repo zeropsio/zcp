@@ -1,6 +1,7 @@
-// Command check-witness enforces OWNER.md Testing's admission evidence on Go
-// tests: every added case carries a `// witness: <owner path> | <old> → <new>`
-// line that still applies, unwitnessed cases never grow against the base, and
+// Command check-witness enforces the admission evidence of
+// zeropsio/mate:docs/engineering-rules.md §4 on Go tests: every added case
+// carries a `// witness: <owner path> | <old> → <new>` line that still
+// applies, unwitnessed cases never grow against the base, and
 // a removed test name carries a `Drops-test: <name> — <class>` trailer or its
 // deleted file a `Drops-test-file: <path>` trailer.
 //
@@ -41,7 +42,7 @@ import (
 	"unicode"
 )
 
-// dropClasses is OWNER.md's removal class set; `reworded` also needs the same
+// dropClasses is the shared rules' removal class set; `reworded` also needs the same
 // commit to add a case carrying the dropped case's witness line.
 var dropClasses = []string{"copy", "duplicate", "fake-input", "mock", "dead",
 	"library", "trivia", "harness", "reworded"}

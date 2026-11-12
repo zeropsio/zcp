@@ -1,6 +1,7 @@
 # ZCP — Zerops Control Plane
 
 Go binary: MCP server + CLI for Zerops PaaS.
+Shared rules: every change follows `zeropsio/mate:docs/engineering-rules.md` (<https://github.com/zeropsio/mate/blob/main/docs/engineering-rules.md>), the rules this repository shares with Mate and HQ. Read it before the first edit, from your own checkout of that repository or from GitHub; this file adds only this repository's map, commands and traps.
 Read private tooling/access policy in `CLAUDE.local.md` when present; worktrees also check the main checkout (`git worktree list`). Never commit it/credentials or edit it without a local-policy request.
 
 ## Where knowledge lives
@@ -9,7 +10,7 @@ Map only. Authority: tests → code → specs → this map. Homes:
 
 - Behavior → test + spec; mechanism → code/doc-comment; design → `docs/spec-*.md`, promoted before citing.
 - Platform facts → `../zerops-docs/` or live, never training data; recipe gotchas → `internal/knowledge/recipes/<slug>.md`; universal mechanics → `internal/content/atoms/`.
-- Disciplines → `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`.
+- Disciplines → the shared rules, this repository's own in `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`.
 - `plans/` is a local, untracked scratch directory for whoever uses it, never authoritative.
 
 Read the home before changes:
@@ -44,7 +45,7 @@ L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/
 
 Tests run only when the owner explicitly asks (the dispatch-only `Tests` workflow, `make test*`, `scripts/check-changed.sh --tests`); nothing runs them automatically. Normal verification is lint (`make check-changed`), `go vet ./...` and `go build ./...`. A test you write or change: table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
-Admission, level and removal: OWNER.md Testing. `scripts/check-witness.go` enforces witness lines and drop trailers (touched test files per staged commit in `make check-changed`, touched owners per pushed range in pre-push). New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/` (platform responses only from `e2e/recordings/`, written by `go test ./e2e -tags e2e -run TestRecord`), live `./e2e/ -tags e2e`. The zcp↔Mate seam's live case installs a released Mate through download → SHA-256 → install and boots `mate serve` (`TestMateInstall_Release_Serves`).
+Admission, level and removal: the shared rules, §4. `scripts/check-witness.go` enforces witness lines and drop trailers (touched test files per staged commit in `make check-changed`, touched owners per pushed range in pre-push). New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/` (platform responses only from `e2e/recordings/`, written by `go test ./e2e -tags e2e -run TestRecord`), live `./e2e/ -tags e2e`. The zcp↔Mate seam's live case installs a released Mate through download → SHA-256 → install and boots `mate serve` (`TestMateInstall_Release_Serves`).
 
 ## Commands
 
@@ -56,7 +57,7 @@ Admission, level and removal: OWNER.md Testing. `scripts/check-witness.go` enfor
 ## How to work
 
 - Resolve agent-facing service hostnames to IDs internally; shell/SQL composition uses POSIX single-quoting via `shellQuote()`, never `fmt.Sprintf`.
-- Errors: `fmt.Errorf("op: %w", err)`, never bare `return err`. Split by cohesion; English code/comments/docs/commits; atomic commits, no Co-Authored-By or amend; verify each refactor phase.
+- Errors: `fmt.Errorf("op: %w", err)`, never bare `return err`. Split by cohesion; never amend a commit; verify each refactor phase.
 - Renames: search calls/types/strings/tests separately, no AST assumptions.
 - No global mutable state (except `sync.Once` init); no `go.mod` replace directives; no `panic()` — return errors; use concrete known types. Never add parallel tests to global-state packages without thread safety; copy under mutex, release before I/O.
 - Atoms: single-owner platform mechanics, no spec IDs/handler verbs/invisible fields/plan paths/env-only title qualifiers. Extend `internal/content/atoms_lint{,_axes}.go`, never per-topic atom tests (`TestAtomAuthoringLint`, `docs/spec-knowledge-distribution.md` §11).
