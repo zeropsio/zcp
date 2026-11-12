@@ -3892,7 +3892,7 @@ crosses the conversation.
     puts that branch on GitHub and opens its pull request — and the agent tells the person the
     earlier pull request is superseded. A branch not pushed anywhere yet, and a change whose
     branch HQ put on GitHub, are unaffected. The agent reads it in AGENTS.md's git host paragraph
-    and in the line of the pass that moves the checkout.
+    and, once, at the first develop start after the move (*The move is told once*, below).
 - **The wiring is the one writer of `origin`.** Every pass that reads the Mate's state records on
   the pair how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a
   repository HQ alone keeps, `mode` empty — unknown — from an HQ that names no repositories, so
@@ -3900,13 +3900,22 @@ crosses the conversation.
   its repository in HQ whichever of `github`, `follow` or `none` the record says
   (`hqPairOrigin`, `hqPairOriginTarget`, over ssh, config only), as `git-push-setup` set it; a
   record that does not say leaves it. A checkout whose `origin` an older zcp pointed at GitHub is
-  moved, and the pass that moves it says so — develop's start to the agent, the Mate's start,
-  which usually comes first, to its log: its code is still on GitHub, which HQ
-  mirrors both ways and alone pushes to; fetch `origin`, then push the branch to `origin`; work
-  on a branch pushed to GitHub from the container is finished under a new branch name, as a new
-  change, the earlier pull request superseded (*The move*, above); `zcp git` refuses a push to
-  GitHub. AGENTS.md's git host paragraph, always in context, says the same of such a branch, and
-  develop's start tells per repository kept on GitHub how it is worked on every time (below). The `credential.https://github.com.helper` lines that zcp wrote into such a checkout
+  moved. **The move is told once.** A zcp update restarts the container, and the Mate's own
+  start, whose lines reach only its log, usually moves the checkout before any develop start
+  runs; a develop start that then found `origin` on HQ would say nothing. So the pass that moves
+  it — the Mate's start, develop's start, or a rewire whose `git-push-setup` replaced a GitHub
+  origin — records the move on the pair (`HQRepoRef.originMoved {from, to}`, in the pair's own
+  record file, so it outlives the restart) and says nothing itself, and the next develop start
+  says it and clears it in one hold of the record (`tellHQOriginMoved`): once, whichever pass
+  moved it, by one of two starts running at once; a move that cannot be recorded is said by the
+  pass rather than never, and a pair no longer kept on GitHub, or keyed by its dev pool since,
+  is cleared unsaid. The line: its code is still on GitHub, which HQ mirrors both ways and alone
+  pushes to; fetch `origin`, then push the branch to `origin`; work on a branch pushed to GitHub
+  from the container is finished under a new branch name, as a new change, the earlier pull
+  request superseded (*The move*, above); `zcp git` refuses a push to GitHub. AGENTS.md's git
+  host paragraph, always in context, says the same of such a branch, and develop's start tells
+  per repository kept on GitHub how it is worked on every time (below). The
+  `credential.https://github.com.helper` lines that zcp wrote into such a checkout
   (`hq.GitHubHelperConfig`) are left where they are — unsetting them cannot tell zcp's emptied
   helper list from a person's own — and are harmless there: the helper they name answers a read
   token and nothing more, and a relayed call clears every persisted helper for itself. Never a
@@ -3917,6 +3926,7 @@ crosses the conversation.
   remote when it names where `origin` points or, kept on GitHub, the GitHub repository HQ mirrors.
   zcp `TestHQPairOriginTarget_EveryWayTheCodeIsKept_IsItsRepositoryInHQ`,
   `TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ`,
+  `TestMateStart_MovesACheckoutOffGitHub_DevelopStartTellsItOnce`,
   `TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote`.
 - **Where the agent reads the way.** Status names it on the dev half — `hqRepo=`, `origin.mode=`,
   `origin=` — from the record; the origin is read from the Mate's state (§2.8); with no state heard, `origin.mode=unknown`. Beside it, `checkoutOrigin=` is the checkout's origin
@@ -3954,9 +3964,11 @@ crosses the conversation.
   commands of the one change that brings them back in step (protocol *Realignment*): a branch
   `realign-github` from GitHub's tip — the checkout's origin being HQ, fetched by GitHub's address
   to `refs/remotes/github/default` (`zcp git <host> fetch <GitHub address>
-  +HEAD:refs/remotes/github/default`, through `zcp git` in a lease too, which answers the address
-  in the fetch's argv with a read token) — with HQ's `main`, fetched
-  from HQ's address to `refs/remotes/hq/main`, merged in; pushed to HQ and never to GitHub — HQ
+  +HEAD:refs/remotes/github/default`, which answers the address in the fetch's argv with a read
+  token) — with HQ's `main`, fetched
+  from HQ's address to `refs/remotes/hq/main`, merged in; pushed to HQ by its address and never to
+  GitHub, every command of it through `zcp git`, in a lease by its alias, whose own git over ssh
+  holds no credential for GitHub or for HQ's address — HQ
   realigns only onto the squash of a change whose head it pushed to the change's branch on GitHub
   itself, and never pushes a branch there it did not make — then opened and described; merged in
   Mate, HQ squash-merges its pull request on GitHub and moves `main` onto that squash. Never a
@@ -4511,11 +4523,19 @@ once per repository per call, and answers git with that token as often as git as
 only access zcp asks, for a fetch, clone, ls-remote, a lazy fetch and zcp's own relayed scripts:
 HQ alone pushes to GitHub (§5.10, *HQ alone pushes to GitHub*). A call whose subcommand is `push`
 is answered for HQ only. When git asks, inside it, for a GitHub repository the call would answer a
-read for, zcp answers nothing, asks HQ for no token, and says once what to do instead — push the
-branch to `origin`, its repository in HQ (`zcp git <host> push origin <branch>`), and open its
-change; HQ puts the change's branch on GitHub and opens its pull request; GitHub's default branch
-moves only by a merge — and git ends on the declined credential (`could not read Username`, exit
-128). The push runs as the one ssh call it is: nothing reads the checkout's config or commits
+read for, zcp answers nothing, asks HQ for no token, and says once why, in words chosen by the
+repository. For the one HQ mirrors the pair's code to (`BrokeredGitRelay.Mirror`: the record's HQ
+origin while its mode is `github`, or the live origin read in its place) it says what to do
+instead — push the branch to `origin`, its repository in HQ (`zcp git <host> push origin
+<branch>`), and open its change; HQ puts the change's branch on GitHub and opens its pull request,
+unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a
+new branch name; GitHub's default branch moves only by a merge; a checkout whose `origin` still
+names GitHub is moved by develop's start. For any other repository — a URL in the push's argv, an
+origin only followed — it says that zcp gives no token that pushes to GitHub and that HQ pushes
+only to the repository it mirrors, and names no push to `origin`: nothing HQ does would carry it
+there (`TestBrokeredGit_Relay_PushToAGitHubRepositoryHQDoesNotMirror_ToldNoPushToOrigin`,
+`TestBrokeredGitRelayFor_OnlyAnOriginKeptOnGitHub_IsTheMirror`). git ends on the declined
+credential (`could not read Username`, exit 128). The push runs as the one ssh call it is: nothing reads the checkout's config or commits
 first (`TestBrokeredGit_Relay_PushToGitHub_RefusedWithoutAskingHQ`). zcp cannot tell a push's own
 request from a read git starts inside it, so such a read is refused with it; a checkout whose
 origin is HQ fetches its lazy contents from HQ. A push a hook starts inside a call that is no push
@@ -4528,8 +4548,8 @@ reaches ssh's argv, the caller's stdout or stderr, or a file the call leaves in 
 **Residual risk.** Code the call starts in the dev service — a hook, an alias, what a hook runs —
 inherits descriptors 3 and 4 and can ask, while the call lasts, for what the call is answered with:
 a read token for the pair's GitHub repository, and the Mate's HQ credential, which covers every HQ
-repository of the application (new exposure for a pair not wired through). Nothing in the
-container can obtain a token that writes to GitHub.
+repository of the application (new exposure for a pair not wired through). zcp asks HQ only for
+GitHub tokens that read; what HQ answers a request for any other access is HQ's to state.
 
 **What stays.** `zcp hq git-credential` and the helpers persisted in a checkout's `.git/config`
 keep working, for HQ and for reads from GitHub (§5.10, *The helper*); a relayed call clears them
@@ -5890,8 +5910,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   repository whose code is kept on GitHub (`origin.mode` `github`, read from the Mate's state (§2.8)
   at the call and recorded, the pair's record when no state was heard) the branch is pushed to
   origin, HQ, like any other, and the answer adds that HQ alone pushes to GitHub: it puts the
-  branch there and opens its pull request once the change is described, the agent opens none and
-  never pushes there, and the person merges it in Mate
+  branch there and opens its pull request once the change is described — unless GitHub already
+  holds a branch of that name HQ did not put there, when the work goes under a new branch name, as
+  a new change — the agent opens none and never pushes there, and the person merges it in Mate
   (`TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs`). `zerops_deploy strategy="git-push"` from a pair
   wired to HQ, to any remote, refuses before git runs — the pair holds no credential, its git
   reaches HQ through `zcp git` alone — and says that way. The person reviews a change by its description:
@@ -6615,7 +6636,7 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-47 | A change HQ moved itself (mate-hq: right after a squash, HQ brings `main` into each open change built on the squashed change's branch by one merge commit authored `Core <core@hq.invalid>`, a fast-forward that keeps a described change described) carries `corePush` `{ at, from, head, landed, squash }` in the Mate's state, decoded as optional: an older HQ, or a change without it, reads as before. While `corePush.head` is the change's head, the pass says once, through the `told` ledger (MB-42) and before any other standing, "HQ brought main into #N after #L merged: fetch and fast-forward `<branch>` before your next push", with `zcp git <host> fetch origin && zcp git <host> merge --ff-only origin/<branch>` where the branch is checked out in the repository's dev service (its checkout or its `/tmp/wt-<branch>` worktree there) or over ssh in each lease of it; lease status names it for the group's change, read now or as last told; a lease sync refused as non-fast-forward names it as the cause, the Mate's state read once for that refusal. zcp never reads the agent's checkouts for it, so it is said once even where the branch was fast-forwarded already (§10.10). zcp `TestHQChangeStanding_CorePushAtHead_SaidOnce`, `TestHQPass_CorePushAtHead_ToldOnce`, `TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease`, `TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause`. |
 | MB-48 | A repository HQ mirrors to GitHub through the organisation's app is never synced by hand: AGENTS.md says HQ pushes `main` there itself and a merged change reaches GitHub as its pull request, so never a push of GitHub's default branch nor a merged change copied onto it; the repository pass says once, through a told record per repository, when a repository's remote becomes the app's (`GET /api/apps/:appId/repos`, `via: "app"`) — its GitHub repository, that HQ alone pushes there, drop a note that says to push to GitHub or to sync it — and once per `divergedSince` that HQ and GitHub diverged, with the git commands of the one change that brings them back in step: a branch from GitHub's tip, fetched by GitHub's address with a read token, with HQ's `main` merged in, pushed to HQ, never to GitHub, squash-merged on GitHub when merged in Mate (§5.10). zcp `TestHQPass_GitHubMirror_SaidOnceWhenHQMirrorsTheRepository`, `TestHQPass_GitHubMirror_DivergenceSaidOnceWithTheRealignment`, `TestTellMirror_SaysEachOnce`, `TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand`, `TestClient_AppRepos_ReadsEachRepositorysRemote`, `TestClient_AppRepos_ReadsEveryPage`. |
 | MB-49 | A change HQ closed because another change's landing carried every commit of it is on `main`, never "closed without merging" (mate-hq: a change built on it merged first, so that squash holds its work; HQ closes it and names the carrier). It carries `landedWith`, the carrier's number in the same repository, in the Mate's state — the link's `state.json` (§2.8) — decoded as optional: absent on every other change and from an older HQ, read only on a `closed` change, whose `mergedSha` and `landedHead` are null. Every reader that asks whether a change's work reached `main` takes it as it takes a merged one: the pass says once "change #N was merged as part of #M", all of its work on `main` through #M's merge, nothing lost and nothing to do again, with the merged note's next steps — `main` brought up to date and the next work's branch cut from it, the leases still on its branch, the stages that track `main` — and forgets it; status, lease status and a lease release's result say "merged as part of #M" where they say "merged", with the same release-or-start-from-`main` words, never "no change yet"; the launch refusal points at the projects page (MB-31); a recipe proposal that landed with another change is no decline, and one landing after a closed proposal reopens the question as a merge does (§10.10). Its leases are released on completion as a merged or closed change's are (DP-34), the line saying it "was merged as part of #M". Only the check that an earlier merge superseded a closed recipe proposal reads `mergedSha`, so a change that landed with another, having none, is not among those merges. zcp `TestClient_Self_Changes_DecodeLandedWith`, `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestObserve_Environments_CurrentChanges`, `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`, `TestReleaseCompletedLeases_ByTheBranchsChange`. |
-| MB-50 | HQ alone pushes to GitHub (§5.10 *HQ alone pushes to GitHub*, §6.8 *Tokens and access*): every wired pair's checkout's `origin` is its repository in HQ whichever way the person keeps the code, and a checkout an older zcp pointed at GitHub is moved back by the pass, which says, as AGENTS.md does, that HQ pushes on only to branches it put on GitHub — work on a branch the container pushed there itself is finished under a new branch name pushed to `origin`, as a new change, the earlier pull request superseded; zcp asks HQ for a GitHub token with `access=read` alone, from a relayed `zcp git` call and `zcp hq git-credential` alike, never `write` or `workflows` and never with no `access`; a `zcp git` push whose git asks for a GitHub repository is refused in zcp's words, no token asked, naming the push to `origin`; the realignment reads GitHub's default branch by its address with that read token and pushes to HQ. zcp `TestHQPairOriginTarget_EveryWayTheCodeIsKept_IsItsRepositoryInHQ`, `TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ`, `TestBrokeredGit_Relay_PushToGitHub_RefusedWithoutAskingHQ`, `TestBrokeredGit_Relay_Realignment_GitHubsTipReadByAddress_PushedToHQ`, `TestAnswerGit_GitHubRepository_AsksHQForAReadToken`, `TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit`. |
+| MB-50 | HQ alone pushes to GitHub (§5.10 *HQ alone pushes to GitHub*, §6.8 *Tokens and access*): every wired pair's checkout's `origin` is its repository in HQ whichever way the person keeps the code, and a checkout an older zcp pointed at GitHub is moved back by the pass — the Mate's start or develop's — and the next develop start says once, from the move kept on the pair's record, as AGENTS.md does always, that HQ pushes on only to branches it put on GitHub — work on a branch the container pushed there itself is finished under a new branch name pushed to `origin`, as a new change, the earlier pull request superseded; zcp asks HQ for a GitHub token with `access=read` alone, from a relayed `zcp git` call and `zcp hq git-credential` alike, never `write` or `workflows` and never with no `access`; a `zcp git` push whose git asks for a GitHub repository is refused in zcp's words, no token asked, naming the push to `origin` only for the repository HQ mirrors the pair's code to; the realignment reads GitHub's default branch by its address with that read token and pushes to HQ. zcp `TestHQPairOriginTarget_EveryWayTheCodeIsKept_IsItsRepositoryInHQ`, `TestRepositoryPass_ACheckoutPointedAtGitHubMovesToHQ`, `TestMateStart_MovesACheckoutOffGitHub_DevelopStartTellsItOnce`, `TestBrokeredGit_Relay_PushToGitHub_RefusedWithoutAskingHQ`, `TestBrokeredGit_Relay_PushToAGitHubRepositoryHQDoesNotMirror_ToldNoPushToOrigin`, `TestBrokeredGit_Relay_Realignment_GitHubsTipReadByAddress_PushedToHQ`, `TestAnswerGit_GitHubRepository_AsksHQForAReadToken`, `TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit`. |
 | MB-43 | A Mate closes its own open change by branch, or a lease of it, never inferred: closed without merging in HQ, its branch and leases kept, forgotten by zcp; another Mate's is never asked for; an HQ without `openPerBranch`, or without the close route, is not asked or refuses, and the answer says a person closes it in its review (§10.10). zcp `TestCloseChange_OwnByBranch`, `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`, `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`, `TestWorkflowTool_CloseChangeReachesItsHandler`. |
 | MB-44 | A Mate's recipe describes its project as it is (D36): the AI Agent tier gives each part its dev pool (swarm@1, `minContainers: 0`, its live maximum and scale, `sshIsolation` as written, no build, no setup, no credential) and its stage; every runtime of every tier is typed, scaled and reached from its own part (its stage as it runs, else its setup's `run.base`) and named after it (`apistage` → `api`); a Mate's own dev tooling stays on the AI Agent tier; a pair's zerops.yaml is read from main of its repository in HQ when the mount has none. A tier zcp wrote from this Mate and nobody changed since (its mark intact and this Mate's, or only Core's squashes of this Mate's recipe proposals in its history) is proposed anew when its shape changes, and HQ lands it by itself unless its merge would change an environment made from a tier (D37); one a person or another Mate wrote or changed never is; one of the same shape stays, and so does one whose header an older zcp worded otherwise. A recipe that cannot be proposed is a required step on the bootstrap response, a develop start and status, tried again on every pass. What serves the Mate itself — a runtime, a utility or a stage of a pair, the person marked (`mateOnly`) or, where they said nothing, wired to the address of a service of its own project no group environment runs (a dev half, its own infrastructure, a utility so wired; never another part's stage), a volume only such a runtime can be using — stays on the AI Agent tier, and one the person cleared is carried everywhere; a recipe change whose branch holds a commit zcp did not write is the Mate's or a person's, and zcp pushes nothing onto it (`TestBuildGroupRecipe_MateOwnServices_OnlyInTheAIAgentTier`, `TestBuildGroupRecipe_MateWiredStage_OnlyInTheAIAgentTier`, `TestBuildGroupRecipe_StageWiring_DecidesItsTiers`, `TestBuildGroupRecipe_MateWiring_OnlyAnAddressNoGroupEnvironmentRuns`, `TestBuildGroupRecipe_PersonsMateOnlyChoice_WinsOverZcpsRules`, `TestGroupRecipe_TheMateOnlyChoice_IsKeptAndEveryPassHonoursIt`, `TestGroupRecipe_AChangeSomeoneElseEdited_IsNeverPushedOver`, `TestGroupRecipe_PushesOnlyWhenItsCompositionChanged`). zcp `TestBuildGroupRecipe_PoolKeyedMonorepo_PoolAndStagePerPart`, `TestBuildGroupRecipe_Polyglot_EachRuntimeFromItsOwnPart`, `TestBuildGroupRecipe_DevOnlyUtilities_OnlyInTheAIAgentTier`, `TestGroupRecipe_ItsOwnTiersFromBeforeAPoolMigration_ProposedAnew`, `TestGroupRecipe_ATierAPersonOrAnotherMateWrote_IsNeverProposedOver`, `TestGroupRecipe_ItsOwnTiersWithTheSameShape_StayAsTheyAre`, `TestGroupRecipe_ItsOwnTiersUnderAnOlderHeader_StayItsOwnAndAsTheyAre`, `TestGroupRecipe_TheMateWebShape_RequiredUntilItComposes`. |
 | MB-45 | A Mate's recipe follows a service change (D36): after an import, a delete, a variable set, deleted or put in the vault as the organization's AI key, a pool migration's retire, or a deploy that reaches a stage — each answered without an error — and after any deploy or workflow call that moved zcp's records of the pairs, the recipe pass runs again off the call's path, once the calls have been quiet for 30 s (3 min at most from a burst's first), one pass per burst and one more for a call during a pass; it reopens no proposal a person closed unmerged, updates the Mate's one open recipe change, pushes nothing over an unchanged project and opens nothing over a main that carries the composition; a tier proposed anew is pushed again only for a new shape; its line goes to the log once and never into a tool's answer; a scale and public access ask for none. zcp `TestRecipeFollower_AfterACall_FollowsWhatTheRecipeReads`, `TestRecipeFollower_ABurst_IsOnePass`, `TestRecipeFollower_ACallDuringAPass_IsOneMorePass`, `TestRecipeFollower_ServerStopped_RunsNoPass`, `TestRecipeFollower_AnOutcome_SaidOnce`, `TestNewRecipeFollower_OutsideAMate_FollowsNothing`, `TestGroupRecipeFollow_ReopensNothingAPersonDeclined`, `TestGroupRecipeFollow_TheMatesOneChange`, `TestGroupRecipeFollow_MainCarriesTheRecipe_OpensAndPushesNothing`, `TestGroupRecipe_ATierProposedAnew_IsRewrittenOnlyForItsShape`, `TestBuildGroupRecipe_AnyInputOrder_SameBytes`, `TestFollowRecipe_ToolCall_ToldAsItStartsAndOnceItAnswered`, `TestNew_RecipeFollower_OnlyInAMate`. |
