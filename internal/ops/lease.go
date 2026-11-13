@@ -145,7 +145,11 @@ func (d LeaseDeps) env(key string) (string, bool) {
 
 // liveEnvFile is where Zerops keeps a container's current env, rewritten as
 // the project's services change; a process's own environment is a snapshot
-// from its start, so a pool created after zcp started is only seen here.
+// from its start, so a pool created after zcp started is only seen here. An
+// env reference to a service never deployed stays its literal text, and the
+// file turns a reference to a pool's API_TOKEN into the token the moment the
+// pool's first deploy lands — no restart, no re-set of the variable (live,
+// 2026-11-13).
 const liveEnvFile = "/etc/zerops-zembed/env.json"
 
 // liveContainerEnv reads key from the container's current env.
@@ -282,7 +286,9 @@ const leaseTokenKey = "API_TOKEN"
 // holds: a variable <pool>_API_TOKEN=${<pool>_API_TOKEN} stays the literal
 // text under every envIsolation, and while it exists every other reference to
 // that name on the service stays literal too; a different name resolves into
-// the live env within about 15 s (live, 2026-10-23).
+// the live env within about 15 s (live, 2026-10-23) — once the pool has been
+// deployed: before its first image the reference stays literal (liveEnvFile),
+// so no lease of a pool works until an ordinary deploy gives it one.
 const leaseTokenAliasKey = "LEASE_TOKEN"
 
 // unresolvedReference is a value that is still the text of an env reference

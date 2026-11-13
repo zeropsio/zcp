@@ -252,7 +252,8 @@ leases are keyed by branch, so they never meet.
   would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
   pool's token references it under another name — this zcp service as
   `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`. A variable named
-  `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text.
+  `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text,
+  as does any reference to a pool never deployed until its first deploy.
 - A container answers from anywhere in the project on every port it listens
   on, at `node-id-<n>.runtime.<pool>.zerops`; `run.ports` governs only the
   public subdomain.
