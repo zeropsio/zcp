@@ -19,7 +19,7 @@
 # proposes it anew when that Mate's project changes shape — a part added or
 # removed, a dev pool, a runtime's type; an edit of any line makes the file the
 # group's alone.
-# zcp-recipe: p-jago sha256=734c291685c269e5a041269d93aef6a437514834bc59fbda1bc4307e4955318d
+# zcp-recipe: p-jago sha256=97beaeb9fd11186ecd1b7e6cfd5be8d37089a4d46728f9ca74fbf382f54ad158
 
 project:
   name: Zerops Apps - Jago
@@ -27,8 +27,8 @@ project:
 
 services:
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "boxpool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "boxpool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: boxpool
     type: swarm@1
     priority: 1
@@ -62,8 +62,8 @@ services:
       maxRam: 1
 
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "hqpool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "hqpool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: hqpool
     type: swarm@1
     priority: 1
@@ -97,8 +97,8 @@ services:
       maxRam: 1
 
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "webpool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "webpool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: webpool
     type: swarm@1
     priority: 1

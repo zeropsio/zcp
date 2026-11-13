@@ -19,7 +19,7 @@
 # proposes it anew when that Mate's project changes shape — a part added or
 # removed, a dev pool, a runtime's type; an edit of any line makes the file the
 # group's alone.
-# zcp-recipe: p-odin sha256=9e89eb8a7f91218a544e6e3f9329af0f8dfc7077fbea3b87c4a252368a39e70d
+# zcp-recipe: p-odin sha256=c37f19055f006eb1c1457d620ff48a1f6f6bfccd4d298a358bc137e739510560
 
 project:
   name: Noola - Odin
@@ -41,8 +41,8 @@ services:
     profile: oltp-hobby
 
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "apipool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "apipool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: apipool
     type: swarm@1
     priority: 1
@@ -79,7 +79,7 @@ services:
 
   # A dev pool: one container leased per branch of the repository its stage
   # builds from. Its image is that repository's setup "edgepool", deployed from
-  # a lease once the Mate runs; this import builds nothing.
+  # main when the Mate stands up; this import builds nothing.
   - hostname: edgepool
     type: swarm@1
     priority: 1
@@ -115,8 +115,8 @@ services:
       maxDisk: 250
 
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "geopool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "geopool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: geopool
     type: swarm@1
     priority: 1
@@ -142,7 +142,7 @@ services:
 
   # A dev pool: one container leased per branch of the repository its stage
   # builds from. Its image is that repository's setup "sitepool", deployed from
-  # a lease once the Mate runs; this import builds nothing.
+  # main when the Mate stands up; this import builds nothing.
   - hostname: sitepool
     type: swarm@1
     priority: 1
@@ -178,8 +178,8 @@ services:
       maxDisk: 250
 
   # A dev pool: one container leased per branch of the repository its stage
-  # builds from. Its image is that repository's setup "webpool", deployed from a
-  # lease once the Mate runs; this import builds nothing.
+  # builds from. Its image is that repository's setup "webpool", deployed from
+  # main when the Mate stands up; this import builds nothing.
   - hostname: webpool
     type: swarm@1
     priority: 1

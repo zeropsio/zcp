@@ -32,8 +32,9 @@ const defaultPoolMaxContainers = 3
 // DP-15), and its live maximum and vertical scale; the tier writes its own
 // service variables beside them (groupPoolVault), the sshIsolation that
 // admits zcp among them. No build and no setup: a
-// pool's image is deployed from a lease of it, never by an import, and a
-// runtime built from HQ would read as a dev half to clone into. No
+// pool's first image is deployed from main by the Mate's stand-up, never by
+// an import, and a runtime built from HQ would read as a dev half to clone
+// into. No
 // credential either: zcp answers a lease's git against HQ itself, with the
 // Mate's project key (DP-16), and the pool's GIT_TOKEN stays the person's,
 // so the tier names neither. The comment says which setup its
@@ -59,7 +60,7 @@ func groupPoolEntry(r GroupRuntime, priority int) (map[string]any, string) {
 			entry["verticalAutoscaling"] = v
 		}
 	}
-	comment := fmt.Sprintf("A dev pool: one container leased per branch of the repository its stage builds from. Its image is that repository's setup %q, deployed from a lease once the Mate runs; this import builds nothing.", r.SetupName)
+	comment := fmt.Sprintf("A dev pool: one container leased per branch of the repository its stage builds from. Its image is that repository's setup %q, deployed from main when the Mate stands up; this import builds nothing.", r.SetupName)
 	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
 }
 

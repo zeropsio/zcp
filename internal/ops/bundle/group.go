@@ -58,9 +58,10 @@ type GroupRuntime struct {
 	DevHostname string
 	// DevPool marks a dev half that is a dev pool (swarm@1): the AI Agent
 	// tier writes it as zcp imports a part's pool — no build and no setup
-	// (its image is deployed from a lease, never by an import), no container
-	// until a lease asks, its own scale and service variables — and nothing
-	// of it is typed, scaled or named after it: its parts take their stages'.
+	// (its first image is deployed by the Mate's stand-up, never by an
+	// import), no container until a lease asks, its own scale and service
+	// variables — and nothing of it is typed, scaled or named after it: its
+	// parts take their stages'.
 	DevPool bool
 	// Stages are the pair's stages in ServiceMeta.Stages order, none for a
 	// mode that has no stage. They exist under their own hostnames only on
