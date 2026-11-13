@@ -110,7 +110,9 @@ func (s *Start) Version() string { return s.version }
 // then records the verdict and lets go of the install lock. Up: last-good
 // names the version. Not up: the server is ended; a version newer than
 // last-good is remembered as failed and current returns to last-good, unless
-// last-good is below SwitchBackMinimum; last-good itself, a dev build, or a
+// last-good is below MinimumMateVersion, which this zcp would not start;
+// every release from 0.16.178 refuses to start on state a newer version wrote,
+// so going back to one at or above the floor is safe. Last-good itself, a dev build, or a
 // first install writes and switches nothing. The returned error says it did
 // not come up, and the caller's process ends with it, so systemd starts the
 // unit again. A stop the launcher was asked for is no verdict. exited
@@ -188,7 +190,7 @@ func (s *Start) down(cause error) error {
 // newer version wrote.
 func (s *Start) switchesBack() bool {
 	return s.lastGood != "" && !IsDevVersion(s.version) && VersionOlder(s.lastGood, s.version) &&
-		!VersionOlder(s.lastGood, SwitchBackMinimum)
+		!BelowFloor(s.lastGood)
 }
 
 // waitUp waits until the server process server answers on the local port with

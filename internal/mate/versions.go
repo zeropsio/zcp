@@ -15,12 +15,6 @@ import (
 // the downloaded versions, and manifest.json the release list as last read. The start job
 // (Start) is the one writer of the two links and the failed version.
 
-// SwitchBackMinimum is the first Mate release that refuses to start on state a
-// newer version wrote. Going back to an older version is safe only from there
-// on: a newer version that does not come up returns to last-good only when
-// last-good is at least this release; below it the newer version stays.
-const SwitchBackMinimum = "0.16.178"
-
 // LastGoodLink names the newest version that came up under this zcp.
 func LastGoodLink() string { return filepath.Join(Prefix(), "last-good") }
 

@@ -37,10 +37,12 @@ const (
 	// and its package declares the HQ origin. 0.16.40 still lacks Observe
 	// credential delivery; 0.16.41 is required for the frame receiver and
 	// file writer used by strict HQ reads. 0.16.54 is the first rev 7
-	// release: it admits people by its own live access list and answers
-	// HQ's tokened tickets; an older Mate is refused every ticket by rev 7 HQ.
-	// 0.16.154 keeps the link's Mate state in the file zcp reads (§2.8).
-	MinimumMateVersion = "0.16.154"
+	// release: it answers HQ's tokened tickets; an older Mate is refused
+	// every ticket by rev 7 HQ. 0.16.154 keeps the link's Mate state in the
+	// file zcp reads (§2.8). 0.16.195 is the first release that keeps no
+	// member list: it makes no member search at Zerops and sends HQ no
+	// person hint (docs/spec-mate.md §3.9), and no longer passes --refresh.
+	MinimumMateVersion = "0.16.195"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order

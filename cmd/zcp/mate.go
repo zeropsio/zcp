@@ -90,9 +90,9 @@ func runMateStatus(args []string) int { return runMateStatusFor(args, server.Ver
 // runMateStatusFor is runMateStatus for a zcp of version zcpVersion. Every
 // status reads both release sources; --local answers from the releases last
 // read instead, without a network call, for the Mate server's read at its
-// boot. --refresh changes nothing and still parses: the Mate server passes it.
+// boot.
 func runMateStatusFor(args []string, zcpVersion string) int {
-	flags, code, done := commandFlags("usage: zcp mate status [--json] [--local]", args, "--json", "--refresh", "--local")
+	flags, code, done := commandFlags("usage: zcp mate status [--json] [--local]", args, "--json", "--local")
 	if done {
 		return code
 	}

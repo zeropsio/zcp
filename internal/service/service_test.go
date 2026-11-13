@@ -623,7 +623,7 @@ func stageVersion(t *testing.T, version string) {
 func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	const next = "0.16.180"
+	const next = "0.16.196"
 	tests := []struct {
 		name        string
 		staged      bool

@@ -132,8 +132,6 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 	}{
 		{"latest unknown", "v9.220.0", "", "", []string{"--json"},
 			zcpWant{"v9.220.0", "", false}, false, "", 1},
-		{"refresh asks the release source", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--refresh"},
-			zcpWant{"v9.220.0", "v9.227.0", true}, true, "zcp v9.227.0 is out; a restart installs it", 1},
 		{"local reads only the last read", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--local"},
 			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
 		{"local with nothing read is unknown", "v9.220.0", "", "v9.227.0", []string{"--json", "--local"},
