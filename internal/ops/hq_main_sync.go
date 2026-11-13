@@ -83,3 +83,19 @@ func MainSync(output string) (state, detail string) {
 	state, detail, _ = strings.Cut(markedLine(output, mainSyncMarker), " ")
 	return state, strings.TrimSpace(detail)
 }
+
+// BuildMainCheckoutCommand puts workingDir on the repository's `main` as HQ
+// holds it now, fetched from repoURL one commit deep and checked out by force
+// over whatever the checkout held. It is for a checkout nothing is worked in
+// — a pool pair's stage holding main for its pool's first image — never a
+// pair's working copy, whose `main` moves only by a merge
+// (BuildBaseBranchCommand). Run again, it takes HQ's `main` as it is then. It
+// runs as a relayed script, as BuildBaseBranchCommand does.
+func BuildMainCheckoutCommand(workingDir, repoURL string) string {
+	return strings.Join([]string{
+		"cd " + shellQuote(workingDir),
+		"{ [ -d .git ] || git init -q; }",
+		hqGit("fetch -q --no-tags --depth=1 " + shellQuote(repoURL) + " " + shellQuote(baseBranch)),
+		"git checkout -q -f -B " + shellQuote(baseBranch) + " FETCH_HEAD",
+	}, " && ")
+}

@@ -6243,8 +6243,22 @@ The order:
      `devPool` with the pool's service id, no `migratedFrom`), and its repository in HQ is recorded
      on it over no ssh — the HQ record, the remote and `main` as the wiring records them, after the
      same existence check — since a pool holds no checkout of its own and each lease checks its
-     branch out from the repository (DP-16). Nothing of such a pair is mounted, checked out,
-     deployed or waited on as running: a pool has no container until a lease asks for one;
+     branch out from the repository (DP-16). A pool is never waited on as running: it has no
+     container until a lease asks for one. Until a pool has its first image no lease of it works —
+     a Mate's key reads its `API_TOKEN` masked, and a reference to a service never deployed stays
+     its literal text — so the stand-up gives it that image by an ordinary deploy, which takes no
+     pool token: a pool with no image has `main` checked out in its stage, the stage brought up
+     running and empty first when it never ran — a stage never deployed (no deploy attempt, the
+     single recovery classifier's `fresh-misconfigured`) is re-imported from its own tier entry
+     with `startWithoutCode` and `override`, carrying the `envIsolation` and `sshIsolation` the live
+     stage holds; one with any other history is the model's — then mounted, and `main` fetched as HQ
+     holds it now (relayed, nothing stored in the stage; each call fetches afresh); the pool is then
+     cross-deployed from that checkout with its own setup among the dev halves. A stage that already
+     runs a build is never checked out into. The stage itself is not deployed by the stand-up: it
+     deploys from a lease of its pool, as every later stage deploy does (DP-8) — a self-deploy from
+     the checkout it holds is refused unless its setup deploys the whole tree (DM-2). Once the
+     pool's deploy lands, the reference to its token resolves in zcp's live env and its leases work
+     (`TestStandup_APoolWithNoImage_GetsItFromItsStage`);
    - deploys each half as soon as what it needs stands, at most five at once, over two calls. What
      orders the halves is what each build reads of the others, read from each half's own setup in
      its pair's zerops.yaml as the recipe writer reads it: a storefront's stage build pre-rendering
@@ -6270,14 +6284,13 @@ The order:
      supervisor did not answer);
    - answers one entry per service: adopted, wired, deployed with its URL, queued, or failed with
      zcp's failure classification, the dev server's state, and the model's next step. A pool pair's
-     pool says whether its image is built (the platform's active app version) and, while not, names
-     the lease of the pool on `main` (`zerops_lease action="acquire" pool=<pool> repo=<its repository
-     in HQ> branch="main"`), the deploy of the pool's image from that lease
-     (`zerops_deploy sourceService=<alias> targetService=<pool> setup=<pool's setup> sha="origin/main"`,
-     DP-14's bake) and its rollout; its stage names its deploy from the same lease and the lease's
-     release. A tier whose every pair the stand-up builds stands — or holds none — with every pool
-     pair recorded answers `pools-recorded`, which never reads as a running development or preview:
-     no pool's image and no such stage is built by the stand-up.
+     pool says how its first image went and, once it has one, names the lease of the pool on `main`
+     (`zerops_lease action="acquire" pool=<pool> repo=<its repository in HQ> branch="main"`) the
+     part's dev servers run in; its stage names its deploy from that lease
+     (`zerops_deploy sourceService=<alias> targetService=<stage> setup=<stage's setup>`) and its
+     verify. A tier whose every pair the stand-up builds stands — or holds none — with every pool
+     given its image answers `pools-built`, which never reads as a running preview: no such stage is
+     built by the stand-up.
 8. The model starts the dev servers, verifies, and tells the person development is up, with each dev
     half's address.
 9. It calls `zerops_standup` again in the same turn, which builds the stages and waits for them. A

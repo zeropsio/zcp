@@ -816,10 +816,10 @@ func TestStandup_HQMigrationDecisions(t *testing.T) {
 }
 
 // A monorepo whose every part is its own dev pool beside its stage (a Mate's
-// tier composed from a pooled project, no dev service anywhere): each part is
-// recorded as the pair keyed by its pool, with its repository in HQ, and
-// nothing touches a pool's containers or deploys — the answer names the
-// lease that builds each pool's image and its stage.
+// tier composed from a pooled project, no dev service anywhere), its pools
+// already given their image: each part is recorded as the pair keyed by its
+// pool, with its repository in HQ, nothing is checked out or deployed again,
+// and the answer names the lease of each pool and its stage's deploy from it.
 // witness: internal/workflow/mate_tier.go | if pool, ok := partPool(m.svc, repo, pools); ok { → if pool, ok := partPool(m.svc, repo, pools); false && ok {
 func TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool(t *testing.T) {
 	t.Parallel()
@@ -850,19 +850,22 @@ func TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool(t *testing.T) {
 	runtimeType := func(v string) platform.ServiceTypeInfo {
 		return platform.ServiceTypeInfo{ServiceStackTypeVersionName: v, ServiceStackTypeCategoryName: "USER"}
 	}
+	image := func(id string) *platform.ActiveAppVersionDigest {
+		return &platform.ActiveAppVersionDigest{ID: id, Source: "CLI", Built: true}
+	}
 	f.services = []platform.ServiceStack{
 		{ID: "svc-zcp", Name: "zcp", Status: statusActive, ServiceStackTypeInfo: runtimeType("zcp@1")},
-		{ID: "svc-apipool", Name: "apipool", Status: statusActive, ServiceStackTypeInfo: pool},
+		{ID: "svc-apipool", Name: "apipool", Status: statusActive, ServiceStackTypeInfo: pool, ActiveAppVersion: image("av-apipool")},
 		{ID: "svc-apistage", Name: "apistage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: runtimeType("nodejs@22")},
-		{ID: "svc-webpool", Name: "webpool", Status: statusActive, ServiceStackTypeInfo: pool},
+		{ID: "svc-webpool", Name: "webpool", Status: statusActive, ServiceStackTypeInfo: pool, ActiveAppVersion: image("av-webpool")},
 		{ID: "svc-webstage", Name: "webstage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: runtimeType("static@1.0")},
 		{ID: "svc-db", Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "STANDARD"}},
 	}
 	f.mock.WithServices(f.services)
 
 	result, body := f.run(t)
-	if result.IsError || body.StandUp != standupPoolsRecorded {
-		t.Fatalf("a tier of pool/stage pairs must stand up as recorded pools: %s", getTextContent(t, result))
+	if result.IsError || body.StandUp != standupPoolsBuilt {
+		t.Fatalf("a tier of pool/stage pairs whose pools have their image must stand up as built pools: %s", getTextContent(t, result))
 	}
 	for _, part := range []struct{ pool, stage, stageSetup string }{{"apipool", "apistage", "api"}, {"webpool", "webstage", "web"}} {
 		meta, err := workflow.ReadServiceMeta(f.stateDir, part.pool)
@@ -872,24 +875,193 @@ func TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool(t *testing.T) {
 		}
 		poolNext := body.service(t, part.pool)
 		if poolNext.Role != standupRoleDevPool || !strings.Contains(poolNext.Next, `zerops_lease action="acquire" pool="`+part.pool+`"`) ||
-			!strings.Contains(poolNext.Next, `targetService="`+part.pool+`"`) || poolNext.Deploy == nil || poolNext.Deploy.Status != standupNotDeployed {
-			t.Errorf("%s must say its image is not built and name the lease that builds it: %+v", part.pool, poolNext)
+			poolNext.Deploy == nil || poolNext.Deploy.Status != standupAlreadyDeployed {
+			t.Errorf("%s must say its image is built and name its lease: %+v", part.pool, poolNext)
 		}
 		stage := body.service(t, part.stage)
-		if stage.Deploy == nil || stage.Deploy.Status != standupNotDeployed || !strings.Contains(stage.Next, `targetService="`+part.stage+`" setup="`+part.stageSetup+`"`) {
+		if stage.Deploy == nil || stage.Deploy.Status != standupNotDeployed || !strings.Contains(stage.Next, `sourceService="<the lease's alias>" targetService="`+part.stage+`" setup="`+part.stageSetup+`"`) {
 			t.Errorf("%s must be left for a deploy from a lease of %s: %+v", part.stage, part.pool, stage)
 		}
 	}
 	for _, call := range f.ssh.commands {
 		if slices.Contains([]string{"apipool", "apistage", "webpool", "webstage"}, call.host) {
-			t.Errorf("a pool pair's stand-up ran ssh on %s: %s", call.host, call.cmd)
+			t.Errorf("a stand-up of pools with their image ran ssh on %s: %s", call.host, call.cmd)
 		}
 	}
-	if len(f.ssh.pushes()) != 0 || len(f.mounter.mounted) != 0 {
-		t.Errorf("a pool pair's stand-up deployed or mounted: pushes=%v mounted=%v", f.ssh.pushes(), f.mounter.mounted)
+	if len(f.ssh.pushes()) != 0 || len(f.mounter.mounted) != 0 || f.mock.CapturedImportYAML != "" {
+		t.Errorf("a stand-up of pools with their image deployed, mounted or imported: pushes=%v mounted=%v import=%q", f.ssh.pushes(), f.mounter.mounted, f.mock.CapturedImportYAML)
 	}
 	if len(f.hq.asked) != 0 {
 		t.Errorf("a pool pair's stand-up asked HQ to make a repository: %v", f.hq.asked)
+	}
+}
+
+// standupPoolTier is a Mate's tier of one pooled part: the pool with no
+// build, its stage built from the monorepo with its own vault and access.
+const standupPoolTier = `#yamlPreprocessor=on
+project:
+  name: mono-wren
+services:
+  - hostname: apipool
+    type: swarm@1
+    minContainers: 0
+    maxContainers: 3
+  - hostname: apistage
+    type: nodejs@22
+    buildFromGit: HQ/git/app-1/mono.git
+    zeropsSetup: api
+    enableSubdomainAccess: true
+    vault:
+      APP_KEY: <@generateRandomString(<32>)>
+  - hostname: db
+    type: postgresql@17
+    mode: NON_HA
+`
+
+// standupPoolZeropsYAML is the monorepo's zerops.yaml as main carries it: the
+// pool's setup, its image, and the stage's.
+const standupPoolZeropsYAML = `zerops:
+  - setup: apipool
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      start: zcp-devsup run
+  - setup: api
+    build:
+      base: nodejs@22
+      buildCommands: [npm ci, npm run build]
+      deployFiles: [dist]
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: node dist/main.js
+`
+
+// newStandupPoolFixture is a new Mate of one pooled part whose pool was never
+// deployed, its stage as stage describes it.
+func newStandupPoolFixture(t *testing.T, stage platform.ServiceStack) *standupFixture {
+	t.Helper()
+	f := newStandupFixture(t)
+	f.hq.repos = []string{"mono"}
+	f.hq.tier = strings.ReplaceAll(standupPoolTier, "HQ", f.srv.URL)
+	f.ssh.zeropsYAML = map[string]string{"apistage": standupPoolZeropsYAML}
+	if err := os.MkdirAll(filepath.Join(f.root, "apistage"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.root, "apistage", "zerops.yaml"), []byte(standupPoolZeropsYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.services = []platform.ServiceStack{
+		{ID: "svc-zcp", Name: "zcp", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-apipool", Name: "apipool", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		stage,
+		{ID: "svc-db", Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "STANDARD"}},
+	}
+	f.mock.WithServices(f.services).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-apipool", ServiceStackID: "svc-apipool", Status: statusActive, Sequence: 2}}).
+		WithServiceEnv(stage.ID, []platform.ServiceEnvVar{{Key: "envIsolation", Content: "service@zcp", Type: platform.ServiceEnvSystem}}).
+		WithImportResult(&platform.ImportResult{ServiceStacks: []platform.ImportedServiceStack{{
+			ID: "svc-apistage-2", Name: "apistage", Processes: []platform.Process{{ID: "proc-import-apistage", ActionName: "stack.import", Status: "PENDING"}},
+		}}}).
+		WithProcess(&platform.Process{ID: "proc-import-apistage", ActionName: "stack.import", Status: platform.ProcessStatusFinished})
+	return f
+}
+
+// A part's dev pool never deployed gets its first image in the stand-up, by
+// an ordinary deploy from main checked out in the part's stage — a stage the
+// birth left waiting for its first deploy re-imported running and empty from
+// its own tier entry first — and its stage is left for a deploy from a lease
+// of the pool, which works once the pool has its image.
+// witness: internal/tools/standup_deploy.go | target: ops.DeployBatchTarget{SourceService: sp.checkoutHost(), TargetService: p.Dev.Hostname → target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname
+func TestStandup_APoolWithNoImage_GetsItFromItsStage(t *testing.T) {
+	t.Parallel()
+	nodejs := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}
+	for name, tc := range map[string]struct {
+		stage      platform.ServiceStack
+		reimported bool
+	}{
+		"a stage waiting for its first deploy is brought up empty first": {
+			stage:      platform.ServiceStack{ID: "svc-apistage", Name: "apistage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: nodejs},
+			reimported: true,
+		},
+		"a stage already running empty is used as it is": {
+			stage: platform.ServiceStack{ID: "svc-apistage", Name: "apistage", Status: statusActive, ServiceStackTypeInfo: nodejs,
+				ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-placeholder", Source: platform.AppVersionSourceNone}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newStandupPoolFixture(t, tc.stage)
+			result, body := f.run(t)
+			if result.IsError || body.StandUp != standupPoolsBuilt {
+				t.Fatalf("a pool given its first image must stand up as a built pool: %s", getTextContent(t, result))
+			}
+			if got := f.ssh.pushes(); !slices.Equal(got, []string{"apistage → svc-apipool (apipool)"}) {
+				t.Errorf("the pool's first image must be deployed from main checked out in its stage, with its own setup, and nothing else deployed: %v", got)
+			}
+			checkedOut := false
+			for _, call := range f.ssh.commands {
+				checkedOut = checkedOut || (call.host == "apistage" && strings.Contains(call.cmd, "/git/"+labOrg+"/app-1/mono") && strings.Contains(call.cmd, "FETCH_HEAD"))
+			}
+			if !checkedOut {
+				t.Error("main of the part's repository was not checked out in its stage")
+			}
+			imported := f.mock.CapturedImportYAML
+			if !tc.reimported && imported != "" {
+				t.Errorf("a stage already running was imported again: %s", imported)
+			}
+			if tc.reimported {
+				for _, want := range []string{"hostname: apistage", "startWithoutCode: true", "override: true", "envIsolation: service@zcp",
+					"enableSubdomainAccess: true", "APP_KEY", "#yamlPreprocessor=on"} {
+					if !strings.Contains(imported, want) {
+						t.Errorf("the stage's re-import lacks %q:\n%s", want, imported)
+					}
+				}
+				for _, never := range []string{"buildFromGit", "zeropsSetup", "apipool", "project:"} {
+					if strings.Contains(imported, never) {
+						t.Errorf("the stage's re-import carries %q:\n%s", never, imported)
+					}
+				}
+			}
+			if pool := body.service(t, "apipool"); pool.Deploy == nil || pool.Deploy.Status != standupDeployed ||
+				!strings.Contains(pool.Next, `zerops_lease action="acquire" pool="apipool"`) {
+				t.Errorf("the pool must say its image is deployed and name its lease: %+v", pool)
+			}
+			if stage := body.service(t, "apistage"); stage.Deploy == nil || stage.Deploy.Status != standupNotDeployed ||
+				!strings.Contains(stage.Next, `sourceService="<the lease's alias>" targetService="apistage" setup="api"`) {
+				t.Errorf("the stage must be left for a deploy from a lease of its pool: %+v", stage)
+			}
+		})
+	}
+}
+
+// A stage that already runs a build holds that build, never main: the
+// stand-up never checks main out over it, and the pool's first image is the
+// model's to give, from a container holding main.
+// witness: internal/tools/standup_pool.go | case st.HasDeployedCode(): → case st.HasDeployedCode() && !st.IsLive():
+func TestStandup_APoolWithNoImage_StageRunningABuild_NeverCheckedOutInto(t *testing.T) {
+	t.Parallel()
+	f := newStandupPoolFixture(t, platform.ServiceStack{ID: "svc-apistage", Name: "apistage", Status: statusActive,
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+		ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-apistage", Source: "CLI", Built: true}})
+	result, body := f.run(t)
+	if result.IsError || body.StandUp != standupFailed {
+		t.Fatalf("a pool whose stage runs a build must stop the part: %s", getTextContent(t, result))
+	}
+	for _, call := range f.ssh.commands {
+		if call.host == "apistage" {
+			t.Errorf("the stand-up ran ssh on a stage that runs a build: %s", call.cmd)
+		}
+	}
+	if len(f.ssh.pushes()) != 0 || f.mock.CapturedImportYAML != "" {
+		t.Errorf("the stand-up deployed or imported: pushes=%v import=%q", f.ssh.pushes(), f.mock.CapturedImportYAML)
+	}
+	if stage := body.service(t, "apistage"); stage.Failed == "" || !strings.Contains(stage.Next, `targetService="apipool"`) {
+		t.Errorf("the stage must say why it is not checked out into and name the pool's deploy: %+v", stage)
 	}
 }
 

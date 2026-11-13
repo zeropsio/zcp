@@ -30,8 +30,11 @@ var agentGitSourceAllowed = map[string][]agentGitAllow{
 		{"baseBranchCommand", "", "zcp's own builder, executed in the dev service over ssh — no agent runs it"},
 		{"KeepOwnHistory", "", "the remedy's form for a project without a Mate, whose git stays on its mounted checkout (owner decision Q1, docs/spec-mate.md §6.7)"},
 	},
-	"internal/ops/hq_main_sync.go": {{"BuildMainSyncCommand", "", "zcp's own builder, executed in the dev service over ssh — no agent runs it"}},
-	"internal/ops/hq_project.go":   {{"*", "", "the plain-project door's builders, executed in the dev service over ssh — no agent runs them"}},
+	"internal/ops/hq_main_sync.go": {
+		{"BuildMainSyncCommand", "", "zcp's own builder, executed in the dev service over ssh — no agent runs it"},
+		{"BuildMainCheckoutCommand", "", "zcp's own builder, executed over ssh in a pool pair's stage for the pool's first image — no agent runs it"},
+	},
+	"internal/ops/hq_project.go": {{"*", "", "the plain-project door's builders, executed in the dev service over ssh — no agent runs them"}},
 	"internal/hq/gitcredential.go": {
 		{"GitHubHelperConfig", "", "the persisted github.com helper's writer, and the mount-fallback refusal that names it, kept for sessions on the old guidance; no new guidance names it"},
 	},

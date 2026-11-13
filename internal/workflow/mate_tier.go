@@ -153,8 +153,8 @@ type MateTier struct {
 // named like it (`apistage` → `apidev` or `api`). A stage left without a dev
 // half pairs with its part's dev pool (partPool): the Swarm pool named after
 // it (`apistage` → `apipool`, the name pool-migrate gives a part's pool),
-// which the tier writes with no build — a pool's image is deployed from a
-// lease, never by an import (the group recipe's pool entry). A pool is never
+// which the tier writes with no build — a pool's first image is deployed by
+// the stand-up, never by an import (the group recipe's pool entry). A pool is never
 // a container half, whatever it builds from. A runtime that fits no pair is
 // skipped by name, never guessed at.
 //

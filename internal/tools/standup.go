@@ -37,8 +37,11 @@ import (
 // model's second call — each stage once its dev half and the stages above it
 // by the tier's priority stand. A part whose dev half is its dev pool is
 // recorded as the pair keyed by the pool, its repository in HQ with it, and
-// nothing of it is deployed: the pool's image and the stage are built from a
-// lease of the pool, which the answer names as the model's next calls.
+// its pool gets its first image with the dev halves (standup_pool.go): no
+// lease of a pool works before it has one, so the image is an ordinary
+// deploy from main checked out in the part's stage. The stage itself is then
+// deployed from a lease of the pool, as every later stage deploy is, which
+// the answer names as the model's next calls.
 //
 // Done by the model, that took sixteen minutes on the Beviro trial
 // (2026-09-29): an improvised adopt, then one deploy after another, and a
@@ -187,9 +190,8 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 	}
 
 	pairs, live := d.preparePairs(ctx, hqc, src, progress)
-	containers := containerPairs(pairs)
-	d.deployAll(ctx, containers, live, src.tier.ProjectEnvs, progress)
-	d.observeDevServers(ctx, containers)
+	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
+	d.observeDevServers(ctx, pairs)
 
 	resp := buildStandupResponse(src, pairs, live)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
@@ -202,6 +204,9 @@ type standupSource struct {
 	appID     string
 	groupRepo string
 	tier      workflow.MateTier
+	// importYAML is the tier as read: a stage brought up empty is re-imported
+	// from its own entry (startPoolStage).
+	importYAML string
 }
 
 // readTier reads the AI Agent tier on main of the recipe repository of the
@@ -258,7 +263,7 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
 			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)
 	}
-	src.tier = tier
+	src.tier, src.importYAML = tier, read.ImportYAML
 	return src, nil
 }
 
@@ -297,19 +302,19 @@ type standupPair struct {
 	// remote is a pool pair's repository in HQ as git clones it, once its
 	// record names it; "" for any other pair.
 	remote string
+	// seedsPool is a pool pair whose pool has no image yet and whose stage
+	// holds, or is to hold, the checkout of main it is deployed from.
+	seedsPool bool
 }
 
-// containerPairs are the pairs whose dev half is a container the stand-up
-// checks out into and deploys — every pair but a part's dev pool and its
-// stage, which build from a lease of the pool.
-func containerPairs(pairs []*standupPair) []*standupPair {
-	out := make([]*standupPair, 0, len(pairs))
-	for _, sp := range pairs {
-		if !sp.pair.DevPool {
-			out = append(out, sp)
-		}
+// checkoutHost is the container the pair's repository is checked out in and
+// its dev deploy runs from: its dev half, or for a pair keyed by its dev pool
+// the stage, which holds main for the pool's first image (standup_pool.go).
+func (p *standupPair) checkoutHost() string {
+	if p.pair.DevPool {
+		return p.pair.FirstStage().Hostname
 	}
-	return out
+	return p.pair.Dev.Hostname
 }
 
 // standupStage is one stage of a pair through the stand-up.
@@ -403,13 +408,21 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 	}
 	d.recordReflog(adoptedNow)
 
+	// A pool pair's stage is readied for the pool's first image, each pair at
+	// once: bringing a stage up empty waits on the platform.
+	var wg sync.WaitGroup
 	for _, sp := range pairs {
-		if sp.failed == "" && !sp.pair.DevPool {
+		if sp.failed == "" && sp.pair.DevPool {
+			wg.Go(func() { d.openPoolStage(ctx, src, sp, live, progress) })
+		}
+	}
+	wg.Wait()
+	for _, sp := range pairs {
+		if sp.failed == "" && (!sp.pair.DevPool || sp.seedsPool) {
 			d.mountDevHalf(ctx, sp)
 		}
 	}
 
-	var wg sync.WaitGroup
 	for _, sp := range pairs {
 		if sp.failed != "" {
 			continue
@@ -710,20 +723,24 @@ func (d standupDeps) recordReflog(targets []workflow.BootstrapTarget) {
 	}
 }
 
-// mountDevHalf mounts the dev half where the deploy's pre-flight reads its
-// zerops.yaml and the Mate's app reads its files, and gives it the repository
-// the checkout lands in — what the adopt route's provision does.
+// mountDevHalf mounts the pair's checkout host (checkoutHost) where the
+// deploy's pre-flight reads its zerops.yaml and the Mate's app reads its
+// files, and gives it the repository the checkout lands in — what the adopt
+// route's provision does. Only a dev half takes the adopt's baseline: a pool
+// pair's stage holds main only for the pool's first image.
 func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
-	host := sp.pair.Dev.Hostname
-	// A dev half the import only just started may not take SSH yet, and
+	host := sp.checkoutHost()
+	// A container the import only just started may not take SSH yet, and
 	// every step from here on is SSH.
 	if err := ops.WaitSSHReady(ctx, d.batch.sshDeployer, host); err != nil {
+		sp.failedHost = host
 		sp.fail(fmt.Sprintf("%s runs but does not answer SSH: %v", host, err),
 			fmt.Sprintf("Check it with zerops_logs serviceHostname=%q, then call zerops_standup again.", host))
 		return
 	}
 	if d.mounter != nil {
 		if _, err := ops.MountService(ctx, d.batch.client, d.batch.projectID, d.mounter, host); err != nil {
+			sp.failedHost = host
 			sp.fail(fmt.Sprintf("could not mount %s: %v — its deploy reads zerops.yaml there", host, err),
 				fmt.Sprintf("Mount it with zerops_mount action=\"mount\" serviceHostname=%q, then call zerops_standup again.", host))
 			return
@@ -732,7 +749,7 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 	if err := ops.InitServiceGit(ctx, d.batch.sshDeployer, host); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up: InitServiceGit %s: %v\n", host, err)
 	}
-	if sp.adopted == standupNow {
+	if sp.adopted == standupNow && !sp.pair.DevPool {
 		adoptRepoBaseline(ctx, d.batch.client, d.batch.projectID, d.batch.sshDeployer, d.batch.stateDir, host)
 	}
 }
@@ -740,7 +757,9 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 // wire puts the recipe's repository into the pair's dev half on its `main` —
 // the repository of the recipe's name in HQ, git-push to it, main fetched and
 // checked out (wireHQPair, the reconcile's own
-// wiring) — unless an earlier pass did. A repository the recipe names that
+// wiring) — unless an earlier pass did; a pool pair's is recorded on the pool
+// and checked out in its stage for the pool's first image (seedPoolStage).
+// A repository the recipe names that
 // the application appID does not have is refused before HQ is asked for it:
 // HQ makes what it is asked for. It holds the pair's checkout throughout
 // (holdPairCheckout): a pass meeting it held leaves the pair to it.
@@ -759,6 +778,9 @@ func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *
 	}
 	if meta.DevIsPool() {
 		d.recordPoolRepository(ctx, hqc, appID, sp, meta, progress)
+		if sp.failed == "" && sp.seedsPool {
+			d.seedPoolStage(ctx, sp, progress)
+		}
 		return
 	}
 	if hqPairWiredThrough(meta) {
