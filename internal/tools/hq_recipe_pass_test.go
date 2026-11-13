@@ -130,7 +130,7 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	if held, err := tryLockFile(lock); err != nil || !held {
 		t.Fatalf("hold the recipe: held %v, %v", held, err)
 	}
-	asked := func() int { return lab.hq.callCount("POST /api/mate/repos") + lab.hq.callCount("GET /api/mate/self") }
+	asked := func() int { return lab.hq.callCount("POST /api/mate/repos") }
 	askedBefore := asked()
 
 	var outcome recipeOutcome

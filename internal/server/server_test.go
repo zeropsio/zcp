@@ -882,16 +882,6 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 			chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
-				case "/api/mate/self":
-					if tt.noChief {
-						_, _ = w.Write([]byte(`{"projectId":"p1","name":"Ada","face":"f","changes":[],"chief":null}`))
-					} else {
-						mark := "chief"
-						if tt.markIsOwn {
-							mark = "p1"
-						}
-						_, _ = w.Write([]byte(`{"projectId":"p1","name":"Ada","face":"f","changes":[],"chief":{"projectId":"` + mark + `"}}`))
-					}
 				case "/api/mate/chief/proposals":
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"id":"hq-chief-offer"}`))

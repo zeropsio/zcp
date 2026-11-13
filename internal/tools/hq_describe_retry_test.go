@@ -147,7 +147,6 @@ func TestDescribeTransient(t *testing.T) {
 // state, its standing is unknown, never answered as no open change.
 func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 	t.Parallel()
-	isSelf := func(r *http.Request) bool { return r.URL.Path == "/api/mate/self" }
 	tests := []struct {
 		name          string
 		hq            func(lab *hqLab)
@@ -156,7 +155,7 @@ func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 		wantNot       string
 	}{
 		{
-			name: "the read meets a 502 twice", hq: func(lab *hqLab) { lab.hq.answerWith(http.StatusBadGateway, "", 2, isSelf) },
+			name: "the last-heard state names the open change", hq: func(*hqLab) {},
 			wantDescribed: true, wantText: []string{`"described":true`, `"pullRequest":1`},
 		},
 		{

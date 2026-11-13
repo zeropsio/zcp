@@ -162,17 +162,6 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 			return
 		}
 		switch path {
-		case "/api/mate/self":
-			if g.refuseSelf {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			var app any
-			if g.appID != "" {
-				app = g.appID
-			}
-			write(http.StatusOK, map[string]any{"projectId": "p1", "name": "Wren", "face": "f", "standupRequestedBy": nil,
-				"appId": app, "changes": []any{}})
 		case "/api/mate/recipe/" + hq.RecipeTierMate:
 			g.tierReads++
 			if refusal := g.tierRefusal; refusal != nil {

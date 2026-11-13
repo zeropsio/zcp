@@ -718,7 +718,6 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 		}
 		return d, true
 	}
-	const selfRead = "GET /api/mate/self"
 	changed, err := hq.WatchReplacedFile(t.Context(), lab.rt.HQ.StatePath)
 	if err != nil {
 		t.Fatal(err)
@@ -735,7 +734,6 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	// starts may still run: the last send only waits for the ticks' looks
 	// after the merge to be over before the frame comes.
 	ticks <- start.Add(10 * time.Second)
-	selfReads := lab.hq.callCount(selfRead)
 	lab.hq.mergeChange("appdev", 1)
 	ticks <- start.Add(20 * time.Minute)
 	ticks <- start.Add(40 * time.Minute)
@@ -757,8 +755,5 @@ func TestMateService_MergedChangesLeasesReleasedWithNoAgentPass(t *testing.T) {
 	}
 	if left := leaseRecordsLeft(t, lab.stateDir); len(left) != 0 {
 		t.Errorf("leases left = %v, want none", left)
-	}
-	if n := lab.hq.callCount(selfRead); n != selfReads {
-		t.Errorf("the service's looks asked HQ for the Mate's state %d times, want none", n-selfReads)
 	}
 }

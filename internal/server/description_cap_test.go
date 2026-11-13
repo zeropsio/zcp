@@ -38,14 +38,7 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 	t.Cleanup(restore)
 
 	// A Mate whose person has a Chief offers to ask it.
-	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/mate/self" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"projectId":"p1","name":"Rossy","face":"f","changes":[],"chief":{"projectId":"chief"}}`))
-	}))
+	chiefHQ := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(chiefHQ.Close)
 	t.Setenv("HOME", t.TempDir())
 	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")

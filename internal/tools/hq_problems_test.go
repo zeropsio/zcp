@@ -87,13 +87,8 @@ func TestHQProblems_NoOpenChange_StatusAndDevelopReportHQFinding(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			lab := newHQLab(t)
-			reads := lab.hq.callCount("GET /api/mate/self")
 			text := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, develop)
 			assertActionableProblem(t, text)
-			wantReads := 0
-			if n := lab.hq.callCount("GET /api/mate/self") - reads; n != wantReads {
-				t.Errorf("ASSERTION: %s preserves its existing self passes, got %d", name, n)
-			}
 		})
 	}
 }
@@ -101,19 +96,12 @@ func TestHQProblems_NoOpenChange_StatusAndDevelopReportHQFinding(t *testing.T) {
 func TestHQProblems_PresentProblems_EachStatusReadsNewFindings(t *testing.T) {
 	// non-parallel: lab setup uses process-wide test credentials.
 	lab := newHQLab(t)
-	reads := lab.hq.callCount("GET /api/mate/self")
 	first := problemToolResult(t, lab, `{"changes":[],"problems":[]}`, false)
 	if strings.Contains(first, "The declared minimum CPU is invalid") {
 		t.Error("ASSERTION: the first status must not report a finding HQ has not added")
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("ASSERTION: status made a network state read to HQ's present empty problems once, got %d", n)
-	}
 	second := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, false)
 	assertActionableProblem(t, second)
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("ASSERTION: two statuses with present problems read HQ twice, got %d", n)
-	}
 }
 
 func TestHQProblems_NoRepositories_DevelopStillReportsHQFinding(t *testing.T) {
@@ -127,19 +115,12 @@ func TestHQProblems_NoRepositories_DevelopStillReportsHQFinding(t *testing.T) {
 func TestHQProblems_RepositoriesWithoutProblems_EachStatusReadsNewFindings(t *testing.T) {
 	// non-parallel: lab setup uses process-wide test credentials.
 	lab := newHQLab(t)
-	reads := lab.hq.callCount("GET /api/mate/self")
 	first := problemToolResult(t, lab, `{"changes":[]}`, false)
 	if strings.Contains(first, "The declared minimum CPU is invalid") {
 		t.Error("ASSERTION: status must not invent a finding when HQ omits problems")
 	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("ASSERTION: status made a network state read to HQ with repositories and omitted problems once, got %d", n)
-	}
 	second := problemToolResult(t, lab, `{"changes":[],"problems":[`+actionableProblem+`]}`, false)
 	assertActionableProblem(t, second)
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("ASSERTION: two statuses with repositories read HQ twice despite earlier omitted problems, got %d", n)
-	}
 }
 
 func TestHQProblems_InvalidGroupHead_StatusReportsValidationFinding(t *testing.T) {

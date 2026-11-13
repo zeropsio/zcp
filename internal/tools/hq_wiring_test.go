@@ -935,17 +935,12 @@ func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
 	lab.hq.mu.Unlock()
 	lab.snapshotMate(t.Context())
 
-	asked := lab.hq.callCount("GET /api/mate/self")
-
 	first, second := lab.status(), lab.status()
 
 	for _, text := range []string{first, second} {
 		if !strings.Contains(text, "origin.mode=unknown") {
 			t.Errorf("status lacks origin.mode=unknown:\n%s", text)
 		}
-	}
-	if n := lab.hq.callCount("GET /api/mate/self") - asked; n != 0 {
-		t.Errorf("two statuses asked HQ %d time(s), want none", n)
 	}
 }
 

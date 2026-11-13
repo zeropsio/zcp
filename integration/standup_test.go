@@ -31,13 +31,7 @@ func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *tes
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HOME", t.TempDir())
-	fakeHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Project fixture" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = w.Write([]byte(`{"projectId":"proj-1","name":"Wren","face":"f","standupRequestedBy":null,"closedOff":true,"appId":null,"changes":[]}`))
-	}))
+	fakeHQ := httptest.NewServer(http.NotFoundHandler())
 	defer fakeHQ.Close()
 	hqtest.Link(t, fakeHQ.URL, "proj-1", "fixture")
 	hqtest.State(t, `{"rev":1,"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":null}`)

@@ -576,8 +576,6 @@ func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
 	lab.passReport()
 	lab.hq.mergeChange("appdev", 1)
 	lab.snapshotMate(t.Context())
-	reads := lab.hq.callCount("GET /api/mate/self")
-
 	status := lab.status()
 
 	for _, want := range []string{"#1 fix-login — leases hqpool-4: merged", "#2 add-signup (ready · behind main)"} {
@@ -587,9 +585,6 @@ func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
 	}
 	if strings.Contains(status, "#1 fix-login (") {
 		t.Errorf("status names merged #1 with an open change's standing:\n%s", status)
-	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("status asked HQ %d times, want none", n)
 	}
 	if lab.kept(1) == nil {
 		t.Fatal("status forgot change #1: saying the merge, once, is the pass's")
@@ -879,8 +874,6 @@ func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
 	lab := twoOpenChanges(t)
 	lab.hq.mergeChange("appdev", 1)
 	lab.snapshotMate(t.Context())
-	reads := lab.hq.callCount("GET /api/mate/self")
-
 	text := lab.release()
 
 	if !strings.Contains(text, "release-person-required") || !strings.Contains(text, "appdev #2 are not in it") {
@@ -888,9 +881,6 @@ func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
 	}
 	if strings.Contains(text, "#1") {
 		t.Errorf("the handoff names merged #1 as an open change left out: %s", text)
-	}
-	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 0 {
-		t.Errorf("the handoff asked HQ %d times, want none", n)
 	}
 	if lab.kept(1) == nil {
 		t.Error("the handoff forgot change #1: saying the merge, once, is the pass's")
