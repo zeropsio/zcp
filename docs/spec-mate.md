@@ -5053,7 +5053,11 @@ bounded array; malformed, oversized or mismatched envelopes fail. It returns JSO
 as text with nil `structuredContent`. Authorized log records retain every native
 field and unchanged content, including sensitive source data; zcp does not scan,
 redact or slice it. zcp never adds either credential to output, errors or header traces, and failed
-or invalid responses do not expose raw bodies. Responses are at most 512 KiB and
+or invalid responses do not expose raw bodies. A refusal keeps only a code this route answers
+(`observation_refused`, `too_many_requests`, `observation_unavailable`, `observation_output_too_large`,
+`too_large`, `invalid`, `credential_required`, `escalation_unavailable`, `zerops_refused`,
+`zerops_unexpected_answer`, `zerops_unanswered`, `zerops_unavailable`, `unavailable`) and its fixed
+reason; any other code reads `observation_refused`. Responses are at most 512 KiB and
 lists at most 100 records; resource limits fail explicitly rather than edit records.
 An HQ `413 observation_output_too_large` asks for a lower `limit` or narrower
 `from`/`till` window; a single record over the output budget cannot be returned.

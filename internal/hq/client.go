@@ -32,9 +32,9 @@ func (r *RefusedError) Error() string {
 }
 
 // UnavailableError is HQ not serving now — never a refusal, always "try
-// again": an HQ that does not answer, or one that answers 503 (a standby
-// while a deploy runs two side by side, not_active; Zerops not answering it,
-// zerops_unavailable) past the wait the client gives it. Code is HQ's, ""
+// again": an HQ that does not answer, or one that answers 503 (one draining
+// or failing, unavailable; Zerops not answering it, zerops_unavailable) past
+// the wait the client gives it. Code is HQ's, ""
 // when it did not answer.
 type UnavailableError struct {
 	Code string

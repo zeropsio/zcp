@@ -179,20 +179,21 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		return nil, fmt.Errorf("HQ refused observe authorization: %w", ErrNoObserveCredential)
 	}
 	if resp.StatusCode != http.StatusOK {
-		// Only fixed machine codes survive; arbitrary upstream reason strings may
-		// contain credentials. They are not an observation projection.
+		// Only fixed machine codes survive: exactly those HQ's POST
+		// /api/mate/observe answers (mate-hq internal/observe/routes.go, its
+		// standing and Zerops reads through door.RefusalOf, the door's own
+		// body and failure answers); any other folds to observation_refused.
+		// Arbitrary upstream reason strings may contain credentials. They are
+		// not an observation projection.
 		var refusal struct {
 			Code   string `json:"code"`
 			Reason string `json:"reason"`
 		}
 		_ = json.Unmarshal(raw, &refusal)
-		const (
-			forbidden = "forbidden"
-			notActive = "not_active"
-		)
 		code := "observation_refused"
 		switch refusal.Code {
-		case "observation_refused", forbidden, "environment_not_found", "service_not_found", "process_not_found", "version_not_found", "invalid_request", notActive, "zerops_unavailable", "observe_credential_required", "observe_credential_refused", "too_many_requests", "observation_unavailable", "observation_output_too_large":
+		case "observation_refused", "too_many_requests", "observation_unavailable", "observation_output_too_large", "too_large", "invalid",
+			"credential_required", "escalation_unavailable", "zerops_refused", "zerops_unexpected_answer", "zerops_unanswered", "zerops_unavailable", "unavailable":
 			code = refusal.Code
 		}
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
@@ -200,7 +201,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		}
 		reason := ""
 		switch refusal.Reason {
-		case forbidden, "environment_not_found", "service_not_found", "process_not_found", "version_not_found", "deploy_key_unavailable", "mate_not_in_app":
+		case "forbidden", "no_target_access", "personal_token_missing", "personal_token_refused", "held", "unauthorized", "not_found", "invalid":
 			reason = refusal.Reason
 		}
 		return nil, &RefusedError{Status: resp.StatusCode, Code: code, Reason: reason}
