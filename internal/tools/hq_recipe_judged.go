@@ -93,7 +93,7 @@ func repushRecipeChange(ctx context.Context, hqc hq.Client, appID string, change
 		return fmt.Errorf("prepare the recipe's scratch repository: %w", err)
 	}
 	defer scratch.Close()
-	branch := hqc.BranchOf(change.Number, change.Branch)
+	branch := change.Branch
 	head, found, err := scratch.Fetch(ctx, branch)
 	switch {
 	case err != nil:

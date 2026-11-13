@@ -149,16 +149,6 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 			t.Errorf("the ledger keeps change #%d for the branch asked for", c.Number)
 		}
 	}
-
-	// An HQ that does not name the open change's branch leaves it unnamed,
-	// never the branch just asked for.
-	lab.hq.mu.Lock()
-	lab.hq.unnamedBranches = true
-	lab.hq.mu.Unlock()
-	answer, text, isError = lab.openChangeFrom("add-signup", "Add the signup")
-	if isError || answer.Created || answer.PullRequest != 1 || answer.Branch != "" || strings.Contains(answer.Message, "add-signup") {
-		t.Errorf("want change #1 answered with no branch named, got: %s", text)
-	}
 }
 
 // The agent cuts new work from main while the Mate's change is open: the
@@ -228,39 +218,6 @@ func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
 	}
 	if described, isError := lab.describe("appdev", describedWords); isError || !strings.Contains(described, `"described":true`) {
 		t.Errorf("a describe naming no branch did not put its words on #2: %s", described)
-	}
-}
-
-// An HQ from before changes were bound to a branch they name ignores the
-// branch asked for and binds the change to the Mate's own: the answer names
-// that branch and says the work goes there, never the one asked for.
-func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-	lab.wire()
-	lab.hq.mu.Lock()
-	lab.hq.unnamedBranches = true
-	lab.hq.mu.Unlock()
-	lab.pushBranch("fix-signup", map[string]string{"signup.js": "the signup\n"})
-
-	answer, text, isError := lab.openChangeFrom("fix-signup", "Fix the signup")
-
-	const bound = "mate/" + labMate + "/1"
-	if isError || !answer.Created || answer.Branch != bound {
-		t.Fatalf("want change #1 opened on %q, got: %s", bound, text)
-	}
-	if kept := lab.kept(1); kept == nil || kept.Branch != bound {
-		t.Errorf("the ledger keeps %+v, want change #1 on %q", kept, bound)
-	}
-	push := pushCommand.FindStringSubmatch(answer.Message)
-	if push == nil {
-		t.Fatalf("the answer gives no push: %s", answer.Message)
-	}
-	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
-		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
-	}
-	if got, want := lab.remoteHead(bound), lab.git("rev-parse", "fix-signup"); got != want {
-		t.Errorf("%s is at %q, want the work %q", bound, got, want)
 	}
 }
 

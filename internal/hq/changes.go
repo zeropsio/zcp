@@ -148,22 +148,6 @@ func (c Client) ChangeURL(appID, repo string, number int) string {
 	return c.Address() + "/changes/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + "/" + strconv.Itoa(number)
 }
 
-// ChangeBranch is the branch HQ binds the Mate's change number to when it is
-// opened naming none.
-func (c Client) ChangeBranch(number int) string {
-	return "mate/" + c.id.ProjectID + "/" + strconv.Itoa(number)
-}
-
-// BranchOf is the branch of the Mate's change number by its short name: the
-// one HQ names for it, branch — the Mate's own, or, for a change handed to it,
-// the branch it was on — and, from an HQ that names none, ChangeBranch.
-func (c Client) BranchOf(number int, branch string) string {
-	if branch = strings.TrimPrefix(branch, "refs/heads/"); branch != "" {
-		return branch
-	}
-	return c.ChangeBranch(number)
-}
-
 // AttachmentURL is where a picture HQ keeps at path is shown from.
 func (c Client) AttachmentURL(path string) string { return c.Address() + path }
 
@@ -187,9 +171,9 @@ type Change struct {
 	Number        int    `json:"number"`
 	MateProjectID string `json:"mateProjectId"`
 	Title         string `json:"title"`
-	// Branch is the change's branch, a full ref under refs/heads/; "" from
-	// an HQ older than branches of the Mate's own.
-	Branch       string  `json:"branch,omitempty"`
+	// Branch is the change's branch by its short name: one its Mate named,
+	// or `mate/<project id>/<number>` of the Mate that opened it naming none.
+	Branch       string  `json:"branch"`
 	Body         string  `json:"body"`
 	State        string  `json:"state"`
 	Head         *string `json:"head"`

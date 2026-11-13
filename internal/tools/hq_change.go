@@ -71,7 +71,7 @@ func rememberChangeRevision(stateDir string, ref changeRef, rev int64) error {
 
 // hqReleasedBranch is the branch an older zcp kept a wired pair's work on in
 // its checkout: the Mate's own, never a change's — HQ bound that zcp's
-// changes, opened naming no branch, to ChangeBranch (workflow.ReleasedBranchOf
+// changes, opened naming no branch, to `mate/<project id>/<number>` (workflow.ReleasedBranchOf
 // moves such a record into the ledger on the change's branch).
 func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
 
@@ -143,13 +143,13 @@ func handedWork(route repoRoute, change hq.MateChange, repo, branch string, oneP
 // from a Mate that is gone, in the ledger on the branch it was on, and says
 // each once: the Mate's own state in HQ is the only word of a hand-over. A
 // change the ledger keeps already is said no more.
-func hqTakeHanded(stateDir string, hqc hq.Client, state hq.MateState, appID, repo string, kept []workflow.HQChange) []string {
+func hqTakeHanded(stateDir string, state hq.MateState, appID, repo string, kept []workflow.HQChange) []string {
 	var lines []string
 	for _, handed := range handedChangesIn(state, appID, repo) {
 		if slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == handed.Number }) {
 			continue
 		}
-		branch := hqc.BranchOf(handed.Number, handed.Branch)
+		branch := handed.Branch
 		_ = recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded, 0)
 		lines = append(lines, handedWork(repoDevHost(stateDir, appID, repo), handed, repo, branch, !state.OpenPerBranch))
 	}
@@ -518,12 +518,12 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 			}
 		}
 		kept := changesIn(hqChanges(stateDir), app, repo)
-		handed := hqTakeHanded(stateDir, hqc, state, app, repo, kept)
+		handed := hqTakeHanded(stateDir, state, app, repo, kept)
 		said = append(said, handed...)
 		switch {
 		case !atStart || len(handed) > 0:
 		case state.OpenPerBranch:
-			if open := openChangesWords(openChangesOf(hqc, state, app, repo, kept), route); open != "" {
+			if open := openChangesWords(openChangesOf(state, app, repo, kept), route); open != "" {
 				said = append(said, open)
 			}
 		case len(kept) == 1:
@@ -577,7 +577,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 // with its standing now — one this zcp never recorded too (opened by another
 // zcp, or naming no branch), since each counts toward the open changes HQ
 // keeps a Mate there. state is of appID's application.
-func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string, kept []workflow.HQChange) []workflow.HQChange {
+func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQChange) []workflow.HQChange {
 	var open []workflow.HQChange
 	for _, s := range state.Changes {
 		if s.Repo != repo || s.State != hq.ChangeOpen {
@@ -587,7 +587,7 @@ func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string, kept [
 			continue
 		}
 		now := standingOf(s)
-		open = append(open, workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: hqc.BranchOf(s.Number, s.Branch), Told: &now})
+		open = append(open, workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: s.Branch, Told: &now})
 	}
 	for _, c := range kept {
 		if c.StateRev > state.Rev && (c.Told == nil || c.Told.State != hq.ChangeClosed) {

@@ -98,14 +98,12 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 	const title = "Lean production at s.flip.studio"
 	tests := []struct {
 		name string
-		// perBranch: HQ keeps an open change per branch; unnamed: HQ from
-		// before changes were bound to the branch they name binds its own.
-		perBranch, unnamed bool
-		wantBranch         string
+		// perBranch: HQ keeps an open change per branch.
+		perBranch  bool
+		wantBranch string
 	}{
 		{name: "HQ keeping an open change per branch", perBranch: true, wantBranch: "recipe/lean-production"},
 		{name: "HQ keeping one open change per repository", wantBranch: "recipe/lean-production"},
-		{name: "HQ binding a change to a branch of its own", unnamed: true, wantBranch: recipeBranch(2)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,9 +112,6 @@ func TestGroupRecipeEdit_AMergedTierCorrectedOnTheMatesOwnChange_ZcpLeavesItAlon
 			if tt.perBranch {
 				lab.hq.keepOpenPerBranch()
 			}
-			lab.hq.mu.Lock()
-			lab.hq.unnamedBranches = tt.unnamed
-			lab.hq.mu.Unlock()
 			client := scalingRecipeClient(1, 0.25)
 			if !strings.Contains(lab.hq.recipeFiles("main")[recipeProdTier], "cpuMode: DEDICATED") {
 				t.Fatalf("the merged Small Production carries no dedicated CPU:\n%s", lab.hq.recipeFiles("main")[recipeProdTier])

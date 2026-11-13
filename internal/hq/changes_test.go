@@ -383,7 +383,6 @@ func TestClient_Addresses(t *testing.T) {
 		for got, want := range map[string]string{
 			client.Address():                    "https://hq.example",
 			client.ChangeURL("a1", "appdev", 3): "https://hq.example/changes/a1/appdev/3",
-			client.ChangeBranch(3):              "mate/p-mate/3",
 			client.AttachmentURL("/api/apps/a1/changes/appdev/3/attachments/x"): "https://hq.example/api/apps/a1/changes/appdev/3/attachments/x",
 		} {
 			if got != want {
@@ -422,31 +421,6 @@ func TestRepoURL_NamesTheOrganisation(t *testing.T) {
 				t.Errorf("RepoURLAt = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
 			}
 		})
-	}
-}
-
-// A change's branch is the one HQ names for it — short, or a full ref — and,
-// from an HQ that names none, the one HQ gives a change opened without a
-// branch: the Mate's own default.
-func TestClient_BranchOf_IsTheStoredBranchElseTheDefault(t *testing.T) {
-	t.Parallel()
-	client, err := Open(http.DefaultClient, Identity{Origin: "https://hq.example", Key: "good", ProjectID: "p-mate"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tt := range []struct {
-		name   string
-		stored string
-		want   string
-	}{
-		{name: "named by its Mate", stored: "fix-login", want: "fix-login"},
-		{name: "a gone Mate's default", stored: "mate/p-gone/7", want: "mate/p-gone/7"},
-		{name: "as a full ref", stored: "refs/heads/fix-login", want: "fix-login"},
-		{name: "from an HQ that names none", want: "mate/p-mate/7"},
-	} {
-		if got := client.BranchOf(7, tt.stored); got != tt.want {
-			t.Errorf("%s: BranchOf(7, %q) = %q, want %q", tt.name, tt.stored, got, tt.want)
-		}
 	}
 }
 

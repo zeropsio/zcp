@@ -85,10 +85,6 @@ type fakeHQ struct {
 	// git: a new one sent over the link revokes the one before. The project
 	// key, which the Mate's API and zcp's own git present, does not change.
 	credential string
-	// unnamedBranches: HQ from before changes were bound to a branch they
-	// name — it binds a change to the Mate's own branch whatever is asked,
-	// and answers it without naming its branch.
-	unnamedBranches bool
 	// origins are the origins connected to the application's repositories,
 	// by name; a repository without one is kept by HQ alone. The repository
 	// list (GET /api/apps/:appId/repos) reads one kept on GitHub as a remote
@@ -384,11 +380,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if open := f.answeredOpen(in.Repo, in.Branch); open != nil {
-			answered := *open
-			if f.unnamedBranches {
-				answered.Branch = ""
-			}
-			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: answered, Created: false})
+			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: wireChange(*open), Created: false})
 			return
 		}
 		number := 1
@@ -400,9 +392,6 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		// HQ's own checks, in its order and with its answers: a branch is a
 		// short name, never main, a full ref or one in HQ's mate/ namespace.
 		branch := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
-		if f.unnamedBranches {
-			in.Branch = ""
-		}
 		if in.Branch != "" {
 			branch = "refs/heads/" + in.Branch
 		}
@@ -425,11 +414,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			Branch: branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"}
 		f.changes = append(f.changes, change)
 		f.writeRefs()
-		answered := change
-		if f.unnamedBranches {
-			answered.Branch = ""
-		}
-		writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: answered, Created: true})
+		writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: wireChange(change), Created: true})
 	case len(parts) >= 5 && parts[2] == "changes":
 		number, _ := strconv.Atoi(parts[4])
 		change := f.find(f.appID, parts[3], number, "")
@@ -448,7 +433,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			change.State, change.ClosedAt, change.UpdatedAt = hq.ChangeClosed, &now, now
 			change.Head = f.branchHead(r.Context(), change)
 			f.writeRefs()
-			writeHQJSON(w, http.StatusOK, *change)
+			writeHQJSON(w, http.StatusOK, wireChange(*change))
 		case r.Method == http.MethodPatch && len(parts) == 5:
 			var edit hq.ChangeEdit
 			_ = json.NewDecoder(r.Body).Decode(&edit)
@@ -461,7 +446,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 					f.described[fmt.Sprintf("%s#%d", change.Repo, change.Number)] = *head
 				}
 			}
-			writeHQJSON(w, http.StatusOK, *change)
+			writeHQJSON(w, http.StatusOK, wireChange(*change))
 		case r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "attachments":
 			png, _ := io.ReadAll(r.Body)
 			if r.Header.Get("Content-Type") != "image/png" || !strings.HasPrefix(string(png), "\x89PNG") {
@@ -616,12 +601,19 @@ func (f *fakeHQ) window(mine []hq.MateChange) []hq.MateChange {
 	return listed
 }
 
+// wireChange is a change as HQ answers it: the fake keeps full refs for its
+// Git side, HQ names a branch by its short name.
+func wireChange(c hq.Change) hq.Change {
+	c.Branch = strings.TrimPrefix(c.Branch, "refs/heads/")
+	return c
+}
+
 // answeredOpen is the open change HQ answers an opener naming branch in repo
 // with, nil when it opens one: today's HQ answers the Mate's one open change
 // whatever is named; one that keeps an open change per branch answers the
 // Mate's change on the branch named, or — none named — its default change.
 func (f *fakeHQ) answeredOpen(repo, branch string) *hq.Change {
-	if !f.perBranch || f.unnamedBranches {
+	if !f.perBranch {
 		return f.findOf(labMate, f.appID, repo)
 	}
 	want := "refs/heads/" + branch
@@ -1361,7 +1353,7 @@ func (l *hqLab) openChange() hq.Change {
 	if err != nil {
 		l.t.Fatalf("opening the change: %v", err)
 	}
-	push := "cd /var/www && git push -q origin HEAD:refs/heads/" + hqc.ChangeBranch(opened.Change.Number)
+	push := "cd /var/www && git push -q origin HEAD:refs/heads/" + opened.Change.Branch
 	if out, err := l.devGit().ExecSSH(l.t.Context(), "appdev", push); err != nil {
 		l.t.Fatalf("pushing the change's branch: %v\n%s", err, out)
 	}

@@ -113,7 +113,7 @@ func recipeHeldReplacements(ctx context.Context, comp groupRecipeComposition, op
 	if len(replaced) == 0 || open == nil || open.Title == nil || *open.Title != hq.RecipeProposalTitle {
 		return replaced, nil
 	}
-	head, found, err := comp.scratch.Fetch(ctx, comp.hqc.BranchOf(open.Number, open.Branch))
+	head, found, err := comp.scratch.Fetch(ctx, open.Branch)
 	if err != nil {
 		return nil, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", open.Number, hq.RecipeRepo, err)
 	}

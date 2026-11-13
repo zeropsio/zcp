@@ -134,7 +134,7 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 	// The Mate keeps one recipe proposal open at a time: the edit goes on
 	// the one open.
 	if open := openRecipeChange(state); open != nil {
-		result.Change, result.Branch = open.Number, hqc.BranchOf(open.Number, open.Branch)
+		result.Change, result.Branch = open.Number, open.Branch
 		result.ChangeURL = hqc.ChangeURL(appID, hq.RecipeRepo, open.Number)
 		result.Message = recipeEditOnOpen(result, titleOf(*open), branch)
 		return result, nil
@@ -156,7 +156,7 @@ func groupRecipeEdit(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 	}
 	number := opened.Change.Number
 	result.Change, result.Created = number, opened.Created
-	result.Branch = hqc.BranchOf(number, opened.Change.Branch)
+	result.Branch = opened.Change.Branch
 	if err := recordHQChange(stateDir, appID, hq.RecipeRepo, number, result.Branch, opened.Change.Title, workflow.HQChangeFromOpen, opened.StateRev); err != nil {
 		return none, refuse(platform.ErrAPIError, fmt.Sprintf("HQ answered recipe change #%d open, but zcp could not record it (%v).", number, err), "Restore access to the local state directory and call again.")
 	}

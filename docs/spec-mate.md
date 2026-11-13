@@ -6056,7 +6056,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (`TestHandedChange_AnotherBranchOpensItsOwnChange`). An older HQ hands a change only to a Mate
   holding no open change in the repository, so there `open-change` answers the handed change
   whatever branch is named. The group recipe's writer moves a
-  handed proposal on its stored branch (`hq.Client.BranchOf`). zcp
+  handed proposal on the branch HQ names for it (`hq.Change.Branch`). zcp
   `TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch`,
   `TestGroupRecipe_AHandedProposalMovesOnItsOwnBranch`.
 - **The checkout's `main`.** A pass changes the checkout in one case only: a local `main` that is

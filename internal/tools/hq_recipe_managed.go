@@ -70,13 +70,13 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 // changes main, and what the proposal would be is worth asking about
 // again. scratch holds main of the recipe repository at main; the closed
 // change's branch is read into it only when a merge came before it.
-func recipeDeclined(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, main string, state hq.MateState, title string) bool {
+func recipeDeclined(ctx context.Context, scratch *hq.Scratch, main string, state hq.MateState, title string) bool {
 	closed := recipeClosedProposal(state, title)
 	if closed == nil {
 		return false
 	}
 	earlier := recipeEarlierMerges(state, *closed)
-	return len(earlier) == 0 || !recipeSuperseded(ctx, hqc, scratch, main, *closed, earlier)
+	return len(earlier) == 0 || !recipeSuperseded(ctx, scratch, main, *closed, earlier)
 }
 
 // recipeClosedProposal is the Mate's latest change titled title in the
@@ -121,11 +121,11 @@ func recipeEarlierMerges(state hq.MateState, closed hq.MateChange) []hq.MateChan
 // Mate's state names no time a settled change opened, merged or closed, so
 // git tells. Whatever git cannot tell — a branch HQ no longer has, an HQ
 // that does not answer — leaves the close a decline.
-func recipeSuperseded(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, main string, closed hq.MateChange, earlier []hq.MateChange) bool {
+func recipeSuperseded(ctx context.Context, scratch *hq.Scratch, main string, closed hq.MateChange, earlier []hq.MateChange) bool {
 	if closed.Head == nil || scratch == nil {
 		return false
 	}
-	if _, found, err := scratch.Fetch(ctx, hqc.BranchOf(closed.Number, closed.Branch)); err != nil || !found {
+	if _, found, err := scratch.Fetch(ctx, closed.Branch); err != nil || !found {
 		return false
 	}
 	head := *closed.Head
@@ -187,7 +187,7 @@ func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (strin
 		}
 		title := recipeServiceTitle(m.Hostname)
 		edits := serviceTierEdits(tiers)
-		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, title) {
+		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(ctx, comp.scratch, comp.main, comp.state, title) {
 			continue
 		}
 		calls = append(calls, fmt.Sprintf("zerops_workflow action=\"group-recipe\" service=%q (%s)", m.Hostname, strings.Join(edits, "; ")))

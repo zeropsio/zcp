@@ -156,17 +156,16 @@ type leaseGroupOnHQ struct {
 // branch and stays. Leases of another application's repository, or of a
 // repository outside HQ (address), are never touched. release refusing for
 // unsaved work keeps every lease of the group, and the line names the leases
-// and what each holds; the next pass tries again. branchOf is the branch of a
-// change by its number and the branch HQ names (hq.Client.BranchOf). A lease
-// joining after the release captured the group is kept. Nothing when release
-// or readState is nil.
-func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, branchOf func(int, string) string, readState func(context.Context) (hq.MateState, error), release leaseBranchRelease) []string {
+// and what each holds; the next pass tries again. A lease joining after the
+// release captured the group is kept. Nothing when release or readState is
+// nil.
+func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID *string, changes []hq.MateChange, readState func(context.Context) (hq.MateState, error), release leaseBranchRelease) []string {
 	if release == nil || readState == nil || appID == nil {
 		return nil
 	}
 	var lines []string
 	for _, group := range leaseGroupsOnHQ(stateDir, address, *appID) {
-		if _, settled := settledChangeOn(changes, group.repo, group.branch, branchOf); !settled {
+		if _, settled := settledChangeOn(changes, group.repo, group.branch); !settled {
 			continue
 		}
 		var change hq.MateChange
@@ -186,7 +185,7 @@ func releaseCompletedLeases(ctx context.Context, stateDir, address string, appID
 				}
 			}
 			var settled bool
-			change, settled = settledChangeOn(state.Changes, group.repo, group.branch, branchOf)
+			change, settled = settledChangeOn(state.Changes, group.repo, group.branch)
 			confirmed = settled && !settlementUnprovenFor(leases, change.UpdatedAt)
 			return confirmed
 		})
@@ -229,11 +228,11 @@ func leaseGroupsOnHQ(stateDir, address, appID string) []leaseGroupOnHQ {
 // while none on it is open — another change still using the branch keeps its
 // leases. false while one is open, and when none is listed on the branch:
 // absence is no word that the work is finished.
-func settledChangeOn(changes []hq.MateChange, repo, branch string, branchOf func(int, string) string) (hq.MateChange, bool) {
+func settledChangeOn(changes []hq.MateChange, repo, branch string) (hq.MateChange, bool) {
 	var newest *hq.MateChange
 	for i := range changes {
 		c := &changes[i]
-		if c.Repo != repo || branchOf(c.Number, c.Branch) != branch {
+		if c.Repo != repo || c.Branch != branch {
 			continue
 		}
 		if c.State == hq.ChangeOpen {
@@ -364,7 +363,7 @@ func followLeaseCompletion(ctx context.Context, d devGitDeps) []string {
 	if err != nil {
 		return nil
 	}
-	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, hqc.BranchOf, func(context.Context) (hq.MateState, error) { return hqc.ReadMateState() }, d.release)
+	return releaseCompletedLeases(ctx, d.stateDir, hqc.Address(), frame.AppID, frame.Changes, func(context.Context) (hq.MateState, error) { return hqc.ReadMateState() }, d.release)
 }
 
 // withRecipeSchemas shares the server schema cache with recipe conflict passes.

@@ -98,8 +98,8 @@ type MateChange struct {
 	LandedWith int `json:"landedWith,omitempty"`
 	// Branch is the branch the change is bound to, by its short name: one
 	// its Mate named, or `mate/<project id>/<number>` of the Mate that opened
-	// it. "" from an HQ older than branches in the Mate's state.
-	Branch string `json:"branch,omitempty"`
+	// it.
+	Branch string `json:"branch"`
 	// Handed is a change a person handed this Mate from a Mate that is gone:
 	// the Mate's own now, on the branch it was on.
 	Handed bool `json:"handed,omitempty"`

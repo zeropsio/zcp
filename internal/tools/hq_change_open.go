@@ -115,7 +115,7 @@ func handleOpenChange(
 			if slices.ContainsFunc(keptBefore, func(c workflow.HQChange) bool { return c.Number == h.Number && c.StateRev > state.Rev }) {
 				continue
 			}
-			held := hqc.BranchOf(h.Number, h.Branch)
+			held := h.Branch
 			// On an HQ that keeps one open change per repository the handed
 			// change is the Mate's one, whatever branch is named.
 			if held != branch && state.OpenPerBranch {
@@ -145,18 +145,8 @@ func handleOpenChange(
 	number := opened.Change.Number
 	result.PullRequest, result.Created = number, opened.Created
 	result.PullRequestURL = hqc.ChangeURL(target.AppID, target.Repo, number)
-	// The change's branch is the one HQ names. An HQ from before changes
-	// were bound to a branch they name ignores the one asked for and binds
-	// a change it opens to the Mate's own (ChangeBranch); an open change it
-	// answers without naming one is never on the one asked for, and stays
-	// unnamed.
-	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
-	switch {
-	case held != "":
-		result.Branch = held
-	case opened.Created:
-		result.Branch = hqc.ChangeBranch(number)
-	}
+	// The change's branch is the one HQ names.
+	result.Branch = opened.Change.Branch
 	// The ledger keeps the change on the branch HQ names — never on the one
 	// asked for when HQ answered another.
 	if recordErr := recordHQChange(stateDir, target.AppID, target.Repo, number, result.Branch, titleIfCreated(opened), workflow.HQChangeFromOpen, opened.StateRev); recordErr != nil {
@@ -208,7 +198,7 @@ func openChangeAtHQ(ctx context.Context, hqc hq.Client, stateDir string, target 
 			return hq.OpenedChange{}, "", tooManyOpen(target, branch, state, stateErr)
 		}
 	}
-	found, refusal := openUnanswered(hqc, target, branch, err, opened.StateRev, state, stateErr, keptBefore)
+	found, refusal := openUnanswered(target, branch, err, opened.StateRev, state, stateErr, keptBefore)
 	if refusal != nil {
 		return hq.OpenedChange{}, "", refusal
 	}
@@ -224,7 +214,7 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 	if !opened.Created {
 		return lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
 	}
-	handedNote := handedElsewhere(hqc, handed, target.Repo)
+	handedNote := handedElsewhere(handed, target.Repo)
 	push, bound := result.Branch, ""
 	if result.Branch != branch {
 		push = branch + ":" + result.Branch
@@ -249,7 +239,7 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 // new one was opened. Without a change there the outcome is unknown; a retry
 // is safe because HQ answers the open change on a branch instead of opening
 // another one.
-func openUnanswered(hqc hq.Client, target changeTarget, branch string, openErr error, writeRev int64, before hq.MateState, beforeErr error, kept []workflow.HQChange) (hq.OpenedChange, *platform.PlatformError) {
+func openUnanswered(target changeTarget, branch string, openErr error, writeRev int64, before hq.MateState, beforeErr error, kept []workflow.HQChange) (hq.OpenedChange, *platform.PlatformError) {
 	var refused *hq.RefusedError
 	if writeRev == 0 && ((errors.As(openErr, &refused) && refused.Status < http.StatusInternalServerError) || hqNotReached(openErr)) {
 		return hq.OpenedChange{}, platform.NewPlatformError(platform.ErrAPIError,
@@ -262,7 +252,7 @@ func openUnanswered(hqc hq.Client, target changeTarget, branch string, openErr e
 			fmt.Sprintf("Whether a change was opened in %q is unknown: HQ's answer to the open never arrived (%s), nor was the Mate's state available (%s).",
 				target.Repo, hqNotServingWords(openErr), hqNotServingWords(beforeErr)), again)
 	}
-	change, ok := openedIn(hqc, before, target, branch)
+	change, ok := openedIn(before, target, branch)
 	if before.Rev < writeRev {
 		ok = false
 	}
@@ -282,7 +272,7 @@ func openUnanswered(hqc hq.Client, target changeTarget, branch string, openErr e
 // the Mate's open change on that branch; on one that keeps one per
 // repository, its open one there whatever the branch (a handed one is
 // answered before HQ is asked to open anything).
-func openedIn(hqc hq.Client, state hq.MateState, target changeTarget, branch string) (hq.Change, bool) {
+func openedIn(state hq.MateState, target changeTarget, branch string) (hq.Change, bool) {
 	if state.AppID == nil || *state.AppID != target.AppID {
 		return hq.Change{}, false
 	}
@@ -290,7 +280,7 @@ func openedIn(hqc hq.Client, state hq.MateState, target changeTarget, branch str
 		if c.Repo != target.Repo || c.State != hq.ChangeOpen || c.Handed {
 			continue
 		}
-		held := hqc.BranchOf(c.Number, strings.TrimPrefix(c.Branch, "refs/heads/"))
+		held := c.Branch
 		if state.OpenPerBranch && held != branch {
 			continue
 		}
@@ -358,13 +348,13 @@ func answeredOpenChange(route repoRoute, hqc hq.Client, repo, branch, held strin
 
 // handedElsewhere names the changes handed to the Mate in repo, each on a
 // branch of its own, which stay open beside the one just opened; "" for none.
-func handedElsewhere(hqc hq.Client, handed []hq.MateChange, repo string) string {
+func handedElsewhere(handed []hq.MateChange, repo string) string {
 	if len(handed) == 0 {
 		return ""
 	}
 	named := make([]string, 0, len(handed))
 	for _, h := range handed {
-		named = append(named, fmt.Sprintf("#%d on %q", h.Number, hqc.BranchOf(h.Number, h.Branch)))
+		named = append(named, fmt.Sprintf("#%d on %q", h.Number, h.Branch))
 	}
 	return fmt.Sprintf(" Handed to this Mate from a Mate that is gone, %s in %q stays open too, its work on its own branch.", strings.Join(named, " and "), repo)
 }

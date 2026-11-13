@@ -191,7 +191,7 @@ func recipeDeclinedAtStart(ctx context.Context, hqc hq.Client, state hq.MateStat
 		return true
 	}
 	defer scratch.Close()
-	return recipeDeclined(ctx, hqc, scratch, main, state, hq.RecipeProposalTitle)
+	return recipeDeclined(ctx, scratch, main, state, hq.RecipeProposalTitle)
 }
 
 // groupRecipeOutcome is the reconcile itself. Split from the reporter so the
@@ -245,7 +245,7 @@ func groupRecipeOutcome(
 			// zcp's own to propose anew follows once main has every tier —
 			// unless a person closed such a proposal unmerged and no recipe
 			// change of this Mate's merged since.
-			if len(missing) == 0 && !recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
+			if len(missing) == 0 && !recipeDeclined(ctx, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
 				var err error
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
 					return nil, err
@@ -728,7 +728,7 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, stateDir, appID string,
 		if *open.Title != title {
 			return recipeWrite{other: &otherRecipeChange{number: open.Number, title: *open.Title}}, nil
 		}
-		return recipeWrite{number: open.Number, branch: hqc.BranchOf(open.Number, open.Branch)}, nil
+		return recipeWrite{number: open.Number, branch: open.Branch}, nil
 	}
 	// No open change, or an HQ whose state names no title: HQ updates are
 	// deferred, so a Mate meets an HQ from before titles for a while. HQ
@@ -739,13 +739,13 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, stateDir, appID string,
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
 	}
-	if err := recordHQChange(stateDir, appID, hq.RecipeRepo, opened.Change.Number, hqc.BranchOf(opened.Change.Number, opened.Change.Branch), opened.Change.Title, workflow.HQChangeFromOpen, opened.StateRev); err != nil {
+	if err := recordHQChange(stateDir, appID, hq.RecipeRepo, opened.Change.Number, opened.Change.Branch, opened.Change.Title, workflow.HQChangeFromOpen, opened.StateRev); err != nil {
 		return recipeWrite{}, fmt.Errorf("HQ answered recipe change #%d open, but zcp could not record it: %w", opened.Change.Number, err)
 	}
 	if !opened.Created && opened.Change.Title != title {
 		return recipeWrite{other: &otherRecipeChange{number: opened.Change.Number, title: opened.Change.Title}}, nil
 	}
-	return recipeWrite{number: opened.Change.Number, branch: hqc.BranchOf(opened.Change.Number, opened.Change.Branch), created: opened.Created}, nil
+	return recipeWrite{number: opened.Change.Number, branch: opened.Change.Branch, created: opened.Created}, nil
 }
 
 // recipeParents are the parents of the commit that brings the change's
