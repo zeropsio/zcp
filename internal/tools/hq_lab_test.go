@@ -769,8 +769,8 @@ func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
 	for _, kv := range [][2]string{{"http.receivepack", "true"}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
 		f.git(ctx, dir, "config", kv[0], kv[1])
 	}
-	// HQ's ref rules for a Mate's push (mate-hq packages/hq-git/src/rules.ts
-	// allowRefUpdate, apps/hq/src/gitHost.ts authorize), in every
+	// HQ's ref rules for a Mate's push (mate-hq spec/protocol.md
+	// § Applications, repositories, Git), in every
 	// repository alike, the recipe repository included: a branch, never
 	// main or anything outside refs/heads/ (protected_ref); never another
 	// Mate's open change's branch (not_your_ref); in HQ's mate/ namespace
