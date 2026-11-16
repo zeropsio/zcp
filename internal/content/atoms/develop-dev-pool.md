@@ -31,11 +31,10 @@ its containers away from the app.
    checks the branch out there; a branch that does not exist yet is cut from
    `main`, or from the branch `from="<branch>"` names. `repo` is remembered
    per pool — pass it on the first acquire only.
-   The clone uses the pool's own `GIT_TOKEN` service secret; a repository
-   on this Mate's HQ zcp clones itself, answering HQ with this Mate's
-   project key, and nothing is stored in the pool. You never type a
-   credential. Each lease it
-   took carries `devServers`: each server's `status` — `running`, or
+   The clone uses the pool's `GIT_TOKEN` service secret; zcp clones a
+   repository on this Mate's HQ itself with the Mate's project key, storing
+   nothing in the pool. You never type a credential. Each lease taken
+   carries `devServers`: each server's `status` — `running`, or
    `starting` while it still compiles — and the preview server's `url`.
    Check a `starting` one with
    `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
@@ -72,9 +71,9 @@ its containers away from the app.
 and kept), `unmounted` (the record has no alias or mount), `lost` (its
 container is gone, free, or another holder's now; a plain release drops the
 record and touches nothing else) or `unknown-holder` (reserved, but no
-record of yours). A lease marked `unverified` is one its pool's orchestrator
-did not answer about: it may be another holder's, so nothing reads it and
-every call that would change it is refused; a later status asks again. It
+record of yours). A lease marked `unverified` got no answer from its pool's
+orchestrator: it may be another holder's, so nothing reads or changes it
+until a later status asks again. It
 reads each other lease's activity and unsaved work, changing
 nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
 release or what a release would lose. `warm` shows each pool's warm
@@ -86,31 +85,36 @@ result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`
 — one per pool.
 
-**Stage.** The part's stage tracks `main`, and a branch is tried on its
-lease's preview URL. The preview runs the dev servers, never the production
-build, so check the branch on the stage before its change is described.
+**Stage.** The part's stage is your test bench: it runs `main` from its
+birth, then the last work deployed to it for a check, and nothing puts
+`main` back on it. A branch is tried on its lease's preview URL. The preview
+runs the dev servers, never the production build, so check the branch on the
+stage before its change is described.
 
 **Stage check.** Deploy the pushed branch from its lease,
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`, verify it with
-`zerops_verify serviceHostname="<stage>"`, then put main back at once:
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
+with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
+check. A build that fails leaves the stage on what it ran; fix the branch,
+push, and check again. Say in the change's description that it built and
+verified on the stage. Run one branch's check at a time per stage: a check
+from another lease replaces it. Deploy `main` onto a stage only when you or
+the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
-— the deploy fetches `main` first, so this ships main as the remote has it now.
-A build that fails leaves the stage on what it ran; fix the branch, push, and
-check again. Say in the change's description that it built and verified on
-the stage. Run one branch's check at a time per stage: a check from another
-lease replaces it. Once a change merges, put main on every stage it touched in
-one call, each target from a lease of its own part:
-`zerops_deploy_batch targets=[{"sourceService":"<alias>","targetService":"<stage>","sha":"origin/main"}, …]`
-— a target without `sha` ships its lease's branch, not main.
-A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
-names in its `warnings` the verify and the call that puts main back. Verify a container with
+ships `origin/main` as the lease last fetched it: run
+`zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 
+**A pool or stage that is not built.** zcp builds a part's pool and stage
+from `main` at the Mate's birth; `zerops_standup` gives each one's state,
+cause and `next` step. A ready pool's failed stage is fixed from a branch
+lease, as a stage check; anything else through a change on `main`, then
+`zerops_standup` again.
+
 **Data.** Every lease of a part uses the part's dev database. The pool's
-service env reaches every leased container, so the database it names — wired
-into the pool's env the way a dev service's is — is the one each branch's app
-connects to, with no change to the app. A migration one branch runs is
+service env reaches every leased container, so each branch's app connects
+to the database it names — wired as a dev service's is — with no change to
+the app. A migration one branch runs is
 seen by every other branch at once. Keep migrations additive (new tables and
 columns; nothing renamed or dropped), and agree a destructive one with
 whoever works on the other branches before running it — branches whose
@@ -162,8 +166,10 @@ leases are keyed by branch, so they never meet.
   change with `service="<its alias>"` and describes it the same way.
 - Report each branch's change and its lease preview URLs to the person.
 - Once one change merges, the others are behind `main`. Bring one up to date
-  only when the person asks or it no longer merges cleanly: over SSH in a
-  lease of it, `git fetch origin && git merge origin/main`, check the preview, push,
+  only when the person asks or it no longer merges cleanly: in a lease of
+  it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
+  (a repository outside this Mate's HQ over SSH:
+  `git fetch origin && git merge origin/main`), check the preview, push,
   sync the group's other leases and describe it again — never rebase, never
   force-push.
 - A change that needs another's unmerged work may be cut from that branch;
@@ -171,9 +177,9 @@ leases are keyed by branch, so they never meet.
 
 **Pitfalls**
 
-- A deploy of the pool itself changes only containers created after it. A
-  leased container keeps its version, and a released one keeps it too, so a
-  new acquire can still hand you an older container.
+- A deploy of the pool changes only containers created after it: leased and
+  released ones keep their version, so an acquire can still hand you an
+  older one.
   `zerops_lease action=rollout pool="<pool>"` replaces the free outdated
   containers; a held lease keeps its version until you release it and roll
   the pool out again.
@@ -187,8 +193,8 @@ leases are keyed by branch, so they never meet.
   `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
   acquire runs it after the checkout, before the dev servers start, and
   reports it; a failed one leaves the lease held. One that ran a minute or
-  longer means the image is behind `main`'s dependencies and every acquire
-  installs them again — the acquire says so: once your change is open,
+  longer means the image lags `main`'s dependencies, so every acquire
+  reinstalls them — the acquire says so: once your change is open,
   deploy the pool from `main`
   (`zerops_deploy sourceService="<alias>" targetService="<pool>" sha="origin/main"`)
   and roll it out, so the next acquire starts in seconds.
@@ -215,12 +221,11 @@ leases are keyed by branch, so they never meet.
   `notAnswering` with why — at its process limit nothing new starts in it
   until what fills it ends.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
-  service env variable admitting the zcp service. The top-level import field
-  did not reach pool containers.
+  service env variable admitting the zcp service; the top-level import field
+  does not reach them.
 - A dev server needs the supervisor, `zcp-devsup`, in the pool's image:
   install it in `run.prepareCommands` and set `run.start: zcp-devsup run`. A
-  reused container starts clean — nothing survives its reset but the image,
-  not a single process — and `run.start` never runs in it again, so
+  reused container starts clean — only the image survives its reset — and `run.start` never runs in it again, so
   `zerops_lease` and `zerops_dev_server` start the supervisor in a lease
   themselves. A pool whose image lacks it is no dev pool: acquire says so and
   `zerops_dev_server` refuses its leases; fix the pool's `zerops.yaml`,
@@ -229,10 +234,9 @@ leases are keyed by branch, so they never meet.
   container's `ZEROPS_StableNumber` starts at 1, so the preview ports
   `previewPortBase + 1` through `previewPortBase + maxContainers` must be
   declared in `run.ports` with `httpSupport: true`.
-- The pool's service env reaches its containers. The orchestrator answers
-  only inside the project.
-- A full pool refuses an acquire at once and queues nothing: an acquire
-  succeeds only after a lease is released. A pool holds at most ten
+- The orchestrator answers only inside the project.
+- A full pool refuses an acquire at once, queueing nothing, until a lease
+  is released. A pool holds at most ten
   containers — a higher `maxContainers` is capped at ten.
 - A lease you will come back to can be parked instead of released:
   `zerops_lease action=park lease="<alias>"` stops its container and keeps
@@ -251,7 +255,8 @@ leases are keyed by branch, so they never meet.
 - Never set `envIsolation: none` on the pool: every service of the project
   would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
   pool's token references it under another name — this zcp service as
-  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`. A variable named
+  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`, which an acquire writes itself
+  when it finds no usable token. A variable named
   `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text,
   as does any reference to a pool never deployed until its first deploy.
 - A container answers from anywhere in the project on every port it listens

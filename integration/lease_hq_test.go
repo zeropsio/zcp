@@ -104,13 +104,14 @@ func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T
 	if res.IsError {
 		t.Fatalf("acquire: %s", text)
 	}
-	at, checkout := ssh.first("fetch -q --prune origin")
+	// A repository on HQ is fetched blobless.
+	at, checkout := ssh.first("fetch -q --prune --filter=blob:none origin")
 	switch {
 	case at < 0:
 		t.Fatal("the checkout did not run")
 	case checkout.hostname != "devpool-3":
 		t.Errorf("the checkout ran on %q, want the alias devpool-3", checkout.hostname)
-	case strings.Contains(checkout.command, "credential."):
+	case strings.Contains(checkout.command, "-c credential.helper"):
 		t.Errorf("the checkout of a repository on HQ names a helper of its own, which would clear the relayed session's:\n%s", checkout.command)
 	}
 

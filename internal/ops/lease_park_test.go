@@ -60,7 +60,7 @@ func (s *parkSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, er
 		if s.unready > 0 {
 			s.unready--
 			s.mu.Unlock()
-			return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host node-id-3.runtime.devpool.zerops port 22: No route to host", Err: errors.New("exit status 255")}
+			return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host node-id-3.runtime.devpool.zerops port 22: No route to host", Err: platform.ExitStatusError(255)}
 		}
 		s.mu.Unlock()
 		return nil, nil

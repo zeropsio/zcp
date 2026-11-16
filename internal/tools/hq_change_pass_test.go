@@ -58,10 +58,10 @@ func describedChanges(t *testing.T) *hqLab {
 }
 
 // TestHQPass_MergedChangeNamesItsLeasesAndStages: a merged change's note names
-// its branch, the leases zcp still holds on that branch — which zcp releases
-// on its own once nothing unsaved is left in them, so the note names no
-// release for the agent to run — and the stages of the repository's pairs,
-// which track main. A pass given no release releases nothing.
+// its branch and the leases zcp still holds on that branch — which zcp
+// releases on its own once nothing unsaved is left in them, so the note names
+// no release for the agent to run. A stage keeps what it runs, so the note
+// names no call for it. A pass given no release releases nothing.
 func TestHQPass_MergedChangeNamesItsLeasesAndStages(t *testing.T) {
 	lab := newHQLab(t)
 	lab.hq.keepOpenPerBranch()
@@ -79,7 +79,7 @@ func TestHQPass_MergedChangeNamesItsLeasesAndStages(t *testing.T) {
 	report := lab.passReport()
 
 	for _, want := range []string{"change #1 is merged", `"fix-login"`, "boxpool-6", "hqpool-4",
-		"zcp releases a merged or closed change's leases on its own", "appstage", "hqstage", `sha="origin/main"`} {
+		"zcp releases a merged or closed change's leases on its own"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the merged note lacks %q:\n%s", want, report)
 		}
@@ -181,8 +181,8 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 		{name: "a draft told already", now: at(&no, "clean", &no, true), told: told(&no, "clean", false)},
 		{name: "nothing pushed yet", now: at(&no, "unknown", &no, false)},
 		{name: "behind and clean, with a lease", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false), leases: []string{"hqpool-4"},
-			want: []string{"behind main and still merges cleanly", "`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge origin/main\"`",
-				"`ssh hqpool-4 \"cd /var/www && git push origin badge\"`", "zerops_lease action=sync lease=hqpool-4"}},
+			want: []string{"behind main and still merges cleanly", "`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge origin/main`",
+				"`zcp git hqpool-4 push origin badge`", "zerops_lease action=sync lease=hqpool-4"}},
 		{name: "behind and clean, in its dev service", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false),
 			want: []string{"behind main and still merges cleanly", "in its dev service appsdev", "`zcp git appsdev fetch origin && zcp git appsdev merge origin/main`",
 				"`zcp git appsdev push origin badge`"}},
@@ -268,9 +268,9 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			never: []string{"git rebase", "--force", "behind main", "your own shell", "never over ssh", "/tmp/badge"}, wantHead: corePushMerge},
 		{name: "at head, leases of it", now: corePushed(corePushMerge, true, false), leases: []string{"boxpool-6", "hqpool-4"},
 			want: []string{line,
-				"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`",
-				"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`"},
-			never: []string{"in your own shell", "zcp git"}, wantHead: corePushMerge},
+				"`zcp git boxpool-6 fetch origin && zcp git boxpool-6 merge --ff-only origin/badge`",
+				"`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge --ff-only origin/badge`"},
+			never: []string{"in your own shell", "zcp git appsdev", "in its dev service"}, wantHead: corePushMerge},
 		{name: "at head, and main moved on past the squash", now: corePushed(corePushMerge, true, true),
 			want: []string{line, ff, "is behind main"}, wantHead: corePushMerge},
 		{name: "pushed past HQ's merge commit", now: corePushed(corePushLater, true, false), never: []string{"HQ brought main"}},
@@ -379,7 +379,7 @@ func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
 // TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease: lease status names
 // a group's change HQ brought main into the way the pass says it — fetch and
 // fast-forward the branch before the next push, in each lease of the group,
-// over ssh — read from the Mate's state now, or from what the pass last told
+// through `zcp git <alias>` — read from the Mate's state now, or from what the pass last told
 // while HQ does not answer; a change without it reads as today.
 func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 	t.Parallel()
@@ -409,8 +409,8 @@ func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 
 		for _, want := range []string{"group appsdev@mate-test-badge: #6 (ready)",
 			"HQ brought main into #6 after #5 merged: fetch and fast-forward `mate-test-badge` before your next push",
-			"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
-			"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
+			"`zcp git boxpool-6 fetch origin && zcp git boxpool-6 merge --ff-only origin/mate-test-badge`",
+			"`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge --ff-only origin/mate-test-badge`",
 			"group appsdev@pool-previews: #2 (ready)"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s: lease status lacks %q: %s", name, want, got)
@@ -425,7 +425,7 @@ func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 // TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause: a lease sync's push
 // refused as non-fast-forward names HQ's own push as the cause when the
 // change on the lease's branch carries it at its head — bring origin's branch
-// in over ssh, a fast-forward when the lease has no commits of its own since,
+// in through `zcp git <alias>`, a fast-forward when the lease has no commits of its own since,
 // never a rebase, then sync again; the Mate's state is read once, and only
 // for that refusal. Any other refusal, a change without it, or no reader
 // leave the refusal as it is.
@@ -452,7 +452,7 @@ func TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause(t *testing.T) {
 
 	pe := refusalOf(t, named)
 	for _, want := range []string{"HQ brought main into #6 after #5 merged",
-		"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --no-edit origin/mate-test-badge\"`",
+		"`zcp git hqpool-4 fetch origin`, then `zcp git hqpool-4 merge --no-edit origin/mate-test-badge`",
 		"never rebase", ops.LeaseSyncCall("hqpool-4")} {
 		if !strings.Contains(pe.Suggestion, want) {
 			t.Errorf("the refusal's suggestion lacks %q: %s", want, pe.Suggestion)
@@ -752,65 +752,6 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	unanswered := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views[1:], func() *hq.MateState { return nil })
 	if !strings.Contains(unanswered, "as last read") || !strings.Contains(unanswered, "group appdev@add-signup: #2") {
 		t.Errorf("with HQ not answering the release result is not the ledger's, as last read: %s", unanswered)
-	}
-}
-
-// TestLeaseRelease_MergedChangeNamesTheStageCall: a stage tracks main, so the
-// release of a branch whose change is merged names the call that puts main on
-// the repository's stage — the merged note may have reached the agent before
-// the last merge only (global HQ 2026-10-26, D7: the stage stayed one merge
-// behind main after the agent released the last branch's leases). A branch
-// whose change is still open, or a repository whose pairs have no stage,
-// names no stage call.
-func TestLeaseRelease_MergedChangeNamesTheStageCall(t *testing.T) {
-	lab := twoOpenChanges(t)
-	merged := lab.leaseOf("webpool", 4, "fix-login")
-	open := lab.leaseOf("webpool", 5, "add-signup")
-	lab.hq.mergeChange("appdev", 1)
-	lab.snapshotMate(t.Context())
-	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
-	if !ok {
-		t.Fatal("the lab's Mate is not linked")
-	}
-	remote, err := hqc.RepoURL(labApp, "appdev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := topology.RepoIdentity(remote)
-	for _, alias := range []string{merged, open} {
-		if err := os.Remove(filepath.Join(lab.stateDir, "leases", alias+".json")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	views := []ops.LeaseView{
-		{Alias: merged, Repo: repo, Branch: "fix-login", State: ops.LeaseStateReleased},
-		{Alias: open, Repo: repo, Branch: "add-signup", State: ops.LeaseStateReleased},
-	}
-	read := func() *hq.MateState { return hqStateNow(lab.rt) }
-
-	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, read)
-
-	mergedLine, openLine, found := strings.Cut(got, "group appdev@add-signup")
-	if !found {
-		t.Fatalf("the release result names no line for add-signup: %s", got)
-	}
-	for _, want := range []string{"group appdev@fix-login: change #1 merged", "appstage", `zerops_deploy sourceService=`, `targetService="appstage" sha="origin/main"`} {
-		if !strings.Contains(mergedLine, want) {
-			t.Errorf("the merged branch's line lacks %q: %s", want, mergedLine)
-		}
-	}
-	if strings.Contains(openLine, "zerops_deploy") || strings.Contains(openLine, "appstage") {
-		t.Errorf("the open change's line names a stage call: %s", openLine)
-	}
-
-	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
-		m.Stages = nil
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if noStage := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views[:1], read); !strings.Contains(noStage, "change #1 merged") || strings.Contains(noStage, "zerops_deploy") {
-		t.Errorf("with no stage the release result still names a stage call, or not the merge: %s", noStage)
 	}
 }
 

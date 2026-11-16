@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -109,13 +110,13 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 
 	switch state {
 	case platform.MountStateActive:
-		writable, _ := mounter.IsWritable(ctx, mountPath)
+		writable, wErr := mounter.IsWritable(ctx, mountPath)
 		return &MountResult{
 			Status:    "ALREADY_MOUNTED",
 			Hostname:  hostname,
 			MountPath: mountPath,
 			Writable:  writable,
-			Message:   fmt.Sprintf("Service %s is already mounted at %s", hostname, mountPath),
+			Message:   fmt.Sprintf("Service %s is already mounted at %s%s", hostname, mountPath, writeCheckNote(wErr)),
 		}, nil
 
 	case platform.MountStateStale:
@@ -143,21 +144,32 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 	}
 
 	if err := mounter.Mount(ctx, hostname, mountPath); err != nil {
-		return nil, platform.NewPlatformError(
-			platform.ErrMountFailed,
-			fmt.Sprintf("Failed to mount %s: %v", hostname, err),
-			"Verify SSHFS is available and the service is running",
-		)
+		return nil, &platform.PlatformError{
+			Code:       platform.ErrMountFailed,
+			Message:    fmt.Sprintf("Failed to mount %s%s: %v", hostname, platform.ClassOf(err).Note(), err),
+			Suggestion: "The cause above is the last state zcp saw and the tail of the sshfs unit's log, which may hold only systemd's own lines. Check that the service is RUNNING (zerops_discover) and that its sshIsolation admits this service.",
+			Diagnostic: err.Error(),
+			Cause:      err,
+		}
 	}
 
-	writable, _ := mounter.IsWritable(ctx, mountPath)
+	writable, wErr := mounter.IsWritable(ctx, mountPath)
 	return &MountResult{
 		Status:    "MOUNTED",
 		Hostname:  hostname,
 		MountPath: mountPath,
 		Writable:  writable,
-		Message:   fmt.Sprintf("Mounted %s at %s", hostname, mountPath),
+		Message:   fmt.Sprintf("Mounted %s at %s%s", hostname, mountPath, writeCheckNote(wErr)),
 	}, nil
+}
+
+// writeCheckNote states a write probe that failed, so writable=false is never
+// read as a read-only mount when the probe itself did not answer.
+func writeCheckNote(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; the write check failed%s: %v", platform.ClassOf(err).Note(), err)
 }
 
 // UnmountService unmounts a service's SSHFS mount. Idempotent.
@@ -184,11 +196,24 @@ func UnmountService(
 	// Check mount state FIRST, before API call.
 	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
-		return nil, platform.NewPlatformError(
-			platform.ErrUnmountFailed,
-			fmt.Sprintf("Failed to check mount status for %s: %v", hostname, err),
-			"Check mount state manually",
-		)
+		// A mount whose path cannot be read (a deleted service's sshfs
+		// answers "Input/output error") is still removed when asked: its
+		// unit goes, then a lazy unmount, as for a stale one.
+		if forceErr := mounter.ForceUnmount(ctx, hostname, mountPath); forceErr != nil {
+			return nil, &platform.PlatformError{
+				Code:       platform.ErrUnmountFailed,
+				Message:    fmt.Sprintf("Failed to unmount %s, whose mount could not be read (%v): %v", hostname, err, forceErr),
+				Suggestion: "Try: sudo zsc unit remove sshfs-" + hostname + ", then fusermount -uz " + mountPath + " if it is still mounted",
+				Cause:      forceErr,
+			}
+		}
+		_ = os.Remove(mountPath)
+		return &MountResult{
+			Status:    "UNMOUNTED",
+			Hostname:  hostname,
+			MountPath: mountPath,
+			Message:   fmt.Sprintf("Force unmounted %s from %s; its mount could not be read: %v", hostname, mountPath, err),
+		}, nil
 	}
 
 	if state == platform.MountStateNotMounted {
@@ -408,7 +433,9 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 	case platform.MountStateActive:
 		info.Mounted = true
 		if probe {
-			info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+			var wErr error
+			info.Writable, wErr = mounter.IsWritable(ctx, mountPath)
+			info.Message = strings.TrimPrefix(writeCheckNote(wErr), "; ")
 		}
 	case platform.MountStateStale:
 		info.Stale = true

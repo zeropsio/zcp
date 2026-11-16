@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -80,6 +81,106 @@ type StandupStatus struct {
 	// stage call of a section a first call left waiting). A reader matches
 	// the section to that call by it.
 	CallStartedAt string `json:"callStartedAt,omitempty"`
+	// Verdict is the pooled stand-up's verdict: a row per pooled service and
+	// the headline derived from them (StandupHeadlineOf). nil where no
+	// pooled part was stood up — a reader keeps today's wake then.
+	Verdict *StandupVerdict `json:"verdict,omitempty"`
+}
+
+// StandupVerdict is the verdict a reader shows and wakes by, never
+// re-derives: the rows and their one headline.
+type StandupVerdict struct {
+	Headline StandupHeadline `json:"headline"`
+	Rows     []StandupRow    `json:"rows"`
+}
+
+// StandupHeadline is the verdict's one word for the whole stand-up.
+type StandupHeadline string
+
+const (
+	// HeadlineBuilding: a row is still building and none failed.
+	HeadlineBuilding StandupHeadline = "building"
+	// HeadlineReady ("ready to work"): every pool row is done — the pools are
+	// leasable — and a stage row is still building.
+	HeadlineReady StandupHeadline = "ready"
+	// HeadlineDone: every row is done, the stages built too.
+	HeadlineDone StandupHeadline = "done"
+	// HeadlineFailed: a row failed.
+	HeadlineFailed StandupHeadline = "failed"
+)
+
+// StandupHeadlineOf is the one derivation of the verdict's headline from its
+// rows: failed, done, ready (to work) or building (StandupHeadline). A
+// failed row makes it failed whatever the others are (pools done and a stage
+// failed is failed: only failed starts the agent's turn); ready needs a pool
+// row; no rows (nothing adopted yet) is building, never done.
+func StandupHeadlineOf(rows []StandupRow) StandupHeadline {
+	if len(rows) == 0 {
+		return HeadlineBuilding
+	}
+	pools := 0
+	poolsDone, allDone := true, true
+	for _, r := range rows {
+		if r.State == RowFailed {
+			return HeadlineFailed
+		}
+		if r.Kind == RowPool {
+			pools++
+		}
+		if r.State != RowDone {
+			allDone = false
+			poolsDone = poolsDone && r.Kind != RowPool
+		}
+	}
+	if allDone {
+		return HeadlineDone
+	}
+	if poolsDone && pools > 0 {
+		return HeadlineReady
+	}
+	return HeadlineBuilding
+}
+
+// StandupRowKind is what a row's service is to the tier.
+type StandupRowKind string
+
+const (
+	RowPool  StandupRowKind = "pool"
+	RowStage StandupRowKind = "stage"
+)
+
+// StandupRowState is one service's state in the verdict.
+type StandupRowState string
+
+const (
+	// RowBuilding: its version named Commit is submitted and not yet active.
+	RowBuilding StandupRowState = "building"
+	// RowDone: its version named Commit is active, and for a pool its bearer
+	// resolves.
+	RowDone StandupRowState = "done"
+	// RowFailed: Class and Cause say why.
+	RowFailed StandupRowState = "failed"
+)
+
+// StandupRow is one pooled service's line of the verdict, read from its app
+// version and process, never from a container.
+type StandupRow struct {
+	Hostname     string          `json:"hostname"`
+	Kind         StandupRowKind  `json:"kind"`
+	Commit       string          `json:"commit"`
+	State        StandupRowState `json:"state"`
+	AppVersionID string          `json:"appVersionId,omitempty"`
+	// ProcessID is the build-and-deploy process; its build log is the
+	// failure's evidence.
+	ProcessID string `json:"processId,omitempty"`
+	// Class is set on RowFailed only.
+	Class platform.ErrorClass `json:"class,omitempty"`
+	// Cause is the source's own words, verbatim (platform message, build
+	// log line, the bearer variable that does not resolve).
+	Cause string `json:"cause,omitempty"`
+	// Next is the one next step zcp gives for the row, shown word for word
+	// to the person and handed to the agent ("" while it builds).
+	Next string `json:"next,omitempty"`
 }
 
 // StandupProcess names a process the way the work sessions do: its PID and
@@ -184,17 +285,35 @@ func UpdateStandup(path string, change func(*StandupStatus)) error {
 	return UpdateStatus(path, func(s *Status) { change(&s.Standup) })
 }
 
+// standupRestartCause is a verdict row a restart stopped while it built.
+const standupRestartCause = "zcp restarted during the stand-up"
+
 // MarkLaunch is the status a mate launch starts from. A stand-up the file
 // says is running was stopped by this restart (the server and every agent
 // under it go down with the unit), so it is marked failed: nothing else ever
-// would.
+// would. Its verdict ends with it: every row still building is failed as
+// unreachable — nothing is lost, the next run waits on what is in flight —
+// and the headline is derived again from the rows (StandupHeadlineOf).
+// A boot run that starts then writes the verdict afresh.
 func MarkLaunch(path string, now time.Time) error {
 	if err := UpdateStandup(path, func(s *StandupStatus) {
-		if s.State == StandupRunning {
-			s.State = StandupFailed
-			s.EndedAt = now.UTC().Format(time.RFC3339)
-			s.Error = "the stand-up was stopped by a restart of the Mate's server"
+		if s.State != StandupRunning {
+			return
 		}
+		s.State = StandupFailed
+		s.EndedAt = now.UTC().Format(time.RFC3339)
+		s.Error = "the stand-up was stopped by a restart of the Mate's server"
+		v := s.Verdict
+		if v == nil {
+			return
+		}
+		for i := range v.Rows {
+			if r := &v.Rows[i]; r.State == RowBuilding {
+				r.State, r.Class, r.Cause = RowFailed, platform.ClassUnreachable, standupRestartCause
+				r.Next = "Run zerops_standup again: it waits on what is still in flight and never builds twice."
+			}
+		}
+		v.Headline = StandupHeadlineOf(v.Rows)
 	}); err != nil {
 		return fmt.Errorf("mark the launch in the status file: %w", err)
 	}

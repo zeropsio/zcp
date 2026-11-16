@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -294,8 +293,8 @@ func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
 	}
 }
 
-// stageLeaseSSH is a leased container whose checkout is on feat-x at a commit
-// that is not on origin/main; it records every command and its host.
+// stageLeaseSSH is a leased container whose checkout is on feat-x; it
+// records every command and its host.
 type stageLeaseSSH struct {
 	mu    sync.Mutex
 	calls []sshCall
@@ -305,10 +304,7 @@ func (s *stageLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]
 	s.mu.Lock()
 	s.calls = append(s.calls, sshCall{hostname: hostname, command: command})
 	s.mu.Unlock()
-	switch {
-	case strings.Contains(command, "merge-base --is-ancestor"):
-		return []byte("ZCP:MAIN:off 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432\n"), nil
-	case strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain"):
+	if strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain") {
 		return []byte("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\nZCP:BRANCH:feat-x\n"), nil
 	}
 	return []byte("ok"), nil
@@ -333,90 +329,6 @@ func (s *stageLeaseSSH) first(sub string) (int, sshCall) {
 		}
 	}
 	return -1, sshCall{}
-}
-
-// TestLease_Integration_DeployToStage_SaysStageTracksMain: zerops_deploy from
-// a lease to the part's stage, through the full MCP server, fetches
-// origin/main in the leased container before it reads what ships, deploys a
-// branch commit that is not on main, and says the stage tracks main
-// (docs/spec-workflows.md §8 DP-8).
-func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
-	// Non-parallel: t.Chdir (the state dir the server resolves from the cwd).
-	t.Chdir(t.TempDir())
-
-	if err := os.MkdirAll(filepath.Join(".zcp", "state", "leases"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	record := `{"poolHostname":"webpool","poolServiceId":"svc-pool","containerId":"c-3","containerNumber":3,` +
-		`"containerHostname":"node-id-3.runtime.webpool.zerops","lease":"secret-lease-value","branch":"feat-x","acquiredAt":"2026-10-23T12:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(".zcp", "state", "leases", "webpool-3.json"), []byte(record), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll("webpool-3", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	yaml := "zerops:\n  - setup: appstage\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      start: node server.js\n"
-	if err := os.WriteFile(filepath.Join("webpool-3", "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	vouchFor(t, "webpool") // the pool's orchestrator gives zcp its lease (DP-2)
-	mock := defaultMock(t).
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-stage", Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-			{ID: "svc-pool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
-		}).
-		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-stage", ProjectID: recordedProjectID(t), ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
-		})
-	ssh := &stageLeaseSSH{}
-	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
-	defer cleanup()
-
-	res := callAndGetResult(t, session, "zerops_deploy", map[string]any{"sourceService": "webpool-3", "targetService": "appstage"})
-	text := getTextContent(t, res)
-	if res.IsError {
-		t.Fatalf("a deploy from a lease to the stage is never refused for its commit: %s", text)
-	}
-	var got ops.DeployResult
-	if err := json.Unmarshal([]byte(text), &got); err != nil {
-		t.Fatalf("result is not JSON: %v\n%s", err, text)
-	}
-	if got.Status != "DEPLOYED" || got.SourceService != "webpool-3" || got.TargetService != "appstage" {
-		t.Errorf("result = %s → %s %s, want webpool-3 → appstage DEPLOYED", got.SourceService, got.TargetService, got.Status)
-	}
-	if strings.Contains(text, "secret-lease-value") {
-		t.Fatalf("the deploy result carries the lease: %s", text)
-	}
-
-	fetch, fetchCall := ssh.first("git fetch")
-	head, _ := ssh.first("rev-parse --verify HEAD")
-	push, _ := ssh.first("zcli push")
-	switch {
-	case fetch < 0:
-		t.Fatal("origin/main was not fetched")
-	case fetchCall.hostname != "webpool-3":
-		t.Errorf("the fetch ran on %q, want the lease webpool-3", fetchCall.hostname)
-	case head >= 0 && head < fetch:
-		t.Errorf("what ships was read (call %d) before origin/main was fetched (call %d)", head, fetch)
-	case push < 0:
-		t.Fatal("the push did not run")
-	}
-
-	note := ""
-	for _, w := range got.Warnings {
-		if strings.Contains(w, "Stage tracks main") {
-			note = w
-		}
-	}
-	for _, want := range []string{"ships feat-x a1b2c3d", "not on origin/main (at 9f8e7d6)", "preview URL",
-		`zerops_verify serviceHostname="appstage"`,
-		`zerops_deploy sourceService="webpool-3" targetService="appstage" sha="origin/main"`} {
-		if !strings.Contains(note, want) {
-			t.Errorf("stage note %q lacks %q (warnings %q)", note, want, got.Warnings)
-		}
-	}
 }
 
 // orchestratorRoutes sends every request for one of its hosts to that host's

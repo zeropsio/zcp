@@ -47,7 +47,7 @@ func leaseInputSchema() *jsonschema.Schema {
 		"action": {Type: "string", Description: "acquire, status, release, rollout, sync, park or unpark."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
-		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
+		"branch": {Type: "string", Description: "acquire: a branch of your own to check out, never main; a new one is cut from main. release: every lease of it, all or none."},
 		"from":   {Type: "string", Description: "acquire: cut a new branch from this one instead."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
 		"lease":  {Type: "string", Description: "release, sync, park, unpark: the lease alias <pool>-<number> from acquire or status (not a secret)."},
@@ -406,7 +406,7 @@ func leaseParkInputRefusal(input LeaseInput) error {
 func leaseParkNext(action string, v ops.LeaseView) string {
 	if v.State == ops.LeaseStateLost {
 		return fmt.Sprintf("%s was not %sed: its lease had ended outside zcp — its note says how, and what zcp did with its record, ssh alias and mount. "+
-			"zerops_lease action=acquire takes a container of your own.", v.Alias, action)
+			"zerops_lease action=acquire pool=%s branch=<your branch> takes a container of your own.", v.Alias, action, v.Pool)
 	}
 	if action == leaseActionPark {
 		return fmt.Sprintf("%s is parked: still yours, its files kept and nothing running. zerops_dev_server, zerops_deploy and zerops_verify refuse it until %s. "+

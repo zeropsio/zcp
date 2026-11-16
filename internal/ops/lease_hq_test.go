@@ -45,7 +45,7 @@ func TestLeaseCheckoutCommand_HQRepoNamesNoHelper_OthersKeepTheOAuth2One(t *test
 			t.Parallel()
 			cmd := leaseCheckoutCommand("/var/www", tt.repo, "feat", "", tt.hqURL)
 			if tt.wantScope == "" {
-				if !strings.Contains(cmd, "GIT_TERMINAL_PROMPT=0 git fetch -q --prune origin") || strings.Contains(cmd, "credential.helper") || strings.Contains(cmd, "username=") {
+				if !strings.Contains(cmd, "GIT_TERMINAL_PROMPT=0 git fetch -q --prune --filter=blob:none origin") || strings.Contains(cmd, "credential.helper") || strings.Contains(cmd, "username=") {
 					t.Errorf("the checkout of a repository on HQ names a helper of its own:\n%s", cmd)
 				}
 				return
@@ -171,7 +171,7 @@ func TestLeaseRelease_HQRepo_HintNamesHQsBranchRule(t *testing.T) {
 			}}
 			hf.deps.SSH = ssh
 			hf.swarm.acquired = acquiredAs(3)
-			if _, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, tt.repo, "main"); err != nil {
+			if _, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, tt.repo, "feat"); err != nil {
 				t.Fatalf("acquire: %v", err)
 			}
 			hf.events = nil

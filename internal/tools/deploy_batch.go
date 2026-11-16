@@ -72,6 +72,19 @@ func RegisterDeployBatch(
 				"Pass targets=[{targetService:...}, ...] with one entry per service to deploy."),
 				WithRecoveryStatus()), nil, nil
 		}
+		// A service builds one app version at a time: two entries on one
+		// service would share it, and each would report the other's outcome.
+		seen := make(map[string]bool, len(input.Targets))
+		for _, t := range input.Targets {
+			if seen[t.TargetService] {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("zerops_deploy_batch names %q more than once: a service takes one deploy at a time, so two entries on it cannot be told apart", t.TargetService),
+					"Pass each target service once; deploy another setup of it with a separate zerops_deploy after this batch."),
+					WithRecoveryStatus()), nil, nil
+			}
+			seen[t.TargetService] = true
+		}
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
@@ -263,7 +276,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	}
 
 	result := ops.DeployBatchSSH(
-		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir, services,
+		ctx, d.client, d.projectID, d.sshDeployer, leaseDeployGit(d.sshDeployer, d.httpClient, d.rtInfo), authVal, d.stateDir, services,
 		targets, d.logFetcher, onProgress, pollFn,
 	)
 
@@ -282,7 +295,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		case entry.Error != "":
 			// Kickoff/transport failure (build never started).
 			attempt.Error = entry.Error
-			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, entry.Target.ConfigFile)
+			classification := classifyTransportError(entry.Err, deployStrategyZCLILabel, entry.Target.ConfigFile)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

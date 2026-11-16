@@ -218,7 +218,7 @@ func TestLeaseTool_StoppedPool_SaysStartIt(t *testing.T) {
 	registerLeaseTool(t, srv, mock, "proj-1", t.TempDir(), ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
 
 	for _, args := range []map[string]any{
-		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
+		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"},
 		{"action": "status", "pool": "devpool"},
 		{"action": "rollout", "pool": "devpool"},
 	} {

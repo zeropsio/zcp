@@ -305,8 +305,8 @@ func TestDevelopDevPoolAtom_OpensTheBranchsChangeFromALease(t *testing.T) {
 
 // A dev pool's branch proves its production build on the stage before its
 // change is described: the lease preview runs dev servers, never the build.
-// The check deploys the branch to the stage, verifies it there and puts main
-// back at once; the description says it built and verified on the stage.
+// The check deploys the branch to the stage and verifies it there, and the
+// stage keeps it; the description says it built and verified on the stage.
 func TestDevelopDevPoolAtom_ChecksTheBranchOnTheStageBeforeItsChangeIsDescribed(t *testing.T) {
 	t.Parallel()
 	atoms, err := ReadAllAtoms()
@@ -323,7 +323,6 @@ func TestDevelopDevPoolAtom_ChecksTheBranchOnTheStageBeforeItsChangeIsDescribed(
 		"**Stage check.**",
 		`zerops_deploy sourceService="<alias>" targetService="<stage>"` + "`",
 		`zerops_verify serviceHostname="<stage>"`,
-		`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`,
 		"built and verified on the stage",
 	} {
 		if !strings.Contains(body, want) {

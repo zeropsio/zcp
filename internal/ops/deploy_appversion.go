@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,6 +89,12 @@ func RedeployLastAppVersion(
 	}
 
 	yaml, err := resolveRedeployYaml(ctx, client, newest)
+	var unread *redeployYamlUnreadError
+	if errors.As(err, &unread) {
+		// A source that did not answer proves nothing about the stored
+		// yaml: its own error goes on, never "rebuild required".
+		return nil, fmt.Errorf("redeploy last app version: %w", err)
+	}
 	if err != nil {
 		// No stored yaml (an SSH push stores none) means no redeploy of
 		// this version can ever succeed: say so with a code, and name the
@@ -117,8 +124,12 @@ func RedeployLastAppVersion(
 
 	final, err := PollProcess(ctx, client, proc.ID, nil)
 	if err != nil {
+		if !pollMayStillRun(err) {
+			return nil, fmt.Errorf("redeploy last app version: follow process %s: %w", proc.ID, err)
+		}
 		result.TimedOut = true
-		return result, nil //nolint:nilerr // timeout/cancel is reported on the result, not as an error
+		result.Message = pollStoppedMessage(proc.ID, err)
+		return result, nil
 	}
 
 	if final.Status == platform.ProcessStatusFinished {
@@ -141,15 +152,37 @@ func RedeployLastAppVersion(
 
 // resolveRedeployYaml runs the yaml-source cascade described on
 // RedeployLastAppVersion's doc comment.
+// A platform source that did not answer for a reason waiting can change
+// (platform.ClassOf: unreachable) stops the cascade as a
+// *redeployYamlUnreadError carrying its error; any other read failure is
+// named in the verdict and the cascade goes on to the next source.
 func resolveRedeployYaml(ctx context.Context, client platform.Client, av platform.AppVersionEvent) (string, error) {
 	yaml, err := client.GetAppVersionZeropsYaml(ctx, av.ID)
-	if err == nil && yaml != "" {
+	if platform.ClassOf(err).WaitedOn() {
+		return "", &redeployYamlUnreadError{AppVersionID: av.ID, Source: "its ZEROPS_YAML user-data", Err: err}
+	}
+	userData := "no ZEROPS_YAML user-data blob"
+	if err != nil {
+		userData = fmt.Sprintf("the ZEROPS_YAML user-data could not be read (%v)", err)
+	} else if yaml != "" {
 		return yaml, nil
 	}
 
-	url, urlErr := client.GetAppVersionAppCode(ctx, av.ID)
-	if urlErr == nil && url != "" {
-		if archiveYaml, fetchErr := archiveYamlFetcher(ctx, url); fetchErr == nil && archiveYaml != "" {
+	url, err := client.GetAppVersionAppCode(ctx, av.ID)
+	if platform.ClassOf(err).WaitedOn() {
+		return "", &redeployYamlUnreadError{AppVersionID: av.ID, Source: "its app-code archive URL", Err: err}
+	}
+	// The archive is the build output, which may hold no zerops.yaml or not
+	// open as one: its error is named in the verdict, and the cascade goes on.
+	archive := "the app-code archive yielded no zerops.yaml"
+	if err != nil {
+		archive = fmt.Sprintf("the app-code archive URL could not be read (%v)", err)
+	} else if url != "" {
+		archiveYaml, fetchErr := archiveYamlFetcher(ctx, url)
+		if fetchErr != nil {
+			archive = fmt.Sprintf("the app-code archive could not be read (%v)", fetchErr)
+		}
+		if archiveYaml != "" {
 			return archiveYaml, nil
 		}
 	}
@@ -162,11 +195,11 @@ func resolveRedeployYaml(ctx context.Context, client platform.Client, av platfor
 	if av.PublicGitSource != nil && av.PublicGitSource.GitURL != "" {
 		rawURL, urlErr := rawZeropsYamlURL(av.PublicGitSource.GitURL, av.PublicGitSource.BranchName)
 		if urlErr != nil {
-			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and the git source cannot be fetched raw: %w", av.ID, urlErr)
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: %s, %s, and the git source cannot be fetched raw: %w", av.ID, userData, archive, urlErr)
 		}
 		gitYaml, fetchErr := rawGitYamlFetcher(ctx, rawURL)
 		if fetchErr != nil {
-			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and %s: %w", av.ID, rawURL, fetchErr)
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: %s, %s, and %s: %w", av.ID, userData, archive, rawURL, fetchErr)
 		}
 		if gitYaml != "" {
 			return gitYaml, nil
@@ -174,10 +207,24 @@ func resolveRedeployYaml(ctx context.Context, client platform.Client, av platfor
 	}
 
 	return "", fmt.Errorf(
-		"no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and the appVersion has no public git source",
-		av.ID,
+		"no zerops.yaml source available for appVersion %s: %s, %s, and the appVersion has no public git source",
+		av.ID, userData, archive,
 	)
 }
+
+// redeployYamlUnreadError is a zerops.yaml source of an appVersion that did
+// not answer: whether the yaml exists is unknown.
+type redeployYamlUnreadError struct {
+	AppVersionID string
+	Source       string
+	Err          error
+}
+
+func (e *redeployYamlUnreadError) Error() string {
+	return fmt.Sprintf("appVersion %s: %s could not be read%s: %v", e.AppVersionID, e.Source, platform.ClassOf(e.Err).Note(), e.Err)
+}
+
+func (e *redeployYamlUnreadError) Unwrap() error { return e.Err }
 
 // rawZeropsYamlURL maps a public git repo URL + branch to the raw
 // zerops.yaml URL of the hosts buildFromGit supports. An empty branch is

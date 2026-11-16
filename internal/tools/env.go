@@ -429,35 +429,45 @@ func applyAutoRestart(
 		return
 	}
 
-	attempted := 0
+	// failed restarts were refused; unfollowed ones were started, but whether
+	// they finished is unknown. Neither is counted as restarted.
+	failed, unfollowed := 0, 0
 	for _, t := range plan.targets {
-		attempted++
 		proc, err := client.RestartService(ctx, t.id)
 		if err != nil {
+			failed++
 			resp.RestartWarnings = append(resp.RestartWarnings,
-				fmt.Sprintf("%s: restart failed: %v — run zerops_manage action=restart manually", t.hostname, err))
+				fmt.Sprintf("%s: restart failed%s: %v", t.hostname, platform.ClassOf(err).Note(), err))
 			continue
 		}
-		if proc != nil {
-			polled, _ := pollManageProcess(ctx, client, proc, onProgress)
+		if proc != nil && proc.ID != "" {
+			polled, pollErr := ops.PollProcess(ctx, client, proc.ID, onProgress)
+			if pollErr != nil {
+				// The restart was asked for, but whether it finished is
+				// unknown: never counted as restarted, so "live" is not claimed.
+				unfollowed++
+				resp.RestartedProcesses = append(resp.RestartedProcesses, proc)
+				resp.RestartWarnings = append(resp.RestartWarnings,
+					fmt.Sprintf("%s: restart process %s was started but could not be followed to its end%s: %v", t.hostname, proc.ID, platform.ClassOf(pollErr).Note(), pollErr))
+				continue
+			}
 			resp.RestartedProcesses = append(resp.RestartedProcesses, polled)
 		}
 		resp.RestartedServices = append(resp.RestartedServices, t.hostname)
 	}
-	failed := attempted - len(resp.RestartedServices)
 
 	var outcome string
 	switch {
-	case len(resp.RestartedServices) == 0:
+	case failed == len(plan.targets):
 		outcome = "Restart failed on every reader — see restartWarnings."
-	case failed > 0:
-		outcome = fmt.Sprintf("Restarted %d reader(s), %d failed — see restartWarnings.", len(resp.RestartedServices), failed)
+	case failed+unfollowed > 0:
+		outcome = restartTally(len(resp.RestartedServices), failed, unfollowed)
 	case len(resp.ShadowWarnings) > 0:
 		outcome = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
 	case len(resp.ShadowUnverified) > 0:
 		// A higher-layer read failed for some service — we cannot confirm the
 		// set isn't silently shadowed there, so do NOT claim "values are live" (E4).
-		outcome = fmt.Sprintf("Restarted %s — env live where verified, but shadow status is UNVERIFIED for %d service(s) (env layer read failed; retry the env check after `zcli vpn up`).", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowUnverified))
+		outcome = fmt.Sprintf("Restarted %s — env live where verified, but shadow status is UNVERIFIED, the env layers could not be read: %s.", strings.Join(resp.RestartedServices, ", "), strings.Join(resp.ShadowUnverified, "; "))
 	case plan.uncertain:
 		outcome = fmt.Sprintf("Restarted %s — see restartWarnings for the services whose env could not be read.", strings.Join(resp.RestartedServices, ", "))
 	case deleting:
@@ -468,6 +478,22 @@ func applyAutoRestart(
 		outcome = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
 	}
 	resp.NextActions = joinSentences(outcome, unreadHint)
+}
+
+// restartTally is the outcome of restarts not all of which were seen to
+// finish: how many restarted, failed, and started without being followed.
+func restartTally(restarted, failed, unfollowed int) string {
+	var parts []string
+	if restarted > 0 {
+		parts = append(parts, fmt.Sprintf("Restarted %d reader(s)", restarted))
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed to restart", failed))
+	}
+	if unfollowed > 0 {
+		parts = append(parts, fmt.Sprintf("%d started restarting but could not be followed to the end", unfollowed))
+	}
+	return strings.Join(parts, ", ") + " — see restartWarnings."
 }
 
 // restartPlan is what an env change restarts and why.
@@ -597,6 +623,35 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 // run.envVariables and deploy. A service's own key is read as `${KEY}` by
 // that service, as `${host_KEY}` by any other.
 func nothingReadsHint(keys []string, input EnvInput) string {
+	var platformRead []string
+	keys, platformRead = splitPlatformRead(keys)
+	var hint string
+	if len(platformRead) > 0 {
+		hint = fmt.Sprintf("%s is read by the platform itself, not by a process: a change applies to the next SSH connection, with no restart or deploy.", strings.Join(platformRead, ", "))
+	}
+	return joinSentences(hint, appReadHint(keys, input))
+}
+
+// platformReadKeys are the env keys the platform reads itself, live, whatever
+// a service's run.envVariables say (knowledge/themes/operations.md: an
+// sshIsolation change applies to the next SSH connection).
+var platformReadKeys = map[string]bool{"sshIsolation": true}
+
+// splitPlatformRead parts keys into those a process reads and those the
+// platform reads itself.
+func splitPlatformRead(keys []string) (appRead, platformRead []string) {
+	for _, k := range keys {
+		if platformReadKeys[k] {
+			platformRead = append(platformRead, k)
+			continue
+		}
+		appRead = append(appRead, k)
+	}
+	return appRead, platformRead
+}
+
+// appReadHint is the fix for keys a process reads but none does yet.
+func appReadHint(keys []string, input EnvInput) string {
 	if len(keys) == 0 {
 		return ""
 	}
@@ -690,7 +745,7 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 	}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
-		return nil, nil
+		return nil, []string{fmt.Sprintf("every service (their list could not be read%s: %v)", platform.ClassOf(err).Note(), err)}
 	}
 	lower := make([]ops.EffectiveEnvVar, 0, len(stored))
 	for _, s := range stored {
@@ -703,7 +758,7 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 		higher, err := ops.ServiceHigherLayers(ctx, client, svc)
 		if err != nil {
 			// Precondition failure — can't verify this service's shadows.
-			unverified = append(unverified, svc.Name)
+			unverified = append(unverified, fmt.Sprintf("%s%s: %v", svc.Name, platform.ClassOf(err).Note(), err))
 			continue
 		}
 		// A failed layer read (Unavailable) means an incomplete view: the

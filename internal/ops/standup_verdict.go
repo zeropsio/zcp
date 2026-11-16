@@ -1,0 +1,214 @@
+package ops
+
+import (
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// StandupRowInput is what one pooled service's verdict row is derived from:
+// its app version named Commit and the process behind it, its bearer, and
+// the class and words of a failure met on the way.
+type StandupRowInput struct {
+	Hostname string
+	Kind     mate.StandupRowKind
+	Commit   string
+	// AppVersionID and AppVersionStatus are the version named Commit; ""
+	// when none exists.
+	AppVersionID     string
+	AppVersionStatus string
+	ProcessID        string
+	ProcessStatus    string
+	// BearerResolves is read for a pool row only.
+	BearerResolves bool
+	// Pool is a stage row's part's pool, whose row says whether the stage
+	// can be worked on in a lease of it (StandupRowsOf).
+	Pool string
+	// BuildLog is a failed build's failing log lines, or words saying the
+	// log could not be read: the cause's evidence beside the ids.
+	BuildLog string
+	// Class and Cause are a failure met on the way ("" for none): one the
+	// caller no longer waits on. A ClassUnreachable failure is passed only
+	// once its bounded wait is over; while the bound lasts the caller passes
+	// none, and the row stays building.
+	Class platform.ErrorClass
+	Cause string
+}
+
+// StandupRowOf is the one derivation of a service's verdict row and the one
+// owner of its next step. A failed version wins over every other cause, and
+// its Cause is the build's words, not a failure met on the way (a failed
+// first pool build leaves its bearer reference literal: one cause, not two).
+// A version a newer one replaced (BACKUP) failed too: the commit no longer
+// runs. A pool is done only when its version is active and its bearer
+// reference resolves, never from the version alone. Next is "" unless the
+// row failed.
+func StandupRowOf(in StandupRowInput) mate.StandupRow {
+	return standupRowOf(in, true)
+}
+
+// StandupRowsOf is a verdict's rows, each by StandupRowOf, read together in
+// the one place a stage's way on depends on its pool's row: a stage is fixed
+// in a lease of its pool only while that pool has a build (an active
+// version) to lease; otherwise it is fixed where its pool is.
+func StandupRowsOf(inputs []StandupRowInput) []mate.StandupRow {
+	poolBuilt := make(map[string]bool, len(inputs))
+	for _, in := range inputs {
+		if in.Kind == mate.RowPool {
+			poolBuilt[in.Hostname] = in.AppVersionStatus == statusActive
+		}
+	}
+	rows := make([]mate.StandupRow, 0, len(inputs))
+	for _, in := range inputs {
+		leasable := in.Kind != mate.RowStage || in.Pool == "" || poolBuilt[in.Pool]
+		rows = append(rows, standupRowOf(in, leasable))
+	}
+	return rows
+}
+
+// standupRowOf is StandupRowOf with whether a branch lease of the row's part
+// exists to fix it in.
+func standupRowOf(in StandupRowInput, leasable bool) mate.StandupRow {
+	row := mate.StandupRow{
+		Hostname:     in.Hostname,
+		Kind:         in.Kind,
+		Commit:       in.Commit,
+		AppVersionID: in.AppVersionID,
+		ProcessID:    in.ProcessID,
+	}
+	active := in.AppVersionStatus == statusActive
+	bearerMissing := in.Kind == mate.RowPool && !in.BearerResolves
+	switch {
+	case versionFailed(in.AppVersionStatus, in.ProcessStatus):
+		row.State, row.Class = mate.RowFailed, platform.ClassFailed
+		row.Cause, row.Next = versionWords(in), rebuildStep(in, leasable)
+	case in.AppVersionStatus == platform.BuildStatusBackup:
+		row.State, row.Class = mate.RowFailed, platform.ClassFailed
+		row.Cause = versionWords(in) + ": a newer version replaced it"
+		row.Next = rerunStep
+	case in.Class != "":
+		row.State, row.Class = mate.RowFailed, in.Class
+		switch {
+		case active && bearerMissing && in.Class == platform.ClassUnreachable:
+			row.Cause, row.Next = bearerCause(in)
+		case buildInFlight(in) && in.Class == platform.ClassUnreachable:
+			// A new run joins this build, never builds again (CommitDeploy).
+			row.Cause = in.Cause
+			row.Next = "run zerops_standup again: it waits on the build in flight (" + orNamed(in.AppVersionStatus, "building") + ")"
+		default:
+			row.Cause, row.Next = in.Cause, classStep(in.Class)
+		}
+	case active && !bearerMissing:
+		row.State = mate.RowDone
+	default:
+		row.State = mate.RowBuilding
+	}
+	return row
+}
+
+// buildInFlight reports a version whose build had not ended when the row was
+// cut off: one exists, it is not active, and its process did not finish (a
+// failed one is versionFailed's).
+func buildInFlight(in StandupRowInput) bool {
+	return in.AppVersionID != "" && in.AppVersionStatus != statusActive && in.ProcessStatus != platform.ProcessStatusFinished
+}
+
+// versionFailed reports a version or its build-and-deploy process that ended
+// failed or cancelled.
+func versionFailed(versionStatus, processStatus string) bool {
+	switch versionStatus {
+	case platform.BuildStatusBuildFailed, platform.BuildStatusPreparingRuntimeFail, platform.BuildStatusDeployFailed,
+		buildStatusValidationFailed, appVersionStatusCancelled:
+		return true
+	}
+	return processStatus == statusFailed || processStatus == statusCanceled
+}
+
+// The app-version statuses beyond platform's build constants that end a
+// version failed.
+const (
+	buildStatusValidationFailed = "BUILD_VALIDATION_FAILED"
+	appVersionStatusCancelled   = "CANCELLED"
+)
+
+// versionWords is the platform's words for the version and its process,
+// naming only what is known.
+func versionWords(in StandupRowInput) string {
+	words := "app version"
+	if in.AppVersionID != "" {
+		words += " " + in.AppVersionID
+	}
+	if in.Commit != "" {
+		words += " of " + in.Commit
+	}
+	words += " is " + orNamed(in.AppVersionStatus, "unknown")
+	if in.ProcessStatus != "" {
+		words += ", process"
+		if in.ProcessID != "" {
+			words += " " + in.ProcessID
+		}
+		words += " is " + in.ProcessStatus
+	}
+	if in.BuildLog != "" {
+		words += ": " + in.BuildLog
+	}
+	return words
+}
+
+// rerunStep ends every step that changes main: no agent tool commit-deploys
+// a branch's commit, the stand-up commit-deploys main.
+const rerunStep = "run zerops_standup again: it commit-deploys main"
+
+// rebuildStep is how a failed version of in's service is fixed: on a branch,
+// merged to main through the HQ change, then the stand-up again. Its evidence
+// is the runtime log when the container failed to start (DEPLOY_FAILED), the
+// build's log otherwise. A pool whose build failed offers no container to
+// work in, so its branch is worked on zcp's own container; a stage's on a
+// branch lease of its pool, or where its pool's is when the pool has no build
+// to lease (leasable false).
+func rebuildStep(in StandupRowInput, leasable bool) string {
+	evidence := "the build log of " + orNamed(in.ProcessID, "its build")
+	if in.AppVersionStatus == platform.BuildStatusDeployFailed {
+		evidence = in.Hostname + "'s runtime log"
+	}
+	where := "a branch lease"
+	switch {
+	case in.Kind == mate.RowPool:
+		where = "a branch in a checkout on zcp's own container (the pool has no build to lease)"
+	case !leasable:
+		where = "a branch in a checkout on zcp's own container (its pool " + in.Pool + " has no build to lease)"
+	}
+	return "read " + evidence + ", fix the code on " + where + ", merge it to main through the HQ change, then " + rerunStep
+}
+
+// bearerCause names the pool's bearer variable that does not resolve, and
+// the call that writes it.
+func bearerCause(in StandupRowInput) (cause, next string) {
+	variable := in.Hostname + "_" + leaseTokenAliasKey
+	cause = variable + " (${" + in.Hostname + "_" + leaseTokenKey + "}) does not resolve on zcp"
+	if in.Cause != "" {
+		cause += ": " + in.Cause
+	}
+	return cause, "acquire a lease of " + in.Hostname + " (zerops_lease): the acquire writes " + variable + " again"
+}
+
+// classStep is the next step for a failure of class c met outside a build
+// (c is never "" here).
+func classStep(c platform.ErrorClass) string {
+	switch c {
+	case platform.ClassRefused:
+		return "change what the refusal names, then " + rerunStep
+	case platform.ClassUnreachable:
+		return "once the target answers, " + rerunStep
+	case platform.ClassFailed:
+		return "fix what the cause names, then " + rerunStep
+	}
+	return ""
+}
+
+// orNamed is s, or name when s is "".
+func orNamed(s, name string) string {
+	if s == "" {
+		return name
+	}
+	return s
+}

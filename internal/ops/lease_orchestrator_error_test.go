@@ -36,7 +36,7 @@ func TestLeaseRelease_OrchestratorRefusal_SaysWhatItsMetadataSays(t *testing.T) 
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
-	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, ""); err != nil {
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
 		t.Fatal(err)
 	}
 	fx.swarm.releaseErr = orchestratorRefusal(t, http.StatusBadRequest,

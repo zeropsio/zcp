@@ -2,13 +2,21 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
 	"github.com/zeropsio/zerops-go/dto/input/query"
 	"github.com/zeropsio/zerops-go/dto/output"
+	"github.com/zeropsio/zerops-go/sdkBase"
 	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
@@ -237,4 +245,213 @@ func (z *ZeropsClient) RedeployAppVersion(ctx context.Context, appVersionID, zer
 	}
 	proc := mapProcess(out)
 	return &proc, nil
+}
+
+// App version statuses a commit deploy reads besides the build ones
+// (BuildStatus*): a created version is UPLOADING until build-and-deploy is
+// accepted, and ACTIVE once it runs.
+const (
+	AppVersionStatusUploading = "UPLOADING"
+	AppVersionStatusActive    = "ACTIVE"
+)
+
+// UploadStall bounds an upload by progress, not by its length: it fails
+// once no archive byte moved, or no answer came after the last, for this
+// long. An upload runs as long as its archive needs, so the API client's
+// whole-request timeout (DefaultAPITimeout) does not apply to it.
+const UploadStall = 60 * time.Second
+
+// errUploadStalled is the upload's context cause when UploadStall ran out.
+var errUploadStalled = errors.New("upload stalled")
+
+// CreateAppVersion is POST /service-stack/{id}/app-version {name}: the new
+// version's id.
+func (z *ZeropsClient) CreateAppVersion(ctx context.Context, serviceID, name string) (string, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	resp, err := z.handler.PostServiceStackAppVersion(ctx, pathParam, body.PostAppVersion{Name: types.NewStringNull(name)})
+	if err != nil {
+		return "", mapSDKError(err, "appVersion")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return "", mapSDKError(err, "appVersion")
+	}
+	return out.Id.TypedString().String(), nil
+}
+
+// UploadAppVersion is PUT /app-version/{id}/upload, the archive streamed
+// chunked as application/octet-stream (Client). The SDK's own upload call
+// sends application/json and runs under the whole-request timeout, so it is
+// hand-rolled on the SDK's authorized request with a client of its own: the
+// same base transport and key-refusal watch as the API client
+// (newZeropsClientOn), no whole-request timeout, UploadStall instead.
+func (z *ZeropsClient) UploadAppVersion(ctx context.Context, appVersionID string, archive io.Reader) error {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	body := &stallReader{archive: archive, timer: time.AfterFunc(UploadStall, func() { cancel(errUploadStalled) })}
+	defer body.timer.Stop()
+	req, err := z.env.Request(ctx, http.MethodPut, "/api/rest/public/app-version/"+url.PathEscape(appVersionID)+"/upload", body)
+	if err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = -1 // chunked (ZEROPS-004)
+	client := &http.Client{Transport: keyRefusalTransport{base: http.DefaultTransport, hook: &z.keyRefused}}
+	resp, err := client.Do(req)
+	if readErr := body.failure(); readErr != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return readErr
+	}
+	if err != nil {
+		if errors.Is(context.Cause(ctx), errUploadStalled) {
+			// The stall, not the cancellation it caused, is the cause:
+			// ClassOf reads a cancellation as the caller's own stop.
+			return withCause(NewPlatformError(ErrAPITimeout,
+				fmt.Sprintf("upload: nothing moved for %s", UploadStall), "Retry the deploy"), errUploadStalled)
+		}
+		return mapSDKError(err, "appVersion")
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return answerError(resp.StatusCode, raw, "appVersion")
+	}
+	return nil
+}
+
+// stallReader is an upload's body: every read that moves bytes, and the
+// archive's end, restart the stall timer; a read error of the archive is
+// kept, so the upload reports it rather than the transport's wrapping.
+type stallReader struct {
+	archive io.Reader
+	timer   *time.Timer
+	mu      sync.Mutex
+	err     error
+}
+
+func (r *stallReader) Read(p []byte) (int, error) {
+	n, err := r.archive.Read(p)
+	if n > 0 || err == io.EOF {
+		r.timer.Reset(UploadStall)
+	}
+	if err != nil && err != io.EOF {
+		r.mu.Lock()
+		r.err = err
+		r.mu.Unlock()
+	}
+	return n, err
+}
+
+func (r *stallReader) failure() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
+// answerError is a non-2xx answer of a hand-rolled call as the platform's
+// error for entity, as directGet maps one.
+func answerError(status int, raw []byte, entity string) error {
+	var apiErrResp directProcessErrorResponse
+	if err := json.Unmarshal(raw, &apiErrResp); err != nil {
+		pe := withCause(NewPlatformError(ErrAPIError,
+			fmt.Sprintf("%s: malformed %d response", entity, status),
+			"Retry; if it persists the platform API changed — report it"), err)
+		pe.serverSide = status >= http.StatusInternalServerError
+		return pe
+	}
+	apiErrResp.Error.HttpStatusCode = status
+	return mapSDKError(apiErrResp.Error, entity)
+}
+
+// BuildAndDeployAppVersion is PUT /app-version/{id}/build-and-deploy
+// {zeropsYaml, zeropsYamlSetup}: the build-and-deploy process.
+func (z *ZeropsClient) BuildAndDeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error) {
+	pathParam := path.AppVersionId{Id: uuid.AppVersionId(appVersionID)}
+	bodyParam := body.PutAppVersionBuildAndDeploy{
+		ZeropsYaml:      types.MediumText(zeropsYaml),
+		ZeropsYamlSetup: types.NewStringNull(setup),
+	}
+	resp, err := z.handler.PutAppVersionBuildAndDeploy(ctx, pathParam, bodyParam)
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
+}
+
+// DeleteAppVersion is DELETE /app-version/{id}.
+func (z *ZeropsClient) DeleteAppVersion(ctx context.Context, appVersionID string) error {
+	resp, err := z.handler.DeleteAppVersion(ctx, path.AppVersionId{Id: uuid.AppVersionId(appVersionID)})
+	if err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	if _, err := resp.Output(); err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	return nil
+}
+
+// ListUploadingAppVersions reads the service's versions still UPLOADING,
+// each with its name: POST /app-version/search (Elasticsearch), the read
+// that carries a version's name — the direct per-service list has none
+// (s0a F6). A version a cut upload left behind stays UPLOADING for 14 min
+// and more; this is how a commit deploy finds its own by name. Being a
+// search it may trail a write by seconds, so a caller never reads it for a
+// version it just made.
+func (z *ZeropsClient) ListUploadingAppVersions(ctx context.Context, projectID, serviceID string) ([]AppVersionEvent, error) {
+	clientID, err := z.OrgID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{
+			body.EsSearchItem{Name: types.NewString("clientId"), Operator: types.NewString("eq"), Value: types.NewString(clientID)},
+			body.EsSearchItem{Name: types.NewString("projectId"), Operator: types.NewString("eq"), Value: types.NewString(projectID)},
+			body.EsSearchItem{Name: types.NewString("serviceStackId"), Operator: types.NewString("eq"), Value: types.NewString(serviceID)},
+			body.EsSearchItem{Name: types.NewString("status"), Operator: types.NewString("eq"), Value: types.NewString(AppVersionStatusUploading)},
+		},
+		Limit: types.NewIntNull(directListLimit),
+	}
+	// Hand-rolled on the SDK's transport: the SDK's EsAppVersion has no
+	// `name`, so the raw answer is decoded twice.
+	resp := sdkBase.Post(ctx, z.env, "/api/rest/public/app-version/search", filter)
+	if resp.Err != nil {
+		return nil, mapSDKError(resp.Err, "appVersion")
+	}
+	raw := resp.ResponseData.Bytes()
+	if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
+		return nil, answerError(status, raw, "appVersion")
+	}
+	var out output.EsAppVersionResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, withCause(NewPlatformError(ErrAPIError, "app version search: malformed response",
+			"Retry; if it persists the platform API changed — report it"), err)
+	}
+	var named struct {
+		Items []struct {
+			Name *string `json:"name"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(raw, &named) // the same body decoded above; a name it lacks stays ""
+	events := make([]AppVersionEvent, 0, len(out.Items))
+	for i, av := range out.Items {
+		event := mapEsAppVersionEvent(av)
+		if event.ServiceStackID != serviceID || event.Status != AppVersionStatusUploading {
+			continue // the search's own filter, asserted
+		}
+		if i < len(named.Items) && named.Items[i].Name != nil {
+			event.Name = *named.Items[i].Name
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }

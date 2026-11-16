@@ -134,7 +134,7 @@ func fetchPoolPartOrigin(ctx context.Context, deps poolPartOriginDeps, meta *wor
 	if err != nil {
 		e := &poolPartOriginError{pool: meta.Hostname, origin: remote, ref: ref, said: fmt.Sprintf("%v (%s)", err, how)}
 		if errors.Is(err, ops.ErrOriginRefMissing) {
-			e.fix = fmt.Sprintf("Push %s to the origin from a lease of the pool (zerops_lease action=\"acquire\" pool=%q), then call again.", poolPartRefWords(ref), meta.Hostname)
+			e.fix = fmt.Sprintf("Push %s to the origin from a lease of the pool (zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\"), then call again.", poolPartRefWords(ref), meta.Hostname)
 		} else {
 			e.fix = fmt.Sprintf("Make the origin readable from this container: reachable, and readable with the person's GIT_TOKEN on the pool %q — a credential the person gives, never one zcp writes or asks for in the conversation. Then call again.", meta.Hostname)
 		}

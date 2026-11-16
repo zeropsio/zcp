@@ -37,6 +37,9 @@ func TestSSHArgs_HostKeyOptions(t *testing.T) {
 				// `git remote get-url origin` value carried the warning and
 				// false-blocked remote-mismatch on an exactly-matching URL.
 				"-o", "LogLevel=ERROR",
+				// ConnectTimeout=5: a container that does not answer ends
+				// ssh with its own 255 and words, not the caller's deadline.
+				"-o", "ConnectTimeout=5",
 				"-o", "ServerAliveInterval=15",
 				"-o", "ServerAliveCountMax=3",
 				"appstage", "cd /var/www && zcli push",

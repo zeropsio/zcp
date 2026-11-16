@@ -1,6 +1,8 @@
 version: "2"
 run:
   concurrency: 16
+  # Parallel worktrees commit at once: wait for the lint lock instead of failing.
+  allow-serial-runners: true
   issues-exit-code: 1
   tests: true
 output:

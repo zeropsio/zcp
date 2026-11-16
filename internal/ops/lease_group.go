@@ -42,6 +42,10 @@ const leaseLocksDir = "locks"
 type groupMember struct {
 	pool string
 	rp   *resolvedPool
+	// missing is why zcp read no bearer for the pool before the keys were
+	// held; acquireBearers writes one and fills rp's client. nil once it has
+	// one.
+	missing *missingBearer
 	// held is the lease zcp held for the key before this call (returned,
 	// reused); nil for a member this call leases.
 	held *LeaseView
@@ -92,14 +96,19 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 // from origin does not have is refused and the containers go back; a branch
 // origin has, one the group cut before (its recorded base) and one a lease
 // already holds are never rewritten — each lease says from was not applied
-// (DP-6). from names a branch a lease takes, never the branch itself, and
-// never comes with main, which no acquire cuts.
+// (DP-6). from names a branch a lease takes, never the branch itself. The
+// repository's default branch — also the branch of an acquire that names none
+// — is refused at once (refuseMainLease); a lease of it held from before is
+// still released, parked and listed.
 func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []string, repo, branch, from string) (LeaseChange, error) {
+	branch = cmp.Or(branch, leaseDefaultBranch)
+	if err := refuseMainLease(branch); err != nil {
+		return LeaseChange{}, err
+	}
 	members, err := resolveGroupPools(ctx, d, pools)
 	if err != nil {
 		return LeaseChange{}, err
 	}
-	branch = cmp.Or(branch, leaseDefaultBranch)
 	if err := validateLeaseBranch(branch); err != nil {
 		return LeaseChange{}, err
 	}
@@ -120,6 +129,9 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			unlock()
 		}
 	}()
+	if err := acquireBearers(ctx, d, members); err != nil {
+		return LeaseChange{}, err
+	}
 	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
 	if err != nil {
 		return LeaseChange{}, err
@@ -149,7 +161,9 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		// The repository a pool's warm containers get is the one its last
 		// lease checked out, as given (DP-32), recorded before the top-up.
 		for _, m := range fresh {
-			_ = storeWarmCloneRepo(d.StateDir, m.pool, repoURL)
+			if err := storeWarmCloneRepo(d.StateDir, m.pool, repoURL); err != nil {
+				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the repository could not be recorded for %s's warm containers (%v), so a warm container keeps the repository it was cloned with", m.pool, err))
+			}
 		}
 	}
 	// Every member holds the branch: a concurrent acquire of these keys now
@@ -217,7 +231,13 @@ func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fres
 	}
 	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
 	if err != nil {
-		return nil
+		// No sibling is known, so none was sent the overlay: each lease
+		// taken says so, rather than a rewire that silently did not run.
+		out := make([]LeaseRewire, 0, len(fresh))
+		for _, m := range fresh {
+			out = append(out, LeaseRewire{Alias: m.rec.alias(), Note: fmt.Sprintf("zcp could not read the leases of branch %s (%v), so no other lease of it was handed an overlay with %s", branch, err, m.rec.alias())})
+		}
+		return out
 	}
 	joined := map[string]bool{}
 	names := make([]string, 0, len(fresh))
@@ -241,8 +261,9 @@ func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fres
 }
 
 // resolveGroupPools finds every pool (one service listing), refusing an empty
-// list, a pool named twice, a service that is not a pool and a pool zcp finds
-// no bearer for — before anything is reserved.
+// list, a pool named twice and a service that is not a pool before anything is
+// reserved; a pool zcp reads no bearer for is marked missing, for
+// acquireBearers to write under the keys' locks.
 func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*groupMember, error) {
 	if len(pools) == 0 {
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -266,13 +287,43 @@ func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*gro
 		if err != nil {
 			return nil, err
 		}
-		rp, err := orchestratorFor(ctx, d, svc)
+		if err := checkPoolType(svc); err != nil {
+			return nil, err
+		}
+		token, missing, err := readPoolBearer(ctx, d, svc)
 		if err != nil {
 			return nil, err
 		}
-		members = append(members, &groupMember{pool: p, rp: rp})
+		m := &groupMember{pool: p, rp: &resolvedPool{svc: svc}, missing: missing}
+		if missing == nil {
+			m.rp = orchestratorClient(d, svc, token)
+		}
+		members = append(members, m)
 	}
 	return members, nil
+}
+
+// acquireBearers writes the bearer reference of every member zcp read none
+// for (EnsureBearer, the one writer), called with the keys' locks held —
+// the lock order is key, then bearer; nothing takes them the other way. The
+// writer's own error, with its class, refuses the acquire before anything is
+// reserved; a writer that answers no bearer (written, not resolved) refuses
+// it as a pool with no image yet (noImageYetError).
+func acquireBearers(ctx context.Context, d LeaseDeps, members []*groupMember) error {
+	for _, m := range members {
+		if m.missing == nil {
+			continue
+		}
+		token, err := EnsureBearer(ctx, d, m.pool)
+		if err != nil {
+			return err
+		}
+		if token == "" {
+			return noImageYetError(m.pool)
+		}
+		m.rp, m.missing = orchestratorClient(d, m.rp.svc, token), nil
+	}
+	return nil
 }
 
 // resolveGroupRepo is the clone URL a group acquire clones, as it was given
@@ -398,21 +449,93 @@ func lockLeaseGroup(ctx context.Context, stateDir, repo, branch string) (func(),
 // longer wait buys nothing but a call that hangs.
 const leaseReleaseGroupWait = 2 * time.Minute
 
-// lockReleaseGroup is lockRecordGroup for a release, waiting at most
-// d.GroupLockWait (leaseReleaseGroupWait): a lock still held then refuses the
-// release, nothing released, naming again — the call that releases it once
-// the other call answered.
-func lockReleaseGroup(ctx context.Context, d LeaseDeps, rec leaseRecord, again string) (func(), error) {
+// lockReleaseGroup is lockRecordGroup for a release of recs (records of one
+// group), and inside it each record's key lock (lockReleaseKeys) — order group,
+// then key: an acquire lets go of its keys before it takes the group's lock
+// (rewireJoined), so no cycle forms, and an acquire that would answer a lease
+// reused waits until the release has dropped it or refused. Both waits share
+// one bound, d.GroupLockWait (leaseReleaseGroupWait): a lock still held then
+// refuses the release, nothing released, naming again — the call that
+// releases it once the other call answered.
+func lockReleaseGroup(ctx context.Context, d LeaseDeps, recs []leaseRecord, again string) (func(), error) {
 	wait := cmp.Or(d.GroupLockWait, leaseReleaseGroupWait)
 	lctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
-	unlock, err := lockRecordGroup(lctx, d.StateDir, rec)
-	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Nothing was released: another zcp call held the leases of branch %s for over %s — a release of another of its leases, across its reset, or an acquire's rewire", recordBranch(rec), wait),
-			"Release again once that call has answered: "+again)
+	branch := recordBranch(recs[0])
+	unlockGroup, err := lockRecordGroup(lctx, d.StateDir, recs[0])
+	if err != nil {
+		return nil, releaseLockRefusal(ctx, err, fmt.Sprintf("another zcp call held the leases of branch %s for over %s — a release of another of its leases, across its reset, or an acquire's rewire", branch, wait), again)
 	}
-	return unlock, err
+	unlockKeys, err := lockReleaseKeys(lctx, d.StateDir, recs)
+	if err != nil {
+		unlockGroup()
+		return nil, releaseLockRefusal(ctx, err, fmt.Sprintf("an acquire of branch %s held its lease's key for over %s — across its reservation and checkout", branch, wait), again)
+	}
+	return func() {
+		unlockKeys()
+		unlockGroup()
+	}, nil
+}
+
+// releaseLockRefusal is a release's refusal of a lock wait that ran out (held
+// says by whom); any other error of the lock is err itself.
+func releaseLockRefusal(ctx context.Context, err error, held, again string) error {
+	if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			"Nothing was released: "+held,
+			"Release again once that call has answered: "+again)
+		pe.Cause = err
+		return pe
+	}
+	return err
+}
+
+// lockReleaseKeys holds the key lock of every record in recs — its
+// repository, branch and pool, as an acquire of it takes it (leaseKeyLockPath)
+// — each once, in lockLeaseKeys' order (the pools sorted), so a release and a
+// group acquire never wait on each other crosswise; none for a record whose
+// repository zcp knows neither way, as lockLeaseGroup holds nothing then. It
+// returns the release of them all.
+func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (func(), error) {
+	type key struct{ repo, branch, pool string }
+	var keys []key
+	for _, r := range recs {
+		if repo := recordRepo(stateDir, r); repo != "" {
+			keys = append(keys, key{repo, recordBranch(r), r.PoolHostname})
+		}
+	}
+	slices.SortFunc(keys, func(a, b key) int {
+		return cmp.Or(strings.Compare(a.repo, b.repo), strings.Compare(a.branch, b.branch), strings.Compare(a.pool, b.pool))
+	})
+	var releases []func()
+	release := func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+	if len(keys) > 0 {
+		if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
+			return nil, fmt.Errorf("create lease lock directory: %w", err)
+		}
+	}
+	// Two records can name one key in different spellings of the repository
+	// (case): one lock path is taken once — flock on a second open of it
+	// would wait on this call's own hold.
+	locked := map[string]bool{}
+	for _, k := range keys {
+		path := leaseKeyLockPath(stateDir, k.repo, k.branch, k.pool)
+		if locked[path] {
+			continue
+		}
+		locked[path] = true
+		rel, err := lockLeaseKey(ctx, path)
+		if err != nil {
+			release()
+			return nil, fmt.Errorf("lock the lease of %s on pool %s: %w", k.branch, k.pool, err)
+		}
+		releases = append(releases, rel)
+	}
+	return release, nil
 }
 
 // lockRecordGroup is lockLeaseGroup of rec's group.
@@ -655,9 +778,20 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 	runMembers(fresh[1:], func(m *groupMember) { checkout(m, base) })
 }
 
-// validateLeaseFrom refuses a from that is not a branch a lease takes, that
-// is the branch itself, or that comes with main, which no acquire cuts; ""
-// (cut from main) passes.
+// refuseMainLease refuses an acquire of the repository's default branch
+// (leaseDefaultBranch): no lease holds main — work happens on a branch of the
+// agent's own, and the stage gets main through the end-of-work check.
+func refuseMainLease(branch string) error {
+	if branch != leaseDefaultBranch {
+		return nil
+	}
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("A lease never holds %s, the repository's default branch: nothing was acquired", leaseDefaultBranch),
+		fmt.Sprintf("Work on a branch of your own: zerops_lease action=acquire pool=<pool> branch=<new branch> cuts it from %s. The stage is deployed from %s through the end-of-work check, never through a lease", leaseDefaultBranch, leaseDefaultBranch))
+}
+
+// validateLeaseFrom refuses a from that is not a branch a lease takes or that
+// is the branch itself; "" (cut from main) passes.
 func validateLeaseFrom(branch, from string) error {
 	switch {
 	case from == "":
@@ -666,10 +800,6 @@ func validateLeaseFrom(branch, from string) error {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			"from is not a branch name a lease takes",
 			"Name the branch a new branch is cut from: letters, digits and . _ / - only, starting with a letter or digit (e.g. from=pool-previews)")
-	case branch == leaseDefaultBranch:
-		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("from cuts a new branch, and the acquire names %s, which no acquire cuts", leaseDefaultBranch),
-			fmt.Sprintf("Pass the new branch as branch (zerops_lease action=acquire branch=<new branch> from=%s), or leave from out to lease %s", from, leaseDefaultBranch))
 	case from == branch:
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			"from names the branch itself, and a branch is never cut from itself",
@@ -923,7 +1053,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				}
 				return
 			}
-			m.guard, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
+			m.guard, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.note = joinNotes(restoreNote, m.wake.note(), m.guard.note)
 			m.guard.woken = m.wake.started
 		})
@@ -938,7 +1068,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	// lock (lockLeaseGroup): no overlay naming a lease that goes is sent after
 	// it went.
 	again := LeaseReleaseBranchCall(branch, repo, force)
-	unlock, err := lockReleaseGroup(ctx, d, group[0], again)
+	unlock, err := lockReleaseGroup(ctx, d, group, again)
 	if err != nil {
 		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 	}
@@ -959,7 +1089,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				return
 			}
 			var again leaseGuardResult
-			again, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
+			again, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
@@ -1351,7 +1481,7 @@ func unreleasedView(ctx context.Context, d LeaseDeps, rec leaseRecord, guard lea
 			v.State = LeaseStateUnmounted
 		}
 	}
-	v.Error = errorNote(err)
+	v.Error, v.Failure = errorNote(err), err
 	v.Note = joinNotes(guard.note, gap,
 		fmt.Sprintf("the release failed, so %s stays reserved and its record is kept; %s releases what is left of the branch (a released lease has no record left)", rec.alias(), again))
 	return v
