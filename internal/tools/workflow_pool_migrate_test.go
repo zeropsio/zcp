@@ -238,6 +238,12 @@ func poolMigratePoolOwnEnv() []platform.ServiceEnvVar {
 	}
 }
 
+// withDevEnvToCopy gives the dev a plain service-env key the pool lacks, so
+// the env step has a write to make and the step reads env.
+func withDevEnvToCopy(f *poolMigrateFixture) {
+	f.env["svc-dev"] = []platform.ServiceEnvVar{{ID: "d-url", Key: "APP_URL", Content: "${zeropsSubdomain}", Type: platform.ServiceEnvUser}}
+}
+
 // build seeds the state dir and the mock the fixture describes, once.
 func (f *poolMigrateFixture) build(t *testing.T) {
 	t.Helper()
@@ -528,6 +534,7 @@ func TestPoolMigrate_StepFromLiveState_PoolPresent_Env(t *testing.T) {
 	t.Parallel()
 	f := newPoolMigrateFixture()
 	f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
+	withDevEnvToCopy(&f)
 	out, _ := f.run(t)
 
 	if out["status"] != "step" || out["step"] != "env" {
@@ -583,6 +590,7 @@ func TestPoolMigrate_StepFromLiveState_DecidesOnDirectReads(t *testing.T) {
 	f := newPoolMigrateFixture()
 	f.search = slices.Clone(f.services) // the search has not indexed the pool yet
 	f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
+	withDevEnvToCopy(&f)
 	out, mock := f.run(t)
 
 	if out["step"] != "env" {
@@ -830,6 +838,7 @@ func TestPoolMigrate_ReadSideWritesNothing(t *testing.T) {
 		{name: "provision"},
 		{name: "env", mutate: func(f *poolMigrateFixture) {
 			f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
+			withDevEnvToCopy(f)
 		}},
 		{name: "crew refusal", mutate: func(f *poolMigrateFixture) {
 			f.ssh.output = poolMigrateCensusFor("main", "origin", "main", poolMigrateCrewAda, "T /var/www/.crew/ada", "TS # branch.head crew/ada")
@@ -848,6 +857,9 @@ func TestPoolMigrate_ReadSideWritesNothing(t *testing.T) {
 			}
 			before := snapshotTree(t, stateDir)
 			mock := platform.NewMock().WithServicesDirect(f.services).WithServices(f.services)
+			for id, rows := range f.env {
+				mock.WithServiceEnv(id, rows)
+			}
 			if _, _, err := handlePoolMigrate(context.Background(), "proj-1", mock, f.ssh, f.input, stateDir, f.rt); err != nil {
 				t.Fatal(err)
 			}
@@ -996,6 +1008,7 @@ func TestPoolMigrate_Census_Rendered(t *testing.T) {
 			f.ssh.output = poolMigrateUnsavedCensus()
 			if step == "env" {
 				f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
+				withDevEnvToCopy(&f)
 			}
 			out, _ := f.run(t)
 			if out["step"] != step {
