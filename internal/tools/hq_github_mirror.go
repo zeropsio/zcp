@@ -159,10 +159,10 @@ func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since stri
 		"open its change with zerops_workflow action=\"open-change\" branch=%q title=\"Bring HQ and GitHub back in step\" and describe it. "+
 		"Never push to GitHub — HQ alone does — and never force-push.",
 		since, whoMerges(limited), route.where(),
-		route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef),
-		route.relayed("fetch "+address+" +main:refs/remotes/hq/main"),
-		route.relayed("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
-		route.relayed("push "+address+" "+realignBranch), realignBranch)
+		route.git("fetch "+github+" +HEAD:"+gitHubTipRef),
+		route.git("fetch "+address+" +main:refs/remotes/hq/main"),
+		route.git("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
+		route.git("push "+address+" "+realignBranch), realignBranch)
 }
 
 // gitHubTipRef is where the realignment keeps GitHub's default branch as

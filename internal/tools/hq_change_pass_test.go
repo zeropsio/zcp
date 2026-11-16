@@ -379,7 +379,7 @@ func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
 // TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease: lease status names
 // a group's change HQ brought main into the way the pass says it — fetch and
 // fast-forward the branch before the next push, in each lease of the group,
-// over ssh — read from the Mate's state now, or from what the pass last told
+// through `zcp git <alias>` — read from the Mate's state now, or from what the pass last told
 // while HQ does not answer; a change without it reads as today.
 func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 	t.Parallel()
@@ -425,7 +425,7 @@ func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 // TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause: a lease sync's push
 // refused as non-fast-forward names HQ's own push as the cause when the
 // change on the lease's branch carries it at its head — bring origin's branch
-// in over ssh, a fast-forward when the lease has no commits of its own since,
+// in through `zcp git <alias>`, a fast-forward when the lease has no commits of its own since,
 // never a rebase, then sync again; the Mate's state is read once, and only
 // for that refusal. Any other refusal, a change without it, or no reader
 // leave the refusal as it is.
