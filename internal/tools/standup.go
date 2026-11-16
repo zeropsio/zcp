@@ -224,19 +224,10 @@ type standupStop struct {
 	class                     platform.ErrorClass
 }
 
-// result is the stop as the agent's answer. An HQ that did not answer
-// leaves the tier unread, so its only way on is the stand-up again, never
-// the classic adopt route.
+// result is the stop as the agent's answer.
 func (s *standupStop) result() *mcp.CallToolResult {
-	if s.class == platform.ClassUnreachable {
-		return convertError(platform.NewPlatformError(s.code, s.message, s.suggestion),
-			WithRecovery(&RecoveryHint{Tool: "zerops_standup"}))
-	}
 	return standupRefusal(s.code, s.message, s.suggestion)
 }
-
-// standupFallback is the way on from a stop: zcp's own tools.
-const standupFallback = "Nothing was touched. Carry on with zcp's own tools: zerops_discover, then adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\", then deploy each dev half and its stage."
 
 // openTier opens HQ under the Mate's key and reads the tier.
 func (d standupDeps) openTier(ctx context.Context, progress *standupProgress) (hq.Client, standupSource, *standupStop) {
@@ -270,10 +261,14 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		if err != nil {
 			class = platform.ClassOf(err)
 		}
-		suggestion := standupFallback
-		if class == platform.ClassUnreachable {
-			// With the tier unread nothing says which path the tier takes.
+		// With the tier unknown nothing says which path it takes, so the way
+		// on is never the classic adopt: it is this stand-up again.
+		suggestion := "Nothing was touched. Change what this names, then run zerops_standup again."
+		switch {
+		case class == platform.ClassUnreachable:
 			suggestion = "Nothing was touched: HQ did not answer. Run zerops_standup again once it answers."
+		case err != nil:
+			suggestion = "Nothing was touched. Change what HQ's refusal names, then run zerops_standup again."
 		}
 		return &standupStop{code: code, class: class, message: message, suggestion: suggestion}
 	}
@@ -342,15 +337,11 @@ func (d standupDeps) ensureGroupRepository(ctx context.Context, hqc hq.Client, p
 }
 
 // standupRefusal is a stand-up that stopped before touching anything: an
-// error result the model reads as "carry on without it", with the adopt route
-// as its recovery.
+// error result whose way on is the stand-up again once its cause is gone,
+// never the classic adopt route, since the tier is not known.
 func standupRefusal(code, message, suggestion string) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(code, message, suggestion),
-		WithRecovery(&RecoveryHint{
-			Tool:   "zerops_workflow",
-			Action: "start",
-			Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
-		}))
+		WithRecovery(&RecoveryHint{Tool: "zerops_standup"}))
 }
 
 // standupPair is one pair's way through the stand-up.

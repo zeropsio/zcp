@@ -168,8 +168,12 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		stood, containers, devs, containers, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
 	if pools > 0 {
 		resp.Message += fmt.Sprintf(" The %d pooled parts' verdict is %s.", pools, pooled.verdict.Headline)
-		for repo, commit := range pooled.built {
-			resp.Message += fmt.Sprintf(" %s was built at %s.", repo, shortCommit(commit))
+		for repo, commit := range pooled.main {
+			if pooled.built[repo] {
+				resp.Message += fmt.Sprintf(" %s was built at %s.", repo, shortCommit(commit))
+			} else {
+				resp.Message += fmt.Sprintf(" %s's main is at %s; nothing was built.", repo, shortCommit(commit))
+			}
 		}
 	}
 	return resp
@@ -211,7 +215,7 @@ func standupPooledNext(pooled pooledOutcome) string {
 	}
 	for repo, head := range pooled.ahead {
 		next += fmt.Sprintf(" %s's main moved during the stand-up to %s: what was built is the head read at its start (%s), and main is ahead of it.",
-			repo, shortCommit(head), shortCommit(pooled.built[repo]))
+			repo, shortCommit(head), shortCommit(pooled.main[repo]))
 	}
 	return next
 }

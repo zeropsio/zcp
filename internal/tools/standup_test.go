@@ -955,7 +955,7 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		{
 			name:    "the Mate is never enrolled",
 			setup:   func(f *standupFixture) { f.identity.Key = "" },
-			wantErr: []string{"PREREQUISITE_MISSING", "does not answer for this Mate's key", "route=\\\"adopt\\\""},
+			wantErr: []string{"PREREQUISITE_MISSING", "does not answer for this Mate's key", "zerops_standup again"},
 		},
 		{
 			name:    "HQ holds the Mate in no application",
