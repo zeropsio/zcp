@@ -212,11 +212,9 @@ func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, start 
 		deadline = end
 	}
 	for {
-		token, _, err := liveBearer(d, pool)
-		if err != nil {
-			return "", err
-		}
-		if token != "" {
+		// An env that cannot be read now (the platform rewriting it) is read
+		// again until the deadline; the state last seen says if it stayed so.
+		if token, _, err := liveBearer(d, pool); err == nil && token != "" {
 			return token, nil
 		}
 		if !time.Now().Before(deadline) {

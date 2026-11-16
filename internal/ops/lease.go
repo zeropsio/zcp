@@ -416,10 +416,15 @@ func orchestratorClient(d LeaseDeps, svc *platform.ServiceStack, token string) *
 type missingBearer struct {
 	pool, reason string
 	unresolved   []string
+	// undeployed: the pool has had no successful deploy (poolUndeployed), so
+	// a reference to its token stays literal until it has one.
+	undeployed bool
 }
 
 // refusal is noBearerError of m.
-func (m *missingBearer) refusal() error { return noBearerError(m.pool, m.reason, m.unresolved) }
+func (m *missingBearer) refusal() error {
+	return noBearerError(m.pool, m.reason, m.unresolved, m.undeployed)
+}
 
 // readPoolBearer reads pool svc's bearer: the live env (liveBearer), then the
 // pool's own env through the API. A pool neither gives one for answers
@@ -444,7 +449,7 @@ func readPoolBearer(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack
 		if slices.Contains(masked, leaseTokenKey) {
 			reason = leaseTokenKey + " is masked for this zcp's API token"
 		}
-		return "", &missingBearer{pool: hostname, reason: reason, unresolved: unresolved}, nil
+		return "", &missingBearer{pool: hostname, reason: reason, unresolved: unresolved, undeployed: poolUndeployed(svc.Status)}, nil
 	}
 	return token, nil, nil
 }
@@ -472,14 +477,15 @@ func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string, er
 }
 
 // noBearerError is the refusal of a pool zcp finds no bearer for, outside an
-// acquire: why the env API did not give it, what the live env held instead,
-// and that an acquire writes the reference (EnsureBearer) — a same-name
-// variable, which keeps every reference to its name literal, is named for
-// deletion.
-func noBearerError(pool, reason string, unresolved []string) error {
+// acquire: a pool with no successful deploy whose reference zcp wrote is
+// refused as having no image yet (noImageYetError); otherwise why the env API
+// did not give it, what the live env held instead, and that an acquire writes
+// the reference (EnsureBearer) — a same-name variable, which keeps every
+// reference to its name literal, is named for deletion.
+func noBearerError(pool, reason string, unresolved []string, undeployed bool) error {
 	apiKey := pool + "_" + leaseTokenKey
 	aliasKey := pool + "_" + leaseTokenAliasKey
-	if slices.ContainsFunc(unresolved, func(u string) bool { return strings.HasPrefix(u, aliasKey+" ") }) {
+	if undeployed && slices.ContainsFunc(unresolved, func(u string) bool { return strings.HasPrefix(u, aliasKey+" ") }) {
 		return noImageYetError(pool)
 	}
 	msg := fmt.Sprintf("Cannot reach pool '%s': %s, and this container's env has no usable %s or %s", pool, reason, apiKey, aliasKey)
@@ -491,7 +497,7 @@ func noBearerError(pool, reason string, unresolved []string) error {
 	if len(unresolved) > 0 && strings.HasPrefix(unresolved[0], apiKey+" ") {
 		fmt.Fprintf(&suggestion, "This zcp service has a variable %s holding ${%s}: a variable named like the reference it holds never resolves, and while it exists every other reference to that name on the service stays unresolved too — delete it. ", apiKey, apiKey)
 	}
-	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
+	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s branch=<your branch>) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
 }
 
@@ -1177,7 +1183,11 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	var siblings []leaseRecord
 	var rewired []LeaseRewire
 	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
-		siblings = siblingRecords(d.StateDir, rec)
+		// Records that cannot be read refuse before anything is released: a
+		// sibling left wired to the container would reach its next holder.
+		if siblings, err = siblingRecords(d.StateDir, rec); err != nil {
+			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
+		}
 		rewired = rewireLeases(ctx, d, siblings, map[string]bool{alias: true}, "without "+alias)
 	}
 	if !force && guard.lost == "" {
@@ -1215,7 +1225,11 @@ func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) 
 	// An alias another zcp took again — maybe for a lease of this branch —
 	// still names a lease: the siblings are not handed an overlay without it.
 	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
-		rewired = rewireLeases(ctx, d, siblingRecords(d.StateDir, rec), map[string]bool{rec.alias(): true}, "without "+rec.alias())
+		siblings, err := siblingRecords(d.StateDir, rec)
+		if err != nil {
+			return LeaseChange{}, err
+		}
+		rewired = rewireLeases(ctx, d, siblings, map[string]bool{rec.alias(): true}, "without "+rec.alias())
 	}
 	view, err := dropLostLease(ctx, d, rec, why)
 	if err != nil {

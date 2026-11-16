@@ -350,8 +350,8 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 // corePushWords says HQ brought `main` into change number on branch after
 // change landed merged, by a merge commit of its own on the branch
 // (hq.CorePush): the agent's branch is where it was, so its next push is
-// refused as non-fast-forward until it fetches and fast-forwards — over ssh
-// in each lease on the branch (leases), since a lease's git runs there; with
+// refused as non-fast-forward until it fetches and fast-forwards — through
+// `zcp git <alias>` in each lease on the branch (leases), since a lease's git runs there; with
 // none, where the branch is checked out where route runs the repository's
 // git: in its dev service through `zcp git <host>`, the checkout or the
 // branch's /tmp/wt- worktree there. zcp reads none of those checkouts — each
@@ -370,7 +370,7 @@ func corePushWords(number, landed int, branch string, route repoRoute, leases []
 		if len(leases) > 1 {
 			which = "in each of its leases"
 		}
-		where = which + ", over ssh: " + strings.Join(calls, ", ")
+		where = which + ": " + strings.Join(calls, ", ")
 	}
 	words := fmt.Sprintf("HQ brought main into #%d after #%d merged: fetch and fast-forward `%s` before your next push, which is refused as non-fast-forward from where it was — %s",
 		number, landed, branch, where)
@@ -410,7 +410,7 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, lea
 // standingWords is what the agent is told of change number on branch whose
 // standing is now — a draft with a push to describe, behind main, no longer
 // merging cleanly — when it differs from what it was told; "" otherwise.
-// leases are the leases on the branch, whose git runs there over ssh; with
+// leases are the leases on the branch, whose git runs there through `zcp git <alias>`; with
 // none, its git runs where route says. limited, in an application that limits
 // who merges, names who merges the change as that, never as the person.
 func standingWords(number int, branch string, now, told workflow.HQChangeTold, route repoRoute, leases []string, limited bool) string {
@@ -422,7 +422,7 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 	where, sync := route.checkedOut(branch), ""
 	if len(leases) > 0 {
 		route = route.inLease(leases[0])
-		where = fmt.Sprintf("in a lease of it (%s), over ssh", strings.Join(leases, ", "))
+		where = fmt.Sprintf("in a lease of it (%s)", strings.Join(leases, ", "))
 		sync = fmt.Sprintf(", `zerops_lease action=sync lease=%s`", leases[0])
 	}
 	merge, push := route.git("fetch origin", "merge origin/"+hqBase), route.git("push origin "+branch)

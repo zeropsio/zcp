@@ -181,8 +181,8 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 		{name: "a draft told already", now: at(&no, "clean", &no, true), told: told(&no, "clean", false)},
 		{name: "nothing pushed yet", now: at(&no, "unknown", &no, false)},
 		{name: "behind and clean, with a lease", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false), leases: []string{"hqpool-4"},
-			want: []string{"behind main and still merges cleanly", "`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge origin/main\"`",
-				"`ssh hqpool-4 \"cd /var/www && git push origin badge\"`", "zerops_lease action=sync lease=hqpool-4"}},
+			want: []string{"behind main and still merges cleanly", "`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge origin/main`",
+				"`zcp git hqpool-4 push origin badge`", "zerops_lease action=sync lease=hqpool-4"}},
 		{name: "behind and clean, in its dev service", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false),
 			want: []string{"behind main and still merges cleanly", "in its dev service appsdev", "`zcp git appsdev fetch origin && zcp git appsdev merge origin/main`",
 				"`zcp git appsdev push origin badge`"}},
@@ -268,8 +268,8 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			never: []string{"git rebase", "--force", "behind main", "your own shell", "never over ssh", "/tmp/badge"}, wantHead: corePushMerge},
 		{name: "at head, leases of it", now: corePushed(corePushMerge, true, false), leases: []string{"boxpool-6", "hqpool-4"},
 			want: []string{line,
-				"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`",
-				"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/badge\"`"},
+				"`zcp git boxpool-6 fetch origin && zcp git boxpool-6 merge --ff-only origin/badge`",
+				"`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge --ff-only origin/badge`"},
 			never: []string{"in your own shell", "zcp git"}, wantHead: corePushMerge},
 		{name: "at head, and main moved on past the squash", now: corePushed(corePushMerge, true, true),
 			want: []string{line, ff, "is behind main"}, wantHead: corePushMerge},
@@ -379,7 +379,7 @@ func TestHQPass_CorePushAtHead_ToldOnce(t *testing.T) {
 // TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease: lease status names
 // a group's change HQ brought main into the way the pass says it — fetch and
 // fast-forward the branch before the next push, in each lease of the group,
-// over ssh — read from the Mate's state now, or from what the pass last told
+// through `zcp git <alias>` — read from the Mate's state now, or from what the pass last told
 // while HQ does not answer; a change without it reads as today.
 func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 	t.Parallel()
@@ -409,8 +409,8 @@ func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 
 		for _, want := range []string{"group appsdev@mate-test-badge: #6 (ready)",
 			"HQ brought main into #6 after #5 merged: fetch and fast-forward `mate-test-badge` before your next push",
-			"`ssh boxpool-6 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
-			"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --ff-only origin/mate-test-badge\"`",
+			"`zcp git boxpool-6 fetch origin && zcp git boxpool-6 merge --ff-only origin/mate-test-badge`",
+			"`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge --ff-only origin/mate-test-badge`",
 			"group appsdev@pool-previews: #2 (ready)"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s: lease status lacks %q: %s", name, want, got)
@@ -425,7 +425,7 @@ func TestLeaseGroupChanges_CorePushAtHead_SaysItInEachLease(t *testing.T) {
 // TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause: a lease sync's push
 // refused as non-fast-forward names HQ's own push as the cause when the
 // change on the lease's branch carries it at its head — bring origin's branch
-// in over ssh, a fast-forward when the lease has no commits of its own since,
+// in through `zcp git <alias>`, a fast-forward when the lease has no commits of its own since,
 // never a rebase, then sync again; the Mate's state is read once, and only
 // for that refusal. Any other refusal, a change without it, or no reader
 // leave the refusal as it is.

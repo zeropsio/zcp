@@ -508,7 +508,7 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 	case topology.IsPoolType(typeVersion):
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is a Swarm pool, not a dev container", hostname),
-			fmt.Sprintf("Lease one of its containers with zerops_lease action=acquire pool=%q and pass the lease alias as hostname.", hostname))
+			fmt.Sprintf("Lease one of its containers with zerops_lease action=acquire pool=%q branch=<your branch> and pass the lease alias as hostname.", hostname))
 	case topology.IsSandboxType(typeVersion):
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is a Zerops Box, not a dev container", hostname),
@@ -1082,7 +1082,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s; echo \" $?\"", port, healthPath))
 	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 	switch {
-	case err != nil && exit == "":
+	case err != nil:
 		// ssh itself failed: the probe never ran, so nothing is known of
 		// the port — never read as a server not listening.
 		result.Message = fmt.Sprintf("Dev server %s is %s, but zcp could not run its HTTP probe on :%d (%s, class %s): this status says nothing of whether it answers.", label, server.Status, port, sshFailureText(err), cmp.Or(string(platform.ClassOf(err)), "unclassified"))

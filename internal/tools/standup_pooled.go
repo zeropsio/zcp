@@ -34,7 +34,7 @@ import (
 // What happened is the verdict (mate.StandupVerdict): a row per pooled
 // service, derived by ops.StandupRowOf from the service's app version named
 // by the commit, its process, the pool's bearer and the class of a failure
-// met on the way, and the headline ops.StandupHeadlineOf derives from them.
+// met on the way, and the headline mate.StandupHeadlineOf derives from them.
 // The status file's stand-up section carries it as written; the run card
 // shows it and the Mate server wakes the agent by it.
 //
@@ -87,7 +87,7 @@ func pooledPairs(pairs []*standupPair) (classic, pooled []*standupPair) {
 
 // standupVerdictRows holds the run's row inputs and writes the verdict at
 // each change: rows only through ops.StandupRowOf, the headline only through
-// ops.StandupHeadlineOf.
+// mate.StandupHeadlineOf.
 type standupVerdictRows struct {
 	status *standupStatus
 	mu     sync.Mutex
@@ -152,7 +152,7 @@ func (r *standupVerdictRows) verdictLocked() mate.StandupVerdict {
 	for _, host := range r.order {
 		rows = append(rows, ops.StandupRowOf(r.inputs[host]))
 	}
-	return mate.StandupVerdict{Headline: ops.StandupHeadlineOf(rows), Rows: rows}
+	return mate.StandupVerdict{Headline: mate.StandupHeadlineOf(rows), Rows: rows}
 }
 
 // pooledOutcome is what the pooled run hands the answer: the verdict, the

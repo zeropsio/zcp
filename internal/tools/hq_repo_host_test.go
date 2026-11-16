@@ -40,8 +40,8 @@ func TestRepoDevHost_RecipeNamedRepository_FindsItsPair(t *testing.T) {
 
 // TestRepoDevHost_PoolPair_NamesLeaseRoute: a repository only pairs keyed by
 // dev pools are wired to has no checkout of its own — its pool's hostname
-// reaches a random container — so its git runs in a lease, over ssh to the
-// lease's alias, and a branch is taken by a lease acquired on it; a lease the
+// reaches a random container — so its git runs in a lease, through `zcp git`
+// with the lease's alias, and a branch is taken by a lease acquired on it; a lease the
 // words know is named.
 func TestRepoDevHost_PoolPair_NamesLeaseRoute(t *testing.T) {
 	t.Parallel()
@@ -56,7 +56,7 @@ func TestRepoDevHost_PoolPair_NamesLeaseRoute(t *testing.T) {
 
 	route := repoDevHost(stateDir, labApp, "web")
 
-	if got, want := route.git("push origin fix-login"), "`ssh <alias> \"cd /var/www && git push origin fix-login\"`"; got != want {
+	if got, want := route.git("push origin fix-login"), "`zcp git <alias> push origin fix-login`"; got != want {
 		t.Errorf("git = %s, want %s", got, want)
 	}
 	if got := route.where(); got != "in a lease of the dev pool webpool" {
@@ -69,7 +69,7 @@ func TestRepoDevHost_PoolPair_NamesLeaseRoute(t *testing.T) {
 		t.Errorf("a pool's hostname is no checkout, yet git runs there: %s", route.git("status"))
 	}
 	leased := route.inLease("webpool-3")
-	if got, want := leased.git("push origin fix-login"), "`ssh webpool-3 \"cd /var/www && git push origin fix-login\"`"; got != want {
+	if got, want := leased.git("push origin fix-login"), "`zcp git webpool-3 push origin fix-login`"; got != want {
 		t.Errorf("in its lease, git = %s, want %s", got, want)
 	}
 	if got := leased.where(); got != "in its lease webpool-3" {

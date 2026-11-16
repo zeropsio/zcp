@@ -82,7 +82,7 @@ type StandupStatus struct {
 	// the section to that call by it.
 	CallStartedAt string `json:"callStartedAt,omitempty"`
 	// Verdict is the pooled stand-up's verdict: a row per pooled service and
-	// the headline derived from them (ops.StandupHeadlineOf). nil where no
+	// the headline derived from them (StandupHeadlineOf). nil where no
 	// pooled part was stood up — a reader keeps today's wake then.
 	Verdict *StandupVerdict `json:"verdict,omitempty"`
 }
@@ -108,6 +108,38 @@ const (
 	// HeadlineFailed: a row failed.
 	HeadlineFailed StandupHeadline = "failed"
 )
+
+// StandupHeadlineOf is the one derivation of the verdict's headline from its
+// rows: failed, done, ready (to work) or building (StandupHeadline). A
+// failed row makes it failed whatever the others are (pools done and a stage
+// failed is failed: only failed starts the agent's turn); ready needs a pool
+// row; no rows (nothing adopted yet) is building, never done.
+func StandupHeadlineOf(rows []StandupRow) StandupHeadline {
+	if len(rows) == 0 {
+		return HeadlineBuilding
+	}
+	pools := 0
+	poolsDone, allDone := true, true
+	for _, r := range rows {
+		if r.State == RowFailed {
+			return HeadlineFailed
+		}
+		if r.Kind == RowPool {
+			pools++
+		}
+		if r.State != RowDone {
+			allDone = false
+			poolsDone = poolsDone && r.Kind != RowPool
+		}
+	}
+	if allDone {
+		return HeadlineDone
+	}
+	if poolsDone && pools > 0 {
+		return HeadlineReady
+	}
+	return HeadlineBuilding
+}
 
 // StandupRowKind is what a row's service is to the tier.
 type StandupRowKind string
@@ -261,8 +293,7 @@ const standupRestartCause = "zcp restarted during the stand-up"
 // under it go down with the unit), so it is marked failed: nothing else ever
 // would. Its verdict ends with it: every row still building is failed as
 // unreachable — nothing is lost, the next run waits on what is in flight —
-// and the headline is failed, as a failed row makes it
-// (ops.StandupHeadlineOf, which this package cannot call: ops imports it).
+// and the headline is derived again from the rows (StandupHeadlineOf).
 // A boot run that starts then writes the verdict afresh.
 func MarkLaunch(path string, now time.Time) error {
 	if err := UpdateStandup(path, func(s *StandupStatus) {
@@ -282,9 +313,7 @@ func MarkLaunch(path string, now time.Time) error {
 				r.Next = "Run zerops_standup again: it waits on what is still in flight and never builds twice."
 			}
 		}
-		if v.Headline != HeadlineDone {
-			v.Headline = HeadlineFailed
-		}
+		v.Headline = StandupHeadlineOf(v.Rows)
 	}); err != nil {
 		return fmt.Errorf("mark the launch in the status file: %w", err)
 	}

@@ -170,7 +170,7 @@ func TestDivergedWords_RunsGitInTheService(t *testing.T) {
 // HQ with the Mate's credential, and the branch is cut and merged the same
 // way — nothing of it over ssh.
 //
-// witness: internal/tools/hq_github_mirror.go | route.relayed("push "+address+" "+realignBranch), realignBranch) → route.git("push "+address+" "+realignBranch), realignBranch)
+// witness: internal/tools/hq_repo_host.go | case r.leased(): → case false:
 func TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit(t *testing.T) {
 	t.Parallel()
 	const github = "https://github.com/acme/app"

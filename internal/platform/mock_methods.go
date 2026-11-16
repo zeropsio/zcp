@@ -273,6 +273,13 @@ func (m *Mock) BuildAndDeployAppVersion(_ context.Context, appVersionID, _, _ st
 	return &Process{ID: "build-" + appVersionID, ActionName: "stack.build", Status: ProcessStatusPending}, nil
 }
 
+// ListUploadingAppVersions answers none; WithError("ListUploadingAppVersions",
+// err) refuses it.
+func (m *Mock) ListUploadingAppVersions(_ context.Context, _, _ string) ([]AppVersionEvent, error) {
+	m.trackCall("ListUploadingAppVersions")
+	return nil, m.getError("ListUploadingAppVersions")
+}
+
 // DeleteAppVersion records the call; WithError("DeleteAppVersion", err)
 // refuses it.
 func (m *Mock) DeleteAppVersion(_ context.Context, _ string) error {
