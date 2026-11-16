@@ -253,16 +253,37 @@ func UpdateStandup(path string, change func(*StandupStatus)) error {
 	return UpdateStatus(path, func(s *Status) { change(&s.Standup) })
 }
 
+// standupRestartCause is a verdict row a restart stopped while it built.
+const standupRestartCause = "zcp restarted during the stand-up"
+
 // MarkLaunch is the status a mate launch starts from. A stand-up the file
 // says is running was stopped by this restart (the server and every agent
 // under it go down with the unit), so it is marked failed: nothing else ever
-// would.
+// would. Its verdict ends with it: every row still building is failed as
+// unreachable — nothing is lost, the next run waits on what is in flight —
+// and the headline is failed, as a failed row makes it
+// (ops.StandupHeadlineOf, which this package cannot call: ops imports it).
+// A boot run that starts then writes the verdict afresh.
 func MarkLaunch(path string, now time.Time) error {
 	if err := UpdateStandup(path, func(s *StandupStatus) {
-		if s.State == StandupRunning {
-			s.State = StandupFailed
-			s.EndedAt = now.UTC().Format(time.RFC3339)
-			s.Error = "the stand-up was stopped by a restart of the Mate's server"
+		if s.State != StandupRunning {
+			return
+		}
+		s.State = StandupFailed
+		s.EndedAt = now.UTC().Format(time.RFC3339)
+		s.Error = "the stand-up was stopped by a restart of the Mate's server"
+		v := s.Verdict
+		if v == nil {
+			return
+		}
+		for i := range v.Rows {
+			if r := &v.Rows[i]; r.State == RowBuilding {
+				r.State, r.Class, r.Cause = RowFailed, platform.ClassUnreachable, standupRestartCause
+				r.Next = "Run zerops_standup again: it waits on what is still in flight and never builds twice."
+			}
+		}
+		if v.Headline != HeadlineDone {
+			v.Headline = HeadlineFailed
 		}
 	}); err != nil {
 		return fmt.Errorf("mark the launch in the status file: %w", err)
