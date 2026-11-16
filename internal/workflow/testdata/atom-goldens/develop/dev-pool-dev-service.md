@@ -88,24 +88,22 @@ result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`
 — one per pool.
 
-**Stage.** The part's stage tracks `main`, and a branch is tried on its
-lease's preview URL. The preview runs the dev servers, never the production
-build, so check the branch on the stage before its change is described.
+**Stage.** The part's stage is your test bench: it runs `main` from its
+birth, then the last work deployed to it for a check, and nothing puts
+`main` back on it. A branch is tried on its lease's preview URL. The preview
+runs the dev servers, never the production build, so check the branch on the
+stage before its change is described.
 
 **Stage check.** Deploy the pushed branch from its lease,
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`, verify it with
-`zerops_verify serviceHostname="<stage>"`, then put main back at once:
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
+with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
+check. A build that fails leaves the stage on what it ran; fix the branch,
+push, and check again. Say in the change's description that it built and
+verified on the stage. Run one branch's check at a time per stage: a check
+from another lease replaces it. Deploy `main` onto a stage only when you or
+the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
-— the deploy fetches `main` first, so this ships main as the remote has it now.
-A build that fails leaves the stage on what it ran; fix the branch, push, and
-check again. Say in the change's description that it built and verified on
-the stage. Run one branch's check at a time per stage: a check from another
-lease replaces it. Once a change merges, put main on every stage it touched in
-one call, each target from a lease of its own part:
-`zerops_deploy_batch targets=[{"sourceService":"<alias>","targetService":"<stage>","sha":"origin/main"}, …]`
-— a target without `sha` ships its lease's branch, not main.
-A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
-names in its `warnings` the verify and the call that puts main back. Verify a container with
+ships `origin/main` as the lease last fetched it. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 
