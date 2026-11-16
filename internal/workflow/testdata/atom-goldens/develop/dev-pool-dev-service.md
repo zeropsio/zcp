@@ -103,7 +103,8 @@ verified on the stage. Run one branch's check at a time per stage: a check
 from another lease replaces it. Deploy `main` onto a stage only when you or
 the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
-ships `origin/main` as the lease last fetched it. Verify a container with
+ships `origin/main` as the lease last fetched it: run
+`zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 
