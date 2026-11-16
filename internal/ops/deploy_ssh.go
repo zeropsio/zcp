@@ -162,19 +162,32 @@ func DeploySSHWithLeases(
 	workingDir string,
 	sha string,
 ) (*DeployResult, error) {
-	return DeploySSHFromListing(ctx, client, projectID, sshDeployer, authInfo, stateDir, nil,
+	return DeploySSHFromListing(ctx, client, projectID, sshDeployer, nil, authInfo, stateDir, nil,
 		sourceService, targetService, setup, workingDir, sha)
 }
+
+// LeaseGitFor is the executor of zcp's git in a lease's container: the
+// relayed one (RelayedSSH) for a lease of a repository on the Mate's HQ, nil
+// for one read over plain ssh.
+type LeaseGitFor func(LeaseTargetInfo) git.SSHExecutor
 
 // DeploySSHFromListing is DeploySSHWithLeases resolving its source and target
 // from services — the project's services as one listing the caller already
 // read for its own checks — rather than a listing of its own (each is an
 // ES-backed search, docs/spec-workflows.md §3.5). nil services: it lists them.
+//
+// leaseGit is the executor of the deploy's git reads in a lease source: for a
+// lease of a repository on the Mate's HQ the relayed one (RelayedSSH, as
+// LeaseDeps.HQGit) — such a lease checks out blobless, so reading a commit
+// other than its tip fetches blobs from HQ, which only a relayed session
+// answers. nil (the func or its answer), or a source that is no lease, reads
+// over sshDeployer.
 func DeploySSHFromListing(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	sshDeployer SSHDeployer,
+	leaseGit LeaseGitFor,
 	authInfo auth.Info,
 	stateDir string,
 	services []platform.ServiceStack,
@@ -215,7 +228,7 @@ func DeploySSHFromListing(
 		leaseSource = &lease
 	}
 
-	return deploySSH(ctx, client, projectID, sshDeployer, authInfo, services,
+	return deploySSH(ctx, client, projectID, sshDeployer, leaseGit, authInfo, services,
 		sourceService, targetService, setup, workingDir, includeGit, sha, leaseSource)
 }
 
@@ -238,6 +251,7 @@ func deploySSH(
 	client platform.Client,
 	projectID string,
 	sshDeployer SSHDeployer,
+	leaseGit LeaseGitFor,
 	authInfo auth.Info,
 	services []platform.ServiceStack,
 	sourceService string,
@@ -343,6 +357,11 @@ func deploySSH(
 	var repoState string
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: sourceName}
+	if lease != nil && leaseGit != nil {
+		if relayed := leaseGit(*lease); relayed != nil {
+			gitRunner.Executor = relayed
+		}
+	}
 	sourceWorkingDir := workingDir
 	if sha != "" {
 		var newWorkingDir string

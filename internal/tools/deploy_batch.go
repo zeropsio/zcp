@@ -263,7 +263,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	}
 
 	result := ops.DeployBatchSSH(
-		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir, services,
+		ctx, d.client, d.projectID, d.sshDeployer, leaseDeployGit(d.sshDeployer, d.httpClient, d.rtInfo), authVal, d.stateDir, services,
 		targets, d.logFetcher, onProgress, pollFn,
 	)
 

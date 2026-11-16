@@ -88,7 +88,7 @@ func DeployBatchSSH(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
-	sshDeployer SSHDeployer,
+	sshDeployer SSHDeployer, leaseGit LeaseGitFor,
 	authInfo auth.Info,
 	stateDir string,
 	services []platform.ServiceStack,
@@ -123,7 +123,7 @@ func DeployBatchSSH(
 			}()
 
 			result, err := DeploySSHFromListing(
-				ctx, client, projectID, sshDeployer, authInfo, stateDir, services,
+				ctx, client, projectID, sshDeployer, leaseGit, authInfo, stateDir, services,
 				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, tgt.SHA,
 			)
 			if err != nil {
