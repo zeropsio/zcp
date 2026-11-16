@@ -321,3 +321,17 @@ func getResultText(t *testing.T, result *mcp.CallToolResult) string {
 	}
 	return tc.Text
 }
+
+// witness: internal/tools/convert.go | wire.Class = platform.ClassOf(err) → wire.Class = platform.ClassOf(pe)
+func TestErrorClass_E8_ToolErrorCarriesClassAndSSHOutput(t *testing.T) {
+	t.Parallel()
+	out := "ssh: connect to host webstage port 22: Connection refused\n"
+	result := convertError(&platform.SSHExecError{Hostname: "webstage", Output: out, Err: platform.ExitStatusError(255)})
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &wire); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if wire.Class != platform.ClassUnreachable || wire.Diagnostic != out {
+		t.Fatalf("class %q, diagnostic %q; want unreachable and ssh's whole output", wire.Class, wire.Diagnostic)
+	}
+}

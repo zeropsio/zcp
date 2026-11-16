@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 type sshReadyConfig struct {
@@ -18,7 +20,11 @@ var defaultSSHReadyConfig = sshReadyConfig{
 	command:  "true",
 }
 
-// WaitSSHReady polls SSH until the target host responds successfully.
+// WaitSSHReady runs the readiness probe (`true`) on hostname over ssh until
+// it answers. Only an unreachable failure is waited on, bounded; any other —
+// a refusal: `true` cannot fail, so any exit but ssh's own 255 is one — comes
+// back at once. Either way the error is a *platform.SSHProbeError with the
+// last ssh error verbatim, its class ClassOf's.
 func WaitSSHReady(ctx context.Context, deployer SSHDeployer, hostname string) error {
 	return waitSSHReady(ctx, deployer, hostname, defaultSSHReadyConfig)
 }
@@ -42,24 +48,23 @@ func waitSSHReady(ctx context.Context, deployer SSHDeployer, hostname string, cf
 
 	deadline := time.After(cfg.timeout)
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("ssh not ready on %s after %s", hostname, cfg.timeout)
-		default:
-		}
-
 		_, err := deployer.ExecSSH(ctx, hostname, cfg.command)
 		if err == nil {
 			return nil
 		}
-
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		probe := &platform.SSHProbeError{Hostname: hostname, Last: err}
+		if !platform.ClassOf(probe).WaitedOn() {
+			return probe
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("ssh not ready on %s after %s", hostname, cfg.timeout)
+			probe.Waited = cfg.timeout
+			return probe
 		case <-time.After(cfg.interval):
 		}
 	}
