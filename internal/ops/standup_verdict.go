@@ -20,6 +20,12 @@ type StandupRowInput struct {
 	ProcessStatus    string
 	// BearerResolves is read for a pool row only.
 	BearerResolves bool
+	// Pool is a stage row's part's pool, whose row says whether the stage
+	// can be worked on in a lease of it (StandupRowsOf).
+	Pool string
+	// BuildLog is a failed build's failing log lines, or words saying the
+	// log could not be read: the cause's evidence beside the ids.
+	BuildLog string
 	// Class and Cause are a failure met on the way ("" for none): one the
 	// caller no longer waits on. A ClassUnreachable failure is passed only
 	// once its bounded wait is over; while the bound lasts the caller passes
@@ -37,6 +43,31 @@ type StandupRowInput struct {
 // reference resolves, never from the version alone. Next is "" unless the
 // row failed.
 func StandupRowOf(in StandupRowInput) mate.StandupRow {
+	return standupRowOf(in, true)
+}
+
+// StandupRowsOf is a verdict's rows, each by StandupRowOf, read together in
+// the one place a stage's way on depends on its pool's row: a stage is fixed
+// in a lease of its pool only while that pool has a build (an active
+// version) to lease; otherwise it is fixed where its pool is.
+func StandupRowsOf(inputs []StandupRowInput) []mate.StandupRow {
+	poolBuilt := make(map[string]bool, len(inputs))
+	for _, in := range inputs {
+		if in.Kind == mate.RowPool {
+			poolBuilt[in.Hostname] = in.AppVersionStatus == statusActive
+		}
+	}
+	rows := make([]mate.StandupRow, 0, len(inputs))
+	for _, in := range inputs {
+		leasable := in.Kind != mate.RowStage || in.Pool == "" || poolBuilt[in.Pool]
+		rows = append(rows, standupRowOf(in, leasable))
+	}
+	return rows
+}
+
+// standupRowOf is StandupRowOf with whether a branch lease of the row's part
+// exists to fix it in.
+func standupRowOf(in StandupRowInput, leasable bool) mate.StandupRow {
 	row := mate.StandupRow{
 		Hostname:     in.Hostname,
 		Kind:         in.Kind,
@@ -49,7 +80,7 @@ func StandupRowOf(in StandupRowInput) mate.StandupRow {
 	switch {
 	case versionFailed(in.AppVersionStatus, in.ProcessStatus):
 		row.State, row.Class = mate.RowFailed, platform.ClassFailed
-		row.Cause, row.Next = versionWords(in), rebuildStep(in)
+		row.Cause, row.Next = versionWords(in), rebuildStep(in, leasable)
 	case in.AppVersionStatus == platform.BuildStatusBackup:
 		row.State, row.Class = mate.RowFailed, platform.ClassFailed
 		row.Cause = versionWords(in) + ": a newer version replaced it"
@@ -117,6 +148,9 @@ func versionWords(in StandupRowInput) string {
 		}
 		words += " is " + in.ProcessStatus
 	}
+	if in.BuildLog != "" {
+		words += ": " + in.BuildLog
+	}
 	return words
 }
 
@@ -129,15 +163,19 @@ const rerunStep = "run zerops_standup again: it commit-deploys main"
 // is the runtime log when the container failed to start (DEPLOY_FAILED), the
 // build's log otherwise. A pool whose build failed offers no container to
 // work in, so its branch is worked on zcp's own container; a stage's on a
-// branch lease of a pool.
-func rebuildStep(in StandupRowInput) string {
+// branch lease of its pool, or where its pool's is when the pool has no build
+// to lease (leasable false).
+func rebuildStep(in StandupRowInput, leasable bool) string {
 	evidence := "the build log of " + orNamed(in.ProcessID, "its build")
 	if in.AppVersionStatus == platform.BuildStatusDeployFailed {
 		evidence = in.Hostname + "'s runtime log"
 	}
 	where := "a branch lease"
-	if in.Kind == mate.RowPool {
+	switch {
+	case in.Kind == mate.RowPool:
 		where = "a branch in a checkout on zcp's own container (the pool has no build to lease)"
+	case !leasable:
+		where = "a branch in a checkout on zcp's own container (its pool " + in.Pool + " has no build to lease)"
 	}
 	return "read " + evidence + ", fix the code on " + where + ", merge it to main through the HQ change, then " + rerunStep
 }
