@@ -242,14 +242,15 @@ func mateStartJob() (childWatch, error) {
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
 // mate.LaunchEnvLines), starts keeping the wired dev services' git on the
-// Mate's HQ (tools.KeepMateDevGit) and starts the stand-up of pooled parts
-// that have no build (tools.StandupAtBoot), which writes its verdict to that
-// status file. The Mate's key and project come from the live env store, as
-// the guard's flag does: a unit's own environment carries neither. Both run
-// in this process beside the server and never hold its launch; a restart cut
-// short finds what they left by looking.
+// Mate's HQ (tools.KeepMateDevGit) and takes the stand-up's bounded first look
+// (tools.StandupAtBoot): where a pooled part has no build, the verdict says
+// building before the server launches, so the server never reads a pooled
+// tier without one; the run itself goes on beside the server. The Mate's key
+// and project come from the live env store, as the guard's flag does: a unit's
+// own environment carries neither. A restart cut short finds what the keeping
+// and the run left by looking.
 func mateLaunchSetup() {
-	// The goroutine reads the store path taken here, never the var: it is the
+	// The goroutines read the store path taken here, never the var: it is the
 	// launch's, and it outlives it.
 	store := mateStorePath
 	path := mate.DefaultStatusFilePath()
@@ -258,7 +259,9 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
 	go keepMateDevGit(env)
-	go standupAtBoot(env, path)
+	if run := standupFirstLook(env, path); run != nil {
+		go standupRun(run)
+	}
 }
 
 // keepMateDevGit runs tools.KeepMateDevGit for as long as this process
@@ -273,16 +276,29 @@ func keepMateDevGit(env func() func(string) string) {
 	tools.KeepMateDevGit(context.Background(), env, logHQ)
 }
 
-// standupAtBoot runs tools.StandupAtBoot once. A panic in it stops only the
-// stand-up, said on stderr: this process supervises the Mate's server, which
-// must outlive it.
-func standupAtBoot(env func() func(string) string, statusPath string) {
+// standupFirstLook takes tools.StandupAtBoot's bounded first look and hands
+// back the run, nil when there is none. A panic in it ends only the stand-up,
+// said on stderr: this process supervises the Mate's server, which must
+// outlive it.
+func standupFirstLook(env func() func(string) string, statusPath string) (run func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			logMate(fmt.Sprintf("the stand-up at boot stopped: %v", r))
+			run = nil
+		}
+	}()
+	return tools.StandupAtBoot(context.Background(), env, statusPath, logMate)
+}
+
+// standupRun runs the stand-up's run beside the server; a panic in it stops
+// only the stand-up, as in standupFirstLook.
+func standupRun(run func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			logMate(fmt.Sprintf("the stand-up at boot stopped: %v", r))
 		}
 	}()
-	tools.StandupAtBoot(context.Background(), env, statusPath, logMate)
+	run()
 }
 
 func logMate(line string) { fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", line) }
