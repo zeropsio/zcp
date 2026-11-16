@@ -258,7 +258,7 @@ func TestStatus_PoolDevHalf_ReadsNoCheckoutOriginOverSSH(t *testing.T) {
 	if services[0].HQCheckoutOrigin != "" || services[0].HQOriginPending != "" {
 		t.Errorf("status names a checkout origin of the pool: %+v", services[0])
 	}
-	for _, line := range hqKeptOnGitHub(stateDir) {
+	for _, line := range hqKeptOnGitHub(stateDir, false) {
 		if strings.Contains(line, testPool) {
 			t.Errorf("develop's start names a checkout of the pool: %s", line)
 		}

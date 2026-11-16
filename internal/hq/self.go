@@ -29,6 +29,11 @@ type MateState struct {
 	// A capability, read before any call; an answer is still read by its
 	// shape, since an HQ can roll back.
 	OpenPerBranch bool `json:"openPerBranch,omitempty"`
+	// MergeLimited says the application HQ holds the Mate in limits who
+	// merges, and with it who releases, to some of its people; who they are
+	// HQ does not say, so the person the Mate works for may not be one of
+	// them. false where nothing is limited, and from an older HQ.
+	MergeLimited bool `json:"mergeLimited,omitempty"`
 	// Repos are the application's repositories in HQ, by name. nil from an HQ
 	// older than repositories in the Mate's state.
 	Repos []MateRepo `json:"repos"`

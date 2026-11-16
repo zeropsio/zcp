@@ -170,7 +170,7 @@ func readPoolPartHQOrigin(ctx context.Context, rt runtime.Info, meta *workflow.S
 	}
 	if !found {
 		e.said = fmt.Sprintf("its repository in HQ holds no %s yet", hqBase)
-		e.fix = fmt.Sprintf("The part's work reaches %s in HQ through a change the person merges; call again once one has.", hqBase)
+		e.fix = fmt.Sprintf("The part's work reaches %s in HQ through a change %s merges; call again once one has.", hqBase, whoMerges(mergeLimitedHeard(hqIdentity(rt))))
 		return nil, e
 	}
 	body := ""

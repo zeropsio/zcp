@@ -137,7 +137,7 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 		if holder == req.Repo {
 			return originAnswer{Connected: connected,
 				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code first, and never ask for a token: %s. %s",
-					req.URL, holder, originFromHQ(host), originKept(req, origin.Mode, host))}
+					req.URL, holder, originFromHQ(host), originKept(req, origin.Mode, host, state.MergeLimited))}
 		}
 		return originAnswer{Connected: connected,
 			NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that repository, %s, never from the asked address, and never ask for a token: %s.",
@@ -153,7 +153,7 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID,
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
 		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. %[4]s Which they picked, that message says. %[5]s %[6]s Declined: nothing changes; should its code still come in, %[7]s. %[8]s End your turn.",
-			req.URL, req.Repo, originFromHQ(host), originMainFromGitHub, "Kept on GitHub: "+originOnGitHub(host), originInMate(req, host),
+			req.URL, req.Repo, originFromHQ(host), originMainFromGitHub, "Kept on GitHub: "+originOnGitHub(host, state.MergeLimited), originInMate(req, host),
 			originAsItsOwnBranch(host, "fetch "+req.URL+" HEAD:<branch>"), originWithdrawWords(req)),
 	}
 }
@@ -192,17 +192,17 @@ func inDevService(host string, cmds ...string) string {
 // originKept is what the way HQ says the person keeps a connected origin's
 // code means for the pair's checkout, in host's dev service. An HQ older than
 // that way says none, and the agent asks the person rather than guess.
-func originKept(req ops.OriginRequest, mode, host string) string {
+func originKept(req ops.OriginRequest, mode, host string, limited bool) string {
 	switch {
 	case !ops.IsGitHubRepository(req.URL):
 		return "It is only followed: " + originFollowed(req, host) + "; only a public one can be fetched."
 	case mode == hq.OriginOnGitHub:
-		return "Kept on GitHub: " + originOnGitHub(host)
+		return "Kept on GitHub: " + originOnGitHub(host, limited)
 	case mode == hq.OriginFollowed:
 		return originInMate(req, host)
 	}
 	return fmt.Sprintf("HQ does not say which way the person keeps it: ask them in one sentence — on GitHub, or in Mate, only following it — and end your turn; their answer picks one of these. %s %s",
-		"Kept on GitHub: "+originOnGitHub(host), originInMate(req, host))
+		"Kept on GitHub: "+originOnGitHub(host, limited), originInMate(req, host))
 }
 
 // originOnGitHub is how a repository whose code is kept on GitHub is worked
@@ -211,15 +211,17 @@ func originKept(req ops.OriginRequest, mode, host string) string {
 // there (hqPairOrigin), never GitHub, never a second remote; work goes on a
 // branch of the agent's own, pushed to origin, and its change is opened
 // after the push. HQ alone pushes to GitHub: it puts the change's branch
-// there and opens its pull request, the person merges it in Mate, and `zcp
-// git` refuses a push to GitHub (docs/spec-mate.md §6.8) — so neither the
-// agent's own pull request nor its own push there is where the work ends.
-func originOnGitHub(host string) string {
+// there and opens its pull request, the person merges it in Mate — or, in
+// an application that limits who merges (limited), someone who may there —
+// and `zcp git` refuses a push to GitHub (docs/spec-mate.md §6.8) — so
+// neither the agent's own pull request nor its own push there is where the
+// work ends.
+func originOnGitHub(host string, limited bool) string {
 	return fmt.Sprintf("the checkout's origin is its repository in HQ, which mirrors GitHub both ways — ZCP keeps it there: never point origin at GitHub and never add GitHub as a remote. "+
 		"Work on it in its dev service as on any repository: %s, a branch of your own (%s), commit, %s, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: "+
-		"HQ puts that branch on GitHub and opens its pull request there, and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. "+
+		"HQ puts that branch on GitHub and opens its pull request there, and %s merges it in Mate, so none of your own (`gh pr create`) is where the work ends. "+
 		"Never push to GitHub — HQ alone does, and `zcp git` refuses it. Never push `main` and never force-push: `main` moves only by a merge, and GitHub's default branch with it.",
-		inDevService(host, "fetch origin"), inDevService(host, "checkout -b <branch> origin/main"), inDevService(host, "push origin <branch>"))
+		inDevService(host, "fetch origin"), inDevService(host, "checkout -b <branch> origin/main"), inDevService(host, "push origin <branch>"), whoMerges(limited))
 }
 
 // originInMate keeps HQ the checkout's origin and follows the repository.

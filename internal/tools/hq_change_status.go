@@ -451,7 +451,8 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 // closed or no longer listed is left out — a merge since the last pass is
 // never named as left out. The read writes nothing: the pass still says the
 // merge once, with what to do. Unread — outside a Mate, or no state heard —
-// the ledger's are named as last read.
+// the ledger's are named as last read. Where the state read says the
+// application limits who merges, who merges them is named as that.
 func releaseOpenChangesWords(rt runtime.Info, stateDir string) string {
 	kept := hqChanges(stateDir)
 	if len(kept) == 0 {
@@ -489,5 +490,5 @@ func releaseOpenChangesWords(rt runtime.Info, stateDir string) string {
 		asLastRead = " (as last read)"
 	}
 	return "A release takes main as it is, so the open changes " + strings.Join(named, ", and ") + asLastRead +
-		" are not in it: the person merges them first, or releases main without them."
+		" are not in it: " + whoMerges(state != nil && state.MergeLimited) + " merges them first, or releases main without them."
 }

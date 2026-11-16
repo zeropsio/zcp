@@ -138,7 +138,13 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		return orgAnswer(ops.ProposeRelease(projectID, application, uuid.NewString, offer, in.Reason))
+		result, err := ops.ProposeRelease(projectID, application, uuid.NewString, offer, in.Reason)
+		// The card is the person's to see, and in an application that limits
+		// who merges the release may not be theirs to press.
+		if result != nil {
+			result.Note += mergeLimitedNote(mergeLimitedHeard(hqIdentity(src.rt)))
+		}
+		return orgAnswer(result, err)
 	})
 }
 

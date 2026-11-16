@@ -306,10 +306,11 @@ const originMovedMarker = "ZCP_ORIGIN_MOVED"
 // line that tells develop's start how it is worked on: its checkout's origin
 // is its repository in HQ, as every pair's, so the agent pushes its branch to
 // origin and opens its change, and HQ alone pushes to GitHub
-// (originOnGitHub). A pair kept in HQ, or followed, gets none. A pair keyed
+// (originOnGitHub; limited says the application limits who merges). A pair
+// kept in HQ, or followed, gets none. A pair keyed
 // by its dev pool has no checkout for the line to name — its work is checked
 // out in a lease of the pool — so it gets none.
-func hqKeptOnGitHub(stateDir string) []string {
+func hqKeptOnGitHub(stateDir string, limited bool) []string {
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
 		return nil
@@ -321,7 +322,7 @@ func hqKeptOnGitHub(stateDir string) []string {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s: its code is on GitHub at %s, which HQ mirrors, and its checkout's origin is its repository in HQ: %s",
-			m.Hostname, m.HQ.Origin.URL, originOnGitHub(m.Hostname)))
+			m.Hostname, m.HQ.Origin.URL, originOnGitHub(m.Hostname, limited)))
 	}
 	return lines
 }

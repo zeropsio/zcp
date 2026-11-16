@@ -348,7 +348,9 @@ type WorkSessionState struct {
 // papered over is gone — there is no event to fire, the state is recomputed.
 //
 // The annotation is derived only from the local work session. Its change
-// handoff points to Review and needs no remote production fact.
+// handoff points to Review and needs no remote production fact; whether the
+// application limits who merges, which changes its words (hqHandoffNote), is
+// read from the Mate's last-heard state.
 func sessionAnnotations(stateDir string) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
@@ -364,7 +366,7 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		// record and a change remains open to hand over. A stand-up, or a
 		// pair with no change open, has none.
 		if sessionHandsOverAChange(stateDir, ws) {
-			note += " " + hqHandoffNote()
+			note += " " + hqHandoffNote(mergeLimitedHeard(liveHQIdentity()))
 		}
 		return &WorkSessionState{
 			Status:      "auto-closed",

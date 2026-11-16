@@ -141,7 +141,7 @@ func TestDivergedWords_RunsGitInTheService(t *testing.T) {
 	}
 	address := lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev.git"
 
-	words := divergedWords(lab.stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z")
+	words := divergedWords(lab.stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z", false)
 
 	for _, want := range []string{
 		"in its dev service appdev",
@@ -188,7 +188,7 @@ func TestDivergedWords_InALease_GitHubIsFetchedThroughZcpGit(t *testing.T) {
 	}
 	address := "https://hq.example/git/" + labOrg + "/" + labApp + "/appdev.git"
 
-	words := divergedWords(stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z")
+	words := divergedWords(stateDir, hqc, labApp, "appdev", github, "2026-10-28T10:00:00.000Z", false)
 
 	for _, want := range []string{
 		"in a lease of the dev pool webpool",
@@ -236,7 +236,7 @@ func TestTellMirror_SaysEachOnce(t *testing.T) {
 		{name: "the app connects it again", remote: app, want: []string{"HQ mirrors it to GitHub now (acme/app)"}},
 	}
 	for _, step := range steps {
-		lines := tellMirror(stateDir, hqc, labApp, "appdev", step.remote)
+		lines := tellMirror(stateDir, hqc, labApp, "appdev", step.remote, false)
 		if len(lines) != len(step.want) {
 			t.Fatalf("%s: said %q, want %d lines", step.name, lines, len(step.want))
 		}

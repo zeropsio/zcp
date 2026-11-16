@@ -195,7 +195,7 @@ func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge", Told: tt.told}
-			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases)
+			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases, false)
 			if strings.Contains(words, "(`git ") || strings.Contains(words, "own shell") {
 				t.Errorf("words %q run git outside the dev service or a lease", words)
 			}
@@ -285,7 +285,7 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge",
 				Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &yes, Mergeability: hq.MergeClean}}
 
-			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases)
+			words, now := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases, false)
 
 			if len(tt.want) == 0 && words != "" {
 				t.Errorf("said %q, want nothing", words)
@@ -309,7 +309,7 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			}
 
 			c.Told = &now
-			if again, _ := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases); again != "" {
+			if again, _ := hqChangeStanding(c, tt.now, appsdevRoute(t), tt.leases, false); again != "" {
 				t.Errorf("the next pass says again: %q", again)
 			}
 		})

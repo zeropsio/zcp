@@ -86,7 +86,7 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 		if !ok {
 			continue
 		}
-		for _, line := range tellMirror(stateDir, hqc, app, repo, remote) {
+		for _, line := range tellMirror(stateDir, hqc, app, repo, remote, state.MergeLimited) {
 			lines = append(lines, fmt.Sprintf("repository %q: %s", repo, line))
 		}
 	}
@@ -99,7 +99,7 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 // they did since a time the agent was not told of. What it says is recorded
 // in the same hold; a record that cannot be written leaves it to be said
 // again rather than never.
-func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.RepoRemote) []string {
+func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.RepoRemote, limited bool) []string {
 	now := workflow.HQRepoTold{}
 	if remote != nil && remote.Via == hq.RemoteViaApp {
 		now = workflow.HQRepoTold{Mirror: gitHubRepoName(remote.URL), DivergedSince: remote.DivergedSince}
@@ -113,7 +113,7 @@ func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.Rep
 			lines = append(lines, mirroredWords(now.Mirror))
 		}
 		if now.DivergedSince != "" && now.DivergedSince != told.DivergedSince {
-			lines = append(lines, divergedWords(stateDir, hqc, app, repo, remote.URL, now.DivergedSince))
+			lines = append(lines, divergedWords(stateDir, hqc, app, repo, remote.URL, now.DivergedSince, limited))
 		}
 		*told = now
 		return nil
@@ -145,20 +145,20 @@ func mirroredWords(name string) string {
 // tip is fetched by its address, which zcp answers in a fetch's argv with a
 // read token; the fetch and the push of HQ name its address, answered with
 // the Mate's credential.
-func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since string) string {
+func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since string, limited bool) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
 		address = "<its repository's address in HQ>"
 	}
 	route := repoDevHost(stateDir, app, repo)
 	return fmt.Sprintf("GitHub's default branch and HQ's `main` have diverged (since %s): neither holds the other, so HQ's follow moves neither. "+
-		"One change brings them back in step — a branch holding both, which the person merges in Mate: HQ squash-merges its pull request on GitHub and moves `main` onto that squash. "+
+		"One change brings them back in step — a branch holding both, which %s merges in Mate: HQ squash-merges its pull request on GitHub and moves `main` onto that squash. "+
 		"Make it %s: take GitHub's default branch by its address, which zcp answers with a read token (%s), and HQ's `main` (%s), "+
 		"then %s — resolve any conflict so the branch keeps what both sides should, and commit — "+
 		"then push it to HQ, never to GitHub (%s: HQ makes its branch on GitHub and pushes it, which the realignment needs), "+
 		"open its change with zerops_workflow action=\"open-change\" branch=%q title=\"Bring HQ and GitHub back in step\" and describe it. "+
 		"Never push to GitHub — HQ alone does — and never force-push.",
-		since, route.where(),
+		since, whoMerges(limited), route.where(),
 		route.relayed("fetch "+github+" +HEAD:"+gitHubTipRef),
 		route.relayed("fetch "+address+" +main:refs/remotes/hq/main"),
 		route.relayed("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),

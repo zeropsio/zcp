@@ -260,7 +260,7 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 			if got == nil || got.Status != "auto-closed" {
 				t.Fatalf("annotations = %+v, want auto-closed", got)
 			}
-			if gotHandoff := strings.Contains(got.Note, hqHandoffNote()); gotHandoff != tt.wantHandoff {
+			if gotHandoff := strings.Contains(got.Note, hqHandoffNote(false)); gotHandoff != tt.wantHandoff {
 				t.Errorf("handoff in the closing note = %v, want %v: %q", gotHandoff, tt.wantHandoff, got.Note)
 			}
 		})
@@ -354,13 +354,13 @@ func TestSessionAnnotations_HandoffUsesReviewWithoutReadingHQ(t *testing.T) {
 func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 	t.Parallel()
 	for _, want := range []string{"Review"} {
-		if !strings.Contains(hqHandoffNote(), want) {
-			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote())
+		if !strings.Contains(hqHandoffNote(false), want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote(false))
 		}
 	}
 	for _, never := range []string{"Put it live", "projects page", "stage"} {
-		if strings.Contains(hqHandoffNote(), never) {
-			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote())
+		if strings.Contains(hqHandoffNote(false), never) {
+			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote(false))
 		}
 	}
 }
@@ -370,8 +370,8 @@ func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 func TestHQHandoffNote_NamesProductionOnceItRunsARelease(t *testing.T) {
 	t.Parallel()
 	for _, want := range []string{"production runs a release", "that address is the app", "preview"} {
-		if !strings.Contains(hqHandoffNote(), want) {
-			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote())
+		if !strings.Contains(hqHandoffNote(false), want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote(false))
 		}
 	}
 }

@@ -48,13 +48,13 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 	texts := map[string]string{
 		"originFromHQ":                        originFromHQ("appdev"),
 		"originTake, from GitHub by address":  originTake("appdev", "fetch https://github.com/acme/app main"),
-		"originOnGitHub":                      originOnGitHub("appdev"),
+		"originOnGitHub":                      originOnGitHub("appdev", false),
 		"originFollowed, GitHub":              originFollowed(ops.OriginRequest{URL: "https://github.com/acme/app", Repo: "appdev"}, "appdev"),
 		"originFollowed, elsewhere":           originFollowed(ops.OriginRequest{URL: "https://gitlab.com/acme/app", Repo: "appdev"}, "appdev"),
 		"originAsItsOwnBranch":                originAsItsOwnBranch("appdev", "fetch https://github.com/acme/app HEAD:<branch>"),
 		"originFromHolder, a service here":    originFromHolder("appdev", "appdev", hq.MateState{}, "https://hq.example", labOrg, stateDir),
 		"originFromHolder, a sibling's in HQ": originFromHolder("appdev", "web", hq.MateState{AppID: &app}, "https://hq.example", labOrg, stateDir),
-		"divergedWords":                       divergedWords(stateDir, hqc, labApp, "appdev", "https://github.com/acme/app", "2026-10-28T10:00:00.000Z"),
+		"divergedWords":                       divergedWords(stateDir, hqc, labApp, "appdev", "https://github.com/acme/app", "2026-10-28T10:00:00.000Z", false),
 		"hqGitPushRefusal":                    hqGitPushRefusal("appdev", true).Suggestion,
 		"AGENTS.md":                           agentsMDForAMate(t),
 	}
@@ -65,13 +65,13 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 		texts["handedWork, pushed, "+name] = handedWork(route, hq.MateChange{Number: 2, Head: &head}, "appdev", "fix-login", true)
 		texts["handedWork, unpushed, "+name] = handedWork(route, hq.MateChange{Number: 2}, "appdev", "fix-login", true)
 		texts["openChangesWords, "+name] = openChangesWords([]workflow.HQChange{{Number: 1, Branch: "fix-login"}}, route)
-		texts["standingWords behind, "+name] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, route, nil)
-		texts["standingWords conflict, "+name] = standingWords(6, "badge", conflict, workflow.HQChangeTold{}, route, nil)
+		texts["standingWords behind, "+name] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, route, nil, false)
+		texts["standingWords conflict, "+name] = standingWords(6, "badge", conflict, workflow.HQChangeTold{}, route, nil, false)
 		texts["mainTakesTheMerge, "+name] = mainTakesTheMerge(route)
 		texts["answeredOpenChange, "+name] = answeredOpenChange(route, hqc, "appdev", "add-signup", "fix-login", 1)
 	}
 	texts["corePushWords, its leases"] = corePushWords(6, 5, "badge", plain, []string{"webpool-3", "boxpool-6"}, false)
-	texts["standingWords behind, its leases"] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, plain, []string{"webpool-3"})
+	texts["standingWords behind, its leases"] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, plain, []string{"webpool-3"}, false)
 	for _, refusal := range []string{"ZCP_BASE_NOT_SEED 0123456789ab", "ZCP_BASE_NOT_SEED", "ZCP_BRANCH_ELSEWHERE", "ZCP_STAGED_CHANGES", "ZCP_UNTRACKED_COLLISION app.js"} {
 		texts["BaseBranchRefusalRemedy "+refusal] = ops.BaseBranchRefusalRemedy(refusal, ops.RemedyRunner{DevHost: "appdev"})
 	}

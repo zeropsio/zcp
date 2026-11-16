@@ -116,11 +116,15 @@ func hqLaunchProductionRefusal(httpClient ops.HTTPDoer, rt runtime.Info, stateDi
 //     pushed and merged first.
 //
 // A Mate that cannot reach HQ at all — no key or HQ origin in its container —
-// knows none of the three, and says so.
+// knows none of the three, and says so. In an application that limits who
+// merges (limited, as the state read says) none of the three sends the person
+// to merge or release: someone who merges there does both, and the rule
+// follows (mergeLimitedRule).
 func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
 	var open []string
 	opened := 0
 	merged := false
+	limited := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
 		address := ""
@@ -142,6 +146,7 @@ func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateD
 			if state.AppID == nil || *state.AppID != repo.AppID {
 				continue
 			}
+			limited = state.MergeLimited
 			for _, c := range changesIn(hqChanges(stateDir), repo.AppID, repo.Repo) {
 				learnChangeLanding(stateDir, address, c, state)
 			}
@@ -164,18 +169,26 @@ func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateD
 			}
 		}
 	}
+	production := "production is added with Put it live on the project's card and released with Release in Mate"
+	if limited {
+		production += ", by " + whoMerges(true)
+	}
+	production += "." + mergeLimitedNote(limited)
 	if len(open) > 0 {
-		lands := "it lands"
+		lands, has := "it lands", "has"
 		if opened > 1 {
-			lands = "they land"
+			lands, has = "they land", "have"
 		}
-		return "Tell the person to merge " + strings.Join(open, ", and ") +
-			" first — an open change is never in a release, which takes main as it is; once " + lands + ", production is added with Put it live on the project's card and released with Release in Mate."
+		first := "Tell the person to merge " + strings.Join(open, ", and ") + " first"
+		if limited {
+			first = "Tell the person that " + strings.Join(open, ", and ") + " " + has + " to be merged first"
+		}
+		return first + " — an open change is never in a release, which takes main as it is; once " + lands + ", " + production
 	}
 	if merged {
-		return "Tell the person: production is added with Put it live on the project's card and released with Release in Mate."
+		return "Tell the person: " + production
 	}
-	return "Tell the person: none of this Mate's work has reached its repository's main yet — it goes there by a branch of your own, pushed and merged first, then production is added with Put it live on the project's card and released with Release in Mate."
+	return "Tell the person: none of this Mate's work has reached its repository's main yet — it goes there by a branch of your own, pushed and merged first, then " + production
 }
 
 // changeNumbersWords names change numbers as one list: "#2", "#2 and #6",
@@ -219,10 +232,16 @@ func hqRemoteOfThisMate(remoteURL string, rt runtime.Info) bool {
 	return ops.IsHQRemote(remoteURL, hqAddress(rt))
 }
 
-// hqHandoffNote points to a change's Review, the action Mate shows there.
-// Production setup belongs to the project's card, so this text needs no
-// production fact from HQ. A release's confirmed address is the app;
-// the Mate's address remains its preview.
-func hqHandoffNote() string {
-	return "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it. Production setup belongs to the project's card; Mate shows the available release actions. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
+// hqHandoffNote points to a change's Review, the action Mate shows there —
+// or, in an application that limits who merges (limited), to the change
+// alone, with the rule in Review's place (mergeLimitedRule): the person may
+// have no Review to press. Production setup belongs to the project's card,
+// so this text needs no production fact from HQ. A release's confirmed
+// address is the app; the Mate's address remains its preview.
+func hqHandoffNote(limited bool) string {
+	change := "the change to review, by its link, and that they can press Review to look it over and merge it."
+	if limited {
+		change = "the change, by its link." + mergeLimitedNote(true)
+	}
+	return "In your closing message tell the person: " + change + " Production setup belongs to the project's card; Mate shows the available release actions. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
 }

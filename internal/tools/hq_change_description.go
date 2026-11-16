@@ -162,8 +162,8 @@ func handleDescribeChange(
 		// change that is not open.
 		return jsonResult(changeDescriptionResult{
 			Service: service, Parts: parts,
-			Message: fmt.Sprintf("No change of this Mate is open %s in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — the person is asked to review it only then.",
-				describedWhere(target)),
+			Message: fmt.Sprintf("No change of this Mate is open %s in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — %s.",
+				describedWhere(target), reviewAskedOnlyThen(state.MergeLimited)),
 		}), nil, nil
 	}
 	release, refusal := holdChangeToDescribe(ctx, stateDir, target, number)
@@ -232,14 +232,20 @@ func handleDescribeChange(
 				number, err, number),
 		}), nil, nil
 	}
+	// In an application that limits who merges, a described change is ready
+	// for the people who merge there, and the person asks them for it.
+	described := "asks for the person's review — they review it by these words in the app"
+	if state.MergeLimited {
+		described = "is ready — " + whoMerges(true) + " reviews it by these words in the app"
+	}
 	return jsonResult(changeDescriptionResult{
 		Service:        service,
 		Parts:          parts,
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
-		Message: fmt.Sprintf("Change #%d carries this description now and asks for the person's review — they review it by these words in the app. A push that moves it makes it a draft again, until you describe it again.",
-			number),
+		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that moves it makes it a draft again, until you describe it again.",
+			number, described) + mergeLimitedNote(state.MergeLimited),
 	}), nil, nil
 }
 

@@ -130,7 +130,8 @@ func handleOpenChange(
 			} else {
 				result.Message += " Nothing else was opened: a Mate has one open change per repository."
 			}
-			result.Message += ` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); the person reviews it by that.`
+			result.Message += fmt.Sprintf(` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); %s reviews it by that.`, whoMerges(state.MergeLimited)) +
+				mergeLimitedNote(state.MergeLimited)
 			learnSettled()
 			return jsonResult(result), nil, nil
 		}
@@ -155,7 +156,7 @@ func handleOpenChange(
 			"Restore access to the local state directory and call open-change again; HQ answers the existing change."), WithRecoveryStatus()), nil, nil
 	}
 	learnSettled()
-	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote)
+	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, stateErr == nil && state.MergeLimited)
 	return jsonResult(result), nil, nil
 }
 
@@ -207,8 +208,10 @@ func openChangeAtHQ(ctx context.Context, hqc hq.Client, stateDir string, target 
 	return found, lostNote, nil
 }
 
-// openChangeWords explains the opened or existing change and where its work goes.
-func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string) string {
+// openChangeWords explains the opened or existing change and where its work
+// goes; limited, in an application that limits who merges, it names who
+// reviews and merges it as that and adds the rule (mergeLimitedRule).
+func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string, limited bool) string {
 	number := opened.Change.Number
 	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
 	if !opened.Created {
@@ -224,10 +227,10 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 	// alone pushes to GitHub.
 	mirrored := ""
 	if origin == hq.OriginOnGitHub {
-		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and the person merges it in Mate."
+		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and " + whoMerges(limited) + " merges it in Mate."
 	}
-	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); the person reviews it by that.",
-		number, target.Repo, result.Branch, bound, route.git("push origin "+push)) + mirrored + handedNote
+	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); %s reviews it by that.",
+		number, target.Repo, result.Branch, bound, route.git("push origin "+push), whoMerges(limited)) + mirrored + handedNote + mergeLimitedNote(limited)
 }
 
 // openUnanswered decides an open HQ did not answer. HQ's own refusal, and a
@@ -378,9 +381,12 @@ func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateEr
 	if len(named) > 0 {
 		held += ": " + strings.Join(named, ", ")
 	}
+	suggestion := `Ask the person to merge or close one of them in its review, or close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"); then open this one again — the branch you pushed stays as it is.`
+	if stateErr == nil && state.MergeLimited {
+		suggestion = `Close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"), or wait until one of them is merged or closed; then open this one again — the branch you pushed stays as it is. ` + mergeLimitedRule
+	}
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-		fmt.Sprintf("Nothing was opened for %q: this Mate already holds, in %q, %s.", branch, target.Repo, held),
-		`Ask the person to merge or close one of them in its review, or close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"); then open this one again — the branch you pushed stays as it is.`)
+		fmt.Sprintf("Nothing was opened for %q: this Mate already holds, in %q, %s.", branch, target.Repo, held), suggestion)
 }
 
 // changeBranchOf is the branch a change is opened from, as its short name:

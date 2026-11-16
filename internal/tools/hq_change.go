@@ -420,17 +420,17 @@ func corePushWords(number, landed int, branch string, route repoRoute, leases []
 // main, no longer merging cleanly — each said only when it differs from what
 // the agent was last told (c.Told), the fast-forward first, since every other
 // step ends in a push; "" for nothing worth words, and for an HQ that judges
-// nothing. leases are the leases on c's branch. It answers the standing to
-// keep as told. Never a rebase, never a force: a branch takes main by a
+// nothing. leases are the leases on c's branch; limited says the application
+// limits who merges (standingWords). It answers the standing to keep as told. Never a rebase, never a force: a branch takes main by a
 // merge, checked on its own preview before it is pushed.
-func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, leases []string) (string, workflow.HQChangeTold) {
+func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, leases []string, limited bool) (string, workflow.HQChangeTold) {
 	now := standingOf(s)
 	told := workflow.HQChangeTold{}
 	if c.Told != nil {
 		told = *c.Told
 	}
 	branch := cmp.Or(c.Branch, cmp.Or(s.Branch, "its branch"))
-	standing := standingWords(c.Number, branch, now, told, route, leases)
+	standing := standingWords(c.Number, branch, now, told, route, leases, limited)
 	if now.CoreHead == "" || now.CoreHead == told.CoreHead {
 		return standing, now
 	}
@@ -445,8 +445,9 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, lea
 // standing is now — a draft with a push to describe, behind main, no longer
 // merging cleanly — when it differs from what it was told; "" otherwise.
 // leases are the leases on the branch, whose git runs there over ssh; with
-// none, its git runs where route says.
-func standingWords(number int, branch string, now, told workflow.HQChangeTold, route repoRoute, leases []string) string {
+// none, its git runs where route says. limited, in an application that limits
+// who merges, names who merges the change as that, never as the person.
+func standingWords(number int, branch string, now, told workflow.HQChangeTold, route repoRoute, leases []string, limited bool) string {
 	label := standingLabel(now)
 	if label == "" || label == standingLabel(told) {
 		return ""
@@ -468,11 +469,11 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 		if now.Mergeability != hq.MergeClean {
 			clean = "(whether it still merges cleanly is not judged yet)"
 		}
-		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, %s, check it works there, push it (%s)%s, and %s; or leave it, and the person merges it on top of what it was not checked with",
-			number, branch, clean, where, merge, push, sync, describe)
+		return fmt.Sprintf("change #%d on %q is behind main %s — to check it with main: %s, %s, check it works there, push it (%s)%s, and %s; or leave it, and %s merges it on top of what it was not checked with",
+			number, branch, clean, where, merge, push, sync, describe, whoMerges(limited))
 	}
-	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q description=\"…\") — the person is asked to review it only then",
-		number, branch, branch)
+	return fmt.Sprintf("change #%d on %q is a draft: describe it once its latest push is ready (zerops_workflow action=\"describe-change\" branch=%q description=\"…\") — %s",
+		number, branch, branch, reviewAskedOnlyThen(limited))
 }
 
 // changeBranchWords names c's branch, or that HQ named none.
@@ -560,7 +561,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 	if outcome != changeStillOpen {
 		return ""
 	}
-	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch))
+	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch), state.MergeLimited)
 	if c.Told == nil || *c.Told != now {
 		_ = workflow.UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *workflow.HQChange, existed bool) error {
 			if !existed || kept.StateRev > state.Rev {
