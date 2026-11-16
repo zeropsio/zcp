@@ -269,14 +269,14 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 
 	scratch, err := hqc.OpenScratch(ctx, sp.appID(), sp.pair.RepoName)
 	if err != nil {
-		failAll(hqClassOf(err), fmt.Sprintf("could not open %s in HQ: %v", sp.repository, err))
+		failAll(platform.ClassOf(err), fmt.Sprintf("could not open %s in HQ: %v", sp.repository, err))
 		return "", ""
 	}
 	defer scratch.Close()
 	commit, found, err := scratch.FetchTip(ctx, hqBase)
 	switch {
 	case err != nil:
-		failAll(hqClassOf(err), fmt.Sprintf("could not read %s's %s from HQ: %v", sp.repository, hqBase, err))
+		failAll(platform.ClassOf(err), fmt.Sprintf("could not read %s's %s from HQ: %v", sp.repository, hqBase, err))
 		return "", ""
 	case !found:
 		failAll(platform.ClassRefused, fmt.Sprintf("%s has no %s branch in HQ", sp.repository, hqBase))
@@ -485,25 +485,6 @@ func zeropsYamlSetups(ctx context.Context, scratch *hq.Scratch, commit string) (
 	return nil, yamlName, errors.New("it has no " + yamlName)
 }
 
-// hqClassOf is an HQ call's failure as an error class: HQ's refusal is
-// refused (a 5xx or 429 among them is unreachable), an HQ that did not answer
-// is unreachable; anything else is platform.ClassOf's.
-func hqClassOf(err error) platform.ErrorClass {
-	var refused *hq.RefusedError
-	var unavailable *hq.UnavailableError
-	switch {
-	case err == nil:
-		return ""
-	case errors.As(err, &unavailable):
-		return platform.ClassUnreachable
-	case errors.As(err, &refused) && (refused.Status >= 500 || refused.Status == http.StatusTooManyRequests):
-		return platform.ClassUnreachable
-	case errors.As(err, &refused):
-		return platform.ClassRefused
-	}
-	return platform.ClassOf(err)
-}
-
 // askHQ makes one HQ call, waiting on an HQ that does not answer for up to
 // standupHQWait (F1); a refusal is answered at once (F12).
 func (d standupDeps) askHQ(ctx context.Context, progress *standupProgress, what string, call func(context.Context) error) error {
@@ -514,7 +495,7 @@ func (d standupDeps) askHQ(ctx context.Context, progress *standupProgress, what 
 	deadline := time.Now().Add(wait)
 	for {
 		err := call(ctx)
-		if err == nil || !hqClassOf(err).WaitedOn() || !time.Now().Before(deadline) {
+		if err == nil || !platform.ClassOf(err).WaitedOn() || !time.Now().Before(deadline) {
 			return err
 		}
 		progress.say(fmt.Sprintf("HQ does not answer %s yet (%v); asking again", what, err))

@@ -257,7 +257,7 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 	stop := func(code string, err error, message string) *standupStop {
 		class := platform.ClassRefused
 		if err != nil {
-			class = hqClassOf(err)
+			class = platform.ClassOf(err)
 		}
 		return &standupStop{code: code, class: class, message: message, suggestion: standupFallback}
 	}
