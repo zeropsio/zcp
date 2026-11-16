@@ -62,8 +62,8 @@ func poolUndeployed(status string) bool {
 // the literal reference; never a value). The read sources (liveBearer, the
 // pool's env) stay as they are.
 func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error) {
-	if token, _ := liveBearer(d, pool); token != "" {
-		return token, nil
+	if token, _, err := liveBearer(d, pool); err != nil || token != "" {
+		return token, err
 	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, bearerWriteBudget)
@@ -74,8 +74,8 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 	}
 	defer release()
 	// Another writer may have finished while this one waited for the lock.
-	if token, _ := liveBearer(d, pool); token != "" {
-		return token, nil
+	if token, _, err := liveBearer(d, pool); err != nil || token != "" {
+		return token, err
 	}
 
 	services, err := ListProjectServicesDirect(ctx, d.Client, d.ProjectID)
@@ -91,7 +91,10 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", pool, typ),
 			"A bearer reference is written only for a pool (swarm@1 or swarm-vm@1); pass the pool's hostname")
 	}
-	selfID, ok := d.env(selfServiceIDKey)
+	selfID, ok, err := d.env(selfServiceIDKey)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Cannot write the bearer reference of pool '%s': this zcp's env has no %s, so it runs outside a Zerops service", pool, selfServiceIDKey),
@@ -209,7 +212,11 @@ func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, start 
 		deadline = end
 	}
 	for {
-		if token, _ := liveBearer(d, pool); token != "" {
+		token, _, err := liveBearer(d, pool)
+		if err != nil {
+			return "", err
+		}
+		if token != "" {
 			return token, nil
 		}
 		if !time.Now().Before(deadline) {
@@ -226,7 +233,9 @@ func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, start 
 		break
 	}
 	seen := "absent from this container's live env"
-	if v, ok := d.env(aliasKey); ok && unresolvedReference.MatchString(v) {
+	if v, ok, err := d.env(aliasKey); err != nil {
+		seen = "unread: " + err.Error()
+	} else if ok && unresolvedReference.MatchString(v) {
 		seen = "still the literal reference " + v
 	}
 	return "", platform.NewPlatformError(platform.ErrAPITimeout,
