@@ -13,3 +13,4 @@ E5 — The platform's 5xx and 429 answers are unreachable, so a wait waits on th
 E6 — The platform's 403 is refused: no wait spends its bound on it.
 E7 — A readiness wait whose bound runs out says it waited the bound and carries the last cause verbatim.
 E8 — Every tool error the agent receives carries the failure's class and, for an ssh failure, ssh's whole output (case in `internal/tools/convert_test.go`).
+E9 — HQ not serving (no answer, 5xx, 429) is unreachable, and HQ's other no (a 4xx) is refused, read through ClassOf (case in `internal/hq/client_class_test.go`).
