@@ -108,6 +108,13 @@ ships `origin/main` as the lease last fetched it: run
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 
+**A pool or stage that is not built.** zcp builds a part's pool and stage
+from `main` at the Mate's birth; `zerops_standup` answers each one's row —
+its state, its cause in the source's words and its `next` step, the way on.
+A failed stage of a pool that is ready is fixed from a branch lease, as a
+stage check is; anything else is fixed on `main` through a change, then
+`zerops_standup` again builds `main`'s new head.
+
 **Data.** Every lease of a part uses the part's dev database. The pool's
 service env reaches every leased container, so the database it names — wired
 into the pool's env the way a dev service's is — is the one each branch's app
