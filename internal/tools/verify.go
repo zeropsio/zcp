@@ -136,9 +136,15 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		// the service asked for is verified instead.
 		host := input.ServiceHostname
 		var redirectedFrom string
-		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host && runsDeploy(ctx, client, projectID, buildHost) {
-			redirectedFrom = host
-			host = buildHost
+		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host {
+			runs, err := runsDeploy(ctx, client, projectID, buildHost)
+			if err != nil {
+				return convertError(err, WithRecoveryStatus()), nil, nil
+			}
+			if runs {
+				redirectedFrom = host
+				host = buildHost
+			}
 		}
 		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, ssh, projectID, stateDir, host))
 		if err != nil {
@@ -208,19 +214,20 @@ func verifyLease(ctx context.Context, client platform.Client, previewHTTP ops.HT
 	})
 }
 
-// runsDeploy reports a service that runs a deploy, read lag-free; false when
-// the read fails, so a verify never moves to a target it cannot see.
-func runsDeploy(ctx context.Context, client platform.Client, projectID, hostname string) bool {
+// runsDeploy reports a service that runs a deploy, read lag-free. A read that
+// fails is the verify's failure: verifying the push source instead would
+// answer for a service the agent did not mean.
+func runsDeploy(ctx context.Context, client platform.Client, projectID, hostname string) (bool, error) {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for i := range services {
 		if services[i].Name == hostname {
-			return services[i].HasDeployedCode()
+			return services[i].HasDeployedCode(), nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // verifyResponse wraps ops.VerifyResult with the structured

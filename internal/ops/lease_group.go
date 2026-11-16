@@ -481,9 +481,11 @@ func lockReleaseGroup(ctx context.Context, d LeaseDeps, recs []leaseRecord, agai
 // says by whom); any other error of the lock is err itself.
 func releaseLockRefusal(ctx context.Context, err error, held, again string) error {
 	if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-		return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			"Nothing was released: "+held,
 			"Release again once that call has answered: "+again)
+		pe.Cause = err
+		return pe
 	}
 	return err
 }
@@ -505,7 +507,6 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 	slices.SortFunc(keys, func(a, b key) int {
 		return cmp.Or(strings.Compare(a.repo, b.repo), strings.Compare(a.branch, b.branch), strings.Compare(a.pool, b.pool))
 	})
-	keys = slices.Compact(keys)
 	var releases []func()
 	release := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -517,8 +518,17 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 			return nil, fmt.Errorf("create lease lock directory: %w", err)
 		}
 	}
+	// Two records can name one key in different spellings of the repository
+	// (case): one lock path is taken once — flock on a second open of it
+	// would wait on this call's own hold.
+	locked := map[string]bool{}
 	for _, k := range keys {
-		rel, err := lockLeaseKey(ctx, leaseKeyLockPath(stateDir, k.repo, k.branch, k.pool))
+		path := leaseKeyLockPath(stateDir, k.repo, k.branch, k.pool)
+		if locked[path] {
+			continue
+		}
+		locked[path] = true
+		rel, err := lockLeaseKey(ctx, path)
 		if err != nil {
 			release()
 			return nil, fmt.Errorf("lock the lease of %s on pool %s: %w", k.branch, k.pool, err)
@@ -1043,7 +1053,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				}
 				return
 			}
-			m.guard, m.work, m.err = inspectBranchMember(ctx, d, m.rec)
+			m.guard, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.note = joinNotes(restoreNote, m.wake.note(), m.guard.note)
 			m.guard.woken = m.wake.started
 		})
@@ -1079,7 +1089,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				return
 			}
 			var again leaseGuardResult
-			again, m.work, m.err = inspectBranchMember(ctx, d, m.rec)
+			again, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
@@ -1380,33 +1390,6 @@ func noLeaseOfBranch(branch, repo string) error {
 		"zerops_lease action=status lists the leases this zcp holds, each with its branch")
 	pe.Cause = ErrNoLeaseOfBranch
 	return pe
-}
-
-// inspectBranchMember is a branch release's read of one lease, the check a
-// release of the lease alone runs (guardLeaseRelease) short of its refusal:
-// inspectLeaseRelease, then for commits on no branch of origin the compare
-// with origin (compareWithOrigin) and with origin's main, relayed for a
-// repository on the Mate's HQ (mainHoldsUnpushed): commits main already holds
-// — merged as a squash — are no work to keep. A compare that could not run is
-// the lease's refusal (leaseCompareRefusal), never a count it could not check.
-func inspectBranchMember(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
-	guard, w, err := inspectLeaseRelease(ctx, d, rec)
-	if err != nil || w.unpushed == 0 {
-		return guard, w, err
-	}
-	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
-	if w, err = compareWithOrigin(ctx, d, rec, w, onHQ); err != nil || w.unpushed == 0 {
-		return guard, w, err
-	}
-	held, err := mainHoldsUnpushed(ctx, d, rec.alias(), onHQ)
-	if err != nil {
-		return guard, w, leaseCompareRefusal(rec.alias(), w.unpushed, "compare their change with origin's main", err, onHQ)
-	}
-	if held {
-		guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
-		w.unpushed = 0
-	}
-	return guard, w, nil
 }
 
 // branchReleaseRefusal is the refusal of a branch's release, nil when every

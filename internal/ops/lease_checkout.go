@@ -922,32 +922,43 @@ type leaseGuardResult struct {
 }
 
 // guardLeaseRelease refuses a release that would lose work (DP-4): commits on
-// no remote branch, or uncommitted/untracked files (inspectLeaseRelease).
+// no remote branch, or uncommitted/untracked files (inspectUnsavedWork).
 func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, error) {
-	guard, w, err := inspectLeaseRelease(ctx, d, rec)
+	guard, w, err := inspectUnsavedWork(ctx, d, rec)
 	if err != nil {
 		return leaseGuardResult{}, err
 	}
-	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
-	if w.unpushed > 0 {
-		if w, err = compareWithOrigin(ctx, d, rec, w, onHQ); err != nil {
-			return leaseGuardResult{}, err
-		}
-	}
-	if w.unpushed > 0 {
-		held, err := mainHoldsUnpushed(ctx, d, rec.alias(), onHQ)
-		if err != nil {
-			return leaseGuardResult{}, leaseCompareRefusal(rec.alias(), w.unpushed, "compare their change with origin's main", err, onHQ)
-		}
-		if held {
-			guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
-			w.unpushed = 0
-		}
-	}
 	if w.any() {
-		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, onHQ)
+		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
 	}
 	return guard, nil
+}
+
+// inspectUnsavedWork is the one read of whether a lease's work is saved,
+// for a release of the lease alone (guardLeaseRelease) and of its branch:
+// inspectLeaseRelease, then for commits on no branch of origin the compare
+// with origin (compareWithOrigin) and with origin's main, relayed for a
+// repository on the Mate's HQ (mainHoldsUnpushed): commits main already holds
+// — merged as a squash — are no work to keep. A compare that could not run is
+// the lease's refusal (leaseCompareRefusal), never a count it could not check.
+func inspectUnsavedWork(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
+	guard, w, err := inspectLeaseRelease(ctx, d, rec)
+	if err != nil || w.unpushed == 0 {
+		return guard, w, err
+	}
+	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
+	if w, err = compareWithOrigin(ctx, d, rec, w, onHQ); err != nil || w.unpushed == 0 {
+		return guard, w, err
+	}
+	held, err := mainHoldsUnpushed(ctx, d, rec.alias(), onHQ)
+	if err != nil {
+		return guard, w, leaseCompareRefusal(rec.alias(), w.unpushed, "compare their change with origin's main", err, onHQ)
+	}
+	if held {
+		guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
+		w.unpushed = 0
+	}
+	return guard, w, nil
 }
 
 // leaseGuardFetchCommand brings the checkout's remote-tracking refs up to
@@ -987,7 +998,11 @@ func leaseMainHoldsCommand() string {
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || main=refs/remotes/origin/master; " +
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || exit 0; " +
 		"tmp=$(mktemp -d) || " + fail + "; trap 'rm -rf \"$tmp\"' EXIT; " +
-		"for tip in $( (" + g + " rev-parse -q --verify HEAD; " + g + " for-each-ref --format='%(objectname)' refs/heads) 2>/dev/null | sort -u); do " +
+		// The tips: a listing that fails ends the compare as not run, never
+		// as "held" over no tips; an unborn HEAD (rev-parse's 1) has none.
+		"heads=$(" + g + " for-each-ref --format='%(objectname)' refs/heads) || " + fail + "; " +
+		"head=$(" + g + " rev-parse -q --verify HEAD); case $? in 0|1) ;; *) " + fail + ";; esac; " +
+		"for tip in $(printf '%s\\n%s\\n' \"$head\" \"$heads\" | sort -u); do " +
 		"[ \"$(" + g + " rev-list --count \"$tip\" --not --remotes=origin)\" = 0 ] && continue; " +
 		answer("mb=$("+g+" merge-base \"$main\" \"$tip\")") +
 		g + " diff --binary \"$mb\" \"$tip\" > \"$tmp/change\" || " + fail + "; " +

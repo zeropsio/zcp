@@ -254,7 +254,9 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	v := rec.view(LeaseStateParked)
 	v.ParkedAt = rec.ParkedAt
 	notes = append(notes, "parked: its container is stopped, its processes (dev servers, supervisor) ended and "+filepath.Join(mountBase, alias)+" is unmounted; "+parkedKeeps(alias))
-	if siblings := siblingRecords(d.StateDir, rec); len(siblings) > 0 {
+	if siblings, err := siblingRecords(d.StateDir, rec); err != nil {
+		notes = append(notes, fmt.Sprintf("zcp could not read the branch's other leases (%v), so it cannot say which stay wired to its container", err))
+	} else if len(siblings) > 0 {
 		notes = append(notes, fmt.Sprintf("the branch's other leases (%s) stay wired to its container, which keeps its hostname while it is parked; their dev servers reach nothing on it until it is unparked", strings.Join(aliasesOf(siblings), ", ")))
 	}
 	notes = append(notes, parkedUnroutedNote(ctx, d, rp, rec))

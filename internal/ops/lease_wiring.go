@@ -650,18 +650,18 @@ func liveServers(st devsup.State) []string {
 }
 
 // siblingRecords is zcp's records of the other leases of rec's group (DP-17):
-// none for a lease whose repository zcp knows neither way, or when the records
-// cannot be read.
-func siblingRecords(stateDir string, rec leaseRecord) []leaseRecord {
+// none for a lease whose repository zcp knows neither way; records that
+// cannot be read are its error.
+func siblingRecords(stateDir string, rec leaseRecord) ([]leaseRecord, error) {
 	repo := recordRepo(stateDir, rec)
 	if repo == "" {
-		return nil
+		return nil, nil
 	}
 	group, err := leaseGroupRecords(stateDir, repo, recordBranch(rec))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return slices.DeleteFunc(group, func(r leaseRecord) bool { return r.alias() == rec.alias() })
+	return slices.DeleteFunc(group, func(r leaseRecord) bool { return r.alias() == rec.alias() }), nil
 }
 
 // handBackOverlay is a release's refusal once it failed after rec's siblings
