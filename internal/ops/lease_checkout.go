@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -252,10 +251,11 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // and removes any other. For an https origin the repository keeps the same helper
 // (leaseCredentialHelperConfig), so the agent's own push authenticates the
 // same way. hqURL is the Mate's HQ, "" on a container not linked to one: a
-// repository on it is fetched with no helper of the command's own and keeps
-// none, as the command runs relayed (LeaseDeps.HQGit): the session's
+// repository on it is fetched blobless (leaseFetchStep) with no helper of the
+// command's own, as the command runs relayed (LeaseDeps.HQGit): the session's
 // helper answers HQ with the Mate's project key, and nothing in the
-// container holds a credential for HQ.
+// container holds a credential for HQ. It keeps only a helper that answers
+// nothing and names `zcp git` to a plain caller (leaseHQHintHelperConfig).
 // It is the checkout of the pool's own default repository: the pool's
 // GIT_TOKEN answers its host (leaseTokenScope).
 func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
@@ -307,6 +307,9 @@ func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL, tokenSco
 	if persist := leaseCredentialHelperConfig(repo, hqURL, tokenScope); persist != "" {
 		steps = append(steps, persist)
 	}
+	if hint := leaseHQHintHelperConfig(repo, hqURL); hint != "" {
+		steps = append(steps, hint)
+	}
 	// The container's stable number, which its preview port follows; only
 	// the container knows it (leaseSlotMarker).
 	steps = append(steps, `printf '`+leaseSlotMarker+`%s\n' "${ZEROPS_StableNumber:-}"`)
@@ -317,9 +320,17 @@ func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL, tokenSco
 // helper alone for a repository outside HQ (leaseCredentialHelperShell), and
 // with none of its own for one on the Mate's HQ (hqURL), which a relayed
 // session's helper answers — a `-c credential.helper=` would clear it.
+// A repository on HQ is fetched blobless with the default refspec, as the
+// Mate's dev checkout is (hq_base_branch.go): every branch's commits and
+// trees, so merge-base, rebase and log are whole, and file contents only as
+// git needs them — HEAD's at the checkout, older ones on demand through the
+// relay a `zcp git <alias>` runs in (git records origin as the promisor
+// remote, so later fetches keep the filter). A narrowed refspec would save
+// about 1.6 % and break a new branch's cut, `from` and the release guard's
+// count (followup-lease §1.4).
 func leaseFetchStep(repo, hqURL, tokenScope string) string {
 	if IsHQRemote(repo, hqURL) {
-		return "GIT_TERMINAL_PROMPT=0 git fetch -q --prune origin"
+		return "GIT_TERMINAL_PROMPT=0 git fetch -q --prune --filter=blob:none origin"
 	}
 	return "GIT_TERMINAL_PROMPT=0 git " + leaseInlineHelperArgs(leaseCredentialHelperShell(tokenScope)) + " fetch -q --prune origin"
 }
@@ -407,7 +418,7 @@ func leaseHelperScope(remoteURL string) string {
 // helper for an https repo outside the Mate's HQ (hqURL), scoped by the rule
 // a dev service's checkout is (persistedHelperScope); "" for a repository on
 // HQ — whose git the agent runs relayed, `zcp git <alias>`, so the container
-// keeps no helper for it — any other repo, a host that can be no scope, or a
+// keeps no credential for it (leaseHQHintHelperConfig) — any other repo, a host that can be no scope, or a
 // repository on another host than tokenScope, which its helper would never
 // answer.
 func leaseCredentialHelperConfig(repo, hqURL, tokenScope string) string {
@@ -422,6 +433,31 @@ func leaseCredentialHelperConfig(repo, hqURL, tokenScope string) string {
 	if helper == "" {
 		return ""
 	}
+	return "git config --replace-all " + shellQuote("credential.https://"+scope+".helper") + " " + shellQuote(helper)
+}
+
+// leaseHQHintMessage is what a git outside zcp's relayed session in a lease
+// of an HQ repository prints when it asks HQ for a credential — a fetch, a
+// push, or the lazy fetch of an old file's contents the blobless checkout
+// (leaseFetchStep) left on HQ.
+const leaseHQHintMessage = "zcp: this repository is on the Mate's HQ and this git ran outside zcp, so it has no credential for HQ: " +
+	"run it as zcp git <alias> <git args> from the Mate. Old file contents (log -p, blame, show <old>:<file>, a diff with an old commit) " +
+	"come from HQ on demand, so a tool reading them outside zcp git fails here"
+
+// leaseHQHintHelperConfig is the git command that persists, for a repository
+// on the Mate's HQ alone, a credential helper scoped to HQ's host that answers
+// nothing and says why (leaseHQHintMessage): a plain ssh git or a tool in the
+// container that needs HQ — an old blob of the blobless checkout above all —
+// then fails naming `zcp git` rather than with git's bare "could not read
+// Username". A relayed session clears every persisted helper before its own
+// (credential.helper= first: buildRelayedScriptCommand, `zcp git`'s argv), so
+// only plain callers ever reach it. "" for any other repository.
+func leaseHQHintHelperConfig(repo, hqURL string) string {
+	scope := leaseHelperScope(repo)
+	if scope == "" || !IsHQRemote(repo, hqURL) {
+		return ""
+	}
+	helper := `!f() { [ "$1" = get ] && echo ` + shellQuote(leaseHQHintMessage) + ` >&2; :; }; f`
 	return "git config --replace-all " + shellQuote("credential.https://"+scope+".helper") + " " + shellQuote(helper)
 }
 
@@ -700,14 +736,10 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-// exitStatus is the exit status of the process behind err, -1 when err has
-// none.
+// exitStatus is the exit status ssh ended with behind err, -1 when err has
+// none (platform.SSHExitCode, the one reader of it).
 func exitStatus(err error) int {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
-	}
-	return -1
+	return platform.SSHExitCode(err)
 }
 
 // abandonLease hands a container whose checkout failed straight back: unmount,
@@ -902,9 +934,15 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 			return leaseGuardResult{}, err
 		}
 	}
-	if w.unpushed > 0 && mainHoldsUnpushed(ctx, d.SSH, rec.alias()) {
-		guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
-		w.unpushed = 0
+	if w.unpushed > 0 {
+		held, err := mainHoldsUnpushed(ctx, d, rec.alias(), onHQ)
+		if err != nil {
+			return leaseGuardResult{}, leaseCompareRefusal(rec.alias(), w.unpushed, "compare their change with origin's main", err, onHQ)
+		}
+		if held {
+			guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
+			w.unpushed = 0
+		}
 	}
 	if w.any() {
 		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, onHQ)
@@ -934,32 +972,48 @@ const leaseMainHoldsMark = "main-holds-them"
 // Main later changing those lines again, or a tip with no history in common
 // with main, reads as not held: never a release of work main lacks. It reads
 // only: the index it applies against is a temporary file, never the
-// checkout's, and nothing in /var/www moves.
+// checkout's, and nothing in /var/www moves. A step that could not run —
+// above all git dying (128) on an old file's contents a blobless checkout
+// could not fetch — ends it with leaseMainHoldsFailedExit and git's own
+// stderr, never as "not held": only merge-base's "no common history" (1) and
+// apply's "does not apply" (1) are answers.
 func leaseMainHoldsCommand() string {
 	g := leaseGitRead + shellQuote(LeaseWorkDir)
+	fail := "exit " + strconv.Itoa(leaseMainHoldsFailedExit)
+	answer := func(step string) string { // 0 goes on, 1 is "not held", anything else could not run
+		return step + "; case $? in 0) ;; 1) exit 0;; *) " + fail + ";; esac; "
+	}
 	return "main=refs/remotes/origin/main; " +
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || main=refs/remotes/origin/master; " +
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || exit 0; " +
-		"tmp=$(mktemp -d) || exit 0; trap 'rm -rf \"$tmp\"' EXIT; " +
+		"tmp=$(mktemp -d) || " + fail + "; trap 'rm -rf \"$tmp\"' EXIT; " +
 		"for tip in $( (" + g + " rev-parse -q --verify HEAD; " + g + " for-each-ref --format='%(objectname)' refs/heads) 2>/dev/null | sort -u); do " +
 		"[ \"$(" + g + " rev-list --count \"$tip\" --not --remotes=origin)\" = 0 ] && continue; " +
-		"mb=$(" + g + " merge-base \"$main\" \"$tip\") || exit 0; " +
-		g + " diff --binary \"$mb\" \"$tip\" > \"$tmp/change\" || exit 0; " +
+		answer("mb=$("+g+" merge-base \"$main\" \"$tip\")") +
+		g + " diff --binary \"$mb\" \"$tip\" > \"$tmp/change\" || " + fail + "; " +
 		"[ -s \"$tmp/change\" ] || continue; " +
-		"GIT_INDEX_FILE=\"$tmp/index\" " + g + " read-tree \"$main\" || exit 0; " +
-		"GIT_INDEX_FILE=\"$tmp/index\" " + g + " apply --cached --check --reverse \"$tmp/change\" >/dev/null 2>&1 || exit 0; " +
+		"GIT_INDEX_FILE=\"$tmp/index\" " + g + " read-tree \"$main\" || " + fail + "; " +
+		answer("GIT_INDEX_FILE=\"$tmp/index\" "+g+" apply --cached --check --reverse \"$tmp/change\" 2>\"$tmp/apply\" >/dev/null; rc=$?; [ $rc = 1 ] || cat \"$tmp/apply\" >&2; (exit $rc)") +
 		"done; echo " + leaseMainHoldsMark
 }
 
-// mainHoldsUnpushed runs leaseMainHoldsCommand in the lease's container: true
-// only where it printed its mark — any failure to tell reads as not held.
-func mainHoldsUnpushed(ctx context.Context, ssh SSHDeployer, alias string) bool {
-	out, err := ssh.ExecSSH(ctx, alias, leaseMainHoldsCommand())
+// leaseMainHoldsFailedExit is leaseMainHoldsCommand's exit status when a step
+// of the compare could not run.
+const leaseMainHoldsFailedExit = 3
+
+// mainHoldsUnpushed runs leaseMainHoldsCommand in the lease's container
+// through ssh — relayed for a repository on the Mate's HQ (LeaseDeps.gitSSH),
+// whose blobless checkout fetches the old contents the diff and the apply
+// read through it: true only where it printed its mark, false where it
+// answered "not held", and an error carrying git's or ssh's own words where
+// the compare could not run.
+func mainHoldsUnpushed(ctx context.Context, d LeaseDeps, alias string, onHQ bool) (bool, error) {
+	out, err := d.gitSSH(onHQ).ExecSSH(ctx, alias, leaseMainHoldsCommand())
 	if err != nil {
-		return false
+		return false, err
 	}
 	fields := strings.Fields(string(out))
-	return len(fields) > 0 && fields[len(fields)-1] == leaseMainHoldsMark
+	return len(fields) > 0 && fields[len(fields)-1] == leaseMainHoldsMark, nil
 }
 
 // compareWithOrigin counts the commits on no remote branch (w.unpushed) again
@@ -968,36 +1022,48 @@ func mainHoldsUnpushed(ctx context.Context, ssh SSHDeployer, alias string) bool 
 // while the lease's remote-tracking refs still predate it, and counted
 // against those it reads as work a release would lose (D9, live 2026-10-27).
 // A repository on the Mate's HQ fetches relayed (LeaseDeps.HQGit). A fetch
-// refused for its credential is a refusal saying the guard could not compare
-// and why — never a count it could not check. Any other failure to fetch
-// leaves the count as it was read.
+// or a recount that fails is a refusal saying the guard could not compare
+// and why (leaseCompareRefusal) — never the count it could not check, which
+// would tell the agent to push commits origin may already hold (D8).
 func compareWithOrigin(ctx context.Context, d LeaseDeps, rec leaseRecord, w unsavedWork, onHQ bool) (unsavedWork, error) {
 	alias := rec.alias()
-	_, err := d.gitSSH(onHQ).ExecSSH(ctx, alias, leaseGuardFetchCommand())
-	switch {
-	case err == nil:
-		// A recount that cannot be read leaves the count as it was read.
-		if out, countErr := d.SSH.ExecSSH(ctx, alias, leaseUnpushedCommand()); countErr == nil {
-			if n, parseErr := parseUnpushedCount(string(out)); parseErr == nil {
-				w.unpushed = n
-			}
-		}
-		return w, nil
-	case !gitCredentialRefused(err):
-		return w, nil
+	if _, err := d.gitSSH(onHQ).ExecSSH(ctx, alias, leaseGuardFetchCommand()); err != nil {
+		return w, leaseCompareRefusal(alias, w.unpushed, "fetch origin's branches", err, onHQ)
 	}
+	out, err := d.SSH.ExecSSH(ctx, alias, leaseUnpushedCommand())
+	if err != nil {
+		return w, leaseCompareRefusal(alias, w.unpushed, "count them again after fetching origin", err, onHQ)
+	}
+	n, err := parseUnpushedCount(string(out))
+	if err != nil {
+		return w, leaseCompareRefusal(alias, w.unpushed, "count them again after fetching origin", err, onHQ)
+	}
+	w.unpushed = n
+	return w, nil
+}
+
+// leaseCompareRefusal refuses a release whose guard counted unpushed commits
+// on no branch of origin but could not compare them with origin — step names
+// what did not run, err is its failure in git's or ssh's own words — so it
+// cannot tell whether they are saved. It is never unsavedWorkRefusal: the
+// commits may be on origin already. A credential refusal says whose
+// credential and never asks for a token (classifyCheckoutFailure on HQ).
+func leaseCompareRefusal(alias string, unpushed int, step string, err error, onHQ bool) error {
 	force := fmt.Sprintf("Once you know origin has them, release with force=true: zerops_lease action=release lease=%s force=true", alias)
-	suggestion := "The repository's host did not take the pool's GIT_TOKEN when zcp fetched origin to compare (" + sshFailureText(err) +
-		"), so zcp could not tell whether origin has them; the person's token is never asked for here. Push them from the container if they are not on origin. " + force
-	if onHQ {
+	suggestion := "zcp could not " + step + " (" + sshFailureText(err) + "). Look at the cause, and push them from the container if they are not on origin. " + force
+	switch {
+	case gitCredentialRefused(err) && onHQ:
 		_, suggestion = classifyCheckoutFailure(err, onHQ)
 		suggestion += ". " + force
+	case gitCredentialRefused(err):
+		suggestion = "The repository's host did not take the pool's GIT_TOKEN when zcp tried to " + step + " (" + sshFailureText(err) +
+			"), so zcp could not tell whether origin has them; the person's token is never asked for here. Push them from the container if they are not on origin. " + force
 	}
 	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-		fmt.Sprintf("Lease %s could not compare its %d commit(s) with origin's branches, so zcp cannot tell whether they are on origin, and nothing was released", alias, w.unpushed),
+		fmt.Sprintf("Lease %s has %d commit(s) its checkout does not see on origin, and zcp could not compare them with origin, so it cannot tell whether they are saved; nothing was released", alias, unpushed),
 		suggestion)
 	pe.Cause = err
-	return w, pe
+	return pe
 }
 
 // inspectLeaseRelease reads what releasing the lease would lose, changing

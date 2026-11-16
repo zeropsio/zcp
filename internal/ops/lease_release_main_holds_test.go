@@ -52,7 +52,7 @@ func mainHoldsFixture(t *testing.T, held bool) *hostFixture {
 // change, so counted by commit the release refused forever, HQ's merge pass
 // included. Where main holds every unpushed commit's change the release goes
 // ahead and says why; where it does not, it is refused as before.
-// witness: internal/ops/lease_checkout.go | if w.unpushed > 0 && mainHoldsUnpushed(ctx, d.SSH, rec.alias()) { → if false {
+// witness: internal/ops/lease_checkout.go | if held { → if false {
 func TestLeaseRelease_CommitsMainHoldsByContent_Released(t *testing.T) {
 	t.Parallel()
 	t.Run("main holds their change: released, saying why", func(t *testing.T) {
