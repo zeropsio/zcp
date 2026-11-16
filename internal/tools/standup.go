@@ -616,9 +616,11 @@ func (d standupDeps) liveServices(ctx context.Context) (map[string]*platform.Ser
 	return live, nil
 }
 
-// settle waits for whatever the import still has in flight on the pairs'
-// halves and the managed services they reach, so no pair is adopted mid-import
-// and no dev deploy runs its init commands against a database still starting.
+// settle waits for whatever is still in flight on the classic pairs' halves
+// and the managed services the tier reaches, so no classic pair is adopted
+// mid-import and no deploy runs its init commands against a database still
+// starting. A pooled part is never waited on here: its own goroutine waits on
+// its own build in flight (commitDeployOne), and the other parts go on.
 // Reports whether it waited.
 func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack, progress *standupProgress) bool {
 	idToHost := map[string]string{}
@@ -628,6 +630,9 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 		}
 	}
 	for _, p := range tier.Pairs {
+		if p.DevPool {
+			continue
+		}
 		for _, host := range pairHosts(p) {
 			add(host)
 		}
@@ -648,9 +653,9 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 			ids = append(ids, op.ProcessID)
 		}
 	}
-	progress.say("waiting for the import to finish on " + strings.Join(hosts, ", "))
+	progress.say("waiting for the build or import in flight on " + strings.Join(hosts, ", "))
 	if _, err := ops.WaitProcesses(ctx, d.batch.client, ids, progress.callback()); err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: stand-up: wait for the import: %v\n", err)
+		fmt.Fprintf(os.Stderr, "zcp: stand-up: wait for the work in flight: %v\n", err)
 	}
 	return true
 }
