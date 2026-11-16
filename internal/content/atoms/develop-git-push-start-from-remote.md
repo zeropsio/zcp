@@ -31,7 +31,7 @@ zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout m
 
 One branch per piece of work, one change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch), and new work starts on a new branch cut as above. Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
 
-Keep one change open at a time on the dev service unless two pieces of work are truly independent: the person reviews and merges each, so fewer, larger, self-contained changes beat a queue of small dependent ones. Its `/var/www` is what its dev server runs and what deploys read: checking out another branch there changes what runs, and files that branch lacks disappear. To update another open change's branch — merge `main` in, a fix that needs no run — use a worktree the dev service holds below `/tmp/wt-`:
+Keep one change open at a time on the dev service unless two pieces of work are truly independent: a person reviews and merges each, so fewer, larger, self-contained changes beat a queue of small dependent ones. Its `/var/www` is what its dev server runs and what deploys read: checking out another branch there changes what runs, and files that branch lacks disappear. To update another open change's branch — merge `main` in, a fix that needs no run — use a worktree the dev service holds below `/tmp/wt-`:
 
 ```
 zcp git <push-source-host> fetch origin
