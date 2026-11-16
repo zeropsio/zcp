@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -161,19 +162,32 @@ func DeploySSHWithLeases(
 	workingDir string,
 	sha string,
 ) (*DeployResult, error) {
-	return DeploySSHFromListing(ctx, client, projectID, sshDeployer, authInfo, stateDir, nil,
+	return DeploySSHFromListing(ctx, client, projectID, sshDeployer, nil, authInfo, stateDir, nil,
 		sourceService, targetService, setup, workingDir, sha)
 }
+
+// LeaseGitFor is the executor of zcp's git in a lease's container: the
+// relayed one (RelayedSSH) for a lease of a repository on the Mate's HQ, nil
+// for one read over plain ssh.
+type LeaseGitFor func(LeaseTargetInfo) git.SSHExecutor
 
 // DeploySSHFromListing is DeploySSHWithLeases resolving its source and target
 // from services — the project's services as one listing the caller already
 // read for its own checks — rather than a listing of its own (each is an
 // ES-backed search, docs/spec-workflows.md §3.5). nil services: it lists them.
+//
+// leaseGit is the executor of the deploy's git reads in a lease source: for a
+// lease of a repository on the Mate's HQ the relayed one (RelayedSSH, as
+// LeaseDeps.HQGit) — such a lease checks out blobless, so reading a commit
+// other than its tip fetches blobs from HQ, which only a relayed session
+// answers. nil (the func or its answer), or a source that is no lease, reads
+// over sshDeployer.
 func DeploySSHFromListing(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	sshDeployer SSHDeployer,
+	leaseGit LeaseGitFor,
 	authInfo auth.Info,
 	stateDir string,
 	services []platform.ServiceStack,
@@ -214,7 +228,7 @@ func DeploySSHFromListing(
 		leaseSource = &lease
 	}
 
-	return deploySSH(ctx, client, projectID, sshDeployer, authInfo, services,
+	return deploySSH(ctx, client, projectID, sshDeployer, leaseGit, authInfo, services,
 		sourceService, targetService, setup, workingDir, includeGit, sha, leaseSource)
 }
 
@@ -237,6 +251,7 @@ func deploySSH(
 	client platform.Client,
 	projectID string,
 	sshDeployer SSHDeployer,
+	leaseGit LeaseGitFor,
 	authInfo auth.Info,
 	services []platform.ServiceStack,
 	sourceService string,
@@ -293,10 +308,6 @@ func deploySSH(
 	if lease != nil && lease.Pool == target.Name {
 		poolLease = sourceService
 	}
-	// A stage tracks main (DP-8): a deploy from a lease to the part's stage
-	// fetches origin/main before it resolves what ships, and says when that
-	// is not on it. Every other deploy fetches nothing and says nothing more.
-	stageMain := newLeaseStageMain(lease, target.Name, serviceType)
 
 	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
 	// self-deploy from a commit would extract sha's tree and push
@@ -346,17 +357,24 @@ func deploySSH(
 	var repoState string
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: sourceName}
+	if lease != nil && leaseGit != nil {
+		if relayed := leaseGit(*lease); relayed != nil {
+			gitRunner.Executor = relayed
+		}
+	}
 	sourceWorkingDir := workingDir
-	stageMain.fetch(ctx, gitRunner, sourceWorkingDir)
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
 		resolvedSHA, warnings, newWorkingDir, cleanupTemp, prepErr = deployFromCommitPrep(
-			ctx, client, target, gitRunner, sourceName, workingDir, setupName, serviceType, class, sha)
+			ctx, client, target, gitRunner, sourceName, workingDir, setupName, serviceType, class, sha, lease != nil)
 		if prepErr != nil {
 			return nil, prepErr
 		}
 		workingDir = newWorkingDir
+		if lease != nil && strings.HasPrefix(sha, "origin/") {
+			warnings = append(warnings, leaseRemoteRefNote(sourceService, sha, resolvedSHA))
+		}
 	} else {
 		if _, statErr := os.Stat(mountPath); statErr == nil {
 			var vErr error
@@ -386,7 +404,6 @@ func deploySSH(
 	if cleanupTemp != nil {
 		defer cleanupTemp()
 	}
-	stageMain.check(ctx, gitRunner, sourceWorkingDir, resolvedSHA)
 
 	var versionName string
 	// uploaded is the push's output up to its upload, when the build is
@@ -414,7 +431,7 @@ func deploySSH(
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
 		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty,
-		warnings:   withUploadWarning(stageMain.withNote(warnings, versionName, dirty), upload),
+		warnings:   withUploadWarning(warnings, upload),
 		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toPool: toPool, poolLease: poolLease,
 		upload: upload.size,
 	}
@@ -594,6 +611,45 @@ func uncommittedIn(ctx context.Context, gitRunner git.Runner, workingDir, source
 	return fmt.Sprintf("%s: %s.", where, strings.Join(paths, ", "))
 }
 
+// sourceNotReached is the failure of a git read (step) in the source over
+// SSH that never reached git: ssh did not get in (platform.ClassOf
+// unreachable or refused). It carries ssh's own words verbatim and the
+// class, so the agent never reads a bad sha or a missing zerops.yaml into a
+// container that did not answer; nil for no error or one git itself gave.
+// The next step follows the class, and for a lease (fromLease) the lease's
+// status: a lease that answers no ssh may not recover by waiting (a
+// container at its process limit), and zerops_lease action=status says why.
+func sourceNotReached(err error, sourceName, step string, fromLease bool) *platform.PlatformError {
+	class := platform.ClassOf(err)
+	if class != platform.ClassUnreachable && class != platform.ClassRefused {
+		return nil
+	}
+	next := fmt.Sprintf("Nothing was deployed. ssh did not get into %s, and waiting alone will not change that: the ssh output above names the cause.", sourceName)
+	if class.WaitedOn() {
+		next = fmt.Sprintf("Nothing was deployed. %s did not answer ssh, which may change by waiting: check its status (zerops_discover) and deploy again once it runs.", sourceName)
+	}
+	if fromLease {
+		next = fmt.Sprintf("Nothing was deployed. Check the lease with zerops_lease action=\"status\": it says whether %s answers and why not; deploy again once it does.", sourceName)
+	}
+	pe := platform.NewPlatformError(platform.ErrSSHDeployFailed,
+		fmt.Sprintf("%s on %s did not run (%s): %v", step, sourceName, class, err), next)
+	var execErr *platform.SSHExecError
+	if errors.As(err, &execErr) {
+		pe.Diagnostic = execErr.Output
+	}
+	pe.Cause = err
+	return pe
+}
+
+// leaseRemoteRefNote is the warning of a deploy from a lease (alias) of a
+// remote-tracking ref (sha, "origin/..."): it shipped commit as the lease
+// last fetched that ref, and a lease's fetches follow its own branch, so
+// the remote's ref may have moved on since.
+func leaseRemoteRefNote(alias, sha, commit string) string {
+	return fmt.Sprintf("This deploy shipped %s at %s, as %s last fetched it: the remote's %s may be newer. To ship it as the remote has it now, run `zcp git %s fetch origin` and deploy again.",
+		sha, shortSHA(commit), alias, strings.TrimPrefix(sha, "origin/"), alias)
+}
+
 // selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
 // (docs/spec-workflows.md §8 DM-7/DM-8, §12.6) and turns it into the
 // values deploySSH's no-sha branch needs: the recorded HEAD sha/dirty
@@ -666,8 +722,12 @@ func deployFromCommitPrep(
 	sourceName, workingDir, setupName, serviceType string,
 	class DeployClass,
 	sha string,
+	fromLease bool,
 ) (resolvedSHA string, warnings []string, newWorkingDir string, cleanupTemp func(), err error) {
 	resolved, resolveErr := git.ResolveSHA(ctx, gitRunner, workingDir, sha)
+	if pe := sourceNotReached(resolveErr, sourceName, "resolve sha "+sha, fromLease); pe != nil {
+		return "", nil, "", nil, pe
+	}
 	if resolveErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -681,9 +741,15 @@ func deployFromCommitPrep(
 	// repo carries zerops.yml, and a working-tree deploy accepts it.
 	source := zeropsYmlPrimary
 	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
+	if pe := sourceNotReached(showErr, sourceName, "read "+source+" at "+resolvedSHA, fromLease); pe != nil {
+		return "", nil, "", nil, pe
+	}
 	if showErr != nil {
 		source = zeropsYmlFallback
 		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
+	}
+	if pe := sourceNotReached(showErr, sourceName, "read "+source+" at "+resolvedSHA, fromLease); pe != nil {
+		return "", nil, "", nil, pe
 	}
 	if showErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(

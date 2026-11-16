@@ -127,15 +127,21 @@ func ReadFileAtCommit(ctx context.Context, r Runner, dir, sha, path string) (str
 	return out, nil
 }
 
-// ExtractCommitToTemp materializes sha's tree into tmpDir via
-// `git archive --format=tar <sha> | tar -x -C <tmpDir>`. tmpDir MUST be
+// ExtractCommitToTemp materializes sha's tree into tmpDir: `git archive`
+// writes it to <tmpDir>.tar, tar extracts that into tmpDir, and the tar file
+// is removed either way. Through a file, not a pipe: a pipe reports tar's
+// exit, and tar exits 0 on empty input, so a git that failed (a blobless
+// checkout whose lazy fetch was refused) extracted nothing and "succeeded";
+// now git's exit and words are the error's. tmpDir MUST be
 // outside dir's working tree — create it with MkTempDir. This sidesteps
 // zcli's own `--workspace-state all` default archiver, which fails when
 // dir's .git is a gitdir: pointer file (a known trap, not this slice's to
 // fix): pushing from a plain extracted directory with --no-git never
 // touches dir's .git at all.
 func ExtractCommitToTemp(ctx context.Context, r Runner, dir, sha, tmpDir string) error {
-	script := "git archive --format=tar " + shellQuote(sha) + " | tar -x -C " + shellQuote(tmpDir)
+	archive := shellQuote(tmpDir + ".tar")
+	script := "git archive --format=tar -o " + archive + " " + shellQuote(sha) +
+		" && tar -xf " + archive + " -C " + shellQuote(tmpDir) + "; rc=$?; rm -f " + archive + "; exit $rc"
 	_, stderr, err := r.Run(ctx, dir, script)
 	if err != nil {
 		return wrapErr("extract commit "+sha, err, stderr)

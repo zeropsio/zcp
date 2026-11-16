@@ -146,6 +146,9 @@ type StandupRow struct {
 	// Cause is the source's own words, verbatim (platform message, build
 	// log line, the bearer variable that does not resolve).
 	Cause string `json:"cause,omitempty"`
+	// Next is the one next step zcp gives for the row, shown word for word
+	// to the person and handed to the agent ("" while it builds).
+	Next string `json:"next,omitempty"`
 }
 
 // StandupProcess names a process the way the work sessions do: its PID and

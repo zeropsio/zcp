@@ -239,8 +239,8 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // A merged change's note names the leases zcp still holds on its branch —
 // which a Mate's HQ pass releases by itself once nothing unsaved is left in
 // them (releaseCompletedLeases, DP-34), so the note names no release for the
-// agent to run — and the stages of its repository's pairs, which track main
-// (address is this Mate's HQ, which names the leases' repository), then what
+// agent to run (address is this Mate's HQ, which names the leases'
+// repository), then what
 // a merge does where the application has a production or a Stage
 // (applicationMergedWords). A change
 // that landed with another is said as that, never as closed without merging
@@ -260,12 +260,12 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	switch outcome {
 	case changeMerged:
 		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
+			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeLandedWith:
 		with := s.CarriedBy()
 		return fmt.Sprintf("change #%d was merged as part of #%d — #%d was built on it and merged first, so its merge carried every commit of this one and HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
 			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
+			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
 	case changeStillOpen, changeClosed, changeUnknown:
@@ -298,42 +298,6 @@ func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 	}
 	return fmt.Sprintf("; the leases %s still hold its branch %q: zcp releases a merged or closed change's leases on its own once nothing unsaved is left in them — commit and push what is there, never force — and cut the next work's branch from %q",
 		strings.Join(held, ", "), c.Branch, hqBase)
-}
-
-// mergedStages names the stages of the repository's pairs, which track main
-// and so take it once a change's work is on it; "" for none.
-func mergedStages(stateDir string, c workflow.HQChange) string {
-	if words := stagesTrackMain(stateDir, c.AppID, c.Repo); words != "" {
-		return "; " + words
-	}
-	return ""
-}
-
-// stagesTrackMain says that the stages of appID's repo's wired pairs track
-// main, with the call that puts main on one — a dev pool's stage deploys from
-// a lease of its part, so the source stays the agent's to name; "" for none.
-func stagesTrackMain(stateDir, appID, repo string) string {
-	metas, _ := workflow.ListServiceMetas(stateDir)
-	var stages []string
-	for _, m := range metas {
-		if hqPairWired(m) && m.HQ.AppID == appID && m.HQ.Repo == repo {
-			for _, stage := range m.StageHostnames() {
-				if !slices.Contains(stages, stage) {
-					stages = append(stages, stage)
-				}
-			}
-		}
-	}
-	if len(stages) == 0 {
-		return ""
-	}
-	slices.Sort(stages)
-	which, on, target := "the stages "+strings.Join(stages, ", ")+" track", "each", "<stage>"
-	if len(stages) == 1 {
-		which, on, target = "the stage "+stages[0]+" tracks", "it", stages[0]
-	}
-	return fmt.Sprintf("%s %q: put %q on %s — a dev pool's stage from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=%q sha=\"origin/main\"`)",
-		which, hqBase, hqBase, on, target)
 }
 
 // leasesOnBranch is the aliases of the leases zcp holds on branch of appID's

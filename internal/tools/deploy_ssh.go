@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -368,8 +369,8 @@ func RegisterDeploySSH(
 		// A lease pushes its own branch itself; git-push pushes the target's
 		// tracked branch (main by default), so from a lease it would put the
 		// feature branch on the stage's delivery branch (DP-6). A branch is
-		// tried on its lease's preview URL and checked on a stage that then
-		// runs main again (DP-8).
+		// tried on its lease's preview URL and checked on a stage by a deploy
+		// from the lease (DP-8).
 		if input.Strategy == deployStrategyGitPush {
 			if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok {
 				return convertError(leaseGitPushRefusal(lease, rtInfo), WithRecoveryStatus()), nil, nil
@@ -496,7 +497,7 @@ func runDeploySSHZCLIPush(
 	}
 
 	// Default: zcli push to Zerops.
-	result, err := ops.DeploySSHFromListing(ctx, client, projectID, sshDeployer, *authInfo, stateDir, services,
+	result, err := ops.DeploySSHFromListing(ctx, client, projectID, sshDeployer, leaseDeployGit(sshDeployer, httpClient, rtInfo), *authInfo, stateDir, services,
 		input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 	if err != nil {
 		attempt.Error = err.Error()
@@ -655,4 +656,26 @@ type deploySSHResponse struct {
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
+// leaseDeployGit chooses the executor of a deploy's git reads in a lease
+// source (ops.LeaseGitFor): inside a Mate, a lease of a repository on its HQ
+// reads relayed, as the lease's checkout fetched it (LeaseDeps.HQGit) — its
+// blobless checkout fetches an older commit's blobs from HQ, which only a
+// relayed session answers. nil outside a Mate, or where this zcp's ssh runs
+// no relayed session: every read goes over plain ssh.
+func leaseDeployGit(sshDeployer ops.SSHDeployer, httpClient ops.HTTPDoer, rt runtime.Info) ops.LeaseGitFor {
+	if !rt.MateEnabled {
+		return nil
+	}
+	relayed, err := hqRelayed(sshDeployer, httpClient, rt)
+	if err != nil {
+		return nil
+	}
+	return func(lease ops.LeaseTargetInfo) git.SSHExecutor {
+		if !hqRemoteOfThisMate(lease.Repo, rt) {
+			return nil
+		}
+		return relayed
+	}
 }

@@ -58,8 +58,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if !strings.Contains(ssh.calls[2].command, "mktemp -d") {
 		t.Errorf("call[2] = %q, want mktemp -d", ssh.calls[2].command)
 	}
-	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "| tar -x -C") {
-		t.Errorf("call[3] = %q, want the archive|tar pipe", ssh.calls[3].command)
+	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "&& tar -xf") {
+		t.Errorf("call[3] = %q, want git archive to a file, then tar -xf of it", ssh.calls[3].command)
 	}
 	pushCmd := ssh.calls[5].command
 	if !strings.Contains(pushCmd, "--no-git") {

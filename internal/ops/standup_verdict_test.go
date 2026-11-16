@@ -10,7 +10,7 @@ import (
 
 // SV-READY — While a stage still builds and every pool is done, the headline
 // is "ready".
-// witness: internal/ops/standup_verdict.go | if r.Kind == mate.RowPool { → if r.Kind == mate.RowStage {
+// witness: internal/ops/standup_verdict.go | poolsDone = poolsDone && r.Kind != mate.RowPool → poolsDone = poolsDone && r.Kind != mate.RowStage
 func TestStandupVerdict_SVReady_PoolsDoneStageBuilding_Ready(t *testing.T) {
 	t.Parallel()
 	got := StandupHeadlineOf([]mate.StandupRow{
@@ -22,9 +22,37 @@ func TestStandupVerdict_SVReady_PoolsDoneStageBuilding_Ready(t *testing.T) {
 	}
 }
 
-// SV-F17 — With two parts where one failed and the other is done, the
+// SV-DONE — Once every pool and every stage is done, the headline is "done",
+// not "ready".
+// witness: internal/ops/standup_verdict.go | return mate.HeadlineDone → return mate.HeadlineReady
+func TestStandupVerdict_SVDone_EveryRowDone_Done(t *testing.T) {
+	t.Parallel()
+	got := StandupHeadlineOf([]mate.StandupRow{
+		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
+		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowDone},
+	})
+	if got != mate.HeadlineDone {
+		t.Fatalf("headline = %q, want %q", got, mate.HeadlineDone)
+	}
+}
+
+// SV-BUILDING — While a pool still builds, the headline is "building", never
+// "ready", even when the stage is done.
+// witness: internal/ops/standup_verdict.go | if poolsDone && pools > 0 { → if pools > 0 {
+func TestStandupVerdict_SVBuilding_PoolBuildingStageDone_Building(t *testing.T) {
+	t.Parallel()
+	got := StandupHeadlineOf([]mate.StandupRow{
+		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowBuilding},
+		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowDone},
+	})
+	if got != mate.HeadlineBuilding {
+		t.Fatalf("headline = %q, want %q", got, mate.HeadlineBuilding)
+	}
+}
+
+// SV-F17 — With two pools where one failed and the other is done, the
 // headline is "failed", never "done".
-// witness: internal/ops/standup_verdict.go | return mate.HeadlineFailed → continue
+// witness: internal/ops/standup_verdict.go | if r.State == mate.RowFailed { → if r.State == mate.RowFailed && r.Kind == mate.RowStage {
 func TestStandupVerdict_SVF17_OnePartFailedOneDone_Failed(t *testing.T) {
 	t.Parallel()
 	got := StandupHeadlineOf([]mate.StandupRow{
@@ -33,6 +61,35 @@ func TestStandupVerdict_SVF17_OnePartFailedOneDone_Failed(t *testing.T) {
 	})
 	if got != mate.HeadlineFailed {
 		t.Fatalf("headline = %q, want %q", got, mate.HeadlineFailed)
+	}
+}
+
+// SV-F6 — With the pools done and the stage failed, the headline is
+// "failed", so the agent's turn starts to fix the stage.
+// witness: internal/ops/standup_verdict.go | if r.State == mate.RowFailed { → if r.State == mate.RowFailed && r.Kind == mate.RowPool {
+func TestStandupVerdict_SVF6_PoolsDoneStageFailed_Failed(t *testing.T) {
+	t.Parallel()
+	got := StandupHeadlineOf([]mate.StandupRow{
+		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
+		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowFailed, Class: platform.ClassFailed},
+	})
+	if got != mate.HeadlineFailed {
+		t.Fatalf("headline = %q, want %q", got, mate.HeadlineFailed)
+	}
+}
+
+// SV-POOL-DONE — A pool whose version is active and whose bearer reference
+// resolves is "done", leasable.
+// witness: internal/ops/standup_verdict.go | bearerMissing := in.Kind == mate.RowPool && !in.BearerResolves → bearerMissing := in.Kind == mate.RowPool
+func TestStandupVerdict_SVPoolDone_ActiveAndBearerResolves_Done(t *testing.T) {
+	t.Parallel()
+	row := StandupRowOf(StandupRowInput{
+		Hostname: "webpool", Kind: mate.RowPool, Commit: "3f1c2a9",
+		AppVersionID: "nQZWI8p", AppVersionStatus: "ACTIVE", ProcessID: "pr1", ProcessStatus: "FINISHED",
+		BearerResolves: true,
+	})
+	if row.State != mate.RowDone {
+		t.Fatalf("state = %q, want %q", row.State, mate.RowDone)
 	}
 }
 
@@ -79,8 +136,8 @@ func TestStandupVerdict_SVF10_BearerUnresolvedAfterWait_FailedNamesVariable(t *t
 	if !strings.Contains(row.Cause, "webpool_LEASE_TOKEN") {
 		t.Errorf("cause %q does not name webpool_LEASE_TOKEN", row.Cause)
 	}
-	if strings.Contains(strings.ToLower(row.Cause), "restart") {
-		t.Errorf("cause %q tells to restart", row.Cause)
+	if strings.Contains(strings.ToLower(row.Cause+row.Next), "restart") {
+		t.Errorf("cause %q, next %q tell to restart", row.Cause, row.Next)
 	}
 }
 
@@ -97,20 +154,22 @@ func TestStandupVerdict_SVF4_RefusedBeforeBuild_FailedRefused(t *testing.T) {
 	if row.State != mate.RowFailed || row.Class != platform.ClassRefused {
 		t.Fatalf("state, class = %q, %q, want %q, %q", row.State, row.Class, mate.RowFailed, platform.ClassRefused)
 	}
-	if !strings.HasPrefix(row.Cause, words) {
-		t.Errorf("cause %q does not start with the refusal's words", row.Cause)
+	if row.Cause != words {
+		t.Errorf("cause = %q, want the refusal's words %q", row.Cause, words)
 	}
 }
 
 // SV-F5 — A failed first pool build is one "failed" row with its commit and
-// build process, whose next step fixes the code on zcp's own container, not
-// a bearer cause.
-// witness: internal/ops/standup_verdict.go | if in.Kind == mate.RowPool { → if in.Kind == mate.RowStage {
+// build process and the build's words, not the bearer failure met beside it,
+// and its next step fixes the code on zcp's own container.
+// witness: internal/ops/standup_verdict.go | case versionFailed(in.AppVersionStatus, in.ProcessStatus): → case in.Class == "" && versionFailed(in.AppVersionStatus, in.ProcessStatus):
 func TestStandupVerdict_SVF5_FailedFirstPoolBuild_OneRowFixOnZcp(t *testing.T) {
 	t.Parallel()
+	const bearerWords = "pwpool_LEASE_TOKEN is still ${pwpool_API_TOKEN}"
 	row := StandupRowOf(StandupRowInput{
 		Hostname: "pwpool", Kind: mate.RowPool, Commit: "3f1c2a9",
 		AppVersionID: "yNHYDse6", AppVersionStatus: "BUILD_FAILED", ProcessID: "pr2", ProcessStatus: "FAILED",
+		Class: platform.ClassUnreachable, Cause: bearerWords,
 	})
 	if row.State != mate.RowFailed || row.Class != platform.ClassFailed {
 		t.Fatalf("state, class = %q, %q, want %q, %q", row.State, row.Class, mate.RowFailed, platform.ClassFailed)
@@ -118,7 +177,10 @@ func TestStandupVerdict_SVF5_FailedFirstPoolBuild_OneRowFixOnZcp(t *testing.T) {
 	if row.Commit != "3f1c2a9" || row.ProcessID != "pr2" {
 		t.Errorf("commit, process = %q, %q, want 3f1c2a9, pr2", row.Commit, row.ProcessID)
 	}
-	if !strings.Contains(row.Cause, "zcp's own container") || strings.Contains(row.Cause, "LEASE_TOKEN") {
-		t.Errorf("cause %q: want the fix on zcp's own container and no bearer cause", row.Cause)
+	if !strings.Contains(row.Cause, "BUILD_FAILED") || strings.Contains(row.Cause, bearerWords) {
+		t.Errorf("cause %q: want the build's words, not the bearer's", row.Cause)
+	}
+	if !strings.Contains(row.Next, "zcp's own container") {
+		t.Errorf("next %q does not fix the code on zcp's own container", row.Next)
 	}
 }
