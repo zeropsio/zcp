@@ -306,15 +306,21 @@ func (s *warmCloneHostSSH) ExecSSHBackground(ctx context.Context, host, command 
 }
 
 // TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository: the warm container
-// the background create makes after an acquire gets the clone of the
-// repository the acquire checked out, over ssh to its own hostname, and
+// the background create makes after an acquire gets the clone of the pool's
+// recorded repository, over ssh to its own hostname, and
 // status reports it started there; no result carries a secret (DP-32).
 func TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository(t *testing.T) {
 	t.Parallel()
 	orch := &warmPoolOrchestrator{max: 3}
 	orch.add(1)
 	ssh := &warmCloneHostSSH{}
-	srv, _, wait := leaseToolServerSSHWithWait(t, orch, ssh)
+	srv, stateDir, wait := leaseToolServerSSHWithWait(t, orch, ssh)
+	// The warm clone takes the pool's recorded repository (DP-32).
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "devpool", Mode: topology.PlanModeDev, BootstrapSession: "sess1", BootstrappedAt: "2026-10-23", RemoteURL: leaseTestRepo,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-a"})
 	if text := getTextContent(t, res); res.IsError {

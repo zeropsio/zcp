@@ -36,7 +36,7 @@ func writeDevpoolLeaseFile(t *testing.T, stateDir string) {
 		t.Fatal(err)
 	}
 	rec := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-3","containerNumber":3,` +
-		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"lease-secret","branch":"feat-x","acquiredAt":"2026-10-23T12:00:00Z"}`
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"lease-secret","branch":"feat-x","repo":"https://github.com/acme/app","acquiredAt":"2026-10-23T12:00:00Z"}`
 	if err := os.WriteFile(filepath.Join(dir, "devpool-3.json"), []byte(rec), 0o600); err != nil {
 		t.Fatal(err)
 	}
