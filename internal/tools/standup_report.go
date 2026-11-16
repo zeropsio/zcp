@@ -214,7 +214,7 @@ func standupPooledNext(pooled pooledOutcome) string {
 			"zerops_standup continues from there and never builds twice."
 	}
 	for repo, head := range pooled.ahead {
-		next += fmt.Sprintf(" %s's main moved during the stand-up to %s: what was built is the head read at its start (%s), and main is ahead of it.",
+		next += fmt.Sprintf(" %s's main is at %s, ahead of what was built (%s).",
 			repo, shortCommit(head), shortCommit(pooled.main[repo]))
 	}
 	return next
