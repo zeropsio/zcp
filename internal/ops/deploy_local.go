@@ -240,13 +240,9 @@ func DeployLocalFromListing(
 	}
 
 	// 5. Login.
-	_, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Token)
+	stdout, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Token)
 	if err != nil {
-		return nil, platform.NewPlatformError(
-			platform.ErrDeployFailed,
-			"zcli login failed: "+strings.TrimSpace(lastLines(stderr, 3)),
-			"Check your API token. Regenerate in Zerops GUI if expired.",
-		)
+		return nil, zcliFailure("zcli login", stdout, stderr, err)
 	}
 
 	// 6. Push with explicit --service-id + --project-id → non-interactive (no TTY needed).
@@ -277,16 +273,26 @@ func DeployLocalFromListing(
 	if versionName != "" {
 		args = append(args, "--version-name", versionName)
 	}
-	_, stderr, err = runner.Run(ctx, "zcli", args...)
+	stdout, stderr, err = runner.Run(ctx, "zcli", args...)
 	if err != nil {
-		return nil, platform.NewPlatformError(
-			platform.ErrDeployFailed,
-			"zcli push failed: "+strings.TrimSpace(lastLines(stderr, 5)),
-			"Check zerops.yaml syntax and build configuration.",
-		)
+		return nil, zcliFailure("zcli push", stdout, stderr, err)
 	}
 
 	return localTriggeredResult(target, targetService, sha, resolvedSHA, versionName, dirty, warnings), nil
+}
+
+// zcliFailure is a local zcli run that failed, in zcli's own words: the exit
+// and the last stderr lines in the message with the error's class
+// (platform.ClassOf), its whole stdout and stderr in the diagnostic. No next
+// step is guessed from the command; zcli's output names what failed.
+func zcliFailure(command, stdout, stderr string, err error) *platform.PlatformError {
+	return &platform.PlatformError{
+		Code:       platform.ErrDeployFailed,
+		Message:    fmt.Sprintf("%s failed%s (%v): %s", command, platform.ClassOf(err).Note(), err, strings.TrimSpace(lastLines(stderr, 5))),
+		Suggestion: "zcli's own output is in diagnostic: it names what failed (the token, zerops.yaml, the build, the API).",
+		Diagnostic: strings.TrimSpace("stdout:\n" + stdout + "\nstderr:\n" + stderr),
+		Cause:      err,
+	}
 }
 
 // localTriggeredResult is the BUILD_TRIGGERED result of a local push. A

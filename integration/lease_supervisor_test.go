@@ -168,7 +168,7 @@ func TestLease_Integration_PoolWithoutZcpDevsup_SaysNotADevPool(t *testing.T) {
 	session, cleanup := setupLeaseTestServer(t, supervisorPoolMock(t), defaultLogFetcher(), c)
 	defer cleanup()
 
-	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app"})
+	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature"})
 	text := getTextContent(t, res)
 	if res.IsError {
 		t.Fatalf("acquire failed: %s", text)

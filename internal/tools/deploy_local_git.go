@@ -24,9 +24,10 @@ import (
 // (DEPLOY-3 — parity with the container git-push path, so a bad ${peer_var}
 // surfaces actionable feedback now instead of a delayed opaque remote build
 // failure). Returns (errResponse, recordMsg, recordClass) when a check
-// fails so the caller records the attempt + returns; (nil, "", "") on pass
-// or when the target can't be resolved (validation is best-effort).
-func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, projectID, stateDir, hostname, inputSetup, workingDir string) (*mcp.CallToolResult, string, topology.FailureClass) {
+// fails so the caller records the attempt + returns; (nil, "", "") on pass.
+// A target that cannot be read skips the validation, and skipped says so and
+// why — the push still goes through (validation is best-effort).
+func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, projectID, stateDir, hostname, inputSetup, workingDir string) (resp *mcp.CallToolResult, recordMsg string, recordClass topology.FailureClass, skipped string) {
 	setupName := inputSetup
 	yamlContent := readLocalZeropsYaml(workingDir)
 	if yamlContent != "" {
@@ -35,7 +36,7 @@ func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, 
 				platform.ErrPreflightFailed,
 				fmt.Sprintf("failed to record deployed setup metadata for %s: %v", hostname, err),
 				"Retry after the local .zcp/state directory is writable; verify needs this metadata to distinguish HTTP services from workers.",
-			), WithRecoveryStatus()), "deployed setup metadata record failed: " + err.Error(), topology.FailureClassConfig
+			), WithRecoveryStatus()), "deployed setup metadata record failed: " + err.Error(), topology.FailureClassConfig, ""
 		} else if resolvedSetup != "" {
 			setupName = resolvedSetup
 		}
@@ -43,19 +44,22 @@ func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, 
 	if setupName == "" {
 		setupName = hostname
 	}
-	target := resolveTargetForValidation(ctx, client, projectID, hostname)
-	if target == nil {
-		return nil, "", ""
+	if client == nil || projectID == "" {
+		return nil, "", "", ""
+	}
+	target, err := ops.LookupService(ctx, client, projectID, hostname)
+	if err != nil {
+		return nil, "", "", fmt.Sprintf("zerops.yaml was not validated before the push: %q could not be read%s: %v", hostname, platform.ClassOf(err).Note(), err)
 	}
 	if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
-		return convertError(vErr, WithRecoveryStatus()), fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig
+		return convertError(vErr, WithRecoveryStatus()), fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig, ""
 	}
 	if yamlContent != "" {
 		if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
-			return resp, "env-var pre-flight failed: " + detail, topology.FailureClassConfig
+			return resp, "env-var pre-flight failed: " + detail, topology.FailureClassConfig, ""
 		}
 	}
-	return nil, "", ""
+	return nil, "", "", ""
 }
 
 // readLocalZeropsYaml reads the local zerops.yaml (zerops.yml fallback)
@@ -82,19 +86,6 @@ func localGitRunner(ctx context.Context, workingDir string) ops.GitRunner {
 	return func(args ...string) (string, error) {
 		return runGitWithEnv(ctx, workingDir, []string{"GIT_TERMINAL_PROMPT=0"}, args...)
 	}
-}
-
-// resolveTargetForValidation fetches the target ServiceStack from live
-// services so pre-deploy validation has the ServiceStackTypeID /
-// TypeVersionName required by the Zerops validator endpoint. Returns nil
-// (no error) when the service can't be resolved — validation is then
-// skipped rather than blocking deploy on a transient list failure.
-func resolveTargetForValidation(ctx context.Context, client platform.Client, projectID, hostname string) *platform.ServiceStack {
-	if client == nil || projectID == "" || hostname == "" {
-		return nil
-	}
-	svc, _ := ops.LookupService(ctx, client, projectID, hostname)
-	return svc
 }
 
 // handleLocalGitPush performs `git push` from the user's local git repo
@@ -165,34 +156,19 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// Extracted to keep handleLocalGitPush under the maintainability-index
 	// ceiling; the helper validates the candidate the remote build will
 	// consume (schema + ${peer_var} refs) before the push transmits.
-	if resp, msg, class := localGitPushPreDeployValidate(ctx, client, projectID, stateDir, hostname, input.Setup, workingDir); resp != nil {
+	var warnings []string
+	resp, msg, class, skipped := localGitPushPreDeployValidate(ctx, client, projectID, stateDir, hostname, input.Setup, workingDir)
+	if resp != nil {
 		record(msg, class)
 		return resp, nil, nil
 	}
-
-	// 1. git repo check. MCP handlers surface the failure in the
-	// CallToolResult (convertError) and return a nil outer error.
-	//nolint:nilerr // tool-level error lives in CallToolResult
-	if _, err := runGit(ctx, workingDir, "rev-parse", "--is-inside-work-tree"); err != nil {
-		_ = err
-		record("working dir is not a git repo", topology.FailureClassConfig)
-		return convertError(platform.NewPlatformError(
-			platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("workingDir %q is not a git repository", workingDir),
-			"Initialize git first: git init && git add -A && git commit -m '<message>'. Then retry.",
-		), WithRecoveryStatus()), nil, nil
+	if skipped != "" {
+		warnings = append(warnings, skipped)
 	}
 
-	// 2. HEAD has commits.
-	//nolint:nilerr // tool-level error lives in CallToolResult
-	if _, err := runGit(ctx, workingDir, "rev-parse", "HEAD"); err != nil {
-		_ = err
-		record("no commits on HEAD", topology.FailureClassConfig)
-		return convertError(platform.NewPlatformError(
-			platform.ErrPrerequisiteMissing,
-			"git-push requires at least one commit on HEAD",
-			"Commit your changes first: git add -A && git commit -m '<message>'. Then retry.",
-		), WithRecoveryStatus()), nil, nil
+	// 1–2. The working dir is a git repo with a commit on HEAD.
+	if blocked := localGitRepoPreflight(ctx, workingDir, record); blocked != nil {
+		return blocked, nil, nil
 	}
 
 	// 3. Resolve effective remote URL via shared helper — see
@@ -200,14 +176,16 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	effectiveRemote := resolveEffectiveRemote(stateDir, hostname, input.RemoteURL)
 
 	// 4. Resolve origin URL.
-	currentOrigin, _ := runGit(ctx, workingDir, "remote", "get-url", "origin")
+	// git exits non-zero when origin is not set; its words say so, or why
+	// else origin could not be read.
+	currentOrigin, originErr := runGit(ctx, workingDir, "remote", "get-url", "origin")
 	current := strings.TrimSpace(currentOrigin)
 	switch {
 	case current == "" && effectiveRemote == "":
 		record("no origin + no remoteUrl + no stamped meta.RemoteURL", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"no origin remote configured, no remoteUrl provided, and no remote stamped in service meta",
+			fmt.Sprintf("no origin remote configured (git said: %v), no remoteUrl provided, and no remote stamped in service meta", originErr),
 			"Either configure origin in your repo (git remote add origin <url>), pass remoteUrl=<url> on this call, or run zerops_workflow action=\"git-push-setup\" service=<hostname> remoteUrl=<url> first.",
 		), WithRecoveryStatus()), nil, nil
 	case current == "" && effectiveRemote != "":
@@ -246,9 +224,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// 5. Dirty-tree warning (non-blocking) — shared owner with the container
 	// path (handleGitPush) via dirtyTreeWarning so the "committed HEAD only"
 	// contract is stated once and cannot drift between the two git-push halves.
-	var warnings []string
-	status, _ := runGit(ctx, workingDir, "status", "--porcelain")
-	if warn := dirtyTreeWarning(status, "git add -A && git commit -m '<msg>'"); warn != "" {
+	if warn := localGitTreeWarning(ctx, workingDir); warn != "" {
 		warnings = append(warnings, warn)
 	}
 
@@ -299,7 +275,9 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// HQ-remote case here: a local git-push never targets this Mate's own
 	// HQ (no Mate exists on a developer's own machine).
 	if localGitPushTrackable(status2, gitPushBuildIntegrationConfigured(stateDir, hostname)) {
-		_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
+		if err := workflow.RecordDeployAttempt(stateDir, hostname, attempt); err != nil {
+			warnings = append(warnings, fmt.Sprintf("the push is not recorded as an in-flight deploy of %q, so record-deploy has nothing to resolve: %v", hostname, err))
+		}
 	}
 
 	result.NextActions = fmt.Sprintf(
@@ -323,6 +301,43 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
+}
+
+// localGitRepoPreflight refuses a working dir that is no git repo or has no
+// commit on HEAD, in git's own words; nil when both hold. record is invoked
+// once on a refusal.
+func localGitRepoPreflight(ctx context.Context, workingDir string, record func(string, topology.FailureClass)) *mcp.CallToolResult {
+	// 1. git repo check. MCP handlers surface the failure in the
+	// CallToolResult (convertError) and return a nil outer error.
+	if _, err := runGit(ctx, workingDir, "rev-parse", "--is-inside-work-tree"); err != nil {
+		record("working dir is not a git repo: "+err.Error(), topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("workingDir %q is not a git repository: git said: %v", workingDir, err),
+			"Initialize git first: git init && git add -A && git commit -m '<message>'. Then retry.",
+		), WithRecoveryStatus())
+	}
+
+	// 2. HEAD has commits.
+	if _, err := runGit(ctx, workingDir, "rev-parse", "HEAD"); err != nil {
+		record("no commits on HEAD: "+err.Error(), topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("git-push requires at least one commit on HEAD: git said: %v", err),
+			"Commit your changes first: git add -A && git commit -m '<message>'. Then retry.",
+		), WithRecoveryStatus())
+	}
+	return nil
+}
+
+// localGitTreeWarning is the dirty-tree warning, or — when the tree's state
+// could not be read — that whether uncommitted changes are left out is unknown.
+func localGitTreeWarning(ctx context.Context, workingDir string) string {
+	status, err := runGit(ctx, workingDir, "status", "--porcelain")
+	if err != nil {
+		return fmt.Sprintf("the working tree's state could not be read, so whether uncommitted changes are left out of this push is unknown: git said: %v", err)
+	}
+	return dirtyTreeWarning(status, "git add -A && git commit -m '<msg>'")
 }
 
 // localGitPushTrackable reports whether a completed local git-push should
@@ -375,11 +390,13 @@ func handleLocalGitPushFailure(
 	}
 
 	record(fmt.Sprintf("git push: %v", pushErr), category)
-	return convertError(platform.NewPlatformError(
-		platform.ErrDeployFailed,
-		fmt.Sprintf("git push origin %s failed: %s", branch, detail),
-		"Check your local git credentials (SSH keys, credential manager) and the remote URL. For passphrase-protected keys, ensure ssh-agent is running.",
-	), WithRecoveryStatus(), WithFailureClassification(classification))
+	return convertError(&platform.PlatformError{
+		Code:       platform.ErrDeployFailed,
+		Message:    fmt.Sprintf("git push origin %s failed%s: %s", branch, platform.ClassOf(pushErr).Note(), detail),
+		Suggestion: "git's own words are above (whole in diagnostic); the failureClassification says what to try.",
+		Diagnostic: pushErr.Error(),
+		Cause:      pushErr,
+	}, WithRecoveryStatus(), WithFailureClassification(classification))
 }
 
 // localGitPushResponse wraps the local git-push result with the
@@ -416,11 +433,7 @@ func runGitWithEnv(ctx context.Context, workingDir string, extraEnv []string, ar
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return stdout.String(), fmt.Errorf("%s", msg)
+		return stdout.String(), gitExitError(stderr.String(), err)
 	}
 	return stdout.String(), nil
 }
@@ -447,13 +460,18 @@ func runGitPushCapture(ctx context.Context, workingDir string, extraEnv []string
 	cmd.Stderr = &errBuf
 	runErr := cmd.Run()
 	if runErr != nil {
-		msg := strings.TrimSpace(errBuf.String())
-		if msg == "" {
-			msg = runErr.Error()
-		}
-		return outBuf.String(), errBuf.String(), fmt.Errorf("%s", msg)
+		return outBuf.String(), errBuf.String(), gitExitError(errBuf.String(), runErr)
 	}
 	return outBuf.String(), errBuf.String(), nil
+}
+
+// gitExitError is a git run that failed: its stderr verbatim, then its exit
+// (or the reason it did not run), which stays reachable through errors.As.
+func gitExitError(stderr string, runErr error) error {
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return fmt.Errorf("%s (%w)", msg, runErr)
+	}
+	return runErr
 }
 
 // truncateStderr keeps error reports compact — only the last few lines

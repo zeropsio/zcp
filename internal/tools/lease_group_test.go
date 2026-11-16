@@ -234,7 +234,7 @@ func TestLeaseTool_GroupAcquire_BadInput_TypedRefusal(t *testing.T) {
 	}{
 		{"pool and pools", map[string]any{"action": "acquire", "pool": "hqpool", "pools": []string{"webpool"}, "repo": leaseTestRepo}, "pool or pools"},
 		{"pools empty", map[string]any{"action": "acquire", "pools": []string{}, "repo": leaseTestRepo}, "needs pool"},
-		{"a pool twice", map[string]any{"action": "acquire", "pools": []string{"hqpool", "hqpool"}, "repo": leaseTestRepo}, "hqpool"},
+		{"a pool twice", map[string]any{"action": "acquire", "pools": []string{"hqpool", "hqpool"}, "repo": leaseTestRepo, "branch": "feature"}, "hqpool"},
 		{"pools on a release", map[string]any{"action": "release", "pools": []string{"hqpool"}, "lease": "hqpool-3"}, "pools"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

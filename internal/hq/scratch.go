@@ -5,11 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // Git on this container against HQ, for what zcp writes to HQ itself rather
@@ -53,6 +57,10 @@ func (c Client) gitEnv() []string {
 		"GIT_CONFIG_KEY_0=http."+c.Address()+"/.extraHeader",
 		"GIT_CONFIG_VALUE_0="+header,
 		"GIT_TERMINAL_PROMPT=0",
+		// A transfer from HQ slower than 1 KB/s for 30 s is cut: a stalled
+		// fetch never holds its caller.
+		"GIT_HTTP_LOW_SPEED_LIMIT=1000",
+		"GIT_HTTP_LOW_SPEED_TIME=30",
 	)
 }
 
@@ -324,3 +332,43 @@ func (e *gitError) Error() string {
 }
 
 func (e *gitError) Unwrap() error { return e.err }
+
+// gitUnreachableWords are what git says when HQ did not answer it: no host,
+// no connection, a cut or stalled transfer (gitLowSpeed), an HTTP 5xx or 429.
+var gitUnreachableWords = []string{
+	"Could not resolve host", "Connection refused", "Connection timed out", "Operation timed out",
+	"Failed to connect", "Recv failure", "transfer closed", "RPC failed", "Empty reply",
+	"Operation too slow", "Connection reset",
+}
+
+// gitHTTPStatus finds the status git names in "The requested URL returned
+// error: <status>"; 0 when it names none.
+func gitHTTPStatus(said string) int {
+	_, rest, found := strings.Cut(said, "returned error: ")
+	if !found {
+		return 0
+	}
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	status, _ := strconv.Atoi(rest[:end])
+	return status
+}
+
+// Class is git's failure as an error class: HQ not answering is
+// unreachable, HQ's 4xx refused, anything else git failing.
+func (e *gitError) Class() platform.ErrorClass {
+	switch status := gitHTTPStatus(e.said); {
+	case status >= 500 || status == http.StatusTooManyRequests:
+		return platform.ClassUnreachable
+	case status >= 400:
+		return platform.ClassRefused
+	}
+	for _, words := range gitUnreachableWords {
+		if strings.Contains(e.said, words) {
+			return platform.ClassUnreachable
+		}
+	}
+	return platform.ClassFailed
+}

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 )
 
@@ -240,6 +241,50 @@ func (m *Mock) RedeployAppVersion(_ context.Context, appVersionID, zeropsYaml, s
 	}
 	out := *proc
 	return &out, nil
+}
+
+// CreateAppVersion answers a version id derived from the service and the
+// name; WithError("CreateAppVersion", err) refuses it.
+func (m *Mock) CreateAppVersion(_ context.Context, serviceID, name string) (string, error) {
+	m.trackCall("CreateAppVersion")
+	if err := m.getError("CreateAppVersion"); err != nil {
+		return "", err
+	}
+	return "av-" + serviceID + "-" + name, nil
+}
+
+// UploadAppVersion reads the archive to its end, as the platform does, and
+// returns its read error or the one WithError("UploadAppVersion", err) sets.
+func (m *Mock) UploadAppVersion(_ context.Context, _ string, archive io.Reader) error {
+	m.trackCall("UploadAppVersion")
+	if _, err := io.Copy(io.Discard, archive); err != nil {
+		return err
+	}
+	return m.getError("UploadAppVersion")
+}
+
+// BuildAndDeployAppVersion answers a PENDING stack.build process for the
+// version; WithError("BuildAndDeployAppVersion", err) refuses it.
+func (m *Mock) BuildAndDeployAppVersion(_ context.Context, appVersionID, _, _ string) (*Process, error) {
+	m.trackCall("BuildAndDeployAppVersion")
+	if err := m.getError("BuildAndDeployAppVersion"); err != nil {
+		return nil, err
+	}
+	return &Process{ID: "build-" + appVersionID, ActionName: "stack.build", Status: ProcessStatusPending}, nil
+}
+
+// ListUploadingAppVersions answers none; WithError("ListUploadingAppVersions",
+// err) refuses it.
+func (m *Mock) ListUploadingAppVersions(_ context.Context, _, _ string) ([]AppVersionEvent, error) {
+	m.trackCall("ListUploadingAppVersions")
+	return nil, m.getError("ListUploadingAppVersions")
+}
+
+// DeleteAppVersion records the call; WithError("DeleteAppVersion", err)
+// refuses it.
+func (m *Mock) DeleteAppVersion(_ context.Context, _ string) error {
+	m.trackCall("DeleteAppVersion")
+	return m.getError("DeleteAppVersion")
 }
 
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {

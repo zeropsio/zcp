@@ -239,8 +239,8 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // A merged change's note names the leases zcp still holds on its branch —
 // which a Mate's HQ pass releases by itself once nothing unsaved is left in
 // them (releaseCompletedLeases, DP-34), so the note names no release for the
-// agent to run — and the stages of its repository's pairs, which track main
-// (address is this Mate's HQ, which names the leases' repository), then what
+// agent to run (address is this Mate's HQ, which names the leases'
+// repository), then what
 // a merge does where the application has a production or a Stage
 // (applicationMergedWords). A change
 // that landed with another is said as that, never as closed without merging
@@ -260,12 +260,12 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	switch outcome {
 	case changeMerged:
 		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
+			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeLandedWith:
 		with := s.CarriedBy()
 		return fmt.Sprintf("change #%d was merged as part of #%d — #%d was built on it and merged first, so its merge carried every commit of this one and HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
 			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
+			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
 	case changeStillOpen, changeClosed, changeUnknown:
@@ -298,42 +298,6 @@ func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 	}
 	return fmt.Sprintf("; the leases %s still hold its branch %q: zcp releases a merged or closed change's leases on its own once nothing unsaved is left in them — commit and push what is there, never force — and cut the next work's branch from %q",
 		strings.Join(held, ", "), c.Branch, hqBase)
-}
-
-// mergedStages names the stages of the repository's pairs, which track main
-// and so take it once a change's work is on it; "" for none.
-func mergedStages(stateDir string, c workflow.HQChange) string {
-	if words := stagesTrackMain(stateDir, c.AppID, c.Repo); words != "" {
-		return "; " + words
-	}
-	return ""
-}
-
-// stagesTrackMain says that the stages of appID's repo's wired pairs track
-// main, with the call that puts main on one — a dev pool's stage deploys from
-// a lease of its part, so the source stays the agent's to name; "" for none.
-func stagesTrackMain(stateDir, appID, repo string) string {
-	metas, _ := workflow.ListServiceMetas(stateDir)
-	var stages []string
-	for _, m := range metas {
-		if hqPairWired(m) && m.HQ.AppID == appID && m.HQ.Repo == repo {
-			for _, stage := range m.StageHostnames() {
-				if !slices.Contains(stages, stage) {
-					stages = append(stages, stage)
-				}
-			}
-		}
-	}
-	if len(stages) == 0 {
-		return ""
-	}
-	slices.Sort(stages)
-	which, on, target := "the stages "+strings.Join(stages, ", ")+" track", "each", "<stage>"
-	if len(stages) == 1 {
-		which, on, target = "the stage "+stages[0]+" tracks", "it", stages[0]
-	}
-	return fmt.Sprintf("%s %q: put %q on %s — a dev pool's stage from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=%q sha=\"origin/main\"`)",
-		which, hqBase, hqBase, on, target)
 }
 
 // leasesOnBranch is the aliases of the leases zcp holds on branch of appID's
@@ -386,8 +350,8 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 // corePushWords says HQ brought `main` into change number on branch after
 // change landed merged, by a merge commit of its own on the branch
 // (hq.CorePush): the agent's branch is where it was, so its next push is
-// refused as non-fast-forward until it fetches and fast-forwards — over ssh
-// in each lease on the branch (leases), since a lease's git runs there; with
+// refused as non-fast-forward until it fetches and fast-forwards — through
+// `zcp git <alias>` in each lease on the branch (leases), since a lease's git runs there; with
 // none, where the branch is checked out where route runs the repository's
 // git: in its dev service through `zcp git <host>`, the checkout or the
 // branch's /tmp/wt- worktree there. zcp reads none of those checkouts — each
@@ -406,7 +370,7 @@ func corePushWords(number, landed int, branch string, route repoRoute, leases []
 		if len(leases) > 1 {
 			which = "in each of its leases"
 		}
-		where = which + ", over ssh: " + strings.Join(calls, ", ")
+		where = which + ": " + strings.Join(calls, ", ")
 	}
 	words := fmt.Sprintf("HQ brought main into #%d after #%d merged: fetch and fast-forward `%s` before your next push, which is refused as non-fast-forward from where it was — %s",
 		number, landed, branch, where)
@@ -446,7 +410,7 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, route repoRoute, lea
 // standingWords is what the agent is told of change number on branch whose
 // standing is now — a draft with a push to describe, behind main, no longer
 // merging cleanly — when it differs from what it was told; "" otherwise.
-// leases are the leases on the branch, whose git runs there over ssh; with
+// leases are the leases on the branch, whose git runs there through `zcp git <alias>`; with
 // none, its git runs where route says. limited, in an application that limits
 // who merges, names who merges the change as that, never as the person.
 func standingWords(number int, branch string, now, told workflow.HQChangeTold, route repoRoute, leases []string, limited bool) string {
@@ -458,7 +422,7 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 	where, sync := route.checkedOut(branch), ""
 	if len(leases) > 0 {
 		route = route.inLease(leases[0])
-		where = fmt.Sprintf("in a lease of it (%s), over ssh", strings.Join(leases, ", "))
+		where = fmt.Sprintf("in a lease of it (%s)", strings.Join(leases, ", "))
 		sync = fmt.Sprintf(", `zerops_lease action=sync lease=%s`", leases[0])
 	}
 	merge, push := route.git("fetch origin", "merge origin/"+hqBase), route.git("push origin "+branch)

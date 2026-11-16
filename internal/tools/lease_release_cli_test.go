@@ -145,8 +145,13 @@ func TestLeaseReleaseAnswer_Contract(t *testing.T) {
 			}
 			if tt.wantCode == LeaseReleaseExitFailed {
 				var shape map[string]any
-				if err := json.Unmarshal(raw, &shape); err != nil || shape["error"] == "" || len(shape) != 1 {
-					t.Errorf("a failure answers only its error: %s", raw)
+				// Its error with the failure's wire (code, suggestion,
+				// diagnostic, class), never a released or refused list.
+				err := json.Unmarshal(raw, &shape)
+				_, released := shape["released"]
+				_, refused := shape["refused"]
+				if err != nil || shape["error"] == "" || shape["code"] == "" || released || refused {
+					t.Errorf("a failure answers its error and code only: %s", raw)
 				}
 			}
 			if left := leaseRecordsLeft(t, deps.StateDir); !slices.Equal(left, tt.wantLeft) {
