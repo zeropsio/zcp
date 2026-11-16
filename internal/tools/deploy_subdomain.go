@@ -107,7 +107,7 @@ func ensurePublicAccessAt(
 	svc, eligible, err := serviceEligibleForSubdomain(ctx, client, meta, projectID, hostname)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("public access was not checked: %s could not be read%s: %v (subdomain state unknown)", hostname, platformClassNote(err), err))
+			fmt.Sprintf("public access was not checked: %s could not be read%s: %v (subdomain state unknown)", hostname, platform.ClassOf(err).Note(), err))
 		return
 	}
 	if !eligible {
@@ -123,7 +123,7 @@ func ensurePublicAccessAt(
 	obs, err := ops.ObservePublicAccess(ctx, client, projectID, svc)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("observe public access failed%s: %v (subdomain state unknown)", platformClassNote(err), err))
+			fmt.Sprintf("observe public access failed%s: %v (subdomain state unknown)", platform.ClassOf(err).Note(), err))
 		return
 	}
 	obs.Observed.Listener = listener
@@ -152,7 +152,7 @@ func ensurePublicAccessAt(
 				result.SubdomainURL = address()
 			} else if fresh, getErr := client.GetService(ctx, svc.ID); getErr != nil {
 				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("subdomain enabled, but its URL is unknown: %s could not be read%s: %v", hostname, platformClassNote(getErr), getErr))
+					fmt.Sprintf("subdomain enabled, but its URL is unknown: %s could not be read%s: %v", hostname, platform.ClassOf(getErr).Note(), getErr))
 			} else if port, ok := ops.PreferredHTTPPort(fresh.Ports); ok {
 				result.SubdomainURL = ops.SubdomainURLForPort(ctx, client, projectID, fresh, port.Port)
 			}
@@ -167,7 +167,7 @@ func ensurePublicAccessAt(
 			// warning — see isServiceStackIsNotHTTPErr doc.
 		default:
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("auto-enable subdomain failed%s: %v", platformClassNote(enableErr), enableErr))
+				fmt.Sprintf("auto-enable subdomain failed%s: %v", platform.ClassOf(enableErr).Note(), enableErr))
 		}
 	} else if obs.Observed.Subdomain == topology.SubdomainOn {
 		// Not eligible for a fresh auto-enable (already stamped, custom
@@ -299,15 +299,6 @@ func serviceEligibleForSubdomain(
 		return nil, false, nil
 	}
 	return svc, true, nil
-}
-
-// platformClassNote is err's class (platform.ClassOf) as a message reads it:
-// " (refused)", or "" while it has none.
-func platformClassNote(err error) string {
-	if class := platform.ClassOf(err); class != "" {
-		return " (" + string(class) + ")"
-	}
-	return ""
 }
 
 // isServiceStackIsNotHTTPErr classifies a platform error as the

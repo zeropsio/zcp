@@ -90,7 +90,7 @@ func (e *SupervisorUnresponsiveError) Unwrap() error { return e.SSH }
 
 func (e *SupervisorUnresponsiveError) Error() string {
 	if e.SSH != nil {
-		return fmt.Sprintf("%s did not answer over SSH within %s%s: %v. A container out of memory or CPU answers late: zerops_logs and zerops_scale show its load. Then retry.", e.Hostname, devsupCtlTimeout, deployClassNote(e.SSH), e.SSH)
+		return fmt.Sprintf("%s did not answer over SSH within %s%s: %v. A container out of memory or CPU answers late: zerops_logs and zerops_scale show its load. Then retry.", e.Hostname, devsupCtlTimeout, platform.ClassOf(e.SSH).Note(), e.SSH)
 	}
 	return fmt.Sprintf("The dev-server supervisor on %s is running but did not answer in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale), then retry in a moment.", e.Hostname)
 }

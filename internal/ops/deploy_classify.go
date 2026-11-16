@@ -104,20 +104,11 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	default:
 		// Don't classify zcli output — show last lines, let LLM reason about it.
 		tail := lastLines(output, 5)
-		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed%s (%s):\n%s", sourceService, targetService, deployClassNote(err), exitMsg, tail)
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed%s (%s):\n%s", sourceService, targetService, platform.ClassOf(err).Note(), exitMsg, tail)
 		pe.Suggestion = "Check the diagnostic field for full command output."
 	}
 
 	return pe
-}
-
-// deployClassNote is err's class (platform.ClassOf) as a message reads it:
-// " (refused)", or "" while it has none.
-func deployClassNote(err error) string {
-	if class := platform.ClassOf(err); class != "" {
-		return " (" + string(class) + ")"
-	}
-	return ""
 }
 
 // pollMayStillRun reports a process poll that stopped on a cause waiting can
@@ -129,7 +120,7 @@ func pollMayStillRun(err error) bool {
 
 // pollStoppedMessage says a process was left running unobserved, and why.
 func pollStoppedMessage(processID string, err error) string {
-	return fmt.Sprintf("process %s may still be running: zcp stopped following it%s: %v. Its outcome is in zerops_events.", processID, deployClassNote(err), err)
+	return fmt.Sprintf("process %s may still be running: zcp stopped following it%s: %v. Its outcome is in zerops_events.", processID, platform.ClassOf(err).Note(), err)
 }
 
 // lastLines returns the last n non-empty lines from s.

@@ -146,7 +146,7 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 	if err := mounter.Mount(ctx, hostname, mountPath); err != nil {
 		return nil, &platform.PlatformError{
 			Code:       platform.ErrMountFailed,
-			Message:    fmt.Sprintf("Failed to mount %s%s: %v", hostname, classNote(err), err),
+			Message:    fmt.Sprintf("Failed to mount %s%s: %v", hostname, platform.ClassOf(err).Note(), err),
 			Suggestion: "The cause above is sshfs's and ssh's own; it says whether the container refused the connection or did not answer.",
 			Diagnostic: err.Error(),
 			Cause:      err,
@@ -163,22 +163,13 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 	}, nil
 }
 
-// classNote is err's class (platform.ClassOf) as a message reads it: " (refused)",
-// or "" while it has none.
-func classNote(err error) string {
-	if class := platform.ClassOf(err); class != "" {
-		return " (" + string(class) + ")"
-	}
-	return ""
-}
-
 // writeCheckNote states a write probe that failed, so writable=false is never
 // read as a read-only mount when the probe itself did not answer.
 func writeCheckNote(err error) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("; the write check failed%s: %v", classNote(err), err)
+	return fmt.Sprintf("; the write check failed%s: %v", platform.ClassOf(err).Note(), err)
 }
 
 // UnmountService unmounts a service's SSHFS mount. Idempotent.

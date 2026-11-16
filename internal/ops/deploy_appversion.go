@@ -215,7 +215,7 @@ type redeployYamlUnreadError struct {
 }
 
 func (e *redeployYamlUnreadError) Error() string {
-	return fmt.Sprintf("appVersion %s: %s could not be read%s: %v", e.AppVersionID, e.Source, deployClassNote(e.Err), e.Err)
+	return fmt.Sprintf("appVersion %s: %s could not be read%s: %v", e.AppVersionID, e.Source, platform.ClassOf(e.Err).Note(), e.Err)
 }
 
 func (e *redeployYamlUnreadError) Unwrap() error { return e.Err }
