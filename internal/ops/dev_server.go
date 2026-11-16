@@ -1078,10 +1078,15 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	// curl's exit follows the code: 28 is a listener that accepted and did
 	// not answer within --max-time.
-	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
+	out, err := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
 		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s; echo \" $?\"", port, healthPath))
 	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 	switch {
+	case err != nil && exit == "":
+		// ssh itself failed: the probe never ran, so nothing is known of
+		// the port — never read as a server not listening.
+		result.Message = fmt.Sprintf("Dev server %s is %s, but zcp could not run its HTTP probe on :%d (%s, class %s): this status says nothing of whether it answers.", label, server.Status, port, sshFailureText(err), cmp.Or(string(platform.ClassOf(err)), "unclassified"))
+		return result, nil
 	case (code == "" || code == "000") && exit == "28":
 		result.Reason = reasonSlow
 		result.Message = fmt.Sprintf("Dev server %s is %s and accepts connections on :%d, but sent no HTTP answer on %s within 2s — likely still compiling its first response; check again shortly.", label, server.Status, port, healthPath)
