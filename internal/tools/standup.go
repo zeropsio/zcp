@@ -98,6 +98,12 @@ type standupDeps struct {
 	// hqWait bounds the wait on an HQ that does not answer; zero means
 	// standupHQWait.
 	hqWait time.Duration
+	// boot is the run zcp starts at its boot: it builds only what was never
+	// built or builds now, never a failed build again.
+	boot bool
+	// runBound bounds the whole run (zero: none); a row still building at
+	// it is failed as unreachable, naming it.
+	runBound time.Duration
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -189,8 +195,7 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 // stand is the stand-up's work and the report's standUp ("" for a
 // refusal); run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
-	// The Mate's server sends the stand-up only once its link to HQ is up, so
-	// HQ is opened and read once, never waited on.
+	// An HQ that does not answer is waited on, bounded (askHQ).
 	hqc, src, stop := d.openTier(ctx, progress)
 	if stop != nil {
 		return stop.result(), ""

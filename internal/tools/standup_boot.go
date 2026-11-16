@@ -21,6 +21,11 @@ import (
 // HQ tier. Past it the boot leaves the stand-up to today's path.
 const standupBootRead = 15 * time.Second
 
+// standupBootBound bounds the boot's run; a row still building at it is
+// failed as unreachable, naming the bound, and the agent's zerops_standup
+// waits on what is in flight.
+const standupBootBound = 20 * time.Minute
+
 // StandupAtBoot is the stand-up zcp's Mate service runs at its start, before
 // the server it supervises launches (internal/service mateLaunchSetup). Under
 // standupBootRead it reads the live services and the HQ tier. Where a pooled
@@ -61,8 +66,8 @@ func StandupAtBoot(ctx context.Context, env func() func(string) string, statusPa
 	d := standupDeps{
 		batch: batchDeployer{
 			client: client, httpClient: httpClient, projectID: rt.ProjectID,
-			sshDeployer: platform.NewSystemSSHDeployer(), logFetcher: platform.NewLogFetcher(),
-			rtInfo: rt, stateDir: filepath.Join(topology.CodeMountRoot, ".zcp", "state"),
+			sshDeployer: platform.NewSystemSSHDeployer(),
+			rtInfo:      rt, stateDir: filepath.Join(topology.CodeMountRoot, ".zcp", "state"),
 		},
 		identity:    func() hq.Identity { return hqIdentity(rt) },
 		runtimeWait: standupRuntimeWait,
@@ -70,6 +75,8 @@ func StandupAtBoot(ctx context.Context, env func() func(string) string, statusPa
 		statusPath:  statusPath,
 		status:      newStandupStatus(statusPath),
 		source:      ops.NewHQDeploySource(httpClient, hqIdentity(rt)),
+		boot:        true,
+		runBound:    standupBootBound,
 	}
 	progress := newStandupProgress(func(message string, _, _ float64) { log("stand-up: " + message) })
 	progress.status = d.status
@@ -93,17 +100,17 @@ func (d standupDeps) bootRun(ctx, readCtx context.Context, progress *standupProg
 		progress.say("did not run: " + stop.message)
 		return nil
 	}
-	tier := src.tier
-	tier.Pairs = nil
+	// A tier with a classic pair keeps today's path whole: the agent's
+	// zerops_standup stands every pair up.
 	for _, p := range src.tier.Pairs {
-		if p.DevPool {
-			tier.Pairs = append(tier.Pairs, p)
+		if !p.DevPool {
+			return nil
 		}
 	}
-	if !pooledPartWithoutBuild(tier, live) {
+	tier := src.tier
+	if !d.pooledPartToBuild(readCtx, tier, live) {
 		return nil
 	}
-	src.tier = tier
 	release, held, err := holdStandup(d.batch.stateDir)
 	switch {
 	case err != nil:
@@ -117,7 +124,7 @@ func (d standupDeps) bootRun(ctx, readCtx context.Context, progress *standupProg
 	rows := d.startPooledRows(readCtx, tier)
 	return func() {
 		defer release()
-		ctx, cancel := context.WithCancel(ctx)
+		ctx, cancel := context.WithTimeout(ctx, d.runBound)
 		defer cancel()
 		d.session = newStandupPushes(d.pushes)
 		pairs, live := d.preparePairs(ctx, hqc, src, progress)
@@ -127,12 +134,14 @@ func (d standupDeps) bootRun(ctx, readCtx context.Context, progress *standupProg
 	}
 }
 
-// pooledPartWithoutBuild reports a pooled part of the tier whose pool or a
-// stage has no build — not yet created counts as none.
-func pooledPartWithoutBuild(tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
+// pooledPartToBuild reports a pooled part of the tier whose pool or a stage
+// the boot builds: not created yet, or with no build and no failed one
+// (bootSkipsFailed).
+func (d standupDeps) pooledPartToBuild(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	for _, p := range tier.Pairs {
 		for _, rt := range append([]workflow.MateTierRuntime{p.Dev}, p.Stages...) {
-			if !hasBuild(live, rt.Hostname) {
+			svc := live[rt.Hostname]
+			if svc == nil || (!svc.HasDeployedCode() && d.bootSkipsFailed(ctx, svc) == nil) {
 				return true
 			}
 		}

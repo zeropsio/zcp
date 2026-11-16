@@ -104,15 +104,40 @@ func newStandupVerdictRows(status *standupStatus, services []pooledService) *sta
 	return r
 }
 
-// set changes one service's input and writes the verdict.
+// set changes one service's input and writes the verdict, under the lock:
+// the file never takes an older verdict after a newer one.
 func (r *standupVerdictRows) set(host string, change func(*ops.StandupRowInput)) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	in := r.inputs[host]
 	change(&in)
 	r.inputs[host] = in
-	verdict := r.verdictLocked()
-	r.mu.Unlock()
-	r.status.verdict(verdict)
+	r.status.verdict(r.verdictLocked())
+}
+
+// endBuilding ends the run's verdict: every row still building is failed as
+// unreachable — nothing is lost, the next run waits on what is in flight —
+// in why's words, and the verdict is written once more.
+func (r *standupVerdictRows) endBuilding(why func(ops.StandupRowInput) string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, host := range r.order {
+		in := r.inputs[host]
+		if ops.StandupRowOf(in).State == mate.RowBuilding {
+			in.Class, in.Cause = platform.ClassUnreachable, why(in)
+			r.inputs[host] = in
+		}
+	}
+	r.status.verdict(r.verdictLocked())
+}
+
+// classOr is err's class, ClassFailed where it has none (a stop of its own
+// is still a run that did not get there).
+func classOr(err error) platform.ErrorClass {
+	if class := platform.ClassOf(err); class != "" {
+		return class
+	}
+	return platform.ClassFailed
 }
 
 // verdict is the verdict as the inputs now stand.
@@ -194,7 +219,7 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 		if sp.failed == "" && !hasBuild(live, pool) {
 			go func() {
 				if _, err := ops.EnsureBearer(ctx, d.leaseDeps(), pool); err != nil {
-					progress.say(fmt.Sprintf("%s's bearer is written; it resolves with the pool's first image (%v)", pool, err))
+					progress.say(fmt.Sprintf("writing %s's bearer reference before its first build failed; it is confirmed after the build: %v", pool, err))
 				}
 			}()
 		}
@@ -228,6 +253,16 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 		})
 	}
 	wg.Wait()
+	rows.endBuilding(func(in ops.StandupRowInput) string {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && d.runBound > 0 {
+			return fmt.Sprintf("%s did not finish within the stand-up's %s", in.Hostname, d.runBound)
+		}
+		status := in.AppVersionStatus
+		if status == "" {
+			status = "building"
+		}
+		return fmt.Sprintf("%s was still %s when the stand-up ended", in.Hostname, status)
+	})
 	out.verdict = rows.verdict()
 	return out
 }
@@ -244,6 +279,9 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		}
 	}
 	failAll := func(class platform.ErrorClass, cause string) {
+		if class == "" {
+			class = platform.ClassFailed
+		}
 		for _, s := range mine {
 			if !hasBuild(live, s.host) {
 				rows.set(s.host, func(in *ops.StandupRowInput) { in.Class, in.Cause = class, cause })
@@ -260,6 +298,12 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		case svc.HasDeployedCode():
 			d.keepBuilt(ctx, s, svc, rows)
 		default:
+			if failed := d.bootSkipsFailed(ctx, svc); failed != nil {
+				rows.set(s.host, func(in *ops.StandupRowInput) {
+					in.AppVersionID, in.AppVersionStatus = failed.ID, failed.Status
+				})
+				continue
+			}
 			toBuild = append(toBuild, s)
 		}
 	}
@@ -282,9 +326,9 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		failAll(platform.ClassRefused, fmt.Sprintf("%s has no %s branch in HQ", sp.repository, hqBase))
 		return "", ""
 	}
-	setups, yamlName, err := zeropsYamlSetups(ctx, scratch, commit)
+	setups, yamlName, class, err := zeropsYamlSetups(ctx, scratch, commit)
 	if err != nil {
-		failAll(platform.ClassRefused, fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
+		failAll(class, fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
 		return "", ""
 	}
 
@@ -312,7 +356,7 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 // the version it runs, and for a pool its bearer confirmed.
 func (d standupDeps) keepBuilt(ctx context.Context, s pooledService, svc *platform.ServiceStack, rows *standupVerdictRows) {
 	rows.set(s.host, func(in *ops.StandupRowInput) {
-		in.AppVersionID, in.AppVersionStatus = svc.ActiveAppVersion.ID, platform.ServiceStatusActive
+		in.AppVersionID, in.AppVersionStatus = svc.ActiveAppVersion.ID, platform.AppVersionStatusActive
 		in.ProcessStatus = platform.ProcessStatusFinished
 	})
 	if s.kind == mate.RowPool {
@@ -335,37 +379,46 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 		})
 		return
 	}
-	rows.set(s.host, func(in *ops.StandupRowInput) {
-		in.AppVersionID, in.ProcessID, in.ProcessStatus = res.AppVersionID, res.ProcessID, platform.ProcessStatusRunning
-	})
-	waited, err := ops.WaitProcesses(ctx, d.batch.client, []string{res.ProcessID}, nil)
-	var process ops.ProcessStatusResult
-	switch {
-	case err != nil:
-		rows.set(s.host, func(in *ops.StandupRowInput) {
-			in.Class, in.Cause = platform.ClassOf(err), fmt.Sprintf("waiting on %s's build failed: %v", s.host, err)
-		})
-		return
-	case waited.TimedOut || len(waited.Processes) == 0:
-		rows.set(s.host, func(in *ops.StandupRowInput) {
-			in.Class = platform.ClassUnreachable
-			in.Cause = fmt.Sprintf("%s still builds past the stand-up's wait (process %s); a second zerops_standup waits on it, never a second build", s.host, res.ProcessID)
-		})
-		return
-	default:
-		process = waited.Processes[0]
+	rows.set(s.host, func(in *ops.StandupRowInput) { in.AppVersionID, in.ProcessID = res.AppVersionID, res.ProcessID })
+	var processStatus string
+	if res.ProcessID != "" {
+		waited, err := ops.WaitProcesses(ctx, d.batch.client, []string{res.ProcessID}, nil)
+		switch {
+		case err != nil:
+			rows.set(s.host, func(in *ops.StandupRowInput) {
+				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %v", s.host, err)
+			})
+			return
+		case waited.TimedOut || len(waited.Processes) == 0:
+			return // still building: the run's end says so (endBuilding)
+		}
+		processStatus = waited.Processes[0].Status
+	} else {
+		// The commit's version was already building (F8): its process is the
+		// service's, waited on as the service settles; never a second build.
+		progress.say(fmt.Sprintf("%s already builds %s; waiting on it", s.host, shortCommit(commit)))
+		waited, err := ops.WaitServiceSettled(ctx, d.batch.client, d.batch.projectID, s.host, nil)
+		switch {
+		case err != nil:
+			rows.set(s.host, func(in *ops.StandupRowInput) {
+				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build in flight failed: %v", s.host, err)
+			})
+			return
+		case waited.TimedOut:
+			return
+		}
 	}
 	version := d.appVersion(ctx, svc.ID, res.AppVersionID)
 	rows.set(s.host, func(in *ops.StandupRowInput) {
-		in.ProcessStatus = process.Status
-		if version != nil {
-			in.AppVersionStatus = version.Status
+		in.ProcessStatus = processStatus
+		if version == nil {
+			in.Class = platform.ClassUnreachable
+			in.Cause = fmt.Sprintf("%s's app version %s could not be read after its build", s.host, res.AppVersionID)
+			return
 		}
-		if process.Status != platform.ProcessStatusFinished {
-			in.Class, in.Cause = platform.ClassFailed, d.buildFailure(ctx, s.host, process, version)
-		}
+		in.AppVersionStatus = version.Status
 	})
-	if process.Status != platform.ProcessStatusFinished {
+	if version == nil || version.Status != platform.AppVersionStatusActive {
 		return
 	}
 	if _, _, err := workflow.RecordExternalDeploy(d.batch.stateDir, s.host); err != nil {
@@ -390,28 +443,6 @@ func (d standupDeps) appVersion(ctx context.Context, serviceID, id string) *plat
 	return nil
 }
 
-// standupBuildLogLines is how many of a failed build's last log lines its
-// row's cause carries.
-const standupBuildLogLines = 5
-
-// buildFailure is a failed build in the source's words: the process's fail
-// reason, the version's status and its build log's last lines.
-func (d standupDeps) buildFailure(ctx context.Context, host string, process ops.ProcessStatusResult, version *platform.AppVersionEvent) string {
-	parts := []string{fmt.Sprintf("%s's build ended %s", host, process.Status)}
-	if version != nil {
-		parts[0] += " (" + version.Status + ")"
-	}
-	if process.FailReason != nil && *process.FailReason != "" {
-		parts = append(parts, *process.FailReason)
-	}
-	if version != nil && d.batch.logFetcher != nil {
-		if _, tail := ops.FetchBuildLogTail(ctx, d.batch.client, d.batch.logFetcher, d.batch.projectID, version, 200, standupBuildLogLines); len(tail) > 0 {
-			parts = append(parts, "build log: "+strings.Join(tail, " | "))
-		}
-	}
-	return strings.Join(parts, "; ")
-}
-
 // standupBearerAsks bounds how often the bearer's writer is asked after the
 // pool's first build, while it answers "written, not resolved yet" — a pool
 // whose status still lags the build it just finished.
@@ -432,10 +463,10 @@ func (d standupDeps) confirmBearer(ctx context.Context, pool string, rows *stand
 			in.BearerResolves = err == nil && bearer != ""
 			switch {
 			case err != nil:
-				in.Class, in.Cause = platform.ClassOf(err), err.Error()
+				in.Class, in.Cause = classOr(err), err.Error()
 			case pending && last:
-				in.Class = platform.ClassFailed
-				in.Cause = fmt.Sprintf("%s_LEASE_TOKEN on this zcp service is written and still does not resolve after %s's build", pool, pool)
+				in.Class = platform.ClassUnreachable
+				in.Cause = "still literal after " + pool + "'s build"
 			}
 		})
 		if !pending || last {
@@ -448,6 +479,31 @@ func (d standupDeps) confirmBearer(ctx context.Context, pool string, rows *stand
 	}
 }
 
+// bootSkipsFailed is, for the boot run, a service's newest version where it
+// ended failed: the boot builds only a service never built or with a build
+// in flight; rebuilding a failed one is the agent's zerops_standup call.
+// nil for any other run, or where the versions cannot be read.
+func (d standupDeps) bootSkipsFailed(ctx context.Context, svc *platform.ServiceStack) *platform.AppVersionEvent {
+	if !d.boot {
+		return nil
+	}
+	versions, err := d.batch.client.ListServiceAppVersions(ctx, svc.ID)
+	if err != nil {
+		return nil
+	}
+	for i := range versions {
+		v := &versions[i]
+		if v.Source == platform.AppVersionSourceNone {
+			continue
+		}
+		if ops.StandupRowOf(ops.StandupRowInput{AppVersionStatus: v.Status}).State == mate.RowFailed {
+			return v
+		}
+		return nil
+	}
+	return nil
+}
+
 // leaseDeps is what the bearer's writer reads the pool through.
 func (d standupDeps) leaseDeps() ops.LeaseDeps {
 	return ops.LeaseDeps{
@@ -457,13 +513,14 @@ func (d standupDeps) leaseDeps() ops.LeaseDeps {
 }
 
 // zeropsYamlSetups are the setups the repository's zerops.yaml names at
-// commit, and the file's name.
-func zeropsYamlSetups(ctx context.Context, scratch *hq.Scratch, commit string) ([]string, string, error) {
+// commit, and the file's name; on an error its class: a read's own, a file
+// absent or unreadable refused.
+func zeropsYamlSetups(ctx context.Context, scratch *hq.Scratch, commit string) ([]string, string, platform.ErrorClass, error) {
 	const yamlName = "zerops.yaml"
 	for _, name := range []string{yamlName, "zerops.yml"} {
 		body, found, err := scratch.File(ctx, commit, name)
 		if err != nil {
-			return nil, name, fmt.Errorf("could not read %s: %w", name, err)
+			return nil, name, classOr(err), fmt.Errorf("could not read %s: %w", name, err)
 		}
 		if !found {
 			continue
@@ -474,15 +531,15 @@ func zeropsYamlSetups(ctx context.Context, scratch *hq.Scratch, commit string) (
 			} `yaml:"zerops"`
 		}
 		if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
-			return nil, name, fmt.Errorf("%s does not parse: %w", name, err)
+			return nil, name, platform.ClassRefused, fmt.Errorf("%s does not parse: %w", name, err)
 		}
 		setups := make([]string, 0, len(doc.Zerops))
 		for _, z := range doc.Zerops {
 			setups = append(setups, z.Setup)
 		}
-		return setups, name, nil
+		return setups, name, "", nil
 	}
-	return nil, yamlName, errors.New("it has no " + yamlName)
+	return nil, yamlName, platform.ClassRefused, errors.New("it has no " + yamlName)
 }
 
 // askHQ makes one HQ call, waiting on an HQ that does not answer for up to
