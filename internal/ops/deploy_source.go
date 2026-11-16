@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -104,7 +103,7 @@ func removeLeftScratches() {
 	for _, dir := range dirs {
 		pidText, _, _ := strings.Cut(strings.TrimPrefix(filepath.Base(dir), scratchPrefix), "-")
 		pid, err := strconv.Atoi(pidText)
-		if err != nil || pid == os.Getpid() || !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		if err != nil || pid == os.Getpid() || !processGone(pid) {
 			continue
 		}
 		_ = os.RemoveAll(dir)
