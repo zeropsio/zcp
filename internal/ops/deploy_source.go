@@ -2,7 +2,10 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"io"
+
+	"github.com/zeropsio/zcp/internal/hq"
 )
 
 // DeploySource yields the deploy source of a commit by HQ's rule: the
@@ -16,4 +19,19 @@ type DeploySource interface {
 	// ServiceMeta holds for the service) as the archive the Zerops upload
 	// takes. The caller closes it.
 	Open(ctx context.Context, repository, commit string) (io.ReadCloser, error)
+}
+
+// NewHQDeploySource is the deploy source over HQ's Git door for the Mate
+// identity id. The stand-up and the boot entry wire it; B1 fills the body.
+func NewHQDeploySource(httpClient hq.Doer, id hq.Identity) DeploySource {
+	return hqDeploySource{httpClient: httpClient, id: id}
+}
+
+type hqDeploySource struct {
+	httpClient hq.Doer
+	id         hq.Identity
+}
+
+func (hqDeploySource) Open(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
 }
