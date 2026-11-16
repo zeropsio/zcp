@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -36,7 +37,41 @@ const (
 type LeaseReleaseAnswer struct {
 	Released []LeaseReleasedEntry
 	Refused  []LeaseRefusedEntry
-	Error    string
+	// Error is the failure's message; "" when the call did not fail.
+	Error string
+	// Failure is the rest of the failure's wire beside Error; nil for a
+	// failure zcp has no error of (a usage refusal).
+	Failure *LeaseReleaseFailure
+}
+
+// LeaseReleaseFailure is the error wire of a failed release beside its
+// message: the code, the suggestion, the source's whole output as diagnostic
+// and the failure's class (platform.ClassOf) — so the Mate reads the cause,
+// never the message alone.
+type LeaseReleaseFailure struct {
+	Code       string              `json:"code,omitempty"`
+	Suggestion string              `json:"suggestion,omitempty"`
+	APICode    string              `json:"apiCode,omitempty"`
+	Diagnostic string              `json:"diagnostic,omitempty"`
+	Class      platform.ErrorClass `json:"class,omitempty"`
+}
+
+// leaseReleaseFailed is the answer of a call err failed: its message, and
+// the rest of its wire as convertError writes it.
+func leaseReleaseFailed(err error) LeaseReleaseAnswer {
+	var a LeaseReleaseAnswer
+	a.Error, a.Failure = leaseReleaseFailure(err)
+	return a
+}
+
+// leaseReleaseFailure is err's message and the rest of its wire.
+func leaseReleaseFailure(err error) (string, *LeaseReleaseFailure) {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		pe = platform.NewPlatformError(platform.ErrUnknown, err.Error(), "")
+	}
+	w := platformErrorToWire(pe)
+	return w.Error, &LeaseReleaseFailure{Code: w.Code, Suggestion: w.Suggestion, APICode: w.APICode, Diagnostic: w.Diagnostic, Class: platform.ClassOf(err)}
 }
 
 // LeaseReleasedEntry is a lease the call released and what became of its
@@ -74,10 +109,15 @@ type LeaseInUseEntry struct {
 func (a LeaseReleaseAnswer) MarshalJSON() ([]byte, error) {
 	switch {
 	case a.Error != "":
+		failure := a.Failure
+		if failure == nil {
+			failure = &LeaseReleaseFailure{}
+		}
 		out := struct {
-			Error    string               `json:"error"`
+			Error string `json:"error"`
+			*LeaseReleaseFailure
 			Released []LeaseReleasedEntry `json:"released,omitempty"`
-		}{a.Error, a.Released}
+		}{a.Error, failure, a.Released}
 		return json.Marshal(out)
 	case len(a.Refused) > 0:
 		return json.Marshal(struct {
@@ -107,7 +147,7 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 	case errors.Is(err, ops.ErrNoLeaseOfBranch):
 		return LeaseReleaseAnswer{}, LeaseReleaseExitReleased
 	case err != nil:
-		return LeaseReleaseAnswer{Error: err.Error()}, LeaseReleaseExitFailed
+		return leaseReleaseFailed(err), LeaseReleaseExitFailed
 	}
 	var inUse []LeaseRefusedEntry
 	for _, l := range group {
@@ -131,13 +171,17 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 	case errors.Is(err, ops.ErrNoLeaseOfBranch):
 		return LeaseReleaseAnswer{}, LeaseReleaseExitReleased
 	case err != nil:
-		return LeaseReleaseAnswer{Error: err.Error()}, LeaseReleaseExitFailed
+		return leaseReleaseFailed(err), LeaseReleaseExitFailed
 	}
 	var answer LeaseReleaseAnswer
 	var failed []string
+	var first error
 	for _, v := range change.Leases {
 		if v.Error != "" {
 			failed = append(failed, fmt.Sprintf("%s: %s", v.Alias, v.Error))
+			if first == nil {
+				first = v.Failure
+			}
 			continue
 		}
 		answer.Released = append(answer.Released, LeaseReleasedEntry{Lease: v.Alias, Outcome: v.ReleaseOutcome()})
@@ -148,6 +192,10 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 	// clock's — the answer is not.
 	slices.SortFunc(answer.Released, func(a, b LeaseReleasedEntry) int { return strings.Compare(a.Lease, b.Lease) })
 	if len(failed) > 0 {
+		// The wire is the first failed lease's error, whole (code, output,
+		// class: ops.LeaseView.Failure); the message names every lease that
+		// stays held.
+		_, answer.Failure = leaseReleaseFailure(first)
 		answer.Error = "the orchestrator would not release every lease of branch " + branch + ", which stay held (" + strings.Join(failed, "; ") + "); the same call again releases what is left"
 		return answer, LeaseReleaseExitFailed
 	}

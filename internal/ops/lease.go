@@ -219,6 +219,10 @@ type LeaseView struct {
 	// Error is why a release of the lease's branch could not release this
 	// lease, which stays held and recorded (DP-23); "" on every other view.
 	Error string `json:"error,omitempty"`
+	// Failure is the error Error says, whole — the source's code, words and
+	// class — for a caller that passes it on as a wire (zcp lease release);
+	// nil wherever Error is "".
+	Failure error `json:"-"`
 	// Prepare is what the repository's prepare command did after an
 	// acquire's checkout (DP-14); nil when none ran.
 	Prepare *LeasePrepare `json:"prepare,omitempty"`
@@ -350,22 +354,61 @@ func resolverFrom(d LeaseDeps, services []platform.ServiceStack) poolResolver {
 }
 
 // orchestratorFor checks svc is a pool and builds the client of its orchestrator
-// (resolvePool's work once the service is in hand).
+// (resolvePool's work once the service is in hand). A pool zcp reads no bearer
+// for is refused (noBearerError); only an acquire writes one (acquireBearers).
 func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack) (*resolvedPool, error) {
-	hostname := svc.Name
+	if err := checkPoolType(svc); err != nil {
+		return nil, err
+	}
+	token, missing, err := readPoolBearer(ctx, d, svc)
+	if err != nil {
+		return nil, err
+	}
+	if missing != nil {
+		return nil, missing.refusal()
+	}
+	return orchestratorClient(d, svc, token), nil
+}
+
+// checkPoolType refuses a service that is not a Swarm pool, by name.
+func checkPoolType(svc *platform.ServiceStack) error {
 	typ := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	if !topology.IsPoolType(typ) {
-		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", hostname, typ),
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", svc.Name, typ),
 			"zerops_lease leases a container of a pool (swarm@1 or swarm-vm@1); pass the pool's hostname")
 	}
+	return nil
+}
+
+// orchestratorClient is the client of pool svc's orchestrator with bearer token.
+func orchestratorClient(d LeaseDeps, svc *platform.ServiceStack, token string) *resolvedPool {
+	return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(svc.Name), token)}
+}
+
+// missingBearer is why zcp read no bearer for a pool: why the env API did not
+// give it, and what the live env held instead.
+type missingBearer struct {
+	pool, reason string
+	unresolved   []string
+}
+
+// refusal is noBearerError of m.
+func (m *missingBearer) refusal() error { return noBearerError(m.pool, m.reason, m.unresolved) }
+
+// readPoolBearer reads pool svc's bearer: the live env (liveBearer), then the
+// pool's own env through the API. A pool neither gives one for answers
+// missing; a read of the pool's env that failed answers its error, with the
+// platform's words and class.
+func readPoolBearer(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack) (string, *missingBearer, error) {
+	hostname := svc.Name
 	token, unresolved := liveBearer(d, hostname)
 	if token != "" {
-		return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
+		return token, nil, nil
 	}
 	envs, err := FetchServiceEnv(ctx, d.Client, svc.ID)
 	if err != nil {
-		return nil, fmt.Errorf("read %s env: %w", hostname, err)
+		return "", nil, fmt.Errorf("read %s env: %w", hostname, err)
 	}
 	scalars, masked := EnvScalars(envs)
 	if token = scalars[leaseTokenKey]; token == "" || unresolvedReference.MatchString(token) {
@@ -373,9 +416,9 @@ func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStac
 		if slices.Contains(masked, leaseTokenKey) {
 			reason = leaseTokenKey + " is masked for this zcp's API token"
 		}
-		return nil, noBearerError(hostname, reason, unresolved)
+		return "", &missingBearer{pool: hostname, reason: reason, unresolved: unresolved}, nil
 	}
-	return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
+	return token, nil, nil
 }
 
 // liveBearer reads a pool's bearer from the container's live env:
@@ -397,9 +440,11 @@ func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string) {
 	return "", unresolved
 }
 
-// noBearerError is the refusal of a pool zcp finds no bearer for: why the env
-// API did not give it, what the live env held instead, and the different-name
-// reference to add — never the same-name one, which cannot resolve.
+// noBearerError is the refusal of a pool zcp finds no bearer for, outside an
+// acquire: why the env API did not give it, what the live env held instead,
+// and that an acquire writes the reference (EnsureBearer) — a same-name
+// variable, which keeps every reference to its name literal, is named for
+// deletion.
 func noBearerError(pool, reason string, unresolved []string) error {
 	apiKey := pool + "_" + leaseTokenKey
 	aliasKey := pool + "_" + leaseTokenAliasKey
@@ -412,7 +457,7 @@ func noBearerError(pool, reason string, unresolved []string) error {
 	if len(unresolved) > 0 && strings.HasPrefix(unresolved[0], apiKey+" ") {
 		fmt.Fprintf(&suggestion, "This zcp service has a variable %s holding ${%s}: a variable named like the reference it holds never resolves, and while it exists every other reference to that name on the service stays unresolved too — delete it. ", apiKey, apiKey)
 	}
-	fmt.Fprintf(&suggestion, "Add a service env var %s=${%s} on this zcp service; it reaches the container's live env within about 15 s, whatever the envIsolation. Never name it %s: a variable named like the reference it holds stays the literal text", aliasKey, apiKey, apiKey)
+	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
 }
 
@@ -1069,7 +1114,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	// The rewire, the release and the drop of the record run under the
 	// group's lock (lockLeaseGroup): a release of a sibling, or an acquire's
 	// rewire, computes its overlay before or after this one, never across it.
-	unlockGroup, err := lockReleaseGroup(ctx, d, rec, leaseReleaseCall(alias, force))
+	unlockGroup, err := lockReleaseGroup(ctx, d, []leaseRecord{rec}, leaseReleaseCall(alias, force))
 	if err != nil {
 		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 	}
@@ -1101,11 +1146,12 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 // releaseLost is the release of a lease whose container is no longer its own
 // (gone, free, another holder's — why says which): the branch's other leases
 // get the overlay without it, as before any release (DP-26), and the record
-// is dropped as lost with its mount and alias stanza. Nothing is read from
+// is dropped as lost with its mount and alias stanza, under the group's lock
+// and the lease's key lock (lockReleaseGroup). Nothing is read from
 // the container and the orchestrator releases and deletes nothing: a free
 // container is reset by a release whatever lease it carries.
 func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
-	unlock, err := lockRecordGroup(ctx, d.StateDir, rec)
+	unlock, err := lockReleaseGroup(ctx, d, []leaseRecord{rec}, leaseReleaseCall(rec.alias(), false))
 	if err != nil {
 		return LeaseChange{}, err
 	}
