@@ -65,7 +65,8 @@ func (s *leaseSSH) checkouts() []sshCall {
 	defer s.mu.Unlock()
 	var out []sshCall
 	for _, c := range s.calls {
-		if strings.Contains(c.command, "fetch -q --prune origin") {
+		// A repository on HQ fetches blobless.
+		if strings.Contains(c.command, "fetch -q --prune origin") || strings.Contains(c.command, "fetch -q --prune --filter=blob:none origin") {
 			out = append(out, c)
 		}
 	}

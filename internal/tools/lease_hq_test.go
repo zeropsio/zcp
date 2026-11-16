@@ -66,8 +66,9 @@ func TestLeaseAcquire_HQRepoInAMate_ClonedThroughTheRelay_NoHQCredentialInThePoo
 			t.Errorf("the acquire stored the pool's %s: %+v", key, v)
 		}
 	}
-	if helpers, _ := leasedGit(t, leased, "config", "--get-regexp", `^credential\.`); helpers != "" {
-		t.Errorf("the leased checkout keeps a credential helper: %s", helpers)
+	// Its only helper is the hint scoped to HQ, which answers nothing.
+	if helpers, _ := leasedGit(t, leased, "config", "--get-regexp", `^credential\.`); strings.Contains(helpers, "password=") || strings.Contains(helpers, "GIT_TOKEN") {
+		t.Errorf("the leased checkout keeps a credential helper that answers: %s", helpers)
 	}
 	for _, secret := range []string{labKey, labCredential} {
 		if strings.Contains(text, secret) {

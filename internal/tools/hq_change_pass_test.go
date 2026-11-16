@@ -270,7 +270,7 @@ func TestHQChangeStanding_CorePushAtHead_SaidOnce(t *testing.T) {
 			want: []string{line,
 				"`zcp git boxpool-6 fetch origin && zcp git boxpool-6 merge --ff-only origin/badge`",
 				"`zcp git hqpool-4 fetch origin && zcp git hqpool-4 merge --ff-only origin/badge`"},
-			never: []string{"in your own shell", "zcp git"}, wantHead: corePushMerge},
+			never: []string{"in your own shell", "zcp git appsdev", "in its dev service"}, wantHead: corePushMerge},
 		{name: "at head, and main moved on past the squash", now: corePushed(corePushMerge, true, true),
 			want: []string{line, ff, "is behind main"}, wantHead: corePushMerge},
 		{name: "pushed past HQ's merge commit", now: corePushed(corePushLater, true, false), never: []string{"HQ brought main"}},
