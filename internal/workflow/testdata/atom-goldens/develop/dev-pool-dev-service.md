@@ -88,26 +88,32 @@ result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`
 — one per pool.
 
-**Stage.** The part's stage tracks `main`, and a branch is tried on its
-lease's preview URL. The preview runs the dev servers, never the production
-build, so check the branch on the stage before its change is described.
+**Stage.** The part's stage is your test bench: it runs `main` from its
+birth, then the last work deployed to it for a check, and nothing puts
+`main` back on it. A branch is tried on its lease's preview URL. The preview
+runs the dev servers, never the production build, so check the branch on the
+stage before its change is described.
 
 **Stage check.** Deploy the pushed branch from its lease,
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`, verify it with
-`zerops_verify serviceHostname="<stage>"`, then put main back at once:
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
+with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
+check. A build that fails leaves the stage on what it ran; fix the branch,
+push, and check again. Say in the change's description that it built and
+verified on the stage. Run one branch's check at a time per stage: a check
+from another lease replaces it. Deploy `main` onto a stage only when you or
+the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
-— the deploy fetches `main` first, so this ships main as the remote has it now.
-A build that fails leaves the stage on what it ran; fix the branch, push, and
-check again. Say in the change's description that it built and verified on
-the stage. Run one branch's check at a time per stage: a check from another
-lease replaces it. Once a change merges, put main on every stage it touched in
-one call, each target from a lease of its own part:
-`zerops_deploy_batch targets=[{"sourceService":"<alias>","targetService":"<stage>","sha":"origin/main"}, …]`
-— a target without `sha` ships its lease's branch, not main.
-A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
-names in its `warnings` the verify and the call that puts main back. Verify a container with
+ships `origin/main` as the lease last fetched it: run
+`zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
+
+**A pool or stage that is not built.** zcp builds a part's pool and stage
+from `main` at the Mate's birth; `zerops_standup` answers each one's row —
+its state, its cause in the source's words and its `next` step, the way on.
+A failed stage of a pool that is ready is fixed from a branch lease, as a
+stage check is; anything else is fixed on `main` through a change, then
+`zerops_standup` again builds `main`'s new head.
 
 **Data.** Every lease of a part uses the part's dev database. The pool's
 service env reaches every leased container, so the database it names — wired
@@ -164,8 +170,10 @@ leases are keyed by branch, so they never meet.
   change with `service="<its alias>"` and describes it the same way.
 - Report each branch's change and its lease preview URLs to the person.
 - Once one change merges, the others are behind `main`. Bring one up to date
-  only when the person asks or it no longer merges cleanly: over SSH in a
-  lease of it, `git fetch origin && git merge origin/main`, check the preview, push,
+  only when the person asks or it no longer merges cleanly: in a lease of
+  it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
+  (a repository outside this Mate's HQ over SSH:
+  `git fetch origin && git merge origin/main`), check the preview, push,
   sync the group's other leases and describe it again — never rebase, never
   force-push.
 - A change that needs another's unmerged work may be cut from that branch;
@@ -253,7 +261,8 @@ leases are keyed by branch, so they never meet.
 - Never set `envIsolation: none` on the pool: every service of the project
   would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
   pool's token references it under another name — this zcp service as
-  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`. A variable named
+  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`, which an acquire writes itself
+  when it finds no usable token. A variable named
   `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text,
   as does any reference to a pool never deployed until its first deploy.
 - A container answers from anywhere in the project on every port it listens

@@ -174,8 +174,8 @@ func TestExtractCommitToTemp_RunsArchivePipedToTar(t *testing.T) {
 	if !strings.Contains(script, "abc123") {
 		t.Errorf("script = %q, want the sha", script)
 	}
-	if !strings.Contains(script, "| tar -x -C") {
-		t.Errorf("script = %q, want a pipe into tar -x -C", script)
+	if strings.Contains(script, "| tar") || !strings.Contains(script, "-o '/tmp/zcp-1.tar'") || !strings.Contains(script, "&& tar -xf") {
+		t.Errorf("script = %q, want git archive to a file, then tar -xf of it: a pipe reports tar's exit, never git's", script)
 	}
 	if !strings.Contains(script, "/tmp/zcp-1") {
 		t.Errorf("script = %q, want the tmp dir as the tar extract target", script)

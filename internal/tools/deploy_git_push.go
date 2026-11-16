@@ -51,6 +51,42 @@ func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, wo
 	}
 }
 
+// gitPushCheckFailure is a git-push pre-flight check (what) that failed on
+// hostname: ssh's or the command's own words verbatim (gitPushErrorDetail),
+// the class when platform.ClassOf gives one, and a next step from that class.
+func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform.PlatformError {
+	class := platform.ClassOf(err)
+	head := fmt.Sprintf("%s on %s failed", what, hostname)
+	if class != "" {
+		head += " (" + string(class) + ")"
+	}
+	next := "Read the output above: the check ran in the container and failed there."
+	switch {
+	case class.WaitedOn():
+		next = fmt.Sprintf("%s did not answer ssh, which may change by waiting: check its status (zerops_discover) and retry once it runs.", hostname)
+	case class == platform.ClassRefused:
+		next = fmt.Sprintf("ssh did not get into %s, and waiting alone will not change that: the output above names the cause.", hostname)
+	}
+	pe := platform.NewPlatformError(platform.ErrSSHDeployFailed, head+": "+gitPushErrorDetail(err, out), next)
+	var sshErr *platform.SSHExecError
+	if errors.As(err, &sshErr) {
+		pe.Diagnostic = sshErr.Output
+	}
+	pe.Cause = err
+	return pe
+}
+
+// gitPushValidationNotRun is the warning of a git-push whose zerops.yaml was
+// not validated before the push: err's own words verbatim, with its class
+// when platform.ClassOf gives one.
+func gitPushValidationNotRun(err error) string {
+	head := "zerops.yaml was not validated before the push"
+	if class := platform.ClassOf(err); class != "" {
+		head += " (" + string(class) + ")"
+	}
+	return head + ": " + err.Error()
+}
+
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
 // Guides the agent through the decision question and setup steps.
 type gitPushPrerequisites struct {
@@ -266,7 +302,7 @@ func hqGitPushRefusal(hostname string, mate bool) *platform.PlatformError {
 
 // leaseGitPushRefusal refuses a git-push from a lease: the lease pushes its own
 // branch itself (DP-6), its branch is tried on the lease's preview URL and
-// checked on a stage by a deploy that puts main back (DP-8). For a lease of a repository on this Mate's
+// checked on a stage by a deploy from the lease, which the stage keeps (DP-8). For a lease of a repository on this Mate's
 // HQ the push it names keeps HQ's rule — a branch of the agent's own, never
 // `main`, never forced (DP-12).
 func leaseGitPushRefusal(lease ops.LeaseTargetInfo, rt runtime.Info) *platform.PlatformError {
@@ -277,7 +313,7 @@ func leaseGitPushRefusal(lease ops.LeaseTargetInfo, rt runtime.Info) *platform.P
 	}
 	return platform.NewPlatformError(platform.ErrInvalidUsage,
 		fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", alias),
-		fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). A stage tracks main: for the branch's stage check, deploy it with zerops_deploy sourceService=%q targetService=<stage>, verify it with zerops_verify serviceHostname=<stage>, then put main back with zerops_deploy sourceService=%q targetService=<stage> sha=\"origin/main\"", push, alias, alias, alias))
+		fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). For the branch's stage check, deploy it with zerops_deploy sourceService=%q targetService=<stage> and verify it with zerops_verify serviceHostname=<stage>", push, alias, alias))
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -472,12 +508,9 @@ func handleGitPush(
 	// touched the meta.
 	committedOut, err := sshDeployer.ExecSSH(ctx, hostname, committedCodeCheckCmd(workingDir))
 	if err != nil {
-		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err), topology.FailureClassNetwork)
-		return convertError(platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("cannot check committed code on %s: %s", hostname, err),
-			"Verify the container is running and SSH is accessible",
-		)), nil, nil
+		pe := gitPushCheckFailure(err, committedOut, hostname, "the committed-code check")
+		recordAttempt(pe.Message, topology.FailureClassNetwork)
+		return convertError(pe), nil, nil
 	}
 	if strings.TrimSpace(string(committedOut)) != "1" {
 		recordAttempt("no committed code at workingDir", topology.FailureClassConfig)
@@ -496,23 +529,25 @@ func handleGitPush(
 	// NOTHING_TO_PUSH) so the agent is told before the terminal message, not
 	// after. Best-effort: a probe transport error is non-blocking. Parity with
 	// the local path via the shared dirtyTreeWarning owner.
-	var dirtyWarn string
-	if porcelainOut, statusErr := sshDeployer.ExecSSH(ctx, hostname, gitStatusPorcelainCmd(workingDir)); statusErr == nil {
+	// A probe that did not run says so in warnings, with its cause.
+	var dirtyWarn, dirtyNotRun string
+	porcelainOut, statusErr := sshDeployer.ExecSSH(ctx, hostname, gitStatusPorcelainCmd(workingDir))
+	if statusErr == nil {
 		dirtyWarn = dirtyTreeWarning(
 			string(porcelainOut),
 			fmt.Sprintf(`ssh %s "cd %s && git add -A && git commit -m '<msg>'"`, hostname, workingDir),
 		)
+	} else {
+		dirtyNotRun = "Uncommitted changes were not checked, so this result cannot say whether any were left behind: " +
+			gitPushCheckFailure(statusErr, porcelainOut, hostname, "the uncommitted-changes check").Message
 	}
 
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err), topology.FailureClassNetwork)
-		return convertError(platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("cannot check GIT_TOKEN on %s: %s", hostname, err),
-			"Verify the container is running and SSH is accessible",
-		)), nil, nil
+		pe := gitPushCheckFailure(err, tokenOut, hostname, "the GIT_TOKEN check")
+		recordAttempt(pe.Message, topology.FailureClassNetwork)
+		return convertError(pe), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
 		recordAttempt("GIT_TOKEN missing in container session", topology.FailureClassCredential)
@@ -548,7 +583,13 @@ func handleGitPush(
 	// lives in the container at workingDir; fetch via SSH cat and pass to
 	// the content-based entry point. Any failure aborts the push.
 	// configFile names the file in the failure classification.
+	// A validation that could not run says so in warnings, with its cause:
+	// the push goes on, and the build reports what the platform finds.
+	var validationNotRun string
 	configFile, yamlContent, yamlErr := ops.ReadRepoConfigFile(ctx, sshDeployer, hostname, workingDir)
+	if yamlErr != nil {
+		validationNotRun = gitPushValidationNotRun(yamlErr)
+	}
 	if yamlErr == nil && yamlContent != "" {
 		setupName := input.Setup
 		if resolvedSetup, recordErr := recordDeploySetupMetaFromContent(stateDir, hostname, input.Setup, yamlContent); recordErr != nil {
@@ -564,7 +605,14 @@ func handleGitPush(
 		if setupName == "" {
 			setupName = hostname
 		}
-		if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
+		var target *platform.ServiceStack
+		if client != nil && projectID != "" {
+			var lookupErr error
+			if target, lookupErr = ops.LookupService(ctx, client, projectID, hostname); lookupErr != nil {
+				validationNotRun = gitPushValidationNotRun(lookupErr)
+			}
+		}
+		if target != nil {
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil
@@ -629,11 +677,17 @@ func handleGitPush(
 		}
 
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
-		return convertError(platform.NewPlatformError(
+		failed := "git-push from " + hostname + " failed"
+		if class := platform.ClassOf(err); class != "" {
+			failed += " (" + string(class) + ")"
+		}
+		pushErr := platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
+			failed+": "+detail,
 			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
-		), WithFailureClassification(classification)), nil, nil
+		)
+		pushErr.Cause = err
+		return convertError(pushErr, WithFailureClassification(classification)), nil, nil
 	}
 
 	result := &ops.GitPushResult{
@@ -682,9 +736,12 @@ func handleGitPush(
 		// build watch (it would emit a false "Push landed…" nextActions). A
 		// dirty tree is the usual cause: the dirtyWarn below already names the
 		// uncommitted changes and the commit contract.
-		if dirtyWarn != "" {
+		switch {
+		case dirtyWarn != "":
 			result.NextActions = `Commit the changes listed in warnings (git-push pushes the committed HEAD only), then re-run zerops_deploy strategy="git-push".`
-		} else {
+		case dirtyNotRun != "":
+			result.NextActions = "The remote already has this HEAD. Whether uncommitted changes were left behind is unknown: the check did not run (warnings say why)."
+		default:
 			result.NextActions = "Working tree is clean and the remote already has this HEAD — nothing to deploy."
 		}
 	default:
@@ -707,6 +764,12 @@ func handleGitPush(
 	var warnings []string
 	if dirtyWarn != "" {
 		warnings = append(warnings, dirtyWarn)
+	}
+	if dirtyNotRun != "" {
+		warnings = append(warnings, dirtyNotRun)
+	}
+	if validationNotRun != "" {
+		warnings = append(warnings, validationNotRun)
 	}
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
