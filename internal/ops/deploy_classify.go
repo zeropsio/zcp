@@ -54,6 +54,7 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	pe := &platform.PlatformError{
 		Code:       platform.ErrSSHDeployFailed,
 		Diagnostic: output, // ALWAYS preserve full output for LLM
+		Cause:      err,    // the ssh error: its exit, read by platform.ClassOf
 	}
 
 	// Only classify OS/SSH-level errors — these NEVER appear in zcli progress output.

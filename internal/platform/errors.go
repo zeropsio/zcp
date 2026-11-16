@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -238,13 +239,9 @@ type SSHExecError struct {
 	Err      error  // underlying exec error (exit code, signal, etc.)
 }
 
-// Error is the exit and the tail of Output — its last sshErrorTailLines
-// lines, at most sshErrorTailBytes — so the source's own words reach every
-// message built from it; Output stays whole for the diagnostic.
+// Error is the host and the exit; Output — which may hold the command's
+// stdout — stays out of it and reaches the agent whole as the diagnostic.
 func (e *SSHExecError) Error() string {
-	if tail := outputTail(e.Output); tail != "" {
-		return fmt.Sprintf("ssh %s: %s: %s", e.Hostname, e.Err.Error(), tail)
-	}
 	return fmt.Sprintf("ssh %s: %s", e.Hostname, e.Err.Error())
 }
 
@@ -344,11 +341,13 @@ const (
 // ClassOf is err's class: the one derivation of the class, first from an
 // error that states its own (a Classed in err's chain: a site that knows what
 // only it can, such as a readiness probe or a commit deploy's refusal), then
-// from a PlatformError, an SSHExecError (SSHExitCode) or a network error. ""
-// for nil, a stop the caller asked for (context.Canceled), and an answer zcp
-// does not classify — an arbitrary command's own exit, passed on verbatim:
-// exit status alone cannot tell a refusal from the command's own failure,
-// and zcp never matches the platform's text.
+// from an SSHExecError (SSHExitCode), a PlatformError or the transport.
+// Refused only on a positive marker — the platform API's own 4xx answer
+// (APICode); unreachable on a 5xx, a 429, a timeout, a dropped connection
+// (EOF) or a network error; failed on a failed deploy. "" for nil, a stop the
+// caller asked for (context.Canceled), and anything zcp does not classify —
+// an arbitrary command's own exit, zcp's own refusal of its input — passed on
+// verbatim: zcp never matches the platform's text.
 func ClassOf(err error) ErrorClass {
 	if err == nil {
 		return ""
@@ -360,11 +359,11 @@ func ClassOf(err error) ErrorClass {
 	if errors.Is(err, context.Canceled) {
 		return ""
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return ClassUnreachable
-	}
 	var sshErr *SSHExecError
 	if errors.As(err, &sshErr) {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return ClassUnreachable
+		}
 		return classOfSSH(sshErr.Output, SSHExitCode(err))
 	}
 	var pe *PlatformError
@@ -374,16 +373,30 @@ func ClassOf(err error) ErrorClass {
 			return ClassUnreachable
 		case pe.Code == ErrDeployFailed:
 			return ClassFailed
+		case pe.APICode != "":
+			return ClassRefused
 		}
-		if _, network := MapNetworkError(pe.Cause); network {
-			return ClassUnreachable
-		}
-		return ClassRefused
 	}
-	if _, network := MapNetworkError(err); network {
+	if transportFailed(err) {
 		return ClassUnreachable
 	}
 	return ""
+}
+
+// transportFailed reports whether err is the way to a source failing rather
+// than the source's answer: a timeout (context deadline, a net.Error's — a
+// TLS handshake's among them), a connection that ended mid-answer (EOF), or a
+// network error.
+func transportFailed(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	_, network := MapNetworkError(err)
+	return network
 }
 
 // sshUnreachableExit is the exit status ssh itself ends with when it did not
@@ -392,27 +405,20 @@ const sshUnreachableExit = 255
 
 // classOfSSH is the class of a command run over ssh that ended with exit
 // and output: unreachable when nothing could run — the container at its
-// process limit (fork answered EAGAIN), or ssh's own 255 — except a 255 whose
-// connect timed out, which is refused: no container answers the address, and
-// waiting does not bring one (live, 2026-11-16: a stopping or starting
-// container answers "Connection refused", a stopped service "Connection timed
-// out"). The text read is the ssh client's and the kernel's, never the
-// platform's. Any other exit is the command's own: "".
+// process limit (fork answered EAGAIN), or ssh's own 255, whatever its words
+// (live, 2026-11-16: a stopping or starting container answers "Connection
+// refused", a stopped one "Connection timed out", and both pass with a
+// restart; a wrong wait costs one bound, a wrong refusal tells the agent to
+// give up). Any other exit is the command's own: "".
 func classOfSSH(output string, exit int) ErrorClass {
 	lower := strings.ToLower(output)
 	if strings.Contains(lower, "fork") && strings.Contains(lower, "resource temporarily unavailable") {
 		return ClassUnreachable
 	}
-	if exit != sshUnreachableExit {
-		return ""
+	if exit == sshUnreachableExit {
+		return ClassUnreachable
 	}
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "connect to host") && strings.HasSuffix(line, "Connection timed out") {
-			return ClassRefused
-		}
-	}
-	return ClassUnreachable
+	return ""
 }
 
 // classOfProbe is the class of a readiness probe's last error (SSHProbeError.Class).
@@ -481,10 +487,19 @@ func (e *SSHProbeError) Error() string {
 	if c := e.Class(); c != "" {
 		class = " (" + string(c) + ")"
 	}
-	if e.Waited > 0 {
-		return fmt.Sprintf("ssh to %s did not answer within %s%s; last: %s", e.Hostname, e.Waited, class, e.Last.Error())
+	last := e.Last.Error()
+	var sshErr *SSHExecError
+	if errors.As(e.Last, &sshErr) {
+		// The probe runs `true`, which writes nothing: its output is ssh's
+		// or the platform's own words, safe to carry in the message.
+		if tail := outputTail(sshErr.Output); tail != "" {
+			last += ": " + tail
+		}
 	}
-	return fmt.Sprintf("ssh to %s did not answer%s, not waited on: %s", e.Hostname, class, e.Last.Error())
+	if e.Waited > 0 {
+		return fmt.Sprintf("ssh to %s did not answer within %s%s; last: %s", e.Hostname, e.Waited, class, last)
+	}
+	return fmt.Sprintf("ssh to %s did not answer%s, not waited on: %s", e.Hostname, class, last)
 }
 
 func (e *SSHProbeError) Unwrap() error { return e.Last }

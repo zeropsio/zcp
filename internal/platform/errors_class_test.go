@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"io"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/zeropsio/zerops-go/apiError"
@@ -16,16 +18,16 @@ func TestErrorClass_E1_SSHConnectionRefusedIsUnreachableAndWaitedOn(t *testing.T
 	}
 }
 
-// witness: internal/platform/errors.go | strings.HasSuffix(line, "Connection timed out") → strings.HasSuffix(line, "Connection refused")
-func TestErrorClass_E2_SSHConnectTimedOutIsRefusedNotWaitedOn(t *testing.T) {
+// witness: internal/platform/errors.go | if exit == sshUnreachableExit { → if exit == sshUnreachableExit && !strings.Contains(output, "timed out") {
+func TestErrorClass_E2_SSHConnectTimedOutIsUnreachableAndWaitedOn(t *testing.T) {
 	t.Parallel()
 	err := &SSHExecError{Hostname: "webstage", Output: "ssh: connect to host webstage port 22: Connection timed out\n", Err: ExitStatusError(255)}
-	if c := ClassOf(err); c != ClassRefused || c.WaitedOn() {
-		t.Fatalf("ClassOf = %q (waited on %v), want refused and not waited on", c, c.WaitedOn())
+	if c := ClassOf(err); c != ClassUnreachable || !c.WaitedOn() {
+		t.Fatalf("ClassOf = %q (waited on %v), want unreachable and waited on", c, c.WaitedOn())
 	}
 }
 
-// witness: internal/platform/errors.go | if exit != sshUnreachableExit { → if exit == 0 {
+// witness: internal/platform/errors.go | if exit == sshUnreachableExit { → if exit != 0 {
 func TestErrorClass_E4_ArbitraryCommandExitIsUnclassified(t *testing.T) {
 	t.Parallel()
 	err := &SSHExecError{Hostname: "appdev", Output: "fatal: not a git repository (or any of the parent directories): .git\n", Err: ExitStatusError(128)}
@@ -54,5 +56,42 @@ func TestErrorClass_E6_ForbiddenIsRefusedNotWaitedOn(t *testing.T) {
 	err := mapSDKError(apiError.Error{HttpStatusCode: http.StatusForbidden, ErrorCode: "noAccess", Message: "no access"}, "")
 	if c := ClassOf(err); c != ClassRefused || c.WaitedOn() {
 		t.Fatalf("ClassOf = %q (waited on %v), want refused and not waited on", c, c.WaitedOn())
+	}
+}
+
+// tlsHandshakeTimeoutError is what net/http answers when the TLS handshake does
+// not finish in time: a net.Error whose Timeout is true.
+type tlsHandshakeTimeoutError struct{}
+
+func (tlsHandshakeTimeoutError) Error() string   { return "net/http: TLS handshake timeout" }
+func (tlsHandshakeTimeoutError) Timeout() bool   { return true }
+func (tlsHandshakeTimeoutError) Temporary() bool { return true }
+
+// witness: internal/platform/errors.go | errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) → errors.Is(err, io.ErrUnexpectedEOF)
+func TestErrorClass_E10_ConnectionEndedMidAnswerIsUnreachable(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{io.EOF, io.ErrUnexpectedEOF} {
+		err := mapSDKError(&url.Error{Op: "Get", URL: "https://api.app-prg1.zerops.io/api/rest/public/service-stack/x", Err: cause}, "")
+		if c := ClassOf(err); c != ClassUnreachable {
+			t.Errorf("%v: ClassOf = %q, want unreachable", cause, c)
+		}
+	}
+}
+
+// witness: internal/platform/errors.go | if errors.As(err, &netErr) && netErr.Timeout() { → if errors.As(err, &netErr) && !netErr.Timeout() {
+func TestErrorClass_E11_TLSHandshakeTimeoutIsUnreachable(t *testing.T) {
+	t.Parallel()
+	err := mapSDKError(&url.Error{Op: "Get", URL: "https://api.app-prg1.zerops.io/api/rest/public/service-stack/x", Err: tlsHandshakeTimeoutError{}}, "")
+	if c := ClassOf(err); c != ClassUnreachable {
+		t.Fatalf("ClassOf = %q, want unreachable", c)
+	}
+}
+
+// witness: internal/platform/errors.go | case pe.APICode != "": → default:
+func TestErrorClass_E12_ZcpsOwnRefusalIsNotCalledRefused(t *testing.T) {
+	t.Parallel()
+	err := NewPlatformError(ErrAdoptTargetBusy, "appdev is being adopted by another session", "Wait for it to finish")
+	if c := ClassOf(err); c != "" {
+		t.Fatalf("ClassOf = %q, want unclassified", c)
 	}
 }

@@ -46,6 +46,7 @@ func waitSSHReady(ctx context.Context, deployer SSHDeployer, hostname string, cf
 		return fmt.Errorf("no SSH deployer configured")
 	}
 
+	start := time.Now()
 	deadline := time.After(cfg.timeout)
 	for {
 		_, err := deployer.ExecSSH(ctx, hostname, cfg.command)
@@ -63,7 +64,7 @@ func waitSSHReady(ctx context.Context, deployer SSHDeployer, hostname string, cf
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			probe.Waited = cfg.timeout
+			probe.Waited = time.Since(start)
 			return probe
 		case <-time.After(cfg.interval):
 		}
