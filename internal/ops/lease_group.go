@@ -476,9 +476,11 @@ func lockReleaseGroup(ctx context.Context, d LeaseDeps, recs []leaseRecord, agai
 // says by whom); any other error of the lock is err itself.
 func releaseLockRefusal(ctx context.Context, err error, held, again string) error {
 	if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-		return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			"Nothing was released: "+held,
 			"Release again once that call has answered: "+again)
+		pe.Cause = err
+		return pe
 	}
 	return err
 }
@@ -500,7 +502,6 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 	slices.SortFunc(keys, func(a, b key) int {
 		return cmp.Or(strings.Compare(a.repo, b.repo), strings.Compare(a.branch, b.branch), strings.Compare(a.pool, b.pool))
 	})
-	keys = slices.Compact(keys)
 	var releases []func()
 	release := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -512,8 +513,17 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 			return nil, fmt.Errorf("create lease lock directory: %w", err)
 		}
 	}
+	// Two records can name one key in different spellings of the repository
+	// (case): one lock path is taken once — flock on a second open of it
+	// would wait on this call's own hold.
+	locked := map[string]bool{}
 	for _, k := range keys {
-		rel, err := lockLeaseKey(ctx, leaseKeyLockPath(stateDir, k.repo, k.branch, k.pool))
+		path := leaseKeyLockPath(stateDir, k.repo, k.branch, k.pool)
+		if locked[path] {
+			continue
+		}
+		locked[path] = true
+		rel, err := lockLeaseKey(ctx, path)
 		if err != nil {
 			release()
 			return nil, fmt.Errorf("lock the lease of %s on pool %s: %w", k.branch, k.pool, err)
