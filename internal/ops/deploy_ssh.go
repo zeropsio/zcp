@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -588,6 +589,30 @@ func uncommittedIn(ctx context.Context, gitRunner git.Runner, workingDir, source
 	return fmt.Sprintf("%s: %s.", where, strings.Join(paths, ", "))
 }
 
+// sourceNotReached is the failure of a git read (step) in the source over
+// SSH that never reached git: ssh did not get in (platform.ClassOf
+// unreachable or refused). It carries ssh's own words verbatim and the
+// class, so the agent never reads a bad sha or a missing zerops.yaml into a
+// container that did not answer; nil for no error or one git itself gave.
+func sourceNotReached(err error, sourceName, step string) *platform.PlatformError {
+	class := platform.ClassOf(err)
+	if class != platform.ClassUnreachable && class != platform.ClassRefused {
+		return nil
+	}
+	next := fmt.Sprintf("Nothing was deployed. ssh to %s was refused, and waiting will not change that: read the ssh output for what refused it.", sourceName)
+	if class.WaitedOn() {
+		next = fmt.Sprintf("Nothing was deployed. %s did not answer ssh, which may change by waiting: check its status (zerops_discover) and deploy again once it runs.", sourceName)
+	}
+	pe := platform.NewPlatformError(platform.ErrSSHDeployFailed,
+		fmt.Sprintf("%s on %s did not run (%s): %v", step, sourceName, class, err), next)
+	var execErr *platform.SSHExecError
+	if errors.As(err, &execErr) {
+		pe.Diagnostic = execErr.Output
+	}
+	pe.Cause = err
+	return pe
+}
+
 // selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
 // (docs/spec-workflows.md §8 DM-7/DM-8, §12.6) and turns it into the
 // values deploySSH's no-sha branch needs: the recorded HEAD sha/dirty
@@ -662,6 +687,9 @@ func deployFromCommitPrep(
 	sha string,
 ) (resolvedSHA string, warnings []string, newWorkingDir string, cleanupTemp func(), err error) {
 	resolved, resolveErr := git.ResolveSHA(ctx, gitRunner, workingDir, sha)
+	if pe := sourceNotReached(resolveErr, sourceName, "resolve sha "+sha); pe != nil {
+		return "", nil, "", nil, pe
+	}
 	if resolveErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -678,6 +706,9 @@ func deployFromCommitPrep(
 	if showErr != nil {
 		source = zeropsYmlFallback
 		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
+	}
+	if pe := sourceNotReached(showErr, sourceName, "read "+source+" at "+resolvedSHA); pe != nil {
+		return "", nil, "", nil, pe
 	}
 	if showErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(

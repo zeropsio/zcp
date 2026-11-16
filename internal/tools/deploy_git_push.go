@@ -51,6 +51,31 @@ func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, wo
 	}
 }
 
+// gitPushCheckFailure is a git-push pre-flight check (what) that failed on
+// hostname: ssh's or the command's own words verbatim (gitPushErrorDetail),
+// the class when platform.ClassOf gives one, and a next step from that class.
+func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform.PlatformError {
+	class := platform.ClassOf(err)
+	head := fmt.Sprintf("%s on %s failed", what, hostname)
+	if class != "" {
+		head += " (" + string(class) + ")"
+	}
+	next := "Read the output above: the check ran in the container and failed there."
+	switch {
+	case class.WaitedOn():
+		next = fmt.Sprintf("%s did not answer ssh, which may change by waiting: check its status (zerops_discover) and retry once it runs.", hostname)
+	case class == platform.ClassRefused:
+		next = fmt.Sprintf("ssh to %s was refused, and waiting will not change that: read the output above for what refused it.", hostname)
+	}
+	pe := platform.NewPlatformError(platform.ErrSSHDeployFailed, head+": "+gitPushErrorDetail(err, out), next)
+	var sshErr *platform.SSHExecError
+	if errors.As(err, &sshErr) {
+		pe.Diagnostic = sshErr.Output
+	}
+	pe.Cause = err
+	return pe
+}
+
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
 // Guides the agent through the decision question and setup steps.
 type gitPushPrerequisites struct {
@@ -472,12 +497,9 @@ func handleGitPush(
 	// touched the meta.
 	committedOut, err := sshDeployer.ExecSSH(ctx, hostname, committedCodeCheckCmd(workingDir))
 	if err != nil {
-		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err), topology.FailureClassNetwork)
-		return convertError(platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("cannot check committed code on %s: %s", hostname, err),
-			"Verify the container is running and SSH is accessible",
-		)), nil, nil
+		pe := gitPushCheckFailure(err, committedOut, hostname, "the committed-code check")
+		recordAttempt(pe.Message, topology.FailureClassNetwork)
+		return convertError(pe), nil, nil
 	}
 	if strings.TrimSpace(string(committedOut)) != "1" {
 		recordAttempt("no committed code at workingDir", topology.FailureClassConfig)
@@ -496,23 +518,25 @@ func handleGitPush(
 	// NOTHING_TO_PUSH) so the agent is told before the terminal message, not
 	// after. Best-effort: a probe transport error is non-blocking. Parity with
 	// the local path via the shared dirtyTreeWarning owner.
-	var dirtyWarn string
-	if porcelainOut, statusErr := sshDeployer.ExecSSH(ctx, hostname, gitStatusPorcelainCmd(workingDir)); statusErr == nil {
+	// A probe that did not run says so in warnings, with its cause.
+	var dirtyWarn, dirtyNotRun string
+	porcelainOut, statusErr := sshDeployer.ExecSSH(ctx, hostname, gitStatusPorcelainCmd(workingDir))
+	if statusErr == nil {
 		dirtyWarn = dirtyTreeWarning(
 			string(porcelainOut),
 			fmt.Sprintf(`ssh %s "cd %s && git add -A && git commit -m '<msg>'"`, hostname, workingDir),
 		)
+	} else {
+		dirtyNotRun = "Uncommitted changes were not checked, so this result cannot say whether any were left behind: " +
+			gitPushCheckFailure(statusErr, porcelainOut, hostname, "the uncommitted-changes check").Message
 	}
 
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err), topology.FailureClassNetwork)
-		return convertError(platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("cannot check GIT_TOKEN on %s: %s", hostname, err),
-			"Verify the container is running and SSH is accessible",
-		)), nil, nil
+		pe := gitPushCheckFailure(err, tokenOut, hostname, "the GIT_TOKEN check")
+		recordAttempt(pe.Message, topology.FailureClassNetwork)
+		return convertError(pe), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
 		recordAttempt("GIT_TOKEN missing in container session", topology.FailureClassCredential)
@@ -629,9 +653,13 @@ func handleGitPush(
 		}
 
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
+		failed := "git-push from " + hostname + " failed"
+		if class := platform.ClassOf(err); class != "" {
+			failed += " (" + string(class) + ")"
+		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
+			failed+": "+detail,
 			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
 	}
@@ -707,6 +735,9 @@ func handleGitPush(
 	var warnings []string
 	if dirtyWarn != "" {
 		warnings = append(warnings, dirtyWarn)
+	}
+	if dirtyNotRun != "" {
+		warnings = append(warnings, dirtyNotRun)
 	}
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
