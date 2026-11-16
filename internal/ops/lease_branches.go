@@ -19,7 +19,7 @@ func LeaseBranches(stateDir string) ([]LeaseTargetInfo, error) {
 	out := make([]LeaseTargetInfo, 0, len(records))
 	for _, r := range records {
 		info := r.targetInfo()
-		info.Repo, info.Branch = recordRepo(stateDir, r), recordBranch(r)
+		info.Repo, info.Branch = recordRepo(r), recordBranch(r)
 		out = append(out, info)
 	}
 	slices.SortFunc(out, func(a, b LeaseTargetInfo) int { return cmp.Compare(a.Alias, b.Alias) })

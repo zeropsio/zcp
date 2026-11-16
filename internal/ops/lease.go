@@ -562,7 +562,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		}
 		readLeaseActivities(ctx, d, records, views)
 		markIdleLeases(d, records, views)
-		markStaleWiring(d.StateDir, records, views)
+		markStaleWiring(records, views)
 		return LeaseStatusView{Leases: views, Warm: d.leaseStatusWarm(ctx, services, []string{pool})}, nil
 	}
 	if err != nil {
@@ -592,7 +592,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	}
 	readLeaseActivities(ctx, d, records, status.Leases)
 	markIdleLeases(d, records, status.Leases)
-	markStaleWiring(d.StateDir, records, status.Leases)
+	markStaleWiring(records, status.Leases)
 	status.Warm = d.leaseStatusWarm(ctx, services, read)
 	return status, nil
 }

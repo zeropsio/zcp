@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -175,49 +176,99 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 // shell-quoted; the caller has validated it. tokenScope is the one host the
 // pool's GIT_TOKEN answers for (leaseTokenScope).
 func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL, tokenScope string) string {
+	head, cut, noWork := leaseCheckoutSteps(workDir, repo, branch, base, from, hqURL, tokenScope)
+	return strings.Join(slices.Concat(head, cut, noWork), " && ")
+}
+
+// leaseCheckoutSteps are leaseCheckoutCommandFrom's steps in three runs: head
+// enters the work dir and takes its flock; cut settles a warm clone, fetches
+// and puts the work dir on the branch — every step that changes work; noWork
+// are the steps after the cut that change none: the git identity, the
+// credential helpers and the stable number.
+func leaseCheckoutSteps(workDir, repo, branch, base, from, hqURL, tokenScope string) (head, cut, noWork []string) {
 	q := shellQuote
 	cutFrom := "origin/" + leaseDefaultBranch
 	if from != "" {
 		cutFrom = q("origin/" + from)
 	}
-	cut := "git checkout -q -f -B " + q(branch) + " --no-track " + cutFrom +
+	newBranch := "git checkout -q -f -B " + q(branch) + " --no-track " + cutFrom +
 		" && printf '" + leaseBaseMarker + "%s\\n' \"$(git rev-parse HEAD)\""
 	if leaseCommitRe.MatchString(base) {
-		cut = "{ git rev-parse -q --verify " + q(base+"^{commit}") + " >/dev/null || { echo " +
+		newBranch = "{ git rev-parse -q --verify " + q(base+"^{commit}") + " >/dev/null || { echo " +
 			q("the branch's base commit "+base+" is not on origin") + " >&2; exit 3; }; } && " +
 			"git checkout -q -f -B " + q(branch) + " --no-track " + q(base) + " && echo " + q(leaseBaseMarker+base)
 	}
 	lockWarm, settleWarm := leaseWarmCheckoutSteps(repo)
-	steps := []string{
-		"cd " + q(workDir),
-		lockWarm,
+	head = []string{"cd " + q(workDir), lockWarm}
+	cut = []string{
 		settleWarm,
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
 		leaseFetchStep(repo, hqURL, tokenScope),
 	}
 	if from != "" {
-		steps = append(steps, "{ git rev-parse --verify -q "+q("refs/remotes/origin/"+from)+" >/dev/null || { echo "+
+		cut = append(cut, "{ git rev-parse --verify -q "+q("refs/remotes/origin/"+from)+" >/dev/null || { echo "+
 			q(leaseFromMissingMarker+from)+" >&2; exit "+strconv.Itoa(leaseFromMissingExit)+"; }; }")
 	}
-	steps = append(steps,
+	cut = append(cut,
 		"if git rev-parse --verify -q "+q("refs/remotes/origin/"+branch)+" >/dev/null; then "+
-			"git checkout -q -f -B "+q(branch)+" --track "+q("origin/"+branch)+"; else "+cut+"; fi",
+			"git checkout -q -f -B "+q(branch)+" --track "+q("origin/"+branch)+"; else "+newBranch+"; fi",
 		"git clean -fd -q",
-		// A fresh pool container carries no git identity; the agent's
-		// first commit needs one (set-if-absent, never over the image's).
-		gitIdentityEnsureFragment(),
 	)
+	// A fresh pool container carries no git identity; the agent's first
+	// commit needs one (set-if-absent, never over the image's).
+	noWork = []string{gitIdentityEnsureFragment()}
 	if persist := leaseCredentialHelperConfig(repo, hqURL, tokenScope); persist != "" {
-		steps = append(steps, persist)
+		noWork = append(noWork, persist)
 	}
 	if hint := leaseHQHintHelperConfig(repo, hqURL); hint != "" {
-		steps = append(steps, hint)
+		noWork = append(noWork, hint)
 	}
 	// The container's stable number, which its preview port follows; only
 	// the container knows it (leaseSlotMarker).
-	steps = append(steps, `printf '`+leaseSlotMarker+`%s\n' "${ZEROPS_StableNumber:-}"`)
-	return strings.Join(steps, " && ")
+	noWork = append(noWork, `printf '`+leaseSlotMarker+`%s\n' "${ZEROPS_StableNumber:-}"`)
+	return head, cut, noWork
+}
+
+// leaseResumedMarker is the line a resumed checkout answers when the branch was
+// cut in the container already (leaseResumeCommandFrom); leaseUnfinishedExit
+// is the status it exits with when the container holds work it cannot tell
+// from an unfinished checkout's.
+const (
+	leaseResumedMarker  = "@@zcp-lease resumed"
+	leaseUnfinishedExit = 7
+)
+
+// leaseResumeCommandFrom is the checkout of a lease zcp already holds, whose
+// checkout may have been cut short (zcp stopped mid-checkout): one script that
+// decides under the work dir's flock (leaseWarmCheckoutSteps), so nothing
+// changes between the look and the act.
+//   - refs/heads/<branch> exists: the cut happened. Only the steps that change
+//     no work run, wherever HEAD is (the agent may be rebasing, bisecting or
+//     on another branch); the answer is leaseResumedMarker and, when origin
+//     lacks the branch, the base it was cut from as the merge base of the
+//     branch and origin/main (leaseBaseMarker).
+//   - a warm clone zcp started is still unsettled, or the work dir has no
+//     local branch and no change (no .git, or a bare `git init`): nothing of
+//     the agent's is there, so the whole checkout runs.
+//   - anything else: exit leaseUnfinishedExit, nothing changed.
+//
+// Nothing here ever forces a checkout over a branch HEAD is on.
+func leaseResumeCommandFrom(workDir, repo, branch, base, from, hqURL, tokenScope string) string {
+	q := shellQuote
+	head, cut, noWork := leaseCheckoutSteps(workDir, repo, branch, base, from, hqURL, tokenScope)
+	ref := q("refs/heads/" + branch)
+	cutBase := "{ git rev-parse -q --verify " + q("refs/remotes/origin/"+branch) + " >/dev/null || " +
+		"{ b=$(git merge-base " + ref + " " + q("refs/remotes/origin/"+leaseDefaultBranch) + " 2>/dev/null) && " +
+		"printf '" + leaseBaseMarker + "%s\\n' \"$b\"; } || :; }"
+	resumed := slices.Concat([]string{"echo " + q(leaseResumedMarker), cutBase}, noWork)
+	nothingOfTheAgents := "{ [ -f .git/" + leaseWarmStateFile + " ] || { [ -z \"$(git for-each-ref refs/heads 2>/dev/null)\" ] && " +
+		"[ -z \"$(git status --porcelain 2>/dev/null)\" ]; }; }"
+	return strings.Join(head, " && ") + " && if git rev-parse -q --verify " + ref + " >/dev/null 2>&1; then " +
+		strings.Join(resumed, " && ") + "; elif " + nothingOfTheAgents + "; then " +
+		strings.Join(slices.Concat(cut, noWork), " && ") + "; else echo " +
+		q("the work dir holds a checkout zcp cannot tell from the agent's work, and branch "+branch+" was never cut in it") +
+		" >&2; exit " + strconv.Itoa(leaseUnfinishedExit) + "; fi"
 }
 
 // leaseFetchStep is the checkout's fetch of origin: with the lease's own
@@ -460,11 +511,13 @@ func (d LeaseDeps) hqAddress() string {
 // branch from ("" when it tracked the branch origin has), the container's
 // stable number (0 when its session had none), and what it did with a clone
 // zcp started while the container was warm (checkoutWarm: used, discarded, ""
-// for none).
+// for none), and whether a resumed checkout found the branch cut already
+// (leaseResumeCommandFrom), so it changed no work.
 type leaseCheckedOut struct {
 	base         string
 	stableNumber int
 	warm         string
+	resumed      bool
 }
 
 // checkoutLease puts the leased container's /var/www on the branch, a new one
@@ -473,16 +526,42 @@ type leaseCheckedOut struct {
 // ssh error (git's stderr rides in it) and classifies auth failures so the
 // credential contract reaches the agent.
 func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
+	return runLeaseCheckout(ctx, d, rec, repo, branch, func(hqURL, tokenScope string) string {
+		return leaseCheckoutCommandFrom(LeaseWorkDir, repo, branch, base, from, hqURL, tokenScope)
+	})
+}
+
+// resumeLeaseCheckout is checkoutLease of a lease zcp already holds
+// (leaseResumeCommandFrom): resumed when the branch was cut in it already and
+// only the steps that change no work ran; a container holding work zcp cannot
+// tell from an unfinished checkout's is refused, nothing changed.
+func resumeLeaseCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
+	return runLeaseCheckout(ctx, d, rec, repo, branch, func(hqURL, tokenScope string) string {
+		return leaseResumeCommandFrom(LeaseWorkDir, repo, branch, base, from, hqURL, tokenScope)
+	})
+}
+
+// runLeaseCheckout runs the checkout script (script of the Mate's HQ address
+// and the pool token's scope) in rec's container and reads its answer.
+func runLeaseCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch string, script func(hqURL, tokenScope string) string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
 	tokenScope, bind := leaseTokenScope(d, rec.PoolHostname, repo)
 	onHQ := IsHQRemote(repo, hqURL)
-	out, err := d.gitSSH(onHQ).ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(LeaseWorkDir, repo, branch, base, from, hqURL, tokenScope))
+	out, err := d.gitSSH(onHQ).ExecSSH(ctx, rec.alias(), script(hqURL, tokenScope))
 	if err == nil {
 		if bind {
 			_ = storePoolTokenScope(d.StateDir, rec.PoolHostname, tokenScope)
 		}
 		cut, _ := checkoutBase(string(out))
-		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out))}, nil
+		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out)),
+			resumed: strings.Contains(string(out), leaseResumedMarker)}, nil
+	}
+	if exitStatus(err) == leaseUnfinishedExit {
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("zcp's lease %s of branch %s is still reserved, but the branch was never cut in it and its %s holds a checkout zcp cannot tell from work (zcp stopped mid-checkout, or a failed checkout's hand-back was refused); zcp keeps one lease per repository, branch and pool, so nothing was changed", rec.alias(), branch, LeaseWorkDir),
+			fmt.Sprintf("Release it, then acquire again: zerops_lease action=release lease=%s — its guard names what it holds; force=true is right only when that is nothing but what the unfinished checkout left", rec.alias()))
+		pe.Cause = err
+		return leaseCheckedOut{}, pe
 	}
 	code, suggestion := classifyCheckoutFailure(err, onHQ)
 	tokenCode := code == platform.ErrGitTokenMissing || code == platform.ErrGitTokenInvalid

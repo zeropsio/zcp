@@ -59,6 +59,9 @@ type groupMember struct {
 	// supervised: after the checkout a supervisor answers on the lease, so the
 	// acquire reads its dev servers at its end.
 	supervised bool
+	// checkedOut: a lease zcp held whose checkout had been cut short, checked
+	// out by heldLease already (resumeHeldCheckout).
+	checkedOut bool
 }
 
 // LeaseAcquireGroup leases one container per pool, every one on branch of one
@@ -134,8 +137,9 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		return LeaseChange{}, err
 	}
 	var fresh []*groupMember
+	base := recordedBase(group)
 	for _, m := range members {
-		held, found, unfinished, err := heldLease(ctx, d, m.pool, repoURL, branch, group)
+		held, found, checkedOut, err := heldLease(ctx, d, m.pool, repoURL, branch, base, from, group)
 		if err != nil {
 			return LeaseChange{}, err
 		}
@@ -143,12 +147,14 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			m.held = &held
 			continue
 		}
-		if unfinished != nil {
-			// Its checkout never cut the branch: it is checked out as a
-			// lease this call takes, and handed back as one if that fails.
-			m.rec, m.reserved = *unfinished, true
-			m.view = unfinished.view(LeaseStateHeld)
-			m.view.Note = "zcp held this lease, but its checkout never put it on the branch (zcp stopped mid-checkout, or a failed checkout's hand-back was refused), so this acquire ran the checkout again"
+		if checkedOut != nil {
+			// Its checkout never cut the branch, and it ran now: the lease is
+			// finished as one this call takes, and handed back as one if
+			// another member fails.
+			m.rec, m.reserved, m.checkedOut = *checkedOut, true, true
+			m.view = checkedOut.view(LeaseStateHeld)
+			m.view.Note = "zcp held this lease, but its checkout had never put it on the branch (zcp stopped mid-checkout), so this acquire ran the checkout"
+			base = cmp.Or(base, checkedOut.Base)
 		}
 		fresh = append(fresh, m)
 	}
@@ -159,7 +165,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		}
 	})
 	if !failed() && d.SSH != nil {
-		checkoutMembers(ctx, d, fresh, repoURL, branch, recordedBase(group), from)
+		checkoutMembers(ctx, d, slices.DeleteFunc(slices.Clone(fresh), func(m *groupMember) bool { return m.checkedOut }), repoURL, branch, base, from)
 	}
 	if failed() {
 		return LeaseChange{}, groupRefusal(ctx, d, members)
@@ -478,7 +484,7 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 	type key struct{ repo, branch, pool string }
 	var keys []key
 	for _, r := range recs {
-		if repo := recordRepo(stateDir, r); repo != "" {
+		if repo := recordRepo(r); repo != "" {
 			keys = append(keys, key{repo, recordBranch(r), r.PoolHostname})
 		}
 	}
@@ -518,10 +524,10 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 
 // lockRecordGroup is lockLeaseGroup of rec's group.
 func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
-	if recordRepo(stateDir, rec) == "" {
+	if recordRepo(rec) == "" {
 		return nil, recordWithoutRepo(rec.alias())
 	}
-	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
+	return lockLeaseGroup(ctx, stateDir, recordRepo(rec), recordBranch(rec))
 }
 
 // lockLeaseTargetGroup is lockLeaseGroup of the group of the lease a target
@@ -542,15 +548,15 @@ func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTarge
 // and only a release drops a lost one (DP-2).
 //
 // Whether the held lease's checkout finished is the container's fact, never
-// the record's (leaseRecord): it runs under the acquire's key lock, so it
-// asks the container (resumeHeldCheckout). A lease whose branch was never cut
-// in it — zcp stopped mid-checkout, or a failed checkout's hand-back was
-// refused — is returned as unfinished, for the acquire to run its whole
-// checkout again as for a lease it takes; one on its branch is reused, and
-// only the checkout's steps that change no work run in it again. A parked
-// lease, and a zcp with no ssh, cannot be asked: the lease is reused as it
-// stands.
-func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch string, group []leaseRecord) (held LeaseView, found bool, unfinished *leaseRecord, err error) {
+// the record's (leaseRecord): it runs under the acquire's key lock, so the
+// container decides (resumeHeldCheckout). One whose branch was cut is reused,
+// only the checkout's steps that change no work run in it again; one holding
+// nothing of the agent's — zcp stopped mid-checkout — gets the whole checkout
+// now and is returned as checkedOut, for the acquire to finish as a lease it
+// takes (prepare, supervisor, dev servers); one holding anything else is
+// refused. A parked lease, and a zcp with no ssh, cannot be asked: the lease
+// is reused as it stands.
+func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch, base, from string, group []leaseRecord) (held LeaseView, found bool, checkedOut *leaseRecord, err error) {
 	own := map[string]leaseRecord{}
 	var records []leaseRecord
 	for _, r := range group {
@@ -590,12 +596,11 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch string, g
 	switch {
 	case heldView != nil:
 		if d.SSH != nil && heldView.State != LeaseStateParked {
-			rec := own[heldView.Alias]
-			cut, note, err := resumeHeldCheckout(ctx, d, rec, repoURL, branch, heldView.State == LeaseStateUnmounted)
+			rec, got, note, err := resumeHeldCheckout(ctx, d, own[heldView.Alias], repoURL, branch, base, from, heldView.State == LeaseStateUnmounted)
 			switch {
 			case err != nil:
 				return LeaseView{}, false, nil, err
-			case !cut:
+			case !got.resumed:
 				return LeaseView{}, false, &rec, nil
 			}
 			heldView.Note = joinNotes(heldView.Note, note)
@@ -615,71 +620,41 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch string, g
 	return LeaseView{}, false, nil, nil
 }
 
-// leaseCutMarker is the line a held lease's container answers when its
-// checkout cut the lease's branch (leaseResumeCommand).
-const leaseCutMarker = "@@zcp-lease cut"
-
-// leaseResumeCommand asks a held lease's container whether its checkout put
-// LeaseWorkDir on branch: HEAD names refs/heads/<branch> and that ref exists
-// (after a bare `git init` HEAD names an unborn branch, so both are tested).
-// When it did, the command answers leaseCutMarker and runs again only the
-// checkout's steps after the cut that change no work — the git identity, the
-// credential helper, the HQ hint helper and the stable number
-// (leaseCheckoutCommandFrom) — never a checkout, a clean or a fetch, so a
-// branch HEAD is on is never forced over. When it did not, it answers nothing
-// and changes nothing.
-func leaseResumeCommand(repo, branch, hqURL, tokenScope string) string {
-	q := shellQuote
-	ref := q("refs/heads/" + branch)
-	steps := []string{"echo " + q(leaseCutMarker), gitIdentityEnsureFragment()}
-	if persist := leaseCredentialHelperConfig(repo, hqURL, tokenScope); persist != "" {
-		steps = append(steps, persist)
-	}
-	if hint := leaseHQHintHelperConfig(repo, hqURL); hint != "" {
-		steps = append(steps, hint)
-	}
-	steps = append(steps, `printf '`+leaseSlotMarker+`%s\n' "${ZEROPS_StableNumber:-}"`)
-	return "cd " + q(LeaseWorkDir) + " && if [ \"$(git symbolic-ref -q HEAD 2>/dev/null)\" = " + ref +
-		" ] && git rev-parse -q --verify " + ref + " >/dev/null 2>&1; then " + strings.Join(steps, " && ") + "; fi"
-}
-
-// resumeHeldCheckout asks the container of rec, a lease of branch held under
-// the acquire's key lock, whether its checkout cut the branch
-// (leaseResumeCommand), and, when it did, finishes what a checkout cut short
-// after the cut left undone: the steps that change no work, and the stable
-// number into the record when it has none. cut is false for a container whose
-// branch was never cut, in which nothing ran. A container that does not
-// answer refuses the acquire: zcp never guesses whether a checkout finished.
-// fixAlias puts back the lease's ssh alias first (a lease status reports
-// unmounted may lack it).
-func resumeHeldCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repoURL, branch string, fixAlias bool) (cut bool, note string, err error) {
-	alias := rec.alias()
+// resumeHeldCheckout runs the checkout of rec, a lease of branch zcp holds,
+// under the acquire's key lock as one script that decides in the container
+// (resumeLeaseCheckout): the branch cut already — only the steps that change
+// no work ran (resumed) — or nothing of the agent's there, so the whole
+// checkout ran, cut from base. What it learnt that the record lacks — the
+// base a new branch was cut from, the container's stable number — is
+// recorded. fixAlias puts back the lease's ssh alias first (a lease status
+// reports unmounted may lack it). Any failure refuses the acquire, the lease
+// and its record as they were: an ssh that does not answer is never read as
+// a checkout that did not happen.
+func resumeHeldCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repoURL, branch, base, from string, fixAlias bool) (leaseRecord, leaseCheckedOut, string, error) {
+	note := ""
 	if fixAlias {
 		note = d.Host.refreshAliases(ctx, d)
 	}
-	hqURL := d.hqAddress()
-	tokenScope, _ := leaseTokenScope(d, hqURL, repoURL)
-	out, err := d.SSH.ExecSSH(ctx, alias, leaseResumeCommand(repoURL, branch, hqURL, tokenScope))
+	got, err := resumeLeaseCheckout(ctx, d, rec, repoURL, branch, base, from)
 	if err != nil {
-		if why, silent := leaseNotAnswering(err); silent {
-			return false, "", leaseNotAnsweringError(alias, why, "zcp could not ask whether its checkout of branch "+branch+" finished and did not hand it out", err)
-		}
-		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("zcp holds lease %s of branch %s, but could not ask its container whether its checkout finished (%s), so it did not hand it out", alias, branch, sshFailureText(err)),
-			"Acquire again once it answers; zerops_lease action=status shows the lease")
-		pe.Cause = err
-		return false, "", pe
+		return rec, got, note, err
 	}
-	if !strings.Contains(string(out), leaseCutMarker) {
-		return false, note, nil
+	if got.warm == leaseWarmDiscarded {
+		note = joinNotes(note, discardedWarmNote)
 	}
-	if slot := checkoutSlot(string(out)); slot != 0 && rec.StableNumber == 0 {
-		rec.StableNumber = slot
+	changed := false
+	if rec.Base == "" && got.base != "" {
+		rec.Base, changed = got.base, true
+	}
+	if rec.StableNumber == 0 && got.stableNumber != 0 {
+		rec.StableNumber, changed = got.stableNumber, true
+	}
+	if changed {
 		if kept, werr := rewriteLeaseRecord(d.StateDir, rec); werr != nil || kept != "" {
-			note = joinNotes(note, fmt.Sprintf("the container's stable number could not be recorded, so no sibling gets this lease's preview URL (%s)", cmp.Or(kept, errorNote(werr))))
+			note = joinNotes(note, fmt.Sprintf("the commit the branch was cut from and the container's stable number could not be recorded (%s)", cmp.Or(kept, errorNote(werr))))
 		}
 	}
-	return true, note, nil
+	return rec, got, note, nil
 }
 
 // recordedBase is the main commit the group's branch was cut from: the earliest
@@ -969,9 +944,8 @@ func groupRefusal(ctx context.Context, d LeaseDeps, members []*groupMember) erro
 
 // recordRepo is the canonical repository a record's lease is of; "" for a
 // record that predates keeping it, which every verb that keys by it refuses
-// (recordWithoutRepo). The first parameter is unused: its callers drop it
-// with the record's rework.
-func recordRepo(_ string, r leaseRecord) string {
+// (recordWithoutRepo).
+func recordRepo(r leaseRecord) string {
 	return topology.CanonicalRepoURL(r.Repo)
 }
 
@@ -999,10 +973,10 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	}
 	var group []leaseRecord
 	for _, r := range records {
-		if recordBranch(r) == branch && recordRepo(stateDir, r) == "" {
+		if recordBranch(r) == branch && recordRepo(r) == "" {
 			return nil, recordWithoutRepo(r.alias())
 		}
-		if recordBranch(r) == branch && topology.SameRepoURL(recordRepo(stateDir, r), repo) {
+		if recordBranch(r) == branch && topology.SameRepoURL(recordRepo(r), repo) {
 			group = append(group, r)
 		}
 	}
@@ -1227,7 +1201,7 @@ func rewireGroupSurvivors(ctx context.Context, d LeaseDeps, members []*releaseMe
 		return nil, nil, nil
 	}
 	first := members[0].rec
-	group, err := leaseGroupRecords(d.StateDir, recordRepo(d.StateDir, first), recordBranch(first))
+	group, err := leaseGroupRecords(d.StateDir, recordRepo(first), recordBranch(first))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read branch leases for rewire: %w", err)
 	}
@@ -1293,7 +1267,7 @@ func rewireGroupAfterFailure(ctx context.Context, d LeaseDeps, members []*releas
 	}
 	ctx = context.WithoutCancel(ctx)
 	first := members[0].rec
-	group, err := leaseGroupRecords(d.StateDir, recordRepo(d.StateDir, first), recordBranch(first))
+	group, err := leaseGroupRecords(d.StateDir, recordRepo(first), recordBranch(first))
 	if err != nil {
 		note := fmt.Sprintf("zcp could not read branch leases to restore sibling wiring (%v)", err)
 		for _, r := range siblings {
@@ -1413,7 +1387,7 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 		if recordBranch(r) != branch {
 			continue
 		}
-		of := recordRepo(stateDir, r)
+		of := recordRepo(r)
 		if of == "" {
 			return nil, recordWithoutRepo(r.alias())
 		}
@@ -1429,7 +1403,7 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	case 0:
 		return nil, noLeaseOfBranch(branch, "")
 	case 1:
-		return leaseGroupRecords(stateDir, recordRepo(stateDir, last), branch)
+		return leaseGroupRecords(stateDir, recordRepo(last), branch)
 	}
 	parts := make([]string, 0, len(keys))
 	for i, key := range keys {

@@ -23,7 +23,7 @@ func PoolMigrateLeases(stateDir, pool, origin, branch string) ([]LeaseTargetInfo
 		if r.PoolHostname != pool || recordBranch(r) != branch {
 			continue
 		}
-		if origin != "" && !topology.SameRepoURL(recordRepo(stateDir, r), origin) {
+		if origin != "" && !topology.SameRepoURL(recordRepo(r), origin) {
 			continue
 		}
 		out = append(out, r)

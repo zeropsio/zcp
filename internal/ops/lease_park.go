@@ -248,7 +248,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	restarted := c.Status != platform.SwarmContainerActive
 	var notes []string
 	if !restarted {
-		notes = append(notes, "its container was running already, so zcp started nothing")
+		notes = append(notes, "its container was running already, so zcp started nothing and did not check its preview route: one started outside zcp after a park lost it, and its preview may answer 502 until the pool's containers change")
 	} else if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
 		switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
 		case held && v.own.lost():

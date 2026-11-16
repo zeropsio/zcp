@@ -201,7 +201,7 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 		}
 	}
 	runMembers(members, func(m *LeaseSyncMember) {
-		parked, held := memberStillHeld(ctx, d, m, alias, recordRepo(d.StateDir, rec), branch)
+		parked, held := memberStillHeld(ctx, d, m, alias, recordRepo(rec), branch)
 		if !held {
 			return
 		}
@@ -472,7 +472,7 @@ func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, sourc
 		m.Outcome, m.Note = LeaseSyncFailed, fmt.Sprintf("%s's record could not be read (%s), so zcp did not fast-forward it", m.Alias, errorNote(err))
 		return false, false
 	}
-	if of := recordRepo(d.StateDir, rec); recordBranch(rec) != branch || !topology.SameRepoURL(of, repo) {
+	if of := recordRepo(rec); recordBranch(rec) != branch || !topology.SameRepoURL(of, repo) {
 		m.Outcome = LeaseSyncLost
 		m.Note = fmt.Sprintf("%s now names a lease of branch %s of %s: the lease of this branch ended after the sync read the branch's leases and the container was taken again under its alias, so zcp did not fast-forward it", m.Alias, recordBranch(rec), cmp.Or(of, "a repository zcp has no record of"))
 		return false, false

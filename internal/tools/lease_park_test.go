@@ -96,10 +96,9 @@ func (o *parkOrchestrator) log() []string {
 type parkResult struct {
 	Action string `json:"action"`
 	Leases []struct {
-		Alias    string `json:"alias"`
-		State    string `json:"state"`
-		ParkedAt string `json:"parkedAt"`
-		Note     string `json:"note"`
+		Alias string `json:"alias"`
+		State string `json:"state"`
+		Note  string `json:"note"`
 	} `json:"leases"`
 	NextActions string `json:"nextActions"`
 	Envelope    *struct {
@@ -112,13 +111,13 @@ type parkResult struct {
 
 // TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope: action=park stops
 // the lease's container with its lease (in the header only) and answers it
-// parked — in the result, with parkedAt and what starts it again, and in the
+// parked — in the result, with what starts it again, and in the
 // envelope's leases[] — status lists it parked, and action=unpark starts it
 // and answers it held. No result carries the lease.
 func TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope(t *testing.T) {
 	t.Parallel()
 	orch := &parkOrchestrator{}
-	srv, stateDir := leaseToolServer(t, orch)
+	srv, _ := leaseToolServer(t, orch)
 	call := func(args map[string]any) parkResult {
 		t.Helper()
 		res := callTool(t, srv, "zerops_lease", args)
@@ -141,19 +140,15 @@ func TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope(t *testing.T) {
 	call(map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"})
 
 	parked := call(map[string]any{"action": "park", "lease": "devpool-3"})
-	if len(parked.Leases) != 1 || parked.Leases[0].State != ops.LeaseStateParked || parked.Leases[0].ParkedAt == "" ||
+	if len(parked.Leases) != 1 || parked.Leases[0].State != ops.LeaseStateParked ||
 		!strings.Contains(parked.Leases[0].Note, "zerops_lease action=unpark lease=devpool-3") {
-		t.Fatalf("park leases = %+v, want devpool-3 parked with its parkedAt and the unpark", parked.Leases)
+		t.Fatalf("park leases = %+v, want devpool-3 parked with the unpark", parked.Leases)
 	}
 	if !strings.Contains(parked.NextActions, "zerops_lease action=unpark lease=devpool-3") {
 		t.Errorf("park nextActions %q should name the unpark", parked.NextActions)
 	}
 	if parked.Envelope == nil || len(parked.Envelope.Leases) != 1 || parked.Envelope.Leases[0].State != ops.LeaseStateParked {
 		t.Errorf("park envelope = %+v, want leases[] with devpool-3 parked", parked.Envelope)
-	}
-	raw, err := os.ReadFile(filepath.Join(stateDir, "leases", "devpool-3.json"))
-	if err != nil || !strings.Contains(string(raw), `"parked": true`) {
-		t.Errorf("record = %s (%v), want it parked", raw, err)
 	}
 
 	status := call(map[string]any{"action": "status"})
@@ -162,7 +157,7 @@ func TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope(t *testing.T) {
 	}
 
 	unparked := call(map[string]any{"action": "unpark", "lease": "devpool-3"})
-	if len(unparked.Leases) != 1 || unparked.Leases[0].State != ops.LeaseStateHeld || unparked.Leases[0].ParkedAt != "" {
+	if len(unparked.Leases) != 1 || unparked.Leases[0].State != ops.LeaseStateHeld {
 		t.Errorf("unpark leases = %+v, want devpool-3 held", unparked.Leases)
 	}
 	if unparked.Envelope == nil || len(unparked.Envelope.Leases) != 1 || unparked.Envelope.Leases[0].State != ops.LeaseStateHeld {

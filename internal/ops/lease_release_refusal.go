@@ -156,7 +156,7 @@ func LeaseBranchGroup(stateDir, repo, branch string) ([]LeaseTargetInfo, error) 
 	out := make([]LeaseTargetInfo, 0, len(group))
 	for _, r := range group {
 		info := r.targetInfo()
-		info.Repo, info.Branch = recordRepo(stateDir, r), recordBranch(r)
+		info.Repo, info.Branch = recordRepo(r), recordBranch(r)
 		out = append(out, info)
 	}
 	return out, nil

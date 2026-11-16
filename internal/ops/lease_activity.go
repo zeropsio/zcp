@@ -448,12 +448,12 @@ type leaseGroup struct {
 
 // leaseGroupsOf groups records as a release of a branch reads them
 // (branchLeaseRecords): by repository identity and branch.
-func leaseGroupsOf(stateDir string, records []leaseRecord) []leaseGroup {
+func leaseGroupsOf(records []leaseRecord) []leaseGroup {
 	var groups []leaseGroup
 	at := map[string]int{}
 	repos := map[string]map[string]bool{} // branch → the repository keys it is leased for
 	for _, r := range records {
-		branch, repo := recordBranch(r), recordRepo(stateDir, r)
+		branch, repo := recordBranch(r), recordRepo(r)
 		key := "\x00" + r.alias()
 		if repo != "" {
 			key = strings.ToLower(repo) + "\x00" + branch
@@ -498,7 +498,7 @@ func markIdleLeases(d LeaseDeps, records []leaseRecord, views []LeaseView) {
 	for i, v := range views {
 		at[v.Alias] = i
 	}
-	for _, g := range leaseGroupsOf(d.StateDir, records) {
+	for _, g := range leaseGroupsOf(records) {
 		var held []int
 		read := true
 		for _, r := range g.records {

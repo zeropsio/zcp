@@ -160,7 +160,7 @@ func leaseGroupWithout(stateDir, alias string, leaving map[string]bool) ([]Lease
 	if err != nil {
 		return nil, err
 	}
-	repo := recordRepo(stateDir, rec)
+	repo := recordRepo(rec)
 	if repo == "" {
 		return []LeaseTargetInfo{rec.targetInfo()}, nil
 	}

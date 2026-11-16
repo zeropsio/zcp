@@ -1,11 +1,9 @@
 package workflow
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -87,44 +85,5 @@ func TestWithParts_LeasesAndStagesNameTheirPart(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestComputeEnvelope_LeaseCarriesLastKnownDevServers: every envelope's lease
-// carries its last-known dev servers and when they were read
-// (devServersReadAt) from zcp's record of the last read of its supervisor —
-// not only the call that read them; WithParts keeps them, and a call that
-// reads them fresh puts its own read and time in their place.
-func TestComputeEnvelope_LeaseCarriesLastKnownDevServers(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","containerNumber":3,"containerHostname":"node-id-3.runtime.devpool.zerops",`+
-		`"lease":"lease-secret","branch":"feat-x","acquiredAt":"2026-10-23T12:00:00Z",`+
-		`"devServers":[{"name":"web","port":3000,"url":"https://devpool-abc1-9003.prg1.zerops.app","status":"running","readAt":"2026-10-27T11:00:00Z"}],`+
-		`"devServersReadAt":"2026-10-27T11:00:00Z"}`)
-	held := LeaseSnapshot{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"}
-	for name, answers := range map[string]bool{"the reader answered": true, "the records stood in for it": false} {
-		reader := func(context.Context) ([]LeaseSnapshot, error) {
-			if !answers {
-				return nil, context.DeadlineExceeded
-			}
-			return []LeaseSnapshot{held}, nil
-		}
-		env, err := ComputeEnvelope(context.Background(), nil, dir, "", runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime, WithLeaseReader(reader))
-		if err != nil {
-			t.Fatalf("%s: ComputeEnvelope: %v", name, err)
-		}
-		for _, wire := range []StateEnvelope{env, env.WithParts(nil)} {
-			got := wire.LeaseList()
-			if len(got) != 1 || len(got[0].DevServers) != 1 || got[0].DevServers[0].URL != "https://devpool-abc1-9003.prg1.zerops.app" ||
-				got[0].DevServersReadAt != "2026-10-27T11:00:00Z" {
-				t.Errorf("%s: leases = %+v, want the last-known dev server and its read time", name, got)
-			}
-		}
-		fresh := time.Date(2026, 10, 27, 12, 30, 0, 0, time.UTC)
-		got := env.WithParts(map[string][]topology.DevServerState{"devpool-3": {{Name: "web", Status: "crashed", ReadAt: fresh}}}).LeaseList()
-		if len(got) != 1 || got[0].DevServers[0].Status != "crashed" || got[0].DevServersReadAt != "2026-10-27T12:30:00Z" {
-			t.Errorf("%s: a fresh read = %+v, want it and its own read time", name, got)
-		}
 	}
 }

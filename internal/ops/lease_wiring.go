@@ -582,7 +582,7 @@ func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, previewU
 			r.Note = fmt.Sprintf("zcp could not read its records, so it sent %s no overlay %s (%v); %s sends it again", alias, why, err, resendCall(alias, live))
 			return r, true
 		}
-		reach := groupContainers(stateDir, rec, records, leaving)
+		reach := groupContainers(rec, records, leaving)
 		env = LeaseSiblingEnv{Set: map[string]string{}}
 		for name, value := range ds.State.Env {
 			if reach.holds(value) {
@@ -646,7 +646,7 @@ func liveServers(st devsup.State) []string {
 // none for a lease whose repository zcp knows neither way; records that
 // cannot be read are its error.
 func siblingRecords(stateDir string, rec leaseRecord) ([]leaseRecord, error) {
-	repo := recordRepo(stateDir, rec)
+	repo := recordRepo(rec)
 	if repo == "" {
 		return nil, nil
 	}
@@ -798,15 +798,15 @@ func previewURLPool(value string) (string, bool) {
 
 // groupContainers is what the leases of rec's group (DP-17) among records —
 // rec's own always — are reached by, leaving out the aliases in gone.
-func groupContainers(stateDir string, rec leaseRecord, records []leaseRecord, gone map[string]bool) groupReach {
+func groupContainers(rec leaseRecord, records []leaseRecord, gone map[string]bool) groupReach {
 	reach := groupReach{containers: map[string]bool{rec.ContainerHostname: true}, pools: map[string]bool{rec.PoolHostname: true}}
-	repo := recordRepo(stateDir, rec)
+	repo := recordRepo(rec)
 	if repo == "" {
 		return reach
 	}
 	branch := recordBranch(rec)
 	for _, r := range records {
-		if !gone[r.alias()] && recordBranch(r) == branch && topology.SameRepoURL(recordRepo(stateDir, r), repo) {
+		if !gone[r.alias()] && recordBranch(r) == branch && topology.SameRepoURL(recordRepo(r), repo) {
 			reach.containers[r.ContainerHostname] = true
 			reach.pools[r.PoolHostname] = true
 		}
@@ -819,11 +819,11 @@ func groupContainers(stateDir string, rec leaseRecord, records []leaseRecord, go
 // of its group holds — its group among records, less the aliases in lost —
 // each variable with what it names and whose it was, and the call that sends
 // the branch's overlay again.
-func staleWiring(stateDir string, rec leaseRecord, o leaseOverlay, records []leaseRecord, lost map[string]bool) string {
+func staleWiring(rec leaseRecord, o leaseOverlay, records []leaseRecord, lost map[string]bool) string {
 	if len(o.live) == 0 {
 		return ""
 	}
-	reach := groupContainers(stateDir, rec, records, lost)
+	reach := groupContainers(rec, records, lost)
 	owners := make(map[string]leaseRecord, len(records))
 	for _, r := range records {
 		owners[r.ContainerHostname] = r
@@ -834,7 +834,7 @@ func staleWiring(stateDir string, rec leaseRecord, o leaseOverlay, records []lea
 		if reach.holds(value) {
 			continue
 		}
-		stale = append(stale, fmt.Sprintf("%s=%s (%s)", name, value, staleWhose(stateDir, rec, value, records, owners, lost)))
+		stale = append(stale, fmt.Sprintf("%s=%s (%s)", name, value, staleWhose(rec, value, records, owners, lost)))
 	}
 	if len(stale) == 0 {
 		return ""
@@ -846,10 +846,10 @@ func staleWiring(stateDir string, rec leaseRecord, o leaseOverlay, records []lea
 // staleWhose says whose the container, or the preview, a stale overlay value
 // names was: a lease of rec's group lost by this status's word, a lease of
 // another branch or repository, or none zcp holds.
-func staleWhose(stateDir string, rec leaseRecord, value string, records []leaseRecord, owners map[string]leaseRecord, lost map[string]bool) string {
+func staleWhose(rec leaseRecord, value string, records []leaseRecord, owners map[string]leaseRecord, lost map[string]bool) string {
 	if pool, ok := previewURLPool(value); ok {
 		for _, r := range records {
-			if r.PoolHostname == pool && lost[r.alias()] && recordBranch(r) == recordBranch(rec) && topology.SameRepoURL(recordRepo(stateDir, r), recordRepo(stateDir, rec)) {
+			if r.PoolHostname == pool && lost[r.alias()] && recordBranch(r) == recordBranch(rec) && topology.SameRepoURL(recordRepo(r), recordRepo(rec)) {
 				return r.alias() + "'s preview URL, whose lease is lost"
 			}
 		}
@@ -873,7 +873,7 @@ func staleWhose(stateDir string, rec leaseRecord, value string, records []leaseR
 // record of the group at all — wiring: stale, its note saying which and the
 // call that fixes it. It changes nothing anywhere (docs/spec-mate.md §0 rule
 // 4): a lease that ended outside zcp is not chased.
-func markStaleWiring(stateDir string, records []leaseRecord, views []LeaseView) {
+func markStaleWiring(records []leaseRecord, views []LeaseView) {
 	lost := map[string]bool{}
 	for _, v := range views {
 		if v.State == LeaseStateLost {
@@ -890,7 +890,7 @@ func markStaleWiring(stateDir string, records []leaseRecord, views []LeaseView) 
 		if v.overlay == nil || !ok {
 			continue
 		}
-		if why := staleWiring(stateDir, rec, *v.overlay, records, lost); why != "" {
+		if why := staleWiring(rec, *v.overlay, records, lost); why != "" {
 			v.Wiring = LeaseWiringStale
 			v.Note = joinNotes(v.Note, "wiring stale: "+why+" (status changes nothing)")
 		}
@@ -910,7 +910,7 @@ func (r *DevServerResult) applyStaleWiring(stateDir string, lease LeaseTargetInf
 		return
 	}
 	o := leaseOverlay{env: st.Env, live: liveServers(st)}
-	if why := staleWiring(stateDir, records[i], o, records, nil); why != "" {
+	if why := staleWiring(records[i], o, records, nil); why != "" {
 		r.Wiring = LeaseWiringStale
 		r.Message += " Wiring stale: " + why + "."
 	}
