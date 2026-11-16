@@ -515,6 +515,14 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 			"A Box hosts sandboxes; run dev servers in an app's dev container or a dev-pool lease.")
 	}
 	switch target.Status {
+	case platform.ServiceStatusStopped:
+		// Nothing answers SSH on a stopped service: say so before an SSH
+		// call waits out its bound on it.
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("dev server target %q is STOPPED — no container runs to attach a dev server to", hostname),
+			fmt.Sprintf("Start it (zerops_manage action=start serviceHostname=%q), then call zerops_dev_server again.", hostname),
+		)
 	case platform.ServiceStatusFailed:
 		return devServerNotRunningErr(hostname, target.Status)
 	case platform.ServiceStatusReadyToDeploy:

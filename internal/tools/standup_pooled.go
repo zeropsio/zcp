@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -155,13 +156,14 @@ func (r *standupVerdictRows) verdictLocked() mate.StandupVerdict {
 	return mate.StandupVerdict{Headline: mate.StandupHeadlineOf(rows), Rows: rows}
 }
 
-// pooledOutcome is what the pooled run hands the answer: the verdict, the
-// commit each repository was built from, and main's head where it moved
-// during the run (F13).
+// pooledOutcome is what the pooled run hands the answer: the verdict, main's
+// head read for each repository, the repositories a deploy of it started
+// for, and main's head where it moved during the run after a build (F13).
 type pooledOutcome struct {
 	verdict mate.StandupVerdict
-	// built and ahead are by repository (appId/name).
-	built, ahead map[string]string
+	// main, built and ahead are by repository (appId/name).
+	main, ahead map[string]string
+	built       map[string]bool
 }
 
 // startPooledRows writes the first verdict, before any wait: a row per
@@ -204,7 +206,7 @@ func serviceBeingCreated(status string) bool {
 // preparePairs: a pair stopped there gets its rows failed with what stopped
 // it; the others go on.
 func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*standupPair, live map[string]*platform.ServiceStack, rows *standupVerdictRows, progress *standupProgress) pooledOutcome {
-	out := pooledOutcome{built: map[string]string{}, ahead: map[string]string{}}
+	out := pooledOutcome{main: map[string]string{}, ahead: map[string]string{}, built: map[string]bool{}}
 	services := pooledServices(pairs)
 	if fresh, err := d.liveServices(ctx); err == nil {
 		live = fresh
@@ -241,11 +243,12 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 			continue
 		}
 		wg.Go(func() {
-			commit, ahead := d.buildPooledPair(ctx, hqc, sp, services, live, rows, progress)
+			commit, built, ahead := d.buildPooledPair(ctx, hqc, sp, services, live, rows, progress)
 			mu.Lock()
 			defer mu.Unlock()
 			if commit != "" {
-				out.built[sp.repository] = commit
+				out.main[sp.repository] = commit
+				out.built[sp.repository] = built
 			}
 			if ahead != "" {
 				out.ahead[sp.repository] = ahead
@@ -271,7 +274,7 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 // zerops.yaml at it names each service's setup (F4), commit-deploys it to
 // every service of the part with no build, waits for each build, and reads
 // main again (F13). Answers the commit built and main's head when it moved.
-func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *standupPair, services []pooledService, live map[string]*platform.ServiceStack, rows *standupVerdictRows, progress *standupProgress) (built, ahead string) {
+func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *standupPair, services []pooledService, live map[string]*platform.ServiceStack, rows *standupVerdictRows, progress *standupProgress) (commit string, built bool, ahead string) {
 	var mine []pooledService
 	for _, s := range services {
 		if s.pair == sp {
@@ -308,31 +311,32 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		}
 	}
 	if len(toBuild) == 0 {
-		return "", ""
+		return "", false, ""
 	}
 
 	scratch, err := hqc.OpenScratch(ctx, sp.appID(), sp.pair.RepoName)
 	if err != nil {
 		failAll(platform.ClassOf(err), fmt.Sprintf("could not open %s in HQ: %v", sp.repository, err))
-		return "", ""
+		return "", false, ""
 	}
 	defer scratch.Close()
 	commit, found, err := scratch.FetchTip(ctx, hqBase)
 	switch {
 	case err != nil:
 		failAll(platform.ClassOf(err), fmt.Sprintf("could not read %s's %s from HQ: %v", sp.repository, hqBase, err))
-		return "", ""
+		return "", false, ""
 	case !found:
 		failAll(platform.ClassRefused, fmt.Sprintf("%s has no %s branch in HQ", sp.repository, hqBase))
-		return "", ""
+		return "", false, ""
 	}
 	setups, yamlName, class, err := zeropsYamlSetups(ctx, scratch, commit)
 	if err != nil {
 		failAll(class, fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
-		return "", ""
+		return "", false, ""
 	}
 
 	var wg sync.WaitGroup
+	var started atomic.Bool
 	for _, s := range toBuild {
 		if !slices.Contains(setups, s.setup) {
 			rows.set(s.host, func(in *ops.StandupRowInput) {
@@ -341,15 +345,22 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 			})
 			continue
 		}
-		wg.Go(func() { d.commitDeployOne(ctx, sp, s, live[s.host], commit, rows, progress) })
+		wg.Go(func() {
+			if d.commitDeployOne(ctx, sp, s, live[s.host], commit, rows, progress) {
+				started.Store(true)
+			}
+		})
 	}
 	wg.Wait()
+	if !started.Load() {
+		return commit, false, ""
+	}
 
 	if head, found, err := scratch.RemoteHead(ctx, hqBase); err == nil && found && head != commit {
 		progress.say(fmt.Sprintf("%s's %s moved to %s during the stand-up; %s was built, and main is ahead of it", sp.repository, hqBase, shortCommit(head), shortCommit(commit)))
 		ahead = head
 	}
-	return commit, ahead
+	return commit, true, ahead
 }
 
 // keepBuilt is a service that has a build: never written, its row read from
@@ -366,8 +377,9 @@ func (d standupDeps) keepBuilt(ctx context.Context, s pooledService, svc *platfo
 
 // commitDeployOne submits one commit deploy and follows it to its end: the
 // row building with its version and process, then done or failed from the
-// version's status, a failure with its build log's last lines (F5).
-func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s pooledService, svc *platform.ServiceStack, commit string, rows *standupVerdictRows, progress *standupProgress) {
+// version's status, a failure with its build log's last lines (F5). Answers
+// whether the deploy started.
+func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s pooledService, svc *platform.ServiceStack, commit string, rows *standupVerdictRows, progress *standupProgress) bool {
 	progress.say(fmt.Sprintf("building %s at %s into %s", sp.repository, shortCommit(commit), s.host))
 	rows.set(s.host, func(in *ops.StandupRowInput) { in.Commit, in.Class, in.Cause = commit, "", "" })
 	res, err := ops.CommitDeploy(ctx, d.batch.client, d.source, ops.CommitDeployRequest{
@@ -377,7 +389,7 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 		rows.set(s.host, func(in *ops.StandupRowInput) {
 			in.Class, in.Cause = platform.ClassOf(err), fmt.Sprintf("the commit deploy of %s into %s did not start: %v", shortCommit(commit), s.host, err)
 		})
-		return
+		return false
 	}
 	rows.set(s.host, func(in *ops.StandupRowInput) { in.AppVersionID, in.ProcessID = res.AppVersionID, res.ProcessID })
 	var processStatus string
@@ -388,9 +400,9 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 			rows.set(s.host, func(in *ops.StandupRowInput) {
 				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %v", s.host, err)
 			})
-			return
+			return true
 		case waited.TimedOut || len(waited.Processes) == 0:
-			return // still building: the run's end says so (endBuilding)
+			return true // still building: the run's end says so (endBuilding)
 		}
 		processStatus = waited.Processes[0].Status
 	} else {
@@ -403,9 +415,9 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 			rows.set(s.host, func(in *ops.StandupRowInput) {
 				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build in flight failed: %v", s.host, err)
 			})
-			return
+			return true
 		case waited.TimedOut:
-			return
+			return true
 		}
 	}
 	version := d.appVersion(ctx, svc.ID, res.AppVersionID)
@@ -419,7 +431,7 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 		in.AppVersionStatus = version.Status
 	})
 	if version == nil || version.Status != platform.AppVersionStatusActive {
-		return
+		return true
 	}
 	if _, _, err := workflow.RecordExternalDeploy(d.batch.stateDir, s.host); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up: record the first deploy of %s: %v\n", s.host, err)
@@ -427,6 +439,7 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 	if s.kind == mate.RowPool {
 		d.confirmBearer(ctx, s.host, rows)
 	}
+	return true
 }
 
 // appVersion is the service's version id, read lag-free; nil when unread.

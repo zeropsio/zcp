@@ -72,6 +72,19 @@ func RegisterDeployBatch(
 				"Pass targets=[{targetService:...}, ...] with one entry per service to deploy."),
 				WithRecoveryStatus()), nil, nil
 		}
+		// A service builds one app version at a time: two entries on one
+		// service would share it, and each would report the other's outcome.
+		seen := make(map[string]bool, len(input.Targets))
+		for _, t := range input.Targets {
+			if seen[t.TargetService] {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("zerops_deploy_batch names %q more than once: a service takes one deploy at a time, so two entries on it cannot be told apart", t.TargetService),
+					"Pass each target service once; deploy another setup of it with a separate zerops_deploy after this batch."),
+					WithRecoveryStatus()), nil, nil
+			}
+			seen[t.TargetService] = true
+		}
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,

@@ -45,23 +45,24 @@ type CommitSource struct {
 
 // NewHQDeploySource is the deploy source read from HQ with the project's
 // key: a bare scratch repository fetched `--depth=1` at the commit through
-// HQ (`Authorization: Project <key>` scoped to HQ's origin, as hq.Scratch
-// and hq.RunGit fetch), archived as HQ's git box archives
+// HQ at the address and with the authorization zcp's other git against HQ
+// uses (hq.RepoURLAt, the builder hq.Scratch reads through; `Authorization:
+// Project <key>` scoped to HQ's origin), archived as HQ's git box archives
 // (`--worktree-attributes` over an empty work tree and index,
-// `tar.umask=0022`) and streamed, nothing of the archive on disk. The
-// repository's organisation and application are HQ's answer to Self at
-// every Open: a repository whose application is not that answer is
-// refused, never fetched.
+// `tar.umask=0022`) and streamed, nothing of the archive on disk. HQ's
+// project door is not asked (it admits a plain project only, never a Mate):
+// the application is the repository's, as the stand-up read it from HQ,
+// and the organisation is id's.
 func NewHQDeploySource(httpClient hq.Doer, id hq.Identity) DeploySource {
 	project, err := hq.OpenProject(httpClient, id)
-	return hqDeploySource{project: project, opened: err, key: id.Key}
+	return hqDeploySource{project: project, opened: err, id: id}
 }
 
 type hqDeploySource struct {
+	// project lends only its git environment (as hq.RunGit takes it).
 	project hq.ProjectClient
 	opened  error
-	// key is only cut out of git's words before they leave this file.
-	key string
+	id      hq.Identity
 }
 
 // scratchPrefix names a deploy source's scratch directory by the process
@@ -72,16 +73,12 @@ func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (Co
 	if s.opened != nil {
 		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source", err: s.opened}
 	}
-	self, err := s.project.Self(ctx)
-	if err != nil {
-		return CommitSource{}, &deployError{class: hqClass(err), step: "deploy source", err: err}
-	}
 	appID, name, ok := strings.Cut(repository, "/")
-	if !ok || appID == "" || name == "" || appID != self.AppID {
+	if !ok || appID == "" || name == "" {
 		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source",
-			words: fmt.Sprintf("repository %q is not <appId>/<name> of this Mate's application %q", repository, self.AppID)}
+			words: fmt.Sprintf("repository %q is not <appId>/<name>", repository)}
 	}
-	repoURL, err := s.project.RepoURL(self.OrgID, self.AppID, name)
+	repoURL, err := hq.RepoURLAt(s.id.Origin, s.id.OrgID, appID, name)
 	if err != nil {
 		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source", err: err}
 	}
@@ -90,7 +87,7 @@ func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (Co
 	if err != nil {
 		return CommitSource{}, &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
 	}
-	g := sourceGit{dir: dir, env: append(s.project.GitEnv(), "LC_ALL=C"), key: s.key}
+	g := sourceGit{dir: dir, env: append(s.project.GitEnv(), "LC_ALL=C"), key: s.id.Key}
 	opened, err := g.open(ctx, repoURL, commit)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -112,15 +109,6 @@ func removeLeftScratches() {
 		}
 		_ = os.RemoveAll(dir)
 	}
-}
-
-// hqClass is an HQ answer's class: HQ out of reach may change by waiting;
-// any refusal of HQ's will not.
-func hqClass(err error) platform.ErrorClass {
-	if hq.IsUnavailable(err) {
-		return platform.ClassUnreachable
-	}
-	return platform.ClassRefused
 }
 
 // sourceGit is git in one deploy source's scratch directory.

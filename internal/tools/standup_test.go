@@ -939,7 +939,7 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		{
 			name:    "the Mate is never enrolled",
 			setup:   func(f *standupFixture) { f.identity.Key = "" },
-			wantErr: []string{"PREREQUISITE_MISSING", "HQ cannot be asked for this Mate", "Nothing was touched", `"route":"adopt"`},
+			wantErr: []string{"PREREQUISITE_MISSING", "HQ cannot be asked for this Mate", "zerops_standup again"},
 		},
 		{
 			name: "a tier past HQ's read bound",

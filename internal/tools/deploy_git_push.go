@@ -56,10 +56,7 @@ func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, wo
 // the class when platform.ClassOf gives one, and a next step from that class.
 func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform.PlatformError {
 	class := platform.ClassOf(err)
-	head := fmt.Sprintf("%s on %s failed", what, hostname)
-	if class != "" {
-		head += " (" + string(class) + ")"
-	}
+	head := fmt.Sprintf("%s on %s failed", what, hostname) + class.Note()
 	next := "Read the output above: the check ran in the container and failed there."
 	switch {
 	case class.WaitedOn():
@@ -80,10 +77,7 @@ func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform
 // not validated before the push: err's own words verbatim, with its class
 // when platform.ClassOf gives one.
 func gitPushValidationNotRun(err error) string {
-	head := "zerops.yaml was not validated before the push"
-	if class := platform.ClassOf(err); class != "" {
-		head += " (" + string(class) + ")"
-	}
+	head := "zerops.yaml was not validated before the push" + platform.ClassOf(err).Note()
 	return head + ": " + err.Error()
 }
 
@@ -677,10 +671,7 @@ func handleGitPush(
 		}
 
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
-		failed := "git-push from " + hostname + " failed"
-		if class := platform.ClassOf(err); class != "" {
-			failed += " (" + string(class) + ")"
-		}
+		failed := "git-push from " + hostname + " failed" + platform.ClassOf(err).Note()
 		pushErr := platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			failed+": "+detail,

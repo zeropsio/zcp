@@ -24,7 +24,7 @@ import (
 // TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched calls
 // the stand-up the way the model does on a Mate's first turn. HQ holds the
 // Mate in no application yet, so there is no recipe to read: the answer is a
-// refusal that names the adopt route, and no service is adopted.
+// refusal that names the stand-up again, and no service is adopted.
 func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir) and t.Setenv (HOME, where the
 	// Mate's enrollment with its HQ is kept).
@@ -81,7 +81,7 @@ func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *tes
 	if !result.IsError {
 		t.Fatalf("want a refusal, got: %s", text.String())
 	}
-	for _, want := range []string{"PREREQUISITE_MISSING", "no application", `route=\"adopt\"`} {
+	for _, want := range []string{"PREREQUISITE_MISSING", "no application", "zerops_standup again"} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("refusal does not say %q: %s", want, text.String())
 		}

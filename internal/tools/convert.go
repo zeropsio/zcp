@@ -67,7 +67,13 @@ func wrapStageErr(stage string, err error) *platform.PlatformError {
 // absence-means-empty.
 func convertError(err error, opts ...ErrorOption) *mcp.CallToolResult {
 	var pe *platform.PlatformError
-	if !errors.As(err, &pe) {
+	var sshFailure *platform.SSHExecError
+	switch {
+	case errors.As(err, &pe):
+	case errors.As(err, &sshFailure):
+		// An ssh call no caller coded is an ssh failure, never UNKNOWN.
+		pe = platform.NewPlatformError(platform.ErrSSHFailed, err.Error(), "")
+	default:
 		// Plain Go error → wrap as typed ErrUnknown. Plain-text wire
 		// shape eliminated; every error response is typed JSON.
 		pe = platform.NewPlatformError(platform.ErrUnknown, err.Error(), "")

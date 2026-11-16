@@ -48,11 +48,15 @@ func NewSystemSSHDeployer() *SystemSSHDeployer {
 // into every parsed single-value read (live-verified: the launch gate's
 // `git remote get-url origin` value carried the warning and false-blocked
 // remote-mismatch on an exactly-matching URL).
+// ConnectTimeout=5 bounds the TCP dial, so a container that does not answer
+// ends ssh with its own 255 and words ("No route to host") instead of the
+// caller's deadline killing the client with nothing said.
 func sshArgs(hostname, command string) []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
+		"-o", "ConnectTimeout=5",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
 		hostname, command,
