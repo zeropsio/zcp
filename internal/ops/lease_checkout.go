@@ -283,7 +283,8 @@ func leaseUnsetNote(unset []string) string {
 //   - a warm clone zcp started is still unsettled, or the work dir has no
 //     local branch and no change (no .git, or a bare `git init`): nothing of
 //     the agent's is there, so the whole checkout runs.
-//   - anything else: exit leaseUnfinishedExit, nothing changed.
+//   - anything else, a git read that fails included: exit
+//     leaseUnfinishedExit, nothing changed.
 //
 // Nothing here ever forces a checkout over a branch HEAD is on.
 func leaseResumeCommandFrom(workDir, repo, branch, base, from, hqURL, tokenScope string) string {
@@ -294,8 +295,11 @@ func leaseResumeCommandFrom(workDir, repo, branch, base, from, hqURL, tokenScope
 		"{ b=$(git merge-base " + ref + " " + q("refs/remotes/origin/"+leaseDefaultBranch) + " 2>/dev/null) && " +
 		"printf '" + leaseBaseMarker + "%s\\n' \"$b\"; } || :; }"
 	resumed := slices.Concat([]string{"echo " + q(leaseResumedMarker), cutBase}, noWork)
-	nothingOfTheAgents := "{ [ -f .git/" + leaseWarmStateFile + " ] || { [ -z \"$(git for-each-ref refs/heads 2>/dev/null)\" ] && " +
-		"[ -z \"$(git status --porcelain 2>/dev/null)\" ]; }; }"
+	// A read that fails (a corrupt index, a lock) is never read as empty:
+	// each $(...) is checked on its own, so a failure leaves the work dir
+	// undecided and the script refuses (leaseUnfinishedExit).
+	nothingOfTheAgents := "{ [ -f .git/" + leaseWarmStateFile + " ] || [ ! -e .git ] || " +
+		"{ r=$(git for-each-ref refs/heads) && s=$(git status --porcelain) && [ -z \"$r$s\" ]; }; }"
 	return strings.Join(head, " && ") + " && if git rev-parse -q --verify " + ref + " >/dev/null 2>&1; then " +
 		strings.Join(resumed, " && ") + "; elif " + nothingOfTheAgents + "; then " +
 		strings.Join(slices.Concat(cut, noWork), " && ") + "; else echo " +

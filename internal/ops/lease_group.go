@@ -143,6 +143,12 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 		if err != nil {
 			return LeaseChange{}, err
 		}
+		if checkedOut != nil {
+			// A base this checkout answered (a resumed lease's merge base,
+			// recorded now) is the group's: every sibling cut after it in
+			// this call starts there, not from today's origin/main.
+			base = cmp.Or(base, checkedOut.Base)
+		}
 		if found {
 			m.held = &held
 			continue
@@ -154,7 +160,6 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			m.rec, m.reserved, m.checkedOut = *checkedOut, true, true
 			m.view = checkedOut.view(LeaseStateHeld)
 			m.view.Note = "zcp held this lease, but its checkout had never put it on the branch (zcp stopped mid-checkout), so this acquire ran the checkout"
-			base = cmp.Or(base, checkedOut.Base)
 		}
 		fresh = append(fresh, m)
 	}
@@ -552,9 +557,10 @@ func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTarge
 // container decides (resumeHeldCheckout). One whose branch was cut is reused,
 // only the checkout's steps that change no work run in it again; one holding
 // nothing of the agent's — zcp stopped mid-checkout — gets the whole checkout
-// now and is returned as checkedOut, for the acquire to finish as a lease it
+// now and is returned not found, for the acquire to finish as a lease it
 // takes (prepare, supervisor, dev servers); one holding anything else is
-// refused. A parked lease, and a zcp with no ssh, cannot be asked: the lease
+// refused. Either way a checkout that ran returns its record as checkedOut,
+// with the base it recorded, which the group's later cuts start from. A parked lease, and a zcp with no ssh, cannot be asked: the lease
 // is reused as it stands.
 func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch, base, from string, group []leaseRecord) (held LeaseView, found bool, checkedOut *leaseRecord, err error) {
 	own := map[string]leaseRecord{}
@@ -604,6 +610,8 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch, base, fr
 				return LeaseView{}, false, &rec, nil
 			}
 			heldView.Note = joinNotes(heldView.Note, note)
+			heldView.Reused = true
+			return *heldView, true, &rec, nil
 		}
 		heldView.Reused = true
 		return *heldView, true, nil, nil
