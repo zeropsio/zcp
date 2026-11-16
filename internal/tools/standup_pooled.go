@@ -101,7 +101,11 @@ func newStandupVerdictRows(status *standupStatus, services []pooledService) *sta
 	r := &standupVerdictRows{status: status, inputs: map[string]ops.StandupRowInput{}}
 	for _, s := range services {
 		r.order = append(r.order, s.host)
-		r.inputs[s.host] = ops.StandupRowInput{Hostname: s.host, Kind: s.kind}
+		in := ops.StandupRowInput{Hostname: s.host, Kind: s.kind}
+		if s.kind == mate.RowStage {
+			in.Pool = s.pair.pair.Dev.Hostname
+		}
+		r.inputs[s.host] = in
 	}
 	return r
 }
@@ -150,10 +154,11 @@ func (r *standupVerdictRows) verdict() mate.StandupVerdict {
 }
 
 func (r *standupVerdictRows) verdictLocked() mate.StandupVerdict {
-	rows := make([]mate.StandupRow, 0, len(r.order))
+	inputs := make([]ops.StandupRowInput, 0, len(r.order))
 	for _, host := range r.order {
-		rows = append(rows, ops.StandupRowOf(r.inputs[host]))
+		inputs = append(inputs, r.inputs[host])
 	}
+	rows := ops.StandupRowsOf(inputs)
 	return mate.StandupVerdict{Headline: mate.StandupHeadlineOf(rows), Rows: rows}
 }
 
@@ -308,8 +313,9 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 			d.keepBuilt(ctx, s, svc, rows)
 		default:
 			if failed := d.bootSkipsFailed(ctx, svc); failed != nil {
+				buildLog := d.failedBuildLog(ctx, failed)
 				rows.set(s.host, func(in *ops.StandupRowInput) {
-					in.AppVersionID, in.AppVersionStatus = failed.ID, failed.Status
+					in.AppVersionID, in.AppVersionStatus, in.BuildLog = failed.ID, failed.Status, buildLog
 				})
 				continue
 			}
@@ -444,8 +450,12 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 		return true, res.Commit
 	}
 	version := d.appVersion(ctx, svc.ID, res.AppVersionID)
+	var buildLog string
+	if version != nil && ops.StandupRowOf(ops.StandupRowInput{AppVersionStatus: version.Status, ProcessStatus: processStatus}).State == mate.RowFailed {
+		buildLog = d.failedBuildLog(ctx, version)
+	}
 	rows.set(s.host, func(in *ops.StandupRowInput) {
-		in.ProcessStatus = processStatus
+		in.ProcessStatus, in.BuildLog = processStatus, buildLog
 		if version == nil {
 			in.Class = platform.ClassUnreachable
 			in.Cause = fmt.Sprintf("%s's app version %s could not be read after its build", s.host, res.AppVersionID)
@@ -575,6 +585,48 @@ func (d standupDeps) confirmBearer(ctx context.Context, pool string, rows *stand
 		case <-time.After(standupHQRetry):
 		}
 	}
+}
+
+// standupLogRead and standupLogLines bound a failed build's evidence: one
+// read of its log's newest standupLogRead lines, of which at most
+// standupLogLines, each cut at standupLogWidth bytes, go into the cause.
+const (
+	standupLogRead  = 200
+	standupLogLines = 5
+	standupLogWidth = 300
+)
+
+// failedBuildLog is a failed build's evidence for its row's cause, from one
+// read of its log: the lines the builder marks failing (❌), else the log's
+// last lines, bounded; words saying so when the log could not be read.
+func (d standupDeps) failedBuildLog(ctx context.Context, version *platform.AppVersionEvent) string {
+	const unread = "its build log could not be read"
+	if d.batch.logFetcher == nil {
+		return unread
+	}
+	logs, tail := ops.FetchBuildLogTail(ctx, d.batch.client, d.batch.logFetcher, d.batch.projectID, version, standupLogRead, standupLogLines)
+	if len(logs) == 0 {
+		return unread
+	}
+	var lines []string
+	for _, line := range logs {
+		if strings.Contains(line, "❌") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		lines = tail
+	}
+	lines = lines[max(0, len(lines)-standupLogLines):]
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) > standupLogWidth {
+			line = strings.ToValidUTF8(line[:standupLogWidth], "") + "…"
+		}
+		out = append(out, line)
+	}
+	return "build log: " + strings.Join(out, " | ")
 }
 
 // bootSkipsFailed is, for the boot run, a service's newest version where it
