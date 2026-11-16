@@ -12,3 +12,4 @@ E4 — An arbitrary command's own non-255 exit is passed on unclassified: zcp ca
 E5 — The platform's 5xx and 429 answers are unreachable, so a wait waits on them.
 E6 — The platform's 403 is refused: no wait spends its bound on it.
 E7 — A readiness wait whose bound runs out says it waited the bound and carries the last cause verbatim.
+E8 — Every tool error the agent receives carries the failure's class and, for an ssh failure, ssh's whole output (case in `internal/tools/convert_test.go`).
