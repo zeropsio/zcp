@@ -168,8 +168,10 @@ leases are keyed by branch, so they never meet.
   change with `service="<its alias>"` and describes it the same way.
 - Report each branch's change and its lease preview URLs to the person.
 - Once one change merges, the others are behind `main`. Bring one up to date
-  only when the person asks or it no longer merges cleanly: over SSH in a
-  lease of it, `git fetch origin && git merge origin/main`, check the preview, push,
+  only when the person asks or it no longer merges cleanly: in a lease of
+  it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
+  (a repository outside this Mate's HQ over SSH:
+  `git fetch origin && git merge origin/main`), check the preview, push,
   sync the group's other leases and describe it again — never rebase, never
   force-push.
 - A change that needs another's unmerged work may be cut from that branch;
