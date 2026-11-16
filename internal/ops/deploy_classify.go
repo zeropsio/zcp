@@ -54,7 +54,9 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	pe := &platform.PlatformError{
 		Code:       platform.ErrSSHDeployFailed,
 		Diagnostic: output, // ALWAYS preserve full output for LLM
+		Cause:      err,
 	}
+	class := platform.ClassOf(err)
 
 	// Only classify OS/SSH-level errors — these NEVER appear in zcli progress output.
 	switch {
@@ -93,17 +95,41 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	case strings.Contains(exitMsg, "signal: killed"):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s killed (likely OOM)", sourceService, targetService)
 		pe.Suggestion = fmt.Sprintf("Process killed. Scale up: zerops_scale serviceHostname=%s minRam=2", sourceService)
-	case strings.Contains(exitMsg, "connection refused") || strings.Contains(exitMsg, "no route to host"):
-		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: cannot reach source service", sourceService, targetService)
-		pe.Suggestion = fmt.Sprintf("Verify it's RUNNING: zerops_discover service=%s", sourceService)
+	case class == platform.ClassUnreachable || class == platform.ClassRefused:
+		// Whether ssh reached the source is platform.ClassOf's verdict;
+		// ssh's own words follow it.
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: the source did not take the SSH session (%s, %s):\n%s",
+			sourceService, targetService, class, exitMsg, lastLines(output, 5))
+		pe.Suggestion = fmt.Sprintf("Is %s RUNNING (zerops_discover service=%s)? A refusal names what refused it above; an unreachable source may answer once it has started.", sourceService, sourceService)
 	default:
 		// Don't classify zcli output — show last lines, let LLM reason about it.
 		tail := lastLines(output, 5)
-		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed:\n%s", sourceService, targetService, tail)
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed%s (%s):\n%s", sourceService, targetService, deployClassNote(err), exitMsg, tail)
 		pe.Suggestion = "Check the diagnostic field for full command output."
 	}
 
 	return pe
+}
+
+// deployClassNote is err's class (platform.ClassOf) as a message reads it:
+// " (refused)", or "" while it has none.
+func deployClassNote(err error) string {
+	if class := platform.ClassOf(err); class != "" {
+		return " (" + string(class) + ")"
+	}
+	return ""
+}
+
+// pollMayStillRun reports a process poll that stopped on a cause waiting can
+// change — its own bound, a 5xx, the caller's ctx ending — so the process may
+// still run. Any other poll error is the operation's failure.
+func pollMayStillRun(err error) bool {
+	return errors.Is(err, context.Canceled) || platform.ClassOf(err).WaitedOn()
+}
+
+// pollStoppedMessage says a process was left running unobserved, and why.
+func pollStoppedMessage(processID string, err error) string {
+	return fmt.Sprintf("process %s may still be running: zcp stopped following it%s: %v. Its outcome is in zerops_events.", processID, deployClassNote(err), err)
 }
 
 // lastLines returns the last n non-empty lines from s.
