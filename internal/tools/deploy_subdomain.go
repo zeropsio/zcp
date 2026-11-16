@@ -104,7 +104,12 @@ func ensurePublicAccessAt(
 		hostname = lease.Pool
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, hostname)
+	svc, eligible, err := serviceEligibleForSubdomain(ctx, client, meta, projectID, hostname)
+	if err != nil {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("public access was not checked: %s could not be read%s: %v (subdomain state unknown)", hostname, platformClassNote(err), err))
+		return
+	}
 	if !eligible {
 		return
 	}
@@ -118,7 +123,7 @@ func ensurePublicAccessAt(
 	obs, err := ops.ObservePublicAccess(ctx, client, projectID, svc)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("observe public access failed: %v (subdomain state unknown)", err))
+			fmt.Sprintf("observe public access failed%s: %v (subdomain state unknown)", platformClassNote(err), err))
 		return
 	}
 	obs.Observed.Listener = listener
@@ -145,10 +150,11 @@ func ensurePublicAccessAt(
 			// search, which can lag the deploy that declared them.
 			if address != nil {
 				result.SubdomainURL = address()
-			} else if fresh, getErr := client.GetService(ctx, svc.ID); getErr == nil {
-				if port, ok := ops.PreferredHTTPPort(fresh.Ports); ok {
-					result.SubdomainURL = ops.SubdomainURLForPort(ctx, client, projectID, fresh, port.Port)
-				}
+			} else if fresh, getErr := client.GetService(ctx, svc.ID); getErr != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("subdomain enabled, but its URL is unknown: %s could not be read%s: %v", hostname, platformClassNote(getErr), getErr))
+			} else if port, ok := ops.PreferredHTTPPort(fresh.Ports); ok {
+				result.SubdomainURL = ops.SubdomainURLForPort(ctx, client, projectID, fresh, port.Port)
 			}
 			for _, w := range subRes.Warnings {
 				result.Warnings = append(result.Warnings, "subdomain: "+w)
@@ -161,7 +167,7 @@ func ensurePublicAccessAt(
 			// warning — see isServiceStackIsNotHTTPErr doc.
 		default:
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("auto-enable subdomain failed: %v (run zerops_subdomain action=enable manually)", enableErr))
+				fmt.Sprintf("auto-enable subdomain failed%s: %v", platformClassNote(enableErr), enableErr))
 		}
 	} else if obs.Observed.Subdomain == topology.SubdomainOn {
 		// Not eligible for a fresh auto-enable (already stamped, custom
@@ -274,25 +280,34 @@ func modeAllowsSubdomain(mode topology.Mode) bool {
 //     defends against future call sites and maintains the invariant that
 //     L7 routing is never auto-enabled on platform-internal stacks.
 //
-// Lookup failures soft-fail (returns nil, false → caller skips auto-enable,
-// agent's manual zerops_subdomain stays valid).
+// A lookup failure is returned: the caller says public access was not
+// checked, and why.
 func serviceEligibleForSubdomain(
 	ctx context.Context,
 	client platform.Client,
 	meta *workflow.ServiceMeta,
 	projectID, targetService string,
-) (*platform.ServiceStack, bool) {
+) (*platform.ServiceStack, bool, error) {
 	if meta != nil && meta.Mode != "" && !modeAllowsSubdomain(meta.Mode) {
-		return nil, false
+		return nil, false, nil
 	}
 	svc, err := ops.LookupService(ctx, client, projectID, targetService)
-	if err != nil || svc == nil {
-		return nil, false
+	if err != nil {
+		return nil, false, err
 	}
-	if svc.IsSystem() {
-		return nil, false
+	if svc == nil || svc.IsSystem() {
+		return nil, false, nil
 	}
-	return svc, true
+	return svc, true, nil
+}
+
+// platformClassNote is err's class (platform.ClassOf) as a message reads it:
+// " (refused)", or "" while it has none.
+func platformClassNote(err error) string {
+	if class := platform.ClassOf(err); class != "" {
+		return " (" + string(class) + ")"
+	}
+	return ""
 }
 
 // isServiceStackIsNotHTTPErr classifies a platform error as the

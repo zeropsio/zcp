@@ -154,8 +154,12 @@ func ReactivateAppVersion(
 
 	final, err := PollProcess(ctx, client, proc.ID, nil)
 	if err != nil {
+		if !pollMayStillRun(err) {
+			return nil, fmt.Errorf("reactivate app version: follow process %s: %w", proc.ID, err)
+		}
 		result.TimedOut = true
-		return result, nil //nolint:nilerr // timeout/cancel is reported on the result, not as an error
+		result.Message = pollStoppedMessage(proc.ID, err)
+		return result, nil
 	}
 
 	if final.Status == platform.ProcessStatusFinished {
