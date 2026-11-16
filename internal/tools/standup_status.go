@@ -132,8 +132,14 @@ func (s *standupStatus) awaitStages() {
 	})
 }
 
+// verdict writes the pooled stand-up's verdict as it now stands.
+func (s *standupStatus) verdict(v mate.StandupVerdict) {
+	s.update(func(st *mate.StandupStatus) { st.Verdict = &v })
+}
+
 // end closes the call: failed with errLine when the call refused, else done
-// unless a half failed or was left still building.
+// unless a half failed or was left still building, or the verdict's headline
+// is not done — so the run's state never disagrees with the verdict.
 func (s *standupStatus) end(errLine string) {
 	if s == nil {
 		return
@@ -153,6 +159,13 @@ func (s *standupStatus) end(errLine string) {
 				failed = append(failed, e.Hostname+": "+e.Error)
 			case mate.StepRunning:
 				failed = append(failed, e.Hostname+": still building past the stand-up's wait; a second call waits for it")
+			}
+		}
+		if v := st.Verdict; v != nil && v.Headline != mate.HeadlineDone {
+			for _, r := range v.Rows {
+				if r.State != mate.RowDone {
+					failed = append(failed, r.Hostname+": "+string(r.State)+" "+r.Cause)
+				}
 			}
 		}
 		if len(failed) > 0 {
