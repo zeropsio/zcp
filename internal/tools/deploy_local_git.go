@@ -88,19 +88,6 @@ func localGitRunner(ctx context.Context, workingDir string) ops.GitRunner {
 	}
 }
 
-// resolveTargetForValidation fetches the target ServiceStack from live
-// services so pre-deploy validation has the ServiceStackTypeID /
-// TypeVersionName required by the Zerops validator endpoint. Returns nil
-// (no error) when the service can't be resolved — validation is then
-// skipped rather than blocking deploy on a transient list failure.
-func resolveTargetForValidation(ctx context.Context, client platform.Client, projectID, hostname string) *platform.ServiceStack {
-	if client == nil || projectID == "" || hostname == "" {
-		return nil
-	}
-	svc, _ := ops.LookupService(ctx, client, projectID, hostname)
-	return svc
-}
-
 // handleLocalGitPush performs `git push` from the user's local git repo
 // without ever touching the user's credentials — the local git binary
 // inherits whatever auth the user has configured (SSH keys, macOS
