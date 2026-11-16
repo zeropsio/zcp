@@ -34,15 +34,17 @@ type MateState struct {
 	// HQ does not say, so the person the Mate works for may not be one of
 	// them. false where nothing is limited, and from an older HQ.
 	MergeLimited bool `json:"mergeLimited,omitempty"`
-	// HasProduction says a production is attached to the application, of any
-	// kind; HasStage that it has a Stage. Each is absent when false, so false
-	// alone does not tell an application without one from an older HQ: Mates
-	// does.
-	HasProduction bool `json:"hasProduction,omitempty"`
-	HasStage      bool `json:"hasStage,omitempty"`
+	// Production is how the application's production is run — ProductionZerops,
+	// ProductionGit or ProductionOutside — "" while it has none; a kind a
+	// later HQ adds is read as said, and zcp says nothing of what it does not
+	// know. HasStage says the application has a Stage. Each is absent when
+	// there is none, so absence alone does not tell an application without
+	// one from an older HQ: Mates does.
+	Production string `json:"production,omitempty"`
+	HasStage   bool   `json:"hasStage,omitempty"`
 	// Mates is how many Mates the application holds, this one included: at
-	// least 1 from an HQ that sends these facts, 0 from an older one. The
-	// three word zcp's guidance and decide nothing.
+	// least 1, always, from an HQ that sends these facts, 0 from an older one.
+	// The three word zcp's guidance and decide nothing.
 	Mates int `json:"mates,omitempty"`
 	// Repos are the application's repositories in HQ, by name. nil from an HQ
 	// older than repositories in the Mate's state.
@@ -84,6 +86,15 @@ type RepoOrigin struct {
 	// Mode is OriginOnGitHub or OriginFollowed; "" from an HQ older than it.
 	Mode string `json:"mode,omitempty"`
 }
+
+// How an application's production is run: a Zerops project or a Git
+// production, each of which HQ releases to, or outside Mate, where Mate
+// releases nothing and cannot tell what a merge publishes.
+const (
+	ProductionZerops  = "zerops"
+	ProductionGit     = "git"
+	ProductionOutside = "outside"
+)
 
 // The ways a person keeps a repository's code: on GitHub, connected through
 // the organisation's GitHub app, which HQ mirrors both ways and alone pushes
