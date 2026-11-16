@@ -56,9 +56,14 @@ func StandupRowOf(in StandupRowInput) mate.StandupRow {
 		row.Next = rerunStep
 	case in.Class != "":
 		row.State, row.Class = mate.RowFailed, in.Class
-		if active && bearerMissing && in.Class == platform.ClassUnreachable {
+		switch {
+		case active && bearerMissing && in.Class == platform.ClassUnreachable:
 			row.Cause, row.Next = bearerCause(in)
-		} else {
+		case buildInFlight(in) && in.Class == platform.ClassUnreachable:
+			// A new run joins this build, never builds again (CommitDeploy).
+			row.Cause = in.Cause
+			row.Next = "run zerops_standup again: it waits on the build in flight (" + orNamed(in.AppVersionStatus, "building") + ")"
+		default:
 			row.Cause, row.Next = in.Cause, classStep(in.Class)
 		}
 	case active && !bearerMissing:
@@ -67,6 +72,13 @@ func StandupRowOf(in StandupRowInput) mate.StandupRow {
 		row.State = mate.RowBuilding
 	}
 	return row
+}
+
+// buildInFlight reports a version whose build had not ended when the row was
+// cut off: one exists, it is not active, and its process did not finish (a
+// failed one is versionFailed's).
+func buildInFlight(in StandupRowInput) bool {
+	return in.AppVersionID != "" && in.AppVersionStatus != statusActive && in.ProcessStatus != platform.ProcessStatusFinished
 }
 
 // versionFailed reports a version or its build-and-deploy process that ended
