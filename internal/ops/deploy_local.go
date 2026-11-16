@@ -288,7 +288,7 @@ func DeployLocalFromListing(
 func zcliFailure(command, stdout, stderr string, err error) *platform.PlatformError {
 	return &platform.PlatformError{
 		Code:       platform.ErrDeployFailed,
-		Message:    fmt.Sprintf("%s failed%s (%v): %s", command, classNote(err), err, strings.TrimSpace(lastLines(stderr, 5))),
+		Message:    fmt.Sprintf("%s failed%s (%v): %s", command, platform.ClassOf(err).Note(), err, strings.TrimSpace(lastLines(stderr, 5))),
 		Suggestion: "zcli's own output is in diagnostic: it names what failed (the token, zerops.yaml, the build, the API).",
 		Diagnostic: strings.TrimSpace("stdout:\n" + stdout + "\nstderr:\n" + stderr),
 		Cause:      err,

@@ -180,7 +180,7 @@ func enrichEmptyLogs(
 		hadPrior, err := HasPriorDeployAttempt(ctx, client, projectID, hostname)
 		switch {
 		case err != nil:
-			result.EmptyReason = fmt.Sprintf("no runtime logs exist — the service is READY_TO_DEPLOY, and whether a deploy was ever attempted could not be read%s: %v", classNote(err), err)
+			result.EmptyReason = fmt.Sprintf("no runtime logs exist — the service is READY_TO_DEPLOY, and whether a deploy was ever attempted could not be read%s: %v", platform.ClassOf(err).Note(), err)
 			result.Recovery = eventsRecovery()
 		case hadPrior:
 			result.EmptyReason = "no runtime logs exist — the service never started an app process. The build/deploy failure timeline (failureClass + cause) is in zerops_events, not this stream."
