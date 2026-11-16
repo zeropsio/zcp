@@ -50,9 +50,31 @@ const (
 	gitExitSSHFailed = 255
 )
 
+// hostVerb is the command a host is resolved for — `zcp git`, `zcp run` — as
+// its refusals say it: one resolution of a host to a container and a
+// directory (gitTargetOf), in each command's own words.
+type hostVerb struct {
+	// name is the subcommand: "git", "run".
+	name string
+	// usage is its usage line.
+	usage string
+	// elsewhere says where it runs instead, of a host that is this container.
+	elsewhere string
+	// what names what it runs, as in "run git in the lease it names".
+	what string
+}
+
+// gitHostVerb is `zcp git`'s.
+func gitHostVerb() hostVerb {
+	return hostVerb{name: "git", usage: gitUsage, elsewhere: "zcp git runs git in another service's checkout", what: "git"}
+}
+
 // gitCmdDeps is what `zcp git` runs on: the container it runs in, the
 // directory of zcp's records, the ssh seam and the caller's streams.
 type gitCmdDeps struct {
+	// verb is the command the host is resolved for; the zero value is
+	// `zcp git`'s (hostVerb).
+	verb     hostVerb
 	rt       runtime.Info
 	stateDir string
 	ssh      ops.SSHStdioRunner
@@ -69,6 +91,15 @@ type gitCmdDeps struct {
 	stdin     io.Reader
 	stdout    io.Writer
 	stderr    io.Writer
+}
+
+// hostVerb is the command d resolves a host for: `zcp git` unless d names
+// another.
+func (d gitCmdDeps) hostVerb() hostVerb {
+	if d.verb.name == "" {
+		return gitHostVerb()
+	}
+	return d.verb
 }
 
 // isGit recognizes `zcp git` before CLI telemetry can add output to git's
@@ -143,7 +174,7 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 		return refuse("no host given; " + gitUsage)
 	}
 	host := args[0]
-	if why := gitHostRefusal(host); why != "" {
+	if why := gitHostRefusal(host, d.hostVerb()); why != "" {
 		return refuse(why)
 	}
 	gitArgs, err := ops.ParseBrokeredGitArgs(args[1:])
@@ -154,7 +185,7 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 		return refuse("runs only in a Zerops container, the zcp service, which reaches " + host + " over the project's ssh")
 	}
 	if host == d.rt.ServiceName {
-		return refuse(fmt.Sprintf("%q is this container itself; zcp git runs git in another service's checkout", host))
+		return refuse(fmt.Sprintf("%q is this container itself; %s", host, d.hostVerb().elsewhere))
 	}
 	target, stop, stopped := gitTargetOf(ctx, host, d)
 	if stopped {
@@ -201,14 +232,14 @@ func runGitCmd(ctx context.Context, args []string, d gitCmdDeps) int {
 
 // gitRefuse says why a call is refused, in one line, and is its exit code.
 func gitRefuse(d gitCmdDeps, msg string) int {
-	fmt.Fprintln(d.stderr, "zcp git: "+msg)
+	fmt.Fprintln(d.stderr, "zcp "+d.hostVerb().name+": "+msg)
 	return gitExitRefused
 }
 
 // gitRecordUnread says zcp could not read its record of host, and is the
 // exit code.
 func gitRecordUnread(d gitCmdDeps, host string, err error) int {
-	fmt.Fprintf(d.stderr, "zcp git: read zcp's record of %s: %v\n", host, err)
+	fmt.Fprintf(d.stderr, "zcp %s: read zcp's record of %s: %v\n", d.hostVerb().name, host, err)
 	return gitExitFailed
 }
 
@@ -225,13 +256,14 @@ type gitTarget struct {
 	id      *hq.Identity
 }
 
-// gitTargetOf is the target of a call to host, or — stopped true — the exit
+// gitTargetOf is the target of a call to host — `zcp git`'s or `zcp run`'s (d.hostVerb) — or — stopped true — the exit
 // code of a call that ends here, its line said: refused (a pool pair, a
 // stage, a lease gitLeaseTarget refuses) or a record zcp could not read.
 func gitTargetOf(ctx context.Context, host string, d gitCmdDeps) (target gitTarget, code int, stopped bool) {
 	if platform.ValidateLeaseAlias(host) == nil {
 		return gitLeaseTarget(ctx, host, d)
 	}
+	verb := d.hostVerb()
 	meta, err := workflow.FindServiceMeta(d.stateDir, host)
 	if err != nil {
 		return gitTarget{}, gitRecordUnread(d, host, err), true
@@ -241,19 +273,16 @@ func gitTargetOf(ctx context.Context, host string, d gitCmdDeps) (target gitTarg
 		return target, 0, false
 	}
 	if meta.DevIsPool() {
-		return gitTarget{}, gitRefuse(d, fmt.Sprintf("%q belongs to the pair keyed by the dev pool %q, which holds no checkout of its own (its hostname reaches a random one of its containers); check the branch out in a lease, zerops_lease action=\"acquire\" pool=%q, and run git in the lease it names: zcp git %s-<n> ...", host, meta.Hostname, meta.Hostname, meta.Hostname)), true
+		return gitTarget{}, gitRefuse(d, fmt.Sprintf("%q belongs to the pair keyed by the dev pool %q, which holds no checkout of its own (its hostname reaches a random one of its containers); check the branch out in a lease, zerops_lease action=\"acquire\" pool=%q, and run %s in the lease it names: zcp %s %s-<n> ...", host, meta.Hostname, meta.Hostname, verb.what, verb.name, meta.Hostname)), true
 	}
 	if _, isStage := meta.StageFor(host); isStage {
-		return gitTarget{}, gitRefuse(d, fmt.Sprintf("%q is the stage of %s and holds no checkout of the pair's repository; run git in its dev service: zcp git %s ...", host, meta.Hostname, meta.Hostname)), true
+		return gitTarget{}, gitRefuse(d, fmt.Sprintf("%q is the stage of %s and holds no checkout of the pair's repository; run %s in its dev service: zcp %s %s ...", host, meta.Hostname, verb.what, verb.name, meta.Hostname)), true
 	}
 	if wd := meta.WorkingDirFor(host); wd != "" {
 		target.dir = wd
 	}
 	return target, 0, false
 }
-
-// gitLeaseWhat is what a refused lease check says zcp git would have done.
-const gitLeaseWhat = "reached by zcp git"
 
 // gitLeaseTarget is the target of a call to the lease alias host. Only zcp's
 // own lease records make an alias reachable, so one zcp holds no record of
@@ -279,7 +308,9 @@ func gitLeaseTarget(ctx context.Context, host string, d gitCmdDeps) (target gitT
 	if resolve == nil {
 		resolve = func(context.Context) (ops.LeaseDeps, error) { return ops.LeaseDeps{}, nil }
 	}
-	lease, held, err := initLeaseCheck(resolve)(ctx, d.stateDir, host, gitLeaseWhat)
+	// What a refused lease check says the call would have done.
+	command := "zcp " + d.hostVerb().name
+	lease, held, err := initLeaseCheck(resolve)(ctx, d.stateDir, host, "reached by "+command)
 	var refusal *platform.PlatformError
 	switch {
 	case errors.As(err, &refusal):
@@ -289,7 +320,7 @@ func gitLeaseTarget(ctx context.Context, host string, d gitCmdDeps) (target gitT
 	case !held:
 		return gitTarget{}, gitRefuse(d, noLease), true
 	case lease.Parked:
-		return gitTarget{}, gitRefuse(d, refusalLine(ops.LeaseParkedError(lease, "zcp git"))), true
+		return gitTarget{}, gitRefuse(d, refusalLine(ops.LeaseParkedError(lease, command))), true
 	}
 	meta, err := workflow.FindServiceMeta(d.stateDir, lease.Pool)
 	if err != nil {
@@ -356,20 +387,20 @@ func brokeredGitRelayFor(meta *workflow.ServiceMeta, id hq.Identity, httpClient 
 	return relay
 }
 
-// gitHostRefusal says why host is no service `zcp git` may run git in — a
-// loopback name or address, or no service hostname or lease alias at all —
-// and "" when it may be one. The container's own hostname is refused by the
-// caller, which knows it.
-func gitHostRefusal(host string) string {
+// gitHostRefusal says why host is no service verb may run in — a loopback
+// name or address, or no service hostname or lease alias at all — and "" when
+// it may be one. The container's own hostname is refused by the caller, which
+// knows it.
+func gitHostRefusal(host string, verb hostVerb) string {
 	switch host {
 	case "localhost", "localhost4", "localhost6":
-		return fmt.Sprintf("%q is this container itself; zcp git runs git in another service's checkout", host)
+		return fmt.Sprintf("%q is this container itself; %s", host, verb.elsewhere)
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return fmt.Sprintf("%q is this container itself; zcp git runs git in another service's checkout", host)
+		return fmt.Sprintf("%q is this container itself; %s", host, verb.elsewhere)
 	}
 	if platform.ValidateMountName(host) != nil {
-		return fmt.Sprintf("%q is no service hostname or lease alias; %s", host, gitUsage)
+		return fmt.Sprintf("%q is no service hostname or lease alias; %s", host, verb.usage)
 	}
 	return ""
 }
