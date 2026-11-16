@@ -37,11 +37,10 @@ import (
 // model's second call — each stage once its dev half and the stages above it
 // by the tier's priority stand. A part whose dev half is its dev pool is
 // recorded as the pair keyed by the pool, its repository in HQ with it, and
-// its pool gets its first image with the dev halves (standup_pool.go): no
-// lease of a pool works before it has one, so the image is an ordinary
-// deploy from main checked out in the part's stage. The stage itself is then
-// deployed from a lease of the pool, as every later stage deploy is, which
-// the answer names as the model's next calls.
+// main's head is commit-deployed from zcp into its pool and every stage of it
+// that has no build, beside the dev halves (standup_pooled.go). zcp runs that
+// pooled path at its own start too (StandupAtBoot); one run at a time per
+// project.
 //
 // Done by the model, that took sixteen minutes on the Beviro trial
 // (2026-09-29): an improvised adopt, then one deploy after another, and a
@@ -94,6 +93,11 @@ type standupDeps struct {
 	// status writes the stand-up's section of statusPath: one per server,
 	// across its calls (registerStandup makes it when none is given).
 	status *standupStatus
+	// source is where a pooled part's commit deploys read main from.
+	source ops.DeploySource
+	// hqWait bounds the wait on an HQ that does not answer; zero means
+	// standupHQWait.
+	hqWait time.Duration
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -122,6 +126,7 @@ func RegisterStandup(
 		runtimeWait: standupRuntimeWait,
 		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
+		source:      ops.NewHQDeploySource(httpClient, hqIdentity(rtInfo)),
 	})
 }
 
@@ -132,7 +137,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_standup",
 		Description: "Stands up this Mate's development from the recipe's AI Agent tier: adopts each dev/stage or pool/stage pair, " +
-			"checks main out into each dev half, deploys dev halves, then stages on a second call, reports each service's next step. " +
+			"checks main out into each dev half, deploys dev halves, then stages on a second call; builds main into every pool and stage with no build. Reports each service's next step. " +
 			"Call it first when the person's message is \"Stand up development of the project.\" Idempotent: call again after a fix.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Stand up development from the recipe",
@@ -155,6 +160,14 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // A call that stood development up with the stages queued leaves the
 // stand-up running for the call that builds them (awaitStages).
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+	release, held, err := holdStandup(d.batch.stateDir)
+	switch {
+	case err != nil:
+		return standupRefusal(platform.ErrAPIError, fmt.Sprintf("Could not take the project's stand-up: %v.", err), "Nothing was touched. Call zerops_standup again.")
+	case !held:
+		return textResult(runningStandupLine(d.statusPath))
+	}
+	defer release()
 	// The call's push session and tracking end with it.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -178,24 +191,52 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
 	// The Mate's server sends the stand-up only once its link to HQ is up, so
 	// HQ is opened and read once, never waited on.
-	hqc, err := hq.Open(d.batch.httpClient, d.identity())
-	if err != nil {
-		return standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("HQ does not answer for this Mate's key: %v. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", err),
-			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once HQ answers for the Mate, and a first deploy follows."), ""
+	hqc, src, stop := d.openTier(ctx, progress)
+	if stop != nil {
+		return stop.result(), ""
 	}
-	src, refusal := d.readTier(ctx, hqc, progress)
-	if refusal != nil {
-		return refusal, ""
-	}
-
+	rows := d.startPooledRows(ctx, src.tier)
 	pairs, live := d.preparePairs(ctx, hqc, src, progress)
-	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
-	d.observeDevServers(ctx, pairs)
+	classic, pooled := pooledPairs(pairs)
+	var outcome pooledOutcome
+	var wg sync.WaitGroup
+	if len(pooled) > 0 {
+		wg.Go(func() { outcome = d.buildPooled(ctx, hqc, pooled, live, rows, progress) })
+	}
+	d.deployAll(ctx, classic, live, src.tier.ProjectEnvs, progress)
+	d.observeDevServers(ctx, classic)
+	wg.Wait()
 
-	resp := buildStandupResponse(src, pairs, live)
+	resp := buildStandupResponse(src, pairs, live, outcome)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
 	return jsonResult(resp), resp.StandUp
+}
+
+// standupStop is a stand-up that stopped before touching anything: its words,
+// their class, and the code and the way on the agent's answer carries.
+type standupStop struct {
+	code, message, suggestion string
+	class                     platform.ErrorClass
+}
+
+// result is the stop as the agent's answer.
+func (s *standupStop) result() *mcp.CallToolResult {
+	return standupRefusal(s.code, s.message, s.suggestion)
+}
+
+// standupFallback is the way on from a stop: zcp's own tools.
+const standupFallback = "Nothing was touched. Carry on with zcp's own tools: zerops_discover, then adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\", then deploy each dev half and its stage."
+
+// openTier opens HQ under the Mate's key and reads the tier.
+func (d standupDeps) openTier(ctx context.Context, progress *standupProgress) (hq.Client, standupSource, *standupStop) {
+	hqc, err := hq.Open(d.batch.httpClient, d.identity())
+	if err != nil {
+		return hq.Client{}, standupSource{}, &standupStop{code: platform.ErrPrerequisiteMissing, class: platform.ClassRefused,
+			message:    fmt.Sprintf("HQ cannot be asked for this Mate: %v. The stand-up needs HQ to read the recipe and the repositories.", err),
+			suggestion: "Nothing was touched. Call zerops_standup again once the Mate's HQ identity is in zcp's environment."}
+	}
+	src, stop := d.readTier(ctx, hqc, progress)
+	return hqc, src, stop
 }
 
 // standupSource is the tier a stand-up works from and where it came from:
@@ -204,52 +245,51 @@ type standupSource struct {
 	appID     string
 	groupRepo string
 	tier      workflow.MateTier
-	// importYAML is the tier as read: a stage brought up empty is re-imported
-	// from its own entry (startPoolStage).
-	importYAML string
 }
 
 // readTier reads the AI Agent tier on main of the recipe repository of the
-// application HQ holds the Mate in, and parses it.
-func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *standupProgress) (standupSource, *mcp.CallToolResult) {
-	const fallback = "Nothing was touched. Carry on with zcp's own tools: zerops_discover, then adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\", then deploy each dev half and its stage."
+// application HQ holds the Mate in, and parses it. An HQ that does not answer
+// is waited on, bounded (F1); a refusal stops at once with HQ's words (F12).
+func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *standupProgress) (standupSource, *standupStop) {
 	progress.say("reading the group's recipe")
-	doc, err := d.identity().ReadMateState()
-	var state hq.MateState
-	if err == nil {
-		state, err = doc.Heard()
-	}
-	if err != nil {
-		return standupSource{}, standupRefusal(platform.ErrAPIError,
-			fmt.Sprintf("Could not read which application holds this Mate: %v.", mate.StateReadError(err)), fallback)
-	}
-	if standing := doc.Standing(); standing != "" {
-		progress.say(standing)
-	}
-	inNoApplication := standupRefusal(platform.ErrPrerequisiteMissing,
-		"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.", fallback)
-	if state.AppID == nil {
-		return standupSource{}, inNoApplication
-	}
-	src := standupSource{appID: *state.AppID, groupRepo: hq.RecipeRepo}
+	src := standupSource{groupRepo: hq.RecipeRepo}
 	path := hq.RecipeTierPaths[hq.RecipeTierMate]
-	read, err := hqc.RecipeTier(ctx, hq.RecipeTierMate)
+	stop := func(code string, err error, message string) *standupStop {
+		class := platform.ClassRefused
+		if err != nil {
+			class = hqClassOf(err)
+		}
+		return &standupStop{code: code, class: class, message: message, suggestion: standupFallback}
+	}
+	inNoApplication := stop(platform.ErrPrerequisiteMissing, nil,
+		"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.")
+	var read hq.RecipeTier
+	err := d.askHQ(ctx, progress, "the recipe", func(ctx context.Context) (err error) {
+		read, err = hqc.RecipeTier(ctx, hq.RecipeTierMate)
+		return err
+	})
 	var refused *hq.RefusedError
 	switch {
 	case errors.As(err, &refused) && refused.Reason == "mate_not_in_app":
 		return standupSource{}, inNoApplication
 	case errors.As(err, &refused) && refused.Code == "too_large":
-		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
-			fmt.Sprintf("%s@%s:%s is larger than HQ reads (%s), so it cannot be stood up from.", src.groupRepo, hqBase, path, hqRefusalWords(refused)), fallback)
+		return standupSource{}, stop(platform.ErrInvalidImportYml, err,
+			fmt.Sprintf("%s@%s:%s is larger than HQ reads (%s), so it cannot be stood up from.", src.groupRepo, hqBase, path, hqRefusalWords(refused)))
 	case err != nil:
-		return standupSource{}, standupRefusal(platform.ErrAPIError,
-			fmt.Sprintf("Could not read %s@%s:%s from HQ: %v.", src.groupRepo, hqBase, path, err), fallback)
+		return standupSource{}, stop(platform.ErrAPIError, err,
+			fmt.Sprintf("Could not read %s@%s:%s from HQ: %v.", src.groupRepo, hqBase, path, err))
 	}
 	if read.State != hq.RecipePresent {
-		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
+		return standupSource{}, stop(platform.ErrPrerequisiteMissing, nil,
 			fmt.Sprintf("%s has no %s on %s: the project's recipe is not merged yet, so there is nothing to stand up from.",
-				src.groupRepo, path, hqBase), fallback)
+				src.groupRepo, path, hqBase))
 	}
+	appID, err := d.ensureGroupRepository(ctx, hqc, progress)
+	if err != nil {
+		return standupSource{}, stop(platform.ErrAPIError, err,
+			fmt.Sprintf("Could not ensure %s in HQ: %v.", src.groupRepo, err))
+	}
+	src.appID = appID
 	// The pairs zcp already records: a variant-B pair among them is read as
 	// that pair again, and no other tier sets up a code volume
 	// (docs/spec-mate.md §2.8a.4a). Records that cannot be read keep none;
@@ -260,11 +300,29 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 	}
 	tier, err := workflow.ParseMateTier(read.ImportYAML, hqc.Address(), src.appID, recorded...)
 	if err != nil {
-		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
-			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)
+		return standupSource{}, stop(platform.ErrInvalidImportYml, nil,
+			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err))
 	}
-	src.tier, src.importYAML = tier, read.ImportYAML
+	src.tier = tier
 	return src, nil
+}
+
+// ensureGroupRepository is the stand-up's duty at birth that the Mate's
+// application has its recipe repository, and answers the application HQ
+// holds the Mate in, from HQ's answer. The recipe was just read from that
+// repository, so HQ makes nothing here. The application comes from HQ, never
+// from the Mate server's file: at zcp's first boot the server has written
+// none yet. One place, so the source can become HQ's recipe answer.
+func (d standupDeps) ensureGroupRepository(ctx context.Context, hqc hq.Client, progress *standupProgress) (string, error) {
+	var repo hq.Repo
+	err := d.askHQ(ctx, progress, "the recipe repository", func(ctx context.Context) (err error) {
+		repo, err = hqc.EnsureRepo(ctx, hq.RecipeRepo)
+		return err
+	})
+	if err == nil && repo.AppID == "" {
+		err = errors.New("HQ named no application")
+	}
+	return repo.AppID, err
 }
 
 // standupRefusal is a stand-up that stopped before touching anything: an
@@ -299,22 +357,25 @@ type standupPair struct {
 	devServer    *standupDevServer
 	// codeVolume is a variant-B pair's code volume, nil for any other.
 	codeVolume *standupCodeVolume
-	// remote is a pool pair's repository in HQ as git clones it, once its
-	// record names it; "" for any other pair.
-	remote string
-	// seedsPool is a pool pair whose pool has no image yet and whose stage
-	// holds, or is to hold, the checkout of main it is deployed from.
-	seedsPool bool
+	// missing is a pair stopped because a half is not in the project: the
+	// birth's import was cut or has not finished (F3).
+	missing bool
+	// failClass is the class of what stopped the pair ("" reads as failed).
+	failClass platform.ErrorClass
 }
 
-// checkoutHost is the container the pair's repository is checked out in and
-// its dev deploy runs from: its dev half, or for a pair keyed by its dev pool
-// the stage, which holds main for the pool's first image (standup_pool.go).
-func (p *standupPair) checkoutHost() string {
-	if p.pair.DevPool {
-		return p.pair.FirstStage().Hostname
+// appID is the application the pair's repository is in.
+func (p *standupPair) appID() string {
+	app, _, _ := strings.Cut(p.repository, "/")
+	return app
+}
+
+// failedClass is the class of what stopped the pair.
+func (p *standupPair) failedClass() platform.ErrorClass {
+	if p.failClass != "" {
+		return p.failClass
 	}
-	return p.pair.Dev.Hostname
+	return platform.ClassFailed
 }
 
 // standupStage is one stage of a pair through the stand-up.
@@ -408,21 +469,15 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 	}
 	d.recordReflog(adoptedNow)
 
-	// A pool pair's stage is readied for the pool's first image, each pair at
-	// once: bringing a stage up empty waits on the platform.
-	var wg sync.WaitGroup
+	// A pooled part has no container to check out into: its builds are
+	// commit deploys (standup_pooled.go).
 	for _, sp := range pairs {
-		if sp.failed == "" && sp.pair.DevPool {
-			wg.Go(func() { d.openPoolStage(ctx, src, sp, live, progress) })
-		}
-	}
-	wg.Wait()
-	for _, sp := range pairs {
-		if sp.failed == "" && (!sp.pair.DevPool || sp.seedsPool) {
+		if sp.failed == "" && !sp.pair.DevPool {
 			d.mountDevHalf(ctx, sp)
 		}
 	}
 
+	var wg sync.WaitGroup
 	for _, sp := range pairs {
 		if sp.failed != "" {
 			continue
@@ -436,7 +491,7 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		}
 	}
 	for _, sp := range pairs {
-		if sp.failed == "" {
+		if sp.failed == "" || sp.pair.DevPool {
 			continue
 		}
 		host := sp.failedHost
@@ -508,18 +563,20 @@ func (p *standupPushes) wake(ctx context.Context) <-chan struct{} {
 }
 
 // runtimesNotUp names every half the stand-up still waits for: a dev half not
-// there or not running yet, a dev pool or a stage half not there. A pool has
-// no container until a lease asks for one, so nothing of it runs.
+// there or not running yet, a dev pool or a stage half not there, or for a
+// pooled part still being created (F2). A pool has no container until a lease
+// asks for one, so nothing of it runs.
 func runtimesNotUp(tier workflow.MateTier, live map[string]*platform.ServiceStack) []string {
 	var pending []string
 	for _, p := range tier.Pairs {
 		for _, dev := range append([]workflow.MateTierRuntime{p.Dev}, p.DevServices...) {
-			if svc := live[dev.Hostname]; svc == nil || (!p.DevPool && !svc.IsLive()) {
+			if svc := live[dev.Hostname]; svc == nil || (!p.DevPool && !svc.IsLive()) || (p.DevPool && serviceBeingCreated(svc.Status)) {
 				pending = append(pending, dev.Hostname)
 			}
 		}
 		for _, stage := range p.Stages {
-			if live[stage.Hostname] == nil {
+			// A pooled part's stage takes a commit deploy only once created.
+			if svc := live[stage.Hostname]; svc == nil || (p.DevPool && serviceBeingCreated(svc.Status)) {
 				pending = append(pending, stage.Hostname)
 			}
 		}
@@ -625,7 +682,7 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, live 
 			shape = "a dev half is imported running and empty, its build taken out"
 			entry = fmt.Sprintf("services: [{hostname: %s, type: %s, startWithoutCode: true}]", half.rt.Hostname, half.rt.Type)
 		}
-		sp.failedHost = half.rt.Hostname
+		sp.failedHost, sp.missing = half.rt.Hostname, true
 		sp.fail(fmt.Sprintf("%s is not in this project after %s: the runtimes are imported when the Mate is made, and this one's import was refused or has not finished", half.rt.Hostname, d.runtimeWait),
 			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its vault and scaling from %s's %s entry), then call zerops_standup again.",
 				entry, shape, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate]))
@@ -723,19 +780,19 @@ func (d standupDeps) recordReflog(targets []workflow.BootstrapTarget) {
 	}
 }
 
-// mountDevHalf mounts the pair's checkout host (checkoutHost) where the
-// deploy's pre-flight reads its zerops.yaml and the Mate's app reads its
-// files, and gives it the repository the checkout lands in — what the adopt
-// route's provision does. Only a dev half takes the adopt's baseline: a pool
-// pair's stage holds main only for the pool's first image.
+// mountDevHalf mounts the pair's dev half where the deploy's pre-flight
+// reads its zerops.yaml and the Mate's app reads its files, and gives it the
+// repository the checkout lands in — what the adopt route's provision does.
 func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
-	host := sp.checkoutHost()
+	host := sp.pair.Dev.Hostname
 	// A container the import only just started may not take SSH yet, and
 	// every step from here on is SSH.
 	if err := ops.WaitSSHReady(ctx, d.batch.sshDeployer, host); err != nil {
-		sp.failedHost = host
-		sp.fail(fmt.Sprintf("%s runs but does not answer SSH: %v", host, err),
-			fmt.Sprintf("Check it with zerops_logs serviceHostname=%q, then call zerops_standup again.", host))
+		// The probe's own words and class: refused, unreachable or failed
+		// tell different causes apart.
+		sp.failedHost, sp.failClass = host, platform.ClassOf(err)
+		sp.fail(fmt.Sprintf("SSH into %s (%s): %v", host, sp.failClass, err),
+			fmt.Sprintf("Fix what the error names (zerops_logs serviceHostname=%q shows the container), then call zerops_standup again.", host))
 		return
 	}
 	if d.mounter != nil {
@@ -749,7 +806,7 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 	if err := ops.InitServiceGit(ctx, d.batch.sshDeployer, host); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up: InitServiceGit %s: %v\n", host, err)
 	}
-	if sp.adopted == standupNow && !sp.pair.DevPool {
+	if sp.adopted == standupNow {
 		adoptRepoBaseline(ctx, d.batch.client, d.batch.projectID, d.batch.sshDeployer, d.batch.stateDir, host)
 	}
 }
@@ -757,8 +814,8 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 // wire puts the recipe's repository into the pair's dev half on its `main` —
 // the repository of the recipe's name in HQ, git-push to it, main fetched and
 // checked out (wireHQPair, the reconcile's own
-// wiring) — unless an earlier pass did; a pool pair's is recorded on the pool
-// and checked out in its stage for the pool's first image (seedPoolStage).
+// wiring) — unless an earlier pass did; a pool pair's is recorded on the pool,
+// which its commit deploys and every lease read (recordPoolRepository).
 // A repository the recipe names that
 // the application appID does not have is refused before HQ is asked for it:
 // HQ makes what it is asked for. It holds the pair's checkout throughout
@@ -778,9 +835,6 @@ func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *
 	}
 	if meta.DevIsPool() {
 		d.recordPoolRepository(ctx, hqc, appID, sp, meta, progress)
-		if sp.failed == "" && sp.seedsPool {
-			d.seedPoolStage(ctx, sp, progress)
-		}
 		return
 	}
 	if hqPairWiredThrough(meta) {
@@ -824,7 +878,7 @@ func (d standupDeps) recordPoolRepository(ctx context.Context, hqc hq.Client, ap
 		return
 	}
 	if hqPairWired(meta) && meta.HQ.AppID == appID && meta.HQ.Repo == sp.pair.RepoName {
-		sp.wired, sp.remote = standupAlready, remote
+		sp.wired = standupAlready
 		return
 	}
 	progress.say(fmt.Sprintf("recording %s for the dev pool %s", sp.repository, pool))
@@ -846,7 +900,7 @@ func (d standupDeps) recordPoolRepository(ctx context.Context, hqc hq.Client, ap
 		sp.fail(fmt.Sprintf("recording %s for the dev pool %s failed: %v", sp.repository, pool, err), "Call zerops_standup again; it continues from here.")
 		return
 	}
-	sp.wired, sp.remote = standupNow, remote
+	sp.wired = standupNow
 }
 
 // standupProgress turns the stand-up's steps and its builds' polls into one

@@ -53,10 +53,8 @@ import (
 // dev half failed, whose stage would only fail the same way. A half whose
 // wait ended with something it reads not standing says what it waited for.
 //
-// A pair keyed by its dev pool has one half here, its pool, deployed as a dev
-// half is but cross-deployed from main checked out in its stage
-// (standup_pool.go) — its only deploy from there, so nothing else holds that
-// source's git lock. Its stage deploys from a lease of the pool.
+// A pair keyed by its dev pool is never deployed here: its pool and stages
+// take commit deploys (standup_pooled.go).
 
 // standupDeploy is one half's deploy, as the report says it.
 type standupDeploy struct {
@@ -243,14 +241,14 @@ func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]
 }
 
 // standupBodies reads each pair's zerops.yaml, by dev hostname, from the
-// mount of its checkout host (standupPair.checkoutHost), as main carries it
+// mount of its dev half, as main carries it
 // once checked out; a pair whose file is not readable is left out, and the
 // priority orders its stage.
 func standupBodies(mountRoot string, pairs []*standupPair) map[string]string {
 	bodies := map[string]string{}
 	for _, sp := range pairs {
 		for _, name := range []string{"zerops.yaml", "zerops.yml"} {
-			if body, err := os.ReadFile(filepath.Join(mountRoot, sp.checkoutHost(), name)); err == nil {
+			if body, err := os.ReadFile(filepath.Join(mountRoot, sp.pair.Dev.Hostname, name)); err == nil {
 				bodies[sp.pair.Dev.Hostname] = string(body)
 				break
 			}
@@ -272,16 +270,6 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		p := sp.pair
 		dev := live[p.Dev.Hostname]
 		sp.devRanBefore = dev != nil && dev.HasDeployedCode()
-		if p.DevPool {
-			// A pool pair deploys its pool alone, as its dev half: its first
-			// image from the checkout of main in its stage (standup_pool.go).
-			// Its stage is deployed from a lease of the pool, never here.
-			p.Stages = nil
-			tier = append(tier, p)
-			halves[p.Dev.Hostname] = standupHalf{pair: sp, dev: true,
-				target: ops.DeployBatchTarget{SourceService: sp.checkoutHost(), TargetService: p.Dev.Hostname, Setup: p.Dev.Setup, SHA: "HEAD"}}
-			continue
-		}
 		tier = append(tier, p)
 		halves[p.Dev.Hostname] = standupHalf{pair: sp, dev: true,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname, Setup: p.Dev.Setup}}
@@ -681,8 +669,7 @@ type standupDevServer struct {
 // starts itself after every deploy.
 func (d standupDeps) observeDevServers(ctx context.Context, pairs []*standupPair) {
 	for _, sp := range pairs {
-		// A pool runs dev servers in its leases only, never as a service.
-		if sp.pair.DevPool || !sp.devDeploy.running() {
+		if !sp.devDeploy.running() {
 			continue
 		}
 		host := sp.pair.Dev.Hostname
