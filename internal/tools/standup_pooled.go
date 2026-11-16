@@ -392,33 +392,12 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 		return false
 	}
 	rows.set(s.host, func(in *ops.StandupRowInput) { in.AppVersionID, in.ProcessID = res.AppVersionID, res.ProcessID })
-	var processStatus string
-	if res.ProcessID != "" {
-		waited, err := ops.WaitProcesses(ctx, d.batch.client, []string{res.ProcessID}, nil)
-		switch {
-		case err != nil:
-			rows.set(s.host, func(in *ops.StandupRowInput) {
-				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %v", s.host, err)
-			})
-			return true
-		case waited.TimedOut || len(waited.Processes) == 0:
-			return true // still building: the run's end says so (endBuilding)
-		}
-		processStatus = waited.Processes[0].Status
-	} else {
-		// The commit's version was already building (F8): its process is the
-		// service's, waited on as the service settles; never a second build.
+	if res.ProcessID == "" {
 		progress.say(fmt.Sprintf("%s already builds %s; waiting on it", s.host, shortCommit(commit)))
-		waited, err := ops.WaitServiceSettled(ctx, d.batch.client, d.batch.projectID, s.host, nil)
-		switch {
-		case err != nil:
-			rows.set(s.host, func(in *ops.StandupRowInput) {
-				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build in flight failed: %v", s.host, err)
-			})
-			return true
-		case waited.TimedOut:
-			return true
-		}
+	}
+	processStatus, settled := d.waitBuild(ctx, s.host, svc.ID, res, rows)
+	if !settled {
+		return true
 	}
 	version := d.appVersion(ctx, svc.ID, res.AppVersionID)
 	rows.set(s.host, func(in *ops.StandupRowInput) {
@@ -454,6 +433,67 @@ func (d standupDeps) appVersion(ctx context.Context, serviceID, id string) *plat
 		}
 	}
 	return nil
+}
+
+// standupBuildWait bounds the wait on one service's build in a run that has
+// no bound of its own (a tool call); a run that has one (the boot's) waits
+// on its builds until that bound, and no other.
+const standupBuildWait = 20 * time.Minute
+
+// waitBuild waits on one service's build to its end, under one bound: the
+// run's, else standupBuildWait. ops' waits end at budgets of their own, which
+// are not the stand-up's: one that ends first is waited again. A build the
+// commit deploy started is its process; one already in flight (F8) is the
+// service's, waited on as the service settles, never a second build. Answers
+// the process's last status and whether the build ended; a build that did
+// not end within the bound, or a wait that failed, has its row failed with
+// the bound or the error named.
+func (d standupDeps) waitBuild(ctx context.Context, host, serviceID string, res ops.CommitDeployResult, rows *standupVerdictRows) (string, bool) {
+	bound, whose := d.runBound, "the stand-up's"
+	waitCtx := ctx
+	if bound <= 0 {
+		bound, whose = standupBuildWait, "the stand-up's wait for a build,"
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, bound)
+		defer cancel()
+	}
+	for {
+		var waited *ops.WaitResult
+		var err error
+		if res.ProcessID != "" {
+			waited, err = ops.WaitProcesses(waitCtx, d.batch.client, []string{res.ProcessID}, nil)
+		} else {
+			waited, err = ops.WaitServiceSettled(waitCtx, d.batch.client, d.batch.projectID, host, nil)
+		}
+		switch {
+		case errors.Is(waitCtx.Err(), context.DeadlineExceeded):
+			// The bound ended the wait: name it, with where the build stood.
+			read, cancel := context.WithTimeout(context.WithoutCancel(ctx), standupBootRead)
+			status := "building"
+			if v := d.appVersion(read, serviceID, res.AppVersionID); v != nil && v.Status != "" {
+				status = v.Status
+			}
+			cancel()
+			rows.set(host, func(in *ops.StandupRowInput) {
+				in.Class = platform.ClassUnreachable
+				in.Cause = fmt.Sprintf("%s was still %s after %s %s; the build goes on in Zerops", host, status, whose, bound)
+			})
+			return "", false
+		case waitCtx.Err() != nil:
+			return "", false // the run was stopped: its end says so (endBuilding)
+		case err != nil:
+			rows.set(host, func(in *ops.StandupRowInput) {
+				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %v", host, err)
+			})
+			return "", false
+		case waited.TimedOut:
+			continue // ops' own budget, not the stand-up's bound
+		}
+		if len(waited.Processes) > 0 {
+			return waited.Processes[0].Status, true
+		}
+		return "", true
+	}
 }
 
 // standupBearerAsks bounds how often the bearer's writer is asked after the
