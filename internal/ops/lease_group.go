@@ -96,14 +96,19 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 // from origin does not have is refused and the containers go back; a branch
 // origin has, one the group cut before (its recorded base) and one a lease
 // already holds are never rewritten — each lease says from was not applied
-// (DP-6). from names a branch a lease takes, never the branch itself, and
-// never comes with main, which no acquire cuts.
+// (DP-6). from names a branch a lease takes, never the branch itself. The
+// repository's default branch — also the branch of an acquire that names none
+// — is refused at once (refuseMainLease); a lease of it held from before is
+// still released, parked and listed.
 func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []string, repo, branch, from string) (LeaseChange, error) {
+	branch = cmp.Or(branch, leaseDefaultBranch)
+	if err := refuseMainLease(branch); err != nil {
+		return LeaseChange{}, err
+	}
 	members, err := resolveGroupPools(ctx, d, pools)
 	if err != nil {
 		return LeaseChange{}, err
 	}
-	branch = cmp.Or(branch, leaseDefaultBranch)
 	if err := validateLeaseBranch(branch); err != nil {
 		return LeaseChange{}, err
 	}
@@ -763,9 +768,20 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 	runMembers(fresh[1:], func(m *groupMember) { checkout(m, base) })
 }
 
-// validateLeaseFrom refuses a from that is not a branch a lease takes, that
-// is the branch itself, or that comes with main, which no acquire cuts; ""
-// (cut from main) passes.
+// refuseMainLease refuses an acquire of the repository's default branch
+// (leaseDefaultBranch): no lease holds main — work happens on a branch of the
+// agent's own, and the stage gets main through the end-of-work check.
+func refuseMainLease(branch string) error {
+	if branch != leaseDefaultBranch {
+		return nil
+	}
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("A lease never holds %s, the repository's default branch: nothing was acquired", leaseDefaultBranch),
+		fmt.Sprintf("Work on a branch of your own: zerops_lease action=acquire pool=<pool> branch=<new branch> cuts it from %s. The stage is deployed from %s through the end-of-work check, never through a lease", leaseDefaultBranch, leaseDefaultBranch))
+}
+
+// validateLeaseFrom refuses a from that is not a branch a lease takes or that
+// is the branch itself; "" (cut from main) passes.
 func validateLeaseFrom(branch, from string) error {
 	switch {
 	case from == "":
@@ -774,10 +790,6 @@ func validateLeaseFrom(branch, from string) error {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			"from is not a branch name a lease takes",
 			"Name the branch a new branch is cut from: letters, digits and . _ / - only, starting with a letter or digit (e.g. from=pool-previews)")
-	case branch == leaseDefaultBranch:
-		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("from cuts a new branch, and the acquire names %s, which no acquire cuts", leaseDefaultBranch),
-			fmt.Sprintf("Pass the new branch as branch (zerops_lease action=acquire branch=<new branch> from=%s), or leave from out to lease %s", from, leaseDefaultBranch))
 	case from == branch:
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			"from names the branch itself, and a branch is never cut from itself",
