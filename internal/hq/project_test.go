@@ -218,8 +218,10 @@ func TestProjectClient_Git_UsesScopedEphemeralAuthorization(t *testing.T) {
 		t.Errorf("calls = %d, want 1", calls)
 	}
 	env := c.GitEnv()
-	relevant := env[len(env)-4:]
-	want := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http." + srv.URL + "/.extraHeader", "GIT_CONFIG_VALUE_0=Authorization: Project test-key", "GIT_TERMINAL_PROMPT=0"}
+	relevant := env[len(env)-6:]
+	// The header scoped to HQ, no prompt, and a stalled transfer cut.
+	want := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http." + srv.URL + "/.extraHeader", "GIT_CONFIG_VALUE_0=Authorization: Project test-key", "GIT_TERMINAL_PROMPT=0",
+		"GIT_HTTP_LOW_SPEED_LIMIT=1000", "GIT_HTTP_LOW_SPEED_TIME=30"}
 	if !reflect.DeepEqual(relevant, want) {
 		t.Error("Git environment is not exactly scoped to HQ with an ephemeral Project header")
 	}

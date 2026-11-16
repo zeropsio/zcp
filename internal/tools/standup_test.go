@@ -118,7 +118,9 @@ type standupHQ struct {
 	tier string
 	// repos are the repositories the application has.
 	repos []string
-	// asked is every repository HQ was asked for, in order.
+	// asked is every pair repository HQ was asked for, in order; the
+	// recipe repository, asked on every call for the application HQ holds
+	// the Mate in, is not among them.
 	asked []string
 	// changeOpens counts changes opened in HQ — a stand-up opens none.
 	changeOpens int
@@ -127,8 +129,6 @@ type standupHQ struct {
 	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
 	// code and reason.
 	tierRefusal *hq.RefusedError
-	// refuseSelf makes the link's last attempt a refused key.
-	refuseSelf bool
 }
 
 func (g *standupHQ) start(t *testing.T) *httptest.Server {
@@ -178,7 +178,9 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			g.asked = append(g.asked, body.Name)
+			if body.Name != hq.RecipeRepo {
+				g.asked = append(g.asked, body.Name)
+			}
 			write(http.StatusOK, map[string]any{"appId": g.appID, "name": body.Name})
 		case "/api/mate/changes":
 			g.changeOpens++
@@ -544,16 +546,13 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 func (f *standupFixture) deps(t *testing.T) standupDeps {
 	t.Helper()
 	f.hq.mu.Lock()
-	appID, refused := f.hq.appID, f.hq.refuseSelf
+	appID := f.hq.appID
 	f.hq.mu.Unlock()
 	var app any
 	if appID != "" {
 		app = appID
 	}
-	var state any = map[string]any{"link": "linked", "mate": map[string]any{"rev": 1, "projectId": "p1", "appId": app, "repos": []any{}, "changes": []any{}, "chief": nil}}
-	if refused {
-		state = map[string]any{"link": "not-linked", "reason": "invalid_key", "mate": nil}
-	}
+	state := map[string]any{"link": "linked", "mate": map[string]any{"rev": 1, "projectId": "p1", "appId": app, "repos": []any{}, "changes": []any{}, "chief": nil}}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -919,21 +918,6 @@ func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
 	}
 }
 
-// A refused link without a last state cannot start a stand-up.
-// witness: internal/hq/mate_state.go | return MateState{}, fmt.Errorf("%w: %s", ErrMateStateUnheard, d.Reason) → return MateState{}, ErrMateStateUnheard
-func TestStandup_RefusedLinkWithoutState_DoesNothing(t *testing.T) {
-	t.Parallel()
-	f := newStandupFixture(t)
-	f.hq.refuseSelf = true
-	result, _ := f.run(t)
-	if !result.IsError || !strings.Contains(getTextContent(t, result), "invalid_key") {
-		t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
-	}
-	if metas, _ := workflow.ListServiceMetas(f.stateDir); len(metas) != 0 {
-		t.Errorf("a refusal touches nothing, but %d services were adopted", len(metas))
-	}
-}
-
 // TestStandup_TheModelIsTheBackup is every way the stand-up can stop: it
 // says exactly what failed, does nothing past it for that pair, and hands
 // the model the next step.
@@ -955,12 +939,7 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		{
 			name:    "the Mate is never enrolled",
 			setup:   func(f *standupFixture) { f.identity.Key = "" },
-			wantErr: []string{"PREREQUISITE_MISSING", "does not answer for this Mate's key", "route=\\\"adopt\\\""},
-		},
-		{
-			name:    "HQ holds the Mate in no application",
-			setup:   func(f *standupFixture) { f.hq.appID = "" },
-			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
+			wantErr: []string{"PREREQUISITE_MISSING", "HQ cannot be asked for this Mate", "Nothing was touched", `"route":"adopt"`},
 		},
 		{
 			name: "a tier past HQ's read bound",
@@ -970,7 +949,7 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			wantErr: []string{"INVALID_IMPORT_YML", "larger than HQ reads"},
 		},
 		{
-			name: "HQ lets the Mate go between its state and the tier",
+			name: "HQ holds the Mate in no application",
 			setup: func(f *standupFixture) {
 				f.hq.tierRefusal = &hq.RefusedError{Status: http.StatusForbidden, Code: "forbidden", Reason: "mate_not_in_app"}
 			},
@@ -1583,7 +1562,7 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 			setup:     func(f *standupFixture) { f.identity.Key = "" },
 			calls:     1,
 			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment, wantEnded: true,
-			wantError: "does not answer for this Mate's key",
+			wantError: "HQ cannot be asked for this Mate",
 		},
 	}
 	for _, tt := range tests {

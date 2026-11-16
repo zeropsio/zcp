@@ -31,7 +31,13 @@ func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *tes
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HOME", t.TempDir())
-	fakeHQ := httptest.NewServer(http.NotFoundHandler())
+	// HQ refuses a Mate it holds in no application, the stand-up's recipe
+	// read first.
+	fakeHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"forbidden","reason":"mate_not_in_app"}`))
+	}))
 	defer fakeHQ.Close()
 	hqtest.Link(t, fakeHQ.URL, "proj-1", "fixture")
 	hqtest.State(t, `{"rev":1,"projectId":"proj-1","appId":null,"repos":[],"changes":[],"chief":null}`)
