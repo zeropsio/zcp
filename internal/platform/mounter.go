@@ -158,6 +158,9 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 		if cleanErr := m.ForceUnmount(context.WithoutCancel(ctx), hostname, localPath); cleanErr != nil {
 			return fmt.Errorf("mount readiness: %w; its unit could not be removed: %w", err, cleanErr)
 		}
+		// Nor the empty directory made for it above: an unmount finds no
+		// mount and no unit, so nothing else would remove it.
+		_ = os.Remove(localPath)
 		return fmt.Errorf("mount readiness: %w", err)
 	}
 	return nil
