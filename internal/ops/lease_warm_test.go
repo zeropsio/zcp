@@ -345,7 +345,7 @@ func (wf *warmFixture) hold(t *testing.T, number int64, current bool) {
 	b := wf.orch.add(number, leaseLockReserved, current, false, 1)
 	if err := writeLeaseRecord(wf.stateDir, leaseRecord{PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: b.c.ID,
 		ContainerNumber: number, ContainerHostname: nodeHostname(number), Lease: b.lease, Branch: "b" + strconv.FormatInt(number, 10),
-		AcquiredAt: "2026-10-24T08:00:00Z"}); err != nil {
+		Repo: testRepoID, AcquiredAt: "2026-10-24T08:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -610,7 +610,7 @@ func TestLeaseWarm_KeepThenRemoveThenPrepare(t *testing.T) {
 	for _, n := range []int64{3, 4} {
 		id := "c-" + strconv.FormatInt(n, 10)
 		if err := writeLeaseRecord(wf.stateDir, leaseRecord{PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: id,
-			ContainerNumber: n, ContainerHostname: nodeHostname(n), Lease: warmLeaseOf(id), Branch: "b" + strconv.FormatInt(n, 10), AcquiredAt: "2026-10-24T08:00:00Z"}); err != nil {
+			ContainerNumber: n, ContainerHostname: nodeHostname(n), Lease: warmLeaseOf(id), Branch: "b" + strconv.FormatInt(n, 10), Repo: testRepoID, AcquiredAt: "2026-10-24T08:00:00Z"}); err != nil {
 			t.Fatal(err)
 		}
 	}
