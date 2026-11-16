@@ -39,11 +39,12 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	var sshErr *platform.SSHExecError
 	if !errors.As(err, &sshErr) {
 		// Non-SSH error (service resolution, validation, etc.) — pass through.
-		return platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("SSH deploy from %s to %s failed: %s", sourceService, targetService, err),
-			"Check the error message for details.",
-		)
+		return &platform.PlatformError{
+			Code:       platform.ErrSSHDeployFailed,
+			Message:    fmt.Sprintf("SSH deploy from %s to %s failed: %s", sourceService, targetService, err),
+			Suggestion: "Check the error message for details.",
+			Cause:      err,
+		}
 	}
 
 	exitMsg := sshErr.Err.Error() // OS-level: "exit status 1", "signal: killed", etc.

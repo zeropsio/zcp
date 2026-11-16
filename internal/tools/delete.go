@@ -84,12 +84,12 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			)), nil, nil
 		}
 
-		// Best-effort: unmount SSHFS before delete so the service still exists for clean unmount.
+		// Unmount SSHFS before delete so the service still exists for a clean
+		// unmount. A failure does not stop the delete; the result says so.
+		var unmountWarning string
 		if mounter != nil {
-			if res, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {
-				fmt.Fprintf(os.Stderr, "zcp: pre-delete unmount %s: %v\n", input.ServiceHostname, umErr)
-			} else {
-				fmt.Fprintf(os.Stderr, "zcp: pre-delete unmount %s: %s\n", input.ServiceHostname, res.Status)
+			if _, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {
+				unmountWarning = fmt.Sprintf("its SSHFS mount could not be removed before the delete%s: %v", platform.ClassOf(umErr).Note(), umErr)
 			}
 		}
 
@@ -115,9 +115,9 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		// Surface a poll timeout so the agent doesn't read a still-running
 		// delete as confirmed (the ServiceMeta cleanup above is also skipped
 		// on timeout, so the local state intentionally still references it).
-		resp := deleteResponse{Process: finalProc, TimedOut: timedOut, Recipe: recipe}
+		resp := deleteResponse{Process: finalProc, TimedOut: timedOut, Recipe: recipe, Warning: unmountWarning}
 		if timedOut {
-			resp.Warning = "delete did not confirm within the poll window — verify with zerops_discover; the service may still be deleting."
+			resp.Warning = joinSentences("delete did not confirm within the poll window — verify with zerops_discover; the service may still be deleting.", unmountWarning)
 		}
 		return jsonResult(resp), nil, nil
 	})

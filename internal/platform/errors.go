@@ -49,8 +49,12 @@ const (
 	ErrSessionNotFound        = "SESSION_NOT_FOUND"
 	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
 	ErrSSHDeployFailed        = "SSH_DEPLOY_FAILED"
-	ErrDeployFailed           = "DEPLOY_FAILED"
-	ErrPrerequisiteMissing    = "PREREQUISITE_MISSING"
+	// ErrSSHFailed is an ssh call that failed outside a deploy, as
+	// tools/convert.go codes an *SSHExecError no caller coded: ssh's exit
+	// and output ride its diagnostic, its class beside it.
+	ErrSSHFailed           = "SSH_FAILED"
+	ErrDeployFailed        = "DEPLOY_FAILED"
+	ErrPrerequisiteMissing = "PREREQUISITE_MISSING"
 	// ErrAdoptRequired narrows ErrPrerequisiteMissing for the specific
 	// "service exists in Zerops but lacks ZCP bootstrap metadata, and
 	// the agent must run bootstrap+route=adopt before this operation"

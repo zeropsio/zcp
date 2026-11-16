@@ -306,7 +306,8 @@ func TestDevServer_AStartOnASupervisorThatDoesNotAnswerIsReportedUnresponsiveAnd
 }
 
 // A dev-server call on a dev container that does not answer over SSH in time
-// answers not answering with its recovery, never an UNKNOWN error.
+// answers not answering with ssh's own error and what to check, never an
+// UNKNOWN error and never a restart.
 func TestDevServer_ACallOnAContainerThatDoesNotAnswerSSHAnswersNotAnsweringNeverUnknown(t *testing.T) {
 	t.Parallel()
 	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"next dev","cwd":"."}]}`)
@@ -314,9 +315,10 @@ func TestDevServer_ACallOnAContainerThatDoesNotAnswerSSHAnswersNotAnsweringNever
 	srv, _ := migrationToolServer(t, c, statusActive)
 
 	a := callDevServer(t, srv, map[string]any{"action": "status", "hostname": "appdev"})
-	if a.Reason != "supervisor_unresponsive" || !strings.Contains(a.Message, "appdev did not answer over SSH in time") ||
-		!strings.Contains(a.Message, "zerops_scale") || !strings.Contains(a.Message, "zerops_manage action=restart") {
-		t.Errorf("status = %+v, want supervisor_unresponsive naming the host, zerops_scale and a restart", a)
+	if a.Reason != "supervisor_unresponsive" || !strings.Contains(a.Message, "appdev did not answer over SSH") ||
+		!strings.Contains(a.Message, "context deadline exceeded") || !strings.Contains(a.Message, "zerops_scale") ||
+		strings.Contains(a.Message, "restart") {
+		t.Errorf("status = %+v, want supervisor_unresponsive naming the host, ssh's error and zerops_scale, no restart", a)
 	}
 }
 

@@ -151,7 +151,12 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 	}
 	if err := waitReady(ctx, localPath); err != nil {
 		if errors.Is(err, errMountNotReady) {
-			return fmt.Errorf("mount readiness: %w; %s", err, m.unitLog(ctx, hostname))
+			err = fmt.Errorf("%w; %s", err, m.unitLog(ctx, hostname))
+		}
+		// A mount that never became ready leaves no unit behind: its sshfs
+		// would keep reconnecting under a path nothing can read or unmount.
+		if cleanErr := m.ForceUnmount(context.WithoutCancel(ctx), hostname, localPath); cleanErr != nil {
+			return fmt.Errorf("mount readiness: %w; its unit could not be removed: %w", err, cleanErr)
 		}
 		return fmt.Errorf("mount readiness: %w", err)
 	}
@@ -199,7 +204,7 @@ func (m *SystemMounter) waitForReady(parent context.Context, path string) error 
 			if parent.Err() != nil {
 				return fmt.Errorf("mount readiness observation: %w", parent.Err())
 			}
-			return fmt.Errorf("%w after %s: %s", errMountNotReady, mountCreateTimeout, lastCause)
+			return fmt.Errorf("%w after %s: %s (%w)", errMountNotReady, mountCreateTimeout, lastCause, ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -211,19 +216,19 @@ var errMountNotReady = errors.New("mount not ready")
 // unitLog is the tail of the sshfs unit's own log — what sshfs and ssh said
 // while they connected — or why it could not be read.
 func (m *SystemMounter) unitLog(parent context.Context, hostname string) string {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), mountCheckTimeout)
+	ctx, cancel := context.WithTimeout(parent, mountCheckTimeout)
 	defer cancel()
 	// sudo as the unit was created with: a system unit's journal is not the
 	// zcp user's to read.
 	args := []string{"journalctl", "--unit", mountUnit(hostname), "--lines", "10", "--no-pager", "--output", "cat"}
 	out, err := exec.CommandContext(ctx, "sudo", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Sprintf("sshfs's log could not be read (journalctl: %v: %s)", err, strings.TrimSpace(string(out)))
+		return fmt.Sprintf("the sshfs unit's log could not be read (journalctl: %v: %s)", err, strings.TrimSpace(string(out)))
 	}
 	if log := strings.TrimSpace(string(out)); log != "" {
-		return "sshfs said: " + log
+		return "the sshfs unit's log ends: " + log
 	}
-	return "sshfs's log is empty"
+	return "the sshfs unit's log is empty"
 }
 
 // Unmount removes the SSHFS mount and zsc unit.

@@ -152,26 +152,32 @@ func RedeployLastAppVersion(
 
 // resolveRedeployYaml runs the yaml-source cascade described on
 // RedeployLastAppVersion's doc comment.
-// A platform source that does not answer is a *redeployYamlUnreadError
-// carrying its error: only sources that answered and held no yaml make the
-// "no source" verdict.
+// A platform source that did not answer for a reason waiting can change
+// (platform.ClassOf: unreachable) stops the cascade as a
+// *redeployYamlUnreadError carrying its error; any other read failure is
+// named in the verdict and the cascade goes on to the next source.
 func resolveRedeployYaml(ctx context.Context, client platform.Client, av platform.AppVersionEvent) (string, error) {
 	yaml, err := client.GetAppVersionZeropsYaml(ctx, av.ID)
-	if err != nil {
+	if platform.ClassOf(err).WaitedOn() {
 		return "", &redeployYamlUnreadError{AppVersionID: av.ID, Source: "its ZEROPS_YAML user-data", Err: err}
 	}
-	if yaml != "" {
+	userData := "no ZEROPS_YAML user-data blob"
+	if err != nil {
+		userData = fmt.Sprintf("the ZEROPS_YAML user-data could not be read (%v)", err)
+	} else if yaml != "" {
 		return yaml, nil
 	}
 
 	url, err := client.GetAppVersionAppCode(ctx, av.ID)
-	if err != nil {
+	if platform.ClassOf(err).WaitedOn() {
 		return "", &redeployYamlUnreadError{AppVersionID: av.ID, Source: "its app-code archive URL", Err: err}
 	}
 	// The archive is the build output, which may hold no zerops.yaml or not
 	// open as one: its error is named in the verdict, and the cascade goes on.
 	archive := "the app-code archive yielded no zerops.yaml"
-	if url != "" {
+	if err != nil {
+		archive = fmt.Sprintf("the app-code archive URL could not be read (%v)", err)
+	} else if url != "" {
 		archiveYaml, fetchErr := archiveYamlFetcher(ctx, url)
 		if fetchErr != nil {
 			archive = fmt.Sprintf("the app-code archive could not be read (%v)", fetchErr)
@@ -189,11 +195,11 @@ func resolveRedeployYaml(ctx context.Context, client platform.Client, av platfor
 	if av.PublicGitSource != nil && av.PublicGitSource.GitURL != "" {
 		rawURL, urlErr := rawZeropsYamlURL(av.PublicGitSource.GitURL, av.PublicGitSource.BranchName)
 		if urlErr != nil {
-			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, %s, and the git source cannot be fetched raw: %w", av.ID, archive, urlErr)
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: %s, %s, and the git source cannot be fetched raw: %w", av.ID, userData, archive, urlErr)
 		}
 		gitYaml, fetchErr := rawGitYamlFetcher(ctx, rawURL)
 		if fetchErr != nil {
-			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, %s, and %s: %w", av.ID, archive, rawURL, fetchErr)
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: %s, %s, and %s: %w", av.ID, userData, archive, rawURL, fetchErr)
 		}
 		if gitYaml != "" {
 			return gitYaml, nil
@@ -201,8 +207,8 @@ func resolveRedeployYaml(ctx context.Context, client platform.Client, av platfor
 	}
 
 	return "", fmt.Errorf(
-		"no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, %s, and the appVersion has no public git source",
-		av.ID, archive,
+		"no zerops.yaml source available for appVersion %s: %s, %s, and the appVersion has no public git source",
+		av.ID, userData, archive,
 	)
 }
 
