@@ -293,10 +293,6 @@ func deploySSH(
 	if lease != nil && lease.Pool == target.Name {
 		poolLease = sourceService
 	}
-	// A stage tracks main (DP-8): a deploy from a lease to the part's stage
-	// fetches origin/main before it resolves what ships, and says when that
-	// is not on it. Every other deploy fetches nothing and says nothing more.
-	stageMain := newLeaseStageMain(lease, target.Name, serviceType)
 
 	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
 	// self-deploy from a commit would extract sha's tree and push
@@ -347,7 +343,6 @@ func deploySSH(
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: sourceName}
 	sourceWorkingDir := workingDir
-	stageMain.fetch(ctx, gitRunner, sourceWorkingDir)
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
@@ -386,7 +381,6 @@ func deploySSH(
 	if cleanupTemp != nil {
 		defer cleanupTemp()
 	}
-	stageMain.check(ctx, gitRunner, sourceWorkingDir, resolvedSHA)
 
 	var versionName string
 	// uploaded is the push's output up to its upload, when the build is
@@ -414,7 +408,7 @@ func deploySSH(
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
 		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty,
-		warnings:   withUploadWarning(stageMain.withNote(warnings, versionName, dirty), upload),
+		warnings:   withUploadWarning(warnings, upload),
 		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toPool: toPool, poolLease: poolLease,
 		upload: upload.size,
 	}
