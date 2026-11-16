@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -109,13 +110,13 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 
 	switch state {
 	case platform.MountStateActive:
-		writable, _ := mounter.IsWritable(ctx, mountPath)
+		writable, wErr := mounter.IsWritable(ctx, mountPath)
 		return &MountResult{
 			Status:    "ALREADY_MOUNTED",
 			Hostname:  hostname,
 			MountPath: mountPath,
 			Writable:  writable,
-			Message:   fmt.Sprintf("Service %s is already mounted at %s", hostname, mountPath),
+			Message:   fmt.Sprintf("Service %s is already mounted at %s%s", hostname, mountPath, writeCheckNote(wErr)),
 		}, nil
 
 	case platform.MountStateStale:
@@ -143,21 +144,41 @@ func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResu
 	}
 
 	if err := mounter.Mount(ctx, hostname, mountPath); err != nil {
-		return nil, platform.NewPlatformError(
-			platform.ErrMountFailed,
-			fmt.Sprintf("Failed to mount %s: %v", hostname, err),
-			"Verify SSHFS is available and the service is running",
-		)
+		return nil, &platform.PlatformError{
+			Code:       platform.ErrMountFailed,
+			Message:    fmt.Sprintf("Failed to mount %s%s: %v", hostname, classNote(err), err),
+			Suggestion: "The cause above is sshfs's and ssh's own; it says whether the container refused the connection or did not answer.",
+			Diagnostic: err.Error(),
+			Cause:      err,
+		}
 	}
 
-	writable, _ := mounter.IsWritable(ctx, mountPath)
+	writable, wErr := mounter.IsWritable(ctx, mountPath)
 	return &MountResult{
 		Status:    "MOUNTED",
 		Hostname:  hostname,
 		MountPath: mountPath,
 		Writable:  writable,
-		Message:   fmt.Sprintf("Mounted %s at %s", hostname, mountPath),
+		Message:   fmt.Sprintf("Mounted %s at %s%s", hostname, mountPath, writeCheckNote(wErr)),
 	}, nil
+}
+
+// classNote is err's class (platform.ClassOf) as a message reads it: " (refused)",
+// or "" while it has none.
+func classNote(err error) string {
+	if class := platform.ClassOf(err); class != "" {
+		return " (" + string(class) + ")"
+	}
+	return ""
+}
+
+// writeCheckNote states a write probe that failed, so writable=false is never
+// read as a read-only mount when the probe itself did not answer.
+func writeCheckNote(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; the write check failed%s: %v", classNote(err), err)
 }
 
 // UnmountService unmounts a service's SSHFS mount. Idempotent.
@@ -408,7 +429,9 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 	case platform.MountStateActive:
 		info.Mounted = true
 		if probe {
-			info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+			var wErr error
+			info.Writable, wErr = mounter.IsWritable(ctx, mountPath)
+			info.Message = strings.TrimPrefix(writeCheckNote(wErr), "; ")
 		}
 	case platform.MountStateStale:
 		info.Stale = true

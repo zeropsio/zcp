@@ -150,6 +150,9 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 		waitReady = m.ready
 	}
 	if err := waitReady(ctx, localPath); err != nil {
+		if errors.Is(err, errMountNotReady) {
+			return fmt.Errorf("mount readiness: %w; %s", err, m.unitLog(ctx, hostname))
+		}
 		return fmt.Errorf("mount readiness: %w", err)
 	}
 	return nil
@@ -158,25 +161,69 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 // waitForReady polls until the SSHFS mount is fully ready for I/O.
 // Ready means: appears in /proc/mounts, a bounded path read succeeds, AND a write probe
 // confirms the SSH channel is operational. Polls every 500ms up to mountCreateTimeout.
-func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
-	ctx, cancel := context.WithTimeout(ctx, mountCreateTimeout)
+// A mount not there yet and the local probes of a mount still connecting are
+// waited on, bounded; an observation whose class waiting cannot change
+// (ClassOf) ends the wait at once. When the bound runs out the last cause is
+// reported as errMountNotReady; Mount adds sshfs's own words from its unit's
+// log (followup-ssh-errors §2.3): sshfs connects inside the unit, so an SSH
+// refusal is seen only there.
+func (m *SystemMounter) waitForReady(parent context.Context, path string) error {
+	ctx, cancel := context.WithTimeout(parent, mountCreateTimeout)
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	lastCause := "the mount did not appear in /proc/mounts"
 	for {
 		state, err := m.CheckMount(ctx, path)
-		if err == nil && state == MountStateActive {
-			if writable, _ := m.IsWritable(ctx, path); writable {
+		switch {
+		case err != nil:
+			if class := ClassOf(err); class != "" && !class.WaitedOn() {
+				return fmt.Errorf("mount readiness (%s): %w", class, err)
+			}
+			lastCause = err.Error()
+		case state == MountStateStale:
+			lastCause = "the mount is there but its transport is not connected"
+		case state == MountStateActive:
+			writable, wErr := m.IsWritable(ctx, path)
+			if writable {
 				return nil
 			}
+			if class := ClassOf(wErr); class != "" && !class.WaitedOn() {
+				return fmt.Errorf("mount readiness (%s): %w", class, wErr)
+			}
+			lastCause = wErr.Error()
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("mount readiness observation: %w", ctx.Err())
+			if parent.Err() != nil {
+				return fmt.Errorf("mount readiness observation: %w", parent.Err())
+			}
+			return fmt.Errorf("%w after %s: %s", errMountNotReady, mountCreateTimeout, lastCause)
 		case <-ticker.C:
 		}
 	}
+}
+
+// errMountNotReady is a readiness wait whose bound ran out.
+var errMountNotReady = errors.New("mount not ready")
+
+// unitLog is the tail of the sshfs unit's own log — what sshfs and ssh said
+// while they connected — or why it could not be read.
+func (m *SystemMounter) unitLog(parent context.Context, hostname string) string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), mountCheckTimeout)
+	defer cancel()
+	// sudo as the unit was created with: a system unit's journal is not the
+	// zcp user's to read.
+	args := []string{"journalctl", "--unit", mountUnit(hostname), "--lines", "10", "--no-pager", "--output", "cat"}
+	out, err := exec.CommandContext(ctx, "sudo", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("sshfs's log could not be read (journalctl: %v: %s)", err, strings.TrimSpace(string(out)))
+	}
+	if log := strings.TrimSpace(string(out)); log != "" {
+		return "sshfs said: " + log
+	}
+	return "sshfs's log is empty"
 }
 
 // Unmount removes the SSHFS mount and zsc unit.
