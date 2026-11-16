@@ -49,7 +49,7 @@ func leaseInputSchema() *jsonschema.Schema {
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
 		"branch": {Type: "string", Description: "acquire: a branch of your own to check out, never main; a new one is cut from main. release: every lease of it, all or none."},
 		"from":   {Type: "string", Description: "acquire: cut a new branch from this one instead."},
-		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
+		"repo":   {Type: "string", Description: "acquire: https clone URL; default the pool's recorded repository. release: the branch's, if several."},
 		"lease":  {Type: "string", Description: "release, sync, park, unpark: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")

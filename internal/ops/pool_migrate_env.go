@@ -52,10 +52,7 @@ type PoolMigrateEnvInput struct {
 	// on a dev service of its own, whose env the pool takes, but the pair is
 	// one repository with one GIT_TOKEN. Zero means Dev.
 	GitTokenFrom platform.ServiceStack
-	// Origin is the dev service's origin. Nothing reads it since the pool's
-	// repository is its ServiceMeta's; its two writers in tools drop it next.
-	Origin   string
-	StateDir string
+	StateDir     string
 	// Owner is the dev hostname keying the pair whose migration this env step
 	// runs; the pool's record names it, so another dev's migration never
 	// takes the pool as its own (PoolMigrateEnvOwner).

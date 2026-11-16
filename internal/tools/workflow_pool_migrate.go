@@ -644,7 +644,6 @@ func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.P
 		Stages:       c.stages,
 		InMate:       d.rt.MateEnabled,
 		CopyGitToken: input.CopyGitToken.Bool(),
-		Origin:       poolMigrateDevOrigin(c.meta, d),
 		StateDir:     d.stateDir,
 		Owner:        c.meta.Hostname,
 	}
@@ -798,7 +797,8 @@ func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMi
 		return poolMigrateAt(resp, poolMigrateStepMove, nil, "The image step is done. A lease of the pool needs the work's branch: "+missing)
 	}
 	branch := wb.Branch
-	leases, err := ops.PoolMigrateLeases(d.stateDir, pool, poolMigrateDevOrigin(call.meta, d), branch)
+	origin := poolMigrateDevOrigin(call.meta, d)
+	leases, err := ops.PoolMigrateLeases(d.stateDir, pool, origin, branch)
 	if err != nil {
 		resp.Warnings = append(resp.Warnings, fmt.Sprintf("zcp's lease records could not be read: %v.", err))
 	}
@@ -816,11 +816,18 @@ func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMi
 		}, "")
 	case len(unsaved) > 0:
 		return poolMigrateAt(resp, poolMigrateStepMove, nil,
-			fmt.Sprintf("The image step is done. %s holds work its origin lacks (census): push each branch you keep, then call again. Once it is moved — or the person chose to leave the rest — lease the pool on the work's branch: zerops_lease action=%q pool=%q branch=%q.", dev, leaseProbeAction, pool, branch))
+			fmt.Sprintf("The image step is done. %s holds work its origin lacks (census): push each branch you keep, then call again. Once it is moved — or the person chose to leave the rest — lease the pool on the work's branch: zerops_lease action=%q pool=%q repo=%q branch=%q.", dev, leaseProbeAction, pool, origin, branch))
+	}
+	// The pool records its repository only at the retire's re-key, which
+	// carries the pair's RemoteURL onto the pool: until then the acquire
+	// names the dev's origin.
+	args := map[string]string{"action": leaseProbeAction, "pool": pool, "branch": branch}
+	if origin != "" {
+		args["repo"] = origin
 	}
 	return poolMigrateAt(resp, poolMigrateStepLease, &poolMigrateNext{
 		Tool: "zerops_lease",
-		Args: map[string]string{"action": leaseProbeAction, "pool": pool, "branch": branch},
+		Args: args,
 		Why:  fmt.Sprintf("Leases a container of %s on %s from the dev's origin; start its dev servers (zerops_dev_server hostname=\"<alias>\") and prove it runs with zerops_verify serviceHostname=\"<alias>\" — the retire verifies it again.", pool, branch),
 	}, "")
 }

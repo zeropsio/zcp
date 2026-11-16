@@ -142,7 +142,7 @@ func newEnvFixture(t *testing.T) *envFixture {
 		container: map[string]string{"STRIPE_SECRET": envSecretValue, "APP_URL": "https://dev", "DB_HOST": "db"},
 		in: PoolMigrateEnvInput{
 			Dev: envDevService(), Pool: envPoolService(), Stages: []platform.ServiceStack{envStageService()},
-			Origin: "https://github.com/example/app.git", StateDir: t.TempDir(),
+			StateDir: t.TempDir(),
 		},
 	}
 }

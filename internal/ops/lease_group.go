@@ -460,9 +460,9 @@ func releaseLockRefusal(ctx context.Context, err error, held, again string) erro
 // lockReleaseKeys holds the key lock of every record in recs — its
 // repository, branch and pool, as an acquire of it takes it (leaseKeyLockPath)
 // — each once, in lockLeaseKeys' order (the pools sorted), so a release and a
-// group acquire never wait on each other crosswise; none for a record whose
-// repository zcp knows neither way, as lockLeaseGroup holds nothing then. It
-// returns the release of them all.
+// group acquire never wait on each other crosswise; none for a record that
+// names no repository, which the release refused before. It returns the
+// release of them all.
 func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (func(), error) {
 	type key struct{ repo, branch, pool string }
 	var keys []key
@@ -507,12 +507,18 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 
 // lockRecordGroup is lockLeaseGroup of rec's group.
 func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
+	if recordRepo(stateDir, rec) == "" {
+		return nil, recordWithoutRepo(rec.alias())
+	}
 	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
 }
 
 // lockLeaseTargetGroup is lockLeaseGroup of the group of the lease a target
 // names (its record's repository and its branch).
 func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTargetInfo) (func(), error) {
+	if topology.CanonicalRepoURL(lease.Repo) == "" {
+		return nil, recordWithoutRepo(lease.Alias)
+	}
 	return lockLeaseGroup(ctx, stateDir, topology.CanonicalRepoURL(lease.Repo), cmp.Or(lease.Branch, leaseDefaultBranch))
 }
 
@@ -878,10 +884,21 @@ func groupRefusal(ctx context.Context, d LeaseDeps, members []*groupMember) erro
 }
 
 // recordRepo is the canonical repository a record's lease is of; "" for a
-// record that predates keeping it (such records are given theirs by hand).
-// The first parameter is unused: its callers drop it with the record's rework.
+// record that predates keeping it, which every verb that keys by it refuses
+// (recordWithoutRepo). The first parameter is unused: its callers drop it
+// with the record's rework.
 func recordRepo(_ string, r leaseRecord) string {
 	return topology.CanonicalRepoURL(r.Repo)
+}
+
+// recordWithoutRepo is the refusal of a verb that keys a lease by its
+// repository when the lease's record names none: it predates zcp keeping one,
+// and keying it by "" would take a second container of its branch or skip it
+// on a release.
+func recordWithoutRepo(alias string) error {
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Lease %s has a record that names no repository (it predates zcp keeping one), so zcp cannot tell which repository's lease of its branch it is", alias),
+		"Tell the person: the record .zcp/state/leases/"+alias+".json needs its repository (the pool's ServiceMeta remoteUrl, canonical form) written by hand before zcp acquires or releases on its branch. Nothing was changed")
 }
 
 // recordBranch is a record's branch; an empty one is main, as an acquire
@@ -898,6 +915,9 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	}
 	var group []leaseRecord
 	for _, r := range records {
+		if recordBranch(r) == branch && recordRepo(stateDir, r) == "" {
+			return nil, recordWithoutRepo(r.alias())
+		}
 		if recordBranch(r) == branch && topology.SameRepoURL(recordRepo(stateDir, r), repo) {
 			group = append(group, r)
 		}
@@ -1281,8 +1301,8 @@ func mergeGroupRewires(before, after []LeaseRewire) []LeaseRewire {
 // the branch of repo, earliest acquired first (leaseGroupRecords). repo empty
 // is the one repository zcp leases the branch for; a branch it leases for
 // several is refused naming each with its leases, and so is a branch it holds
-// no lease of. A record whose repository zcp knows neither way is a group of
-// one (DP-17), released by itself or by its alias.
+// no lease of. A record of the branch that names no repository refuses it
+// (recordWithoutRepo).
 func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	if strings.TrimSpace(repo) != "" {
 		cloneURL, err := validateLeaseRepo(repo)
@@ -1310,10 +1330,10 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 			continue
 		}
 		of := recordRepo(stateDir, r)
-		key := strings.ToLower(of)
 		if of == "" {
-			key, of = "\x00"+r.alias(), "a repository zcp has no record of"
+			return nil, recordWithoutRepo(r.alias())
 		}
+		key := strings.ToLower(of)
 		if _, seen := aliases[key]; !seen {
 			keys = append(keys, key)
 			named = append(named, of)
@@ -1325,10 +1345,7 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	case 0:
 		return nil, noLeaseOfBranch(branch, "")
 	case 1:
-		if of := recordRepo(stateDir, last); of != "" {
-			return leaseGroupRecords(stateDir, of, branch)
-		}
-		return []leaseRecord{last}, nil
+		return leaseGroupRecords(stateDir, recordRepo(stateDir, last), branch)
 	}
 	parts := make([]string, 0, len(keys))
 	for i, key := range keys {
