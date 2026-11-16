@@ -366,78 +366,30 @@ func TestLeaseSync_MemberAliasRetakenForAnotherRepository_NotFastForwarded(t *te
 }
 
 // TestLeaseOwnership_ParkUnpark_RecordTakenMeanwhile_NeverWrittenOver: park
-// and unpark record the lease parked or running once its container stopped
-// or started. The record is written only while it is still the lease's own
-// (DP-2): another zcp process that took the container again under the alias
-// meanwhile — after the stop or start went, or while park unmounted a
-// container stopped outside zcp — keeps its record, and the call says the
-// lease is lost.
+// and unpark write no record (the orchestrator owns the parked state), and an
+// unpark whose
+// container another zcp process took again under the alias right after the
+// start keeps that process's record and says the lease is lost (DP-2).
 func TestLeaseOwnership_ParkUnpark_RecordTakenMeanwhile_NeverWrittenOver(t *testing.T) {
 	t.Parallel()
-	for _, tt := range []struct {
-		name string
-		// stopped: the container is stopped outside zcp before the park, and
-		// the other process takes it during the park's unmount.
-		stopped bool
-		// afterCall: the other process takes it once this call went through.
-		afterCall string
-		unpark    bool
-	}{
-		{name: "a park, taken right after its stop", afterCall: "stop"},
-		{name: "an unpark, taken right after its start", afterCall: "start", unpark: true},
-		{name: "a park of a container stopped outside zcp, taken during the unmount", stopped: true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			of := newOwnFixture(t)
-			of.acquire(t, groupHQPool)
-			if tt.unpark {
-				if _, err := LeasePark(context.Background(), of.deps, ownHQAlias); err != nil {
-					t.Fatalf("park before the unpark: %v", err)
-				}
-			}
-			if tt.stopped {
-				c := of.hq.get(ownHQContainer)
-				c.Status = platform.SwarmContainerStopped
-				of.hq.put(c, of.hq.leaseOf(ownHQContainer))
-			}
-			var once sync.Once
-			take := func() { once.Do(func() { of.reacquireHQ(t) }) }
-			if tt.stopped {
-				of.deps.Host.Mounter = &takeOnUnmount{lockedMounter: of.mounter, take: take}
-			}
-			of.routeHQ(hookOrch{poolOrch: of.hq, after: func(call string) {
-				if call == tt.afterCall {
-					take()
-				}
-			}})
-
-			var v LeaseView
-			var err error
-			if tt.unpark {
-				v, err = LeaseUnpark(context.Background(), of.deps, ownHQAlias)
-			} else {
-				v, err = LeasePark(context.Background(), of.deps, ownHQAlias)
-			}
-			if rec := of.rawRecord(t, ownHQAlias); rec == nil || rec["lease"] != ownNewLease {
-				t.Errorf("record = %v, want the other process's, never written over", rec)
-			}
-			if err == nil && v.State != LeaseStateLost {
-				t.Errorf("view = %+v, want the old lease lost (or a refusal)", v)
-			}
-		})
+	of := newOwnFixture(t)
+	of.acquire(t, groupHQPool)
+	if _, err := LeasePark(context.Background(), of.deps, ownHQAlias); err != nil {
+		t.Fatalf("park before the unpark: %v", err)
 	}
-}
-
-// takeOnUnmount is the fixture's mounter, running take at the park's unmount.
-type takeOnUnmount struct {
-	*lockedMounter
-	take func()
-}
-
-func (m *takeOnUnmount) Unmount(ctx context.Context, h, p string) error {
-	m.take()
-	return m.lockedMounter.Unmount(ctx, h, p)
+	var once sync.Once
+	of.routeHQ(hookOrch{poolOrch: of.hq, after: func(call string) {
+		if call == "start" {
+			once.Do(func() { of.reacquireHQ(t) })
+		}
+	}})
+	v, err := LeaseUnpark(context.Background(), of.deps, ownHQAlias)
+	if rec := of.rawRecord(t, ownHQAlias); rec == nil || rec["lease"] != ownNewLease {
+		t.Errorf("record = %v, want the other process's, never written over", rec)
+	}
+	if err == nil && v.State != LeaseStateLost {
+		t.Errorf("view = %+v, want the old lease lost (or a refusal)", v)
+	}
 }
 
 // readFails is a pool orchestrator whose read by id of one container fails.

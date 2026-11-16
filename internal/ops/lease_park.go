@@ -367,8 +367,8 @@ func (w leaseWake) note() string {
 // guard can read it, and waits for its ssh. v is the release's own verdict,
 // asked of the orchestrator right before (readLeaseOwnership): only a
 // container it gives the lease, stopped, is started — whoever stopped it. A
-// running container and a zcp without ssh (it checks nothing) start
-// nothing: the guard and the release then say what became of it. Once
+// container in any other status (running, failed, one the orchestrator names
+// no status for) and a zcp without ssh (it checks nothing) start nothing: the guard and the release then say what became of it. Once
 // its ssh answers the orchestrator is asked again, right before the guard
 // reads it. A lease found ended — a start refused held-by-other that a renew
 // confirms, or that last renew — is a *leaseEndedError with no wake (the
@@ -380,7 +380,7 @@ func (w leaseWake) note() string {
 func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v leaseVerdict) (leaseWake, error) {
 	var w leaseWake
 	c := v.container
-	if d.SSH == nil || v.own != leaseOurs || c.LockState != leaseLockReserved || c.Status == platform.SwarmContainerActive {
+	if d.SSH == nil || v.own != leaseOurs || c.LockState != leaseLockReserved || c.Status != platform.SwarmContainerStopped {
 		return w, nil
 	}
 	alias := rec.alias()

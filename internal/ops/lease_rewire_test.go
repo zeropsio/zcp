@@ -67,7 +67,7 @@ func (s *rewireSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, 
 		if slot > 0 {
 			answer += "@@zcp-lease slot " + strconv.Itoa(slot) + "\n"
 		}
-		return []byte(answer), nil
+		return leaseCheckoutAnswer(command, answer), nil
 	case strings.Contains(command, "status --porcelain"):
 		return nil, nil
 	case strings.Contains(command, "rev-list --count"):

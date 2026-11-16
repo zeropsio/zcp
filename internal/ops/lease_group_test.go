@@ -422,12 +422,22 @@ func poolService(id, name string) platform.ServiceStack {
 	return platform.ServiceStack{ID: id, Name: name, Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
 }
 
+// leaseCheckoutAnswer is a fake container's answer to a lease's checkout: the
+// checkout of a lease zcp holds already (leaseResumeCommandFrom) finds its
+// branch cut, as it is in a container whose checkout finished.
+func leaseCheckoutAnswer(command, answer string) []byte {
+	if strings.Contains(command, leaseResumedMarker) {
+		answer = leaseResumedMarker + "\n" + answer
+	}
+	return []byte(answer)
+}
+
 func newGroupFixture(t *testing.T) *groupFixture {
 	t.Helper()
 	gf := &groupFixture{stateDir: t.TempDir(), hq: newPoolOrch(groupHQPool, "svc-hq", 3), web: newPoolOrch(groupWebPool, "svc-web", 7), ssh: &leaseSSH{}}
 	gf.ssh.setHandler(func(_, command string) ([]byte, error) {
 		if strings.Contains(command, "fetch -q --prune origin") {
-			return []byte("@@zcp-lease base " + groupBase + "\n"), nil
+			return leaseCheckoutAnswer(command, "@@zcp-lease base "+groupBase+"\n"), nil
 		}
 		return nil, nil
 	})
@@ -787,8 +797,10 @@ func TestLeaseAcquire_HeldBranchOnPool_ReturnsHeldLeaseReused(t *testing.T) {
 	if n := gf.hq.acquireCount(); n != 1 {
 		t.Errorf("the orchestrator reserved %d containers, want 1", n)
 	}
-	if cmds := gf.ssh.commands(); len(cmds) != 0 {
-		t.Errorf("a reused lease ran %d command(s) in its container: %v", len(cmds), cmds)
+	// The container decides whether the held lease's checkout finished: one
+	// script that, finding the branch cut, changes no work (DP-17).
+	if cmds := gf.ssh.commands(); len(cmds) != 1 || !strings.Contains(cmds[0], leaseResumedMarker) {
+		t.Errorf("a reused lease ran %d command(s) in its container, want its resumed checkout alone: %v", len(cmds), cmds)
 	}
 
 	// Another branch on the pool, or the same branch of another repository, is another lease.

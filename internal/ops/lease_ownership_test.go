@@ -125,7 +125,7 @@ func newOwnFixture(t *testing.T) *ownFixture {
 	gf.ssh.setHandler(func(_, command string) ([]byte, error) {
 		switch {
 		case strings.Contains(command, "fetch -q --prune origin"):
-			return []byte("@@zcp-lease base " + groupBase + "\n"), nil
+			return leaseCheckoutAnswer(command, "@@zcp-lease base "+groupBase+"\n"), nil
 		case strings.Contains(command, "rev-list --count"):
 			return []byte("0\n"), nil
 		}
@@ -1711,8 +1711,8 @@ func TestLeaseOwnership_HeldByOtherForItsOwnLease_KeptUnlessTheRenewAgrees(t *te
 				if err == nil {
 					t.Fatalf("view = %+v, want the call refused", v)
 				}
-				if rec := of.rawRecord(t, ownHQAlias); (rec["parked"] == true) != tt.wantParked {
-					t.Errorf("record = %v, want parked %v", rec, tt.wantParked)
+				if c := of.hq.get(ownHQContainer); parkedContainer(c) != tt.wantParked {
+					t.Errorf("container = %+v, want parked %v", c, tt.wantParked)
 				}
 				return
 			}

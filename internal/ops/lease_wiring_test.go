@@ -86,7 +86,7 @@ func wiringAcquireHandler(version, decl, ensure string) func(host, command strin
 	return func(_, command string) ([]byte, error) {
 		switch {
 		case strings.Contains(command, "fetch -q --prune origin"):
-			return []byte("@@zcp-lease base " + groupBase + "\n"), nil
+			return leaseCheckoutAnswer(command, "@@zcp-lease base "+groupBase+"\n"), nil
 		case strings.Contains(command, "@@zcp-devsup declaration"):
 			out := "@@zcp-devsup version 127\n"
 			if version != "" {
