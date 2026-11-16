@@ -160,6 +160,12 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			m.rec, m.reserved, m.checkedOut = *checkedOut, true, true
 			m.view = checkedOut.view(LeaseStateHeld)
 			m.view.Note = "zcp held this lease, but its checkout had never put it on the branch (zcp stopped mid-checkout), so this acquire ran the checkout"
+			// Reported as status reports it: a mount that failed when the
+			// lease was taken is still missing after this checkout.
+			if gap := d.Host.gap(ctx, checkedOut.alias()); gap != "" {
+				m.view.State = LeaseStateUnmounted
+				m.view.Note = joinNotes(m.view.Note, gap)
+			}
 		}
 		fresh = append(fresh, m)
 	}
