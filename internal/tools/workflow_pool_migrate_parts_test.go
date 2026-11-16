@@ -99,11 +99,6 @@ func multiPartFixture(t *testing.T, web, api partProgress, mutate func(*poolMigr
 	}
 	f.build(t)
 	for _, p := range multiPartPools {
-		if progress[p.pool] >= partEnv {
-			if got := ops.SeedPoolDefaultRepo(f.stateDir, p.pool, f.meta.RemoteURL); got.State != ops.PoolDefaultRepoSeeded {
-				t.Fatalf("seed %s: %+v", p.pool, got)
-			}
-		}
 		if progress[p.pool] >= partLeased {
 			writePoolLeaseRecord(t, f.stateDir, p.pool, p.id)
 		}

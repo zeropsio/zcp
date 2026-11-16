@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -97,136 +96,41 @@ func validateLeaseRepo(raw string) (string, error) {
 	return raw, nil
 }
 
-// poolDefault is zcp's record of the repository a pool's leases are for
-// (.zcp/state/leases/pools/<pool>.json): the clone URL as the first acquire
-// was given it, which a later acquire without repo clones. It carries no
-// credential; compare it through topology.SameRepoURL, never as a string.
-type poolDefault struct {
-	Repo string `json:"repo"`
-	// HQ: the repository was on the Mate's HQ when it was recorded — an HQ
-	// repository, whose host is never the person's token's (DP-6), even once
-	// the Mate links to another HQ (D8, live 2026-10-27). A record written
-	// before zcp kept this says false.
-	HQ bool `json:"hq,omitempty"`
+// poolRepository is the repository a pool's leases are of, as its pair's
+// ServiceMeta records it (the stand-up or the HQ wiring writes it; the one
+// store, read through LeaseDeps.PoolRepository): the clone URL as recorded,
+// and whether it was recorded wired in the Mate's HQ — an HQ repository,
+// whose host is never the person's token's (DP-6), even once the Mate links
+// to another HQ (D8). It carries no credential; compare it through
+// topology.SameRepoURL, never as a string.
+type poolRepository struct {
+	Repo string
+	HQ   bool
 }
 
-func poolDefaultPath(stateDir, pool string) string {
-	return filepath.Join(leaseDir(stateDir), "pools", pool+".json")
-}
-
-// MovePoolDefaultRepos re-points every pool default repository that names
-// from (topology.SameRepoURL) at to, and names the pools it moved, sorted: a
-// repository zcp wired moved — the Mate left an HQ, or HQ holds it in another
-// application now — and an acquire naming no repository must clone it where
-// it is (D8, live 2026-10-27). A default naming anything else stays; a
-// record that cannot be rewritten stays as it was.
-func MovePoolDefaultRepos(stateDir, from, to string) []string {
-	if stateDir == "" || from == "" || to == "" || topology.SameRepoURL(from, to) {
-		return nil
+// poolRepository is the pool's recorded repository; the zero value when none
+// is recorded or zcp has no reader of it.
+func (d LeaseDeps) poolRepository(pool string) poolRepository {
+	if d.PoolRepository == nil || !leasePoolNameRe.MatchString(pool) {
+		return poolRepository{}
 	}
-	entries, err := os.ReadDir(filepath.Join(leaseDir(stateDir), "pools"))
-	if err != nil {
-		return nil
-	}
-	var moved []string
-	for _, e := range entries {
-		pool, isRecord := strings.CutSuffix(e.Name(), ".json")
-		if e.IsDir() || !isRecord || !topology.SameRepoURL(readPoolDefaultRepo(stateDir, pool), from) {
-			continue
-		}
-		if storePoolDefaultRepoOn(stateDir, pool, to, true) == nil {
-			moved = append(moved, pool)
-		}
-	}
-	sort.Strings(moved)
-	return moved
-}
-
-// readPoolDefaultRepo is the pool's default repository, "" when none is
-// recorded (or the record cannot be read: it names nothing zcp could use).
-func readPoolDefaultRepo(stateDir, pool string) string {
-	return readPoolDefaultRecord(stateDir, pool).Repo
-}
-
-// readPoolDefaultRecord is the pool's default record, the zero value when none is
-// recorded or it cannot be read.
-func readPoolDefaultRecord(stateDir, pool string) poolDefault {
-	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
-		return poolDefault{}
-	}
-	raw, err := os.ReadFile(poolDefaultPath(stateDir, pool))
-	if err != nil {
-		return poolDefault{}
-	}
-	var rec poolDefault
-	if json.Unmarshal(raw, &rec) != nil {
-		return poolDefault{}
-	}
-	return rec
-}
-
-// storePoolDefaultRepo records repo, a repository outside the Mate's HQ, as
-// the pool's default (storePoolDefaultRepoOn).
-func storePoolDefaultRepo(stateDir, pool, repo string) error {
-	return storePoolDefaultRepoOn(stateDir, pool, repo, false)
-}
-
-// storePoolDefaultRepoOn records repo as the pool's default, atomically with
-// mode 0600; onHQ: repo is on the Mate's HQ (poolDefault.HQ).
-func storePoolDefaultRepoOn(stateDir, pool, repo string, onHQ bool) error {
-	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
-		return errors.New("no state directory or an unusable pool name")
-	}
-	dir := filepath.Dir(poolDefaultPath(stateDir, pool))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-	data, err := json.MarshalIndent(poolDefault{Repo: repo, HQ: onHQ}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".pool-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	defer os.Remove(tmp.Name()) // best effort: already gone after a successful rename
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), poolDefaultPath(stateDir, pool)); err != nil {
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	repo, onHQ := d.PoolRepository(pool)
+	return poolRepository{Repo: strings.TrimSpace(repo), HQ: onHQ}
 }
 
 // resolveLeaseRepo is the clone URL an acquire clones, as it was given: the
-// acquire's own, else the pool's default. It reports whether the pool has no
-// default yet, so the caller can record the given one once the checkout
-// worked.
-func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefault bool, err error) {
-	have := readPoolDefaultRepo(stateDir, pool)
-	if strings.TrimSpace(repo) == "" {
-		if have == "" {
-			return "", false, platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("acquire needs repo: pool '%s' has no default repository yet", pool),
-				"Pass the clone URL as repo (https://host/owner/repo); the first acquire on a pool stores it as the pool's default")
-		}
-		cloneURL, err = validateLeaseRepo(have)
-		return cloneURL, false, err
+// acquire's own, else the pool's recorded repository.
+func resolveLeaseRepo(d LeaseDeps, pool, repo string) (string, error) {
+	if strings.TrimSpace(repo) != "" {
+		return validateLeaseRepo(repo)
 	}
-	cloneURL, err = validateLeaseRepo(repo)
-	if err != nil {
-		return "", false, err
+	have := d.poolRepository(pool).Repo
+	if have == "" {
+		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("acquire needs repo: pool '%s' has no repository recorded", pool),
+			"Pass the clone URL as repo (https://host/owner/repo). A pool's repository is the one its stand-up records: zerops_standup records it for a pool that has none")
 	}
-	return cloneURL, have == "", nil
+	return validateLeaseRepo(have)
 }
 
 // leaseCheckoutCommand is the git script that puts workDir on branch of repo.
@@ -256,7 +160,7 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // helper answers HQ with the Mate's project key, and nothing in the
 // container holds a credential for HQ. It keeps only a helper that answers
 // nothing and names `zcp git` to a plain caller (leaseHQHintHelperConfig).
-// It is the checkout of the pool's own default repository: the pool's
+// It is the checkout of the pool's own recorded repository: the pool's
 // GIT_TOKEN answers its host (leaseTokenScope).
 func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 	return leaseCheckoutCommandFrom(workDir, repo, branch, base, "", hqURL, leaseHelperScope(repo))
@@ -468,7 +372,7 @@ func leaseHQHintHelperConfig(repo, hqURL string) string {
 // a repository on another host fetches without it (review R4-2).
 
 // poolTokenScopePath is zcp's record of the scope a pool's GIT_TOKEN answers
-// when its default repository names none outside the Mate's HQ
+// when its recorded repository names none outside the Mate's HQ
 // (.zcp/state/leases/pools/<pool>.token-scope.json, mode 0600).
 func poolTokenScopePath(stateDir, pool string) string {
 	return filepath.Join(leaseDir(stateDir), "pools", pool+".token-scope.json")
@@ -521,20 +425,19 @@ func storePoolTokenScope(stateDir, pool, scope string) error {
 }
 
 // leaseTokenScope is the one scope the pool's GIT_TOKEN answers, and whether
-// repo binds it: the host of the pool's default repository when that is
-// outside the Mate's HQ — pool-migrate seeds it with the migrating dev's
-// origin, whose GIT_TOKEN it copies, else the first acquire recorded its own
-// (DP-5); else the scope zcp recorded when it bound the token; else — no
-// default outside HQ and nothing bound yet, as in a Mate whose pools default
-// to HQ repositories — repo's own host, which binds it once its checkout
-// worked (bind true). "" when none applies (repo "" or on HQ): no GIT_TOKEN
-// helper at all.
-func leaseTokenScope(stateDir, pool, hqURL, repo string) (scope string, bind bool) {
-	def := readPoolDefaultRecord(stateDir, pool)
+// repo binds it: the host of the pool's recorded repository when that is
+// outside the Mate's HQ (DP-5); else the scope zcp recorded when it bound the
+// token; else — no repository outside HQ and nothing bound yet, as in a Mate
+// whose pools are of HQ repositories — repo's own host, which binds it once
+// its checkout worked (bind true). "" when none applies (repo "" or on HQ):
+// no GIT_TOKEN helper at all.
+func leaseTokenScope(d LeaseDeps, pool, repo string) (scope string, bind bool) {
+	hqURL := d.hqAddress()
+	def := d.poolRepository(pool)
 	if def.Repo != "" && !def.HQ && !IsHQRemote(def.Repo, hqURL) {
 		return leaseHelperScope(def.Repo), false
 	}
-	if recorded := readPoolTokenScope(stateDir, pool); recorded != "" {
+	if recorded := readPoolTokenScope(d.StateDir, pool); recorded != "" {
 		return recorded, false
 	}
 	if repo == "" || IsHQRemote(repo, hqURL) || retiredHQDefault(def, repo, hqURL) {
@@ -571,7 +474,7 @@ type leaseCheckedOut struct {
 // credential contract reaches the agent.
 func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
-	tokenScope, bind := leaseTokenScope(d.StateDir, rec.PoolHostname, hqURL, repo)
+	tokenScope, bind := leaseTokenScope(d, rec.PoolHostname, repo)
 	onHQ := IsHQRemote(repo, hqURL)
 	out, err := d.gitSSH(onHQ).ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(LeaseWorkDir, repo, branch, base, from, hqURL, tokenScope))
 	if err == nil {
@@ -584,7 +487,7 @@ func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, bran
 	code, suggestion := classifyCheckoutFailure(err, onHQ)
 	tokenCode := code == platform.ErrGitTokenMissing || code == platform.ErrGitTokenInvalid
 	switch repoScope := leaseHelperScope(repo); {
-	case tokenCode && retiredHQDefault(readPoolDefaultRecord(d.StateDir, rec.PoolHostname), repo, hqURL):
+	case tokenCode && retiredHQDefault(d.poolRepository(rec.PoolHostname), repo, hqURL):
 		code, suggestion = platform.ErrPrerequisiteMissing, retiredHQDefaultSuggestion(repo)
 	case tokenCode && repoScope != "" && !strings.EqualFold(repoScope, tokenScope):
 		code, suggestion = platform.ErrPrerequisiteMissing, foreignHostSuggestion(repoScope, tokenScope)
@@ -672,20 +575,20 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 		"Check the repo URL and that the container can reach the git host"
 }
 
-// retiredHQDefault reports whether repo is the pool's default recorded on the
-// Mate's HQ (def.HQ) while that HQ is not the one the Mate links to now
-// (hqURL): an HQ repository the Mate left, whose host never was the person's
-// token's.
-func retiredHQDefault(def poolDefault, repo, hqURL string) bool {
+// retiredHQDefault reports whether repo is the pool's repository recorded
+// wired in the Mate's HQ (def.HQ) while that HQ is not the one the Mate links
+// to now (hqURL): an HQ repository the Mate left, whose host never was the
+// person's token's.
+func retiredHQDefault(def poolRepository, repo, hqURL string) bool {
 	return def.HQ && topology.SameRepoURL(def.Repo, repo) && !IsHQRemote(repo, hqURL)
 }
 
-// retiredHQDefaultSuggestion is what a checkout of the pool's default says
+// retiredHQDefaultSuggestion is what a checkout of the pool's repository says
 // when it is an HQ repository the Mate has left (retiredHQDefault) and git
 // asked for a credential there: no person's token answers it.
 func retiredHQDefaultSuggestion(repo string) string {
-	return "The repository " + repo + " is the pool's default, recorded while it was on this Mate's HQ, and the Mate links to another HQ now: no person's token answers it. " +
-		"Name the repository on the HQ this Mate links to now with repo=<its address there> (zerops_workflow action=\"status\" names each pair's repository); the next repository pass moves the pool's default along with its pair. Never ask for a token or make one up"
+	return "The repository " + repo + " is the pool's repository, recorded while it was on this Mate's HQ, and the Mate links to another HQ now: no person's token answers it. " +
+		"Name the repository on the HQ this Mate links to now with repo=<its address there> (zerops_workflow action=\"status\" names each pair's repository); the next repository pass moves the pool's record to it. Never ask for a token or make one up"
 }
 
 // foreignHostSuggestion is what a checkout says when git asked for a
@@ -696,11 +599,11 @@ func retiredHQDefaultSuggestion(repo string) string {
 func foreignHostSuggestion(repoScope, tokenScope string) string {
 	bound := "the pool's GIT_TOKEN answers no host outside HQ yet"
 	if tokenScope != "" {
-		bound = "the pool's GIT_TOKEN is the person's token for " + tokenScope + " (the host of the pool's default repository, or of its first lease outside HQ) and answers no other host"
+		bound = "the pool's GIT_TOKEN is the person's token for " + tokenScope + " (the host of the pool's repository, or of its first lease outside HQ) and answers no other host"
 	}
 	return "The repository on " + repoScope + " asked for a credential, and " + bound +
 		", so git asked without it. Check that the repo URL is the one the person meant; a private repository on " + repoScope +
-		" is leased from a pool whose default repository is there. Never ask for the token's value or make one up"
+		" is leased from a pool whose recorded repository is there. Never ask for the token's value or make one up"
 }
 
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's

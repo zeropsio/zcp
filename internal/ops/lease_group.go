@@ -49,9 +49,6 @@ type groupMember struct {
 	// held is the lease zcp held for the key before this call (returned,
 	// reused); nil for a member this call leases.
 	held *LeaseView
-	// becomesDefault: the pool has no default repository yet; the group's
-	// becomes it once the acquire worked.
-	becomesDefault bool
 	// rec is the member's record once reserved is set.
 	rec      leaseRecord
 	reserved bool
@@ -73,8 +70,8 @@ type groupMember struct {
 // from one main commit — the group's recorded base, else what the first new
 // member's checkout cut from. If any member fails, every container this call
 // reserved is handed back, the leases held before it stay, and the refusal
-// says where each container went. repo empty is the pools' default, which
-// every pool that has one must agree on.
+// says where each container went. repo empty is the pools' recorded
+// repository, which every pool that records one must agree on.
 func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, branch string) ([]LeaseView, error) {
 	change, err := LeaseAcquireGroupChange(ctx, d, pools, repo, branch)
 	return change.Leases, err
@@ -115,7 +112,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	if err := validateLeaseFrom(branch, from); err != nil {
 		return LeaseChange{}, err
 	}
-	repoURL, becomesDefault, err := resolveGroupRepo(d.StateDir, pools, repo)
+	repoURL, err := resolveGroupRepo(d, pools, repo)
 	if err != nil {
 		return LeaseChange{}, err
 	}
@@ -153,7 +150,6 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			m.view = unfinished.view(LeaseStateHeld)
 			m.view.Note = "zcp held this lease, but its checkout never put it on the branch (zcp stopped mid-checkout, or a failed checkout's hand-back was refused), so this acquire ran the checkout again"
 		}
-		m.becomesDefault = becomesDefault[m.pool]
 		fresh = append(fresh, m)
 	}
 	failed := func() bool { return slices.ContainsFunc(fresh, func(m *groupMember) bool { return m.err != nil }) }
@@ -167,15 +163,6 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	}
 	if failed() {
 		return LeaseChange{}, groupRefusal(ctx, d, members)
-	}
-	if d.Warm != nil {
-		// The repository a pool's warm containers get is the one its last
-		// lease checked out, as given (DP-32), recorded before the top-up.
-		for _, m := range fresh {
-			if err := storeWarmCloneRepo(d.StateDir, m.pool, repoURL); err != nil {
-				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the repository could not be recorded for %s's warm containers (%v), so a warm container keeps the repository it was cloned with", m.pool, err))
-			}
-		}
 	}
 	// Every member holds the branch: a concurrent acquire of these keys now
 	// finds them, while the prepare and the supervisor run.
@@ -218,11 +205,6 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			}
 			views = append(views, *m.held)
 			continue
-		}
-		if m.becomesDefault {
-			if err := storePoolDefaultRepoOn(d.StateDir, m.pool, repoURL, IsHQRemote(repoURL, d.hqAddress())); err != nil {
-				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the repository could not be recorded as the pool's default: %v", err))
-			}
 		}
 		views = append(views, m.view)
 	}
@@ -338,50 +320,35 @@ func acquireBearers(ctx context.Context, d LeaseDeps, members []*groupMember) er
 }
 
 // resolveGroupRepo is the clone URL a group acquire clones, as it was given
-// (DP-18) — repo, else the default every pool that has one agrees on (agreeing
-// by identity, topology.SameRepoURL) — and, per pool, whether the pool has no
-// default yet. One pool is resolveLeaseRepo exactly.
-func resolveGroupRepo(stateDir string, pools []string, repo string) (string, map[string]bool, error) {
-	if len(pools) == 1 {
-		cloneURL, becomes, err := resolveLeaseRepo(stateDir, pools[0], repo)
-		return cloneURL, map[string]bool{pools[0]: becomes}, err
-	}
-	defaults := map[string]string{}
-	becomes := map[string]bool{}
-	for _, p := range pools {
-		if have := readPoolDefaultRepo(stateDir, p); have != "" {
-			defaults[p] = have
-		} else {
-			becomes[p] = true
-		}
-	}
-	if strings.TrimSpace(repo) != "" {
-		cloneURL, err := validateLeaseRepo(repo)
-		return cloneURL, becomes, err
+// (DP-18) — repo, else the repository every pool that records one agrees on
+// (agreeing by identity, topology.SameRepoURL). One pool is resolveLeaseRepo
+// exactly.
+func resolveGroupRepo(d LeaseDeps, pools []string, repo string) (string, error) {
+	if len(pools) == 1 || strings.TrimSpace(repo) != "" {
+		return resolveLeaseRepo(d, pools[0], repo)
 	}
 	var agreed string
 	var named []string
 	for _, p := range pools {
-		have, ok := defaults[p]
-		if !ok {
+		have := d.poolRepository(p).Repo
+		if have == "" {
 			continue
 		}
 		named = append(named, p+": "+have)
 		if agreed == "" {
 			agreed = have
 		} else if !topology.SameRepoURL(agreed, have) {
-			return "", nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Pools %s default to different repositories (%s)", strings.Join(pools, ", "), strings.Join(named, "; ")),
+			return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("Pools %s record different repositories (%s)", strings.Join(pools, ", "), strings.Join(named, "; ")),
 				"Pass repo, the https clone URL the branch is of: a group's leases are all of one repository")
 		}
 	}
 	if agreed == "" {
-		return "", nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("acquire needs repo: pools %s have no default repository yet", strings.Join(pools, ", ")),
-			"Pass the clone URL as repo (https://host/owner/repo); the first acquire on a pool stores it as the pool's default")
+		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("acquire needs repo: pools %s have no repository recorded", strings.Join(pools, ", ")),
+			"Pass the clone URL as repo (https://host/owner/repo). A pool's repository is the one its stand-up records: zerops_standup records it for a pool that has none")
 	}
-	cloneURL, err := validateLeaseRepo(agreed)
-	return cloneURL, becomes, err
+	return validateLeaseRepo(agreed)
 }
 
 // leaseKeyLockPath is the lock file of one key — the canonical repository
@@ -504,9 +471,9 @@ func releaseLockRefusal(ctx context.Context, err error, held, again string) erro
 // lockReleaseKeys holds the key lock of every record in recs — its
 // repository, branch and pool, as an acquire of it takes it (leaseKeyLockPath)
 // — each once, in lockLeaseKeys' order (the pools sorted), so a release and a
-// group acquire never wait on each other crosswise; none for a record whose
-// repository zcp knows neither way, as lockLeaseGroup holds nothing then. It
-// returns the release of them all.
+// group acquire never wait on each other crosswise; none for a record that
+// names no repository, which the release refused before. It returns the
+// release of them all.
 func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (func(), error) {
 	type key struct{ repo, branch, pool string }
 	var keys []key
@@ -551,14 +518,19 @@ func lockReleaseKeys(ctx context.Context, stateDir string, recs []leaseRecord) (
 
 // lockRecordGroup is lockLeaseGroup of rec's group.
 func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
+	if recordRepo(stateDir, rec) == "" {
+		return nil, recordWithoutRepo(rec.alias())
+	}
 	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
 }
 
 // lockLeaseTargetGroup is lockLeaseGroup of the group of the lease a target
-// names (its record's repository, or its pool's default, and its branch).
+// names (its record's repository and its branch).
 func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTargetInfo) (func(), error) {
-	repo := topology.CanonicalRepoURL(cmp.Or(lease.Repo, readPoolDefaultRepo(stateDir, lease.Pool)))
-	return lockLeaseGroup(ctx, stateDir, repo, cmp.Or(lease.Branch, leaseDefaultBranch))
+	if topology.CanonicalRepoURL(lease.Repo) == "" {
+		return nil, recordWithoutRepo(lease.Alias)
+	}
+	return lockLeaseGroup(ctx, stateDir, topology.CanonicalRepoURL(lease.Repo), cmp.Or(lease.Branch, leaseDefaultBranch))
 }
 
 // heldLease is the lease zcp already holds of branch on pool — one of the
@@ -686,7 +658,7 @@ func resumeHeldCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repoU
 		note = d.Host.refreshAliases(ctx, d)
 	}
 	hqURL := d.hqAddress()
-	tokenScope, _ := leaseTokenScope(d.StateDir, rec.PoolHostname, hqURL, repoURL)
+	tokenScope, _ := leaseTokenScope(d, hqURL, repoURL)
 	out, err := d.SSH.ExecSSH(ctx, alias, leaseResumeCommand(repoURL, branch, hqURL, tokenScope))
 	if err != nil {
 		if why, silent := leaseNotAnswering(err); silent {
@@ -995,11 +967,22 @@ func groupRefusal(ctx context.Context, d LeaseDeps, members []*groupMember) erro
 	return &out
 }
 
-// recordRepo is the canonical repository a record's lease is of: its own, or
-// — for a record that predates keeping it — its pool's default; "" when zcp
-// knows neither.
-func recordRepo(stateDir string, r leaseRecord) string {
-	return topology.CanonicalRepoURL(cmp.Or(r.Repo, readPoolDefaultRepo(stateDir, r.PoolHostname)))
+// recordRepo is the canonical repository a record's lease is of; "" for a
+// record that predates keeping it, which every verb that keys by it refuses
+// (recordWithoutRepo). The first parameter is unused: its callers drop it
+// with the record's rework.
+func recordRepo(_ string, r leaseRecord) string {
+	return topology.CanonicalRepoURL(r.Repo)
+}
+
+// recordWithoutRepo is the refusal of a verb that keys a lease by its
+// repository when the lease's record names none: it predates zcp keeping one,
+// and keying it by "" would take a second container of its branch or skip it
+// on a release.
+func recordWithoutRepo(alias string) error {
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Lease %s has a record that names no repository (it predates zcp keeping one), so zcp cannot tell which repository's lease of its branch it is", alias),
+		"Tell the person: the record .zcp/state/leases/"+alias+".json needs its repository (the pool's ServiceMeta remoteUrl, canonical form) written by hand before zcp acquires or releases on its branch. Nothing was changed")
 }
 
 // recordBranch is a record's branch; an empty one is main, as an acquire
@@ -1016,6 +999,9 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	}
 	var group []leaseRecord
 	for _, r := range records {
+		if recordBranch(r) == branch && recordRepo(stateDir, r) == "" {
+			return nil, recordWithoutRepo(r.alias())
+		}
 		if recordBranch(r) == branch && topology.SameRepoURL(recordRepo(stateDir, r), repo) {
 			group = append(group, r)
 		}
@@ -1399,8 +1385,8 @@ func mergeGroupRewires(before, after []LeaseRewire) []LeaseRewire {
 // the branch of repo, earliest acquired first (leaseGroupRecords). repo empty
 // is the one repository zcp leases the branch for; a branch it leases for
 // several is refused naming each with its leases, and so is a branch it holds
-// no lease of. A record whose repository zcp knows neither way is a group of
-// one (DP-17), released by itself or by its alias.
+// no lease of. A record of the branch that names no repository refuses it
+// (recordWithoutRepo).
 func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	if strings.TrimSpace(repo) != "" {
 		cloneURL, err := validateLeaseRepo(repo)
@@ -1428,10 +1414,10 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 			continue
 		}
 		of := recordRepo(stateDir, r)
-		key := strings.ToLower(of)
 		if of == "" {
-			key, of = "\x00"+r.alias(), "a repository zcp has no record of"
+			return nil, recordWithoutRepo(r.alias())
 		}
+		key := strings.ToLower(of)
 		if _, seen := aliases[key]; !seen {
 			keys = append(keys, key)
 			named = append(named, of)
@@ -1443,10 +1429,7 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	case 0:
 		return nil, noLeaseOfBranch(branch, "")
 	case 1:
-		if of := recordRepo(stateDir, last); of != "" {
-			return leaseGroupRecords(stateDir, of, branch)
-		}
-		return []leaseRecord{last}, nil
+		return leaseGroupRecords(stateDir, recordRepo(stateDir, last), branch)
 	}
 	parts := make([]string, 0, len(keys))
 	for i, key := range keys {

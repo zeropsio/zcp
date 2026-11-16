@@ -65,6 +65,10 @@ type LeaseDeps struct {
 	// each use ("" — or nil — for none): a repository on it is checked out as
 	// HQ's git user (DP-12).
 	HQAddress func() string
+	// PoolRepository reads the repository a pool's leases are of from the
+	// pool's ServiceMeta, its one store: the clone URL ("" for none) and
+	// whether it is recorded wired in the Mate's HQ. nil reads none.
+	PoolRepository func(pool string) (repo string, onHQ bool)
 	// HQGit runs zcp's own git against the Mate's HQ in a leased container —
 	// the checkout's fetch, the release guard's, a sync's push and
 	// fast-forwards — as relayed sessions (RelayedSSH), answered with the
@@ -870,8 +874,8 @@ func swarmSuggestion(se *platform.SwarmError) string {
 // (leaseTtlSeconds 0): an expiring lease frees the container silently and
 // unreset — a clean acquire resets only a container marked dirty, which ssh
 // writes never mark — so the lease ends only by an explicit release, which
-// resets it. An empty repo is the pool's default repository (the first
-// acquire with a repo records it); with neither, or with a repo or branch that
+// resets it. An empty repo is the pool's recorded repository
+// (LeaseDeps.PoolRepository); with neither, or with a repo or branch that
 // is not usable, the acquire refuses before it takes a container. A checkout
 // that fails hands the container straight back.
 func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (LeaseView, error) {

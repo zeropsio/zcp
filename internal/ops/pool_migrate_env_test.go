@@ -142,7 +142,7 @@ func newEnvFixture(t *testing.T) *envFixture {
 		container: map[string]string{"STRIPE_SECRET": envSecretValue, "APP_URL": "https://dev", "DB_HOST": "db"},
 		in: PoolMigrateEnvInput{
 			Dev: envDevService(), Pool: envPoolService(), Stages: []platform.ServiceStack{envStageService()},
-			Origin: "https://github.com/example/app.git", StateDir: t.TempDir(),
+			StateDir: t.TempDir(),
 		},
 	}
 }
@@ -900,8 +900,8 @@ func TestReadPoolMigrateEnv_ReadsNoSecretWritesNothing(t *testing.T) {
 	if !reflect.DeepEqual(out.Present, []string{"STRIPE_SECRET"}) || !reflect.DeepEqual(out.Unchanged, []string{"APP_URL"}) {
 		t.Errorf("present = %v unchanged = %v", out.Present, out.Unchanged)
 	}
-	if out.Done || out.DefaultRepo.State != PoolDefaultRepoPending {
-		t.Errorf("done = %v defaultRepo = %+v, want pending", out.Done, out.DefaultRepo)
+	if out.Done {
+		t.Errorf("done = %v, want a key still to write", out.Done)
 	}
 	if out.GitToken.State != PoolGitTokenDevHasNone {
 		t.Errorf("gitToken = %+v", out.GitToken)
@@ -1034,35 +1034,6 @@ func TestParsePoolEnvRead_CutShortOrMalformed_NoValue(t *testing.T) {
 	values, perr := parsePoolEnvRead([]byte("zcp-env 1\x00X\x00v\n\x00ok\x00zcp-env-end\x00"), keys)
 	if perr != "" || len(values) != 0 {
 		t.Errorf("an unasked key was kept: %v %q", values, perr)
-	}
-}
-
-func TestSeedPoolDefaultRepo_CheckBeforeWrite(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	const origin = "https://github.com/example/app.git"
-	if got := poolDefaultRepoState(dir, "apppool", origin); got.State != PoolDefaultRepoPending || got.Repo != origin {
-		t.Fatalf("state before = %+v", got)
-	}
-	if got := SeedPoolDefaultRepo(dir, "apppool", origin); got.State != PoolDefaultRepoSeeded || got.Previous != "" {
-		t.Fatalf("first seed = %+v", got)
-	}
-	if got := readPoolDefaultRepo(dir, "apppool"); got != origin {
-		t.Fatalf("the lease's record names %q, want the origin as given (DP-18)", got)
-	}
-	if got := SeedPoolDefaultRepo(dir, "apppool", origin+"/"); got.State != PoolDefaultRepoUnchanged {
-		t.Fatalf("second seed = %+v, want unchanged", got)
-	}
-	if err := storePoolDefaultRepo(dir, "apppool", "https://github.com/example/other"); err != nil {
-		t.Fatal(err)
-	}
-	if got := SeedPoolDefaultRepo(dir, "apppool", origin); got.State != PoolDefaultRepoSeeded || got.Previous != "https://github.com/example/other" {
-		t.Fatalf("seed over another repository = %+v", got)
-	}
-	for _, bad := range []string{"", "git@github.com:example/app.git", "https://user:pw@github.com/x/y"} {
-		if got := SeedPoolDefaultRepo(dir, "apppool", bad); got.State != PoolDefaultRepoUnavailable || got.Reason == "" {
-			t.Errorf("origin %q: %+v, want unavailable with a reason", bad, got)
-		}
 	}
 }
 

@@ -25,12 +25,12 @@ its containers away from the app.
 
 **The loop**
 
-1. `zerops_lease action=acquire pool="<pool>" repo="<https clone url>" branch="<branch>"`
+1. `zerops_lease action=acquire pool="<pool>" branch="<branch>"`
    leases a clean container with no expiry. It writes the alias
    `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
    checks the branch out there; a branch that does not exist yet is cut from
-   `main`, or from the branch `from="<branch>"` names. `repo` is remembered
-   per pool — pass it on the first acquire only.
+   `main`, or from the branch `from="<branch>"` names. The repository is the
+   pool's, recorded by its stand-up.
    The clone uses the pool's `GIT_TOKEN` service secret; zcp clones a
    repository on this Mate's HQ itself with the Mate's project key, storing
    nothing in the pool. You never type a credential. Each lease taken

@@ -55,9 +55,7 @@ func TestLeaseAcquire_PoolTokenAnswersOnlyThePoolsHost(t *testing.T) {
 		orch := newWarmOrch(4)
 		orch.add(3, "", true, false, 1)
 		wf, ssh := newWarmCloneFixture(t, orch)
-		if err := storePoolDefaultRepo(wf.stateDir, testPoolHost, testRepo); err != nil {
-			t.Fatal(err)
-		}
+		withPoolRepository(&wf.deps, testPoolHost, testRepo, false)
 		if _, err := LeaseAcquire(context.Background(), wf.deps, testPoolHost, foreignRepo, "feat"); err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
@@ -95,9 +93,7 @@ func TestLeaseAcquire_PoolTokenAnswersOnlyThePoolsHost(t *testing.T) {
 		ssh := &leaseSSH{}
 		fx.deps.SSH = ssh
 		fx.swarm.acquired = acquiredAs(3)
-		if err := storePoolDefaultRepo(fx.stateDir, testPoolHost, testRepo); err != nil {
-			t.Fatal(err)
-		}
+		withPoolRepository(&fx.deps, testPoolHost, testRepo, false)
 		const other = "https://GitHub.com/acme/other.git"
 		if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, other, "feat"); err != nil {
 			t.Fatalf("acquire: %v", err)
@@ -113,7 +109,7 @@ func TestLeaseAcquire_PoolTokenAnswersOnlyThePoolsHost(t *testing.T) {
 }
 
 // TestLeaseAcquire_PoolTokenBindsAtTheFirstLeaseOutsideHQ: inside a Mate a
-// pool's default repository is on HQ, which says nothing of where the
+// pool's recorded repository is on HQ, which says nothing of where the
 // person's GIT_TOKEN belongs. The first lease of a repository outside HQ
 // fetches with it and binds it to that host; a later acquire naming another
 // host gets nothing from it, the bound host still does.
@@ -124,9 +120,7 @@ func TestLeaseAcquire_PoolTokenBindsAtTheFirstLeaseOutsideHQ(t *testing.T) {
 	inAMate(fx)
 	ssh := &leaseSSH{}
 	fx.deps.SSH = ssh
-	if err := storePoolDefaultRepo(fx.stateDir, testPoolHost, leaseHQRepo); err != nil {
-		t.Fatal(err)
-	}
+	withPoolRepository(&fx.deps, testPoolHost, leaseHQRepo, true)
 	session := map[string]string{GitTokenEnvKey: usersToken}
 	for i, repo := range []string{testRepo, foreignRepo, "https://github.com/acme/other"} {
 		fx.swarm.acquired = acquiredAs(int64(3 + i))
@@ -159,9 +153,7 @@ func TestLeaseCheckout_ForeignHostAsksForACredential_NamesTheTokensHost(t *testi
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
-	if err := storePoolDefaultRepo(fx.stateDir, testPoolHost, testRepo); err != nil {
-		t.Fatal(err)
-	}
+	withPoolRepository(&fx.deps, testPoolHost, testRepo, false)
 	fx.deps.SSH = &leaseSSH{fn: func(_, command string) ([]byte, error) {
 		if !strings.Contains(command, "fetch -q --prune origin") {
 			return nil, nil

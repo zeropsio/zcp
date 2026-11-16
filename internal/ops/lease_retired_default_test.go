@@ -10,8 +10,8 @@ import (
 )
 
 // TestLeaseAcquire_ADefaultRecordedOnHQ_IsNoHostForThePoolsToken (D8, live
-// 2026-10-27): a pool's default repository recorded while it was on the
-// Mate's HQ is an HQ repository — its host never was the person's token's.
+// 2026-10-27): a pool's repository recorded wired in the Mate's HQ is an HQ
+// repository — its host never was the person's token's.
 // Once the Mate links to another HQ, an acquire naming no repository clones
 // that address, and git asks for a credential there: that is no missing or
 // refused person's token (DP-6), so the refusal is PREREQUISITE_MISSING and
@@ -33,9 +33,7 @@ func TestLeaseAcquire_ADefaultRecordedOnHQ_IsNoHostForThePoolsToken(t *testing.T
 			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
 				t.Fatalf("the first acquire, of the HQ repository: %v", err)
 			}
-			if got := readPoolDefaultRepo(fx.stateDir, testPoolHost); got != leaseHQRepo {
-				t.Fatalf("the pool's default = %q, want the HQ repository", got)
-			}
+			withPoolRepository(&fx.deps, testPoolHost, leaseHQRepo, true)
 			// The Mate links to another HQ now.
 			fx.deps.HQAddress = func() string { return "https://hq-now.example.invalid" }
 			fx.swarm.acquired = acquiredAs(4)
@@ -55,7 +53,7 @@ func TestLeaseAcquire_ADefaultRecordedOnHQ_IsNoHostForThePoolsToken(t *testing.T
 			if !strings.Contains(pe.Suggestion, "Never ask") {
 				t.Errorf("suggestion %q: want it to ask for no token", pe.Suggestion)
 			}
-			if scope, _ := leaseTokenScope(fx.stateDir, testPoolHost, fx.deps.hqAddress(), leaseHQRepo); scope != "" {
+			if scope, _ := leaseTokenScope(fx.deps, testPoolHost, leaseHQRepo); scope != "" {
 				t.Errorf("the pool's token answers %q, the host of a repository recorded on HQ", scope)
 			}
 		})

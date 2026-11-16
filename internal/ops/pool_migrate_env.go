@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // The env step of workflow="pool-migrate" (docs/spec-workflows.md §13 PM-4)
@@ -53,10 +52,7 @@ type PoolMigrateEnvInput struct {
 	// on a dev service of its own, whose env the pool takes, but the pair is
 	// one repository with one GIT_TOKEN. Zero means Dev.
 	GitTokenFrom platform.ServiceStack
-	// Origin is the dev service's origin, which the pool's leases default to;
-	// "" when zcp cannot name it.
-	Origin   string
-	StateDir string
+	StateDir     string
 	// Owner is the dev hostname keying the pair whose migration this env step
 	// runs; the pool's record names it, so another dev's migration never
 	// takes the pool as its own (PoolMigrateEnvOwner).
@@ -81,8 +77,8 @@ func (in PoolMigrateEnvInput) gitTokenSource() platform.ServiceStack {
 // the step ran (ApplyPoolMigrateEnv). It never carries a value.
 type PoolMigrateEnv struct {
 	// Done: the pool holds every key the step copies — or a key zcp could not
-	// read is asked of the person (Requests) — and its default repository is
-	// the dev's origin. GitToken never holds it: that is the person's call.
+	// read is asked of the person (Requests). GitToken never holds it: that
+	// is the person's call.
 	Done bool `json:"done"`
 	// ToWrite are the keys the step would write (the read side).
 	ToWrite []PoolMigrateEnvKey `json:"toWrite,omitempty"`
@@ -98,10 +94,9 @@ type PoolMigrateEnv struct {
 	// dev: each is asked of the person, never guessed and never written empty.
 	Requests []PoolMigrateEnvRequest `json:"requests,omitempty"`
 	// Failed are the keys a write did not take; calling the step again retries.
-	Failed      []PoolMigrateEnvSkip   `json:"failed,omitempty"`
-	NeverCopied []PoolMigrateEnvSkip   `json:"neverCopied,omitempty"`
-	GitToken    PoolMigrateGitToken    `json:"gitToken"`
-	DefaultRepo PoolMigrateDefaultRepo `json:"defaultRepo"`
+	Failed      []PoolMigrateEnvSkip `json:"failed,omitempty"`
+	NeverCopied []PoolMigrateEnvSkip `json:"neverCopied,omitempty"`
+	GitToken    PoolMigrateGitToken  `json:"gitToken"`
 	// StageDiff names, per stage, the keys whose set differs from the pool's.
 	// Values are the dev's; aligning a stage is the person's call.
 	StageDiff []PoolMigrateStageDiff `json:"stageDiff,omitempty"`
@@ -172,25 +167,6 @@ const (
 	PoolGitTokenUnchanged      = "unchanged"
 	PoolGitTokenUnreadable     = "unreadable"
 	PoolGitTokenFailed         = "failed"
-)
-
-// PoolMigrateDefaultRepo is the repository the pool's leases clone when an
-// acquire names none: the dev's origin.
-type PoolMigrateDefaultRepo struct {
-	Repo  string `json:"repo,omitempty"`
-	State string `json:"state"`
-	// Previous is the repository the record named before the step replaced it.
-	Previous string `json:"previous,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-}
-
-// The default-repository states.
-const (
-	PoolDefaultRepoSeeded      = "seeded"
-	PoolDefaultRepoUnchanged   = "unchanged"
-	PoolDefaultRepoPending     = "pending"
-	PoolDefaultRepoUnavailable = "unavailable"
-	PoolDefaultRepoFailed      = "failed"
 )
 
 // PoolMigrateStageDiff is one stage's key set against the pool's.
@@ -412,9 +388,8 @@ func ReadPoolMigrateEnv(ctx context.Context, client platform.Client, in PoolMigr
 		}
 	}
 	out.GitToken = readGitTokenState(plan.gitDev, sides, in)
-	out.DefaultRepo = poolDefaultRepoState(in.StateDir, in.Pool.Name, in.Origin)
 	out.StageDiff = poolStageDiff(sides.stages, held)
-	out.Done = len(out.ToWrite) == 0 && out.DefaultRepo.State != PoolDefaultRepoPending
+	out.Done = len(out.ToWrite) == 0
 	return out, nil
 }
 
@@ -558,10 +533,10 @@ type poolEnvWrite struct {
 // ApplyPoolMigrateEnv runs the env step: it reads both sides, reads the dev's
 // secrets in its container (one SSH round trip, none when the dev holds no
 // secret to copy), writes only the keys whose value or flag differs, waits for
-// the writes to settle, seeds the pool's default repository and keeps its
-// record of the secrets it wrote — fingerprints, never values. Nothing
-// restarts: a fresh session in a pool container reads the new values, and a
-// process already running keeps its boot env.
+// the writes to settle and keeps its record of the secrets it wrote —
+// fingerprints, never values. Nothing restarts: a fresh session in a pool
+// container reads the new values, and a process already running keeps its
+// boot env.
 func ApplyPoolMigrateEnv(ctx context.Context, client platform.Client, ssh SSHDeployer, in PoolMigrateEnvInput) (*PoolMigrateEnv, error) {
 	sides, err := readPoolEnvSides(ctx, client, in)
 	if err != nil {
@@ -583,10 +558,8 @@ func ApplyPoolMigrateEnv(ctx context.Context, client platform.Client, ssh SSHDep
 	step.keepRecord()
 
 	out := step.out
-	out.DefaultRepo = seedPoolDefaultRepo(in.StateDir, in.Pool.Name, in.Origin, in.InMate)
 	out.StageDiff = poolStageDiff(sides.stages, held)
-	out.Done = len(out.Failed) == 0 &&
-		out.DefaultRepo.State != PoolDefaultRepoPending && out.DefaultRepo.State != PoolDefaultRepoFailed
+	out.Done = len(out.Failed) == 0
 	return out, nil
 }
 
@@ -1095,54 +1068,4 @@ func savePoolEnvRecord(stateDir, pool string, rec poolEnvRecord) error {
 		return fmt.Errorf("pool env record %s: %w", pool, err)
 	}
 	return nil
-}
-
-// poolDefaultRepoState is the pool's default repository against the dev's
-// origin, read only.
-func poolDefaultRepoState(stateDir, pool, origin string) PoolMigrateDefaultRepo {
-	repo, reason := poolDefaultRepoOrigin(origin)
-	if reason != "" {
-		return PoolMigrateDefaultRepo{State: PoolDefaultRepoUnavailable, Reason: reason}
-	}
-	if topology.SameRepoURL(readPoolDefaultRepo(stateDir, pool), repo) {
-		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoUnchanged}
-	}
-	return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoPending}
-}
-
-// SeedPoolDefaultRepo makes the dev's origin the repository the pool's leases
-// clone when an acquire names none (zcp's per-pool record, DP-5), writing only
-// when the record names another repository or none.
-func SeedPoolDefaultRepo(stateDir, pool, origin string) PoolMigrateDefaultRepo {
-	return seedPoolDefaultRepo(stateDir, pool, origin, false)
-}
-
-// seedPoolDefaultRepo is SeedPoolDefaultRepo; onHQ: origin is the pair's
-// repository on the Mate's HQ (in a Mate), recorded so (poolDefault.HQ).
-func seedPoolDefaultRepo(stateDir, pool, origin string, onHQ bool) PoolMigrateDefaultRepo {
-	repo, reason := poolDefaultRepoOrigin(origin)
-	if reason != "" {
-		return PoolMigrateDefaultRepo{State: PoolDefaultRepoUnavailable, Reason: reason}
-	}
-	have := readPoolDefaultRepo(stateDir, pool)
-	if topology.SameRepoURL(have, repo) {
-		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoUnchanged}
-	}
-	if err := storePoolDefaultRepoOn(stateDir, pool, repo, onHQ); err != nil {
-		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoFailed, Reason: err.Error()}
-	}
-	return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoSeeded, Previous: have}
-}
-
-// poolDefaultRepoOrigin is origin as a lease takes it — as given, since a
-// lease clones the remembered URL verbatim (DP-18) — or why it cannot be.
-func poolDefaultRepoOrigin(origin string) (string, string) {
-	if strings.TrimSpace(origin) == "" {
-		return "", "zcp cannot name the dev service's origin here; name repo on the first acquire"
-	}
-	repo, err := validateLeaseRepo(origin)
-	if err != nil {
-		return "", "the dev service's origin is not an https URL a lease clones; name repo on the first acquire"
-	}
-	return repo, ""
 }

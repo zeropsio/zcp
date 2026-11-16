@@ -120,9 +120,6 @@ func TestPoolMigrate_Integration_VariantBRetireDeletesEveryDevServiceThenTheVolu
 		t.Fatal(err)
 	}
 	for _, pool := range []string{"webpool", "apipool"} {
-		if got := ops.SeedPoolDefaultRepo(stateDir, pool, origin); got.State != ops.PoolDefaultRepoSeeded {
-			t.Fatalf("seed %s: %+v", pool, got)
-		}
 		record := `{"poolHostname":"` + pool + `","poolServiceId":"svc-` + pool + `","containerId":"c-` + pool + `","containerNumber":1,"containerHostname":"node-id-1.runtime.` + pool + `.zerops","lease":"l","branch":"main","repo":"` + origin + `","acquiredAt":"2026-10-24T09:30:00Z"}`
 		if err := os.WriteFile(filepath.Join(leases, pool+"-1.json"), []byte(record), 0o600); err != nil {
 			t.Fatal(err)

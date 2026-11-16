@@ -71,6 +71,8 @@ func newWarmCloneFixture(t *testing.T, orch *warmOrch) (*warmFixture, *warmClone
 	wf := newWarmFixture(t, orch)
 	ssh := newWarmCloneSSH()
 	wf.deps.SSH = ssh
+	// The pool's ServiceMeta records the repository its leases take.
+	withPoolRepository(&wf.deps, testPoolHost, testRepo, false)
 	return wf, ssh
 }
 
@@ -85,8 +87,8 @@ func warmCloneOf(t *testing.T, wf *warmFixture) *LeaseWarmClone {
 
 // TestLeaseWarmClone_ContainerTheTopUpCreated_GetsThePoolsRepository: after an
 // acquire the pool's new warm container, once the orchestrator's create
-// answers, gets the clone of the repository the acquire checked out — the URL
-// as it was given (DP-18) — and status reports it started there.
+// answers, gets the clone of the pool's recorded repository — the URL as it
+// was recorded (DP-18) — and status reports it started there.
 func TestLeaseWarmClone_ContainerTheTopUpCreated_GetsThePoolsRepository(t *testing.T) {
 	t.Parallel()
 	orch := newWarmOrch(4)
@@ -161,14 +163,14 @@ func TestLeaseWarmClone_FoundWarmContainer_GetsIt(t *testing.T) {
 	}
 }
 
-// TestLeaseWarmClone_PoolNeverLeasedARepository_ClonesNothing: a pool zcp
-// never checked a repository out on — here a lease it holds from before it
-// kept such a record — gets no clone, its warm container stays as the image
-// left it.
+// TestLeaseWarmClone_PoolNeverLeasedARepository_ClonesNothing: a pool whose
+// ServiceMeta records no repository gets no clone, its warm container stays
+// as the image left it.
 func TestLeaseWarmClone_PoolNeverLeasedARepository_ClonesNothing(t *testing.T) {
 	t.Parallel()
 	orch := newWarmOrch(4)
 	wf, ssh := newWarmCloneFixture(t, orch)
+	wf.deps.PoolRepository = nil
 	wf.hold(t, 5, true)
 
 	view := wf.release(t, "devpool-5")
@@ -341,9 +343,7 @@ func TestLeaseWarmClone_HQRepository_NeverWarmed(t *testing.T) {
 			if mate {
 				wf.deps.HQGit = relayedThrough{deps: &wf.deps}
 			}
-			if err := storeWarmCloneRepo(wf.stateDir, testPoolHost, leaseHQRepo); err != nil {
-				t.Fatal(err)
-			}
+			withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
 			wf.hold(t, 5, true)
 			mock := wf.deps.Client.(*platform.Mock)
 

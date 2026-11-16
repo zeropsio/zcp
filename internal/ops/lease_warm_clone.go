@@ -22,7 +22,7 @@ import (
 // tree that was most of a 10.8 s acquire (live, 2026-10-24). So right after zcp
 // creates a pool's warm container, keeps one at a release or finds one at an
 // acquire, it starts — detached in the container, over ssh to its hostname — a
-// clone of the repository the pool's last lease checked out, at origin/main,
+// clone of the pool's recorded repository, at origin/main,
 // into /var/www; the next acquire then only fetches what changed and checks its
 // branch out (docs/spec-workflows.md §8 DP-32).
 //
@@ -254,29 +254,6 @@ func checkoutWarm(out string) string {
 // discardedWarmNote is what a lease says when its checkout removed a clone.
 const discardedWarmNote = "the container held a clone zcp had started while it was warm, of another repository or unfinished; it was removed before the checkout"
 
-// warmCloneRepoPath is the pool's record of the repository its last lease
-// checked out (<stateDir>/warm/<pool>.repo.json), the clone URL as given.
-func warmCloneRepoPath(stateDir, pool string) string {
-	return filepath.Join(stateDir, leaseWarmDir, pool+".repo.json")
-}
-
-// warmCloneRepoRecord is that record: the URL as given, never a credential.
-type warmCloneRepoRecord struct {
-	Repo string `json:"repo"`
-}
-
-// storeWarmCloneRepo records repo — the clone URL as given (DP-18) — as the one
-// the pool's warm containers get, atomically with mode 0600.
-func storeWarmCloneRepo(stateDir, pool, repo string) error {
-	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
-		return errors.New("no state directory or an unusable pool name")
-	}
-	if err := writeWarmFile(stateDir, warmCloneRepoPath(stateDir, pool), warmCloneRepoRecord{Repo: repo}); err != nil {
-		return fmt.Errorf("warm repository of %s: %w", pool, err)
-	}
-	return nil
-}
-
 // writeWarmFile writes v as JSON to path in the state dir's warm directory,
 // atomically with mode 0600.
 func writeWarmFile(stateDir, path string, v any) error {
@@ -290,20 +267,11 @@ func writeWarmFile(stateDir, path string, v any) error {
 	return atomicWriteFile(path, data)
 }
 
-// readWarmCloneRepo is the repository the pool's warm containers get: the one
-// its last lease checked out, else the pool's default (recorded only after an
-// acquire's checkout worked); "" for a pool zcp never leased a repository from
-// or one whose record is no clone URL a lease takes.
-func readWarmCloneRepo(stateDir, pool string) string {
-	repo := readPoolDefaultRepo(stateDir, pool)
-	if stateDir != "" && leasePoolNameRe.MatchString(pool) {
-		if raw, err := os.ReadFile(warmCloneRepoPath(stateDir, pool)); err == nil {
-			var rec warmCloneRepoRecord
-			if json.Unmarshal(raw, &rec) == nil && rec.Repo != "" {
-				repo = rec.Repo
-			}
-		}
-	}
+// warmCloneRepo is the repository the pool's warm containers get: the pool's
+// recorded one (LeaseDeps.PoolRepository); "" for a pool that records none or
+// one whose record is no clone URL a lease takes.
+func warmCloneRepo(d LeaseDeps, pool string) string {
+	repo := d.poolRepository(pool).Repo
 	if repo == "" {
 		return ""
 	}
@@ -361,15 +329,15 @@ func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPoo
 }
 
 // cloneInto starts, in each container of ids still free, the clone of the
-// repository the pool's last lease checked out, and records what it did. It
-// does nothing for a pool zcp never leased a repository from, and records a
+// pool's recorded repository, and records what it did. It does nothing for a
+// pool that records none, and records a
 // skip for a repository on the Mate's HQ (warmCloneHQSkip).
 func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return
 	}
 	pool := rp.svc.Name
-	repo := readWarmCloneRepo(d.StateDir, pool)
+	repo := warmCloneRepo(d, pool)
 	if repo == "" {
 		return
 	}
@@ -400,9 +368,9 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's hostname is not a pool container's, so nothing was written into it"
 		return out
 	}
-	// The pool's GIT_TOKEN answers the scope its default repository or an
+	// The pool's GIT_TOKEN answers the scope its recorded repository or an
 	// earlier lease bound it to; a clone never binds it (repo "").
-	tokenScope, _ := leaseTokenScope(d.StateDir, rp.svc.Name, d.hqAddress(), "")
+	tokenScope, _ := leaseTokenScope(d, rp.svc.Name, "")
 	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, tokenScope))
 	if err != nil {
 		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)

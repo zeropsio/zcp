@@ -25,11 +25,8 @@ func TestLeaseBranches_EveryRecordWithItsRepositoryAndBranch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := storePoolDefaultRepo(stateDir, "boxpool", "https://hq.example.com/git/app-1/appsdev.git"); err != nil {
-		t.Fatal(err)
-	}
 	write("hqpool", 4, "https://hq.example.com/git/app-1/appsdev.git", "badge")
-	write("boxpool", 6, "", "badge") // predates keeping the repository
+	write("boxpool", 6, "https://hq.example.com/git/app-1/appsdev.git", "badge")
 	write("webpool", 3, "https://hq.example.com/git/app-1/appsdev", "")
 
 	got, err := LeaseBranches(stateDir)

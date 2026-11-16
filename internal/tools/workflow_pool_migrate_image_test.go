@@ -94,9 +94,6 @@ func poolImageFixture(t *testing.T, mutate func(*poolMigrateFixture)) poolMigrat
 		mutate(&f)
 	}
 	f.build(t)
-	if got := ops.SeedPoolDefaultRepo(f.stateDir, "apppool", f.meta.RemoteURL); got.State != ops.PoolDefaultRepoSeeded {
-		t.Fatalf("seed: %+v", got)
-	}
 	return f
 }
 
