@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // TestCLIDispatch_LeaseIsAVerb: `zcp lease …` is a CLI verb, never MCP serve
@@ -22,7 +23,7 @@ func TestCLIDispatch_LeaseIsAVerb(t *testing.T) {
 }
 
 // TestRunLeaseCmd_BadArguments_ErrorOnStdoutExitOne: a call the verb cannot
-// run answers exit 1 with its error as JSON under --json, before anything is
+// run answers exit 1 with its error and code as JSON under --json, before anything is
 // resolved or released, and never reads stdin.
 func TestRunLeaseCmd_BadArguments_ErrorOnStdoutExitOne(t *testing.T) {
 	t.Parallel()
@@ -54,8 +55,9 @@ func TestRunLeaseCmd_BadArguments_ErrorOnStdoutExitOne(t *testing.T) {
 				t.Error("a bad call resolved the platform client")
 			}
 			var answer map[string]string
-			if err := json.Unmarshal(out.Bytes(), &answer); err != nil || !strings.Contains(answer["error"], tt.want) || len(answer) != 1 {
-				t.Errorf("stdout = %q, want one JSON error naming %q", out.String(), tt.want)
+			// The error carries its wire code beside the words.
+			if err := json.Unmarshal(out.Bytes(), &answer); err != nil || !strings.Contains(answer["error"], tt.want) || answer["code"] != platform.ErrInvalidUsage || len(answer) != 2 {
+				t.Errorf("stdout = %q, want one JSON error naming %q with code %s", out.String(), tt.want, platform.ErrInvalidUsage)
 			}
 		})
 	}

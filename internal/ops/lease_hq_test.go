@@ -171,7 +171,7 @@ func TestLeaseRelease_HQRepo_HintNamesHQsBranchRule(t *testing.T) {
 			}}
 			hf.deps.SSH = ssh
 			hf.swarm.acquired = acquiredAs(3)
-			if _, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, tt.repo, "main"); err != nil {
+			if _, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, tt.repo, "feat"); err != nil {
 				t.Fatalf("acquire: %v", err)
 			}
 			hf.events = nil

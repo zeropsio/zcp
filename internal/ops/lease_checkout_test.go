@@ -486,15 +486,18 @@ func TestLeaseCheckout_EmptyBranch_IsMain(t *testing.T) {
 	fx.deps.SSH = ssh
 	fx.swarm.acquired = acquiredAs(3)
 
-	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
-	if err != nil {
-		t.Fatal(err)
+	// An acquire that names no branch is an acquire of main, which no lease
+	// holds: it is refused before anything is acquired or checked out.
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter || !strings.Contains(pe.Message, "main") {
+		t.Fatalf("err = %v, want the refusal of a lease of main", err)
 	}
-	if view.Branch != "main" {
-		t.Errorf("view branch = %q, want main", view.Branch)
+	if len(fx.swarm.acquireReqs) != 0 {
+		t.Errorf("acquired %d container(s) for a lease of main", len(fx.swarm.acquireReqs))
 	}
-	if cmds := ssh.checkouts(); len(cmds) != 1 || !strings.Contains(cmds[0].command, shellQuote("main")) {
-		t.Errorf("checkouts = %v, want a checkout of main", cmds)
+	if cmds := ssh.checkouts(); len(cmds) != 0 {
+		t.Errorf("checkouts = %v, want none", cmds)
 	}
 }
 

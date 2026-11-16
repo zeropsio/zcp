@@ -387,7 +387,7 @@ func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *test
 		close(allowClone)
 	}()
 
-	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"}); res.IsError {
 		t.Fatalf("acquire: %s", getTextContent(t, res))
 	}
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})

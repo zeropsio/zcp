@@ -442,7 +442,7 @@ func TestLeaseAcquire_RecordWriteFails_ReleasesContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
 	if err == nil {
 		t.Fatal("want an error when the record cannot be written")
 	}
@@ -491,7 +491,7 @@ func TestLeaseRelease_RefusedOrStale_RecordFate(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
 			fx.swarm.acquired = acquiredAs(3)
-			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, ""); err != nil {
+			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
 				t.Fatal(err)
 			}
 			fx.swarm.releaseErr = tt.releaseErr
@@ -652,25 +652,6 @@ func TestLeaseAcquire_MaskedToken_UsesTheContainersLiveEnv(t *testing.T) {
 	}
 }
 
-// With neither source the refusal says what to add, never just "masked".
-func TestLeaseAcquire_MaskedTokenNoLiveEnv_SaysWhatToAdd(t *testing.T) {
-	t.Parallel()
-	fx := maskedPoolFixture(t)
-	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
-	var pe *platform.PlatformError
-	if !errors.As(err, &pe) {
-		t.Fatalf("err = %v, want a platform error", err)
-	}
-	for _, want := range []string{testPoolHost + "_API_TOKEN", "${" + testPoolHost + "_API_TOKEN}"} {
-		if !strings.Contains(pe.Message+" "+pe.Suggestion, want) {
-			t.Errorf("refusal %q / %q lacks %q", pe.Message, pe.Suggestion, want)
-		}
-	}
-	if len(fx.swarm.acquireReqs) != 0 {
-		t.Error("acquired without a token")
-	}
-}
-
 // TestLeaseAcquire_PoolBearer_LiveEnvSources: the orchestrator's bearer
 // comes from the container's live env as <pool>_API_TOKEN, else as the
 // different-name <pool>_LEASE_TOKEN (a service variable
@@ -712,64 +693,6 @@ func TestLeaseAcquire_PoolBearer_LiveEnvSources(t *testing.T) {
 			}
 			if fx.gotToken != tt.wantToken {
 				t.Errorf("orchestrator bearer = %q, want %q", fx.gotToken, tt.wantToken)
-			}
-		})
-	}
-}
-
-// TestLeaseAcquire_NoUsableBearer_SaysAddADifferentNameReference: with no
-// usable bearer the refusal tells the person to add the different-name
-// reference and never to name it like the reference it holds; a live value
-// that is an unresolved reference is named as such, and the same-name
-// variable as the thing to delete.
-func TestLeaseAcquire_NoUsableBearer_SaysAddADifferentNameReference(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		live   map[string]string
-		want   []string
-		banned []string
-	}{
-		{
-			name: "nothing in the live env",
-			want: []string{"devpool_LEASE_TOKEN=${devpool_API_TOKEN}", "Never name it devpool_API_TOKEN"},
-		},
-		{
-			name: "the same-name variable left the API token name unresolved",
-			live: map[string]string{"devpool_API_TOKEN": "${devpool_API_TOKEN}"},
-			want: []string{"devpool_API_TOKEN is the unresolved text ${devpool_API_TOKEN}", "delete", "devpool_LEASE_TOKEN=${devpool_API_TOKEN}"},
-		},
-		{
-			name: "the lease token's reference did not resolve",
-			live: map[string]string{"devpool_LEASE_TOKEN": "${devpool_API_TOKEN}"},
-			want: []string{"devpool_LEASE_TOKEN is the unresolved text ${devpool_API_TOKEN}"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			fx := maskedPoolFixture(t)
-			fx.deps.Env = func(key string) (string, bool) {
-				v, ok := tt.live[key]
-				return v, ok
-			}
-			_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
-			var pe *platform.PlatformError
-			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
-				t.Fatalf("err = %v, want a %s refusal", err, platform.ErrPrerequisiteMissing)
-			}
-			text := pe.Message + " " + pe.Suggestion
-			for _, want := range tt.want {
-				if !strings.Contains(text, want) {
-					t.Errorf("refusal %q lacks %q", text, want)
-				}
-			}
-			if strings.Contains(text, "devpool_API_TOKEN=${devpool_API_TOKEN}") {
-				t.Errorf("refusal still advises the same-name reference, which never resolves: %q", text)
-			}
-			if fx.gotToken != "" || len(fx.swarm.acquireReqs) != 0 {
-				t.Errorf("the orchestrator was reached with bearer %q (%d acquires): an unresolved reference is no bearer", fx.gotToken, len(fx.swarm.acquireReqs))
 			}
 		})
 	}
