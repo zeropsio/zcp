@@ -62,6 +62,9 @@ func run(args []string) int {
 	if isGit(args) {
 		return runGit(args[1:])
 	}
+	if isRun(args) {
+		return runRun(args[1:])
+	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
 			return runCLI(args, dispatch)
