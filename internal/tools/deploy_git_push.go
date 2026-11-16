@@ -76,6 +76,17 @@ func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform
 	return pe
 }
 
+// gitPushValidationNotRun is the warning of a git-push whose zerops.yaml was
+// not validated before the push: err's own words verbatim, with its class
+// when platform.ClassOf gives one.
+func gitPushValidationNotRun(err error) string {
+	head := "zerops.yaml was not validated before the push"
+	if class := platform.ClassOf(err); class != "" {
+		head += " (" + string(class) + ")"
+	}
+	return head + ": " + err.Error()
+}
+
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
 // Guides the agent through the decision question and setup steps.
 type gitPushPrerequisites struct {
@@ -572,7 +583,13 @@ func handleGitPush(
 	// lives in the container at workingDir; fetch via SSH cat and pass to
 	// the content-based entry point. Any failure aborts the push.
 	// configFile names the file in the failure classification.
+	// A validation that could not run says so in warnings, with its cause:
+	// the push goes on, and the build reports what the platform finds.
+	var validationNotRun string
 	configFile, yamlContent, yamlErr := ops.ReadRepoConfigFile(ctx, sshDeployer, hostname, workingDir)
+	if yamlErr != nil {
+		validationNotRun = gitPushValidationNotRun(yamlErr)
+	}
 	if yamlErr == nil && yamlContent != "" {
 		setupName := input.Setup
 		if resolvedSetup, recordErr := recordDeploySetupMetaFromContent(stateDir, hostname, input.Setup, yamlContent); recordErr != nil {
@@ -588,7 +605,14 @@ func handleGitPush(
 		if setupName == "" {
 			setupName = hostname
 		}
-		if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
+		var target *platform.ServiceStack
+		if client != nil && projectID != "" {
+			var lookupErr error
+			if target, lookupErr = ops.LookupService(ctx, client, projectID, hostname); lookupErr != nil {
+				validationNotRun = gitPushValidationNotRun(lookupErr)
+			}
+		}
+		if target != nil {
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil
@@ -738,6 +762,9 @@ func handleGitPush(
 	}
 	if dirtyNotRun != "" {
 		warnings = append(warnings, dirtyNotRun)
+	}
+	if validationNotRun != "" {
+		warnings = append(warnings, validationNotRun)
 	}
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
