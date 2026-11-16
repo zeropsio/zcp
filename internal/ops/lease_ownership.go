@@ -396,7 +396,10 @@ func lostLeaseNote(alias, why, what string) string {
 // leases of its branch that may still run wired to its container (DP-26);
 // "" when it has none.
 func siblingsMayBeWired(stateDir string, rec leaseRecord) string {
-	siblings := siblingRecords(stateDir, rec)
+	siblings, err := siblingRecords(stateDir, rec)
+	if err != nil {
+		return fmt.Sprintf("zcp could not read the branch's other leases (%v), so it cannot tell which may still run wired to its container: zerops_lease action=status names any stale wiring once they read", err)
+	}
 	if len(siblings) == 0 {
 		return ""
 	}

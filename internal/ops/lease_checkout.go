@@ -999,7 +999,11 @@ func leaseMainHoldsCommand() string {
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || main=refs/remotes/origin/master; " +
 		g + " rev-parse -q --verify \"$main\" >/dev/null 2>&1 || exit 0; " +
 		"tmp=$(mktemp -d) || " + fail + "; trap 'rm -rf \"$tmp\"' EXIT; " +
-		"for tip in $( (" + g + " rev-parse -q --verify HEAD; " + g + " for-each-ref --format='%(objectname)' refs/heads) 2>/dev/null | sort -u); do " +
+		// The tips: a listing that fails ends the compare as not run, never
+		// as "held" over no tips; an unborn HEAD (rev-parse's 1) has none.
+		"heads=$(" + g + " for-each-ref --format='%(objectname)' refs/heads) || " + fail + "; " +
+		"head=$(" + g + " rev-parse -q --verify HEAD); case $? in 0|1) ;; *) " + fail + ";; esac; " +
+		"for tip in $(printf '%s\\n%s\\n' \"$head\" \"$heads\" | sort -u); do " +
 		"[ \"$(" + g + " rev-list --count \"$tip\" --not --remotes=origin)\" = 0 ] && continue; " +
 		answer("mb=$("+g+" merge-base \"$main\" \"$tip\")") +
 		g + " diff --binary \"$mb\" \"$tip\" > \"$tmp/change\" || " + fail + "; " +
