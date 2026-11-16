@@ -163,6 +163,12 @@ func (d standupDeps) startPooledRows(ctx context.Context, tier workflow.MateTier
 	return rows
 }
 
+// hasBuild reports a service of the project that has a build.
+func hasBuild(live map[string]*platform.ServiceStack, host string) bool {
+	svc := live[host]
+	return svc != nil && svc.HasDeployedCode()
+}
+
 // serviceBeingCreated is a service the import has not finished creating.
 func serviceBeingCreated(status string) bool {
 	return status == platform.ServiceStatusNew || status == "CREATING"
@@ -185,7 +191,7 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 	// build is.
 	for _, sp := range pairs {
 		pool := sp.pair.Dev.Hostname
-		if sp.failed == "" && !live[pool].HasDeployedCode() {
+		if sp.failed == "" && !hasBuild(live, pool) {
 			go func() {
 				if _, err := ops.EnsureBearer(ctx, d.leaseDeps(), pool); err != nil {
 					progress.say(fmt.Sprintf("%s's bearer is written; it resolves with the pool's first image (%v)", pool, err))
@@ -239,18 +245,23 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 	}
 	failAll := func(class platform.ErrorClass, cause string) {
 		for _, s := range mine {
-			if !live[s.host].HasDeployedCode() {
+			if !hasBuild(live, s.host) {
 				rows.set(s.host, func(in *ops.StandupRowInput) { in.Class, in.Cause = class, cause })
 			}
 		}
 	}
 	var toBuild []pooledService
 	for _, s := range mine {
-		if svc := live[s.host]; svc != nil && svc.HasDeployedCode() {
+		switch svc := live[s.host]; {
+		case svc == nil:
+			rows.set(s.host, func(in *ops.StandupRowInput) {
+				in.Class, in.Cause = platform.ClassFailed, "nothing to adopt yet: "+s.host+" is not in this project"
+			})
+		case svc.HasDeployedCode():
 			d.keepBuilt(ctx, s, svc, rows)
-			continue
+		default:
+			toBuild = append(toBuild, s)
 		}
-		toBuild = append(toBuild, s)
 	}
 	if len(toBuild) == 0 {
 		return "", ""
