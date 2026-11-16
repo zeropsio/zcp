@@ -55,9 +55,13 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 			asJSON = true
 		}
 	}
-	fail := func(msg string) int {
-		printLease(stdout, tools.LeaseReleaseAnswer{Error: msg}, asJSON)
+	failWith := func(err error) int {
+		printLease(stdout, tools.LeaseReleaseFailedAnswer(err), asJSON)
 		return tools.LeaseReleaseExitFailed
+	}
+	// A usage refusal carries a code and its class as every failure does.
+	fail := func(msg string) int {
+		return failWith(platform.NewPlatformError(platform.ErrInvalidUsage, msg, ""))
 	}
 	if len(args) == 0 || args[0] != "release" {
 		return fail(leaseUsage)
@@ -88,7 +92,7 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	defer cancel()
 	deps, err := resolve(ctx)
 	if err != nil {
-		return fail(err.Error())
+		return failWith(err)
 	}
 	var background sync.WaitGroup
 	if deps.Warm != nil {
