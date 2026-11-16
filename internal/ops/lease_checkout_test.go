@@ -100,6 +100,10 @@ func exitError(t *testing.T, code int) error {
 	return err
 }
 
+// testRepoID is testRepo's identity as a lease record keeps it
+// (topology.CanonicalRepoURL).
+const testRepoID = "https://github.com/acme/app"
+
 // withPoolRepository makes d read repo (onHQ as given) as pool's recorded
 // repository, as the pool's ServiceMeta answers it; other pools read as before.
 func withPoolRepository(d *LeaseDeps, pool, repo string, onHQ bool) {
