@@ -768,13 +768,13 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	}
 	foundWarning := false
 	for _, w := range parsed.Warnings {
-		if strings.Contains(w, "SSH not ready") {
+		if strings.Contains(w, "did not answer within") {
 			foundWarning = true
 			break
 		}
 	}
 	if !foundWarning {
-		t.Errorf("expected warning containing 'SSH not ready', got: %v", parsed.Warnings)
+		t.Errorf("expected warning containing 'did not answer within', got: %v", parsed.Warnings)
 	}
 }
 

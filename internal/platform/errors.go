@@ -1,10 +1,12 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // Error codes for ZCP.
@@ -236,8 +238,38 @@ type SSHExecError struct {
 	Err      error  // underlying exec error (exit code, signal, etc.)
 }
 
+// Error is the exit and the tail of Output — its last sshErrorTailLines
+// lines, at most sshErrorTailBytes — so the source's own words reach every
+// message built from it; Output stays whole for the diagnostic.
 func (e *SSHExecError) Error() string {
+	if tail := outputTail(e.Output); tail != "" {
+		return fmt.Sprintf("ssh %s: %s: %s", e.Hostname, e.Err.Error(), tail)
+	}
 	return fmt.Sprintf("ssh %s: %s", e.Hostname, e.Err.Error())
+}
+
+const (
+	sshErrorTailLines = 3
+	sshErrorTailBytes = 512
+)
+
+// outputTail is output's last sshErrorTailLines non-empty lines joined by
+// " | ", cut to its last sshErrorTailBytes.
+func outputTail(output string) string {
+	var lines []string
+	for l := range strings.SplitSeq(output, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > sshErrorTailLines {
+		lines = lines[len(lines)-sshErrorTailLines:]
+	}
+	tail := strings.Join(lines, " | ")
+	if len(tail) > sshErrorTailBytes {
+		tail = "…" + tail[len(tail)-sshErrorTailBytes:]
+	}
+	return tail
 }
 
 func (e *SSHExecError) Unwrap() error { return e.Err }
@@ -309,21 +341,150 @@ const (
 	ClassFailed ErrorClass = "failed"
 )
 
-// ClassOf is err's class: "" for nil. The one derivation of the class from a
-// PlatformError, an SSHExecError (SSHExitCode) or a network error.
+// ClassOf is err's class: the one derivation of the class, first from an
+// error that states its own (a Classed in err's chain: a site that knows what
+// only it can, such as a readiness probe or a commit deploy's refusal), then
+// from a PlatformError, an SSHExecError (SSHExitCode) or a network error. ""
+// for nil, a stop the caller asked for (context.Canceled), and an answer zcp
+// does not classify — an arbitrary command's own exit, passed on verbatim:
+// exit status alone cannot tell a refusal from the command's own failure,
+// and zcp never matches the platform's text.
 func ClassOf(err error) ErrorClass {
+	if err == nil {
+		return ""
+	}
+	var classed Classed
+	if errors.As(err, &classed) {
+		return classed.Class()
+	}
+	if errors.Is(err, context.Canceled) {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ClassUnreachable
+	}
+	var sshErr *SSHExecError
+	if errors.As(err, &sshErr) {
+		return classOfSSH(sshErr.Output, SSHExitCode(err))
+	}
+	var pe *PlatformError
+	if errors.As(err, &pe) {
+		switch {
+		case IsTransient(pe):
+			return ClassUnreachable
+		case pe.Code == ErrDeployFailed:
+			return ClassFailed
+		}
+		if _, network := MapNetworkError(pe.Cause); network {
+			return ClassUnreachable
+		}
+		return ClassRefused
+	}
+	if _, network := MapNetworkError(err); network {
+		return ClassUnreachable
+	}
 	return ""
 }
 
-// WaitedOn reports whether a wait loop waits on a failure of class c, bounded:
-// true for ClassUnreachable only.
-func (c ErrorClass) WaitedOn() bool {
-	return false
+// sshUnreachableExit is the exit status ssh itself ends with when it did not
+// run the command: every transport failure, before or after connect.
+const sshUnreachableExit = 255
+
+// classOfSSH is the class of a command run over ssh that ended with exit
+// and output: unreachable when nothing could run — the container at its
+// process limit (fork answered EAGAIN), or ssh's own 255 — except a 255 whose
+// connect timed out, which is refused: no container answers the address, and
+// waiting does not bring one (live, 2026-11-16: a stopping or starting
+// container answers "Connection refused", a stopped service "Connection timed
+// out"). The text read is the ssh client's and the kernel's, never the
+// platform's. Any other exit is the command's own: "".
+func classOfSSH(output string, exit int) ErrorClass {
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "fork") && strings.Contains(lower, "resource temporarily unavailable") {
+		return ClassUnreachable
+	}
+	if exit != sshUnreachableExit {
+		return ""
+	}
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "connect to host") && strings.HasSuffix(line, "Connection timed out") {
+			return ClassRefused
+		}
+	}
+	return ClassUnreachable
 }
+
+// classOfProbe is the class of a readiness probe's last error (SSHProbeError.Class).
+func classOfProbe(err error) ErrorClass {
+	if c := ClassOf(err); c != "" {
+		return c
+	}
+	if SSHExitCode(err) > 0 {
+		return ClassRefused
+	}
+	return ""
+}
+
+// Classed is an error that states its own class, which ClassOf honours
+// before any rule of its own.
+type Classed interface {
+	error
+	Class() ErrorClass
+}
+
+// WaitedOn reports whether a wait loop waits on a failure of class c, bounded:
+// true for ClassUnreachable only. A wait whose bound runs out reports the
+// last cause it saw.
+func (c ErrorClass) WaitedOn() bool {
+	return c == ClassUnreachable
+}
+
+// ExitStatusError is a command's exit status as an error, for a runner that reads
+// the status from somewhere other than its process (a relayed session's
+// done marker): SSHExitCode reads it as it reads an *exec.ExitError.
+type ExitStatusError int
+
+func (s ExitStatusError) Error() string { return fmt.Sprintf("exit status %d", int(s)) }
+
+// ExitCode is the status, as *exec.ExitError's.
+func (s ExitStatusError) ExitCode() int { return int(s) }
 
 // SSHExitCode is the exit status ssh ended with behind err — the remote
 // command's, or ssh's own 255 — and -1 when err carries none (nil, a context
-// stop, ssh that never ran). Both SSH runners carry it in their SSHExecError.
+// stop, ssh that never ran). Both SSH runners carry it in their SSHExecError's
+// Err: the system runner an *exec.ExitError, the relayed one an ExitStatusError.
 func SSHExitCode(err error) int {
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
 	return -1
 }
+
+// SSHProbeError is a readiness probe (`true` over ssh) on Hostname that did
+// not answer: Last is the last ssh error, verbatim; Waited how long it was
+// tried — zero when it was not waited on (its Class is not WaitedOn).
+type SSHProbeError struct {
+	Hostname string
+	Last     error
+	Waited   time.Duration
+}
+
+// Class is the probe's class: as any ssh command's, except that `true`
+// cannot fail, so any exit that is not ssh's own (an admission refusal
+// answers 2) is refused.
+func (e *SSHProbeError) Class() ErrorClass { return classOfProbe(e.Last) }
+
+func (e *SSHProbeError) Error() string {
+	class := ""
+	if c := e.Class(); c != "" {
+		class = " (" + string(c) + ")"
+	}
+	if e.Waited > 0 {
+		return fmt.Sprintf("ssh to %s did not answer within %s%s; last: %s", e.Hostname, e.Waited, class, e.Last.Error())
+	}
+	return fmt.Sprintf("ssh to %s did not answer%s, not waited on: %s", e.Hostname, class, e.Last.Error())
+}
+
+func (e *SSHProbeError) Unwrap() error { return e.Last }
