@@ -27,7 +27,7 @@ func leaseState(t *testing.T) string {
 	dir := t.TempDir()
 	if err := writeLeaseRecord(dir, leaseRecord{
 		PoolHostname: "devpool", PoolServiceID: "svc-pool", ContainerID: "c-3", ContainerNumber: 3,
-		ContainerHostname: "node-id-3.runtime.devpool.zerops", Lease: "lease-secret", Branch: "feat-x", AcquiredAt: "2026-10-23T12:00:00Z",
+		ContainerHostname: "node-id-3.runtime.devpool.zerops", Lease: "lease-secret", Branch: "feat-x", Repo: testRepoID, AcquiredAt: "2026-10-23T12:00:00Z",
 	}); err != nil {
 		t.Fatalf("write lease record: %v", err)
 	}
