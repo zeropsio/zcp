@@ -2,11 +2,14 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 type sequencingSSH struct {
@@ -61,7 +64,7 @@ func TestWaitSSHReady(t *testing.T) {
 			ctx:       func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
 			cfg:       sshReadyConfig{interval: time.Millisecond, timeout: 10 * time.Millisecond, command: "true"},
 			wantErr:   true,
-			errSubstr: "ssh not ready",
+			errSubstr: "did not answer within",
 		},
 		{
 			name:     "ContextCanceled",
@@ -108,4 +111,68 @@ func TestWaitSSHReady(t *testing.T) {
 			})
 		})
 	}
+}
+
+// answersSSH answers the readiness probe with first, then with rest on every
+// later call.
+type answersSSH struct {
+	first, rest error
+	called      bool
+}
+
+func (s *answersSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
+	if !s.called {
+		s.called = true
+		return nil, s.first
+	}
+	return nil, s.rest
+}
+
+func (s *answersSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
+func (s *answersSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+	return nil, nil
+}
+
+// witness: internal/platform/errors.go | if SSHExitCode(err) > 0 { → if SSHExitCode(err) == 1 {
+func TestErrorClass_E3_ProbeAdmissionRefusalIsRefusedAtOnceWithPlatformWords(t *testing.T) {
+	t.Parallel()
+	refusal := &platform.SSHExecError{Hostname: "webstage", Output: "Access denied. Current SSH isolation: vpn\n", Err: platform.ExitStatusError(2)}
+	synctest.Test(t, func(t *testing.T) {
+		err := waitSSHReady(t.Context(), &answersSSH{first: refusal, rest: refusal}, "webstage",
+			sshReadyConfig{interval: time.Second, timeout: 30 * time.Second, command: "true"})
+		var probe *platform.SSHProbeError
+		if !errors.As(err, &probe) {
+			t.Fatalf("err = %v, want an SSHProbeError", err)
+		}
+		if c := platform.ClassOf(err); c != platform.ClassRefused || probe.Waited != 0 {
+			t.Fatalf("ClassOf = %q, waited %s; want refused, not waited on", c, probe.Waited)
+		}
+		if !strings.Contains(err.Error(), "Access denied. Current SSH isolation: vpn") {
+			t.Fatalf("err = %q, want the platform's words", err.Error())
+		}
+	})
+}
+
+// witness: internal/ops/ssh_ready.go | probe.Waited = cfg.timeout → probe.Waited = 0
+func TestErrorClass_E7_ProbeBoundRunOutReportsBoundAndLastCause(t *testing.T) {
+	t.Parallel()
+	first := &platform.SSHExecError{Hostname: "webstage", Output: "ssh: connect to host webstage port 22: Connection refused\n", Err: platform.ExitStatusError(255)}
+	last := &platform.SSHExecError{Hostname: "webstage", Output: "kex_exchange_identification: Connection closed by remote host\n", Err: platform.ExitStatusError(255)}
+	synctest.Test(t, func(t *testing.T) {
+		err := waitSSHReady(t.Context(), &answersSSH{first: first, rest: last}, "webstage",
+			sshReadyConfig{interval: time.Second, timeout: 30 * time.Second, command: "true"})
+		var probe *platform.SSHProbeError
+		if !errors.As(err, &probe) {
+			t.Fatalf("err = %v, want an SSHProbeError", err)
+		}
+		if probe.Waited != 30*time.Second || platform.ClassOf(err) != platform.ClassUnreachable {
+			t.Fatalf("waited %s, class %q; want 30s, unreachable", probe.Waited, platform.ClassOf(err))
+		}
+		if msg := err.Error(); !strings.Contains(msg, "Connection closed by remote host") || !strings.Contains(msg, "within 30s") {
+			t.Fatalf("err = %q, want the bound and the last cause", msg)
+		}
+	})
 }

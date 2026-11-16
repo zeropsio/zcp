@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // RefusedError is HQ's own no: its HTTP status, the code it answered, and
@@ -29,6 +31,15 @@ func (r *RefusedError) Error() string {
 		return fmt.Sprintf("hq refused: %d %s (%s)", r.Status, r.Code, r.Reason)
 	}
 	return fmt.Sprintf("hq refused: %d %s", r.Status, r.Code)
+}
+
+// Class is the refusal's error class (platform.Classed): HQ's own 5xx or 429
+// may change by waiting (unreachable); any other no will not (refused).
+func (r *RefusedError) Class() platform.ErrorClass {
+	if r.Status >= http.StatusInternalServerError || r.Status == http.StatusTooManyRequests {
+		return platform.ClassUnreachable
+	}
+	return platform.ClassRefused
 }
 
 // UnavailableError is HQ not serving now — never a refusal, always "try
@@ -50,6 +61,9 @@ func (u *UnavailableError) Error() string {
 
 func (u *UnavailableError) Unwrap() error { return u.Err }
 
+// Class is HQ not serving now (platform.Classed): unreachable, always.
+func (u *UnavailableError) Class() platform.ErrorClass { return platform.ClassUnreachable }
+
 // NoAnswerError is a call HQ did not answer within a bounded client's bounds
 // (Client.Bounded): no connection within the connect bound — TLS included —
 // or, connected, no answer within the answer bound. An UnavailableError
@@ -61,6 +75,9 @@ type NoAnswerError struct {
 }
 
 func (e *NoAnswerError) Error() string { return "hq " + e.Path + ": " + e.Words() }
+
+// Class is a call HQ did not answer (platform.Classed): unreachable.
+func (e *NoAnswerError) Class() platform.ErrorClass { return platform.ClassUnreachable }
 
 // Words is what the call met, without the path: "no connection within 5s".
 func (e *NoAnswerError) Words() string {
