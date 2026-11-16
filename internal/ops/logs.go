@@ -178,10 +178,14 @@ func enrichEmptyLogs(
 		// that never produced a running process → events, not logs. Without a
 		// prior attempt = nothing deployed yet.
 		hadPrior, err := HasPriorDeployAttempt(ctx, client, projectID, hostname)
-		if err == nil && hadPrior {
+		switch {
+		case err != nil:
+			result.EmptyReason = fmt.Sprintf("no runtime logs exist — the service is READY_TO_DEPLOY, and whether a deploy was ever attempted could not be read%s: %v", classNote(err), err)
+			result.Recovery = eventsRecovery()
+		case hadPrior:
 			result.EmptyReason = "no runtime logs exist — the service never started an app process. The build/deploy failure timeline (failureClass + cause) is in zerops_events, not this stream."
 			result.Recovery = eventsRecovery()
-		} else {
+		default:
 			result.EmptyReason = "nothing has been deployed yet — no process has ever run, so no logs exist. Deploy first, then read logs."
 		}
 	case platform.ServiceStatusFailed:

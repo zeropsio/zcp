@@ -181,7 +181,7 @@ func RunBrokeredGit(ctx context.Context, ssh SSHStdioRunner, host, dir string, a
 		return exit, fmt.Errorf("run git over ssh: %w", err)
 	}
 	if exit == sshTransportExit {
-		return exit, fmt.Errorf("ssh to %s failed (exit %d): the message above is ssh's own, not git's answer", host, exit)
+		return exit, fmt.Errorf("ssh to %s failed (%w): the message above is ssh's own, not git's answer", host, platform.ExitStatusError(exit))
 	}
 	return exit, nil
 }
