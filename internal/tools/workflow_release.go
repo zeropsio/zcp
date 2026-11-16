@@ -260,7 +260,7 @@ func releasePoolPart(ctx context.Context, deps poolPartOriginDeps, meta *workflo
 		), WithRecoveryStatus())
 	case errors.Is(err, ops.ErrOriginRefMissing):
 		return refuse(fmt.Sprintf("%v (%s)", err, how),
-			fmt.Sprintf("Push %s to the origin from a lease of the pool (zerops_lease action=\"acquire\" pool=%q), then call again.", poolPartRefWords(ref), meta.Hostname))
+			fmt.Sprintf("Push %s to the origin from a lease of the pool (zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\"), then call again.", poolPartRefWords(ref), meta.Hostname))
 	case err != nil:
 		return refuse(fmt.Sprintf("%v (%s)", err, how),
 			fmt.Sprintf("Nothing fired — the tag did not reach the origin. The person's GIT_TOKEN on the pool %q must be able to push tags to it; fix the named cause and re-call.", meta.Hostname))

@@ -508,7 +508,7 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 	case topology.IsPoolType(typeVersion):
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is a Swarm pool, not a dev container", hostname),
-			fmt.Sprintf("Lease one of its containers with zerops_lease action=acquire pool=%q and pass the lease alias as hostname.", hostname))
+			fmt.Sprintf("Lease one of its containers with zerops_lease action=acquire pool=%q branch=<your branch> and pass the lease alias as hostname.", hostname))
 	case topology.IsSandboxType(typeVersion):
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is a Zerops Box, not a dev container", hostname),

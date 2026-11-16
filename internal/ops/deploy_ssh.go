@@ -229,7 +229,7 @@ func RefusePoolSource(source *platform.ServiceStack, targetService string) error
 	}
 	return platform.NewPlatformError(platform.ErrInvalidParameter,
 		fmt.Sprintf("'%s' is a Swarm pool: its hostname reaches a random container, so a deploy never runs from it", source.Name),
-		fmt.Sprintf("Deploy from a lease of the pool: zerops_deploy sourceService=\"<lease alias>\" targetService=%q (zerops_lease action=status lists your leases; zerops_lease action=acquire pool=%q takes one)", targetService, source.Name))
+		fmt.Sprintf("Deploy from a lease of the pool: zerops_deploy sourceService=\"<lease alias>\" targetService=%q (zerops_lease action=status lists your leases; zerops_lease action=acquire pool=%q branch=<your branch> takes one)", targetService, source.Name))
 }
 
 func deploySSH(

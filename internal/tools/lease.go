@@ -406,7 +406,7 @@ func leaseParkInputRefusal(input LeaseInput) error {
 func leaseParkNext(action string, v ops.LeaseView) string {
 	if v.State == ops.LeaseStateLost {
 		return fmt.Sprintf("%s was not %sed: its lease had ended outside zcp — its note says how, and what zcp did with its record, ssh alias and mount. "+
-			"zerops_lease action=acquire takes a container of your own.", v.Alias, action)
+			"zerops_lease action=acquire pool=%s branch=<your branch> takes a container of your own.", v.Alias, action, v.Pool)
 	}
 	if action == leaseActionPark {
 		return fmt.Sprintf("%s is parked: still yours, its files kept and nothing running. zerops_dev_server, zerops_deploy and zerops_verify refuse it until %s. "+

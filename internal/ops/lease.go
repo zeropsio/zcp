@@ -497,7 +497,7 @@ func noBearerError(pool, reason string, unresolved []string, undeployed bool) er
 	if len(unresolved) > 0 && strings.HasPrefix(unresolved[0], apiKey+" ") {
 		fmt.Fprintf(&suggestion, "This zcp service has a variable %s holding ${%s}: a variable named like the reference it holds never resolves, and while it exists every other reference to that name on the service stays unresolved too — delete it. ", apiKey, apiKey)
 	}
-	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
+	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s branch=<your branch>) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
 }
 
