@@ -21,6 +21,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -1496,7 +1497,7 @@ func runRelayedSession(ctx context.Context, ssh SSHStdioRunner, host, command, n
 		return exit, fmt.Errorf("run git over ssh: %w", runErr)
 	}
 	if exit == sshTransportExit {
-		return exit, fmt.Errorf("ssh to %s failed (exit %d): the message above is ssh's own, not git's answer", host, exit)
+		return exit, fmt.Errorf("ssh to %s failed (%w): the message above is ssh's own, not git's answer", host, platform.ExitStatusError(exit))
 	}
 	return exit, nil
 }
