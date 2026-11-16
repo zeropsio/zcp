@@ -20,7 +20,11 @@ import (
 // every byte the caller gave reaches the command as data. Like a `zcp git`
 // call's (BuildBrokeredGitCommand) the script runs under /bin/sh whatever
 // the login shell, ShellQuoted whole as its one -c argument. The command is
-// not exec'd: a shell builtin (`command -v`, `test`) is a command too.
+// not exec'd: a shell builtin (`command -v`, `test`) is a command too. Nor is
+// it the script's last word, which a shell execs in its own place: the shell
+// stays to say how the command ended, so one a signal ended — a `timeout`
+// that fired, a process the kernel killed for memory — is its 128+n, where
+// sshd would report a signalled top process and ssh end with its own 255.
 func BuildServiceRunCommand(dir string, argv []string) string {
 	var b strings.Builder
 	b.WriteString("cd ")
@@ -30,6 +34,7 @@ func BuildServiceRunCommand(dir string, argv []string) string {
 		b.WriteByte(' ')
 		b.WriteString(ShellQuote(a))
 	}
+	b.WriteString("; exit $?")
 	return "/bin/sh -c " + ShellQuote(b.String())
 }
 

@@ -39,7 +39,7 @@ func TestServiceRunDir_FolderOfTheMount_IsThatFolderOfTheService(t *testing.T) {
 func TestBuildServiceRunCommand_Arguments_ReachTheCommandAsData(t *testing.T) {
 	t.Parallel()
 	// The script the service's /bin/sh runs, POSIX single-quoted by hand …
-	script := `cd '/var/www/apps/web' && 'printf' '%s' 'a b' 'it'\''s' ';ls' '$HOME' '*'`
+	script := `cd '/var/www/apps/web' && 'printf' '%s' 'a b' 'it'\''s' ';ls' '$HOME' '*'; exit $?`
 	// … and that script as the one -c argument of the login shell's command.
 	want := "/bin/sh -c '" + strings.ReplaceAll(script, `'`, `'\''`) + "'"
 	got := BuildServiceRunCommand("/var/www/apps/web", []string{"printf", "%s", "a b", "it's", ";ls", "$HOME", "*"})

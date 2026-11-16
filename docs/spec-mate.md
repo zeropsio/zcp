@@ -4609,7 +4609,8 @@ the network and takes the cores and memory the Mate itself runs on; where the mo
   script changes into the folder and runs the argv, every argument ShellQuoted, so a shell builtin
   is a command too and a shell line goes in as `sh -c '<line>'`. stdin, stdout and stderr are the
   command's, byte for byte, and the exit code is its own (255 is ssh's own failure, 1 a record zcp
-  could not read); `zcp run` prints nothing to stdout itself and runs before CLI telemetry. stdin
+  could not read); the script's shell stays to report it, so a command a signal ended is its
+  128+n — 137 for one the kernel killed for memory — never ssh's 255; `zcp run` prints nothing to stdout itself and runs before CLI telemetry. stdin
   always reaches the command, as ssh's does, so a heredoc or a pipe feeds it and a caller reading
   its own stdin on — a loop over hosts — gives the call `</dev/null`. A reader of the output that
   goes away (`zcp run <host> … | head -1`) ends the call with 141 and no line of zcp's, as it ends
