@@ -223,7 +223,9 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
 			}
 			return jsonResult(leaseToolResult{
 				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
-				NextActions: joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx),
+				// The dev servers the acquire read ride its envelope's leases[]
+				// too, stamped: an acquire is a fresh read (DP-30).
+				NextActions: joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx, change.Leases...),
 			}), nil, nil
 		case leaseActionStatus:
 			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
