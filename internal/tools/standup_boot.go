@@ -29,13 +29,14 @@ const standupBootBound = 20 * time.Minute
 // StandupAtBoot is the stand-up zcp's Mate service runs at its start, before
 // the server it supervises launches (internal/service mateLaunchSetup). Under
 // standupBootRead it reads the live services and the HQ tier. Where a pooled
-// part has no build — a pool or a stage of it with none — it takes the
+// part has no build — a pool or a stage of it with no active version, whatever
+// earlier versions failed or were cancelled — it takes the
 // project's one stand-up, writes the verdict with every pooled row building,
 // and returns the rest of the run: adopt, ensure each pool's bearer,
 // commit-deploy main to every pool and stage without a build, the verdict
 // written as it goes. Otherwise — a classic tier, nothing to build, a stand-up
-// already running, or a read that failed or ran out — it writes nothing and
-// returns nil, and today's path applies. env is the container's live env
+// already running, or a read that failed or ran out — it writes nothing,
+// says why in one line, and returns nil, and today's path applies. env is the container's live env
 // store as it is at each call (as KeepMateDevGit takes it); each line said
 // goes to log.
 func StandupAtBoot(ctx context.Context, env func() func(string) string, statusPath string, log func(string)) (run func()) {
@@ -75,7 +76,6 @@ func StandupAtBoot(ctx context.Context, env func() func(string) string, statusPa
 		statusPath:  statusPath,
 		status:      newStandupStatus(statusPath),
 		source:      ops.NewHQDeploySource(httpClient, hqIdentity(rt)),
-		boot:        true,
 		runBound:    standupBootBound,
 	}
 	progress := newStandupProgress(func(message string, _, _ float64) { log("stand-up: " + message) })
@@ -104,11 +104,13 @@ func (d standupDeps) bootRun(ctx, readCtx context.Context, progress *standupProg
 	// zerops_standup stands every pair up.
 	for _, p := range src.tier.Pairs {
 		if !p.DevPool {
+			progress.say("did not run: the tier has a classic pair, which the agent's zerops_standup stands up")
 			return nil
 		}
 	}
 	tier := src.tier
-	if !d.pooledPartToBuild(readCtx, tier, live) {
+	if !pooledPartToBuild(tier, live) {
+		progress.say("did not run: every pooled service has a build")
 		return nil
 	}
 	release, held, err := holdStandup(d.batch.stateDir)
@@ -135,13 +137,13 @@ func (d standupDeps) bootRun(ctx, readCtx context.Context, progress *standupProg
 }
 
 // pooledPartToBuild reports a pooled part of the tier whose pool or a stage
-// the boot builds: not created yet, or with no build and no failed one
-// (bootSkipsFailed).
-func (d standupDeps) pooledPartToBuild(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
+// the boot builds: not created yet, or with no build — no active version with
+// code, whatever versions failed, were cancelled or are in flight (a build in
+// flight is joined, never built again: ops.CommitDeploy).
+func pooledPartToBuild(tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	for _, p := range tier.Pairs {
 		for _, rt := range append([]workflow.MateTierRuntime{p.Dev}, p.Stages...) {
-			svc := live[rt.Hostname]
-			if svc == nil || (!svc.HasDeployedCode() && d.bootSkipsFailed(ctx, svc) == nil) {
+			if svc := live[rt.Hostname]; svc == nil || !svc.HasDeployedCode() {
 				return true
 			}
 		}

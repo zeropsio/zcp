@@ -312,13 +312,6 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		case svc.HasDeployedCode():
 			d.keepBuilt(ctx, s, svc, rows)
 		default:
-			if failed := d.bootSkipsFailed(ctx, svc); failed != nil {
-				buildLog := d.failedBuildLog(ctx, failed)
-				rows.set(s.host, func(in *ops.StandupRowInput) {
-					in.AppVersionID, in.AppVersionStatus, in.BuildLog = failed.ID, failed.Status, buildLog
-				})
-				continue
-			}
 			toBuild = append(toBuild, s)
 		}
 	}
@@ -627,31 +620,6 @@ func (d standupDeps) failedBuildLog(ctx context.Context, version *platform.AppVe
 		out = append(out, line)
 	}
 	return "build log: " + strings.Join(out, " | ")
-}
-
-// bootSkipsFailed is, for the boot run, a service's newest version where it
-// ended failed: the boot builds only a service never built or with a build
-// in flight; rebuilding a failed one is the agent's zerops_standup call.
-// nil for any other run, or where the versions cannot be read.
-func (d standupDeps) bootSkipsFailed(ctx context.Context, svc *platform.ServiceStack) *platform.AppVersionEvent {
-	if !d.boot {
-		return nil
-	}
-	versions, err := d.batch.client.ListServiceAppVersions(ctx, svc.ID)
-	if err != nil {
-		return nil
-	}
-	for i := range versions {
-		v := &versions[i]
-		if v.Source == platform.AppVersionSourceNone {
-			continue
-		}
-		if ops.StandupRowOf(ops.StandupRowInput{AppVersionStatus: v.Status}).State == mate.RowFailed {
-			return v
-		}
-		return nil
-	}
-	return nil
 }
 
 // leaseDeps is what the bearer's writer reads the pool through.
