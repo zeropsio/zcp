@@ -367,7 +367,7 @@ func exportPoolPartSource(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Export reads %q from its origin, and %s at %s (commit %s) holds no zerops.yaml — the pair is keyed by the dev pool %q, which holds no checkout of its own to scaffold one in",
 				target, topology.RedactRepoURLCredentials(origin.RepoURL), origin.Ref, origin.CommitSHA, meta.Hostname),
-			fmt.Sprintf("Commit a zerops.yaml with the stage's setup in a lease of the pool (zerops_lease action=\"acquire\" pool=%q), push it so it reaches %s, then re-call export.", meta.Hostname, origin.Ref)), WithRecoveryStatus())
+			fmt.Sprintf("Commit a zerops.yaml with the stage's setup in a lease of the pool (zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\"), push it so it reaches %s, then re-call export.", meta.Hostname, origin.Ref)), WithRecoveryStatus())
 	}
 	return exportSource{ZeropsYAMLBody: origin.ZeropsYAMLBody, RepoURL: origin.RepoURL, Origin: origin}, nil
 }

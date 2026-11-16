@@ -348,7 +348,7 @@ func poolStageDeployNext(host string, env StateEnvelope) string {
 	case intent.SourcePool == "" || intent.Delivery == DeployDeliveryManual:
 		return ""
 	case intent.PushSource == "":
-		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
+		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\" (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
 	}
 	return fmt.Sprintf("Next: zerops_deploy sourceService=%q targetService=%q setup=%q (un-deployed edits revert on a container cycle — deploy makes the change durable)",
 		intent.PushSource, host, intent.BuildSetup)
