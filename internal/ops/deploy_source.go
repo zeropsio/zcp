@@ -9,8 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -18,24 +21,37 @@ import (
 
 // DeploySource yields the deploy source of a commit by HQ's rule: the
 // repository's tree at the commit minus what its root `.deployignore` names,
-// `export-ignore` off. It is the one interface CommitDeploy reads a commit
-// through; today's implementation is zcp's relayed depth-1 scratch applying
-// that rule, and an HQ read of the filtered source replaces it in one wiring
+// `export-ignore` off, and the zerops.yaml the build reads from the commit
+// itself. It is the one interface CommitDeploy reads a commit through;
+// today's implementation is zcp's relayed depth-1 scratch applying that
+// rule, and an HQ read of the filtered source replaces it in one wiring
 // place.
 type DeploySource interface {
-	// Open streams the deploy source of commit in repository (as
-	// ServiceMeta holds it for the service: `<appId>/<name>`) as the
-	// archive the Zerops upload takes. The caller closes it.
-	Open(ctx context.Context, repository, commit string) (io.ReadCloser, error)
+	// Open reads commit in repository (as ServiceMeta holds it for the
+	// service: `<appId>/<name>`): the archive the Zerops upload takes and
+	// the commit's zerops.yaml. The caller closes the archive.
+	Open(ctx context.Context, repository, commit string) (CommitSource, error)
+}
+
+// CommitSource is a commit's deploy source, opened.
+type CommitSource struct {
+	// Archive streams the deploy source as tar.gz.
+	Archive io.ReadCloser
+	// ZeropsYaml is the commit's root zerops.yaml (zerops.yml when it has
+	// none), read from the commit as HQ reads it, whatever .deployignore
+	// leaves out of the archive.
+	ZeropsYaml string
 }
 
 // NewHQDeploySource is the deploy source read from HQ with the project's
 // key: a bare scratch repository fetched `--depth=1` at the commit through
 // HQ (`Authorization: Project <key>` scoped to HQ's origin, as hq.Scratch
-// and hq.RunGit fetch), archived as `git archive --format=tar.gz` and
-// streamed, nothing of the archive on disk. The repository's organisation
-// and application are HQ's answer to Self at every Open: a repository whose
-// application is not that answer is refused, never fetched.
+// and hq.RunGit fetch), archived as HQ's git box archives
+// (`--worktree-attributes` over an empty work tree and index,
+// `tar.umask=0022`) and streamed, nothing of the archive on disk. The
+// repository's organisation and application are HQ's answer to Self at
+// every Open: a repository whose application is not that answer is
+// refused, never fetched.
 func NewHQDeploySource(httpClient hq.Doer, id hq.Identity) DeploySource {
 	project, err := hq.OpenProject(httpClient, id)
 	return hqDeploySource{project: project, opened: err, key: id.Key}
@@ -48,39 +64,54 @@ type hqDeploySource struct {
 	key string
 }
 
-func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (io.ReadCloser, error) {
+// scratchPrefix names a deploy source's scratch directory by the process
+// that made it, so one whose process is gone is known as left behind.
+const scratchPrefix = "zcp-deploy-"
+
+func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (CommitSource, error) {
 	if s.opened != nil {
-		return nil, &deployError{class: platform.ClassRefused, step: "deploy source", err: s.opened}
+		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source", err: s.opened}
 	}
 	self, err := s.project.Self(ctx)
 	if err != nil {
-		return nil, &deployError{class: hqClass(err), step: "deploy source", err: err}
+		return CommitSource{}, &deployError{class: hqClass(err), step: "deploy source", err: err}
 	}
 	appID, name, ok := strings.Cut(repository, "/")
 	if !ok || appID == "" || name == "" || appID != self.AppID {
-		return nil, &deployError{class: platform.ClassRefused, step: "deploy source",
+		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source",
 			words: fmt.Sprintf("repository %q is not <appId>/<name> of this Mate's application %q", repository, self.AppID)}
 	}
 	repoURL, err := s.project.RepoURL(self.OrgID, self.AppID, name)
 	if err != nil {
-		return nil, &deployError{class: platform.ClassRefused, step: "deploy source", err: err}
+		return CommitSource{}, &deployError{class: platform.ClassRefused, step: "deploy source", err: err}
 	}
-	dir, err := os.MkdirTemp("", "zcp-deploy-")
+	removeLeftScratches()
+	dir, err := os.MkdirTemp("", scratchPrefix+strconv.Itoa(os.Getpid())+"-")
 	if err != nil {
-		return nil, &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
+		return CommitSource{}, &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
 	}
 	g := sourceGit{dir: dir, env: append(s.project.GitEnv(), "LC_ALL=C"), key: s.key}
-	tree, err := g.prepare(ctx, repoURL, commit)
+	opened, err := g.open(ctx, repoURL, commit)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, err
+		return CommitSource{}, err
 	}
-	archive, err := g.archive(ctx, tree)
-	if err != nil {
+	return opened, nil
+}
+
+// removeLeftScratches removes the scratch directories of deploy sources
+// whose process is gone (a zcp killed mid-deploy); a live process's,
+// this one's among them, stay.
+func removeLeftScratches() {
+	dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), scratchPrefix+"*"))
+	for _, dir := range dirs {
+		pidText, _, _ := strings.Cut(strings.TrimPrefix(filepath.Base(dir), scratchPrefix), "-")
+		pid, err := strconv.Atoi(pidText)
+		if err != nil || pid == os.Getpid() || !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			continue
+		}
 		_ = os.RemoveAll(dir)
-		return nil, err
 	}
-	return archive, nil
 }
 
 // hqClass is an HQ answer's class: HQ out of reach may change by waiting;
@@ -103,29 +134,70 @@ type sourceGit struct {
 // paths out of a deploy (HQ internal/deploys/source).
 const deployIgnore = ".deployignore"
 
-// prepare fetches commit and answers the tree to archive: the commit's
-// tree, less what its root .deployignore names when it has one. git's own
-// ignore matching reads the file, case-insensitive as HQ's is, and leaves
-// out everything under a directory it leaves out whatever a later rule
-// says, as HQ does.
-func (g sourceGit) prepare(ctx context.Context, repoURL, commit string) (string, error) {
+// gitWaitDelay bounds how long git may hold its pipes after the caller's
+// stop.
+const gitWaitDelay = 5 * time.Second
+
+// fetchLowSpeed is the fetch's bound: git gives up once it moved under
+// 1 KiB/s for a minute, so a fetch HQ stopped answering ends.
+var fetchLowSpeed = []string{"-c", "http.lowSpeedLimit=1024", "-c", "http.lowSpeedTime=60"}
+
+// open fetches commit and answers its zerops.yaml and its archive: the
+// commit's tree, less what its root .deployignore names when it has one.
+// git's own ignore matching reads the file, case-insensitive as HQ's is,
+// and leaves out everything under a directory it leaves out whatever a
+// later rule says, as HQ does.
+func (g sourceGit) open(ctx context.Context, repoURL, commit string) (CommitSource, error) {
 	if _, err := g.run(ctx, nil, "init", "--bare", "-q"); err != nil {
-		return "", err
+		return CommitSource{}, err
 	}
-	if _, err := g.run(ctx, nil, "-c", "http.followRedirects=false", "fetch", "-q", "--no-tags", "--depth=1", repoURL, commit); err != nil {
-		return "", err
+	fetch := append(append([]string{"-c", "http.followRedirects=false"}, fetchLowSpeed...),
+		"fetch", "-q", "--no-tags", "--depth=1", repoURL, commit)
+	if _, err := g.run(ctx, nil, fetch...); err != nil {
+		return CommitSource{}, err
 	}
-	// export-ignore off: an in-tree .gitattributes cannot drop a path from
-	// the archive; info/attributes outranks it.
-	if err := os.WriteFile(filepath.Join(g.dir, "info", "attributes"), []byte("* -export-ignore\n"), 0o600); err != nil {
-		return "", &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
-	}
-	rules, err := g.run(ctx, nil, "ls-tree", "-z", commit, "--", deployIgnore)
+	yaml, err := g.zeropsYaml(ctx, commit)
 	if err != nil {
-		return "", err
+		return CommitSource{}, err
 	}
-	if rules == "" {
-		return commit, nil
+	empty := filepath.Join(g.dir, "no-worktree")
+	if err := os.Mkdir(empty, 0o700); err != nil {
+		return CommitSource{}, &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
+	}
+	tree, err := g.deployTree(ctx, commit, empty)
+	if err != nil {
+		return CommitSource{}, err
+	}
+	archive, err := g.archive(ctx, tree, empty)
+	if err != nil {
+		return CommitSource{}, err
+	}
+	return CommitSource{Archive: archive, ZeropsYaml: yaml}, nil
+}
+
+// zeropsYaml is the commit's root zerops.yaml, zerops.yml when it has
+// none, in HQ's order (internal/deploys yamlNames). A commit with neither is
+// refused: nothing would build it.
+func (g sourceGit) zeropsYaml(ctx context.Context, commit string) (string, error) {
+	for _, name := range []string{zeropsYmlPrimary, zeropsYmlFallback} {
+		entry, err := g.run(ctx, nil, "ls-tree", "-z", commit, "--", name)
+		if err != nil {
+			return "", err
+		}
+		if entry != "" {
+			return g.run(ctx, nil, "cat-file", "blob", commit+":"+name)
+		}
+	}
+	return "", &deployError{class: platform.ClassRefused, step: "commit deploy",
+		words: fmt.Sprintf("commit %s has no %s or %s at its root", commit, zeropsYmlPrimary, zeropsYmlFallback)}
+}
+
+// deployTree is the tree to archive: commit's own, or, when it has a root
+// .deployignore, a tree written without the paths that file leaves out.
+func (g sourceGit) deployTree(ctx context.Context, commit, empty string) (string, error) {
+	rules, err := g.run(ctx, nil, "ls-tree", "-z", commit, "--", deployIgnore)
+	if err != nil || rules == "" {
+		return commit, err
 	}
 	excludes := filepath.Join(g.dir, "deployignore")
 	body, err := g.run(ctx, nil, "cat-file", "blob", commit+":"+deployIgnore)
@@ -138,10 +210,6 @@ func (g sourceGit) prepare(ctx context.Context, repoURL, commit string) (string,
 	paths, err := g.run(ctx, nil, "ls-tree", "-r", "-z", "--name-only", commit)
 	if err != nil {
 		return "", err
-	}
-	empty := filepath.Join(g.dir, "no-worktree")
-	if err := os.Mkdir(empty, 0o700); err != nil {
-		return "", &deployError{class: platform.ClassFailed, step: "deploy source", err: err}
 	}
 	ignored, err := g.run(ctx, strings.NewReader(paths), "--work-tree="+empty, "-c", "core.excludesFile="+excludes,
 		"-c", "core.ignoreCase=true", "check-ignore", "--no-index", "--stdin", "-z")
@@ -168,7 +236,7 @@ func (g sourceGit) prepare(ctx context.Context, repoURL, commit string) (string,
 // the key cut out.
 func (g sourceGit) run(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir, cmd.Env, cmd.Stdin = g.dir, g.env, stdin
+	cmd.Dir, cmd.Env, cmd.Stdin, cmd.WaitDelay = g.dir, g.env, stdin, gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -180,9 +248,10 @@ func (g sourceGit) run(ctx context.Context, stdin io.Reader, args ...string) (st
 	return stdout.String(), nil
 }
 
-// failure is a git step that did not run through, classed: a fetch HQ did
-// not answer may change by waiting; a fetch HQ refused (a missing commit,
-// a refused key) will not; any other git step failed here.
+// failure is a git step that did not run through, classed: a fetch HQ
+// refused (a missing commit, a refused key) will not change by waiting;
+// any other failed fetch (no connection, a transfer cut, a 5xx) may; any
+// other git step failed here.
 func (g sourceGit) failure(args []string, said string, err error) error {
 	said = strings.TrimSpace(said)
 	if g.key != "" {
@@ -207,26 +276,29 @@ func (g sourceGit) failure(args []string, said string, err error) error {
 }
 
 // fetchClass reads git's own words on a failed fetch, the only signal git
-// gives: no connection or a 5xx/429 of HQ may change by waiting; anything
-// else (401, 403, 404, a commit HQ does not have) will not.
+// gives: HQ's refusal (a 4xx other than 429, a commit or repository it does
+// not have) will not change by waiting; anything else may.
 func fetchClass(said string) platform.ErrorClass {
-	for _, transient := range []string{
-		"Could not resolve host", "Failed to connect", "Connection timed out", "Operation timed out",
-		"Connection reset", "returned error: 5", "returned error: 429",
-	} {
-		if strings.Contains(said, transient) {
-			return platform.ClassUnreachable
+	if strings.Contains(said, "returned error: 429") {
+		return platform.ClassUnreachable
+	}
+	for _, refusal := range []string{"returned error: 4", "not our ref", "Repository not found"} {
+		if strings.Contains(said, refusal) {
+			return platform.ClassRefused
 		}
 	}
-	return platform.ClassRefused
+	return platform.ClassUnreachable
 }
 
-// archive starts `git archive --format=tar.gz tree` and answers its stream:
-// the archive's end is git's exit, so a failed archive never reads as a
-// whole one; Close stops git and removes the scratch.
-func (g sourceGit) archive(ctx context.Context, tree string) (io.ReadCloser, error) {
-	cmd := exec.CommandContext(ctx, "git", "archive", "--format=tar.gz", tree)
-	cmd.Dir, cmd.Env = g.dir, g.env
+// archive starts git archive of tree as HQ's git box runs it and answers
+// its stream: the archive's end is git's exit, so a failed archive never
+// reads as a whole one; Close stops git and removes the scratch.
+func (g sourceGit) archive(ctx context.Context, tree, empty string) (io.ReadCloser, error) {
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.bare=false", "-c", "tar.umask=0022",
+		"archive", "--worktree-attributes", "--format=tar.gz", tree)
+	cmd.Dir, cmd.WaitDelay = g.dir, gitWaitDelay
+	cmd.Env = append(append([]string(nil), g.env...),
+		"GIT_DIR="+g.dir, "GIT_WORK_TREE="+empty, "GIT_INDEX_FILE="+filepath.Join(empty, "index"))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, &deployError{class: platform.ClassFailed, step: "git archive", err: err}
