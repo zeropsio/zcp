@@ -41,7 +41,6 @@ var agentGitSourceAllowed = map[string][]agentGitAllow{
 	"internal/tools/hq_origin_kept.go": {{"hqPairOrigin", "git remote get-url", "zcp's own command pointing the checkout's origin, executed in the dev service over ssh"}},
 	"internal/tools/hq_recipe_edit.go": {{"*", "", "a zcp-side fresh clone of the group recipe repository — no mount, no dev repository, no code the repository controls"}},
 	"internal/tools/hq_project.go":     {{"*", "", "a project without a Mate keeps `zcp hq git` on its mounted checkout (owner decision Q1, docs/spec-mate.md §6.7)"}},
-	"internal/tools/hq_repo_host.go":   {{"repoRoute.git", "`ssh %s", "the lease form: ssh to the lease's alias, its checkout /var/www"}},
 	"internal/tools/deploy_git_push.go": {
 		{"gitPushMetaPreflight", "over ssh to the lease's alias", "a lease pushes over ssh to its alias"},
 		{"leaseGitPushRefusal", "over ssh to %s yourself", "a lease pushes over ssh to its alias"},

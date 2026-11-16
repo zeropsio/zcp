@@ -206,7 +206,8 @@ func TestLeaseAcquire_HQRepo_TheUsersGitTokenStays(t *testing.T) {
 	if !strings.HasPrefix(checkouts[1].command, relayedMark) || strings.HasPrefix(checkouts[0].command, relayedMark) {
 		t.Errorf("checkouts = %v, want only the HQ lease's relayed", checkouts)
 	}
-	if strings.Contains(checkouts[1].command, "credential.") {
+	// Its only helper is the hint scoped to HQ, which answers nothing.
+	if strings.Contains(checkouts[1].command, "password=") || strings.Contains(checkouts[1].command, "GIT_TOKEN") {
 		t.Errorf("the HQ lease names or keeps a helper that could answer HQ from the pool's env:\n%s", checkouts[1].command)
 	}
 }

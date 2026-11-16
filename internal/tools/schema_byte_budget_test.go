@@ -215,8 +215,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// read its log through zcp and logged zcli in with zcp's key.
 		"zerops_logs": 845,
 		// A target's sha (deploy that commit, zerops_deploy's sha) is a new
-		// field: one batch puts main on several stages (DP-8).
-		"zerops_deploy_batch": 681,
+		// field: one batch puts main on several stages (DP-8). Raised 681 ->
+		// 698: the sha says origin/main ships main as the lease last fetched
+		// it, as a stage keeps what was last deployed to it.
+		"zerops_deploy_batch": 698,
 		"zerops_manage":       453,
 		"zerops_subdomain":    393,
 		"zerops_mount":        306,
@@ -240,8 +242,9 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// both in action and gives lease their role; no new field.
 		// Raised 1085 -> 1175: from, the branch an acquire cuts a new branch
 		// from instead of main (DP-6) — a new input of acquire, its
-		// description one short line.
-		"zerops_lease": 1175,
+		// description one short line. Raised 1175 -> 1186: branch says an
+		// acquire never takes main, which is refused at once.
+		"zerops_lease": 1186,
 		// New tool: setup / status of a Zerops Box (docs/spec-workflows.md §8
 		// PS-11..PS-14). Two fields: the action and the Box's hostname.
 		"zerops_box": 420,

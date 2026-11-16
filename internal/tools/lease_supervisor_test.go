@@ -145,7 +145,7 @@ func TestLeaseTool_Release_Unresettable_DeletesWithTheLease(t *testing.T) {
 		inner.ServeHTTP(w, r)
 	}), &leaseStubSSH{})
 
-	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"}); res.IsError {
 		t.Fatalf("acquire failed: %s", getTextContent(t, res))
 	}
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})

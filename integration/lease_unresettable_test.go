@@ -97,7 +97,7 @@ func TestLease_Integration_UnresettableContainerIsDeletedNotReleasedUnreset(t *t
 		}
 		return out
 	}
-	call(map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app"})
+	call(map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature"})
 	got := call(map[string]any{"action": "release", "lease": "devpool-3", "force": true})
 	if len(got.Leases) != 1 || got.Leases[0].State != "released" {
 		t.Fatalf("release = %+v, want devpool-3 released", got.Leases)

@@ -262,7 +262,7 @@ func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
 func TestLeaseTool_RefusalNeverCarriesLease(t *testing.T) {
 	t.Parallel()
 	srv, _ := leaseToolServer(t, &fakeOrchestrator{echoLease: true})
-	callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo})
+	callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"})
 
 	// Forced: no ssh reaches the container to check it (DP-4), and the
 	// refusal under test is the orchestrator's.
@@ -300,7 +300,7 @@ func TestLeaseTool_OrchestratorUnreachable_Explains(t *testing.T) {
 	registerLeaseTool(t, srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
 
 	for _, args := range []map[string]any{
-		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
+		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"},
 		{"action": "status", "pool": "devpool"},
 		{"action": "rollout", "pool": "devpool"},
 	} {
@@ -342,9 +342,9 @@ func TestLeaseTool_BadInput_TypedRefusal(t *testing.T) {
 		{"release without lease", map[string]any{"action": "release"}, platform.ErrInvalidParameter, "needs lease"},
 		{"release path-shaped alias", map[string]any{"action": "release", "lease": "../../etc/x"}, platform.ErrInvalidParameter, "not a lease alias"},
 		{"release unrecorded alias", map[string]any{"action": "release", "lease": "devpool-9"}, platform.ErrInvalidParameter, "No lease record"},
-		{"acquire without repo or default", map[string]any{"action": "acquire", "pool": "devpool"}, platform.ErrInvalidParameter, "needs repo"},
-		{"acquire with a credential in the repo", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://u:tok@github.com/a/b"}, platform.ErrInvalidParameter, "clone URL"},
-		{"acquire a non-pool", map[string]any{"action": "acquire", "pool": "nosuch"}, platform.ErrServiceNotFound, "nosuch"},
+		{"acquire without repo or default", map[string]any{"action": "acquire", "pool": "devpool", "branch": "feature"}, platform.ErrInvalidParameter, "needs repo"},
+		{"acquire with a credential in the repo", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://u:tok@github.com/a/b", "branch": "feature"}, platform.ErrInvalidParameter, "clone URL"},
+		{"acquire a non-pool", map[string]any{"action": "acquire", "pool": "nosuch", "branch": "feature"}, platform.ErrServiceNotFound, "nosuch"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -441,7 +441,7 @@ func TestLeaseTool_ReleaseForceParam(t *testing.T) {
 				}
 				inner.ServeHTTP(w, r)
 			}), ssh)
-			if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+			if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"}); res.IsError {
 				t.Fatalf("acquire failed: %s", getTextContent(t, res))
 			}
 			args := map[string]any{"action": "release", "lease": "devpool-3"}
