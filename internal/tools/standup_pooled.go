@@ -89,19 +89,17 @@ func pooledPairs(pairs []*standupPair) (classic, pooled []*standupPair) {
 // each change: rows only through ops.StandupRowOf, the headline only through
 // ops.StandupHeadlineOf.
 type standupVerdictRows struct {
-	status   *standupStatus
-	mu       sync.Mutex
-	order    []string
-	inputs   map[string]ops.StandupRowInput
-	services map[string]pooledService
+	status *standupStatus
+	mu     sync.Mutex
+	order  []string
+	inputs map[string]ops.StandupRowInput
 }
 
 func newStandupVerdictRows(status *standupStatus, services []pooledService) *standupVerdictRows {
-	r := &standupVerdictRows{status: status, inputs: map[string]ops.StandupRowInput{}, services: map[string]pooledService{}}
+	r := &standupVerdictRows{status: status, inputs: map[string]ops.StandupRowInput{}}
 	for _, s := range services {
 		r.order = append(r.order, s.host)
 		r.inputs[s.host] = ops.StandupRowInput{Hostname: s.host, Kind: s.kind}
-		r.services[s.host] = s
 	}
 	return r
 }
@@ -126,47 +124,10 @@ func (r *standupVerdictRows) verdict() mate.StandupVerdict {
 
 func (r *standupVerdictRows) verdictLocked() mate.StandupVerdict {
 	rows := make([]mate.StandupRow, 0, len(r.order))
-	poolDone := map[string]bool{}
 	for _, host := range r.order {
-		row := ops.StandupRowOf(r.inputs[host])
-		if row.Kind == mate.RowPool && row.State == mate.RowDone {
-			poolDone[host] = true
-		}
-		rows = append(rows, row)
-	}
-	for i := range rows {
-		rows[i].Next = standupRowNext(rows[i], r.services[rows[i].Hostname], poolDone)
+		rows = append(rows, ops.StandupRowOf(r.inputs[host]))
 	}
 	return mate.StandupVerdict{Headline: ops.StandupHeadlineOf(rows), Rows: rows}
-}
-
-// standupRowNext is the one next step for a row: nothing while it builds;
-// for a row done, how it is used; for a row failed, the way to fix it that
-// works with what stands — a stage of a leasable pool is fixed from a lease
-// (F6), anything else through main, which the next zerops_standup builds.
-func standupRowNext(row mate.StandupRow, s pooledService, poolDone map[string]bool) string {
-	pool := row.Hostname
-	if s.pair != nil {
-		pool = s.pair.pair.Dev.Hostname
-	}
-	again := "then call zerops_standup again: it builds main's new head into what has no build and skips what is done."
-	switch {
-	case row.State == mate.RowBuilding:
-		return ""
-	case row.State == mate.RowDone && row.Kind == mate.RowPool:
-		return fmt.Sprintf("Ready to work: lease a container of %s on the branch you work on — zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\".", pool, pool)
-	case row.State == mate.RowDone:
-		return fmt.Sprintf("It runs main as this Mate's preview: verify it with zerops_verify serviceHostname=%q.", row.Hostname)
-	case row.Class == platform.ClassUnreachable:
-		return "Nothing is lost: call zerops_standup again — it waits on what is still in flight and never builds twice."
-	case row.Kind == mate.RowStage && poolDone[pool]:
-		return fmt.Sprintf("Fix it from a lease: lease %s on a branch (zerops_lease action=\"acquire\" pool=%q branch=\"<branch>\"), fix the build there, deploy it with zerops_deploy sourceService=\"<the lease's alias>\" targetService=%q setup=%q, and propose the fix to main.",
-			pool, pool, row.Hostname, s.setup)
-	case row.Class == platform.ClassRefused:
-		return "Change what the cause names — the repository's zerops.yaml on a branch proposed to main, or what HQ or Zerops refused — " + again
-	default:
-		return fmt.Sprintf("Fix the build on a branch: check main out on zcp's own container through HQ, fix what the cause names, push the branch and propose it to main; once it is merged, %s", again)
-	}
 }
 
 // pooledOutcome is what the pooled run hands the answer: the verdict, the
@@ -440,21 +401,40 @@ func (d standupDeps) buildFailure(ctx context.Context, host string, process ops.
 	return strings.Join(parts, "; ")
 }
 
+// standupBearerAsks bounds how often the bearer's writer is asked after the
+// pool's first build, while it answers "written, not resolved yet" — a pool
+// whose status still lags the build it just finished.
+const standupBearerAsks = 3
+
 // confirmBearer reads the pool's bearer through its one writer, which waits a
 // bounded time for the reference to resolve (F10): the row is done only once
-// it does.
+// it does. An answer of no bearer and no error is the reference written and
+// not resolved yet: the row stays building while it is asked again, and is
+// failed naming the variable when it still has not resolved. "" is never
+// taken for a bearer.
 func (d standupDeps) confirmBearer(ctx context.Context, pool string, rows *standupVerdictRows) {
-	bearer, err := ops.EnsureBearer(ctx, d.leaseDeps(), pool)
-	rows.set(pool, func(in *ops.StandupRowInput) {
-		in.BearerResolves = err == nil && bearer != ""
-		switch {
-		case err != nil:
-			in.Class, in.Cause = platform.ClassOf(err), err.Error()
-		case bearer == "":
-			in.Class = platform.ClassFailed
-			in.Cause = fmt.Sprintf("%s_LEASE_TOKEN on this zcp service is written and does not resolve yet: it resolves with %s's first successful build", pool, pool)
+	for ask := 1; ; ask++ {
+		bearer, err := ops.EnsureBearer(ctx, d.leaseDeps(), pool)
+		pending := err == nil && bearer == ""
+		last := ask >= standupBearerAsks || ctx.Err() != nil
+		rows.set(pool, func(in *ops.StandupRowInput) {
+			in.BearerResolves = err == nil && bearer != ""
+			switch {
+			case err != nil:
+				in.Class, in.Cause = platform.ClassOf(err), err.Error()
+			case pending && last:
+				in.Class = platform.ClassFailed
+				in.Cause = fmt.Sprintf("%s_LEASE_TOKEN on this zcp service is written and still does not resolve after %s's build", pool, pool)
+			}
+		})
+		if !pending || last {
+			return
 		}
-	})
+		select {
+		case <-ctx.Done():
+		case <-time.After(standupHQRetry):
+		}
+	}
 }
 
 // leaseDeps is what the bearer's writer reads the pool through.
