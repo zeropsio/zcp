@@ -71,14 +71,16 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 	return deps
 }
 
-// poolRepository reads the repository a pool's leases are of from the pair
-// keyed by the pool, its one store (the stand-up and the HQ wiring write it):
-// its RemoteURL, and whether it is wired in HQ. "" for a pool no pair is keyed
-// by, or one whose record cannot be read.
+// poolRepository reads the repository a pool's leases are of from the record
+// keyed by the pool's hostname, its one store (the stand-up and the HQ wiring
+// write it): its RemoteURL, and whether it is wired in HQ. The acquire has
+// already resolved the hostname as a pool service, so the record is that
+// pool's whether or not it names its DevPool. "" for a pool no record is
+// keyed by, or one whose record cannot be read.
 func poolRepository(stateDir string) func(pool string) (string, bool) {
 	return func(pool string) (string, bool) {
 		m, err := workflow.ReadServiceMeta(stateDir, pool)
-		if err != nil || !m.DevIsPool() {
+		if err != nil || m == nil {
 			return "", false
 		}
 		return m.RemoteURL, hqPairWired(m)
