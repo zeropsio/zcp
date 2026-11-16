@@ -284,7 +284,7 @@ func mainTakesTheMerge(route repoRoute) string {
 			route.pool, leaseAcquire(route.pool, "<branch>"), hqBase)
 	}
 	return fmt.Sprintf("bring it up to date %s (%s), and cut the next work's branch from it",
-		route.where(), route.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
+		route.where(), route.relayed("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
 }
 
 // mergedLeases names the leases zcp still holds on the branch of a change
@@ -360,11 +360,11 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 // merge commit, which costs no new description.
 func corePushWords(number, landed int, branch string, route repoRoute, leases []string, ready bool) string {
 	ff := []string{"fetch origin", "merge --ff-only origin/" + branch}
-	where := route.checkedOut(branch) + ": " + route.git(ff...)
+	where := route.checkedOut(branch) + ": " + route.relayed(ff...)
 	if len(leases) > 0 {
 		calls := make([]string, 0, len(leases))
 		for _, alias := range leases {
-			calls = append(calls, route.inLease(alias).git(ff...))
+			calls = append(calls, route.inLease(alias).relayed(ff...))
 		}
 		which := "in its lease"
 		if len(leases) > 1 {
@@ -425,7 +425,7 @@ func standingWords(number int, branch string, now, told workflow.HQChangeTold, r
 		where = fmt.Sprintf("in a lease of it (%s), over ssh", strings.Join(leases, ", "))
 		sync = fmt.Sprintf(", `zerops_lease action=sync lease=%s`", leases[0])
 	}
-	merge, push := route.git("fetch origin", "merge origin/"+hqBase), route.git("push origin "+branch)
+	merge, push := route.relayed("fetch origin", "merge origin/"+hqBase), route.relayed("push origin "+branch)
 	switch label {
 	case "conflict":
 		return fmt.Sprintf("change #%d on %q no longer merges cleanly with main: %s, merge origin/main in (%s), resolve the conflicts, check it works, commit and push it (%s)%s — never rebase, never force-push — and %s",
