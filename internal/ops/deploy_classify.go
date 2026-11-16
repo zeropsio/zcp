@@ -98,9 +98,9 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 	case class == platform.ClassUnreachable || class == platform.ClassRefused:
 		// Whether ssh reached the source is platform.ClassOf's verdict;
 		// ssh's own words follow it.
-		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: the source did not take the SSH session (%s, %s):\n%s",
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s failed: ssh itself failed (%s, %s):\n%s",
 			sourceService, targetService, class, exitMsg, lastLines(output, 5))
-		pe.Suggestion = fmt.Sprintf("Is %s RUNNING (zerops_discover service=%s)? A refusal names what refused it above; an unreachable source may answer once it has started.", sourceService, sourceService)
+		pe.Suggestion = fmt.Sprintf("ssh's own words are above. Is %s RUNNING (zerops_discover service=%s)? An unreachable source may answer once it has started; a refused one will not until what refused it changes.", sourceService, sourceService)
 	default:
 		// Don't classify zcli output — show last lines, let LLM reason about it.
 		tail := lastLines(output, 5)
