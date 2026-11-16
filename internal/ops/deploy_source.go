@@ -172,6 +172,9 @@ func (g sourceGit) run(ctx context.Context, stdin io.Reader, args ...string) (st
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err() // the caller's stop, no failure of git's
+		}
 		return "", g.failure(args, stderr.String(), err)
 	}
 	return stdout.String(), nil
@@ -233,14 +236,17 @@ func (g sourceGit) archive(ctx context.Context, tree string) (io.ReadCloser, err
 	if err := cmd.Start(); err != nil {
 		return nil, &deployError{class: platform.ClassFailed, step: "git archive", err: err}
 	}
-	return &archiveStream{git: g, cmd: cmd, out: stdout, stderr: stderr}, nil
+	return &archiveStream{stopped: ctx.Err, git: g, cmd: cmd, out: stdout, stderr: stderr}, nil
 }
 
 type archiveStream struct {
-	git    sourceGit
-	cmd    *exec.Cmd
-	out    io.ReadCloser
-	stderr *bytes.Buffer
+	// stopped is the Open context's Err: a git killed by the caller's stop
+	// exits as killed, which is no failure of git's.
+	stopped func() error
+	git     sourceGit
+	cmd     *exec.Cmd
+	out     io.ReadCloser
+	stderr  *bytes.Buffer
 
 	once   sync.Once
 	waited error
@@ -250,6 +256,9 @@ func (a *archiveStream) Read(p []byte) (int, error) {
 	n, err := a.out.Read(p)
 	if err == io.EOF {
 		if werr := a.wait(); werr != nil {
+			if stop := a.stopped(); stop != nil {
+				return n, stop
+			}
 			return n, a.git.failure([]string{"archive"}, a.stderr.String(), werr)
 		}
 	}

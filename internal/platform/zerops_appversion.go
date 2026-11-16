@@ -317,8 +317,10 @@ func (z *ZeropsClient) UploadAppVersion(ctx context.Context, appVersionID string
 	}
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errUploadStalled) {
+			// The stall, not the cancellation it caused, is the cause:
+			// ClassOf reads a cancellation as the caller's own stop.
 			return withCause(NewPlatformError(ErrAPITimeout,
-				fmt.Sprintf("upload: nothing moved for %s", UploadStall), "Retry the deploy"), err)
+				fmt.Sprintf("upload: nothing moved for %s", UploadStall), "Retry the deploy"), errUploadStalled)
 		}
 		return mapSDKError(err, "appVersion")
 	}
