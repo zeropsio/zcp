@@ -131,7 +131,7 @@ func handleOpenChange(
 				result.Message += " Nothing else was opened: a Mate has one open change per repository."
 			}
 			result.Message += fmt.Sprintf(` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); %s reviews it by that.`, whoMerges(state.MergeLimited)) +
-				mergeLimitedNote(state.MergeLimited)
+				applicationOpenedWords(state) + mergeLimitedNote(state.MergeLimited)
 			learnSettled()
 			return jsonResult(result), nil, nil
 		}
@@ -156,7 +156,7 @@ func handleOpenChange(
 			"Restore access to the local state directory and call open-change again; HQ answers the existing change."), WithRecoveryStatus()), nil, nil
 	}
 	learnSettled()
-	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, stateErr == nil && state.MergeLimited)
+	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, state)
 	return jsonResult(result), nil, nil
 }
 
@@ -209,9 +209,12 @@ func openChangeAtHQ(ctx context.Context, hqc hq.Client, stateDir string, target 
 }
 
 // openChangeWords explains the opened or existing change and where its work
-// goes; limited, in an application that limits who merges, it names who
-// reviews and merges it as that and adds the rule (mergeLimitedRule).
-func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string, limited bool) string {
+// goes. state is the Mate's state as read before the open, zero when it could
+// not be read: in an application that limits who merges it names who reviews
+// and merges the change as that and adds the rule (mergeLimitedRule), and
+// with a production it says what the description owes (applicationOpenedWords).
+func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string, state hq.MateState) string {
+	limited := state.MergeLimited
 	number := opened.Change.Number
 	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
 	if !opened.Created {
@@ -230,7 +233,7 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and " + whoMerges(limited) + " merges it in Mate."
 	}
 	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); %s reviews it by that.",
-		number, target.Repo, result.Branch, bound, route.git("push origin "+push), whoMerges(limited)) + mirrored + handedNote + mergeLimitedNote(limited)
+		number, target.Repo, result.Branch, bound, route.git("push origin "+push), whoMerges(limited)) + mirrored + handedNote + applicationOpenedWords(state) + mergeLimitedNote(limited)
 }
 
 // openUnanswered decides an open HQ did not answer. HQ's own refusal, and a

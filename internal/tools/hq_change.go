@@ -240,7 +240,9 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // which a Mate's HQ pass releases by itself once nothing unsaved is left in
 // them (releaseCompletedLeases, DP-34), so the note names no release for the
 // agent to run — and the stages of its repository's pairs, which track main
-// (address is this Mate's HQ, which names the leases' repository). A change
+// (address is this Mate's HQ, which names the leases' repository), then what
+// a merge does where the application has a production or a Stage
+// (applicationMergedWords). A change
 // that landed with another is said as that, never as closed without merging
 // — a Mate told nothing of it is on main does the work again — and takes the
 // merged change's note, none of which reads a squash of the change's own.
@@ -258,12 +260,12 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	switch outcome {
 	case changeMerged:
 		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
+			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
 	case changeLandedWith:
 		with := s.CarriedBy()
 		return fmt.Sprintf("change #%d was merged as part of #%d — #%d was built on it and merged first, so its merge carried every commit of this one and HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
 			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
-			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c)
+			mergedLeases(stateDir, address, c) + mergedStages(stateDir, c) + applicationMergedWords(state)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
 	case changeStillOpen, changeClosed, changeUnknown:
@@ -495,7 +497,8 @@ func changeBranchWords(c workflow.HQChange) string {
 // on one that keeps one per repository the open one, where the work goes
 // (hqOpenChangeWork). A change another step holds (a describe) is left to the
 // next pass. Changes of another application than the one HQ holds the Mate
-// in stay there, said once.
+// in stay there, said once. Develop's start ends with how work is cut where
+// other Mates work or a production is attached (applicationStartWords).
 func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState, atStart bool) []string {
 	if state.AppID == nil {
 		return nil
@@ -534,6 +537,11 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		}
 		for _, line := range said {
 			lines = append(lines, fmt.Sprintf("repository %q: %s", repo, line))
+		}
+	}
+	if atStart {
+		if words := applicationStartWords(state); words != "" {
+			lines = append(lines, words)
 		}
 	}
 	return lines

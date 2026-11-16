@@ -245,7 +245,7 @@ func handleDescribeChange(
 		PullRequestURL: url,
 		Described:      true,
 		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that moves it makes it a draft again, until you describe it again.",
-			number, described) + mergeLimitedNote(state.MergeLimited),
+			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited),
 	}), nil, nil
 }
 
