@@ -224,8 +224,14 @@ type standupStop struct {
 	class                     platform.ErrorClass
 }
 
-// result is the stop as the agent's answer.
+// result is the stop as the agent's answer. An HQ that did not answer
+// leaves the tier unread, so its only way on is the stand-up again, never
+// the classic adopt route.
 func (s *standupStop) result() *mcp.CallToolResult {
+	if s.class == platform.ClassUnreachable {
+		return convertError(platform.NewPlatformError(s.code, s.message, s.suggestion),
+			WithRecovery(&RecoveryHint{Tool: "zerops_standup"}))
+	}
 	return standupRefusal(s.code, s.message, s.suggestion)
 }
 
@@ -264,7 +270,12 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		if err != nil {
 			class = platform.ClassOf(err)
 		}
-		return &standupStop{code: code, class: class, message: message, suggestion: standupFallback}
+		suggestion := standupFallback
+		if class == platform.ClassUnreachable {
+			// With the tier unread nothing says which path the tier takes.
+			suggestion = "Nothing was touched: HQ did not answer. Run zerops_standup again once it answers."
+		}
+		return &standupStop{code: code, class: class, message: message, suggestion: suggestion}
 	}
 	inNoApplication := stop(platform.ErrPrerequisiteMissing, nil,
 		"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.")
