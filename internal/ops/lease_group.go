@@ -1031,7 +1031,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				}
 				return
 			}
-			m.guard, m.work, m.err = inspectBranchMember(ctx, d, m.rec)
+			m.guard, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.note = joinNotes(restoreNote, m.wake.note(), m.guard.note)
 			m.guard.woken = m.wake.started
 		})
@@ -1067,7 +1067,7 @@ func leaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 				return
 			}
 			var again leaseGuardResult
-			again, m.work, m.err = inspectBranchMember(ctx, d, m.rec)
+			again, m.work, m.err = inspectUnsavedWork(ctx, d, m.rec)
 			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
@@ -1368,33 +1368,6 @@ func noLeaseOfBranch(branch, repo string) error {
 		"zerops_lease action=status lists the leases this zcp holds, each with its branch")
 	pe.Cause = ErrNoLeaseOfBranch
 	return pe
-}
-
-// inspectBranchMember is a branch release's read of one lease, the check a
-// release of the lease alone runs (guardLeaseRelease) short of its refusal:
-// inspectLeaseRelease, then for commits on no branch of origin the compare
-// with origin (compareWithOrigin) and with origin's main, relayed for a
-// repository on the Mate's HQ (mainHoldsUnpushed): commits main already holds
-// — merged as a squash — are no work to keep. A compare that could not run is
-// the lease's refusal (leaseCompareRefusal), never a count it could not check.
-func inspectBranchMember(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
-	guard, w, err := inspectLeaseRelease(ctx, d, rec)
-	if err != nil || w.unpushed == 0 {
-		return guard, w, err
-	}
-	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
-	if w, err = compareWithOrigin(ctx, d, rec, w, onHQ); err != nil || w.unpushed == 0 {
-		return guard, w, err
-	}
-	held, err := mainHoldsUnpushed(ctx, d, rec.alias(), onHQ)
-	if err != nil {
-		return guard, w, leaseCompareRefusal(rec.alias(), w.unpushed, "compare their change with origin's main", err, onHQ)
-	}
-	if held {
-		guard.note = joinNotes(guard.note, fmt.Sprintf("its %d commit(s) are on no branch of origin, but origin's main already holds what they change — merged as a squash — so releasing loses nothing", w.unpushed))
-		w.unpushed = 0
-	}
-	return guard, w, nil
 }
 
 // branchReleaseRefusal is the refusal of a branch's release, nil when every
