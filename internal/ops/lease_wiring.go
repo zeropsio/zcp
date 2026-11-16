@@ -528,13 +528,12 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: lostLeaseNote(alias, v.why, "sent it no overlay "+why)}, true
 		case v.own == leaseUnverified:
 			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s; %s sends it once its pool's orchestrator answers", alias, why, v.why, resendCall(alias, nil))}, true
+		case parkedContainer(v.container):
+			// Nothing answers on a parked lease; its unpark sends it the
+			// overlay the records then give (DP-28).
+			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("%s is parked, so zcp sent it no overlay %s; %s sends it the branch's overlay as it then stands", alias, why, LeaseUnparkCall(alias))}, true
 		default:
 			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, d.previewURLs(ctx), rec, without, why)
-			if len(outcomes[i].r.Restarted) > 0 || len(outcomes[i].r.Pending) > 0 {
-				// Its servers restarted under the new overlay: what they are
-				// now is its last-known for every envelope.
-				acquiredDevServers(ctx, d, rec, false)
-			}
 		}
 	})
 	var out []LeaseRewire
@@ -558,12 +557,6 @@ func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, previewU
 	alias := rec.alias()
 	r = LeaseRewire{Alias: alias}
 	defer func() { r.Millis = time.Since(start).Milliseconds() }()
-	if rec.Parked {
-		// Nothing answers on a parked lease; its unpark sends it the overlay
-		// the records then give (DP-28).
-		r.Note = fmt.Sprintf("%s is parked, so zcp sent it no overlay %s; %s sends it the branch's overlay as it then stands", alias, why, LeaseUnparkCall(alias))
-		return r, true
-	}
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
 	var noSup *NoSupervisorError
 	var unresponsive *SupervisorUnresponsiveError

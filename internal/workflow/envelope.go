@@ -94,12 +94,13 @@ type LeaseSnapshot struct {
 	// docs/spec-mate.md §2.8a.3).
 	Part  string `json:"part,omitempty"`
 	Stage string `json:"stage,omitempty"`
-	// DevServers is what the lease's supervisor last reported — fresh on a
-	// call that read it (zerops_dev_server on the alias, an acquire), keyed
-	// by alias the way a dev service's devServers[] is keyed by its hostname
-	// (WithParts), otherwise the last-known read from zcp's lease record —
-	// and DevServersReadAt when that read was (RFC 3339, UTC); both absent
-	// while no zcp call has read it.
+	// DevServers is what the lease's supervisor reported to this call —
+	// only a call that read it (zerops_dev_server on the alias, keyed by alias
+	// the way a dev service's devServers[] is keyed by its hostname
+	// (WithParts); an acquire, WithLeaseActivity) — and DevServersReadAt when
+	// that read was (RFC 3339, UTC); both absent when this call did not read
+	// it, never "none". zcp keeps no last-known read: the client keeps the
+	// last one it was told (docs/spec-mate.md §2.8a.3).
 	DevServers       []topology.DevServerState `json:"devServers,omitempty"`
 	DevServersReadAt string                    `json:"devServersReadAt,omitempty"`
 	// Activity and Unsaved are what a zerops_lease call read of the lease's
@@ -109,12 +110,11 @@ type LeaseSnapshot struct {
 	// reader sets.
 	Activity *topology.LeaseActivity `json:"activity,omitempty"`
 	Unsaved  *topology.LeaseUnsaved  `json:"unsaved,omitempty"`
-	// NotAnswering is why the last zcp call that ran a command in the lease's
+	// NotAnswering is why a zerops_lease status call's read of the lease's
 	// container found it not answering — its process limit, or ssh not
-	// reaching it — as zcp's lease record keeps it until a later call reaches
-	// the container again; absent when that call reached it, or none ran.
-	// ComputeEnvelope takes it from the record on every envelope, never from
-	// an ssh read of its own (docs/spec-mate.md §2.8a.3).
+	// reaching it — only on that call (WithLeaseActivity); absent when it
+	// answered or was not read. zcp keeps no last-known one
+	// (docs/spec-mate.md §2.8a.3).
 	NotAnswering string `json:"notAnswering,omitempty"`
 }
 

@@ -237,10 +237,7 @@ type LeaseView struct {
 	// (DP-17): a client binds nothing to it.
 	Reused     bool   `json:"reused,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
-	// ParkedAt is when zcp parked the lease (RFC 3339, UTC), on a view in
-	// state parked whose record says so (DP-28).
-	ParkedAt string `json:"parkedAt,omitempty"`
-	Note     string `json:"note,omitempty"`
+	Note       string `json:"note,omitempty"`
 	// Error is why a release of the lease's branch could not release this
 	// lease, which stays held and recorded (DP-23); "" on every other view.
 	Error string `json:"error,omitempty"`
@@ -706,9 +703,6 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 				v.State = LeaseStateUnmounted
 				v.Note = gap
 			}
-			if r.Parked {
-				v.Note = joinNotes(v.Note, startedSinceParkedNote(r.alias()))
-			}
 		}
 		if e.own == leaseUnverified {
 			// The orchestrator did not answer whose it is: nothing is read
@@ -891,7 +885,15 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 // leaseRecord is zcp's own record of a lease it holds
 // (.zcp/state/leases/<alias>.json, mode 0600). The orchestrator is the truth
 // for the lease; the record carries the secret and what zcp needs to find its
-// own leases again. It is never a ServiceMeta.
+// own leases again, and nothing that changes while the lease is held: whether
+// it is parked is the orchestrator's (parkedContainer), whether its checkout
+// finished the container's (leaseCheckoutState), its dev servers its
+// supervisor's. Its identity fields — the container's hostname and stable
+// number, the base a branch was cut from, acquiredAt, the pool's service id —
+// are kept because they never change for the lease and the orchestrator
+// cannot give them back. An older record's other fields (parked,
+// checkoutPending, notAnswering, devServers) are ignored when decoded and
+// never written again. It is never a ServiceMeta.
 type leaseRecord struct {
 	PoolHostname      string `json:"poolHostname"`
 	PoolServiceID     string `json:"poolServiceId"`
@@ -913,33 +915,6 @@ type leaseRecord struct {
 	// the container number; 0 when the session had none, or in an older
 	// record.
 	StableNumber int `json:"stableNumber,omitempty"`
-	// CheckoutPending: the acquire that wrote the record had not yet put the
-	// branch in the container — written with the record, cleared once the
-	// checkout finished. A record still marked (zcp died mid-checkout, or a
-	// failed checkout's hand-back was refused) is never answered reused
-	// (heldLease): its /var/www may be empty, half fetched or a warm clone
-	// at origin/main. An older record never marks it.
-	CheckoutPending bool `json:"checkoutPending,omitempty"`
-	// Parked: zcp stopped the lease's container with its lease and keeps it
-	// (DP-28), since ParkedAt (RFC 3339, UTC). Dev servers, deploy, verify,
-	// sync and zcp init read only records, so the record says it.
-	Parked   bool   `json:"parked,omitempty"`
-	ParkedAt string `json:"parkedAt,omitempty"`
-	// NotAnswering is why the last call that ran a command in the lease's
-	// container over ssh found it not answering (leaseNotAnswering), since
-	// NotAnsweringSince (RFC 3339, UTC); both "" once a later call reached it
-	// again (noteLeaseAnswer). Every envelope's leases[] carries the reason
-	// from here, never from an ssh read of its own (docs/spec-mate.md §2.8a.3).
-	NotAnswering      string `json:"notAnswering,omitempty"`
-	NotAnsweringSince string `json:"notAnsweringSince,omitempty"`
-	// DevServers are the lease's dev servers as the last zcp call that read
-	// its supervisor found them — an acquire, a rewire's restarts, a sync's
-	// take, zerops_dev_server — read at DevServersReadAt (RFC 3339, UTC)
-	// (NoteLeaseDevServers). Every envelope's leases[] carries them as the
-	// lease's last-known ones (docs/spec-mate.md §2.8a.3); they go with the
-	// record.
-	DevServers       []topology.DevServerState `json:"devServers,omitempty"`
-	DevServersReadAt string                    `json:"devServersReadAt,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }
@@ -1201,7 +1176,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		}
 		guard.lost, guard.note = again.lost, joinNotes(guard.note, again.note)
 	}
-	view, err := releaseGuarded(ctx, d, rec, guard)
+	view, err := releaseGuarded(ctx, d, rec, guard, parkedContainer(verdict.container))
 	if err != nil {
 		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, handBackOverlay(ctx, d, rec, siblings, rewired, err))
 	}
@@ -1245,7 +1220,9 @@ func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) 
 // this lease is dropped as lost, released nothing (dropLostLease). The
 // guard's note leads the view's. It is the one release step of a lease, alone
 // or as a member of its branch's release (DP-23).
-func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult) (LeaseView, error) {
+// parked is whether the orchestrator listed the lease's container stopped
+// when the release asked it (parkedContainer).
+func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult, parked bool) (LeaseView, error) {
 	var view LeaseView
 	var err error
 	if guard.lost != "" {
@@ -1256,7 +1233,7 @@ func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard lea
 	if err != nil {
 		return LeaseView{}, err
 	}
-	view.Note = joinNotes(guard.note, view.Note, releasedParkedNote(rec, guard, view))
+	view.Note = joinNotes(guard.note, view.Note, releasedParkedNote(parked, guard, view))
 	return view, nil
 }
 

@@ -178,11 +178,6 @@ func TestLeaseUnpark_PoolWithoutHTTPPort_ChangesNoContainer(t *testing.T) {
 func TestLeaseUnpark_RunningUnparkedLease_ChangesNoContainer(t *testing.T) {
 	t.Parallel()
 	pf, orch := newRerouteFixture(t, 3, previewPorts)
-	rec := pf.record(t)
-	rec.Parked, rec.ParkedAt = false, ""
-	if err := writeLeaseRecord(pf.stateDir, rec); err != nil {
-		t.Fatal(err)
-	}
 	orch.find("c-3").c.Status = platform.SwarmContainerActive
 	orch.add(4, "", true, false, 1)
 
@@ -221,11 +216,6 @@ func TestLeasePark_PublicPool_FullNoneFree_SaysItsPreviewWillNotAnswer(t *testin
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			pf, orch := newRerouteFixture(t, tt.max, tt.ports)
-			rec := pf.record(t)
-			rec.Parked, rec.ParkedAt = false, ""
-			if err := writeLeaseRecord(pf.stateDir, rec); err != nil {
-				t.Fatal(err)
-			}
 			orch.find("c-3").c.Status = platform.SwarmContainerActive
 			pf.mounter.states["/var/www/devpool-3"] = platform.MountStateActive
 			orch.add(4, tt.otherLock, true, false, 1)
@@ -234,7 +224,7 @@ func TestLeasePark_PublicPool_FullNoneFree_SaysItsPreviewWillNotAnswer(t *testin
 			if err != nil {
 				t.Fatalf("LeasePark: %v", err)
 			}
-			if v.State != LeaseStateParked || !pf.record(t).Parked {
+			if v.State != LeaseStateParked {
 				t.Fatalf("view = %+v, want the lease parked: a full pool never refuses the park", v)
 			}
 			if _, status, _ := orch.state("c-3"); status != platform.SwarmContainerStopped {

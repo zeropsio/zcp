@@ -20,8 +20,10 @@ type LeaseTargetInfo struct {
 	// Repo is the canonical repository the lease checked out, "" when its
 	// record predates keeping it.
 	Repo string
-	// Parked: zcp's record says the lease is parked — its container stopped
-	// and kept (DP-28) — so nothing answers on it until an unpark.
+	// Parked: the pool's orchestrator lists the lease's container stopped
+	// (or stopping, or starting) and reserved (DP-28), so nothing answers on
+	// it until an unpark. Only LeaseTargetChecked asks it; LeaseTarget, which
+	// reads zcp's records alone, never knows it and leaves it false.
 	Parked bool
 	// StableNumber is the container's ZEROPS_StableNumber as the checkout
 	// read it, 0 when the record does not know it.
@@ -40,7 +42,6 @@ func (r leaseRecord) targetInfo() LeaseTargetInfo {
 		ContainerHostname: r.ContainerHostname,
 		Branch:            r.Branch,
 		Repo:              r.Repo,
-		Parked:            r.Parked,
 		StableNumber:      r.StableNumber,
 		AcquiredAt:        r.AcquiredAt,
 	}
@@ -87,7 +88,7 @@ func leaseTargetRecord(stateDir, host string) (leaseRecord, bool, error) {
 // orchestrator wired), is refused with why; either way nothing reaches the
 // container. what is what the call would have done with it ("verified",
 // "deployed from", …). A lease the orchestrator gives zcp is returned parked
-// when its record says so or its container is stopped (DP-28). ok is false
+// when it lists its container stopped (DP-28). ok is false
 // when host is no lease zcp holds.
 func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (LeaseTargetInfo, bool, error) {
 	if d.StateDir == "" || !isLeaseAliasShape(host) {
@@ -118,7 +119,7 @@ func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (Le
 		case v.own == leaseUnverified:
 			return info, true, unverifiedLeaseRefusal(host, what, v)
 		}
-		info.Parked = info.Parked || parkedContainer(v.container)
+		info.Parked = parkedContainer(v.container)
 		return info, true, nil
 	}
 	return LeaseTargetInfo{}, false, nil

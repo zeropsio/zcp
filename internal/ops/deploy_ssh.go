@@ -221,10 +221,6 @@ func DeploySSHFromListing(
 	}
 	var leaseSource *LeaseTargetInfo
 	if isLease {
-		if lease.Parked {
-			// Nothing answers on a parked lease (DP-28).
-			return nil, LeaseParkedError(lease, "a deploy from it")
-		}
 		leaseSource = &lease
 	}
 

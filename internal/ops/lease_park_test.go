@@ -103,15 +103,14 @@ type parkFixture struct {
 	ssh *parkSSH
 }
 
-// newParkFixture holds devpool-3 parked (its record says so, its container
-// is stopped and it is not mounted) or held (running and mounted).
+// newParkFixture holds devpool-3 parked (its container stopped and reserved,
+// not mounted) or held (running and mounted).
 func newParkFixture(t *testing.T, parked bool) *parkFixture {
 	t.Helper()
 	hf := newHostFixture(t)
 	recordLeaseAt(t, hf.stateDir, testPoolHost, "svc-pool", 3, "feat-x", testRepo, parkNow.Add(-48*time.Hour))
 	c := reservedContainer("c-3", 3)
 	if parked {
-		markParked(t, hf.stateDir, "devpool-3", parkNow.Add(-time.Hour))
 		c.Status = platform.SwarmContainerStopped
 	} else {
 		hf.mounter.states["/var/www/devpool-3"] = platform.MountStateActive
@@ -151,17 +150,17 @@ func (pf *parkFixture) release(t *testing.T, force bool) (LeaseView, error) {
 	return view, err
 }
 
-// markParked rewrites alias's record parked since at.
-func markParked(t *testing.T, stateDir, alias string, at time.Time) {
+// markParked stops alias's container on its pool's orchestrator o, its
+// reservation kept: parked, as only the orchestrator says (DP-28).
+func markParked(t *testing.T, o *poolOrch, stateDir, alias string) {
 	t.Helper()
 	rec, err := loadLeaseRecord(stateDir, alias)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec.Parked, rec.ParkedAt = true, at.UTC().Format(time.RFC3339)
-	if err := writeLeaseRecord(stateDir, rec); err != nil {
-		t.Fatal(err)
-	}
+	c := o.get(rec.ContainerID)
+	c.Status = platform.SwarmContainerStopped
+	o.put(c, rec.Lease)
 }
 
 // poolLeaseView is alias's view in a status of testPoolHost.
@@ -178,15 +177,6 @@ func poolLeaseView(t *testing.T, d LeaseDeps, alias string) LeaseView {
 	}
 	t.Fatalf("leases = %+v, want %s", status.Leases, alias)
 	return LeaseView{}
-}
-
-func (pf *parkFixture) record(t *testing.T) leaseRecord {
-	t.Helper()
-	rec, err := loadLeaseRecord(pf.stateDir, "devpool-3")
-	if err != nil {
-		t.Fatalf("devpool-3's record: %v", err)
-	}
-	return rec
 }
 
 // orderOf is each named event's first index in events, -1 when absent.
@@ -236,12 +226,8 @@ func TestLeasePark_UnmountsThenStopsWithItsLease(t *testing.T) {
 	if hosts := pf.ssh.sentTo(); len(hosts) != 0 {
 		t.Errorf("park sent ssh to %v; it needs none", hosts)
 	}
-	rec := pf.record(t)
-	if !rec.Parked || rec.ParkedAt != parkNow.Format(time.RFC3339) {
-		t.Errorf("record parked %v since %q, want parked since %s", rec.Parked, rec.ParkedAt, parkNow.Format(time.RFC3339))
-	}
-	if v.State != LeaseStateParked || v.ParkedAt != parkNow.Format(time.RFC3339) {
-		t.Errorf("view = %+v, want state parked since %s", v, parkNow.Format(time.RFC3339))
+	if v.State != LeaseStateParked {
+		t.Errorf("view = %+v, want state parked", v)
 	}
 	for _, want := range []string{"zerops_lease action=unpark lease=devpool-3", "/var/www and $HOME", "an Ubuntu base empties /tmp", "unmounted"} {
 		if !strings.Contains(v.Note, want) {
@@ -280,9 +266,6 @@ func TestLeasePark_UnmountFails_NothingStopped(t *testing.T) {
 	if len(pf.swarm.stops) != 0 {
 		t.Errorf("stops = %+v, want none", pf.swarm.stops)
 	}
-	if pf.record(t).Parked {
-		t.Error("the record says parked after a refused park")
-	}
 }
 
 // TestLeasePark_StopRefused_StaysHeldAndMounted: a stop the orchestrator
@@ -305,9 +288,6 @@ func TestLeasePark_StopRefused_StaysHeldAndMounted(t *testing.T) {
 	}
 	if pf.mounter.states["/var/www/devpool-3"] != platform.MountStateActive {
 		t.Error("the mount was not put back after the refused stop")
-	}
-	if pf.record(t).Parked {
-		t.Error("the record says parked after a refused stop")
 	}
 }
 
@@ -364,8 +344,8 @@ func TestLeasePark_AlreadyStopped_RecordsWithoutAStop(t *testing.T) {
 	if len(pf.swarm.stops) != 0 {
 		t.Errorf("stops = %+v, want none for a stopped container", pf.swarm.stops)
 	}
-	if !pf.record(t).Parked || v.State != LeaseStateParked || !strings.Contains(v.Note, "stopped already") {
-		t.Errorf("view = %+v, record parked %v: want it recorded parked, saying it was stopped already", v, pf.record(t).Parked)
+	if v.State != LeaseStateParked || !strings.Contains(v.Note, "stopped already") {
+		t.Errorf("view = %+v: want it parked, saying it was stopped already", v)
 	}
 }
 
@@ -416,10 +396,7 @@ func TestLeaseUnpark_StartsWaitsForSSHMountsAndSupervises(t *testing.T) {
 			if pf.mounter.states["/var/www/devpool-3"] != platform.MountStateActive {
 				t.Error("/var/www/devpool-3 is not mounted")
 			}
-			if rec := pf.record(t); rec.Parked || rec.ParkedAt != "" {
-				t.Errorf("record parked %v since %q, want it running", rec.Parked, rec.ParkedAt)
-			}
-			if v.State != LeaseStateHeld || v.ParkedAt != "" || v.Note != "" {
+			if v.State != LeaseStateHeld || v.Note != "" {
 				t.Errorf("view = %+v, want a plain held lease", v)
 			}
 		})
@@ -466,9 +443,6 @@ func TestLeaseUnpark_SSHNeverAnswers_RunsUnmountedWithNote(t *testing.T) {
 	if slices.Contains(pf.events, "mount") || slices.Contains(pf.events, "supervisor") {
 		t.Errorf("events = %v: nothing is mounted or supervised before ssh answers", pf.events)
 	}
-	if pf.record(t).Parked {
-		t.Error("the record still says parked though the container runs")
-	}
 }
 
 // TestLeaseUnpark_StartRefused_StaysParked: a start the orchestrator refuses
@@ -482,8 +456,8 @@ func TestLeaseUnpark_StartRefused_StaysParked(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not start the container") {
 		t.Fatalf("err = %v, want the orchestrator's refusal", err)
 	}
-	if !pf.record(t).Parked || slices.Contains(pf.events, "mount") {
-		t.Errorf("record parked %v, events %v: want it still parked and unmounted", pf.record(t).Parked, pf.events)
+	if slices.Contains(pf.events, "mount") {
+		t.Errorf("events %v: want it still unmounted", pf.events)
 	}
 }
 
@@ -518,24 +492,18 @@ func TestLeaseUnpark_RunningLease_StartsNothingRestoresTheRest(t *testing.T) {
 // nothing.
 func TestLeaseStatus_StoppedReservedIsParked(t *testing.T) {
 	t.Parallel()
-	parkedAt := parkNow.Add(-time.Hour).Format(time.RFC3339)
 	for _, tt := range []struct {
 		name         string
 		parked       bool
 		status, lock string
 		wantState    string
-		wantParkedAt string
 		want         []string
 		banned       []string
 	}{
-		{name: "parked by zcp", parked: true, status: "STOPPED", lock: "reserved", wantState: LeaseStateParked, wantParkedAt: parkedAt,
+		{name: "stopped and reserved", parked: true, status: "STOPPED", lock: "reserved", wantState: LeaseStateParked,
 			want: []string{"parked", "zerops_lease action=unpark lease=devpool-3"}, banned: []string{"zcp init restores"}},
-		{name: "stopped outside zcp", status: "STOPPED", lock: "reserved", wantState: LeaseStateParked,
-			want: []string{"did not park it", "zerops_lease action=unpark lease=devpool-3"}},
-		{name: "being stopped", parked: true, status: "ACTIVE", lock: "stopping", wantState: LeaseStateParked, wantParkedAt: parkedAt,
+		{name: "being stopped", parked: true, status: "ACTIVE", lock: "stopping", wantState: LeaseStateParked,
 			want: []string{"stopping its container right now"}},
-		{name: "parked, then started outside zcp", parked: true, status: "ACTIVE", lock: "reserved", wantState: LeaseStateUnmounted,
-			want: []string{"runs again (started outside zcp)", "zerops_lease action=unpark lease=devpool-3"}},
 		{name: "parked, then released elsewhere", parked: true, status: "STOPPED", lock: "", wantState: LeaseStateLost},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -547,8 +515,8 @@ func TestLeaseStatus_StoppedReservedIsParked(t *testing.T) {
 
 			v := poolLeaseView(t, pf.deps, "devpool-3")
 
-			if v.State != tt.wantState || v.ParkedAt != tt.wantParkedAt {
-				t.Errorf("view = %+v, want state %s parked at %q", v, tt.wantState, tt.wantParkedAt)
+			if v.State != tt.wantState {
+				t.Errorf("view = %+v, want state %s", v, tt.wantState)
 			}
 			for _, want := range tt.want {
 				if !strings.Contains(v.Note, want) {
@@ -564,24 +532,6 @@ func TestLeaseStatus_StoppedReservedIsParked(t *testing.T) {
 				t.Errorf("status changed the pool: stops %+v starts %+v releases %+v", pf.swarm.stops, pf.swarm.starts, pf.swarm.releases)
 			}
 		})
-	}
-}
-
-// TestLeaseStatus_UnreadPool_ParkedRecordStaysParked: when the pool's
-// orchestrator cannot be read, a lease zcp's record says is parked is listed
-// parked, unverified.
-func TestLeaseStatus_UnreadPool_ParkedRecordStaysParked(t *testing.T) {
-	t.Parallel()
-	pf := newParkFixture(t, true)
-	pf.swarm.listErr = errors.New("connection refused")
-	pf.deps.SSH = nil
-
-	status, err := LeaseStatus(context.Background(), pf.deps, "")
-	if err != nil {
-		t.Fatalf("LeaseStatus: %v", err)
-	}
-	if len(status.Leases) != 1 || status.Leases[0].State != LeaseStateParked || !status.Leases[0].Unverified || status.Leases[0].ParkedAt == "" {
-		t.Errorf("leases = %+v, want devpool-3 parked, unverified, with its parkedAt", status.Leases)
 	}
 }
 
@@ -615,16 +565,15 @@ func TestLeaseRelease_Parked_StartsThenGuards(t *testing.T) {
 func TestLeaseRelease_Parked_RefusedThenStoppedAgain(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name       string
-		porcelain  string
-		unready    int
-		stopErr    error
-		wantParked bool
-		want       []string
+		name      string
+		porcelain string
+		unready   int
+		stopErr   error
+		want      []string
 	}{
-		{name: "the guard finds unsaved work", porcelain: " M src/App.tsx\n", wantParked: true,
+		{name: "the guard finds unsaved work", porcelain: " M src/App.tsx\n",
 			want: []string{"src/App.tsx", "stays parked"}},
-		{name: "its ssh never answers", unready: 1 << 30, wantParked: true,
+		{name: "its ssh never answers", unready: 1 << 30,
 			want: []string{"did not answer ssh", "stays parked"}},
 		{name: "the stop again is refused", porcelain: " M src/App.tsx\n",
 			stopErr: &platform.SwarmError{Status: 400, Code: "containerAction", Message: "the container has work in progress"},
@@ -652,9 +601,6 @@ func TestLeaseRelease_Parked_RefusedThenStoppedAgain(t *testing.T) {
 			if len(pf.swarm.releases) != 0 {
 				t.Errorf("releases = %+v, want none", pf.swarm.releases)
 			}
-			if got := pf.record(t).Parked; got != tt.wantParked {
-				t.Errorf("record parked = %v, want %v", got, tt.wantParked)
-			}
 		})
 	}
 }
@@ -678,7 +624,7 @@ func TestLeaseRelease_Parked_StartRefused_NothingReleased(t *testing.T) {
 	if !strings.Contains(pe.Suggestion, "zerops_lease action=unpark lease=devpool-3") || !strings.Contains(pe.Suggestion, "force=true") {
 		t.Errorf("suggestion %q should name the unpark and the forced release", pe.Suggestion)
 	}
-	if slices.Contains(pf.events, "guard") || len(pf.swarm.releases)+len(pf.swarm.stops) != 0 || !pf.record(t).Parked {
+	if slices.Contains(pf.events, "guard") || len(pf.swarm.releases)+len(pf.swarm.stops) != 0 {
 		t.Errorf("events %v, releases %+v, stops %+v: want nothing read, released or stopped, and the lease still parked", pf.events, pf.swarm.releases, pf.swarm.stops)
 	}
 }
@@ -727,9 +673,6 @@ func TestLeaseReleaseGroup_ParkedMember_StartedAndStoppedAgainOnRefusal(t *testi
 	gf.web.mu.Unlock()
 	if want := []string{"STOPPED c-webpool-7", "ACTIVE c-webpool-7", "STOPPED c-webpool-7"}; !slices.Equal(powers, want) {
 		t.Errorf("webpool stops and starts = %v, want %v (park, start for the guard, stop again)", powers, want)
-	}
-	if rec := gf.records(t)["webpool-7"]; !rec.Parked {
-		t.Errorf("webpool-7's record = %+v, want it still parked", rec)
 	}
 }
 
@@ -795,7 +738,7 @@ func TestLeaseSync_ParkedLease_RefusedOrNamedParked(t *testing.T) {
 	t.Run("the source", func(t *testing.T) {
 		t.Parallel()
 		gf, remote := newSyncFixture(t, syncBranch)
-		markParked(t, gf.stateDir, "hqpool-3", parkNow)
+		markParked(t, gf.hq, gf.stateDir, "hqpool-3")
 
 		_, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 		var pe *platform.PlatformError
@@ -810,7 +753,7 @@ func TestLeaseSync_ParkedLease_RefusedOrNamedParked(t *testing.T) {
 	t.Run("a member", func(t *testing.T) {
 		t.Parallel()
 		gf, remote := newSyncFixture(t, syncBranch)
-		markParked(t, gf.stateDir, "webpool-7", parkNow)
+		markParked(t, gf.web, gf.stateDir, "webpool-7")
 
 		v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 		if err != nil {

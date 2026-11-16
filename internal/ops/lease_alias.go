@@ -145,24 +145,20 @@ func InstallLeaseAliases(ctx context.Context, run CommandRunner, stateDir, dest 
 }
 
 // LeaseMounts lists, sorted, the aliases of the lease records in stateDir
-// that `zcp init` remounts after a redeploy, and apart the parked ones it
-// leaves unmounted: a parked lease's container is stopped, and a mount of it
-// would hang whatever reads it (DP-28).
-func LeaseMounts(stateDir string) (mount, parked []string, err error) {
+// that `zcp init` remounts after a redeploy once the orchestrator vouches for
+// each: one it lists stopped is parked and left unmounted, since a mount of a
+// stopped container hangs whatever reads it (DP-28; LeaseTargetChecked).
+func LeaseMounts(stateDir string) ([]string, error) {
 	records, err := readLeaseRecords(stateDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	mount := make([]string, 0, len(records))
 	for _, r := range records {
-		if r.Parked {
-			parked = append(parked, r.alias())
-			continue
-		}
 		mount = append(mount, r.alias())
 	}
 	slices.Sort(mount)
-	slices.Sort(parked)
-	return mount, parked, nil
+	return mount, nil
 }
 
 // aliasInstalled reports whether the alias file holds a stanza for alias.

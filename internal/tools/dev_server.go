@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -211,12 +210,6 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		var states []topology.DevServerState
 		if d.CarriesParts || result.Pool != "" {
 			states = ops.DevServerStates(ctx, client, projectID, result)
-		}
-		if result.Pool != "" && result.Read != nil {
-			// A lease's dev servers as this call read them are its
-			// last-known ones for every later envelope (docs/spec-mate.md
-			// §2.8a.3).
-			ops.NoteLeaseDevServers(stateDir, input.Hostname, states, time.Now())
 		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {

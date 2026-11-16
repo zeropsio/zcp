@@ -1390,7 +1390,7 @@ func (of *ownFixture) reacquireHQOn(t *testing.T, branch string) {
 		t.Errorf("the other process reads the record: %v", err)
 		return
 	}
-	rec.Lease, rec.Branch, rec.Parked, rec.ParkedAt = ownNewLease, branch, false, ""
+	rec.Lease, rec.Branch = ownNewLease, branch
 	if err := writeLeaseRecord(of.stateDir, rec); err != nil {
 		t.Errorf("the other process writes its record: %v", err)
 	}

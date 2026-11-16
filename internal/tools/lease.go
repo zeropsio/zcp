@@ -505,14 +505,15 @@ func joinNext(parts ...string) string {
 	return strings.Join(kept, " ")
 }
 
-// leaseReads is what a call read of each lease's checkout, keyed by alias, for
-// the envelope (workflow.WithLeaseActivity): a view that carries no activity
-// and no unsaved work was not read and is left out.
+// leaseReads is what a call read of each lease, keyed by alias, for the
+// envelope (workflow.WithLeaseActivity): its checkout's activity and unsaved
+// work, the dev servers an acquire read, and why its container did not answer;
+// a view that carries none of them was not read and is left out.
 func leaseReads(views []ops.LeaseView) map[string]workflow.LeaseRead {
 	reads := map[string]workflow.LeaseRead{}
 	for _, v := range views {
-		if v.Activity != nil || v.Unsaved != nil {
-			reads[v.Alias] = workflow.LeaseRead{Activity: v.Activity, Unsaved: v.Unsaved}
+		if v.Activity != nil || v.Unsaved != nil || v.DevServers != nil || v.NotAnswering != "" {
+			reads[v.Alias] = workflow.LeaseRead{Activity: v.Activity, Unsaved: v.Unsaved, DevServers: v.DevServers, NotAnswering: v.NotAnswering}
 		}
 	}
 	return reads

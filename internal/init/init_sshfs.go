@@ -105,9 +105,9 @@ func (o options) restoreLeaseStep(string, runtime.Info) error {
 // lease may have ended outside zcp meanwhile and the pool handed its
 // container to another holder, so before a lease is mounted check asks its
 // orchestrator whether the container is still the lease's (DP-2) — every
-// lease at once, within leaseCheckTimeout. Ours is mounted; one whose record
-// says parked (not asked) or whose container the orchestrator answers stopped
-// keeps its alias and is not mounted (DP-28): its unpark mounts it. A lost
+// lease at once, within leaseCheckTimeout. Ours is mounted; one whose
+// container the orchestrator answers stopped keeps its alias and is not
+// mounted (DP-28): its unpark mounts it. A lost
 // lease is not mounted and is printed with the release that drops its record;
 // one the orchestrator does not answer about — or that init cannot ask, with
 // no check or no API client — is not mounted and is printed with why and the
@@ -119,12 +119,12 @@ func restoreLeases(check LeaseCheck) {
 	if stateDir == "" {
 		return
 	}
-	aliases, parked, err := ops.LeaseMounts(stateDir)
+	aliases, err := ops.LeaseMounts(stateDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ! lease records: %v\n    (continuing — leases stay unmounted)\n", err)
 		return
 	}
-	if len(aliases) == 0 && len(parked) == 0 {
+	if len(aliases) == 0 {
 		return
 	}
 	run := func(_ context.Context, name string, args ...string) error { return commandRunner(name, args...) }
@@ -132,9 +132,6 @@ func restoreLeases(check LeaseCheck) {
 		// A mount whose alias does not resolve cannot work: skip them all.
 		fmt.Fprintf(os.Stderr, "  ! lease aliases: %v\n    (continuing — leases stay unmounted)\n", err)
 		return
-	}
-	for _, alias := range parked {
-		printParkedLease(alias)
 	}
 	for i, v := range askLeases(stateDir, aliases, check) {
 		alias := aliases[i]

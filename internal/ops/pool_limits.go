@@ -311,15 +311,13 @@ type LeaseStatusView struct {
 }
 
 // unverifiedViews are zcp's records of a pool its orchestrator could not
-// confirm: the last known state (held — a record is written only by a
-// successful acquire), marked unverified, with why.
+// confirm: held — a record is written only by a successful acquire, and keeps
+// no state that changes after it, parked included — marked unverified, with
+// why.
 func unverifiedViews(records []leaseRecord, why string) []LeaseView {
 	views := make([]LeaseView, 0, len(records))
 	for _, r := range records {
 		v := r.view(LeaseStateHeld)
-		if r.Parked {
-			v.State, v.ParkedAt = LeaseStateParked, r.ParkedAt
-		}
 		v.AcquiredAt = r.AcquiredAt
 		v.Unverified = true
 		v.Note = "zcp's own record, unconfirmed: " + why
