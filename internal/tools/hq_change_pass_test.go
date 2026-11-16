@@ -452,7 +452,7 @@ func TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause(t *testing.T) {
 
 	pe := refusalOf(t, named)
 	for _, want := range []string{"HQ brought main into #6 after #5 merged",
-		"`ssh hqpool-4 \"cd /var/www && git fetch origin && git merge --no-edit origin/mate-test-badge\"`",
+		"`zcp git hqpool-4 fetch origin`, then `zcp git hqpool-4 merge --no-edit origin/mate-test-badge`",
 		"never rebase", ops.LeaseSyncCall("hqpool-4")} {
 		if !strings.Contains(pe.Suggestion, want) {
 			t.Errorf("the refusal's suggestion lacks %q: %s", want, pe.Suggestion)

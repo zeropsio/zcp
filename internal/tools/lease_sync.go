@@ -70,8 +70,8 @@ func corePushSyncRefusal(err error, stateDir, address, alias string, read func()
 			continue
 		}
 		named := *pe
-		named.Suggestion = fmt.Sprintf("HQ brought main into #%d after #%d merged: origin's %s is HQ's merge commit on what this lease had, and %s lacks it. Bring it in over ssh — `ssh %s \"cd /var/www && git fetch origin && git merge --no-edit origin/%s\"`, a fast-forward when the lease has no commits of its own since, a merge otherwise; never rebase, never force-push — then sync again: %s",
-			c.Number, c.CorePush.Landed, l.branch, alias, alias, l.branch, ops.LeaseSyncCall(alias))
+		named.Suggestion = fmt.Sprintf("HQ brought main into #%d after #%d merged: origin's %s is HQ's merge commit on what this lease had, and %s lacks it. Bring it in through zcp, which holds HQ's credential — `zcp git %s fetch origin`, then `zcp git %s merge --no-edit origin/%s`, a fast-forward when the lease has no commits of its own since, a merge otherwise; never rebase, never force-push, never a plain ssh git, which has no credential for HQ and none of the old file contents the checkout leaves on HQ — then sync again: %s",
+			c.Number, c.CorePush.Landed, l.branch, alias, alias, alias, l.branch, ops.LeaseSyncCall(alias))
 		return &named
 	}
 	return err
