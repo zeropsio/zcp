@@ -166,7 +166,7 @@ func TestLease_Integration_FullAndStoppedPools(t *testing.T) {
 		}
 	}
 
-	res = callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "stoppool", "repo": "https://github.com/acme/app"})
+	res = callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "stoppool", "repo": "https://github.com/acme/app", "branch": "feature"})
 	text = getTextContent(t, res)
 	if !res.IsError || !strings.Contains(text, "the pool is stopped") || !strings.Contains(text, "zerops_manage action=start") {
 		t.Errorf("an acquire on a stopped pool should say to start it:\n%s", text)
