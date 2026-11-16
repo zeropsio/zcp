@@ -1854,6 +1854,22 @@ on it and never blocks.
 - Direction: a wire change lands in zcp first with its fixtures; the Mate lane runs the sync and
   lands its decoder (field order above).
 
+
+### 2.8b The birth of a pooled part (B-1…B-5)
+
+A **pooled part** is a part whose development runs in a dev pool: the tier names its pool and its stage, paired by
+name (`<part>pool`, `<part>stage`; only `workflow.ParseMateTier` reads the pairing). Its birth is zcp's (the owner's
+decision, 2026-11-16: birth by commit deploy from zcp). These rows add to contract 2 without a bump: the status
+file's version stays 1, and the verdict is a field an older reader ignores.
+
+| # | The fact | Owned by |
+|---|---|---|
+| B-1 | **Birth by commit deploy.** zcp commit-deploys `main`'s head, as the Mate's HQ holds it when the run reads it, to every pool and stage of a pooled part that has no build, all at once: a new app version named `zcp <sha12>`, the commit's deploy source uploaded to it — the commit fetched from HQ by zcp, what its root `.deployignore` leaves out left out, as HQ's rule for a deploy source says — then build and deploy with the commit's zerops.yaml and the part's setup. A version of the same commit waiting, building, deploying or active is never built twice; one left `UPLOADING` by a cut upload is deleted by the next run and the deploy submitted again. A Zerops call answering 5xx or 429, or not at all, is tried three times, then fails with its last answer and its class. No container holds a checkout for it, no lease is taken and no stage is a checkout host. A pool or stage that has a build is never written; its row is read from the version it runs. After birth the stage is the agent's test bench (`spec-workflows.md` DP-8) | zcp `ops.CommitDeploy`, the stand-up |
+| B-2 | **Who runs it.** zcp's Mate service runs the stand-up at its start in a project that holds a Swarm pool, for the pooled parts only: before the Mate's server launches, a first look bounded to 15 s (the live services, HQ's tier) writes the verdict `building` where a pooled part has no build, so the server never reads a pooled tier without a verdict, and the build then runs beside the server; a tier with no pooled part, nothing to build, a run already going or a first look that failed writes nothing; the agent's `zerops_standup` runs the same stand-up, the classic pairs with it. One run per project at a time: a second — the boot run beside the agent's call, either way round — starts nothing and answers the first's start and its verdict so far | zcp |
+| B-3 | **The application is HQ's answer.** The stand-up takes the application from HQ, never from the Mate server's state file | zcp, HQ |
+| B-4 | **Bearer.** Each pool's bearer reference is written at adoption, before any deploy, by its one writer (`spec-workflows.md` DP-3), and resolves with the pool's first successful build. A pool's row is done only once it resolves; one still unresolved after the run's bounded asks is failed, naming `<pool>_LEASE_TOKEN` | zcp `ops.EnsureBearer` |
+| B-5 | **The verdict.** zcp writes it to the status file's `standup` section as `verdict`: `rows`, one per pool and stage of a pooled part — `hostname`, `kind` (`pool`, `stage`), `commit`, `state` (`building`, `done`, `failed`), `appVersionId`, `processId`, `class` (`unreachable`, `refused`, `failed`), `cause` (the source's own words) and `next` (the row's one next step) — and the `headline`, derived from the rows alone: `failed` when any row failed, `done` when every row is done, `ready` (ready to work: every pool is done, so its leases work) when every pool is, else `building`. A row still building when the run's wait ends is failed as `unreachable`, naming the wait, so a run never ends with a row in flight. The section's `state` follows the headline: `running` while the run lives, then `done` only when the headline is `done` and no classic half failed, else `failed`, its `error` naming every row that is not done. The Mate server reads the verdict as written and never derives a row or the headline itself | zcp `ops.StandupRowOf`, `ops.StandupHeadlineOf`; the Mate server reads |
+
 ---
 
 ### 2.9 Updates in the product — one reader, one verb
@@ -6238,17 +6254,17 @@ The order:
    preview, minutes per build), then give one short line per step, the fallback's included
    (`TestBuildAgentsMD_Container_StandUpRoutesToTheTool`).
    The tool:
-   - reads the Mate's state (§2.8) once and, if applicable, the recipe once under the Mate's key — the
-     server sends the stand-up only once its link is up; the shared client's bounded `503` retries
-     still apply to the recipe read (zcp `internal/tools/standup.go`,
-     `internal/hq/client.go`, `TestStandup_StartsOnlyOnceLinked_AsksHQOnce`);
+   - takes the project's one stand-up (§2.8b B-2) and reads the recipe under the Mate's key, the
+     application from HQ's answer, never from the Mate's state file (§2.8b B-3); an HQ that does not
+     answer is waited on, bounded (2 min, asked every 10 s), and a refusal stops the run at once with
+     HQ's words (zcp `internal/tools/standup.go`, `internal/hq/client.go`);
    - waits, bounded, for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created; it reads the project again at each of the
      project's pushes, a service's or a process's (ZEROPS-079, ZEROPS-078), never on a timer —
      `TestStandup_TheRuntimesAreReadAgainOnlyOnAPush`), and for whatever the import still has in
      flight on them and on the managed services;
    - reads the tier from `main` of the recipe repository of the application HQ holds the Mate in
-     (the Mate's state (§2.8) for the application, `GET /api/mate/recipe/mate` for the tier);
+     (the application as HQ answers it, `GET /api/mate/recipe/mate` for the tier);
    - pairs the runtimes that build from the application's repositories in HQ
      (`<HQ>/git/<orgId>/<appId>/<repo>`), per repository, by zcp's naming —
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named
@@ -6259,8 +6275,7 @@ The order:
      pool (§10.10); a pool is never a container half, and one no stage takes is skipped as `pool`.
      Managed services and public builds are skipped, and so, by name, is a runtime with no partner
      or another application's repository (`workflow.ParseMateTier`). A tier with no pair of either
-     kind is refused, its error naming both kinds and every service with its reason
-     (`TestStandup_ATierOfPoolPairs_RecordsEachPartKeyedByItsPool`).
+     kind is refused, its error naming both kinds and every service with its reason.
      A legacy HTTPS reference whose exact path is `/git/<appId>/<repo>` and names this
      Mate's own application identifies that repository regardless of the HQ host or port
      it names; stand-up reads and wires the repository through the current HQ. Only this
@@ -6281,22 +6296,14 @@ The order:
      on it over no ssh — the HQ record, the remote and `main` as the wiring records them, after the
      same existence check — since a pool holds no checkout of its own and each lease checks its
      branch out from the repository (DP-16). A pool is never waited on as running: it has no
-     container until a lease asks for one. Until a pool has its first image no lease of it works —
-     a Mate's key reads its `API_TOKEN` masked, and a reference to a service never deployed stays
-     its literal text — so the stand-up gives it that image by an ordinary deploy, which takes no
-     pool token: a pool with no image has `main` checked out in its stage, the stage brought up
-     running and empty first when it never ran — a stage never deployed (no deploy attempt, the
-     single recovery classifier's `fresh-misconfigured`) is re-imported from its own tier entry
-     with `startWithoutCode` and `override`, carrying the `envIsolation` and `sshIsolation` the live
-     stage holds; one with any other history is the model's — then mounted, and `main` fetched as HQ
-     holds it now (relayed, nothing stored in the stage; each call fetches afresh); the pool is then
-     cross-deployed from that checkout with its own setup among the dev halves. A stage that already
-     runs a build is never checked out into. The stage itself is not deployed by the stand-up: it
-     deploys from a lease of its pool, as every later stage deploy does (DP-8) — a self-deploy from
-     the checkout it holds is refused unless its setup deploys the whole tree (DM-2). Once the
-     pool's deploy lands, the reference to its token resolves in zcp's live env and its leases work
-     (`TestStandup_APoolWithNoImage_GetsItFromItsStage`);
-   - deploys each half as soon as what it needs stands, at most five at once, over two calls. What
+     container until a lease asks for one. Each pool's bearer reference is written at adoption
+     (§2.8b B-4). The pooled part is then built by commit deploy (§2.8b B-1): the zerops.yaml at
+     `main`'s head must name each service's setup, and every pool and stage with no build takes that
+     commit at once, beside the classic halves' deploys; a pool or stage with a build is never
+     written. Each build's failure carries the process's reason, the version's status and its build
+     log's last lines. Once the builds end, `main` is read again, and a head that moved during the
+     run is said (what was built is the head read at the start, and `main` is ahead of it);
+   - deploys each classic half as soon as what it needs stands, at most five at once, over two calls. What
      orders the halves is what each build reads of the others, read from each half's own setup in
      its pair's zerops.yaml as the recipe writer reads it: a storefront's stage build pre-rendering
      from its API's stage waits for that stage, and nothing else waits. Every dev half starts at
@@ -6320,14 +6327,14 @@ The order:
      `zerops_dev_server` call with the port its dev setup declares (`not started`; `unread` when the
      supervisor did not answer);
    - answers one entry per service: adopted, wired, deployed with its URL, queued, or failed with
-     zcp's failure classification, the dev server's state, and the model's next step. A pool pair's
-     pool says how its first image went and, once it has one, names the lease of the pool on `main`
-     (`zerops_lease action="acquire" pool=<pool> repo=<its repository in HQ> branch="main"`) the
-     part's dev servers run in; its stage names its deploy from that lease
-     (`zerops_deploy sourceService=<alias> targetService=<stage> setup=<stage's setup>`) and its
-     verify. A tier whose every pair the stand-up builds stands — or holds none — with every pool
-     given its image answers `pools-built`, which never reads as a running preview: no such stage is
-     built by the stand-up.
+     zcp's failure classification, the dev server's state, and the model's next step. A pooled
+     part's pool and stage answer their verdict row (§2.8b B-5), its `next` the way on, and the
+     answer's next step follows the headline: `done`, every pooled stage runs `main` and is the
+     Mate's preview; `ready`, the pools lease and a stage that is not built has no preview yet, so
+     nothing tells the person it is up; `building` or `failed`, each row names its state, cause and
+     step, and `zerops_standup` again continues and never builds twice. No lease is named: a lease
+     never holds `main` (`spec-workflows.md` DP-3), and a part's work goes through develop, each
+     branch in a lease of its own.
 8. The model starts the dev servers, verifies, and tells the person development is up, with each dev
     half's address.
 9. It calls `zerops_standup` again in the same turn, which builds the stages and waits for them. A
