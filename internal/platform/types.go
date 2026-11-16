@@ -579,6 +579,10 @@ type AppVersionEvent struct {
 	PublicGitSource *AppVersionGitSource `json:"publicGitSource,omitempty"`
 	Created         string               `json:"created"`
 	LastUpdate      string               `json:"lastUpdate"`
+	// Name is the version's name as created; a commit deploy names its
+	// version by the commit (ops.CommitDeploy). Only the direct read
+	// (ListServiceAppVersions) fills it.
+	Name string `json:"name,omitempty"`
 }
 
 // AppVersionGitSource carries the public git repository an AppVersionEvent
