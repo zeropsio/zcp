@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // warmPoolOrchestrator is a pool orchestrator speaking the live wire shapes
@@ -377,8 +379,14 @@ func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *test
 		}
 		return nil, nil
 	}}
-	srv, _, complete := leaseToolServerSSHWithWait(t, &fakeOrchestrator{}, ssh, func() { close(waitStarted) })
+	srv, stateDir, complete := leaseToolServerSSHWithWait(t, &fakeOrchestrator{}, ssh, func() { close(waitStarted) })
 	wait = complete
+	// The warm clone takes the pool's recorded repository (DP-32).
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "devpool", Mode: topology.PlanModeDev, BootstrapSession: "sess1", BootstrappedAt: "2026-10-23", RemoteURL: leaseTestRepo,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
 	go func() {
 		select {
 		case <-waitStarted:
@@ -395,7 +403,11 @@ func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *test
 	if res.IsError || !strings.Contains(text, "kept as the pool's warm container") {
 		t.Fatalf("release = (error %v) %s, want the container kept as the pool's warm one", res.IsError, text)
 	}
-	<-started
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the forced release started no warm clone within 10 s")
+	}
 }
 
 // TestNoRegisterLeaseInTests: no test of this package registers zerops_lease
