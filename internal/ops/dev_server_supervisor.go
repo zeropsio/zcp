@@ -80,12 +80,17 @@ func (e *NoSupervisorError) Error() string {
 // setup to move onto the supervisor.
 type SupervisorUnresponsiveError struct {
 	Hostname string
-	SSH      bool
+	// SSH is ssh's own failure when the container did not answer over SSH;
+	// nil when SSH answered and the supervisor did not.
+	SSH error
 }
 
+// Unwrap is ssh's failure, so its class reads through (platform.ClassOf).
+func (e *SupervisorUnresponsiveError) Unwrap() error { return e.SSH }
+
 func (e *SupervisorUnresponsiveError) Error() string {
-	if e.SSH {
-		return fmt.Sprintf("%s did not answer over SSH in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale) or restart it (zerops_manage action=restart), then retry.", e.Hostname)
+	if e.SSH != nil {
+		return fmt.Sprintf("%s did not answer over SSH within %s%s: %v. A container out of memory or CPU answers late: zerops_logs and zerops_scale show its load. Then retry.", e.Hostname, devsupCtlTimeout, platform.ClassOf(e.SSH).Note(), e.SSH)
 	}
 	return fmt.Sprintf("The dev-server supervisor on %s is running but did not answer in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale), then retry in a moment.", e.Hostname)
 }
@@ -168,7 +173,7 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	defer cancel()
 	out, err := ssh.ExecSSH(readCtx, hostname, readDevServersCmd(root))
 	if sshTimedOut(ctx, err) {
-		return nil, &SupervisorUnresponsiveError{Hostname: hostname, SSH: true}
+		return nil, &SupervisorUnresponsiveError{Hostname: hostname, SSH: err}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read dev servers on %s: %w", hostname, err)
@@ -481,7 +486,7 @@ func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args .
 	defer cancel()
 	out, err := ssh.ExecSSH(ctlCtx, hostname, cmd)
 	if sshTimedOut(ctx, err) {
-		return devsup.State{}, &SupervisorUnresponsiveError{Hostname: hostname, SSH: true}
+		return devsup.State{}, &SupervisorUnresponsiveError{Hostname: hostname, SSH: err}
 	}
 	if err != nil {
 		return devsup.State{}, fmt.Errorf("zcp-devsup ctl %s on %s: %w", strings.Join(args, " "), hostname, err)

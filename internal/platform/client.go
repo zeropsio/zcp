@@ -1,6 +1,9 @@
 package platform
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // Client is the interface for Zerops API operations.
 // Mocked in tests, real implementation wraps zerops-go SDK.
@@ -165,6 +168,27 @@ type Client interface {
 	// rebuild, no re-import. Both zeropsYaml and setup MUST be supplied —
 	// the platform does not reuse the stored yaml.
 	RedeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error)
+
+	// Commit deploy (ops.CommitDeploy): the three calls HQ makes to build a
+	// commit into a service, and the removal of a version whose upload was
+	// cut.
+	//
+	// CreateAppVersion is POST /service-stack/{id}/app-version {name}: the
+	// new version's id, status UPLOADING.
+	CreateAppVersion(ctx context.Context, serviceID, name string) (string, error)
+	// UploadAppVersion is PUT /app-version/{id}/upload: archive streamed as
+	// application/octet-stream, chunked (a Content-Length upload is accepted
+	// and then fails source preparation, ZEROPS-004), never held whole. It
+	// fails once no byte moved for UploadStall; a read error of archive is
+	// returned as archive gave it.
+	UploadAppVersion(ctx context.Context, appVersionID string, archive io.Reader) error
+	// BuildAndDeployAppVersion is PUT /app-version/{id}/build-and-deploy
+	// {zeropsYaml, zeropsYamlSetup}: the build-and-deploy process.
+	BuildAndDeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error)
+	// DeleteAppVersion is DELETE /app-version/{id}: how a version left
+	// UPLOADING by a cut upload goes (it stays UPLOADING for 14 min and
+	// more, s0b).
+	DeleteAppVersion(ctx context.Context, appVersionID string) error
 
 	// ListOwnTokenDelegations returns the delegations attached to the token
 	// this client authenticates with. Fresh read every call — the platform

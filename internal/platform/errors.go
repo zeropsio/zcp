@@ -440,6 +440,15 @@ func (c ErrorClass) WaitedOn() bool {
 	return c == ClassUnreachable
 }
 
+// Note is the class as a message reads it: " (refused)", or "" while there is
+// none. The one formatter of a class inside a message.
+func (c ErrorClass) Note() string {
+	if c == "" {
+		return ""
+	}
+	return " (" + string(c) + ")"
+}
+
 // ExitStatusError is a command's exit status as an error, for a runner that reads
 // the status from somewhere other than its process (a relayed session's
 // done marker): SSHExitCode reads it as it reads an *exec.ExitError.
@@ -477,10 +486,7 @@ type SSHProbeError struct {
 func (e *SSHProbeError) Class() ErrorClass { return classOfProbe(e.Last) }
 
 func (e *SSHProbeError) Error() string {
-	class := ""
-	if c := e.Class(); c != "" {
-		class = " (" + string(c) + ")"
-	}
+	class := e.Class().Note()
 	if e.Waited > 0 {
 		return fmt.Sprintf("ssh to %s did not answer within %s%s; last: %s", e.Hostname, e.Waited, class, e.Last.Error())
 	}
