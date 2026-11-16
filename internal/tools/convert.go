@@ -73,6 +73,13 @@ func convertError(err error, opts ...ErrorOption) *mcp.CallToolResult {
 		pe = platform.NewPlatformError(platform.ErrUnknown, err.Error(), "")
 	}
 	wire := platformErrorToWire(pe)
+	// The class and the ssh output come from err itself: a plain error
+	// wrapped as ErrUnknown above is not zcp's refusal.
+	wire.Class = platform.ClassOf(err)
+	var sshErr *platform.SSHExecError
+	if wire.Diagnostic == "" && errors.As(err, &sshErr) {
+		wire.Diagnostic = sshErr.Output
+	}
 	for _, opt := range opts {
 		opt(&wire)
 	}

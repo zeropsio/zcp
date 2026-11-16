@@ -36,6 +36,11 @@ type ErrorWire struct {
 	// middleware peeks this key exactly like "code" (spec §5.3).
 	Subcode string `json:"subcode,omitempty"`
 
+	// Class is the failure's one class (platform.ClassOf): whether waiting
+	// can change it — unreachable, refused, failed — empty for an answer zcp
+	// does not classify (an arbitrary command's own exit, passed on as it is).
+	Class platform.ErrorClass `json:"class,omitempty"`
+
 	// Multi-check failures (preflight, verify, mount). Always carries
 	// its kind discriminator so the agent can interpret semantics by
 	// tool family.

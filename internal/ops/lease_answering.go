@@ -26,23 +26,35 @@ const leaseProcessLimitWhy = "it cannot start a new process: the container reach
 // leaseUnreachableWhy is why a container ssh does not reach does not answer.
 const leaseUnreachableWhy = "ssh did not reach the container"
 
+// leaseNoContainerWhy is why a container no ssh connection reaches answers
+// nothing: the connect timed out, so nothing answers the address — no
+// container, or none this service is admitted to — and waiting brings none.
+const leaseNoContainerWhy = "ssh found no container answering the address (the connect timed out)"
+
 // leaseNotAnswering says why the lease's container did not answer a command
-// zcp ran in it over ssh, when err says it did not: its process limit (the
-// output carries fork's EAGAIN), or ssh not reaching it (exit 255); false
-// when err says neither — the command ran and failed on its own.
+// zcp ran in it over ssh, when err's class (platform.ClassOf) says it did not:
+// its process limit (the output carries fork's EAGAIN), ssh not reaching it,
+// or no container answering at all (refused); false when err says neither —
+// the command ran and failed on its own.
 func leaseNotAnswering(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-	var sshErr *platform.SSHExecError
-	if errors.As(err, &sshErr) {
-		out := strings.ToLower(sshErr.Output)
-		if strings.Contains(out, "resource temporarily unavailable") && strings.Contains(out, "fork") {
-			return leaseProcessLimitWhy, true
+	switch platform.ClassOf(err) {
+	case platform.ClassUnreachable:
+		var sshErr *platform.SSHExecError
+		if errors.As(err, &sshErr) {
+			out := strings.ToLower(sshErr.Output)
+			if strings.Contains(out, "resource temporarily unavailable") && strings.Contains(out, "fork") {
+				return leaseProcessLimitWhy, true
+			}
 		}
-	}
-	if exitStatus(err) == leaseSSHUnreachableExit {
-		return leaseUnreachableWhy, true
+		if platform.SSHExitCode(err) >= 0 {
+			return leaseUnreachableWhy, true
+		}
+	case platform.ClassRefused:
+		if platform.SSHExitCode(err) >= 0 {
+			return leaseNoContainerWhy, true
+		}
+	case platform.ClassFailed:
+		// The command ran and failed: the container answered.
 	}
 	return "", false
 }
@@ -58,7 +70,7 @@ func leaseAnswered(err error) bool {
 	if _, silent := leaseNotAnswering(err); silent {
 		return false
 	}
-	return exitStatus(err) >= 0
+	return platform.SSHExitCode(err) >= 0
 }
 
 // noteLeaseAnswer records in rec's record what a call that ran a command in
@@ -97,12 +109,17 @@ func noteLeaseAnswer(stateDir string, rec leaseRecord, err error, now time.Time)
 // leaseNotAnsweringAdvice is what to do about a lease that stopped answering
 // for why: report it up, never wait on it. A container at its process limit
 // does not recover by itself while what fills it runs, and a pool restart
-// restarts every container of it, the other leases' dev servers too.
+// restarts every container of it, the other leases' dev servers too. One no
+// connection reaches (refused) is not there or not admitted: its pool's
+// sshIsolation and the lease's alias are what to check.
 func leaseNotAnsweringAdvice(alias, why string) string {
-	if why == leaseProcessLimitWhy {
+	switch why {
+	case leaseProcessLimitWhy:
 		return fmt.Sprintf("Tell the person now that %s stopped answering, rather than wait on it or retry in a loop: it does not recover by itself while what fills it runs. Restarting its pool restarts every container of it, the other leases' dev servers too", alias)
+	case leaseNoContainerWhy:
+		return fmt.Sprintf("Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows %s's alias and container in place; waiting does not change it, so tell the person", alias)
 	}
-	return fmt.Sprintf("Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows %s's alias and container in place; one that stays unreachable is told to the person, never waited on", alias)
+	return fmt.Sprintf("ssh's own words are in the diagnostic: a container stopping or starting refuses the connection for a few seconds; one that stays unreachable is told to the person, never waited on in a loop (zerops_lease action=status shows %s's container)", alias)
 }
 
 // leaseNotAnsweringError is the refusal of a call that ran nothing in alias's
@@ -113,5 +130,9 @@ func leaseNotAnsweringError(alias, why, notDone string, cause error) *platform.P
 		fmt.Sprintf("Lease %s is not answering — %s — so %s", alias, why, notDone),
 		leaseNotAnsweringAdvice(alias, why))
 	pe.Cause = cause
+	var sshErr *platform.SSHExecError
+	if errors.As(cause, &sshErr) {
+		pe.Diagnostic = sshErr.Output
+	}
 	return pe
 }
