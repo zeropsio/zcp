@@ -236,9 +236,14 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 				cause = "nothing to adopt yet: " + cause
 			}
 			for _, s := range services {
-				if s.pair == sp {
-					rows.set(s.host, func(in *ops.StandupRowInput) { in.Class, in.Cause = sp.failedClass(), cause })
+				if s.pair != sp {
+					continue
 				}
+				own := cause
+				if sp.failedHost != "" && s.host != sp.failedHost {
+					own = fmt.Sprintf("%s waits on %s, which stopped its part: %s", s.host, sp.failedHost, cause)
+				}
+				rows.set(s.host, func(in *ops.StandupRowInput) { in.Class, in.Cause = sp.failedClass(), own })
 			}
 			continue
 		}
