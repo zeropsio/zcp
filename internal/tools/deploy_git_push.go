@@ -65,7 +65,7 @@ func gitPushCheckFailure(err error, out []byte, hostname, what string) *platform
 	case class.WaitedOn():
 		next = fmt.Sprintf("%s did not answer ssh, which may change by waiting: check its status (zerops_discover) and retry once it runs.", hostname)
 	case class == platform.ClassRefused:
-		next = fmt.Sprintf("ssh to %s was refused, and waiting will not change that: read the output above for what refused it.", hostname)
+		next = fmt.Sprintf("ssh did not get into %s, and waiting alone will not change that: the output above names the cause.", hostname)
 	}
 	pe := platform.NewPlatformError(platform.ErrSSHDeployFailed, head+": "+gitPushErrorDetail(err, out), next)
 	var sshErr *platform.SSHExecError
@@ -681,11 +681,13 @@ func handleGitPush(
 		if class := platform.ClassOf(err); class != "" {
 			failed += " (" + string(class) + ")"
 		}
-		return convertError(platform.NewPlatformError(
+		pushErr := platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			failed+": "+detail,
 			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
-		), WithFailureClassification(classification)), nil, nil
+		)
+		pushErr.Cause = err
+		return convertError(pushErr, WithFailureClassification(classification)), nil, nil
 	}
 
 	result := &ops.GitPushResult{
@@ -734,9 +736,12 @@ func handleGitPush(
 		// build watch (it would emit a false "Push landed…" nextActions). A
 		// dirty tree is the usual cause: the dirtyWarn below already names the
 		// uncommitted changes and the commit contract.
-		if dirtyWarn != "" {
+		switch {
+		case dirtyWarn != "":
 			result.NextActions = `Commit the changes listed in warnings (git-push pushes the committed HEAD only), then re-run zerops_deploy strategy="git-push".`
-		} else {
+		case dirtyNotRun != "":
+			result.NextActions = "The remote already has this HEAD. Whether uncommitted changes were left behind is unknown: the check did not run (warnings say why)."
+		default:
 			result.NextActions = "Working tree is clean and the remote already has this HEAD — nothing to deploy."
 		}
 	default:
