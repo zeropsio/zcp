@@ -371,13 +371,35 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 // keepBuilt is a service that has a build: never written, its row read from
 // the version it runs, and for a pool its bearer confirmed.
 func (d standupDeps) keepBuilt(ctx context.Context, s pooledService, svc *platform.ServiceStack, rows *standupVerdictRows) {
+	commit := d.builtCommit(ctx, svc.ActiveAppVersion.ID)
 	rows.set(s.host, func(in *ops.StandupRowInput) {
 		in.AppVersionID, in.AppVersionStatus = svc.ActiveAppVersion.ID, platform.AppVersionStatusActive
 		in.ProcessStatus = platform.ProcessStatusFinished
+		in.Commit = commit
 	})
 	if s.kind == mate.RowPool {
 		d.confirmBearer(ctx, s.host, rows)
 	}
+}
+
+// builtCommit is the commit an existing build was made from: a commit deploy
+// names its version by the commit's first 12 hex digits (ops.AppVersionName),
+// and the build's process in the project's list carries that name — the
+// active version's own read has none. "" when no listed process names it: a
+// version zcp did not commit-deploy, or one older than the list.
+func (d standupDeps) builtCommit(ctx context.Context, versionID string) string {
+	processes, err := d.batch.client.GetProjectProcessesDirect(ctx, d.batch.projectID)
+	if err != nil {
+		return ""
+	}
+	for _, p := range processes {
+		if p.AppVersion != nil && p.AppVersion.ID == versionID {
+			if commit, ok := strings.CutPrefix(p.AppVersion.Name, ops.AppVersionName("")); ok {
+				return commit
+			}
+		}
+	}
+	return ""
 }
 
 // commitDeployOne submits one commit deploy and follows it to its end: the
