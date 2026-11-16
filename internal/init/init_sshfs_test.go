@@ -413,11 +413,13 @@ func TestInitSSHFS_LeaseMount_SameOptionsAsAcquire(t *testing.T) {
 	}
 }
 
-// TestInitSSHFS_ParkedLease_SkippedNotFatal: a lease whose record says it is
-// parked (DP-28) keeps its ssh alias — its unpark reaches it — and is not
-// mounted, nor its orchestrator asked: its container is stopped, and a mount
-// of it would hang whatever reads it. The other leases are restored as before
-// and the step never fails.
+// TestInitSSHFS_ParkedLease_SkippedNotFatal: a lease whose container its
+// orchestrator lists stopped and reserved is parked (DP-28) — the orchestrator
+// is the only source of that, so every lease is asked, the parked one too —
+// keeps its ssh alias — its unpark reaches it — and is not mounted: its
+// container is stopped, and a mount of it would hang whatever reads it. The
+// other leases are restored as before and the step never fails. Its record is
+// the old shape that still says parked, which nothing reads.
 func TestInitSSHFS_ParkedLease_SkippedNotFatal(t *testing.T) {
 	// Not parallel — mutates env, commandRunner and the sshfs/lease package vars.
 	mountBase := t.TempDir()
@@ -453,8 +455,8 @@ func TestInitSSHFS_ParkedLease_SkippedNotFatal(t *testing.T) {
 	if err := zcpinit.RunSSHFS(zcpinit.WithLeaseCheck(orchestratorCheck(orch))); err != nil {
 		t.Fatalf("RunSSHFS() error: %v (a parked lease never fails the boot)", err)
 	}
-	if got := orch.renewed(); !slices.Equal(got, []string{"c-3"}) {
-		t.Errorf("renews = %q, want c-3 only: a parked record is not mounted, so nothing is asked of it", got)
+	if got := slices.Sorted(slices.Values(orch.renewed())); !slices.Equal(got, []string{"c-3", "c-4"}) {
+		t.Errorf("renews = %q, want both: whether a lease is parked is the orchestrator's answer", got)
 	}
 	if !strings.Contains(installedFile, "Host apppool-4\n") || !strings.Contains(installedFile, "Host apppool-3\n") {
 		t.Errorf("installed alias file lacks a lease's stanza (the parked one keeps its alias):\n%s", installedFile)

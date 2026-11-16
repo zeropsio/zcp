@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +20,21 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// writeWarmPoolRepo records repo as pool's repository in the state directory
+// under the cwd, as the stand-up does: the warm clone takes the pool's
+// recorded repository (DP-32).
+func writeWarmPoolRepo(t *testing.T, pool, repo string) {
+	t.Helper()
+	if err := workflow.WriteServiceMeta(filepath.Join(".zcp", "state"), &workflow.ServiceMeta{
+		Hostname: pool, Mode: topology.PlanModeDev, BootstrapSession: "sess1", BootstrappedAt: "2026-10-23", RemoteURL: repo,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+}
 
 // warmIntBox is one container of warmIntOrchestrator's pool.
 type warmIntBox struct {
@@ -298,6 +313,7 @@ func TestLease_Integration_WarmContainerGetsTheRepository(t *testing.T) {
 	defer cleanup()
 
 	const repo = "https://github.com/acme/app.git"
+	writeWarmPoolRepo(t, "devpool", repo)
 	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": repo, "branch": "feat-a"})
 
 	var clone map[string]any
@@ -400,6 +416,7 @@ func TestLease_Integration_Release_BackgroundWarmClone_EndsBeforeTheTestTearsDow
 	// Deferred after cleanup, so it runs first: the body has ended.
 	defer close(ssh.bodyEnded)
 
+	writeWarmPoolRepo(t, "devpool", "https://github.com/acme/app")
 	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-a"})
 	got := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-3", "force": true})
 	if len(got.Leases) != 1 || !strings.Contains(got.Leases[0].Note, "kept as the pool's warm container") {

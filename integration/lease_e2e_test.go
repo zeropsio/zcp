@@ -77,7 +77,7 @@ func writeLeaseE2ERecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-abc","containerNumber":3,` +
-		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseIntLease + `","branch":"feat","acquiredAt":"2026-10-23T12:00:00Z"}`
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseIntLease + `","branch":"feat","repo":"https://github.com/acme/app","acquiredAt":"2026-10-23T12:00:00Z"}`
 	if err := os.WriteFile(filepath.Join(dir, "devpool-3.json"), []byte(rec), 0o600); err != nil {
 		t.Fatal(err)
 	}

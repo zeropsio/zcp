@@ -106,10 +106,9 @@ func TestLease_Integration_ParkStatusUnparkRelease(t *testing.T) {
 	defer cleanup()
 
 	type leaseView struct {
-		Alias    string `json:"alias"`
-		State    string `json:"state"`
-		ParkedAt string `json:"parkedAt"`
-		Note     string `json:"note"`
+		Alias string `json:"alias"`
+		State string `json:"state"`
+		Note  string `json:"note"`
 	}
 	call := func(tool string, args map[string]any) (string, bool) {
 		t.Helper()
@@ -140,8 +139,8 @@ func TestLease_Integration_ParkStatusUnparkRelease(t *testing.T) {
 	lease(map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"})
 	startsBefore := c.SupervisorStarts
 
-	if v := lease(map[string]any{"action": "park", "lease": "devpool-3"}); v.State != "parked" || v.ParkedAt == "" {
-		t.Fatalf("park = %+v, want devpool-3 parked with its parkedAt", v)
+	if v := lease(map[string]any{"action": "park", "lease": "devpool-3"}); v.State != "parked" {
+		t.Fatalf("park = %+v, want devpool-3 parked", v)
 	}
 	if v := lease(map[string]any{"action": "status"}); v.State != "parked" || !strings.Contains(v.Note, "zerops_lease action=unpark lease=devpool-3") {
 		t.Fatalf("status = %+v, want devpool-3 parked, naming its unpark", v)
@@ -151,7 +150,7 @@ func TestLease_Integration_ParkStatusUnparkRelease(t *testing.T) {
 		t.Fatalf("zerops_dev_server on the parked lease = (error %v) %s, want a refusal naming the unpark", isErr, text)
 	}
 
-	if v := lease(map[string]any{"action": "unpark", "lease": "devpool-3"}); v.State != "held" || v.ParkedAt != "" {
+	if v := lease(map[string]any{"action": "unpark", "lease": "devpool-3"}); v.State != "held" {
 		t.Fatalf("unpark = %+v, want devpool-3 held", v)
 	}
 	if c.SupervisorStarts != startsBefore+1 {
