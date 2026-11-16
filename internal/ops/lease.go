@@ -479,6 +479,9 @@ func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string, er
 func noBearerError(pool, reason string, unresolved []string) error {
 	apiKey := pool + "_" + leaseTokenKey
 	aliasKey := pool + "_" + leaseTokenAliasKey
+	if slices.ContainsFunc(unresolved, func(u string) bool { return strings.HasPrefix(u, aliasKey+" ") }) {
+		return noImageYetError(pool)
+	}
 	msg := fmt.Sprintf("Cannot reach pool '%s': %s, and this container's env has no usable %s or %s", pool, reason, apiKey, aliasKey)
 	if len(unresolved) > 0 {
 		msg += " (" + strings.Join(unresolved, "; ") + ")"
@@ -490,6 +493,17 @@ func noBearerError(pool, reason string, unresolved []string) error {
 	}
 	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
+}
+
+// noImageYetError is the refusal of a pool whose bearer reference zcp wrote
+// (<pool>_LEASE_TOKEN) and the platform has not resolved: a pool's references
+// resolve with its first successful deploy, so it has no image yet. Nothing
+// is waited for and nothing is written again.
+func noImageYetError(pool string) error {
+	aliasKey, apiKey := pool+"_"+leaseTokenAliasKey, pool+"_"+leaseTokenKey
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Cannot reach pool '%s': this pool has no image yet — zcp's reference %s=${%s} is still its literal text in this container", pool, aliasKey, apiKey),
+		fmt.Sprintf("A pool's references resolve with its first successful deploy: deploy %s, then call again", pool))
 }
 
 // LeaseList reports the leases of one pool, or of every pool the project

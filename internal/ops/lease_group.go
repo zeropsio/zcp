@@ -302,8 +302,8 @@ func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*gro
 // for (EnsureBearer, the one writer), called with the keys' locks held —
 // the lock order is key, then bearer; nothing takes them the other way. The
 // writer's own error, with its class, refuses the acquire before anything is
-// reserved; a writer that answers no bearer refuses it saying the reference
-// is written but not resolved yet.
+// reserved; a writer that answers no bearer (written, not resolved) refuses
+// it as a pool with no image yet (noImageYetError).
 func acquireBearers(ctx context.Context, d LeaseDeps, members []*groupMember) error {
 	for _, m := range members {
 		if m.missing == nil {
@@ -314,10 +314,7 @@ func acquireBearers(ctx context.Context, d LeaseDeps, members []*groupMember) er
 			return err
 		}
 		if token == "" {
-			aliasKey, apiKey := m.pool+"_"+leaseTokenAliasKey, m.pool+"_"+leaseTokenKey
-			return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("Cannot reach pool '%s': zcp wrote %s=${%s} on this zcp service (%s), but it has not resolved in this container yet", m.pool, aliasKey, apiKey, m.missing.reason),
-				fmt.Sprintf("A pool's references resolve with its first successful deploy: deploy %s, then acquire again", m.pool))
+			return noImageYetError(m.pool)
 		}
 		m.rp, m.missing = orchestratorClient(d, m.rp.svc, token), nil
 	}
