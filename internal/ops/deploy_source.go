@@ -23,9 +23,9 @@ import (
 // that rule, and an HQ read of the filtered source replaces it in one wiring
 // place.
 type DeploySource interface {
-	// Open streams the deploy source of commit in repository (the name
-	// ServiceMeta holds for the service) as the archive the Zerops upload
-	// takes. The caller closes it.
+	// Open streams the deploy source of commit in repository (as
+	// ServiceMeta holds it for the service: `<appId>/<name>`) as the
+	// archive the Zerops upload takes. The caller closes it.
 	Open(ctx context.Context, repository, commit string) (io.ReadCloser, error)
 }
 
@@ -34,7 +34,8 @@ type DeploySource interface {
 // HQ (`Authorization: Project <key>` scoped to HQ's origin, as hq.Scratch
 // and hq.RunGit fetch), archived as `git archive --format=tar.gz` and
 // streamed, nothing of the archive on disk. The repository's organisation
-// and application are HQ's answer to Self at every Open, never the caller's.
+// and application are HQ's answer to Self at every Open: a repository whose
+// application is not that answer is refused, never fetched.
 func NewHQDeploySource(httpClient hq.Doer, id hq.Identity) DeploySource {
 	project, err := hq.OpenProject(httpClient, id)
 	return hqDeploySource{project: project, opened: err, key: id.Key}
@@ -55,7 +56,12 @@ func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (io
 	if err != nil {
 		return nil, &deployError{class: hqClass(err), step: "deploy source", err: err}
 	}
-	repoURL, err := s.project.RepoURL(self.OrgID, self.AppID, repository)
+	appID, name, ok := strings.Cut(repository, "/")
+	if !ok || appID == "" || name == "" || appID != self.AppID {
+		return nil, &deployError{class: platform.ClassRefused, step: "deploy source",
+			words: fmt.Sprintf("repository %q is not <appId>/<name> of this Mate's application %q", repository, self.AppID)}
+	}
+	repoURL, err := s.project.RepoURL(self.OrgID, self.AppID, name)
 	if err != nil {
 		return nil, &deployError{class: platform.ClassRefused, step: "deploy source", err: err}
 	}
