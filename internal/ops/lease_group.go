@@ -642,6 +642,7 @@ func resumeHeldCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repoU
 	if got.warm == leaseWarmDiscarded {
 		note = joinNotes(note, discardedWarmNote)
 	}
+	note = joinNotes(note, leaseUnsetNote(got.unset))
 	changed := false
 	if rec.Base == "" && got.base != "" {
 		rec.Base, changed = got.base, true
@@ -776,6 +777,7 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 		if got.warm == leaseWarmDiscarded {
 			m.view.Note = joinNotes(m.view.Note, discardedWarmNote)
 		}
+		m.view.Note = joinNotes(m.view.Note, leaseUnsetNote(got.unset))
 		m.view.Note = joinNotes(m.view.Note, fromNotAppliedNote(branch, from, groupBase, got.base))
 		if got.base != "" || got.stableNumber != 0 {
 			// Recorded before the keys are let go and before any rewire, so

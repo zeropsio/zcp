@@ -225,7 +225,7 @@ func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas 
 		read := reads[leases[i].Alias]
 		leases[i].Activity, leases[i].Unsaved, leases[i].NotAnswering = read.Activity, read.Unsaved, read.NotAnswering
 		if read.DevServers != nil {
-			leases[i].DevServers, leases[i].DevServersReadAt = read.DevServers, devServersReadAt(read.DevServers)
+			leases[i].DevServers, leases[i].DevServersReadAt = read.DevServers, devServersReadAt(read.DevServers, time.Now())
 		}
 	}
 	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {

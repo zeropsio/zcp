@@ -143,19 +143,17 @@ func scrubSecrets(text string, secrets []string) string {
 // (DevServerStates): each server's status verbatim — a server whose port does
 // not answer yet is starting; nothing here waits for it — and the preview
 // server's preview URL, as zerops_dev_server status reports it. A read that
-// fails leaves them unread (nil): the acquire's notes already say what is
-// wrong with the supervisor, and zerops_dev_server action=status reads it.
+// found none is the empty slice, which the envelope sends as [] (the client
+// replaces its last read with it). A read that fails leaves them unread
+// (nil): the acquire's notes already say what is wrong with the supervisor,
+// and zerops_dev_server action=status reads it.
 func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord, subdomainOn bool) []topology.DevServerState {
 	ds, err := ReadDevServers(ctx, d.SSH, rec.alias(), "")
 	if err != nil {
 		return nil
 	}
 	ds.Service = rec.PoolHostname
-	states := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
-	if len(states) == 0 {
-		return nil
-	}
-	return states
+	return DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
 }
 
 // leaseCheckoutRead is what an acquire reads in the container after its

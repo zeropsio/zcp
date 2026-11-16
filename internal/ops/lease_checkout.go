@@ -215,14 +215,20 @@ func leaseCheckoutSteps(workDir, repo, branch, base, from, hqURL, tokenScope str
 			"git checkout -q -f -B "+q(branch)+" --track "+q("origin/"+branch)+"; else "+newBranch+"; fi",
 		"git clean -fd -q",
 	)
+	// The branch is in place once cut ends: a step after it that fails (a
+	// stale .git/config.lock) never refuses the lease, it answers
+	// leaseUnsetMarker naming what it left unset (leaseUnsetNote).
+	unsetOnFail := func(step, what string) string {
+		return "{ " + step + " || echo " + q(leaseUnsetMarker+what) + "; }"
+	}
 	// A fresh pool container carries no git identity; the agent's first
 	// commit needs one (set-if-absent, never over the image's).
-	noWork = []string{gitIdentityEnsureFragment()}
+	noWork = []string{unsetOnFail(gitIdentityEnsureFragment(), "the git identity (user.name, user.email)")}
 	if persist := leaseCredentialHelperConfig(repo, hqURL, tokenScope); persist != "" {
-		noWork = append(noWork, persist)
+		noWork = append(noWork, unsetOnFail(persist, "the credential helper git fetches and pushes with"))
 	}
 	if hint := leaseHQHintHelperConfig(repo, hqURL); hint != "" {
-		noWork = append(noWork, hint)
+		noWork = append(noWork, unsetOnFail(hint, "the helper that says how to reach HQ outside `zcp git`"))
 	}
 	// The container's stable number, which its preview port follows; only
 	// the container knows it (leaseSlotMarker).
@@ -238,6 +244,32 @@ const (
 	leaseResumedMarker  = "@@zcp-lease resumed"
 	leaseUnfinishedExit = 7
 )
+
+// leaseUnsetMarker opens the line a checkout answers for each step after the
+// cut that failed (leaseCheckoutSteps' noWork), naming what it left unset.
+const leaseUnsetMarker = "@@zcp-lease unset "
+
+// checkoutUnset is what a checkout's answer says it left unset, in order.
+func checkoutUnset(out string) []string {
+	var unset []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), leaseUnsetMarker); ok {
+			unset = append(unset, v)
+		}
+	}
+	return unset
+}
+
+// leaseUnsetNote is what a lease says when its checkout put the branch in
+// place but left part of the work dir's git config unset; "" when nothing.
+func leaseUnsetNote(unset []string) string {
+	if len(unset) == 0 {
+		return ""
+	}
+	return "the branch is checked out, but zcp could not set " + strings.Join(unset, " and ") + " in " + LeaseWorkDir +
+		"'s git config (a stale .git/config.lock, or a read-only config): commits or pushes may fail until it is set; " +
+		"acquiring the same branch again sets it without touching the work"
+}
 
 // leaseResumeCommandFrom is the checkout of a lease zcp already holds, whose
 // checkout may have been cut short (zcp stopped mid-checkout): one script that
@@ -512,12 +544,14 @@ func (d LeaseDeps) hqAddress() string {
 // stable number (0 when its session had none), and what it did with a clone
 // zcp started while the container was warm (checkoutWarm: used, discarded, ""
 // for none), and whether a resumed checkout found the branch cut already
-// (leaseResumeCommandFrom), so it changed no work.
+// (leaseResumeCommandFrom), so it changed no work, and what of the git config
+// it left unset (leaseUnsetMarker).
 type leaseCheckedOut struct {
 	base         string
 	stableNumber int
 	warm         string
 	resumed      bool
+	unset        []string
 }
 
 // checkoutLease puts the leased container's /var/www on the branch, a new one
@@ -554,7 +588,7 @@ func runLeaseCheckout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, b
 		}
 		cut, _ := checkoutBase(string(out))
 		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out)),
-			resumed: strings.Contains(string(out), leaseResumedMarker)}, nil
+			resumed: strings.Contains(string(out), leaseResumedMarker), unset: checkoutUnset(string(out))}, nil
 	}
 	if exitStatus(err) == leaseUnfinishedExit {
 		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,

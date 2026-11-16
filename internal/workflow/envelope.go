@@ -99,9 +99,11 @@ type LeaseSnapshot struct {
 	// the way a dev service's devServers[] is keyed by its hostname
 	// (WithParts); an acquire, WithLeaseActivity) — and DevServersReadAt when
 	// that read was (RFC 3339, UTC); both absent when this call did not read
-	// it, never "none". zcp keeps no last-known read: the client keeps the
-	// last one it was told (docs/spec-mate.md §2.8a.3).
-	DevServers       []topology.DevServerState `json:"devServers,omitempty"`
+	// it, never "none"; a read that found none is the empty array, which
+	// replaces the client's last read (omitzero, not omitempty: nil is "not
+	// read", empty is "none"). zcp keeps no last-known read: the client keeps
+	// the last one it was told (docs/spec-mate.md §2.8a.3).
+	DevServers       []topology.DevServerState `json:"devServers,omitzero"`
 	DevServersReadAt string                    `json:"devServersReadAt,omitempty"`
 	// Activity and Unsaved are what a zerops_lease call read of the lease's
 	// checkout (docs/spec-workflows.md §8 DP-21), only on that call
@@ -277,10 +279,11 @@ type ServiceSnapshot struct {
 
 	// WireStages and DevServers are the dev half's parts as the envelope
 	// carries them from field-order step (3) of docs/spec-mate.md §2.8a.3;
-	// only WithParts sets them. DevServers is absent when the call did not
-	// read the supervisor — never "none running".
+	// only WithParts sets them. DevServers is absent (nil) when the call did
+	// not read the supervisor — never "none running" — and the empty array
+	// when it read none (omitzero, not omitempty).
 	WireStages []topology.StageWire      `json:"stages,omitempty"`
-	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+	DevServers []topology.DevServerState `json:"devServers,omitzero"`
 
 	// StandIn marks, inside a Mate, a dev service pool-migrate holds as its
 	// repository's stand-in (ServiceMeta.PoolMigrateStandIn): {for:
@@ -359,9 +362,9 @@ func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState
 		copy(leases, *e.Leases)
 		for i := range leases {
 			// A fresh read replaces the last-known one; a lease this call
-			// did not read keeps it.
-			if states, read := devServers[leases[i].Alias]; read {
-				leases[i].DevServers, leases[i].DevServersReadAt = states, devServersReadAt(states)
+			// did not read (no entry, or nil) keeps it.
+			if states := devServers[leases[i].Alias]; states != nil {
+				leases[i].DevServers, leases[i].DevServersReadAt = states, devServersReadAt(states, time.Now())
 			}
 		}
 	}
@@ -397,9 +400,14 @@ func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState
 }
 
 // devServersReadAt is when states were read (RFC 3339, UTC): the newest read
-// time among them, "" for none.
-func devServersReadAt(states []topology.DevServerState) string {
-	var at time.Time
+// time among them; for a read that found none, which carries no time of its
+// own, now — the envelope is built after the read, so the stamp still orders
+// it after every earlier read, and the client lets it replace a stamped one.
+func devServersReadAt(states []topology.DevServerState, now time.Time) string {
+	at := time.Time{}
+	if len(states) == 0 {
+		at = now
+	}
 	for _, s := range states {
 		if s.ReadAt.After(at) {
 			at = s.ReadAt
