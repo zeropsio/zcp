@@ -76,7 +76,13 @@ func mapProcess(p output.Process) Process {
 	// SearchAppVersions call). nil for lifecycle processes or when absent.
 	var appVersion *ProcessAppVersion
 	if p.AppVersion != nil && p.AppVersion.Status != nil {
-		appVersion = &ProcessAppVersion{Status: p.AppVersion.Status.String()}
+		appVersion = &ProcessAppVersion{
+			ID:     p.AppVersion.Id.TypedString().String(),
+			Status: p.AppVersion.Status.String(),
+		}
+		if name, ok := p.AppVersion.Name.Get(); ok {
+			appVersion.Name = name.String()
+		}
 	}
 
 	return Process{

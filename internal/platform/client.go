@@ -185,6 +185,10 @@ type Client interface {
 	// BuildAndDeployAppVersion is PUT /app-version/{id}/build-and-deploy
 	// {zeropsYaml, zeropsYamlSetup}: the build-and-deploy process.
 	BuildAndDeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error)
+	// ListUploadingAppVersions is the service's versions still UPLOADING,
+	// with their names (POST /app-version/search; the direct list carries
+	// no name). Being a search it may trail a write by seconds.
+	ListUploadingAppVersions(ctx context.Context, projectID, serviceID string) ([]AppVersionEvent, error)
 	// DeleteAppVersion is DELETE /app-version/{id}: how a version left
 	// UPLOADING by a cut upload goes (it stays UPLOADING for 14 min and
 	// more, s0b).

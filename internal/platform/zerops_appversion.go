@@ -14,7 +14,9 @@ import (
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
+	"github.com/zeropsio/zerops-go/dto/input/query"
 	"github.com/zeropsio/zerops-go/dto/output"
+	"github.com/zeropsio/zerops-go/sdkBase"
 	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
@@ -167,31 +169,18 @@ func (z *ZeropsClient) GetAppVersionZeropsYaml(ctx context.Context, appVersionID
 // Returns newest-first by Sequence descending regardless of what order the
 // platform emits `list` in — callers key off index 0 as "the newest".
 func (z *ZeropsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error) {
-	// Hand-rolled on the SDK's transport: the SDK's GetAppVersion DTO has no
-	// `name`, which a commit deploy finds its version by. The raw body is
-	// decoded twice, once into the SDK list, once for the names.
-	raw, err := z.directGet(ctx, "/api/rest/public/service-stack/"+url.PathEscape(serviceID)+"/app-version", "appVersion")
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	resp, err := z.handler.GetServiceStackAppVersion(ctx, pathParam, query.ListServiceStackAppVersions{})
 	if err != nil {
-		return nil, err
+		return nil, mapSDKError(err, "appVersion")
 	}
-	var out output.AppVersionList
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, withCause(NewPlatformError(ErrAPIError, "service app versions: malformed response",
-			"Retry; if it persists the platform API changed — report it"), err)
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
 	}
-	var named struct {
-		List []struct {
-			Name *string `json:"name"`
-		} `json:"list"`
-	}
-	_ = json.Unmarshal(raw, &named) // the same body decoded above; a name it lacks stays ""
 	events := make([]AppVersionEvent, 0, len(out.List))
-	for i, av := range out.List {
-		event := mapDirectAppVersion(av)
-		if i < len(named.List) && named.List[i].Name != nil {
-			event.Name = *named.List[i].Name
-		}
-		events = append(events, event)
+	for _, av := range out.List {
+		events = append(events, mapDirectAppVersion(av))
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Sequence > events[j].Sequence })
 	return events, nil
@@ -409,4 +398,60 @@ func (z *ZeropsClient) DeleteAppVersion(ctx context.Context, appVersionID string
 		return mapSDKError(err, "appVersion")
 	}
 	return nil
+}
+
+// ListUploadingAppVersions reads the service's versions still UPLOADING,
+// each with its name: POST /app-version/search (Elasticsearch), the read
+// that carries a version's name — the direct per-service list has none
+// (s0a F6). A version a cut upload left behind stays UPLOADING for 14 min
+// and more; this is how a commit deploy finds its own by name. Being a
+// search it may trail a write by seconds, so a caller never reads it for a
+// version it just made.
+func (z *ZeropsClient) ListUploadingAppVersions(ctx context.Context, projectID, serviceID string) ([]AppVersionEvent, error) {
+	clientID, err := z.OrgID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{
+			body.EsSearchItem{Name: types.NewString("clientId"), Operator: types.NewString("eq"), Value: types.NewString(clientID)},
+			body.EsSearchItem{Name: types.NewString("projectId"), Operator: types.NewString("eq"), Value: types.NewString(projectID)},
+			body.EsSearchItem{Name: types.NewString("serviceStackId"), Operator: types.NewString("eq"), Value: types.NewString(serviceID)},
+			body.EsSearchItem{Name: types.NewString("status"), Operator: types.NewString("eq"), Value: types.NewString(AppVersionStatusUploading)},
+		},
+		Limit: types.NewIntNull(directListLimit),
+	}
+	// Hand-rolled on the SDK's transport: the SDK's EsAppVersion has no
+	// `name`, so the raw answer is decoded twice.
+	resp := sdkBase.Post(ctx, z.env, "/api/rest/public/app-version/search", filter)
+	if resp.Err != nil {
+		return nil, mapSDKError(resp.Err, "appVersion")
+	}
+	raw := resp.ResponseData.Bytes()
+	if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
+		return nil, answerError(status, raw, "appVersion")
+	}
+	var out output.EsAppVersionResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, withCause(NewPlatformError(ErrAPIError, "app version search: malformed response",
+			"Retry; if it persists the platform API changed — report it"), err)
+	}
+	var named struct {
+		Items []struct {
+			Name *string `json:"name"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(raw, &named) // the same body decoded above; a name it lacks stays ""
+	events := make([]AppVersionEvent, 0, len(out.Items))
+	for i, av := range out.Items {
+		event := mapEsAppVersionEvent(av)
+		if event.ServiceStackID != serviceID || event.Status != AppVersionStatusUploading {
+			continue // the search's own filter, asserted
+		}
+		if i < len(named.Items) && named.Items[i].Name != nil {
+			event.Name = *named.Items[i].Name
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }
