@@ -156,7 +156,7 @@ func TestErrorClass_E3_ProbeAdmissionRefusalIsRefusedAtOnceWithPlatformWords(t *
 	})
 }
 
-// witness: internal/ops/ssh_ready.go | probe.Waited = cfg.timeout → probe.Waited = 0
+// witness: internal/ops/ssh_ready.go | start := time.Now() → start := time.Now().Add(cfg.timeout)
 func TestErrorClass_E7_ProbeBoundRunOutReportsBoundAndLastCause(t *testing.T) {
 	t.Parallel()
 	first := &platform.SSHExecError{Hostname: "webstage", Output: "ssh: connect to host webstage port 22: Connection refused\n", Err: platform.ExitStatusError(255)}

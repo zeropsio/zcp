@@ -446,7 +446,8 @@ const leaseHQHintMessage = "zcp: this repository is on the Mate's HQ and this gi
 
 // leaseHQHintHelperConfig is the git command that persists, for a repository
 // on the Mate's HQ alone, a credential helper scoped to HQ's host that answers
-// nothing and says why (leaseHQHintMessage): a plain ssh git or a tool in the
+// nothing, says why (leaseHQHintMessage) and answers quit=1, so git stops
+// there and never prompts, a terminal under `ssh -t` included: a plain ssh git or a tool in the
 // container that needs HQ — an old blob of the blobless checkout above all —
 // then fails naming `zcp git` rather than with git's bare "could not read
 // Username". A relayed session clears every persisted helper before its own
@@ -457,7 +458,7 @@ func leaseHQHintHelperConfig(repo, hqURL string) string {
 	if scope == "" || !IsHQRemote(repo, hqURL) {
 		return ""
 	}
-	helper := `!f() { [ "$1" = get ] && echo ` + shellQuote(leaseHQHintMessage) + ` >&2; :; }; f`
+	helper := `!f() { [ "$1" = get ] || return 0; echo ` + shellQuote(leaseHQHintMessage) + ` >&2; echo quit=1; }; f`
 	return "git config --replace-all " + shellQuote("credential.https://"+scope+".helper") + " " + shellQuote(helper)
 }
 
@@ -1061,7 +1062,7 @@ func compareWithOrigin(ctx context.Context, d LeaseDeps, rec leaseRecord, w unsa
 // credential and never asks for a token (classifyCheckoutFailure on HQ).
 func leaseCompareRefusal(alias string, unpushed int, step string, err error, onHQ bool) error {
 	force := fmt.Sprintf("Once you know origin has them, release with force=true: zerops_lease action=release lease=%s force=true", alias)
-	suggestion := "zcp could not " + step + " (" + sshFailureText(err) + "). Look at the cause, and push them from the container if they are not on origin. " + force
+	suggestion := "zcp could not " + step + " (" + sshFailureText(err) + "). Look at the cause. If they are not on origin, save them: " + saveWorkHint(onHQ, "the container") + ". " + force
 	switch {
 	case gitCredentialRefused(err) && onHQ:
 		_, suggestion = classifyCheckoutFailure(err, onHQ)

@@ -88,13 +88,6 @@ func (r *recordedPlatform) service(t *testing.T, hostname string) platform.Servi
 	return platform.ServiceStack{}
 }
 
-// recordedProjectID is the recorded project's id, for a seed that names the
-// project defaultMock serves.
-func recordedProjectID(t *testing.T) string {
-	t.Helper()
-	return loadRecordedPlatform(t).project.ID
-}
-
 // loadRecordedPlatform reads every recording, serves each at its endpoint
 // and reads them back through zcp's real client.
 func loadRecordedPlatform(t *testing.T) *recordedPlatform {
