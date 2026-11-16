@@ -48,7 +48,7 @@ Services accessible by appending `.zerops`: `db.zerops`, `api.zerops`. Only one 
 
 ### SSH Isolation
 
-`sshIsolation` rules: `vpn` (default), `project`, `service`, `service@<name>`. Block rules with `-` prefix. **SSHFS mounts require `vpn project`**. Web Terminal always works. SSH isolation is immutable after creation.
+`sshIsolation` rules: `vpn` (default), `project`, `service`, `service@<name>`. Block rules with `-` prefix. **SSHFS mounts require `vpn project`**. Web Terminal always works. A change to the project's or a service's value applies to the next SSH connection, with no restart or deploy.
 
 ## CI/CD Integration
 

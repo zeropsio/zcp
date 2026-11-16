@@ -20,8 +20,10 @@ var mateTierStartKeys = []string{"buildFromGit", "zeropsSetup", "startWithoutCod
 // — its type, vault, scale and access — with its build taken out, as a Mate's
 // birth takes it out, and startWithoutCode set. A re-import with override
 // replaces the service, so live holds what the running service carries
-// beyond its entry — its envIsolation and sshIsolation, which the birth sets
-// on every service — and each is set where the entry states none. The tier's
+// beyond its entry — its envIsolation, which the birth sets on every service,
+// and an sshIsolation of its own where it has one (the project's admits the
+// container, spec-mate.md §2.8 C-13) — and each is set where the entry
+// states none. The tier's
 // leading comments go first, its preprocessor line among them, so a vault
 // value the tier generates is generated again, never stored as its text.
 // Pure; an error when the tier does not read or names no such runtime.

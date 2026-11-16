@@ -26,8 +26,11 @@ import (
 // checkout it holds is refused unless its setup deploys the whole tree
 // (DM-2), and a stage's build seldom does.
 
-// standupIsolationKeys are the settings the Mate's birth gives every service
-// beside its tier entry, which a re-import replacing the service must carry.
+// standupIsolationKeys are the isolation settings a live service holds
+// beside its tier entry — envIsolation the birth stamps on every service,
+// sshIsolation where a service has its own — which a re-import replacing the
+// service must carry. The project's own sshIsolation admits the container
+// everywhere else (spec-mate.md §2.8 C-13).
 var standupIsolationKeys = []string{"envIsolation", "sshIsolation"}
 
 // openPoolStage readies a pool pair's stage to hold main for its pool's first
