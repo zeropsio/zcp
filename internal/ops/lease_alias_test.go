@@ -29,6 +29,7 @@ func stanzaFor(alias, hostname string) string {
 		"    StrictHostKeyChecking no\n" +
 		"    UserKnownHostsFile /dev/null\n" +
 		"    LogLevel ERROR\n" +
+		"    ConnectTimeout 5\n" +
 		"    ControlMaster auto\n" +
 		"    ControlPath /tmp/ssh-mux-%i-%r@%h:%p\n" +
 		"    ControlPersist 600\n"
