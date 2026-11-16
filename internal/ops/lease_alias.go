@@ -77,6 +77,11 @@ func renderLeaseAliases(records []leaseRecord) (string, error) {
 		b.WriteString("    StrictHostKeyChecking no\n")
 		b.WriteString("    UserKnownHostsFile /dev/null\n")
 		b.WriteString("    LogLevel ERROR\n")
+		// A bounded dial per address, as zcp's own ssh (sshArgs): a new
+		// container's reused IPv6 address stays unreachable for up to ~2 min
+		// (stale neighbour entry, live 2026-11-16), and sshfs must fall back to
+		// IPv4 within its 30 s mount wait.
+		b.WriteString("    ConnectTimeout 5\n")
 		b.WriteString("    ControlMaster auto\n")
 		b.WriteString("    ControlPath /tmp/ssh-mux-%i-%r@%h:%p\n")
 		b.WriteString("    ControlPersist 600\n")
