@@ -79,7 +79,11 @@ func ensureDevServerPublicAccess(
 	result := &ops.DeployResult{}
 	listener := true
 	ensurePublicAccessAt(ctx, client, httpClient, projectID, stateDir, hostname, result, &listener, func() string {
-		return ops.DevServerSubdomainURL(ctx, client, projectID, server)
+		url, err := ops.DevServerSubdomainURL(ctx, client, projectID, server)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("zcp could not read %s's public address: %v", hostname, err))
+		}
+		return url
 	})
 	return result
 }

@@ -1326,21 +1326,24 @@ func devServerURL(hostname string, port int, healthPath string) string {
 
 // DevServerSubdomainURL is the subdomain address of the port a dev server
 // result probed — Zerops gives each HTTP port its own — or "" when that port
-// serves no HTTP or its address is not known. Ask it only while the service's
-// subdomain is on.
-func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) string {
+// serves no HTTP or its address is not known; a lookup of the dev service that
+// failed is its error. Ask it only while the service's subdomain is on.
+func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) (string, error) {
 	if result.Pool != "" {
 		// A lease is reached on its preview port, at the pool's subdomain.
-		return leasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort, false)
+		return leasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort, false), nil
 	}
 	if result.Port == 0 {
-		return ""
+		return "", nil
 	}
 	svc, err := LookupService(ctx, client, projectID, result.Hostname)
-	if err != nil || !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == result.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("look up %s for its subdomain address: %w", result.Hostname, err)
 	}
-	return SubdomainURLForPort(ctx, client, projectID, svc, result.Port)
+	if !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == result.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
+		return "", nil
+	}
+	return SubdomainURLForPort(ctx, client, projectID, svc, result.Port), nil
 }
 
 // pollIntervalAsShellDuration returns the pollIntervalMillis as a shell

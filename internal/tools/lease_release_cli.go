@@ -39,8 +39,8 @@ type LeaseReleaseAnswer struct {
 	Refused  []LeaseRefusedEntry
 	// Error is the failure's message; "" when the call did not fail.
 	Error string
-	// Failure is the rest of the failure's wire beside Error; nil for a
-	// failure zcp has no error of (a usage refusal).
+	// Failure is the rest of the failure's wire beside Error
+	// (LeaseReleaseFailedAnswer sets both).
 	Failure *LeaseReleaseFailure
 }
 
@@ -56,9 +56,9 @@ type LeaseReleaseFailure struct {
 	Class      platform.ErrorClass `json:"class,omitempty"`
 }
 
-// leaseReleaseFailed is the answer of a call err failed: its message, and
-// the rest of its wire as convertError writes it.
-func leaseReleaseFailed(err error) LeaseReleaseAnswer {
+// LeaseReleaseFailedAnswer is the answer of a call err failed: its message,
+// and the rest of its wire as convertError writes it.
+func LeaseReleaseFailedAnswer(err error) LeaseReleaseAnswer {
 	var a LeaseReleaseAnswer
 	a.Error, a.Failure = leaseReleaseFailure(err)
 	return a
@@ -147,7 +147,7 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 	case errors.Is(err, ops.ErrNoLeaseOfBranch):
 		return LeaseReleaseAnswer{}, LeaseReleaseExitReleased
 	case err != nil:
-		return leaseReleaseFailed(err), LeaseReleaseExitFailed
+		return LeaseReleaseFailedAnswer(err), LeaseReleaseExitFailed
 	}
 	var inUse []LeaseRefusedEntry
 	for _, l := range group {
@@ -171,7 +171,7 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 	case errors.Is(err, ops.ErrNoLeaseOfBranch):
 		return LeaseReleaseAnswer{}, LeaseReleaseExitReleased
 	case err != nil:
-		return leaseReleaseFailed(err), LeaseReleaseExitFailed
+		return LeaseReleaseFailedAnswer(err), LeaseReleaseExitFailed
 	}
 	var answer LeaseReleaseAnswer
 	var failed []string

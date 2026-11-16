@@ -135,10 +135,12 @@ func (d LeaseDeps) containers(ctx context.Context, rp *resolvedPool) ([]platform
 	return rp.api.Containers(ctx)
 }
 
-// env reads key from the container's current env.
-func (d LeaseDeps) env(key string) (string, bool) {
+// env reads key from the container's current env; a live env file that
+// cannot be read is an error, never an absent key.
+func (d LeaseDeps) env(key string) (string, bool, error) {
 	if d.Env != nil {
-		return d.Env(key)
+		v, ok := d.Env(key)
+		return v, ok, nil
 	}
 	return liveContainerEnv(key)
 }
@@ -153,7 +155,7 @@ func (d LeaseDeps) env(key string) (string, bool) {
 const liveEnvFile = "/etc/zerops-zembed/env.json"
 
 // liveContainerEnv reads key from the container's current env.
-func liveContainerEnv(key string) (string, bool) {
+func liveContainerEnv(key string) (string, bool, error) {
 	return liveContainerEnvFrom(liveEnvFile, key)
 }
 
@@ -161,22 +163,45 @@ func liveContainerEnv(key string) (string, bool) {
 // every call. Where the file exists it is the answer — a key it lacks is
 // absent, never taken from the process env, which is a snapshot from the
 // process's start (a re-created pool's old token would win). Only where there
-// is no file (outside a Zerops container) does the process env answer.
-func liveContainerEnvFrom(path, key string) (string, bool) {
+// is no file (outside a Zerops container) does the process env answer. A file
+// that exists and cannot be read or parsed is an error (failedRead): what it
+// holds is unknown, so no key reads as absent.
+func liveContainerEnvFrom(path, key string) (string, bool, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		v := os.Getenv(key)
-		return v, v != ""
-	}
-	if err != nil {
-		return "", false
+		return v, v != "", nil
 	}
 	var env map[string]any
-	if json.Unmarshal(raw, &env) != nil {
-		return "", false
+	if err == nil {
+		err = json.Unmarshal(raw, &env)
+	}
+	if err != nil {
+		return "", false, failedRead(fmt.Sprintf("zcp could not read the container's live env %s", path), err,
+			"zcp reads the pool's bearer and the container's current env from that file; check it exists as JSON and is readable by zcp's user")
 	}
 	v, ok := env[key].(string)
-	return v, ok && v != ""
+	return v, ok && v != "", nil
+}
+
+// stateReadError is a read of a file zcp relies on that failed: the
+// operation ran and failed (platform.ClassFailed), whatever its code. It
+// states its own class (platform's Classed), and its PlatformError travels on
+// the wire.
+type stateReadError struct{ *platform.PlatformError }
+
+// Class is platform.ClassFailed.
+func (e stateReadError) Class() platform.ErrorClass { return platform.ClassFailed }
+
+// Unwrap is the PlatformError, for errors.As.
+func (e stateReadError) Unwrap() error { return e.PlatformError }
+
+// failedRead is a stateReadError saying what, the read's own error whole as
+// its diagnostic, and next.
+func failedRead(what string, err error, next string) error {
+	pe := platform.NewPlatformError(platform.ErrUnknown, what+": "+err.Error(), next)
+	pe.Diagnostic, pe.Cause = err.Error(), err
+	return stateReadError{pe}
 }
 
 // Lease states.
@@ -402,7 +427,10 @@ func (m *missingBearer) refusal() error { return noBearerError(m.pool, m.reason,
 // platform's words and class.
 func readPoolBearer(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack) (string, *missingBearer, error) {
 	hostname := svc.Name
-	token, unresolved := liveBearer(d, hostname)
+	token, unresolved, err := liveBearer(d, hostname)
+	if err != nil {
+		return "", nil, err
+	}
 	if token != "" {
 		return token, nil, nil
 	}
@@ -424,10 +452,13 @@ func readPoolBearer(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack
 // liveBearer reads a pool's bearer from the container's live env:
 // <pool>_API_TOKEN, then <pool>_LEASE_TOKEN. A value that is still the text of
 // a reference is skipped, and named in unresolved ("<key> is the unresolved
-// text ${...}").
-func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string) {
+// text ${...}"); a live env that cannot be read is its error.
+func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string, err error) {
 	for _, key := range []string{pool + "_" + leaseTokenKey, pool + "_" + leaseTokenAliasKey} {
-		v, ok := d.env(key)
+		v, ok, err := d.env(key)
+		if err != nil {
+			return "", nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -435,9 +466,9 @@ func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string) {
 			unresolved = append(unresolved, key+" is the unresolved text "+v)
 			continue
 		}
-		return v, nil
+		return v, nil, nil
 	}
-	return "", unresolved
+	return "", unresolved, nil
 }
 
 // noBearerError is the refusal of a pool zcp finds no bearer for, outside an
@@ -1011,8 +1042,10 @@ func writeLeaseRecordLocked(stateDir string, rec leaseRecord) error {
 	return nil
 }
 
-// readLeaseRecords reads every lease record. A record that cannot be read or
-// parsed is skipped: it names no lease zcp could use.
+// readLeaseRecords reads every lease record. One dropped between the listing
+// and its read is gone; any other record that cannot be read or parsed, or
+// whose name is not its own alias, is an error naming the file (failedRead):
+// the record holds the only copy of its lease, so it is never skipped.
 func readLeaseRecords(stateDir string) ([]leaseRecord, error) {
 	if stateDir == "" {
 		return nil, nil
@@ -1029,13 +1062,21 @@ func readLeaseRecords(stateDir string) ([]leaseRecord, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(leaseDir(stateDir), e.Name()))
-		if err != nil {
+		path := filepath.Join(leaseDir(stateDir), e.Name())
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		var r leaseRecord
-		if json.Unmarshal(raw, &r) != nil || r.alias()+".json" != e.Name() || !isLeaseAliasShape(r.alias()) {
-			continue
+		if err == nil {
+			err = json.Unmarshal(raw, &r)
+		}
+		if err == nil && (r.alias()+".json" != e.Name() || !isLeaseAliasShape(r.alias())) {
+			err = fmt.Errorf("it records lease %q, not the one its name says", r.alias())
+		}
+		if err != nil {
+			return nil, failedRead("zcp could not read the lease record "+path, err,
+				"It may hold the only copy of a lease, so zcp neither skips nor removes it: repair it, or move it out of "+leaseDir(stateDir)+" once no lease of yours is recorded there (zerops_lease action=status lists the leases after that)")
 		}
 		out = append(out, r)
 	}
