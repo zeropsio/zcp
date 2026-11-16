@@ -241,11 +241,13 @@ func mateStartJob() (childWatch, error) {
 }
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines) and starts keeping the wired dev services' git on the
-// Mate's HQ (tools.KeepMateDevGit). The Mate's key and project come from the
-// live env store, as the guard's flag does: a unit's own environment carries
-// neither. Keeping runs in this process for as long as the server does; a
-// restart cut short finds what it left by looking.
+// mate.LaunchEnvLines), starts keeping the wired dev services' git on the
+// Mate's HQ (tools.KeepMateDevGit) and starts the stand-up of pooled parts
+// that have no build (tools.StandupAtBoot), which writes its verdict to that
+// status file. The Mate's key and project come from the live env store, as
+// the guard's flag does: a unit's own environment carries neither. Both run
+// in this process beside the server and never hold its launch; a restart cut
+// short finds what they left by looking.
 func mateLaunchSetup() {
 	// The goroutine reads the store path taken here, never the var: it is the
 	// launch's, and it outlives it.
@@ -256,6 +258,7 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
 	go keepMateDevGit(env)
+	go standupAtBoot(env, path)
 }
 
 // keepMateDevGit runs tools.KeepMateDevGit for as long as this process
@@ -269,6 +272,20 @@ func keepMateDevGit(env func() func(string) string) {
 	}()
 	tools.KeepMateDevGit(context.Background(), env, logHQ)
 }
+
+// standupAtBoot runs tools.StandupAtBoot once. A panic in it stops only the
+// stand-up, said on stderr: this process supervises the Mate's server, which
+// must outlive it.
+func standupAtBoot(env func() func(string) string, statusPath string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logMate(fmt.Sprintf("the stand-up at boot stopped: %v", r))
+		}
+	}()
+	tools.StandupAtBoot(context.Background(), env, statusPath, logMate)
+}
+
+func logMate(line string) { fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", line) }
 
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }
 
