@@ -814,7 +814,8 @@ func TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMi
 
 // A dev container that does not answer over SSH in time (out of memory or
 // CPU) is reported not answering, never an unknown ssh error: every action
-// changes nothing and says to check its load and memory, scale it or restart it.
+// changes nothing, carries ssh's own error and its class, and says to check
+// its load and memory — never to restart it (for a lease, a pool restart).
 func TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWithItsRecovery(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"stop", "status", "logs", "start", "restart"} {
@@ -826,9 +827,16 @@ func TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWit
 		if err != nil {
 			t.Fatalf("%s: err = %v, want a not-answering result", action, err)
 		}
-		want := "difydev did not answer over SSH in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale) or restart it (zerops_manage action=restart), then retry."
-		if result.Reason != reasonSupervisorUnresponsive || result.Running || result.Message != want {
-			t.Errorf("%s: result = %+v, want supervisor_unresponsive saying %q", action, result, want)
+		if result.Reason != reasonSupervisorUnresponsive || result.Running {
+			t.Errorf("%s: result = %+v, want supervisor_unresponsive, not running", action, result)
+		}
+		for _, part := range []string{"difydev did not answer over SSH", "(unreachable)", "context deadline exceeded", "zerops_scale"} {
+			if !strings.Contains(result.Message, part) {
+				t.Errorf("%s: message %q, want it to carry %q", action, result.Message, part)
+			}
+		}
+		if strings.Contains(result.Message, "restart") {
+			t.Errorf("%s: message %q advises a restart", action, result.Message)
 		}
 		if n := len(c.Sent()); n != 1 || c.Declaration != decl || c.Deploys != 0 {
 			t.Errorf("%s: sent %d commands, declaration %q, deploys %d — want only the read, nothing changed", action, n, c.Declaration, c.Deploys)
