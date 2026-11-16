@@ -2466,8 +2466,10 @@ jobs:
 // it is staged — zcp's own service, read by `zcp self launch-token` in this
 // container, no ssh (a launch outside a container staged it on the stage,
 // read over ssh from there) — with GH_TOKEN the PAT the person gives, never
-// read from the pool or a lease; the workflow file is committed and pushed
-// from a lease of the pool (commitVia), and the release tags the origin's tip
+// read from the pool or a lease; the workflow file is committed on the
+// agent's own working branch, in its lease of the pool, and lands on the
+// tracked branch as every change does (commitVia) — never through a lease of
+// that branch, which no acquire takes — and the release tags the origin's tip
 // that holds it.
 func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, workflowYAML, ownerRepo string) map[string]any {
 	stage := state.TargetServiceHostname
@@ -2493,7 +2495,7 @@ func poolPartProdCDActionsBlock(meta *workflow.ServiceMeta, state *launchState, 
 			"path":    workflowPath,
 			"content": workflowYAML,
 		},
-		"commitVia": fmt.Sprintf("%s — the part's dev half is the dev pool %q, which holds no checkout of its own: write %s in the lease's checkout (ssh to its alias), commit, and push %s from the lease, before the release.", poolPairLeaseAcquire(meta, branch), meta.Hostname, workflowPath, branch),
+		"commitVia": fmt.Sprintf("Your working branch's lease (%s) — the part's dev half is the dev pool %q, which holds no checkout of its own: write %s in the lease's checkout (ssh to its alias), commit and push it on that branch, and land it on %s as every change lands (in a Mate, through its HQ change), before the release. Never acquire %s: no lease holds it.", poolPairLeaseAcquire(meta, "<your branch>"), meta.Hostname, workflowPath, branch, branch),
 		"secret": map[string]any{
 			"name":    launchProdSecretName,
 			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret " + stagedWhere + " so it never re-enters the conversation; do NOT ask the user to paste it and NEVER fabricate one. GH_TOKEN is the PAT the user provides (`Secrets: Read and write` on " + ownerRepo + ") — the part's dev half is a dev pool, which holds no container to read GIT_TOKEN from. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
