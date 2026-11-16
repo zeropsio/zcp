@@ -69,38 +69,6 @@ func StandupRowOf(in StandupRowInput) mate.StandupRow {
 	return row
 }
 
-// StandupHeadlineOf is the one derivation of the verdict's headline from its
-// rows: failed, done, ready (to work) or building (mate.StandupHeadline). A
-// failed row makes it failed whatever the others are (pools done and a stage
-// failed is failed: only failed starts the agent's turn); ready needs a pool
-// row; no rows (nothing adopted yet) is building, never done.
-func StandupHeadlineOf(rows []mate.StandupRow) mate.StandupHeadline {
-	if len(rows) == 0 {
-		return mate.HeadlineBuilding
-	}
-	pools := 0
-	poolsDone, allDone := true, true
-	for _, r := range rows {
-		if r.State == mate.RowFailed {
-			return mate.HeadlineFailed
-		}
-		if r.Kind == mate.RowPool {
-			pools++
-		}
-		if r.State != mate.RowDone {
-			allDone = false
-			poolsDone = poolsDone && r.Kind != mate.RowPool
-		}
-	}
-	if allDone {
-		return mate.HeadlineDone
-	}
-	if poolsDone && pools > 0 {
-		return mate.HeadlineReady
-	}
-	return mate.HeadlineBuilding
-}
-
 // versionFailed reports a version or its build-and-deploy process that ended
 // failed or cancelled.
 func versionFailed(versionStatus, processStatus string) bool {

@@ -10,10 +10,10 @@ import (
 
 // SV-READY — While a stage still builds and every pool is done, the headline
 // is "ready".
-// witness: internal/ops/standup_verdict.go | poolsDone = poolsDone && r.Kind != mate.RowPool → poolsDone = poolsDone && r.Kind != mate.RowStage
+// witness: internal/mate/status.go | poolsDone = poolsDone && r.Kind != RowPool → poolsDone = poolsDone && r.Kind != RowStage
 func TestStandupVerdict_SVReady_PoolsDoneStageBuilding_Ready(t *testing.T) {
 	t.Parallel()
-	got := StandupHeadlineOf([]mate.StandupRow{
+	got := mate.StandupHeadlineOf([]mate.StandupRow{
 		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
 		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowBuilding},
 	})
@@ -24,10 +24,10 @@ func TestStandupVerdict_SVReady_PoolsDoneStageBuilding_Ready(t *testing.T) {
 
 // SV-DONE — Once every pool and every stage is done, the headline is "done",
 // not "ready".
-// witness: internal/ops/standup_verdict.go | return mate.HeadlineDone → return mate.HeadlineReady
+// witness: internal/mate/status.go | return HeadlineDone → return HeadlineReady
 func TestStandupVerdict_SVDone_EveryRowDone_Done(t *testing.T) {
 	t.Parallel()
-	got := StandupHeadlineOf([]mate.StandupRow{
+	got := mate.StandupHeadlineOf([]mate.StandupRow{
 		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
 		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowDone},
 	})
@@ -38,10 +38,10 @@ func TestStandupVerdict_SVDone_EveryRowDone_Done(t *testing.T) {
 
 // SV-BUILDING — While a pool still builds, the headline is "building", never
 // "ready", even when the stage is done.
-// witness: internal/ops/standup_verdict.go | if poolsDone && pools > 0 { → if pools > 0 {
+// witness: internal/mate/status.go | if poolsDone && pools > 0 { → if pools > 0 {
 func TestStandupVerdict_SVBuilding_PoolBuildingStageDone_Building(t *testing.T) {
 	t.Parallel()
-	got := StandupHeadlineOf([]mate.StandupRow{
+	got := mate.StandupHeadlineOf([]mate.StandupRow{
 		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowBuilding},
 		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowDone},
 	})
@@ -52,10 +52,10 @@ func TestStandupVerdict_SVBuilding_PoolBuildingStageDone_Building(t *testing.T) 
 
 // SV-F17 — With two pools where one failed and the other is done, the
 // headline is "failed", never "done".
-// witness: internal/ops/standup_verdict.go | if r.State == mate.RowFailed { → if r.State == mate.RowFailed && r.Kind == mate.RowStage {
+// witness: internal/mate/status.go | if r.State == RowFailed { → if r.State == RowFailed && r.Kind == RowStage {
 func TestStandupVerdict_SVF17_OnePartFailedOneDone_Failed(t *testing.T) {
 	t.Parallel()
-	got := StandupHeadlineOf([]mate.StandupRow{
+	got := mate.StandupHeadlineOf([]mate.StandupRow{
 		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
 		{Hostname: "apipool", Kind: mate.RowPool, State: mate.RowFailed, Class: platform.ClassFailed},
 	})
@@ -66,10 +66,10 @@ func TestStandupVerdict_SVF17_OnePartFailedOneDone_Failed(t *testing.T) {
 
 // SV-F6 — With the pools done and the stage failed, the headline is
 // "failed", so the agent's turn starts to fix the stage.
-// witness: internal/ops/standup_verdict.go | if r.State == mate.RowFailed { → if r.State == mate.RowFailed && r.Kind == mate.RowPool {
+// witness: internal/mate/status.go | if r.State == RowFailed { → if r.State == RowFailed && r.Kind == RowPool {
 func TestStandupVerdict_SVF6_PoolsDoneStageFailed_Failed(t *testing.T) {
 	t.Parallel()
-	got := StandupHeadlineOf([]mate.StandupRow{
+	got := mate.StandupHeadlineOf([]mate.StandupRow{
 		{Hostname: "webpool", Kind: mate.RowPool, State: mate.RowDone},
 		{Hostname: "webstage", Kind: mate.RowStage, State: mate.RowFailed, Class: platform.ClassFailed},
 	})
