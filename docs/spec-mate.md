@@ -5795,7 +5795,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   ancestry and downloads file contents only as they are needed. The wiring's initial fetch uses
   `--filter=blob:none`; checkout and later historical reads use Git's promisor remote through the
   existing HQ credential helper. Recipe clones are still unshallowed before replacing their
-  origin. Pool warm clones, lease checkouts and missing-`.git` reconstruction keep their existing
+  origin. A lease checkout of an HQ repository fetches the same way, `blob:none` with full ancestry,
+  and keeps a credential hint for HQ's host that tells a plain git needing old contents to run it
+  as `zcp git <alias> …`. Pool warm clones and missing-`.git` reconstruction keep their existing
   fetch policy until separately qualified (`TestBuildBaseBranchCommand_FirstFetch_DefersBlobsWithFullAncestry`).
 - **One repository per monorepo** (owner decision, 2026-10-24; a split seen live 2026-10-27:
   one monorepo wired as three and as seven HQ repositories, one per dev service, which HQ cannot
