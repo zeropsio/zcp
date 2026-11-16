@@ -1247,8 +1247,9 @@ came in time). On `5` every `zerops_dev_server` action changes nothing and answe
 `supervisor_unresponsive` — the container may be out of memory or CPU, check its load and memory and
 retry — and a start never takes the move onto the supervisor below; a deploy's reply says the same
 (`TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing`). A container
-that does not answer the SSH call itself in time answers the same reason, naming the host, with a
-scale or restart as its recovery
+that does not answer the SSH call itself in time answers the same reason, naming the host, ssh's own
+error and its class, with the container's load (`zerops_logs`, `zerops_scale`) as what to check and
+never a restart: for a lease that would restart its pool
 (`TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWithItsRecovery`).
 A start that fails still answers `0`; the failure is the server's `exit` in the answer.
 When the supervisor still runs a declared server whose entry the file no longer holds (removed by

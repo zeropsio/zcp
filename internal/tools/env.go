@@ -429,11 +429,13 @@ func applyAutoRestart(
 		return
 	}
 
-	attempted := 0
+	// failed restarts were refused; unfollowed ones were started, but whether
+	// they finished is unknown. Neither is counted as restarted.
+	failed, unfollowed := 0, 0
 	for _, t := range plan.targets {
-		attempted++
 		proc, err := client.RestartService(ctx, t.id)
 		if err != nil {
+			failed++
 			resp.RestartWarnings = append(resp.RestartWarnings,
 				fmt.Sprintf("%s: restart failed%s: %v", t.hostname, platform.ClassOf(err).Note(), err))
 			continue
@@ -443,6 +445,7 @@ func applyAutoRestart(
 			if pollErr != nil {
 				// The restart was asked for, but whether it finished is
 				// unknown: never counted as restarted, so "live" is not claimed.
+				unfollowed++
 				resp.RestartedProcesses = append(resp.RestartedProcesses, proc)
 				resp.RestartWarnings = append(resp.RestartWarnings,
 					fmt.Sprintf("%s: restart process %s was started but could not be followed to its end%s: %v", t.hostname, proc.ID, platform.ClassOf(pollErr).Note(), pollErr))
@@ -452,14 +455,13 @@ func applyAutoRestart(
 		}
 		resp.RestartedServices = append(resp.RestartedServices, t.hostname)
 	}
-	failed := attempted - len(resp.RestartedServices)
 
 	var outcome string
 	switch {
-	case len(resp.RestartedServices) == 0:
+	case failed == len(plan.targets):
 		outcome = "Restart failed on every reader — see restartWarnings."
-	case failed > 0:
-		outcome = fmt.Sprintf("Restarted %d reader(s), %d failed — see restartWarnings.", len(resp.RestartedServices), failed)
+	case failed+unfollowed > 0:
+		outcome = restartTally(len(resp.RestartedServices), failed, unfollowed)
 	case len(resp.ShadowWarnings) > 0:
 		outcome = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
 	case len(resp.ShadowUnverified) > 0:
@@ -476,6 +478,22 @@ func applyAutoRestart(
 		outcome = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
 	}
 	resp.NextActions = joinSentences(outcome, unreadHint)
+}
+
+// restartTally is the outcome of restarts not all of which were seen to
+// finish: how many restarted, failed, and started without being followed.
+func restartTally(restarted, failed, unfollowed int) string {
+	var parts []string
+	if restarted > 0 {
+		parts = append(parts, fmt.Sprintf("Restarted %d reader(s)", restarted))
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed to restart", failed))
+	}
+	if unfollowed > 0 {
+		parts = append(parts, fmt.Sprintf("%d started restarting but could not be followed to the end", unfollowed))
+	}
+	return strings.Join(parts, ", ") + " — see restartWarnings."
 }
 
 // restartPlan is what an env change restarts and why.

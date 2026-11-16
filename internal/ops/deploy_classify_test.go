@@ -26,22 +26,22 @@ func TestClassifySSHError_OSLevel(t *testing.T) {
 			wantMessage: "killed (likely OOM)",
 		},
 		{
-			name: "connection refused",
+			name: "ssh exit 255, connection refused → unreachable with ssh's words",
 			sshErr: &platform.SSHExecError{
 				Hostname: "builder",
-				Output:   "",
-				Err:      fmt.Errorf("dial tcp 10.0.0.5:22: connection refused"),
+				Output:   "ssh: connect to host builder port 22: Connection refused",
+				Err:      platform.ExitStatusError(255),
 			},
-			wantMessage: "cannot reach source service",
+			wantMessage: "ssh itself failed (unreachable, exit status 255):\nssh: connect to host builder port 22: Connection refused",
 		},
 		{
-			name: "no route to host",
+			name: "ssh exit 255, connection timed out → unreachable with ssh's words",
 			sshErr: &platform.SSHExecError{
 				Hostname: "builder",
-				Output:   "",
-				Err:      fmt.Errorf("connect: no route to host"),
+				Output:   "ssh: connect to host builder port 22: Connection timed out",
+				Err:      platform.ExitStatusError(255),
 			},
-			wantMessage: "cannot reach source service",
+			wantMessage: "ssh itself failed (unreachable, exit status 255):\nssh: connect to host builder port 22: Connection timed out",
 		},
 	}
 
