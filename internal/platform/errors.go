@@ -290,3 +290,40 @@ func MapNetworkError(err error) (code string, isNetwork bool) {
 
 	return "", false
 }
+
+// ErrorClass is zcp's one class of a failure, derived once here and read by
+// every consumer (docs: followup-ssh-errors §2.3): whether waiting can change
+// it. The source's own words (platform message and code, ssh/git/zcli stderr
+// and exit) travel beside it verbatim. "" is no failure.
+type ErrorClass string
+
+const (
+	// ClassUnreachable may change by waiting: ssh's 255 before connect, a
+	// 5xx, a 429, a timeout. The only class a wait loop waits on, bounded.
+	ClassUnreachable ErrorClass = "unreachable"
+	// ClassRefused will not change until something is changed: a 401/403 or
+	// other 4xx, an SSH admission refusal, a quota.
+	ClassRefused ErrorClass = "refused"
+	// ClassFailed is an operation that ran and failed: a build, a command's
+	// exit.
+	ClassFailed ErrorClass = "failed"
+)
+
+// ClassOf is err's class: "" for nil. The one derivation of the class from a
+// PlatformError, an SSHExecError (SSHExitCode) or a network error.
+func ClassOf(err error) ErrorClass {
+	return ""
+}
+
+// WaitedOn reports whether a wait loop waits on a failure of class c, bounded:
+// true for ClassUnreachable only.
+func (c ErrorClass) WaitedOn() bool {
+	return false
+}
+
+// SSHExitCode is the exit status ssh ended with behind err — the remote
+// command's, or ssh's own 255 — and -1 when err carries none (nil, a context
+// stop, ssh that never ran). Both SSH runners carry it in their SSHExecError.
+func SSHExitCode(err error) int {
+	return -1
+}

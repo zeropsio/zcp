@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -80,6 +81,71 @@ type StandupStatus struct {
 	// stage call of a section a first call left waiting). A reader matches
 	// the section to that call by it.
 	CallStartedAt string `json:"callStartedAt,omitempty"`
+	// Verdict is the pooled stand-up's verdict: a row per pooled service and
+	// the headline derived from them (ops.StandupHeadlineOf). nil where no
+	// pooled part was stood up — a reader keeps today's wake then.
+	Verdict *StandupVerdict `json:"verdict,omitempty"`
+}
+
+// StandupVerdict is the verdict a reader shows and wakes by, never
+// re-derives: the rows and their one headline.
+type StandupVerdict struct {
+	Headline StandupHeadline `json:"headline"`
+	Rows     []StandupRow    `json:"rows"`
+}
+
+// StandupHeadline is the verdict's one word for the whole stand-up.
+type StandupHeadline string
+
+const (
+	// HeadlineBuilding: a row is still building and none failed.
+	HeadlineBuilding StandupHeadline = "building"
+	// HeadlineReady ("ready to work"): every pool row is done — the pools are
+	// leasable — and a stage row is still building.
+	HeadlineReady StandupHeadline = "ready"
+	// HeadlineDone: every row is done, the stages built too.
+	HeadlineDone StandupHeadline = "done"
+	// HeadlineFailed: a row failed.
+	HeadlineFailed StandupHeadline = "failed"
+)
+
+// StandupRowKind is what a row's service is to the tier.
+type StandupRowKind string
+
+const (
+	RowPool  StandupRowKind = "pool"
+	RowStage StandupRowKind = "stage"
+)
+
+// StandupRowState is one service's state in the verdict.
+type StandupRowState string
+
+const (
+	// RowBuilding: its version named Commit is submitted and not yet active.
+	RowBuilding StandupRowState = "building"
+	// RowDone: its version named Commit is active, and for a pool its bearer
+	// resolves.
+	RowDone StandupRowState = "done"
+	// RowFailed: Class and Cause say why.
+	RowFailed StandupRowState = "failed"
+)
+
+// StandupRow is one pooled service's line of the verdict, read from its app
+// version and process, never from a container.
+type StandupRow struct {
+	Hostname     string          `json:"hostname"`
+	Kind         StandupRowKind  `json:"kind"`
+	Commit       string          `json:"commit"`
+	State        StandupRowState `json:"state"`
+	AppVersionID string          `json:"appVersionId,omitempty"`
+	// ProcessID is the build-and-deploy process; its build log is the
+	// failure's evidence.
+	ProcessID string `json:"processId,omitempty"`
+	// Class is set on RowFailed only.
+	Class platform.ErrorClass `json:"class,omitempty"`
+	// Cause is the source's own words, verbatim (platform message, build
+	// log line, the bearer variable that does not resolve).
+	Cause string `json:"cause,omitempty"`
 }
 
 // StandupProcess names a process the way the work sessions do: its PID and
