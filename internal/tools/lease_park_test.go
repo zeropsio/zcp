@@ -5,7 +5,6 @@ package tools
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -198,29 +197,6 @@ func TestLeaseTool_ParkUnpark_BadInput_TypedRefusal(t *testing.T) {
 	}
 }
 
-// parkLeaseFile marks the recorded lease alias parked, as zerops_lease
-// action=park writes it.
-func parkLeaseFile(t *testing.T, stateDir, alias string) {
-	t.Helper()
-	path := filepath.Join(stateDir, "leases", alias+".json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read lease record: %v", err)
-	}
-	var rec map[string]any
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		t.Fatalf("parse lease record: %v", err)
-	}
-	rec["parked"], rec["parkedAt"] = true, "2026-10-24T09:00:00Z"
-	out, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatalf("write lease record: %v", err)
-	}
-}
-
 // TestDeployTool_ParkedLeaseSource_RefusedBeforeAnyRead: zerops_deploy and
 // zerops_deploy_batch from a parked lease are refused before pre-flight reads
 // its (unmounted) checkout or anything reaches it over ssh, naming the unpark.
@@ -230,9 +206,8 @@ func TestDeployTool_ParkedLeaseSource_RefusedBeforeAnyRead(t *testing.T) {
 	t.Run("zerops_deploy", func(t *testing.T) {
 		t.Parallel()
 		rig := newLeaseDeployRig(t)
-		parkLeaseFile(t, rig.stateDir, rig.alias)
 		ssh := &leaseSSH{}
-		result, text := rig.deploy(t, ssh, map[string]any{"sourceService": rig.alias, "targetService": "appstage"})
+		result, text := rig.deploy(t, ssh, map[string]any{"sourceService": rig.alias, "targetService": "appstage"}, withVouchParked())
 		if !result.IsError || !strings.Contains(text, rig.alias+" is parked") || !strings.Contains(text, "zerops_lease action=unpark lease="+rig.alias) {
 			t.Fatalf("result = (error %v) %s, want a refusal naming the parked lease and its unpark", result.IsError, text)
 		}
@@ -244,9 +219,8 @@ func TestDeployTool_ParkedLeaseSource_RefusedBeforeAnyRead(t *testing.T) {
 	t.Run("zerops_deploy_batch", func(t *testing.T) {
 		t.Parallel()
 		rig := newLeaseDeployRig(t)
-		parkLeaseFile(t, rig.stateDir, rig.alias)
 		ssh := &leaseSSH{}
-		result, _, text := runPoolBatch(t, rig.mock, ssh, rig.stateDir, []map[string]any{{"sourceService": rig.alias, "targetService": "appstage"}})
+		result, _, text := runPoolBatch(t, rig.mock, ssh, rig.stateDir, []map[string]any{{"sourceService": rig.alias, "targetService": "appstage"}}, withVouchParked())
 		if !result.IsError || !strings.Contains(text, rig.alias+" is parked") || !strings.Contains(text, "zerops_lease action=unpark lease="+rig.alias) {
 			t.Fatalf("result = (error %v) %s, want a refusal naming the parked lease and its unpark", result.IsError, text)
 		}
@@ -263,10 +237,9 @@ func TestVerify_ParkedLease_NoProbeNamesUnpark(t *testing.T) {
 	t.Parallel()
 	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
 	writeLeaseFile(t, stateDir)
-	parkLeaseFile(t, stateDir, "webpool-3")
 	ssh := &hostSSH{inner: devservertest.NewSupervised("")}
 
-	result, text := verifyLeaseCall(t, stateDir, ssh, "webpool-3")
+	result, text := verifyLeaseCall(t, stateDir, ssh, "webpool-3", verifyVouchParked())
 	if result.IsError {
 		t.Fatalf("verify failed: %s", text)
 	}

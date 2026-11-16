@@ -36,11 +36,11 @@ func poolBatchMock() *platform.Mock {
 
 // runPoolBatch calls zerops_deploy_batch with targets over mock and stateDir.
 // The tool result is returned whole, and the batch parsed when it is no error.
-func runPoolBatch(t *testing.T, mock *platform.Mock, ssh ops.SSHDeployer, stateDir string, targets []map[string]any) (*mcp.CallToolResult, ops.DeployBatchResult, string) {
+func runPoolBatch(t *testing.T, mock *platform.Mock, ssh ops.SSHDeployer, stateDir string, targets []map[string]any, opts ...DeployOption) (*mcp.CallToolResult, ops.DeployBatchResult, string) {
 	t.Helper()
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{}, append([]DeployOption{withVouchHeld()}, opts...)...)
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{"targets": targets})
 	text := getTextContent(t, result)
 	var batch ops.DeployBatchResult
