@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -22,10 +23,6 @@ const (
 	// standupDevelopment is every dev half standing with the stages queued
 	// for the next call.
 	standupDevelopment = "development"
-	// standupPoolsBuilt is every pair the stand-up builds standing (or none
-	// in the tier) and every part's dev pool given its image of main: the
-	// parts' stages are the model's, each deployed from a lease of its pool.
-	standupPoolsBuilt = "pools-built"
 
 	// Roles.
 	standupRoleDev           = "dev"
@@ -88,27 +85,33 @@ type standupService struct {
 	// CodeVolume is a variant-B dev half's code volume: filled once, and
 	// every dev service's supervisor reloaded.
 	CodeVolume *standupCodeVolume `json:"codeVolume,omitempty"`
-	Next       string             `json:"next"`
+	// Verdict is a pooled part's pool or stage's row of the verdict.
+	Verdict *mate.StandupRow `json:"verdict,omitempty"`
+	Next    string           `json:"next"`
 }
 
 // buildStandupResponse is the report: the pairs, dev half, further dev
-// services, then every stage, in the order they were deployed, then every
-// service the stand-up left as it is.
-func buildStandupResponse(src standupSource, pairs []*standupPair, live map[string]*platform.ServiceStack) standupResponse {
+// services, then every stage, in the order they were deployed, a pooled
+// part's pool and stages each with its verdict row, then every service the
+// stand-up left as it is.
+func buildStandupResponse(src standupSource, pairs []*standupPair, live map[string]*platform.ServiceStack, pooled pooledOutcome) standupResponse {
 	resp := standupResponse{
 		GroupRepo: src.groupRepo,
 		Tier:      hq.RecipeTierPaths[hq.RecipeTierMate] + "@" + hqBase,
 	}
-	stood, devs, queued := 0, 0, 0
-	var pools, built []string
+	rows := map[string]mate.StandupRow{}
+	for _, r := range pooled.verdict.Rows {
+		rows[r.Hostname] = r
+	}
+	stood, devs, queued, pools := 0, 0, 0, 0
 	names := make([]string, 0, len(pairs))
 	for _, sp := range pairs {
+		names = append(names, sp.pair.Dev.Hostname+"→"+strings.Join(stageHostnames(sp.pair), "+"))
 		if sp.pair.DevPool {
-			resp.Services = append(resp.Services, standupPoolService(sp), standupPoolStageService(sp, live))
-			names = append(names, sp.pair.Dev.Hostname+"→"+sp.pair.FirstStage().Hostname)
-			pools = append(pools, sp.pair.Dev.Hostname)
-			if sp.devStands() {
-				built = append(built, sp.pair.Dev.Hostname)
+			pools++
+			resp.Services = append(resp.Services, standupPooledService(sp, sp.pair.Dev.Hostname, standupRoleDevPool, sp.pair.Dev.Setup, rows))
+			for _, st := range sp.pair.Stages {
+				resp.Services = append(resp.Services, standupPooledService(sp, st.Hostname, standupRoleStage, st.Setup, rows))
 			}
 			continue
 		}
@@ -121,7 +124,6 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		for _, st := range sp.stages {
 			resp.Services = append(resp.Services, standupStageService(sp, st))
 		}
-		names = append(names, sp.pair.Dev.Hostname+"→"+strings.Join(stageHostnames(sp.pair), "+"))
 		switch {
 		case sp.stoodUp():
 			stood++
@@ -136,21 +138,11 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		resp.Services = append(resp.Services, standupSkippedService(s, live[s.Hostname]))
 	}
 
-	containers := len(pairs) - len(pools)
+	containers := len(pairs) - pools
 	switch {
-	case containers == 0 && len(built) == len(pools):
-		resp.StandUp = standupPoolsBuilt
-		resp.Next = standupPoolsNext
 	case containers == 0:
-		resp.StandUp = standupPartial
-		if len(built) == 0 {
-			resp.StandUp = standupFailed
-		}
-		resp.Next = fmt.Sprintf("The stand-up stopped short: %d of %d parts' dev pools have their image. Each service's next step names the call for what failed; "+
-			"once a cause is fixed, zerops_standup continues from where it stopped and skips what is done.", len(built), len(pools))
-		if len(built) > 0 {
-			resp.Next += " For the pools that have it: " + standupPoolsNext
-		}
+		resp.StandUp = string(pooled.verdict.Headline)
+		resp.Next = standupPooledNext(pooled)
 	case stood == containers:
 		resp.StandUp = standupReady
 		resp.Next = "Every pair stands: each dev half runs main's code, and each stage runs main as this Mate's preview. " +
@@ -166,110 +158,62 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		resp.StandUp = standupPartial
 		resp.Next = standupStoppedNext(stood, containers, queued)
 	}
-	if containers > 0 && len(pools) > 0 {
-		switch {
-		case len(built) < len(pools) && (resp.StandUp == standupReady || resp.StandUp == standupDevelopment):
+	if containers > 0 && pools > 0 {
+		if resp.StandUp == standupReady && pooled.verdict.Headline != mate.HeadlineDone {
 			resp.StandUp = standupPartial
-			resp.Next = standupStoppedNext(stood, containers, queued)
-		case resp.StandUp == standupReady:
-			resp.StandUp = standupPoolsBuilt
 		}
-		if len(built) > 0 {
-			resp.Next += " For the parts whose dev half is a dev pool: " + standupPoolsNext
-		}
+		resp.Next += " For the parts whose dev half is a dev pool: " + standupPooledNext(pooled)
 	}
 	resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
 		stood, containers, devs, containers, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
-	if len(pools) > 0 {
-		resp.Message += fmt.Sprintf(" %d of %d parts' dev pools have their image of main (%s); each of their stages is deployed from a lease of its pool.",
-			len(built), len(pools), strings.Join(built, ", "))
+	if pools > 0 {
+		resp.Message += fmt.Sprintf(" The %d pooled parts' verdict is %s.", pools, pooled.verdict.Headline)
+		for repo, commit := range pooled.built {
+			resp.Message += fmt.Sprintf(" %s was built at %s.", repo, shortCommit(commit))
+		}
 	}
 	return resp
 }
 
-// standupPoolsNext is the model's way on for the parts whose dev pool has its
-// image: each service's next step names the calls.
-const standupPoolsNext = "Each such part's pool has its image of main, so it leases now. " +
-	"Lease a container of every such pool on main in one call — zerops_lease action=\"acquire\" pools=[…] repo=\"<the repository its pool's next step names>\" branch=\"main\" — " +
-	"then, per part, deploy its stage from its lease and verify it as the stage's next step gives, and start the part's dev servers in its lease as the pool's next step says. " +
-	"Until its stage is deployed a part has no preview: never tell the person it is up before. " +
-	"From then on, work on a part goes through zerops_workflow action=\"start\" workflow=\"develop\" scope=[\"<pool>\"]."
-
-// standupPoolService is a part's dev pool after the stand-up: recorded as the
-// pair's key, its first image deployed from main checked out in its stage
-// (standup_pool.go) — or what stopped it — and once it has one, the lease
-// the part's dev servers run in.
-func standupPoolService(sp *standupPair) standupService {
-	p := sp.pair
-	pool, stage := p.Dev.Hostname, p.FirstStage().Hostname
+// standupPooledService is a pooled part's pool or stage after the stand-up:
+// its verdict row, whose next step is the service's.
+func standupPooledService(sp *standupPair, host, role, setup string, rows map[string]mate.StandupRow) standupService {
 	s := standupService{
-		Hostname: pool, Role: standupRoleDevPool, Pair: stage,
-		Repository: sp.repository, Setup: p.Dev.Setup,
-		Adopted: sp.adopted, Wired: sp.wired, Deploy: sp.devDeploy,
+		Hostname: host, Role: role, Repository: sp.repository, Setup: setup,
+		Adopted: sp.adopted, Wired: sp.wired,
 	}
-	byHand := fmt.Sprintf("zerops_deploy sourceService=%q targetService=%q setup=%q sha=\"HEAD\"", stage, pool, p.Dev.Setup)
-	switch d := sp.devDeploy; {
-	case sp.failed != "" && sp.failedHost == stage:
-		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: "its first image is deployed from main checked out in " + stage + ", which did not get there"}
-		s.Next = sp.next
-	case sp.failed != "":
-		s.Failed = sp.failed
-		s.Next = sp.next
-	case d == nil:
-		s.Next = standupCallAgain
-	case d.running():
-		s.Next = fmt.Sprintf("Its image is main's, so it leases: %s takes a container of it on main, whose dev servers are the part's — "+
-			"the acquire starts the ones the repository declares; start any other with zerops_dev_server action=\"start\" hostname=\"<the lease's alias>\". "+
-			"Every other branch you work on takes a lease of its own.", standupPoolAcquire(sp))
-	case d.Status == standupDeployFailed:
-		s.Next = fmt.Sprintf("Its first image did not deploy from main (the reason and the logs above): the repository's zerops.yaml needs a setup %q that builds and starts zcp-devsup. "+
-			"Fix it on a branch and propose it; once that is merged, call zerops_standup again — it checks main out afresh and continues from here. Or deploy it by hand from main checked out in %s: %s.", p.Dev.Setup, stage, byHand)
-	default:
-		s.Next = standupDeployNext(d, pool, byHand)
+	if host == sp.pair.Dev.Hostname {
+		s.Pair = strings.Join(stageHostnames(sp.pair), "+")
+	} else {
+		s.Pair = sp.pair.Dev.Hostname
+	}
+	if row, ok := rows[host]; ok {
+		s.Verdict, s.Next = &row, row.Next
 	}
 	return s
 }
 
-// standupPoolStageService is a pool pair's stage after the stand-up: it holds
-// main for the pool's first image and is deployed from a lease of the pool,
-// never by the stand-up.
-func standupPoolStageService(sp *standupPair, live map[string]*platform.ServiceStack) standupService {
-	p := sp.pair
-	pool, stage := p.Dev.Hostname, p.FirstStage()
-	s := standupService{
-		Hostname: stage.Hostname, Role: standupRoleStage, Pair: pool,
-		Repository: sp.repository, Setup: stage.Setup, Adopted: sp.adopted,
+// standupPooledNext is the model's way on for the pooled parts, by the
+// verdict's headline, and where main moved during the run (F13).
+func standupPooledNext(pooled pooledOutcome) string {
+	var next string
+	switch pooled.verdict.Headline {
+	case mate.HeadlineDone:
+		next = "Every pooled part's pool and stages run main: the pools lease, and each stage is this Mate's preview. " +
+			"Tell the person this Mate's preview is up, with each stage's address — a preview with test data. " +
+			"Work on a part goes through zerops_workflow action=\"start\" workflow=\"develop\" scope=[\"<pool>\"], each branch in a lease of its own."
+	case mate.HeadlineReady:
+		next = "The pools are ready to work and lease; a stage is not built — its verdict row says why and its next step how to fix it. " +
+			"Until a stage runs, its part has no preview: never tell the person it is up before."
+	case mate.HeadlineBuilding, mate.HeadlineFailed:
+		next = "Each pooled service's verdict row names its state, the cause in the source's words and its next step; " +
+			"zerops_standup continues from there and never builds twice."
 	}
-	switch svc := live[stage.Hostname]; {
-	case sp.failed != "" && sp.failedHost == stage.Hostname:
-		s.Failed = sp.failed
-		s.Next = sp.next
-	case sp.failed != "":
-		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: pool + " did not stand up, and the stage is deployed from a lease of it"}
-		s.Next = sp.next
-	case svc != nil && svc.HasDeployedCode():
-		s.Deploy = &standupDeploy{Status: standupAlreadyDeployed}
-		s.Next = fmt.Sprintf("Verify it: zerops_verify serviceHostname=%q. It is this Mate's preview of %s's part.", stage.Hostname, pool)
-	case sp.devStands():
-		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: "a part's stage is deployed from a lease of its pool; until then it holds main's checkout and runs no build"}
-		s.Next = fmt.Sprintf("Deploy it from a lease of %s on main (%s): zerops_deploy sourceService=\"<the lease's alias>\" targetService=%q setup=%q, then verify it: zerops_verify serviceHostname=%q. It is this Mate's preview of %s's part.",
-			pool, standupPoolAcquire(sp), stage.Hostname, stage.Setup, stage.Hostname, pool)
-	default:
-		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: pool + " has no image yet, and the stage is deployed from a lease of it"}
-		s.Next = fmt.Sprintf("Once %s has its image (its next step), deploy it from a lease of %s on main: zerops_deploy sourceService=\"<the lease's alias>\" targetService=%q setup=%q.",
-			pool, pool, stage.Hostname, stage.Setup)
+	for repo, head := range pooled.ahead {
+		next += fmt.Sprintf(" %s's main moved during the stand-up to %s: what was built is the head read at its start (%s), and main is ahead of it.",
+			repo, shortCommit(head), shortCommit(pooled.built[repo]))
 	}
-	return s
-}
-
-// standupPoolAcquire is the call that leases a container of the pair's pool
-// on main, naming the repository on the pool's first acquire.
-func standupPoolAcquire(sp *standupPair) string {
-	repo := sp.remote
-	if repo == "" {
-		repo = sp.pair.Repository
-	}
-	return fmt.Sprintf("zerops_lease action=\"acquire\" pool=%q repo=%q branch=\"main\"", sp.pair.Dev.Hostname, repo)
+	return next
 }
 
 // standupCallAgain is the next step of a half the call left undecided.

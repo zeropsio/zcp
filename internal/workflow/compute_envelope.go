@@ -568,13 +568,16 @@ const StatusActive = "ACTIVE"
 //
 // The stamp is the pair's, shared by its dev half and every stage, so it
 // cannot speak for a service the platform still lists READY_TO_DEPLOY
-// without deployed code: no deploy has landed there, unless this session
-// recorded one (the list lags the deploy).
+// without deployed code, nor for one that runs the startWithoutCode
+// placeholder (a pooled part's stage born running and empty, beside a pool
+// whose build stamped the pair): no deploy has landed there, unless this
+// session recorded one (the list lags the deploy).
 func DeriveDeployed(hostname string, live *platform.ServiceStack, meta *ServiceMeta, ws *WorkSession) bool {
 	if HasSuccessfulDeployFor(ws, hostname) {
 		return true
 	}
-	if live != nil && live.Status == platform.ServiceStatusReadyToDeploy && !live.HasDeployedCode() {
+	if live != nil && !live.HasDeployedCode() &&
+		(live.Status == platform.ServiceStatusReadyToDeploy || live.ActiveAppVersion.IsStartWithoutCode()) {
 		return false
 	}
 	if meta != nil && meta.IsDeployed() {
