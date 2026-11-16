@@ -644,9 +644,6 @@ func wireHQPair(
 		}
 	}
 
-	// The repository the pair pushed to before — on this Mate's HQ, in the
-	// application it was wired in — which a pool's default may name.
-	previous := m.RemoteURL
 	if line := wireHQOrigin(ctx, sshDeployer, stateDir, hqc.Address(), m, remote); line != "" {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but %s — retrying on the next pass.", repo.Name, line)}
 	}
@@ -684,11 +681,6 @@ func wireHQPair(
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is wired but recording it failed (%v) — the next pass re-reads it.", repo.Name, err)}
 	}
 	m.HQ = recorded
-	// A pool whose default repository is the one the pair left follows it to
-	// the application HQ holds the Mate in now.
-	if previous != "" && !sameGitRepository(previous, remote) {
-		ops.MovePoolDefaultRepos(stateDir, previous, remote)
-	}
 	// git-push-setup pointed origin at HQ, keeping the origin it replaced as a
 	// remote of its own: read how the code is kept, so the wiring drops that
 	// remote when it names the GitHub repository HQ mirrors (hqPairOrigin).

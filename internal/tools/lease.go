@@ -58,15 +58,31 @@ func leaseInputSchema() *jsonschema.Schema {
 // leaseDeps wires the lease operations: with a mounter (container mode) a
 // lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
 // side does nothing. The HQ a repository is recognised on is the container's
-// (registerLease sets it from the runtime). Each pool keeps
-// ops.LeaseWarmTarget warm containers (DP-27).
+// (registerLease sets it from the runtime). A pool's repository is read from
+// its ServiceMeta (poolRepository). Each pool keeps ops.LeaseWarmTarget warm
+// containers (DP-27).
 func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
 	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh,
-		Warm: &ops.LeaseWarm{Target: ops.LeaseWarmTarget}}
+		PoolRepository: poolRepository(stateDir),
+		Warm:           &ops.LeaseWarm{Target: ops.LeaseWarmTarget}}
 	if mounter != nil {
 		deps.Host = ops.NewLeaseHost(mounter)
 	}
 	return deps
+}
+
+// poolRepository reads the repository a pool's leases are of from the pair
+// keyed by the pool, its one store (the stand-up and the HQ wiring write it):
+// its RemoteURL, and whether it is wired in HQ. "" for a pool no pair is keyed
+// by, or one whose record cannot be read.
+func poolRepository(stateDir string) func(pool string) (string, bool) {
+	return func(pool string) (string, bool) {
+		m, err := workflow.ReadServiceMeta(stateDir, pool)
+		if err != nil || !m.DevIsPool() {
+			return "", false
+		}
+		return m.RemoteURL, hqPairWired(m)
+	}
 }
 
 // leaseToolResult is what zerops_lease returns. It never carries the lease

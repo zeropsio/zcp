@@ -14,7 +14,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -92,9 +91,6 @@ func TestPoolMigrate_StepFromLiveState_EnvDone_Image(t *testing.T) {
 		platform.ServiceEnvVar{ID: "p-secret", Key: "STRIPE_SECRET", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
 	)
 	f.build(t)
-	if got := ops.SeedPoolDefaultRepo(f.stateDir, "apppool", f.meta.RemoteURL); got.State != ops.PoolDefaultRepoSeeded {
-		t.Fatalf("seed: %+v", got)
-	}
 	out, mock := f.run(t)
 
 	if out["step"] != "image" {
@@ -140,9 +136,6 @@ func TestPoolMigrateEnv_ActionCopiesThenTheFlowNamesImage(t *testing.T) {
 	}
 	if r := rows["STRIPE_SECRET"]; r.Content != poolEnvSecret || !r.Sensitive {
 		t.Errorf("STRIPE_SECRET on the pool: sensitive=%v exact=%v", r.Sensitive, r.Content == poolEnvSecret)
-	}
-	if repo, _ := env["defaultRepo"].(map[string]any); repo["state"] != ops.PoolDefaultRepoSeeded || repo["repo"] != "https://github.com/example/app.git" {
-		t.Errorf("defaultRepo = %v, want the dev's origin seeded", env["defaultRepo"])
 	}
 	diff, _ := env["stageDiff"].([]any)
 	if len(diff) != 1 {
@@ -258,28 +251,6 @@ func TestPoolMigrateEnv_InAMate_GitTokenNeverCopied_DefaultRepoIsHQ(t *testing.T
 		if strings.Contains(cmd, "'"+poolEnvGitTokenKey+"'") {
 			t.Fatalf("in a Mate the dev's GIT_TOKEN was read: %s", cmd)
 		}
-	}
-	if repo, _ := env["defaultRepo"].(map[string]any); repo["repo"] != "https://hq.example/git/org-1/app-1/appdev.git" || repo["state"] != ops.PoolDefaultRepoSeeded {
-		t.Errorf("defaultRepo = %v, want the pair's HQ repository", repo)
-	}
-}
-
-// TestPoolMigrateEnv_InAMate_NoOrganisation_DefaultRepoUnavailable: HQ's
-// repository address names the Zerops organisation (hq.RepoURLAt), so a Mate
-// whose container has none cannot name the pair's HQ repository: the pool's
-// default repository is unavailable, never an address HQ would answer 404.
-func TestPoolMigrateEnv_InAMate_NoOrganisation_DefaultRepoUnavailable(t *testing.T) {
-	t.Parallel()
-	f := poolEnvFixture()
-	f.rt.MateEnabled, f.rt.OrgID = true, ""
-	f.meta.GitPushState, f.meta.RemoteURL = "", ""
-	f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
-	f.hqAddress = func() string { return "https://hq.example" }
-	out, _ := f.runEnv(t)
-
-	repo, _ := poolEnvBlock(t, out)["defaultRepo"].(map[string]any)
-	if repo["state"] != ops.PoolDefaultRepoUnavailable || repo["repo"] != nil {
-		t.Errorf("defaultRepo = %v, want unavailable and no repository named", repo)
 	}
 }
 
@@ -519,9 +490,6 @@ func TestPoolMigrateEnv_PoolAnotherPairHolds_RefusedBeforeAnyWrite(t *testing.T)
 				}
 				if strings.Contains(strings.Join(f.ssh.recorded(), "\n"), poolMigrateEnvReadMarker) {
 					t.Fatalf("action %q read the dev's secrets for another pair's pool", action)
-				}
-				if _, err := os.Stat(filepath.Join(f.stateDir, "leases", "pools", "apppool.json")); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("action %q seeded the pool's default repository (%v)", action, err)
 				}
 			}
 		})

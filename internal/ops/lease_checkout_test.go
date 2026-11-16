@@ -100,16 +100,19 @@ func exitError(t *testing.T, code int) error {
 	return err
 }
 
-func readPoolDefault(t *testing.T, stateDir, pool string) (string, bool) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(stateDir, "leases", "pools", pool+".json"))
-	if errors.Is(err, os.ErrNotExist) {
+// withPoolRepository makes d read repo (onHQ as given) as pool's recorded
+// repository, as the pool's ServiceMeta answers it; other pools read as before.
+func withPoolRepository(d *LeaseDeps, pool, repo string, onHQ bool) {
+	prev := d.PoolRepository
+	d.PoolRepository = func(p string) (string, bool) {
+		if p == pool {
+			return repo, onHQ
+		}
+		if prev != nil {
+			return prev(p)
+		}
 		return "", false
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw), true
 }
 
 func TestLeaseAcquire_NoRepoNoDefault_RefusedBeforeLeasing(t *testing.T) {
@@ -134,62 +137,11 @@ func TestLeaseAcquire_NoRepoNoDefault_RefusedBeforeLeasing(t *testing.T) {
 	}
 }
 
-func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
-	t.Parallel()
-	fx := newLeaseFixture(t)
-	ssh := &leaseSSH{}
-	fx.deps.SSH = ssh
-	fx.swarm.acquired = acquiredAs(3)
-	ctx := context.Background()
-
-	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, testRepo, "feature"); err != nil {
-		t.Fatalf("first acquire: %v", err)
-	}
-	stored, ok := readPoolDefault(t, fx.stateDir, testPoolHost)
-	if !ok {
-		t.Fatal("the first acquire with a repo must store it as the pool's default")
-	}
-	// The default is a clone URL a later acquire clones: kept as given
-	// (testRepo ends in .git), never its canonical form.
-	if !strings.Contains(stored, `"`+testRepo+`"`) {
-		t.Errorf("stored default = %s, want the URL as given, %s", stored, testRepo)
-	}
-	if info, err := os.Stat(filepath.Join(fx.stateDir, "leases", "pools", testPoolHost+".json")); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("default record stat = %v, %v; want mode 600", info, err)
-	}
-
-	// A later acquire without repo uses the default; one with another repo
-	// uses that repo and leaves the default alone.
-	fx.swarm.acquired = acquiredAs(4)
-	fx.swarm.acquired.Container.ID = "c-def"
-	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "", "other"); err != nil {
-		t.Fatalf("second acquire without repo: %v", err)
-	}
-	fx.swarm.acquired = acquiredAs(5)
-	fx.swarm.acquired.Container.ID = "c-ghi"
-	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "https://github.com/acme/other", "third"); err != nil {
-		t.Fatalf("third acquire: %v", err)
-	}
-	cmds := ssh.checkouts()
-	if len(cmds) != 3 {
-		t.Fatalf("checkouts = %d, want one per acquire", len(cmds))
-	}
-	if !strings.Contains(cmds[1].command, shellQuote(testRepo)) {
-		t.Errorf("second checkout does not use the pool default %s:\n%s", testRepo, cmds[1].command)
-	}
-	if !strings.Contains(cmds[2].command, shellQuote("https://github.com/acme/other")) {
-		t.Errorf("third checkout does not use the repo it was given:\n%s", cmds[2].command)
-	}
-	if again, _ := readPoolDefault(t, fx.stateDir, testPoolHost); again != stored {
-		t.Errorf("an acquire with another repo changed the default:\n%s\nto\n%s", stored, again)
-	}
-}
-
 // TestLeaseAcquire_RepoAsGiven_ClonedVerbatim: a plain git server answers a
 // repository only at the address it serves it under — `…/repo.git` clones,
 // `…/repo` is "repository not found" (live Mate run) — so the checkout clones
 // the URL exactly as the caller gave it, an acquire that takes the pool's
-// default clones that same URL, and a failed checkout names it. The
+// recorded repository clones that same URL, and a failed checkout names it. The
 // canonical form is identity only: the lease record keeps it (DP-18).
 func TestLeaseAcquire_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 	t.Parallel()
@@ -212,8 +164,9 @@ func TestLeaseAcquire_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 			}
 			fx.swarm.acquired = acquiredAs(4)
 			fx.swarm.acquired.Container.ID = "c-def"
+			withPoolRepository(&fx.deps, testPoolHost, tt.given, false)
 			if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "", "other"); err != nil {
-				t.Fatalf("acquire with the pool's default: %v", err)
+				t.Fatalf("acquire with the pool's recorded repository: %v", err)
 			}
 			cmds := ssh.checkouts()
 			if len(cmds) != 2 {
@@ -553,9 +506,6 @@ func TestLeaseCheckout_Failure_ReleasesWithResetAndCleansUp(t *testing.T) {
 			}
 			if st := hf.mounter.states["/var/www/devpool-3"]; st == platform.MountStateActive {
 				t.Errorf("devpool-3 is still mounted after the failed checkout")
-			}
-			if _, ok := readPoolDefault(t, hf.stateDir, testPoolHost); ok {
-				t.Error("a failed checkout must not store the repo as the pool's default")
 			}
 			want := "install-aliases,mount,unmount,orchestrator-release,install-aliases"
 			if got := strings.Join(hf.events, ","); got != want {

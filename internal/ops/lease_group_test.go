@@ -506,16 +506,12 @@ func TestLeaseAcquireGroup_AllPoolsCheckedBeforeAnyReservation(t *testing.T) {
 }
 
 // TestLeaseAcquireGroup_PoolsWithDifferentDefaultRepos_Refused: without repo
-// the group's repository is the pools' default, which must be the same one.
+// the group's repository is the one the pools record, which must be the same.
 func TestLeaseAcquireGroup_PoolsWithDifferentDefaultRepos_Refused(t *testing.T) {
 	t.Parallel()
 	gf := newGroupFixture(t)
-	if err := storePoolDefaultRepo(gf.stateDir, groupHQPool, "https://github.com/acme/hq"); err != nil {
-		t.Fatal(err)
-	}
-	if err := storePoolDefaultRepo(gf.stateDir, groupWebPool, "https://github.com/acme/web"); err != nil {
-		t.Fatal(err)
-	}
+	withPoolRepository(&gf.deps, groupHQPool, "https://github.com/acme/hq", false)
+	withPoolRepository(&gf.deps, groupWebPool, "https://github.com/acme/web", false)
 	_, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, "", "feat")
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
@@ -534,25 +530,18 @@ func TestLeaseAcquireGroup_PoolsWithDifferentDefaultRepos_Refused(t *testing.T) 
 	}
 }
 
-// A pool with no default joins the group's repository, which the pools that
-// have one agree on; the pool without one records it.
+// A pool that records no repository joins the group's repository, which the
+// pools that record one agree on.
 func TestLeaseAcquireGroup_OneDefaultRepo_IsTheGroups(t *testing.T) {
 	t.Parallel()
 	gf := newGroupFixture(t)
-	if err := storePoolDefaultRepo(gf.stateDir, groupHQPool, testRepo); err != nil {
-		t.Fatal(err)
-	}
+	withPoolRepository(&gf.deps, groupHQPool, testRepo, false)
 	views, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, "", "feat")
 	if err != nil {
 		t.Fatalf("LeaseAcquireGroup: %v", err)
 	}
 	if len(views) != 2 {
 		t.Fatalf("views = %+v, want two", views)
-	}
-	// The default is a clone URL: kept as given (DP-18), the record's repo is
-	// the identity.
-	if got := readPoolDefaultRepo(gf.stateDir, groupWebPool); got != testRepo {
-		t.Errorf("webpool's default = %q, want the group's repository as given, %q", got, testRepo)
 	}
 	for alias, r := range gf.records(t) {
 		if r.Repo != "https://github.com/acme/app" {
@@ -929,8 +918,7 @@ func TestLeaseAcquire_ConcurrentDifferentKeys_RunTogether(t *testing.T) {
 
 // TestLeaseGroup_HeldLeasesOfOneRepositoryAndBranch: a lease's group is the
 // leases zcp holds of its repository and branch, one per pool, the lease
-// itself included, earliest acquired first; a record older than keeping the
-// repository groups with its pool's default repository.
+// itself included, earliest acquired first.
 func TestLeaseGroup_HeldLeasesOfOneRepositoryAndBranch(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -944,12 +932,9 @@ func TestLeaseGroup_HeldLeasesOfOneRepositoryAndBranch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := storePoolDefaultRepo(stateDir, "apipool", "https://github.com/acme/app.git"); err != nil {
-		t.Fatal(err)
-	}
 	write("webpool", 7, "https://github.com/acme/app", "feat", "2026-10-23T12:00:05Z")
 	write("hqpool", 3, "https://github.com/acme/app", "feat", "2026-10-23T12:00:01Z")
-	write("apipool", 2, "", "feat", "2026-10-23T12:00:09Z") // predates keeping the repository
+	write("apipool", 2, "https://github.com/acme/app", "feat", "2026-10-23T12:00:09Z")
 	write("hqpool", 4, "https://github.com/acme/app", "other", "2026-10-23T12:00:02Z")
 	write("docpool", 5, "https://github.com/acme/docs", "feat", "2026-10-23T12:00:03Z")
 

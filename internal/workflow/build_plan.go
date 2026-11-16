@@ -493,11 +493,11 @@ func adoptRuntimesAction() NextAction {
 // LeaseAcquireAction is the step that leases a container of pools — Swarm
 // pools whose work is a lease, one container per branch
 // (docs/spec-workflows.md §8 DP-29): `pool` for one, `pools` for several (one
-// acquire, all or none). The branch, and the repository on a pool's first
-// acquire, are the agent's to pass.
+// acquire, all or none). The branch is the agent's to pass; the repository is
+// the one the pool's stand-up recorded.
 func LeaseAcquireAction(pools []string) NextAction {
 	sorted := slices.Sorted(slices.Values(pools))
-	rationale := "A part's dev pool is worked on in a container leased on the work's branch: pass branch, and repo on a pool's first acquire."
+	rationale := "A part's dev pool is worked on in a container leased on the work's branch: pass branch; the pool's repository is the one its stand-up recorded."
 	if len(sorted) == 1 {
 		return NextAction{
 			Label:     "Lease a container of " + sorted[0],
