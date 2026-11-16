@@ -251,7 +251,8 @@ leases are keyed by branch, so they never meet.
 - Never set `envIsolation: none` on the pool: every service of the project
   would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
   pool's token references it under another name — this zcp service as
-  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`. A variable named
+  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`, which an acquire writes itself
+  when it finds no usable token. A variable named
   `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text,
   as does any reference to a pool never deployed until its first deploy.
 - A container answers from anywhere in the project on every port it listens
