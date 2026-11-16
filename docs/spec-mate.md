@@ -4609,6 +4609,38 @@ Witnesses: `TestBrokeredGit_Relay_RemoteAddedInCheckoutConfig_Declined`,
 `TestConfigureVSCode_MateTurnedOff_GitSettingRemoved`; the relay tests run
 the real script against real git under `/bin/sh` and, where installed, dash and busybox `sh`.
 
+### 6.9 A command runs in its service
+
+`zcp run <host> [--] <command> [<args>...]` runs one command in the service `host`, over ssh
+(`cmd/zcp/run.go`, `internal/ops/service_run.go`) — where the code's runtime and dependencies are.
+The same command started in the zcp container on the sshfs mount runs on zcp, reads every file over
+the network and takes the cores and memory the Mate itself runs on; where the mount holds
+`node_modules` it works, slowly, and nothing says it ran in the wrong place.
+
+- **Where.** In the folder of the service the caller stands in: zcp mounts `host`'s `/var/www` at
+  `/var/www/<host>`, so a call from `/var/www/<host>/<rel>` runs in the service's `/var/www/<rel>`
+  (`ops.ServiceRunDir`). From anywhere else it runs in the service's checkout, as §6.8 finds it.
+- **Which host.** The host is resolved once, for both commands (`gitTargetOf`): `zcp run` refuses,
+  with exit 2 and before any ssh call, what `zcp git` refuses — a loopback or the container's own
+  name, a name that is no hostname or lease alias, a call outside a container, a stage, a
+  pool-keyed pair, and a lease alias the lease check refuses (§6.8 *Leases*) — in its own words,
+  and a call with no command.
+- **The command.** The remote command is `/bin/sh -c '<script>'` whatever the login shell: the
+  script changes into the folder and runs the argv, every argument ShellQuoted, so a shell builtin
+  is a command too and a shell line goes in as `sh -c '<line>'`. stdin, stdout and stderr are the
+  command's, byte for byte, and the exit code is its own (255 is ssh's own failure, 1 a record zcp
+  could not read); the script's shell stays to report it, so a command a signal ended is its
+  128+n — 137 for one the kernel killed for memory — never ssh's 255; `zcp run` prints nothing to stdout itself and runs before CLI telemetry. stdin
+  always reaches the command, as ssh's does, so a heredoc or a pipe feeds it and a caller reading
+  its own stdin on — a loop over hosts — gives the call `</dev/null`. A reader of the output that
+  goes away (`zcp run <host> … | head -1`) ends the call with 141 and no line of zcp's, as it ends
+  any command writing into a pipe.
+- **Stopping.** Ctrl-C or SIGTERM stops the ssh client with exit 130, saying the command may still
+  be running: a time limit belongs on the command (`zcp run <host> timeout 600 …`). A long-running
+  dev server is `zerops_dev_server`'s, never a `zcp run`.
+- **No credential.** The call is the plain passthrough in every container, relaying nothing: git
+  against the Mate's HQ is `zcp git`'s (§6.8).
+
 ## 7. The fork
 
 Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag

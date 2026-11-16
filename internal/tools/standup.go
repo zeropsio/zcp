@@ -98,9 +98,6 @@ type standupDeps struct {
 	// hqWait bounds the wait on an HQ that does not answer; zero means
 	// standupHQWait.
 	hqWait time.Duration
-	// boot is the run zcp starts at its boot: it builds only what was never
-	// built or builds now, never a failed build again.
-	boot bool
 	// runBound bounds the whole run (zero: none); a row still building at
 	// it is failed as unreachable, naming it.
 	runBound time.Duration
