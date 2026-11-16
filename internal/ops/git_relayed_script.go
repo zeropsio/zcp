@@ -54,7 +54,7 @@ func (r RelayedSSH) ExecSSH(ctx context.Context, hostname, command string) ([]by
 		return output, &platform.SSHExecError{Hostname: hostname, Output: string(output), Err: err}
 	}
 	if exit != 0 {
-		return output, &platform.SSHExecError{Hostname: hostname, Output: string(output), Err: fmt.Errorf("exit status %d", exit)}
+		return output, &platform.SSHExecError{Hostname: hostname, Output: string(output), Err: platform.ExitStatusError(exit)}
 	}
 	return output, nil
 }
