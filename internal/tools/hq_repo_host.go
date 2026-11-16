@@ -5,15 +5,14 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // A Mate's agent runs every git command for a repository of its HQ in a dev
 // service, never on the sshfs mount (docs/spec-mate.md §6.8): `zcp git
 // <host>` in the dev service of the repository's pair, where zcp answers git
-// for HQ and, to read, for GitHub, and over ssh in a lease where a dev pool
-// holds the repository's checkouts, as a lease's git always ran. The words zcp gives
+// for HQ and, to read, for GitHub, and `zcp git <alias>` in a lease where a
+// dev pool holds the repository's checkouts. The words zcp gives
 // about a change name that place, read here from zcp's own records alone.
 
 // repoRoute is where the agent runs git for one repository of this Mate's HQ
@@ -80,42 +79,28 @@ func changeRoute(stateDir string, target changeTarget) repoRoute {
 // about.
 func (r repoRoute) inLease(alias string) repoRoute { return repoRoute{lease: alias, pool: r.pool} }
 
-// leased reports whether r's git runs in a lease, over ssh.
+// leased reports whether r's git runs in a lease.
 func (r repoRoute) leased() bool { return r.lease != "" || r.pool != "" }
 
 // git is cmds — each a git command's arguments — run one after another
 // where r runs git, as one command line in backticks that stops at the first
-// that fails: `zcp git <host> …` for each in a dev service, one ssh to a
-// lease's alias running them in its checkout.
+// that fails: `zcp git <host> …` for each in a dev service, `zcp git <alias> …`
+// in a lease. Always through zcp, which answers HQ with the Mate's credential:
+// a lease's own git over ssh holds none, and its blobless checkout fetches
+// old file contents from HQ on demand.
 func (r repoRoute) git(cmds ...string) string {
-	if r.leased() {
-		alias := r.lease
-		if alias == "" {
-			alias = "<alias>"
-		}
-		return fmt.Sprintf("`ssh %s \"cd %s && git %s\"`", alias, topology.CodeMountRoot, strings.Join(cmds, " && git "))
-	}
-	host := r.host
-	if host == "" {
-		host = "<host>"
-	}
-	prefix := "zcp git " + host + " "
-	return "`" + prefix + strings.Join(cmds, " && "+prefix) + "`"
-}
-
-// relayed is cmds run one after another through `zcp git`, in a lease too —
-// by its alias — for git that names a repository by its address: zcp answers
-// it there, GitHub with a read token and HQ with the Mate's credential, and
-// a lease's own git over ssh holds a credential for neither address.
-func (r repoRoute) relayed(cmds ...string) string {
 	at := r.host
-	if r.leased() {
+	switch {
+	case r.leased():
 		at = r.lease
 		if at == "" {
 			at = "<alias>"
 		}
+	case at == "":
+		at = "<host>"
 	}
-	return repoRoute{host: at}.git(cmds...)
+	prefix := "zcp git " + at + " "
+	return "`" + prefix + strings.Join(cmds, " && "+prefix) + "`"
 }
 
 // where names the place r runs git.
