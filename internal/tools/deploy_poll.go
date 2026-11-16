@@ -115,7 +115,7 @@ func pollDeployBuild(
 		if sshDeployer != nil {
 			if err := ops.WaitSSHReady(ctx, sshDeployer, result.TargetService); err != nil {
 				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("SSH not ready on %s after 30s — deployed but SSH may need more time", result.TargetService))
+					fmt.Sprintf("Deployed, but %s", err.Error()))
 			} else {
 				result.SSHReady = true
 				root := ""
