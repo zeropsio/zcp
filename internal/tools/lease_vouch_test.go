@@ -15,6 +15,23 @@ func vouchHeld(_ context.Context, lease ops.LeaseTargetInfo, _ string) (ops.Leas
 	return lease, nil
 }
 
+// vouchParked is a leaseVouch whose orchestrator lists the lease's container
+// stopped and still reserved: parked (DP-28), whoever stopped it — the
+// orchestrator is the only source of that, never zcp's record.
+func vouchParked(_ context.Context, lease ops.LeaseTargetInfo, _ string) (ops.LeaseTargetInfo, error) {
+	lease.Parked = true
+	return lease, nil
+}
+
+// withVouchParked gives the deploy tools vouchParked.
+func withVouchParked() DeployOption { return func(c *deployConfig) { c.vouch = vouchParked } }
+
+// mountVouchParked gives zerops_mount vouchParked.
+func mountVouchParked() MountOption { return func(c *mountConfig) { c.vouch = vouchParked } }
+
+// verifyVouchParked gives zerops_verify vouchParked.
+func verifyVouchParked() VerifyOption { return func(c *verifyConfig) { c.vouch = vouchParked } }
+
 // withVouchHeld gives the deploy tools vouchHeld.
 func withVouchHeld() DeployOption { return func(c *deployConfig) { c.vouch = vouchHeld } }
 

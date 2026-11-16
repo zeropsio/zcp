@@ -136,11 +136,11 @@ func newLeaseDeployRig(t *testing.T) leaseDeployRig {
 	return leaseDeployRig{stateDir: stateDir, alias: alias, mock: mock, rt: runtime.Info{InContainer: true, ServiceName: "zcp"}}
 }
 
-func (r leaseDeployRig) deploy(t *testing.T, ssh ops.SSHDeployer, args map[string]any) (*mcp.CallToolResult, string) {
+func (r leaseDeployRig) deploy(t *testing.T, ssh ops.SSHDeployer, args map[string]any, opts ...DeployOption) (*mcp.CallToolResult, string) {
 	t.Helper()
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, r.rt, r.stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
+	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, r.rt, r.stateDir, testDeployEngine(t), nil, DevsupSource{}, append([]DeployOption{withVouchHeld()}, opts...)...)
 	result := callTool(t, srv, "zerops_deploy", args)
 	return result, getTextContent(t, result)
 }

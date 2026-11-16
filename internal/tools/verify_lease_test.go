@@ -55,14 +55,14 @@ func (h *hostSSH) ExecSSHBackground(ctx context.Context, host, command string, _
 	return h.ExecSSH(ctx, host, command)
 }
 
-func verifyLeaseCall(t *testing.T, stateDir string, ssh ops.SSHDeployer, host string) (*mcp.CallToolResult, string) {
+func verifyLeaseCall(t *testing.T, stateDir string, ssh ops.SSHDeployer, host string, opts ...VerifyOption) (*mcp.CallToolResult, string) {
 	t.Helper()
 	// The project holds no service named like the lease alias: resolving it
 	// as a service could only fail.
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-pool", Name: "webpool", Status: serviceStatusRunning,
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{InContainer: true}, ssh, verifyVouchHeld())
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{InContainer: true}, ssh, append([]VerifyOption{verifyVouchHeld()}, opts...)...)
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": host})
 	return result, getTextContent(t, result)
 }
