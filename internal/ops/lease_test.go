@@ -783,16 +783,16 @@ func TestLiveContainerEnv_ReadsTheFileFresh(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"devpool_API_TOKEN":"one"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "one" {
+	if v, ok, _ := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "one" {
 		t.Errorf("first read = %q %v, want one", v, ok)
 	}
 	if err := os.WriteFile(path, []byte(`{"devpool_API_TOKEN":"two"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "two" {
+	if v, ok, _ := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "two" {
 		t.Errorf("second read = %q %v, want two (read fresh)", v, ok)
 	}
-	if _, ok := liveContainerEnvFrom(filepath.Join(t.TempDir(), "absent.json"), "zcp_test_no_such_key_12345"); ok {
+	if _, ok, _ := liveContainerEnvFrom(filepath.Join(t.TempDir(), "absent.json"), "zcp_test_no_such_key_12345"); ok {
 		t.Error("an absent file and an unset process env must read as absent")
 	}
 }
@@ -808,10 +808,10 @@ func TestLiveContainerEnv_FileWinsOverAStaleProcessEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"other_KEY":"x"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := liveContainerEnvFrom(path, "zcppool_API_TOKEN"); ok {
+	if v, ok, _ := liveContainerEnvFrom(path, "zcppool_API_TOKEN"); ok {
 		t.Errorf("a key the live file lacks read as %q from the stale process env", v)
 	}
-	if v, ok := liveContainerEnvFrom(filepath.Join(dir, "absent.json"), "zcppool_API_TOKEN"); !ok || v != "stale" {
+	if v, ok, _ := liveContainerEnvFrom(filepath.Join(dir, "absent.json"), "zcppool_API_TOKEN"); !ok || v != "stale" {
 		t.Errorf("without a live file = %q %v, want the process env's value", v, ok)
 	}
 }

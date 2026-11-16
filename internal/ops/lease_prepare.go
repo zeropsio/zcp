@@ -121,7 +121,9 @@ func leaseSecrets(d LeaseDeps, pool string) []string {
 	if pool == "" {
 		return nil
 	}
-	if bearer, _ := liveBearer(d, pool); bearer != "" {
+	// A live env zcp cannot read gives no bearer to take out; the call that
+	// reads the bearer reports that read's error itself.
+	if bearer, _, err := liveBearer(d, pool); err == nil && bearer != "" {
 		return []string{bearer}
 	}
 	return nil
