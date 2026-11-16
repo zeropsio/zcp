@@ -49,7 +49,7 @@ func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, 
 	}
 	target, err := ops.LookupService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, "", "", fmt.Sprintf("zerops.yaml was not validated before the push: %q could not be read%s: %v", hostname, classNote(err), err)
+		return nil, "", "", fmt.Sprintf("zerops.yaml was not validated before the push: %q could not be read%s: %v", hostname, platform.ClassOf(err).Note(), err)
 	}
 	if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
 		return convertError(vErr, WithRecoveryStatus()), fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig, ""
@@ -392,7 +392,7 @@ func handleLocalGitPushFailure(
 	record(fmt.Sprintf("git push: %v", pushErr), category)
 	return convertError(&platform.PlatformError{
 		Code:       platform.ErrDeployFailed,
-		Message:    fmt.Sprintf("git push origin %s failed%s: %s", branch, classNote(pushErr), detail),
+		Message:    fmt.Sprintf("git push origin %s failed%s: %s", branch, platform.ClassOf(pushErr).Note(), detail),
 		Suggestion: "git's own words are above (whole in diagnostic); the failureClassification says what to try.",
 		Diagnostic: pushErr.Error(),
 		Cause:      pushErr,

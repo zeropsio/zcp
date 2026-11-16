@@ -129,7 +129,7 @@ func writeMeta(t *testing.T, dir string, mode topology.Mode) {
 func TestServiceEligible_NoMeta_NonSystem_True(t *testing.T) {
 	t.Parallel()
 	mock := autoEnableTestMock(t, false)
-	svc, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
+	svc, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
 	if !ok {
 		t.Error("no meta + USER-category service should be eligible (recipe-authoring / manual import path)")
 	}
@@ -144,7 +144,7 @@ func TestServiceEligible_NoMeta_SystemStack_False(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			t.Parallel()
 			mock := systemStackMock(t, category)
-			svc, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
+			svc, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
 			if ok {
 				t.Errorf("system-category %q should be ineligible (defensive guard)", category)
 			}
@@ -168,7 +168,7 @@ func TestServiceEligible_MetaMode_AllowList_NonSystem_True(t *testing.T) {
 			t.Parallel()
 			meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: mode}
 			mock := autoEnableTestMock(t, false)
-			if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
+			if _, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
 				t.Errorf("mode %q should be eligible", mode)
 			}
 		})
@@ -179,7 +179,7 @@ func TestServiceEligible_LocalOnly_False(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: topology.ModeLocalOnly}
 	mock := autoEnableTestMock(t, false)
-	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
+	if _, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
 		t.Error("local-only mode must be ineligible (no Zerops runtime to route to)")
 	}
 }
@@ -188,7 +188,7 @@ func TestServiceEligible_UnknownMode_False(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: topology.Mode("production-future")}
 	mock := autoEnableTestMock(t, false)
-	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
+	if _, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
 		t.Error("unknown mode must default to ineligible (future-proof: explicit opt-in via modeAllowsSubdomain switch)")
 	}
 }
@@ -197,7 +197,7 @@ func TestServiceEligible_EmptyMode_NonSystem_True(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname} // Mode left empty
 	mock := autoEnableTestMock(t, false)
-	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
+	if _, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
 		t.Error("empty Mode should be permissive (recipe-authoring scaffold path)")
 	}
 }
@@ -208,7 +208,7 @@ func TestServiceEligible_LookupFails_False(t *testing.T) {
 		Code:    platform.ErrAPIError,
 		Message: "transient lookup failure",
 	})
-	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app"); ok {
+	if _, ok, _ := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app"); ok {
 		t.Error("LookupService failure should soft-fail to ineligible")
 	}
 }

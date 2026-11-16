@@ -1078,10 +1078,15 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	// curl's exit follows the code: 28 is a listener that accepted and did
 	// not answer within --max-time.
-	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
+	out, err := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
 		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s; echo \" $?\"", port, healthPath))
 	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 	switch {
+	case err != nil && exit == "":
+		// ssh itself failed: the probe never ran, so nothing is known of
+		// the port — never read as a server not listening.
+		result.Message = fmt.Sprintf("Dev server %s is %s, but zcp could not run its HTTP probe on :%d (%s, class %s): this status says nothing of whether it answers.", label, server.Status, port, sshFailureText(err), cmp.Or(string(platform.ClassOf(err)), "unclassified"))
+		return result, nil
 	case (code == "" || code == "000") && exit == "28":
 		result.Reason = reasonSlow
 		result.Message = fmt.Sprintf("Dev server %s is %s and accepts connections on :%d, but sent no HTTP answer on %s within 2s — likely still compiling its first response; check again shortly.", label, server.Status, port, healthPath)
@@ -1321,21 +1326,24 @@ func devServerURL(hostname string, port int, healthPath string) string {
 
 // DevServerSubdomainURL is the subdomain address of the port a dev server
 // result probed — Zerops gives each HTTP port its own — or "" when that port
-// serves no HTTP or its address is not known. Ask it only while the service's
-// subdomain is on.
-func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) string {
+// serves no HTTP or its address is not known; a lookup of the dev service that
+// failed is its error. Ask it only while the service's subdomain is on.
+func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) (string, error) {
 	if result.Pool != "" {
 		// A lease is reached on its preview port, at the pool's subdomain.
-		return leasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort, false)
+		return leasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort, false), nil
 	}
 	if result.Port == 0 {
-		return ""
+		return "", nil
 	}
 	svc, err := LookupService(ctx, client, projectID, result.Hostname)
-	if err != nil || !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == result.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("look up %s for its subdomain address: %w", result.Hostname, err)
 	}
-	return SubdomainURLForPort(ctx, client, projectID, svc, result.Port)
+	if !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == result.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
+		return "", nil
+	}
+	return SubdomainURLForPort(ctx, client, projectID, svc, result.Port), nil
 }
 
 // pollIntervalAsShellDuration returns the pollIntervalMillis as a shell

@@ -30,6 +30,20 @@ const bearerWriteBudget = 3 * time.Minute
 // service the container belongs to — here zcp's own service.
 const selfServiceIDKey = "serviceId"
 
+// serviceStatusCreating is a service the platform is still creating.
+const serviceStatusCreating = "CREATING"
+
+// poolUndeployed reports a pool status before any successful deploy: the
+// reference written then resolves only during the first successful deploy
+// (live, 2026-11-16), so nothing is waited for.
+func poolUndeployed(status string) bool {
+	switch status {
+	case platform.ServiceStatusReadyToDeploy, platform.ServiceStatusNew, serviceStatusCreating:
+		return true
+	}
+	return false
+}
+
 // EnsureBearer is the one writer of a pool's bearer reference on this zcp
 // service, for an acquire (or the stand-up) that finds no usable bearer: it
 // writes <pool>_LEASE_TOKEN=${<pool>_API_TOKEN} on zcp's own service under its
@@ -38,31 +52,37 @@ const selfServiceIDKey = "serviceId"
 //
 // A usable bearer in the live env is returned as it is, never rewritten; a
 // reference already on the service is not written again, so two acquires
-// write once. A pool that has had no successful deploy yet
-// (READY_TO_DEPLOY) resolves the reference only during its first successful
-// deploy: EnsureBearer then writes it and returns "" with no error — the
-// reference is in place, not yet resolved, which the caller reports. On a
-// deployed pool it waits at most bearerResolveWait for the reference to
-// resolve and otherwise fails naming the variable, the bound and the state it
-// last saw (absent or the literal reference; never a value). The read sources
-// (liveBearer, the pool's env) stay as they are.
+// write once. A pool that has had no successful deploy yet (NEW, CREATING,
+// READY_TO_DEPLOY, read by direct GET) resolves the reference only during its
+// first successful deploy: EnsureBearer then writes it and returns "" with no
+// error — the reference is in place, not yet resolved, which the caller
+// reports. On a deployed pool it waits at most bearerResolveWait (and never
+// past bearerWriteBudget) for the reference to resolve and otherwise fails
+// naming the variable, the time waited and the state it last saw (absent or
+// the literal reference; never a value). The read sources (liveBearer, the
+// pool's env) stay as they are.
 func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error) {
-	if token, _ := liveBearer(d, pool); token != "" {
-		return token, nil
+	if token, _, err := liveBearer(d, pool); err != nil || token != "" {
+		return token, err
 	}
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, bearerWriteBudget)
 	defer cancel()
 	release, err := lockBearer(ctx, d.StateDir, pool)
 	if err != nil {
-		return "", err
+		return "", budgetSpent(ctx, err, start, "waiting for the bearer lock of pool '"+pool+"'")
 	}
 	defer release()
 	// Another writer may have finished while this one waited for the lock.
-	if token, _ := liveBearer(d, pool); token != "" {
-		return token, nil
+	if token, _, err := liveBearer(d, pool); err != nil || token != "" {
+		return token, err
 	}
 
-	svc, err := LookupService(ctx, d.Client, d.ProjectID, pool)
+	services, err := ListProjectServicesDirect(ctx, d.Client, d.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	svc, err := FindService(services, pool)
 	if err != nil {
 		return "", err
 	}
@@ -71,11 +91,20 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", pool, typ),
 			"A bearer reference is written only for a pool (swarm@1 or swarm-vm@1); pass the pool's hostname")
 	}
-	selfID, ok := d.env(selfServiceIDKey)
+	selfID, ok, err := d.env(selfServiceIDKey)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Cannot write the bearer reference of pool '%s': this zcp's env has no %s, so it runs outside a Zerops service", pool, selfServiceIDKey),
 			"Lease a pool from the zcp service of the pool's project")
+	}
+	selfName := "this zcp service"
+	for _, s := range services {
+		if s.ID == selfID {
+			selfName = s.Name
+		}
 	}
 
 	aliasKey := pool + "_" + leaseTokenAliasKey
@@ -85,7 +114,7 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("read this zcp service's env: %w", err)
 	}
-	present, sameName := false, false
+	present, selfReference := false, false
 	for _, e := range own {
 		switch e.Key {
 		case aliasKey:
@@ -96,18 +125,34 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 			}
 			present = true
 		case apiKey:
-			sameName = true
+			selfReference = !e.Masked && e.Content == reference
 		}
 	}
 	if !present {
-		if err := writeBearerReference(ctx, d.Client, selfID, aliasKey, reference); err != nil {
-			return "", err
+		if err := writeBearerReference(ctx, d.Client, selfID, selfName, aliasKey, reference); err != nil {
+			return "", budgetSpent(ctx, err, start, "writing "+aliasKey+" on this zcp service")
 		}
 	}
-	if svc.Status == platform.ServiceStatusReadyToDeploy {
+	if selfReference {
+		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("This zcp service has a variable %s=%s: a variable named like the reference it holds stays the literal text, and while it exists %s stays literal too", apiKey, reference, aliasKey),
+			fmt.Sprintf("Delete %s on this zcp service; %s=%s is in place and resolves once it is gone", apiKey, aliasKey, reference))
+	}
+	if poolUndeployed(svc.Status) {
 		return "", nil
 	}
-	return awaitBearer(ctx, d, pool, aliasKey, sameName)
+	return awaitBearer(ctx, d, pool, aliasKey, start)
+}
+
+// budgetSpent is err as the failure of what: an API_TIMEOUT naming what and
+// the time spent when ctx's deadline ended it, err otherwise.
+func budgetSpent(ctx context.Context, err error, start time.Time, what string) error {
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return err
+	}
+	return platform.NewPlatformError(platform.ErrAPITimeout,
+		fmt.Sprintf("Ensuring a pool bearer ran out of time after %s while %s", time.Since(start).Round(time.Second), what),
+		"Another acquire may hold the bearer lock or the platform is slow; acquire again")
 }
 
 // lockBearer takes pool's bearer lock: a file of its own beside the lease key
@@ -127,13 +172,14 @@ func lockBearer(ctx context.Context, stateDir, pool string) (func(), error) {
 	return release, nil
 }
 
-// writeBearerReference writes key=reference on zcp's service selfID and waits
-// for the platform's process. The value is the reference text, not a secret.
-func writeBearerReference(ctx context.Context, client platform.Client, selfID, key, reference string) error {
+// writeBearerReference writes key=reference on zcp's service selfID (named
+// selfName) and waits for the platform's process. The value is the reference
+// text, not a secret. A duplicate key is one zcp's own zerops.yaml bakes in.
+func writeBearerReference(ctx context.Context, client platform.Client, selfID, selfName, key, reference string) error {
 	proc, err := client.CreateServiceEnvVar(ctx, selfID, key, reference, false)
 	if err != nil {
 		if hasAPICode(err, apiCodeUserDataDuplicateKey) {
-			return nil
+			return yamlOwnedKeyError(key, selfName)
 		}
 		return fmt.Errorf("write %s on this zcp service: %w", key, err)
 	}
@@ -156,13 +202,21 @@ func writeBearerReference(ctx context.Context, client platform.Client, selfID, k
 	return nil
 }
 
-// awaitBearer waits at most bearerResolveWait for pool's bearer to appear in
-// the live env and returns it; sameName reports that zcp's service also holds
-// <pool>_API_TOKEN, which keeps every reference to that name literal.
-func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, sameName bool) (string, error) {
-	deadline := time.Now().Add(bearerResolveWait)
+// awaitBearer waits for pool's bearer to appear in the live env — at most
+// bearerResolveWait, never past ctx's deadline — and returns it; otherwise it
+// fails naming aliasKey, the time waited and the state last seen.
+func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, start time.Time) (string, error) {
+	waitStart := time.Now()
+	deadline := waitStart.Add(bearerResolveWait)
+	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
+		deadline = end
+	}
 	for {
-		if token, _ := liveBearer(d, pool); token != "" {
+		token, _, err := liveBearer(d, pool)
+		if err != nil {
+			return "", err
+		}
+		if token != "" {
 			return token, nil
 		}
 		if !time.Now().Before(deadline) {
@@ -170,20 +224,22 @@ func awaitBearer(ctx context.Context, d LeaseDeps, pool, aliasKey string, sameNa
 		}
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("wait for %s to resolve: %w", aliasKey, ctx.Err())
-		case <-time.After(bearerResolvePoll):
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", fmt.Errorf("wait for %s to resolve: %w", aliasKey, ctx.Err())
+			}
+		case <-time.After(min(bearerResolvePoll, time.Until(deadline))):
+			continue
 		}
+		break
 	}
 	seen := "absent from this container's live env"
-	if v, ok := d.env(aliasKey); ok && unresolvedReference.MatchString(v) {
+	if v, ok, err := d.env(aliasKey); err != nil {
+		seen = "unread: " + err.Error()
+	} else if ok && unresolvedReference.MatchString(v) {
 		seen = "still the literal reference " + v
 	}
-	msg := fmt.Sprintf("%s on this zcp service did not resolve within %s: it is %s", aliasKey, bearerResolveWait, seen)
-	if sameName {
-		apiKey := pool + "_" + leaseTokenKey
-		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg,
-			fmt.Sprintf("This zcp service also has a variable %s: a variable named like the reference it holds keeps every reference to that name literal — delete it", apiKey))
-	}
-	return "", platform.NewPlatformError(platform.ErrAPITimeout, msg,
+	return "", platform.NewPlatformError(platform.ErrAPITimeout,
+		fmt.Sprintf("%s on this zcp service did not resolve within %s of waiting (%s since the bearer was asked for): it is %s",
+			aliasKey, time.Since(waitStart).Round(time.Second), time.Since(start).Round(time.Second), seen),
 		fmt.Sprintf("The pool '%s' has been deployed, so the reference normally resolves within about 20 s; the next acquire reads it again", pool))
 }

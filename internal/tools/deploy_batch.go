@@ -282,7 +282,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		case entry.Error != "":
 			// Kickoff/transport failure (build never started).
 			attempt.Error = entry.Error
-			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, entry.Target.ConfigFile)
+			classification := classifyTransportError(entry.Err, deployStrategyZCLILabel, entry.Target.ConfigFile)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

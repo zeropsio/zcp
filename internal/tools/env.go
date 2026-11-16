@@ -435,7 +435,7 @@ func applyAutoRestart(
 		proc, err := client.RestartService(ctx, t.id)
 		if err != nil {
 			resp.RestartWarnings = append(resp.RestartWarnings,
-				fmt.Sprintf("%s: restart failed%s: %v", t.hostname, classNote(err), err))
+				fmt.Sprintf("%s: restart failed%s: %v", t.hostname, platform.ClassOf(err).Note(), err))
 			continue
 		}
 		if proc != nil && proc.ID != "" {
@@ -445,7 +445,7 @@ func applyAutoRestart(
 				// unknown: never counted as restarted, so "live" is not claimed.
 				resp.RestartedProcesses = append(resp.RestartedProcesses, proc)
 				resp.RestartWarnings = append(resp.RestartWarnings,
-					fmt.Sprintf("%s: restart process %s was started but could not be followed to its end%s: %v", t.hostname, proc.ID, classNote(pollErr), pollErr))
+					fmt.Sprintf("%s: restart process %s was started but could not be followed to its end%s: %v", t.hostname, proc.ID, platform.ClassOf(pollErr).Note(), pollErr))
 				continue
 			}
 			resp.RestartedProcesses = append(resp.RestartedProcesses, polled)
@@ -727,7 +727,7 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 	}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("every service (their list could not be read%s: %v)", classNote(err), err)}
+		return nil, []string{fmt.Sprintf("every service (their list could not be read%s: %v)", platform.ClassOf(err).Note(), err)}
 	}
 	lower := make([]ops.EffectiveEnvVar, 0, len(stored))
 	for _, s := range stored {
@@ -740,7 +740,7 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 		higher, err := ops.ServiceHigherLayers(ctx, client, svc)
 		if err != nil {
 			// Precondition failure — can't verify this service's shadows.
-			unverified = append(unverified, fmt.Sprintf("%s%s: %v", svc.Name, classNote(err), err))
+			unverified = append(unverified, fmt.Sprintf("%s%s: %v", svc.Name, platform.ClassOf(err).Note(), err))
 			continue
 		}
 		// A failed layer read (Unavailable) means an incomplete view: the
@@ -820,13 +820,4 @@ func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool 
 		return false
 	}
 	return true
-}
-
-// classNote is err's class (platform.ClassOf) as a message reads it:
-// " (refused)", or "" while it has none.
-func classNote(err error) string {
-	if class := platform.ClassOf(err); class != "" {
-		return " (" + string(class) + ")"
-	}
-	return ""
 }

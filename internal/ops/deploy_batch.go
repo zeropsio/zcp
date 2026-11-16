@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -34,13 +35,34 @@ type DeployBatchTarget struct {
 // DeployBatchEntryResult is the outcome for one target inside a batch. The
 // Result pointer carries the same DeployResult shape a single zerops_deploy
 // call would have produced; Error is set when the kickoff itself failed
-// before the platform could return a build ID.
+// before the platform could return a build ID, beside the rest of the
+// failure as a single zerops_deploy would carry it: its code, suggestion,
+// diagnostic (zcli's whole output) and class (platform.ClassOf). Err is the
+// failure itself, for in-process readers.
 type DeployBatchEntryResult struct {
-	Target    DeployBatchTarget `json:"target"`
-	Result    *DeployResult     `json:"result,omitempty"`
-	Error     string            `json:"error,omitempty"`
-	StartedAt string            `json:"startedAt"`
-	EndedAt   string            `json:"endedAt"`
+	Target          DeployBatchTarget   `json:"target"`
+	Result          *DeployResult       `json:"result,omitempty"`
+	Error           string              `json:"error,omitempty"`
+	ErrorCode       string              `json:"errorCode,omitempty"`
+	ErrorSuggestion string              `json:"errorSuggestion,omitempty"`
+	ErrorDiagnostic string              `json:"errorDiagnostic,omitempty"`
+	ErrorClass      platform.ErrorClass `json:"errorClass,omitempty"`
+	Err             error               `json:"-"`
+	StartedAt       string              `json:"startedAt"`
+	EndedAt         string              `json:"endedAt"`
+}
+
+// failed sets the entry's failure from err.
+func (e *DeployBatchEntryResult) failed(err error) {
+	e.Err = err
+	e.Error = err.Error()
+	e.ErrorClass = platform.ClassOf(err)
+	var pe *platform.PlatformError
+	if errors.As(err, &pe) {
+		e.ErrorCode = pe.Code
+		e.ErrorSuggestion = pe.Suggestion
+		e.ErrorDiagnostic = pe.Diagnostic
+	}
 }
 
 // DeployBatchResult aggregates per-target outcomes for a zerops_deploy_batch
@@ -127,7 +149,7 @@ func DeployBatchSSH(
 				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, tgt.SHA,
 			)
 			if err != nil {
-				entry.Error = err.Error()
+				entry.failed(err)
 				return
 			}
 			if pollBuild != nil {
