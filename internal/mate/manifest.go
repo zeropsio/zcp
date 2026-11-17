@@ -62,7 +62,7 @@ const (
 	// value and tells the agent which: zcp tells the agent to restart nothing
 	// itself only from it on (CarriesCardRestart); an older card restarts
 	// nothing, so the agent restarts them. Set at mate's release.
-	CardRestartMateVersion = "0.16.225"
+	CardRestartMateVersion = "0.16.226"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
