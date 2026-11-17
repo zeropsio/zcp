@@ -24,6 +24,10 @@ var (
 	ErrInvalid      = errors.New("invalid request")       // 400
 	ErrWrongType    = errors.New("wrong type")            // 409 — write would overwrite a different-shaped value
 	ErrTimeout      = errors.New("timeout")               // 504 — upstream accepted the request but did not confirm completion in time
+	// ErrNoCredentials: a secret the service's connection needs is readable
+	// neither from the API (masked to this key) nor from the container's env
+	// store (the service does not share its variables with this container).
+	ErrNoCredentials = errors.New("credentials not readable") // 424
 )
 
 // HTTPStatus maps a sentinel error to its status code (default 500).
@@ -49,6 +53,8 @@ func HTTPStatus(err error) int {
 		return 400
 	case errors.Is(err, ErrTimeout):
 		return 504
+	case errors.Is(err, ErrNoCredentials):
+		return 424
 	default:
 		return 500
 	}
@@ -81,6 +87,8 @@ func ErrorCode(err error) string {
 		return "wrong_type"
 	case errors.Is(err, ErrTimeout):
 		return "timeout"
+	case errors.Is(err, ErrNoCredentials):
+		return "no_credentials"
 	default:
 		return codeInternal
 	}

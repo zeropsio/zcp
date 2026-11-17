@@ -144,5 +144,6 @@ func errorCodeCases() []struct {
 		{name: "invalid", err: ErrInvalid, code: "invalid", status: 400},
 		{name: "wrong_type", err: ErrWrongType, code: "wrong_type", status: 409},
 		{name: "timeout", err: ErrTimeout, code: "timeout", status: 504},
+		{name: "no_credentials", err: ErrNoCredentials, code: "no_credentials", status: 424},
 	}
 }

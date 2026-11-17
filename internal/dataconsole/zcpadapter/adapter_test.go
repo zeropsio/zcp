@@ -2,6 +2,7 @@ package zcpadapter
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -174,9 +175,10 @@ func serviceEnv(env map[string]string) []platform.ServiceEnvVar {
 	return out
 }
 
-func TestAdapter_ConnectionInfo_MaskedPassword_NamesTheServiceNotTheMaskedValue(t *testing.T) {
-	t.Parallel()
-	client := platform.NewMock().
+// maskedPostgres is a postgres service whose password the API withholds from
+// a project-scoped key.
+func maskedPostgres() *platform.Mock {
+	return platform.NewMock().
 		WithServices([]platform.ServiceStack{service("pg-id", "db", "postgresql@16")}).
 		WithServiceEnv("pg-id", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "hostname", Content: "db"},
@@ -185,12 +187,47 @@ func TestAdapter_ConnectionInfo_MaskedPassword_NamesTheServiceNotTheMaskedValue(
 			{ID: "e4", Key: "dbName", Content: "app"},
 			{ID: "e5", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
 		})
-	adapter := New(client, &auth.Info{ProjectID: "p", ProjectName: "proj"})
+}
+
+// storeOf is a container env store holding exactly env.
+func storeOf(env map[string]string) func(string) (string, bool, error) {
+	return func(key string) (string, bool, error) {
+		v, ok := env[key]
+		return v, ok, nil
+	}
+}
+
+// witness: internal/dataconsole/zcpadapter/adapter.go | scalars[key] = v → _ = v
+func TestAdapter_ConnectionInfo_ValueTheAPIWithholds_IsReadFromTheContainersEnvStore(t *testing.T) {
+	t.Parallel()
+	adapter := New(maskedPostgres(), &auth.Info{ProjectID: "p", ProjectName: "proj"})
+	adapter.env = storeOf(map[string]string{"db_password": "s3cret", "other_password": "wrong"})
+	if _, err := adapter.ManagedServices(context.Background()); err != nil {
+		t.Fatalf("ManagedServices: %v", err)
+	}
+	info, err := adapter.ConnectionInfo(context.Background(), "pg-id")
+	if err != nil {
+		t.Fatalf("ConnectionInfo: %v", err)
+	}
+	conn, ok := info.Descriptor.(provider.SQLConn)
+	if !ok || conn.Password != "s3cret" || conn.Host != "db" || conn.User != "app" || conn.Database != "app" {
+		t.Fatalf("descriptor = %#v, want the API's plain values and the store's db_password", info.Descriptor)
+	}
+}
+
+// witness: internal/dataconsole/zcpadapter/adapter.go | if !found { → if found {
+func TestAdapter_ConnectionInfo_ServiceThatDoesNotShareItsVariables_AnswersNoCredentialsNamingServiceAndKey(t *testing.T) {
+	t.Parallel()
+	adapter := New(maskedPostgres(), &auth.Info{ProjectID: "p", ProjectName: "proj"})
+	adapter.env = storeOf(map[string]string{"other_password": "s3cret"})
 	if _, err := adapter.ManagedServices(context.Background()); err != nil {
 		t.Fatalf("ManagedServices: %v", err)
 	}
 	_, err := adapter.ConnectionInfo(context.Background(), "pg-id")
-	if err == nil || !strings.Contains(err.Error(), "this Mate's key cannot read db's password") {
-		t.Fatalf("ConnectionInfo error = %v, want the named masked-password error", err)
+	if !errors.Is(err, provider.ErrNoCredentials) || provider.ErrorCode(err) != "no_credentials" {
+		t.Fatalf("ConnectionInfo error = %v, want ErrNoCredentials", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "db") || !strings.Contains(msg, "password") || strings.Contains(msg, "s3cret") || strings.Contains(msg, platform.MaskedEnvValue) {
+		t.Fatalf("error text = %q, want the service and key named and no value", msg)
 	}
 }

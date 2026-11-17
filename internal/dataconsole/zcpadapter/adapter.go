@@ -30,13 +30,24 @@ type Adapter struct {
 	client platform.Client
 	info   *auth.Info
 
+	// env reads one key of the container's live env store, fresh per call:
+	// where a value the API withholds from this key is read.
+	env func(key string) (string, bool, error)
+
 	mu       sync.Mutex
 	typeByID map[string]string // serviceID -> type string (filled on discovery)
+	hostByID map[string]string // serviceID -> hostname (filled on discovery)
 }
 
 // New wires the adapter from an already-resolved client + auth info.
 func New(client platform.Client, info *auth.Info) *Adapter {
-	return &Adapter{client: client, info: info, typeByID: map[string]string{}}
+	return &Adapter{
+		client:   client,
+		info:     info,
+		env:      ops.LiveContainerEnv,
+		typeByID: map[string]string{},
+		hostByID: map[string]string{},
+	}
 }
 
 // Project returns the neutral project identity.
@@ -53,6 +64,7 @@ func (a *Adapter) ManagedServices(ctx context.Context) ([]console.ManagedService
 	}
 	out := make([]console.ManagedServiceRef, 0, len(services))
 	idType := map[string]string{}
+	idHost := map[string]string{}
 	for i := range services {
 		svc := &services[i]
 		typ := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
@@ -60,6 +72,7 @@ func (a *Adapter) ManagedServices(ctx context.Context) ([]console.ManagedService
 			continue
 		}
 		idType[svc.ID] = typ
+		idHost[svc.ID] = svc.Name
 		out = append(out, console.ManagedServiceRef{
 			ID:       svc.ID,
 			Hostname: svc.Name,
@@ -69,6 +82,7 @@ func (a *Adapter) ManagedServices(ctx context.Context) ([]console.ManagedService
 	}
 	a.mu.Lock()
 	a.typeByID = idType
+	a.hostByID = idHost
 	a.mu.Unlock()
 	return out, nil
 }
@@ -76,25 +90,44 @@ func (a *Adapter) ManagedServices(ctx context.Context) ([]console.ManagedService
 // ConnectionInfo resolves a service's own env scalars via FetchServiceEnv and
 // maps them to the console's neutral typed connection descriptor. Env-key names
 // and service-type fallback rules live only in this bridge.
+//
+// The API answers a sensitive value (a password, a secret key) as masked to a
+// project-scoped key; the container's live env store holds it as
+// <hostname>_<key> when the service's envIsolation admits this container, so
+// each withheld key is read there, fresh on every call. A withheld key the
+// store lacks is ErrNoCredentials; the error names the service and the keys,
+// never a value.
 func (a *Adapter) ConnectionInfo(ctx context.Context, serviceID string) (console.ConnectionInfo, error) {
 	envs, err := ops.FetchServiceEnv(ctx, a.client, serviceID)
 	if err != nil {
-		return console.ConnectionInfo{}, err
+		return console.ConnectionInfo{}, fmt.Errorf("read %s's variables: %w: %w", serviceID, provider.ErrUpstream, err)
 	}
 	scalars, masked := ops.EnvScalars(envs)
-	if len(masked) > 0 {
-		host := serviceID
-		if svc, err := a.client.GetService(ctx, serviceID); err == nil {
-			host = svc.Name
-		}
-		return console.ConnectionInfo{}, fmt.Errorf("this Mate's key cannot read %s's %s", host, strings.Join(masked, ", "))
-	}
 	a.mu.Lock()
 	typ := a.typeByID[serviceID]
+	host, ok := a.hostByID[serviceID]
 	a.mu.Unlock()
+	if !ok {
+		host = serviceID
+	}
+	var absent []string
+	for _, key := range masked {
+		v, found, err := a.env(host + "_" + key)
+		if err != nil {
+			return console.ConnectionInfo{}, fmt.Errorf("read %s's %s from the container's env: %w: %w", host, key, provider.ErrUpstream, err)
+		}
+		if !found {
+			absent = append(absent, key)
+			continue
+		}
+		scalars[key] = v
+	}
+	if len(absent) > 0 {
+		return console.ConnectionInfo{}, fmt.Errorf("%s does not share %s with this container: %w", host, strings.Join(absent, ", "), provider.ErrNoCredentials)
+	}
 	desc, err := descriptorFor(typ, scalars)
 	if err != nil {
-		return console.ConnectionInfo{}, err
+		return console.ConnectionInfo{}, fmt.Errorf("%w: %w", provider.ErrUnsupported, err)
 	}
 	return console.ConnectionInfo{
 		Type:       typ,

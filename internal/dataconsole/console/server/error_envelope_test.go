@@ -47,6 +47,7 @@ func TestServer_ErrorEnvelope_SentinelErrors(t *testing.T) {
 		{name: "invalid", err: provider.ErrInvalid, code: "invalid", status: http.StatusBadRequest, message: "invalid request"},
 		{name: "wrong_type", err: provider.ErrWrongType, code: "wrong_type", status: http.StatusConflict, message: "wrong type"},
 		{name: "timeout", err: provider.ErrTimeout, code: "timeout", status: http.StatusGatewayTimeout, message: "timeout"},
+		{name: "no_credentials", err: provider.ErrNoCredentials, code: "no_credentials", status: http.StatusFailedDependency, message: "credentials not readable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

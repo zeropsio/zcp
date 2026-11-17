@@ -25,7 +25,7 @@ func (e *Engine) Summary(ctx context.Context, hostname string) (ServiceSummary, 
 	}
 	ci, err := e.host.ConnectionInfo(ctx, view.ID)
 	if err != nil {
-		return ServiceSummary{}, fmt.Errorf("summary: %w", provider.ErrUpstream)
+		return ServiceSummary{}, fmt.Errorf("summary: %w", err)
 	}
 	switch d := ci.Descriptor.(type) {
 	case provider.SQLConn:

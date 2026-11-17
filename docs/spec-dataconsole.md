@@ -345,7 +345,11 @@ contract — a family maps its conditions onto these, never a flat catch-all:
 oracle) · `ErrNotFound` (404) · `ErrNeedsConfirm`/`ErrConflict`/`ErrWrongType`
 (409) · `ErrTooLarge` (413) · `ErrUnsupported` (422) · `ErrUpstream` (502, a
 sanitized real outage) · `ErrUnreachable` (503, the VPN gate) · `ErrTimeout` (504,
-accepted-not-confirmed). The VPN gate (`showVPNGate`) is offered only to a console on a
+accepted-not-confirmed) · `ErrNoCredentials` (424, `no_credentials`). A service's connection
+comes from the Zerops API for its plain values; a value the API withholds from a project-scoped key
+(a password, a secret key) is read from the container's live env store as `<hostname>_<key>`,
+fresh per request; a withheld value the store lacks — the service does not share its variables with
+the container — is `ErrNoCredentials`, its text naming the service and the keys, never a value. The VPN gate (`showVPNGate`) is offered only to a console on a
 person's own machine: one running in the project's own container (a Mate's) is on the private
 network and carries no VPN hint (`TestEngine_VPNHint_OnlyOutsideTheProject`).
 

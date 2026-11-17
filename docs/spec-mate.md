@@ -892,6 +892,7 @@ environment instead, never a probed flag (§2.2).
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
 | C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. The new-Mate import writes `MATE_SETUP` beside the project key; the server checks for that name once in its environment or live env store, and without it settles server-initiated stand-up as not due. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | mate `apps/server/src/zerops/ZeropsGitCredentialFile.ts`, `apps/server/src/zerops/zeropsSetupMarker.ts`, `apps/server/src/zerops/ZeropsSetup.ts`, `packages/client-runtime/src/zerops/newProject.ts`; zcp `internal/tools/hq_wiring.go`, `internal/tools/hq_dev_git.go` |
 | C-13 | **A Mate's project admits its container over SSH.** From the moment the `zcp` container is imported, the project's `sshIsolation` is `vpn service@<container>`: people on the VPN and the container may SSH into every service of the project, app code into none. The hosted client's container import (a birth and Finish setup) updates the platform's own entry just before it imports the container; zcp never writes the project's value and relies on it for SSH into every service without a value of its own (a dev half, a stage, a mount, a deploy's readiness check). A service's own value holds for that service alone | mate `packages/client-runtime/src/zerops/api.ts` (`importDevelopmentContainer`) |
+| C-14 | **A Mate's project shares its services' variables with its container.** Before the import the press sets the project's `envIsolation` to `service service@<container>` (the platform's own entry, updated, never added; equal already → nothing written). Every service that states no isolation of its own inherits it, also one added later, and the platform writes its variables into the container's live env store as `<hostname>_<key>` (`docs/spec-zerops-env-lifecycle.md` §5); a service that states its own keeps it. The data console reads a value the API withholds from the Mate's key there (§5.7) | mate `packages/client-runtime/src/zerops/api.ts` (the press) |
 
 - **Registration and access.** HQ resolves a presented project key and checks whether that same key
   can read its own value in clear among the project's and non-system services' variables, refusing
@@ -3120,9 +3121,10 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts`), in order:
 - `import` — ONE Zerops import of the whole tier. A Mate's holds its zcp container — with the key
   the person mints for it, a key that holds only its own project; the agent sees the application's
   stage and production through HQ (`zerops_observe`, §10.8), never through a key on a sibling — at
-  the top `priority`, with the tier's managed services and runtimes; its YAML states `project:
-  envIsolation: service@zcp`. The platform creates the services in descending `priority` and
-  isolates every service's variables from the others but the container's, so `ZCP_API_KEY` is the
+  the top `priority`, with the tier's managed services and runtimes; its YAML states no
+  `envIsolation` of its own: just before it the press sets the project's value to `service
+  service@zcp` (C-14). The platform creates the services in descending `priority` and isolates
+  every service's variables from the others but the container's, so `ZCP_API_KEY` is the
   container's alone (zerops-docs `env-variables.mdx`, `import.mdx` `priority`); a new project never
   reads `envIsolation: none` (ZEROPS-081). A stage imports its tier whole. Production imports no
   services at creation; an approved release supplies them later.
@@ -3716,6 +3718,11 @@ slice.
   mutating route is refused by the console itself. Writes arrive later the way the console already
   expects them (`spec-dataconsole.md` §5): a confirm in the Mate UI, and a write token that lives in
   the mate server beside the bearer and never reaches a client.
+- **Credentials.** A service's plain values come from the Zerops API; a value the API withholds
+  from the Mate's project-scoped key (a password, a secret key) is read from the container's live
+  env store as `<hostname>_<key>`, fresh on every request, so a database added later works without
+  a restart of anything. A service whose `envIsolation` does not admit the container answers
+  `no_credentials` (`spec-dataconsole.md` §7.2), naming the service, never a value.
 - **Two hosts, two processes.** The Zerops Studio extension keeps spawning its own console for the
   code-server surface. Nothing is shared between them — not the process, not the port, not the
   tokens.
@@ -5200,10 +5207,11 @@ the Mate's own record (§10.5), the other the Mate's record at its HQ (§10.10).
 ### 10.7 A Mate's project
 
 The creation steps (`createEnvironment.ts`): `create-project` → `register` → `import` (the whole
-tier in one import, the `zcp` container at the top `priority`, every service stamped `envIsolation:
-service@zcp`: the platform creates in priority order and isolates every service's variables but the
-container's, so `ZCP_API_KEY` is the container's alone; just before it the project's `sshIsolation` becomes
-`vpn service@zcp`, C-13) →
+tier in one import, the `zcp` container at the top `priority`, no service stating an `envIsolation`
+of its own: just before it the project's `envIsolation` becomes `service service@zcp` (C-14), so the
+platform isolates every service's variables but the container's, also of a service added later, and
+`ZCP_API_KEY` is the container's alone; and the project's `sshIsolation` becomes `vpn service@zcp`,
+C-13) →
 `secure-container-token` (the Mate's key lowered to `NO_ACCESS` at the org and `BASIC_USER` on its
 own project) → `drop-container-delegation` (the one-use _can create projects_ delegation every
 platform-made key carries, deleted). A Mate's key holds only its own project, and nothing widens
@@ -6799,8 +6807,8 @@ own leg of the project's flow and nothing else (D26): per codebase — the dev h
 the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with
 `todoappstage`); the stage half is deployed to and never a checkout — one block with the checkout's
 branch and counts from the Mate server's `subscribeVcsStatus`, its change and merge destination
-from HQ, and the remote's health from a live `git ls-remote` through the server
-(`ZeropsGitRemoteProbe`). One verb: _Push_ before _Update from main_, or _Review_ for an open
+from HQ, and the remote's health from `zcp git <host> ls-remote` in the Mate's container, never
+by git in the dev service (`ZeropsGitRemoteProbe`). One verb: _Push_ before _Update from main_, or _Review_ for an open
 change; a push opens the change in HQ. A merged change offers none; unread or broken setup says
 why. Checkout actions run as the agent's user for the Mate's owner only; Review applies HQ's
 permissions. No checkout fact proves what stage or production runs (`gitTab.ts`).

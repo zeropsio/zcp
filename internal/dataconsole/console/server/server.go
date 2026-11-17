@@ -1257,6 +1257,8 @@ func sentinelMessage(err error) string {
 		return provider.ErrWrongType.Error()
 	case errors.Is(err, provider.ErrTimeout):
 		return provider.ErrTimeout.Error()
+	case errors.Is(err, provider.ErrNoCredentials):
+		return provider.ErrNoCredentials.Error()
 	default:
 		return "internal error"
 	}

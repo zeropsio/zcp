@@ -59,7 +59,7 @@ type LeaseDeps struct {
 	// checkout and no release guard (zcp outside a container).
 	SSH SSHDeployer
 	// Env reads one key of the container's current env; nil means the live
-	// env (liveContainerEnv).
+	// env (LiveContainerEnv).
 	Env func(key string) (string, bool)
 	// HQAddress is the address of the HQ this container presents itself to, read at
 	// each use ("" — or nil — for none): a repository on it is checked out as
@@ -146,7 +146,7 @@ func (d LeaseDeps) env(key string) (string, bool, error) {
 		v, ok := d.Env(key)
 		return v, ok, nil
 	}
-	return liveContainerEnv(key)
+	return LiveContainerEnv(key)
 }
 
 // liveEnvFile is where Zerops keeps a container's current env, rewritten as
@@ -158,8 +158,8 @@ func (d LeaseDeps) env(key string) (string, bool, error) {
 // 2026-11-13).
 const liveEnvFile = "/etc/zerops-zembed/env.json"
 
-// liveContainerEnv reads key from the container's current env.
-func liveContainerEnv(key string) (string, bool, error) {
+// LiveContainerEnv reads key from the container's current env, fresh on every call.
+func LiveContainerEnv(key string) (string, bool, error) {
 	return liveContainerEnvFrom(liveEnvFile, key)
 }
 
