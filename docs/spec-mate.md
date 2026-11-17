@@ -577,17 +577,21 @@ another keep run asks, it does nothing. Then the first that applies:
    fails the run without skipping step 3: a newer zcp is what repairs a staging defect, and in a
    container nobody can reach the keep job is the only automatic way it arrives.
 3. **A newer zcp** (`zcp.behind`; for a dev zcp only without an active dev pin, §2.1a) the keep job
-   has not restarted for from the installed zcp → the same question. Yes → it records the release and
-   the installed zcp (`zcpRestartedFor`, `zcpRestartedFrom` in `~/.zcp/mate/fuse.json`) and `zcp self
+   has not restarted for from the installed zcp build → the same question. Yes → it records the
+   release and the installed build, its version and build time (`zcpRestartedFor`,
+   `zcpRestartedFrom`, `zcpRestartedFromBuilt` in `~/.zcp/mate/fuse.json`) and `zcp self
    restart` asks the platform for the container restart that is a boot: install.sh installs the
    newest zcp, the start job the newest Mate (§2.9 step 7). Every run reads zcp's latest release from
    its source (bounded as a status read). A refused restart forgets the record; an accepted one that
    does not end the process within 5 minutes (the Mate server's own grace) cancels the question and
-   keeps the record: one attempt per installed zcp and release. A run that finds another zcp
-   installed than `zcpRestartedFrom` forgets the record (the attempt took effect), so a dev zcp
-   placed after a run under the release it installed is still replaced once its pin ends; a record
-   without `zcpRestartedFrom` is forgotten the same way. With any dev build installed, the run's last line names the pin, or says
-   the build stays because no release is newer than its base.
+   keeps the record: one attempt per installed build and release. A run that finds another build
+   installed (another version or build time) forgets the record: the attempt took effect, and a
+   build pushed again, even under the same version, is a new placement, so a dev zcp placed after an
+   attempt is still replaced once its pin ends. A record without the build is forgotten the same
+   way. With any dev build installed, the run's last line names the pin, or says for each unpinned
+   dev build why this run left it: zcp's latest release is unknown, the restart for it was already
+   asked from this build, the Mate release list was not read, the Mate release is not staged, or no
+   release is newer than its base.
 4. Otherwise nothing: no question, no restart.
 
 **The question** is the server's loopback updater (`http://127.0.0.1:3773/api/mate/update/`,
