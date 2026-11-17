@@ -235,10 +235,10 @@ func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
 
 func TestEnvAIKey_OutsideAMateThereIsNoSuchAction(t *testing.T) {
 	t.Parallel()
-	if enum := envInputSchema(false).Properties["action"].Enum; slices.Contains(enum, any("ai-key")) {
+	if enum := envInputSchema(false, false).Properties["action"].Enum; slices.Contains(enum, any("ai-key")) {
 		t.Errorf("action enum outside a Mate = %v, want no ai-key", enum)
 	}
-	if enum := envInputSchema(true).Properties["action"].Enum; !slices.Contains(enum, any("ai-key")) {
+	if enum := envInputSchema(true, false).Properties["action"].Enum; !slices.Contains(enum, any("ai-key")) {
 		t.Errorf("action enum in a Mate = %v, want ai-key", enum)
 	}
 	mock := aiKeyMock()

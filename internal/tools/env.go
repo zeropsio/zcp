@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -58,10 +59,15 @@ type EnvInput struct {
 // zerops.yaml — a UX failure that cost ~10 tool calls. Exposing `get`
 // as a first-class action eliminates that branch entirely.
 //
-// orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey).
-func envInputSchema(orgAIKey bool) *jsonschema.Schema {
-	actions := []any{"get", "set", "delete", "request", "generate-dotenv"}
-	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+// orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey);
+// asks adds request, which only a Mate's client draws (WithAskCard).
+func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
+	actions := []any{"get", "set", "delete", "generate-dotenv"}
+	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	if asks {
+		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
+		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	}
 	if orgAIKey {
 		actions = append(actions, "ai-key")
 		actionDescription += " ai-key: the organization's AI key into the Shared vault, unseen (NEBIUS_API_KEY sensitive, NEBIUS_BASE_URL), for an AI feature in the app; skipRestart as set."
@@ -245,14 +251,17 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 	for _, opt := range opts {
 		opt(&options)
 	}
-	actions := "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
+	actions := "get (keys), set (upsert), delete, generate-dotenv (local .env)"
+	if options.asks {
+		actions = "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
+	}
 	if options.aiKey != nil {
 		actions += ", ai-key (the organization's AI key into the Shared vault, unseen)"
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
 		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: " + actions + ". An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
-		InputSchema: envInputSchema(options.aiKey != nil),
+		InputSchema: envInputSchema(options.aiKey != nil, options.asks),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -341,7 +350,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 		case envActionRequest:
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
-			// conversation, this result, or any log.
+			// conversation, this result, or any log. Without a Mate's client
+			// nobody draws it, so nothing is asked and nothing recorded.
+			if !options.asks {
+				return noAskCard(input.Key), nil, nil
+			}
 			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls
@@ -385,8 +398,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 // the entries of its run.envVariables, so a reader is a runtime whose
 // deployed entries reference the key — `${KEY}` for its own value or the
 // Shared one, through a chain of its entries, or `${host_KEY}` for a
-// service's key (ops.ProjectEnvScopes). Nothing reads it → nothing restarts,
-// and nextActions says how to make a service read it. Populates resp with
+// service's key (ops.ProjectEnvScopes). A key no entry references still
+// reaches a process under its own name (byNameReaders): those are named for
+// the agent to restart if it needs to, never restarted — a restart stops its
+// dev servers — and nextActions says how to reference it. Populates resp with
 // the readers and the outcomes. Best-effort — a restart failure is a
 // warning; the env change itself has already succeeded.
 func applyAutoRestart(
@@ -403,7 +418,7 @@ func applyAutoRestart(
 	plan := planRestart(ctx, client, projectID, input, selfHostname, keys, deleting)
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
-	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+	unreadHint := joinSentences(nothingReadsHint(plan.unreadKeys, input), byNameHint(plan.byName))
 	switch {
 	case plan.poolOwner:
 		unreadHint = poolEnvHint(keys, input.ServiceHostname)
@@ -525,6 +540,9 @@ type restartPlan struct {
 	// idle are the readers that are not live: each reads the value when it
 	// starts.
 	idle []string
+	// byName are the live runtimes that have a key no entry references by its
+	// own name: never restarted by themselves, named for the agent to choose.
+	byName []string
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -586,6 +604,15 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 		plan.readers[key] = readers
 		if len(readers) == 0 {
 			plan.unreadKeys = append(plan.unreadKeys, key)
+			// No entry references it, yet the platform still hands an unreferenced Shared
+			// value to every service, and a service's own to that service, by its name. In
+			// the Mate's own project a restart stops the agent's dev servers, so these are
+			// named for the agent to choose from, never restarted by themselves.
+			for _, name := range byNameReaders(scopes, owner, key, platformReadKeys[key] || plan.poolOwner || plan.boxOwner) {
+				if isAutoRestartEligible(byName[name], selfHostname) && !slices.Contains(plan.byName, name) {
+					plan.byName = append(plan.byName, name)
+				}
+			}
 		}
 		for _, name := range readers {
 			svc := byName[name]
@@ -617,6 +644,39 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 		addTarget(svc)
 	}
 	return plan
+}
+
+// byNameReaders are the services a key no entry references still reaches
+// under its own name (spec-zerops-env-lifecycle §3: project→service
+// inheritance is not gated): every service for a Shared key, its owner for a
+// service's own, unless an entry or the service's own value of that name
+// shadows it. None for a key the platform reads itself, or a pool's or a
+// Box's own.
+func byNameReaders(scopes *ops.ProjectEnvScopes, owner, key string, none bool) []string {
+	if none {
+		return nil
+	}
+	var readers []string
+	for _, svc := range scopes.Services {
+		if owner != "" && svc.Hostname != owner {
+			continue
+		}
+		if _, entry := svc.Entries[key]; entry || (owner == "" && svc.Own[key]) {
+			continue
+		}
+		readers = append(readers, svc.Hostname)
+	}
+	return readers
+}
+
+// byNameHint names the running services that have an unreferenced key by its
+// own name: nothing restarted them, and the agent chooses.
+func byNameHint(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s still %s it by its own name (an unreferenced value reaches the process anyway) and keeps the old value until it restarts: nothing restarted it, since a restart stops its dev server — restart the ones that need it (zerops_manage action=\"restart\").",
+		strings.Join(names, ", "), map[bool]string{true: "have", false: "has"}[len(names) > 1])
 }
 
 // nothingReadsHint is the fix for keys no service reads: reference them in
@@ -657,10 +717,10 @@ func appReadHint(keys []string, input EnvInput) string {
 	}
 	names := strings.Join(keys, ", ")
 	if input.Project.Bool() {
-		return fmt.Sprintf("Nothing reads %s yet — reference it in the run.envVariables of each service that needs it (e.g. `NAME: ${%s}`), then deploy.", names, keys[0])
+		return fmt.Sprintf("No zerops.yaml entry references %s yet — reference it in the run.envVariables of each service that needs it (e.g. `NAME: ${%s}`), then deploy.", names, keys[0])
 	}
 	host := input.ServiceHostname
-	return fmt.Sprintf("Nothing reads %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
+	return fmt.Sprintf("No zerops.yaml entry references %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
 		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
 }
 

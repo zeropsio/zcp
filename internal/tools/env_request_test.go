@@ -68,7 +68,7 @@ func flipRequest(extra map[string]any) map[string]any {
 func TestEnvTool_Request_AlreadySet_NamesHowToReplace(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, flipMock(), "proj-1", "")
+	RegisterEnv(srv, flipMock(), "proj-1", "", WithAskCard())
 
 	got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil)))
 	if got.AlreadySet == nil || got.Requested != nil {
@@ -89,7 +89,7 @@ func TestEnvTool_Request_Replace_AsksForTheHeldKey(t *testing.T) {
 	t.Parallel()
 	mock := flipMock()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", flipRequest(map[string]any{"replace": true, "replaceWhy": "it is not in Google's format"}))
 	got := parseRequest(t, result)
@@ -115,7 +115,7 @@ func TestEnvTool_Request_Replace_AsksForTheHeldKey(t *testing.T) {
 func TestEnvTool_Request_Replace_NeedsReplaceWhy(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, flipMock(), "proj-1", "")
+	RegisterEnv(srv, flipMock(), "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", flipRequest(map[string]any{"replace": true}))
 	text := getTextContent(t, result)
@@ -245,13 +245,12 @@ func TestEnvTool_Request_Again_AsksAfterADecline(t *testing.T) {
 	}
 }
 
-// TestEnvTool_Request_WithoutVaultAsks_AsksEachTime: outside a Mate nothing
-// records an ask (WithVaultAsks is a Mate's), so every request answers as
-// before.
+// TestEnvTool_Request_WithoutVaultAsks_AsksEachTime: a card drawn with
+// nothing recording its asks (no WithVaultAsks) asks afresh each time.
 func TestEnvTool_Request_WithoutVaultAsks_AsksEachTime(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+	RegisterEnv(srv, platform.NewMock(), "proj-1", "", WithAskCard())
 
 	for i := range 2 {
 		if got := parseRequest(t, callTool(t, srv, "zerops_env", flipRequest(nil))); got.Requested == nil || got.AlreadyAsked != "" {
@@ -261,11 +260,11 @@ func TestEnvTool_Request_WithoutVaultAsks_AsksEachTime(t *testing.T) {
 }
 
 // TestEnvTool_Request_NamesTheRestartAfterTheSave: the person's save writes
-// the vault from their own client — zcp never sees it, and nothing restarts
-// (Filip 10-26 20:56: "Neither has restarted yet"). So the answer names the
-// services whose deployed entries read the key and the call that restarts
-// each once a message says saved — never the service running this session,
-// never a restart of its own. A key nothing reads says how a service reads it.
+// the vault from their own client and zcp never sees it (Filip 10-26 20:56:
+// "Neither has restarted yet"). A Mate whose card restarts the readers has the
+// agent restart nothing itself; an older one's agent restarts each once a
+// message says saved — never the service running this session. A key no entry
+// references restarts nothing: the answer names who has it by name.
 func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 	t.Parallel()
 
@@ -275,6 +274,8 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 		wantReaders []string
 		wantRestart []string
 		wantNext    []string
+		// cardRestarts: the Mate's card restarts the readers at the save.
+		cardRestarts bool
 	}{
 		{
 			name:        "a Shared key a runtime reads",
@@ -282,6 +283,14 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 			wantReaders: []string{"web"},
 			wantRestart: []string{"web"},
 			wantNext:    []string{"Saving restarts nothing", `zerops_manage action="restart" serviceHostname="web"`},
+		},
+		{
+			name:         "a Mate whose card restarts: the agent restarts nothing itself",
+			args:         map[string]any{"action": "request", "project": true, "key": "STRIPE_SECRET_KEY", "label": "Stripe secret key", "why": "for checkout"},
+			wantReaders:  []string{"web"},
+			wantRestart:  []string{"web"},
+			wantNext:     []string{"the person's card restarts web", "Restart nothing yourself"},
+			cardRestarts: true,
 		},
 		{
 			name:        "a replaced Shared key this session's service reads too",
@@ -298,9 +307,10 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 			wantNext:    []string{`serviceHostname="worker"`},
 		},
 		{
-			name:     "a key nothing reads yet",
-			args:     map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
-			wantNext: []string{"Nothing reads SENTRY_DSN yet", "deploy"},
+			name:         "a key nothing references yet restarts nothing and names who has it by name",
+			args:         map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
+			wantNext:     []string{"No zerops.yaml entry references SENTRY_DSN yet", "deploy", "still have it by its own name"},
+			cardRestarts: true,
 		},
 	}
 	for _, tt := range tests {
@@ -309,7 +319,7 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 			mock := readersMock().
 				WithAppVersionUserData("av-web", []platform.ServiceEnvVar{{Key: "STRIPE_KEY", Content: "${STRIPE_SECRET_KEY}"}})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, mock, "proj-1", "zcp")
+			RegisterEnv(srv, mock, "proj-1", "zcp", WithAskCard(), WithCardRestarts(func() bool { return tt.cardRestarts }))
 
 			got := parseRequest(t, callTool(t, srv, "zerops_env", tt.args))
 			if got.Requested == nil {
@@ -340,7 +350,7 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 // published with what each is for.
 func TestEnvSchema_RequestReplaceAndAgain(t *testing.T) {
 	t.Parallel()
-	props := envInputSchema(false).Properties
+	props := envInputSchema(false, true).Properties
 	for name, want := range map[string]string{
 		"replace":    "replaceWhy",
 		"replaceWhy": "wrong with the saved value",
@@ -353,6 +363,35 @@ func TestEnvSchema_RequestReplaceAndAgain(t *testing.T) {
 		}
 		if !strings.Contains(prop.Description, want) {
 			t.Errorf("%s description = %q, want it to name %q", name, prop.Description, want)
+		}
+	}
+}
+
+// TestEnvTool_Request_NoMate_OffersNoCardAndAsksNothing: where no Mate's
+// client draws the card (plain zcp, a project outside a Mate) request is not
+// offered, so a call of it — an agent that remembers it — is refused, never
+// answered as asked; the handler's own answer says nothing was asked, never a
+// card to decline, and tells the agent to have the person add the key
+// themselves, never in the chat.
+// witness: internal/tools/env.go | if asks { → if true {
+func TestEnvTool_Request_NoMate_OffersNoCardAndAsksNothing(t *testing.T) {
+	t.Parallel()
+	if enum := envInputSchema(false, false).Properties["action"].Enum; slices.Contains(enum, any("request")) {
+		t.Errorf("request is offered without a Mate: %v", enum)
+	}
+	if enum := envInputSchema(false, true).Properties["action"].Enum; !slices.Contains(enum, any("request")) {
+		t.Errorf("request is not offered in a Mate: %v", enum)
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+	result := callTool(t, srv, "zerops_env", flipRequest(nil))
+	if text := getTextContent(t, result); !result.IsError || strings.Contains(text, "requested") {
+		t.Errorf("a request without a Mate answered as asked: %s", text)
+	}
+	text := getTextContent(t, noAskCard("FLIP_GOOGLE_CLIENT_ID"))
+	for _, want := range []string{"Nothing was asked", "no request for them to answer or decline", "add FLIP_GOOGLE_CLIENT_ID themselves", "never to paste it into the chat"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("answer lacks %q: %s", want, text)
 		}
 	}
 }

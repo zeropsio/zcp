@@ -2134,15 +2134,24 @@ Chief.
 
 **A Mate proposes in its application's environments.** In project mode, in a Mate's container
 (`ZCP_MATE_ENABLED`), `zerops_propose_service {action, project, service, reason}` (`restart` |
-`start` | `stop`) and `zerops_propose_env {project, scope, service?, key, value, reason}` propose
+`start` | `stop`) and `zerops_propose_env {project, scope, service?, key, value, reason, restart?}` propose
 the Chief's `service.*` and `env.set` kinds for the Mate's application's stage or production, which
 its token does not reach. Each checks the target against HQ's observation (§10.8) under the
 Mate's observe credential, one request at a time: `environments` names the stage and production
 (by project id, name, kind or title), then `status` of that one environment its services. The
 proposal is the shape above, its `projectName` the environment's title as Mate's menu shows it
 ("Production"; a stage by its own name, or "Stage" where HQ made the name). `env.set` carries a
-plain value only, `secret: false`; its note adds that a running service reads the value after a
-restart.
+plain value only, `secret: false`. A running process reads a changed value only after a restart
+(2026-11-17), so its params carry `restart`: the running services the card restarts once the value
+is set — a service's own value's service, then the hostnames the Mate names in `restart` (the
+readers of a project value), checked against that environment's `status` as the secret ask's are —
+and `notRunning`, the named ones that run nothing now, which read it when they next start; a name
+the environment lacks is refused, and so is a running service with no deployed version (a
+database, cache or storage: HQ's `status` carries no type), which reads no value. The card says before the press what it restarts, adds the
+running readers the vault's references name, restarts one at a time with the person's own access,
+and settles "KEY is in the vault · app restarted"; a failed restart offers Try again and Finish
+without restart. Both fields are optional both ways: a card older than them sets the value and
+restarts nothing. The note names what the card restarts.
 
 **A Mate asks for a secret in stage or production** (2026-11-17). `zerops_propose_env {project, scope,
 service?, key, reason, secret: true, restart?}` takes no value: one given is refused ("a secret is
@@ -2296,7 +2305,7 @@ what neither its project nor `zerops_observe` shows. The shared section tells a 
 | OM-5 | A Mate asks its person's Chief only by message: `zerops_list_mates` names the peer the Mate's state names as its person's Chief, and no tool proposes asking it. `TestListMates_PersonsChiefAmongThem_IsNamedTheChief`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
-| OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
+| OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment — an `env.set` carrying the running services its card restarts and the named ones that run nothing — and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-8a | A Mate's `zerops_propose_env secret=true` answers env request's `requested` shape with the environment and the running services its card restarts, always sensitive, never a value: a value, a key holding one or a reason holding one is refused before anything is observed and never repeated; `generate` passes only the directives the card makes as zParser does; a Mate below `SecretAskMateVersion` is refused. `TestProposeSecretAsk_Shape`, `TestProposeSecretAsk_RefusesAValue`, `TestProposeSecretAsk_RefusesWhatIsNotThere`, `TestSecretGenerate_AllowList`, `TestSecretGenerate_ExpandsAsTheCardMakesIt`, `TestCarriesSecretAsk`. |
 | OM-9 | A Mate's `zerops_propose_mcp` returns an `mcp.add` proposal of the shape above from its own project, never carrying a secret value, and runs nothing; only a Mate's project mode registers it. `TestProposeMcp_Shape`, `TestProposeMcp_RefusesSecretsAndWhatCannotConnect`, `TestMcpPropose_OverMCP_ProposesAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-10 | A Mate's `zerops_propose_reveal` returns an `env.reveal` proposal of the shape above naming a key in its application's stage or production or its own project, never a value: a key or reason holding one is refused before anything is read; only a Mate's project mode registers it. `TestProposeReveal_Shape`, `TestProposeReveal_RefusesAValue`, `TestProposeReveal_RefusesWhatIsNotThere`, `TestRevealPropose_OverMCP_ProposesANameNeverAValue`, `TestServer_AppProposeToolGating`. |
@@ -3789,10 +3798,14 @@ the values those entries reference.
   finished answer without `alreadySet`) until it updates, accepted as mild. An ask counts as
   answered once the vault holds the key written since it was asked (another row, or the held row's
   `lastUpdate` later); `again=true` asks after a message said declined. The save writes the vault
-  from the person's client and the engine words the `saved` message, so zcp never sees it, and
-  nothing restarts. `requested` names the `readers` and `restartAfterSave`, the live runtimes to
-  restart with `zerops_manage action="restart"` once the message says saved. The service running
-  the session is never among them. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
+  from the person's client and the engine words the `saved` message, so zcp never sees it. From
+  `CardRestartMateVersion` on (2026-11-17) the card then restarts the running readers from the
+  person's client, the `saved` answer naming those it restarted (`restarted`) and one that did not
+  and why (`notRestarted`); a restart that fails offers Try again and Finish without restart.
+  `requested` names the `readers` and `restartAfterSave`, the live runtimes restarted after the
+  save: by the card, the agent told to restart nothing itself, or — below that version — by the
+  agent with `zerops_manage action="restart"` once the message says saved. The service running
+  the session is never among them, nor a service holding an unreferenced key only by its name. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
   older mate ignores `replace`, `alreadyAsked` and the other new fields.
 - **A secret for stage or production** (2026-11-17). `zerops_propose_env secret=true` (§2.11)
   answers the same `requested` shape with an `environment` (`kind`, `projectId`, `name`) and the

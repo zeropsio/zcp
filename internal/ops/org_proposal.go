@@ -46,6 +46,10 @@ type OrgActionInput struct {
 	Key    string
 	Value  string
 	Secret bool
+	// Restart names the services that read a plain value an application's
+	// stage or production gets (zerops_propose_env): its card restarts the
+	// running ones once it is set.
+	Restart []string
 	// mate.message
 	To              string
 	Words           string
@@ -80,12 +84,18 @@ type OrgProposalResult struct {
 	Note     string      `json:"note"`
 }
 
-// OrgEnvSetParams are env.set's params.
+// OrgEnvSetParams are env.set's params. In an application's stage or
+// production, Restart are the running services the card restarts once the
+// value is set — a service's own value's service, and the ones the Mate named
+// — and NotRunning the named ones that run nothing now, which read it when
+// they next start. A card older than them sets the value and restarts nothing.
 type OrgEnvSetParams struct {
-	Scope  string `json:"scope"`
-	Key    string `json:"key"`
-	Value  string `json:"value"`
-	Secret bool   `json:"secret"`
+	Scope      string             `json:"scope"`
+	Key        string             `json:"key"`
+	Value      string             `json:"value"`
+	Secret     bool               `json:"secret"`
+	Restart    []SecretAskService `json:"restart,omitempty"`
+	NotRunning []string           `json:"notRunning,omitempty"`
 }
 
 // OrgMateAddress names the Mate a message goes to.

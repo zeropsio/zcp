@@ -53,7 +53,7 @@ func appObserveHQ(t *testing.T) (*httptest.Server, func() []string) {
 		case "environments":
 			body = observeTestWire(t, "environments", `{"environments":[{"projectId":"P_STAGE","name":"stage","tier":"stage"},{"projectId":"P_PROD","name":"production","tier":"production"}],"siblingMates":[]}`, http.StatusOK)
 		case "status":
-			body = observeTestWire(t, "status", `{"environment":{"projectId":"`+in.ProjectID+`","name":"production","tier":"production"},"services":[{"id":"S_API","name":"api","status":"ACTIVE","activeVersion":null}]}`, http.StatusOK)
+			body = observeTestWire(t, "status", `{"environment":{"projectId":"`+in.ProjectID+`","name":"production","tier":"production"},"services":[{"id":"S_API","name":"api","status":"ACTIVE","activeVersion":{"id":"V_API","activatedAt":null}}]}`, http.StatusOK)
 		default:
 			t.Errorf("unexpected observation %q", in.Action)
 		}

@@ -63,8 +63,9 @@ type envChangeWire struct {
 // TestEnvChange_RestartsOnlyReaders — a set or delete restarts the runtimes
 // whose deployed run entries read the key (directly, through a chain, or as
 // `${host_KEY}`), never one that does not reference it, never the service
-// running this session; nothing reads it → no restart, and the response
-// says how to make a service read it.
+// running this session; a key no entry references restarts nothing — in the
+// Mate's own project a restart stops the agent's dev servers — and the
+// response names the services that have it by name and says how to reference it.
 func TestEnvChange_RestartsOnlyReaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -91,16 +92,16 @@ func TestEnvChange_RestartsOnlyReaders(t *testing.T) {
 			wantReaders:   map[string][]string{"TOKEN": {"worker"}},
 		},
 		{
-			name:        "nothing reads it — no restart, the fix in nextActions",
+			name:        "a Shared key nothing references restarts nothing and names who has it by name",
 			args:        map[string]any{"action": "set", "project": true, "variables": []any{"UNUSED=x"}},
 			wantReaders: map[string][]string{"UNUSED": nil},
-			wantNext:    []string{"Nothing reads UNUSED yet", "NAME: ${UNUSED}", "deploy"},
+			wantNext:    []string{"No zerops.yaml entry references UNUSED yet", "NAME: ${UNUSED}", "deploy", "api, worker, web still have it by its own name", "nothing restarted it"},
 		},
 		{
-			name:        "service key nothing reads names the host reference",
+			name:        "a service key nothing references restarts nothing and names the host reference",
 			args:        map[string]any{"action": "set", "serviceHostname": "web", "variables": []any{"SIGNING=x"}},
 			wantReaders: map[string][]string{"SIGNING": nil},
-			wantNext:    []string{"Nothing reads SIGNING yet", "web", "${web_SIGNING}"},
+			wantNext:    []string{"No zerops.yaml entry references SIGNING yet", "${web_SIGNING}", "web still has it by its own name"},
 		},
 		{
 			name:          "delete restarts readers and warns they now read the literal",
