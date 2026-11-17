@@ -197,9 +197,6 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), s.followRepos(), receive)
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
-	if rtInfo.InContainer && rtInfo.MateEnabled {
-		tools.RegisterAskChief(s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
-	}
 
 	// Dev servers run under each dev service's supervisor now; the keeper
 	// units an older zcp left on this container go (its record stays until
@@ -380,8 +377,8 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 // repository to GitHub (§5.11), and proposes changes to its
 // application's stage and production, checked against HQ's observation,
 // and MCP servers for its agents (§2.11); it lists and asks its person's
-// other Mates (§6.10). Asking the person's Chief registers
-// in New, once HQ names one; org mode is the Chief and registers none of these.
+// other Mates (§6.10), its person's Chief among them. Org mode is the Chief
+// and registers none of these but the messages.
 func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir string) {
 	if !s.rtInfo.InContainer || !s.rtInfo.MateEnabled {
 		return

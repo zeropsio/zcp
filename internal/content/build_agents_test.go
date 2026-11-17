@@ -583,7 +583,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet", "zerops_propose_mcp"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "Chief", "addresses sheet", "zerops_propose_mcp"},
 		},
 		{
 			name: "a Mate",
@@ -591,7 +591,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			want: []string{
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp git <host>",
-				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
+				"ask the person's Chief", "`zerops_message_mate`", "another project's logs",
 				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
 				"`zerops_propose_reveal`", "never print or paste a secret value",
 				"`zerops_propose_create_service` before the release", "`zerops_propose_release`",
@@ -1214,7 +1214,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 					t.Errorf("Chief section lacks %q", want)
 				}
 			}
-			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief", "zerops_org_logs", "zerops_org_env", "zerops_org_costs", "zerops_org_usage", "zerops_org_failures", "zerops_org_processes"} {
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_org_logs", "zerops_org_env", "zerops_org_costs", "zerops_org_usage", "zerops_org_failures", "zerops_org_processes"} {
 				if strings.Contains(out, leak) {
 					t.Errorf("Chief section carries single-project doctrine %q", leak)
 				}
