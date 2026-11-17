@@ -217,10 +217,22 @@ place_pin() {
     reason="dev push $WHAT $(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD)@$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
   fi
   echo "==> Pinning the dev builds on $REMOTE_HOST for $pin..."
-  if ! remote "zcp mate pin --for '$pin' --reason '$reason'"; then
-    echo "the zcp on $REMOTE_HOST does not pin dev builds; restart the container to get the current release, then push again" >&2
-    exit 1
+  if remote "zcp mate pin --for $(shell_quote "$pin") --reason $(shell_quote "$reason")"; then
+    return
   fi
+  if remote "zcp mate pin --help" >/dev/null 2>&1; then
+    echo "placing the dev pin on $REMOTE_HOST failed (above); nothing was pushed" >&2
+  else
+    echo "the zcp on $REMOTE_HOST does not pin dev builds; restart the container to get the current release, then push again" >&2
+  fi
+  exit 1
+}
+
+# shell_quote prints $1 as one single-quoted word for the remote shell, any
+# single quote in it closed, escaped and reopened.
+shell_quote() {
+  local q="'\\''"
+  printf "'%s'" "${1//\'/$q}"
 }
 
 case "$WHAT" in
