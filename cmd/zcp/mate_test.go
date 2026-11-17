@@ -93,6 +93,10 @@ func manifestAndTarballServer(t *testing.T) {
 	server = httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	t.Setenv("ZCP_MATE_MANIFEST_URL", server.URL+"/stable.json")
+	// zcp's own release source refuses at once, so a status read by this
+	// test's dev zcp never reaches GitHub; a test about zcp's release
+	// replaces it with zcpReleaseServer.
+	t.Setenv("ZCP_UPDATE_URL", "http://127.0.0.1:1")
 
 	origClient := http.DefaultClient
 	http.DefaultClient = server.Client()
@@ -225,6 +229,7 @@ func TestRunMateStatus_ManifestUnreachable_ExitsZeroWithError(t *testing.T) {
 	t.Setenv("HOME", home)
 	seedInstalledBundle(t, home, "0.14.0")
 	t.Setenv("ZCP_MATE_MANIFEST_URL", "http://127.0.0.1:1/stable.json") // nothing listens here
+	t.Setenv("ZCP_UPDATE_URL", "http://127.0.0.1:1")                    // nor here: no GitHub read
 
 	stdout := captureStdout(t, func() {
 		if got := runMateCmd([]string{"status", "--json"}); got != 0 {
