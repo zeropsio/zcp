@@ -4678,6 +4678,67 @@ the network and takes the cores and memory the Mate itself runs on; where the mo
 - **No credential.** The call is the plain passthrough in every container, relaying nothing: git
   against the Mate's HQ is `zcp git`'s (§6.8).
 
+### 6.10 A Mate messages its person's other Mates
+
+A Mate lists its person's other Mates and asks one of them for something in its project, with no
+click per message. "Its person's" means the same owner: both Mates' HQ records name the same,
+non-null owner in the same organisation. A Mate is never its own peer, and automated Mates are
+neither listed nor reachable. zcp lists and sends; HQ decides who may be reached, stores and
+delivers each message, and makes the answer. zcp keeps no record of a message.
+
+**The tools.** Both register in a Mate's container that can address its HQ (a project key, a
+project and HQ's origin), the Chief's included, and neither registers anywhere else
+(`internal/tools/mate_messages.go`).
+
+- `zerops_list_mates`, no input, lists the peers: each one's name and project, a plain state and
+  its `projectId`. The state is the first of these that holds: "needs an update" (it has not
+  advertised `identity.messages`), "asleep" (its link to HQ is closed), "not signed in" (no login
+  of it has the owner as its present signer), else "awake".
+- `zerops_message_mate` takes `{ to, words, attachmentTitle?, attachmentText? }`. `to` is a
+  `projectId`, or a Mate name or project name matched case-insensitively against the peers. When it
+  names none or several, nothing is sent and the answer lists the candidates. Otherwise it sends
+  and answers one JSON document, as the proposal tools do, in the one text block:
+  `{ "message": { "id", "chainId", "hop", "to": { "projectId", "projectName", "mateName" },
+  "delivery" }, "note" }`. The Mate's client reads `message` to draw the ask and, until an answer
+  whose `inReplyTo` is its `id` arrives, the wait for it. `note` tells the agent where the message
+  went and when the answer comes back: as a new message after its turn, never by waiting or
+  polling. A refusal is an error result in words that say what to do.
+
+**The routes,** under `Authorization: Project <ZCP_API_KEY>`; the key names the sending Mate.
+
+- `GET /api/mate/peers` → `200 { "mates": [{ "projectId", "projectName", "mateName", "awake",
+  "receives", "signedIn" }] }`, by Mate name, then project name. A caller with no owner gets
+  `{ "mates": [] }`.
+- `POST /api/mate/messages` with `{ "to": <projectId>, "words": <1–8000 characters>,
+  "attachment"?: { "title": <1–200 characters>, "text": <1–40000 bytes> } }` → `201 { "id",
+  "chainId", "hop", "to", "delivery" }`. `delivery` is, first that holds: `on-update` when the
+  receiver has not advertised `identity.messages`, `on-wake` when its link is closed, `on-sign-in`
+  when no login of it has the owner as its present signer, else `now`. Refusals are `{ code,
+  reason }`: `400 invalid/to|words|attachment`, `413 too_large` (a body over 64 KiB),
+  `404 not_found/mate_not_found` (no Mate there, another person's, automated, or ownerless, alike
+  so nothing leaks), `409 conflict/self`, `409 conflict/too_many_hops`, and
+  `429 too_many_requests/messages_per_hour`.
+
+**What HQ and the Mate server do with it.** A Mate that takes messages says so in its overview,
+`identity.messages = { "protocol": 1 }`, and only such a link gets `message` frames. HQ re-checks
+the owner and sends `{ "type": "message", "message": { id, chainId, hop, kind: "ask" | "answer",
+inReplyTo?, from, words, attachment?, end?, sentAt } }` when the link is open, and again after each
+later link opening for every message not yet taken, oldest first; an asleep receiver is never
+started for one. The receiving Mate records the message durably and reports `message-taken`, works
+it as the next run of its one conversation (never steered into a run already going), attributed to
+the sending Mate and never to the person, spending its own agent login only when that login's
+signer is the owner, and reports `message-ended` with `answered`, `failed`, `stopped` or
+`declined`, and for an ask the run's last answer (at most 8000 characters). HQ answers
+`message-ack`, and the Mate repeats every unacknowledged `message-ended` on each new link. From an
+ask's end HQ makes the answer automatically, `kind: "answer"`, to the asker, which wakes it as its
+next run; an answer is always delivered. A message is a colleague's request, never the person's
+approval. A chain is an ask, its answer and every ask sent from a run a message started: HQ alone
+attributes hops, from the open-message window it records between `message-taken` and
+`message-ended` (at most 24 hours), so the container cannot forge them. An ask past
+`HQ_MATE_MESSAGE_HOPS` (default 4) is refused, and asks are limited per owner to
+`HQ_MATE_MESSAGES_PER_HOUR` (default 60), counted across all their Mates; answers count toward
+neither.
+
 ## 7. The fork
 
 Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag
