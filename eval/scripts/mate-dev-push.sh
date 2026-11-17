@@ -3,10 +3,13 @@
 #
 # Unreleased mate work ships nothing while it is built:
 # the modified zcp binary and the forked mate server go straight into the target
-# container over VPN + ssh. A container restart re-runs the platform's
-# install.sh and replaces the zcp binary with the latest RELEASE — push zcp
-# again after a restart. The mate prefix survives a plain restart; a redeploy
-# replaces the container and loses the hand-pushed bundle.
+# container over VPN + ssh. Before anything is built, every mode places the dev
+# pin with the zcp already on the container (`zcp mate pin`, docs/spec-mate.md
+# §2.1a): the dev builds stay until it ends, then the next release newer than a
+# build's base replaces it. A container restart re-runs the platform's
+# install.sh and replaces the zcp binary with the latest RELEASE, pin or not —
+# push zcp again after a restart. The mate prefix and the pin survive a plain
+# restart; a redeploy replaces the container and loses both.
 #
 # Usage:
 #   ./eval/scripts/mate-dev-push.sh          # zcp (default)
@@ -34,6 +37,9 @@
 #   MATE_NODE_PTY_PREBUILD  directory holding a linux-x64 pty.node to bundle (default:
 #                     taken from an install on the container, else built in Docker)
 #   MATE_HOSTED_APP_CHANNEL  REMOVED — the container bundle no longer claims to be the hosted app
+#   MATE_DEV_PIN        how long the dev builds stay pinned, a Go duration of at
+#                     most 168h (default: 24h)
+#   MATE_DEV_PIN_REASON why they are pinned (default: dev push <mode> <zcp branch>@<short sha>)
 
 set -euo pipefail
 
@@ -191,7 +197,9 @@ NODE
 
   # Activate: repoint $MATE_PREFIX/current at versions/dev, the same relative
   # symlink the start job's own activation produces. The start job and the keep
-  # job keep a dev build in current as long as its base meets MinimumMateVersion.
+  # job keep a dev build in current while the pin placed above is active (and
+  # without it until a release newer than its base), never below
+  # MinimumMateVersion.
   remote "cd '$MATE_PREFIX' && ln -sfn versions/dev current"
 
   # Both the CLI bundle and npm package must report the validated dev version.
@@ -200,11 +208,27 @@ NODE
   restart_mate_unit
 }
 
+# The dev pin goes in before any build lands, through the zcp already on the
+# container: placed later, the start job this push triggers (or the next keep
+# run) would replace the build as soon as a release newer than its base is out.
+place_pin() {
+  local pin="${MATE_DEV_PIN:-24h}" reason="${MATE_DEV_PIN_REASON:-}"
+  if [ -z "$reason" ]; then
+    reason="dev push $WHAT $(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD)@$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
+  fi
+  echo "==> Pinning the dev builds on $REMOTE_HOST for $pin..."
+  if ! remote "zcp mate pin --for '$pin' --reason '$reason'"; then
+    echo "the zcp on $REMOTE_HOST does not pin dev builds; restart the container to get the current release, then push again" >&2
+    exit 1
+  fi
+}
+
 case "$WHAT" in
-  zcp) push_zcp ;;
+  zcp) place_pin; push_zcp ;;
   mate|all)
     # Reject an unsupported base before even the zcp half of an all push.
     version="$(node "$SCRIPT_DIR/mate-dev-version.mjs" "$MATE_REPO")"
+    place_pin
     if [ "$WHAT" = "all" ]; then push_zcp; fi
     push_mate "$version"
     ;;

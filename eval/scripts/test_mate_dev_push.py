@@ -95,6 +95,13 @@ class MateDevPushTests(unittest.TestCase):
         return subprocess.run(["bash", str(ENTRY), "mate"], env=self.env,
                               capture_output=True, text=True, timeout=20)
 
+    def delivered(self):
+        """Whether anything but the dev pin, placed before any build, reached the container."""
+        if not self.delivery_file.exists():
+            return False
+        commands = [json.loads(line) for line in self.delivery_file.read_text().splitlines()]
+        return any(not command[-1].startswith("zcp mate pin ") for command in commands)
+
     def test_build_and_pack_read_the_validated_artifact_version(self):
         result = self.run_push()
         self.assertEqual(result.returncode, 7, result.stderr)
@@ -116,7 +123,7 @@ class MateDevPushTests(unittest.TestCase):
                 result = self.run_push()
                 self.assertEqual(result.returncode, build_exit or pack_exit, result.stderr)
                 self.assertEqual(manifest.read_bytes(), original)
-                self.assertEqual(self.delivery_file.exists(), build_exit == pack_exit == 0)
+                self.assertEqual(self.delivered(), build_exit == pack_exit == 0)
 
     def test_original_manifest_bytes_are_restored_after_build_or_pack_signals(self):
         manifest = self.repo / "apps/server/package.json"
@@ -154,7 +161,7 @@ class MateDevPushTests(unittest.TestCase):
                     _, stderr = process.communicate(timeout=10)
                     self.assertEqual(process.returncode, 128 + sig, stderr)
                     self.assertEqual(manifest.read_bytes(), original)
-                    self.assertFalse(self.delivery_file.exists())
+                    self.assertFalse(self.delivered())
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGKILL)
