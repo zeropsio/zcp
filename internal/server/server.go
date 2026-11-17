@@ -334,7 +334,8 @@ func (s *Server) followRepos() mcp.Middleware {
 // Chief, a person's Mate for the whole organization. It registers the
 // zerops_org_* look and propose tools over org (the Zerops API read with the
 // Chief's project key, platform.OrgReader in production), platform knowledge,
-// and in a Mate's container the page tool. The single-project surface — workflows,
+// and in a Mate's container the page tool and the tools that list and ask
+// its person's other Mates (docs/spec-mate.md §6.10). The single-project surface — workflows,
 // deploys, discover, logs, env, manage, scale, import, delete, mount,
 // subdomain, dev server, stand-up, and the browser that looks at a service
 // of this project — acts on the Chief's own empty project and is not
@@ -366,6 +367,9 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 	if rtInfo.InContainer && rtInfo.MateEnabled && stateDir != "" {
 		tools.RegisterPublishPage(srv, stateDir, filepath.Dir(filepath.Dir(stateDir)), false)
 	}
+	// The Chief is one of its person's Mates too: it lists and asks the
+	// others as a project's Mate does.
+	tools.RegisterMateMessages(srv, &http.Client{Timeout: 15 * time.Second}, rtInfo)
 	return s
 }
 
@@ -375,7 +379,8 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 // repository it came from is kept (§5.10) and asks the person to connect a
 // repository to GitHub (§5.11), and proposes changes to its
 // application's stage and production, checked against HQ's observation,
-// and MCP servers for its agents (§2.11). Asking the person's Chief registers
+// and MCP servers for its agents (§2.11); it lists and asks its person's
+// other Mates (§6.10). Asking the person's Chief registers
 // in New, once HQ names one; org mode is the Chief and registers none of these.
 func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir string) {
 	if !s.rtInfo.InContainer || !s.rtInfo.MateEnabled {
@@ -385,6 +390,7 @@ func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir 
 	tools.RegisterMirror(s.server, httpClient, projectID)
 	tools.RegisterAppPropose(s.server, httpClient, projectID, s.rtInfo)
 	tools.RegisterMcpPropose(s.server, projectID, s.rtInfo)
+	tools.RegisterMateMessages(s.server, httpClient, s.rtInfo)
 }
 
 func (s *Server) registerTools() {
