@@ -31,14 +31,15 @@ type AppProposeServiceInput struct {
 // AppProposeEnvInput is zerops_propose_env's input: a plain value, or with
 // Secret an ask for a secret the person gives on the card — never its value.
 type AppProposeEnvInput struct {
-	Project string   `json:"project"           jsonschema:"The environment: its projectId or name from zerops_observe action=environments, or stage or production."`
-	Scope   string   `json:"scope"             jsonschema:"project (every app there reads it) or service (one service's own)."`
-	Service string   `json:"service,omitempty" jsonschema:"The service's hostname when scope is service."`
-	Key     string   `json:"key"               jsonschema:"The variable's name as the vault keeps it, which zerops.yaml run.envVariables references under the name the app reads: APP_KEY: ${APP_KEY_SECRET}, never KEY: ${KEY}."`
-	Value   string   `json:"value,omitempty"   jsonschema:"A plain value; never with secret, never a secret."`
-	Secret  bool     `json:"secret,omitempty"  jsonschema:"true asks the person for a secret (a password, key or signing secret): they type or generate it on the card and it is saved hidden. Pass no value."`
-	Restart []string `json:"restart,omitempty" jsonschema:"With secret: hostnames of the services that read it, which the card restarts once it is saved (a service's own secret restarts that service)."`
-	Reason  string   `json:"reason"            jsonschema:"Why, in one sentence, for the person deciding. Never a value."`
+	Project  string   `json:"project"            jsonschema:"The environment: its projectId or name from zerops_observe action=environments, or stage or production."`
+	Scope    string   `json:"scope"              jsonschema:"project (every app there reads it) or service (one service's own)."`
+	Service  string   `json:"service,omitempty"  jsonschema:"The service's hostname when scope is service."`
+	Key      string   `json:"key"                jsonschema:"The variable's name as the vault keeps it, which zerops.yaml run.envVariables references under the name the app reads: APP_KEY: ${APP_KEY_SECRET}, never KEY: ${KEY}."`
+	Value    string   `json:"value,omitempty"    jsonschema:"A plain value; never with secret, never a secret."`
+	Secret   bool     `json:"secret,omitempty"   jsonschema:"true asks the person for a secret (a password, key or signing secret): they type or generate it on the card and it is saved hidden. Pass no value."`
+	Restart  []string `json:"restart,omitempty"  jsonschema:"With secret: hostnames of the services that read it, which the card restarts once it is saved (a service's own secret restarts that service)."`
+	Generate string   `json:"generate,omitempty" jsonschema:"With secret, for a random secret (a session, auth or app key): <@generateRandomString(<32>)> (16 to 1024 characters) or <@generateRandomInt(<min>, <max>)>, nothing else. The card makes it in the person's browser at one press. Omit it for a value from outside, such as a provider's API key."`
+	Reason   string   `json:"reason"             jsonschema:"Why, in one sentence, for the person deciding. Never a value."`
 }
 
 // AppProposeRevealInput is zerops_propose_reveal's input: where a hidden
@@ -106,7 +107,7 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 		if in.Secret {
 			ask, err := ops.ProposeSecretAsk(ctx, src, ops.SecretAskInput{
 				Project: in.Project, Scope: in.Scope, Service: in.Service, Key: in.Key,
-				Value: in.Value, Reason: in.Reason, Restart: in.Restart,
+				Value: in.Value, Reason: in.Reason, Restart: in.Restart, Generate: in.Generate,
 			})
 			if err != nil {
 				return appAnswer(nil, err)
@@ -118,9 +119,9 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 				"value is required for a plain value",
 				"For a secret pass secret=true and no value: the person gives it on the card")), nil, nil
 		}
-		if len(in.Restart) > 0 {
+		if len(in.Restart) > 0 || in.Generate != "" {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				"restart goes with secret only",
+				"restart and generate go with secret only",
 				"For a plain value propose the restart with zerops_propose_service once it is set")), nil, nil
 		}
 		result, err := ops.ProposeAppAction(ctx, src, uuid.NewString, ops.OrgActionInput{

@@ -2153,7 +2153,12 @@ environment's `status` (a service's own secret restarts that service). It answer
 env request's `requested` shape, so Mate's engine opens a `vault` ask on the call (§5.8):
 `{"requested": {"key", "label", "why", "scope": "shared" | "service", "serviceHostname"?,
 "sensitive": true, "environment": {"kind": "stage" | "production", "projectId", "name"},
-"restart"?: [{"serviceId", "hostname"}]}, "nextActions"}`. The card takes the value typed or
+"restart"?: [{"serviceId", "hostname"}], "generate"?}, "nextActions"}`. `generate`, for a random secret, is
+one preprocessor directive the card expands in the person's browser at their press, exactly as zParser
+does: `<@generateRandomString(<N>)>` (N 16…1024: N random bytes, each mapped onto zParser's 65-character
+alphabet) or `<@generateRandomInt(<min>, <max>)>` (uniform in [min, max]); anything else — a modifier, a
+literal beside it, `generateRandomBytes` — is refused. With it the card shows no field, only what it will
+make; the value is written sensitive, never shown and never sent to the engine. The card takes the value typed or
 generated, writes it hidden into that environment's vault with the person's own access, restarts the
 `restart` services through their own restart, and tells the engine saved or declined; the agent hears
 `saved to <environment> · <vault>/<KEY>` or `declined`. Nothing is minted at HQ and nothing is

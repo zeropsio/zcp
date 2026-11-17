@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/preprocess"
 )
 
 // TestProposeSecretAsk_Shape pins the ask Mate's engine opens a card on: the
@@ -26,8 +29,8 @@ func TestProposeSecretAsk_Shape(t *testing.T) {
 	}{
 		{
 			name: "a project secret in production, restarting what reads it",
-			in:   SecretAskInput{Project: "production", Scope: "project", Key: "AUTH_SECRET", Reason: "v0.1.1 signs sessions with it and production has none", Restart: []string{"api", " api "}},
-			want: `{"key":"AUTH_SECRET","label":"Auth secret","why":"v0.1.1 signs sessions with it and production has none","scope":"shared","sensitive":true,"environment":{"kind":"production","projectId":"pProd","name":"Production"},"restart":[{"serviceId":"sApi","hostname":"api"}]}`,
+			in:   SecretAskInput{Project: "production", Scope: "project", Key: "AUTH_SECRET", Reason: "v0.1.1 signs sessions with it and production has none", Restart: []string{"api", " api "}, Generate: "<@generateRandomString(<32>)>"},
+			want: `{"key":"AUTH_SECRET","label":"Auth secret","why":"v0.1.1 signs sessions with it and production has none","scope":"shared","sensitive":true,"environment":{"kind":"production","projectId":"pProd","name":"Production"},"restart":[{"serviceId":"sApi","hostname":"api"}],"generate":"<@generateRandomString(<32>)>"}`,
 		},
 		{
 			name: "a service's own secret on stage restarts that service",
@@ -131,5 +134,71 @@ func TestProposeSecretAsk_RefusesWhatIsNotThere(t *testing.T) {
 	}
 	if !slices.Equal(app.read, nil) {
 		t.Errorf("services read for %v with nothing to restart, want none", app.read)
+	}
+}
+
+// TestSecretGenerate_AllowList: only a bare generateRandomString of 16 to
+// 1024 characters or a generateRandomInt with min below max passes, made
+// canonical; a modifier, a literal beside it, another function or raw bytes
+// is refused without repeating what was given.
+// witness: internal/ops/secret_ask.go | if err != nil || n < minSecretGenerate || n > maxSecretGenerate { → if err != nil {
+func TestSecretGenerate_AllowList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in, want, refused string
+	}{
+		{in: "", want: ""},
+		{in: " <@generateRandomString(<32>)> ", want: "<@generateRandomString(<32>)>"},
+		{in: "<@generateRandomInt(<1000>,<9999>)>", want: "<@generateRandomInt(<1000>, <9999>)>"},
+		{in: "<@generateRandomString(<8>)>", refused: "16 to 1024"},
+		{in: "<@generateRandomString(<2048>)>", refused: "16 to 1024"},
+		{in: "<@generateRandomInt(<5>, <5>)>", refused: "min below max"},
+		{in: "<@generateRandomString(<32>) | sha256>", refused: "not a directive"},
+		{in: "base64:<@generateRandomString(<32>)>", refused: "not a directive"},
+		{in: "<@generateRandomBytes(<32>)>", refused: "not a directive"},
+		{in: "hunter2hunter2hunter2", refused: "not a directive"},
+	}
+	for _, tt := range tests {
+		got, err := SecretGenerate(tt.in)
+		if tt.refused != "" {
+			words := refusalWords(t, err)
+			if !strings.Contains(words, tt.refused) || strings.Contains(words, strings.TrimSpace(tt.in)) {
+				t.Errorf("SecretGenerate(%q) refusal %q, want %q and never the input", tt.in, words, tt.refused)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("SecretGenerate(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+		}
+	}
+}
+
+// TestSecretGenerate_ExpandsAsTheCardMakesIt: each allowed form is one
+// zParser expands to what the card's browser port makes — N characters of
+// zParser's alphabet, or an integer in [min, max].
+// witness: internal/ops/secret_ask.go | return fmt.Sprintf("<@generateRandomString(<%d>)>", n), nil → return fmt.Sprintf("<@generateRandomString(%d)>", n), nil
+func TestSecretGenerate_ExpandsAsTheCardMakesIt(t *testing.T) {
+	t.Parallel()
+	expr, err := SecretGenerate("<@generateRandomString(<40>)>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := preprocess.Expand(context.Background(), expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 40 || strings.Trim(out, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != "" {
+		t.Errorf("expanded %q, want 40 characters of zParser's alphabet", out)
+	}
+	expr, err = SecretGenerate("<@generateRandomInt(<10>, <12>)>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = preprocess.Expand(context.Background(), expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := strconv.Atoi(out); err != nil || n < 10 || n > 12 {
+		t.Errorf("expanded %q, want an integer in [10, 12]", out)
 	}
 }

@@ -3,6 +3,9 @@ package ops
 import (
 	"context"
 	"fmt"
+	"math/big"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -20,6 +23,9 @@ type SecretAskInput struct {
 	Value   string
 	Reason  string
 	Restart []string
+	// Generate is a preprocessor expression the person's browser expands
+	// into a random value at their press (SecretGenerate's allow-list).
+	Generate string
 }
 
 // SecretAskEnvironment is the stage or production a secret goes to, named
@@ -50,6 +56,10 @@ type SecretAsk struct {
 	Sensitive       bool                 `json:"sensitive"`
 	Environment     SecretAskEnvironment `json:"environment"`
 	Restart         []SecretAskService   `json:"restart,omitempty"`
+	// Generate is the random value the card makes in the person's browser
+	// when they press, as a preprocessor expression in its canonical form;
+	// absent, the person types or pastes the value.
+	Generate string `json:"generate,omitempty"`
 }
 
 // SecretAskResult is zerops_propose_env's answer for a secret.
@@ -85,6 +95,10 @@ func ProposeSecretAsk(ctx context.Context, src AppSource, in SecretAskInput) (*S
 	if looksLikeValue(reason, key) {
 		return nil, invalid("the reason holds what looks like a value",
 			"An ask carries the name and why, never a value: the person gives it on the card.")
+	}
+	generate, err := SecretGenerate(in.Generate)
+	if err != nil {
+		return nil, err
 	}
 	scope := strings.TrimSpace(in.Scope)
 	hostname := strings.TrimSpace(in.Service)
@@ -130,7 +144,57 @@ func ProposeSecretAsk(ctx context.Context, src AppSource, in SecretAskInput) (*S
 	if len(restart) > 0 {
 		ask.Restart = restart
 	}
+	ask.Generate = generate
 	return &SecretAskResult{Requested: ask, NextActions: secretAskWords(ask)}, nil
+}
+
+// The preprocessor directives a person's browser expands exactly as zParser
+// does (mate's apps/web/src/components/zerops/vault/secretGenerate.ts):
+// generateRandomString(<N>) — N bytes, each mapped onto zParser's 65
+// characters — and generateRandomInt(<min>, <max>), uniform in [min, max].
+// generateRandomBytes is left out: raw bytes are no text a browser writes.
+var (
+	generateString = regexp.MustCompile(`^<@generateRandomString\(<(\d+)>\)>$`)
+	generateInt    = regexp.MustCompile(`^<@generateRandomInt\(<(-?\d+)>,\s*<(-?\d+)>\)>$`)
+)
+
+// The lengths a generated string takes: the recipe's shortest secret, and
+// zParser's own limit (maxRandBytesLen).
+const (
+	minSecretGenerate = 16
+	maxSecretGenerate = 1024
+)
+
+// SecretGenerate checks a generate expression against the allow-list and
+// returns it canonical (no spaces); "" for none. Anything else — a
+// modifier, a literal beside the directive, another function, a length out
+// of bounds — is refused without repeating it.
+func SecretGenerate(expr string) (string, error) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return "", nil
+	}
+	const allowed = "generate is one directive and nothing else: <@generateRandomString(<32>)> (16 to 1024 characters) or <@generateRandomInt(<min>, <max>)>."
+	if m := generateString.FindStringSubmatch(expr); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n < minSecretGenerate || n > maxSecretGenerate {
+			return "", invalid(fmt.Sprintf("a generated secret is %d to %d characters", minSecretGenerate, maxSecretGenerate), allowed)
+		}
+		return fmt.Sprintf("<@generateRandomString(<%d>)>", n), nil
+	}
+	if m := generateInt.FindStringSubmatch(expr); m != nil {
+		low, errLow := strconv.ParseInt(m[1], 10, 64)
+		high, errHigh := strconv.ParseInt(m[2], 10, 64)
+		if errLow != nil || errHigh != nil || high <= low {
+			return "", invalid("a generated number needs min below max, each a 64-bit integer", allowed)
+		}
+		// zParser draws from max-min+1, which must stay a 64-bit integer.
+		if new(big.Int).Sub(big.NewInt(high), big.NewInt(low)).Cmp(big.NewInt(1<<62)) >= 0 {
+			return "", invalid("a generated number's range is too wide", allowed)
+		}
+		return fmt.Sprintf("<@generateRandomInt(<%d>, <%d>)>", low, high), nil
+	}
+	return "", invalid("generate is not a directive the card can make", allowed)
 }
 
 // secretAskRestarts is each service the card restarts, once: a service's
@@ -169,9 +233,13 @@ func secretAskWords(ask SecretAsk) string {
 		}
 		restarted = fmt.Sprintf(" The card restarts %s once it is saved.", domainList(names))
 	}
-	return fmt.Sprintf("Now waiting on the person for %s in %s: their card takes it, typed or generated, and saves it hidden with their own access.%s "+
+	made := "their card takes it, typed or generated, and saves it hidden with their own access."
+	if ask.Generate != "" {
+		made = "their card makes it in their browser at their press, never shown, and saves it hidden with their own access."
+	}
+	return fmt.Sprintf("Now waiting on the person for %s in %s: %s%s "+
 		"Tell them in one sentence why it is needed, and nothing about how they give it: never send them to a Vault page and never ask for the value in the chat. "+
 		"A message of its own tells you how it ended: saved to %s, or declined. Once saved, read zerops_observe action=logs for %s before you say it works. "+
 		"The app reads it only through its service's zerops.yaml run.envVariables, under the name the app reads and never the same name (APP_KEY: ${%s}): the release review sees nothing else.",
-		ask.Key, ask.Environment.Name, restarted, secretAskPlace(ask), ask.Environment.Name, ask.Key)
+		ask.Key, ask.Environment.Name, made, restarted, secretAskPlace(ask), ask.Environment.Name, ask.Key)
 }
