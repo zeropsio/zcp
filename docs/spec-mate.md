@@ -4708,7 +4708,9 @@ project and HQ's origin), the Chief's included, and neither registers anywhere e
 - `zerops_list_mates`, no input, lists the peers: each one's name and project, a plain state and
   its `projectId`. The state is the first of these that holds: "needs an update" (it has not
   advertised `identity.messages`), "asleep" (its link to HQ is closed), "not signed in" (no login
-  of it has the owner as its present signer), else "awake".
+  of it has the owner as its present signer), else "awake". HQ's peers do not mark the person's
+  Chief, so zcp names the peer whose project the `chief` of the Mate's state (§2.8) names as "your
+  person's Chief"; no state heard marks none.
 - `zerops_message_mate` takes `{ to, words, attachmentTitle?, attachmentText? }`. `to` is a
   Mate's name, matched case-insensitively against the peers, or its `projectId`. When it
   names none or several, nothing is sent and the answer lists the candidates. Otherwise it sends
