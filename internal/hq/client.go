@@ -252,7 +252,8 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 		}
 		return 0, nil
 	}
-	if resp.StatusCode != http.StatusOK {
+	// A route that makes a record answers 201 with it (POST /api/mate/messages).
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		var refusal struct {
 			Code   string `json:"code"`
 			Reason string `json:"reason"`
