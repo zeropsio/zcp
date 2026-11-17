@@ -3798,12 +3798,14 @@ the values those entries reference.
   finished answer without `alreadySet`) until it updates, accepted as mild. An ask counts as
   answered once the vault holds the key written since it was asked (another row, or the held row's
   `lastUpdate` later); `again=true` asks after a message said declined. The save writes the vault
-  from the person's client and the engine words the `saved` message, so zcp never sees it; the
-  card then restarts the running readers from the person's client (2026-11-17), and a restart
-  that fails offers Try again and Finish without restart, the `saved` answer then naming the
-  service and why (`notRestarted`). `requested` names the `readers` and `restartAfterSave`, the
-  live runtimes the card restarts, and tells the agent to restart nothing itself. The service
-  running the session is never among them. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
+  from the person's client and the engine words the `saved` message, so zcp never sees it. From
+  `CardRestartMateVersion` on (2026-11-17) the card then restarts the running readers from the
+  person's client, the `saved` answer naming those it restarted (`restarted`) and one that did not
+  and why (`notRestarted`); a restart that fails offers Try again and Finish without restart.
+  `requested` names the `readers` and `restartAfterSave`, the live runtimes restarted after the
+  save: by the card, the agent told to restart nothing itself, or — below that version — by the
+  agent with `zerops_manage action="restart"` once the message says saved. The service running
+  the session is never among them, nor a service holding an unreferenced key only by its name. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
   older mate ignores `replace`, `alreadyAsked` and the other new fields.
 - **A secret for stage or production** (2026-11-17). `zerops_propose_env secret=true` (§2.11)
   answers the same `requested` shape with an `environment` (`kind`, `projectId`, `name`) and the

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -386,8 +387,9 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 // deployed entries reference the key — `${KEY}` for its own value or the
 // Shared one, through a chain of its entries, or `${host_KEY}` for a
 // service's key (ops.ProjectEnvScopes). A key no entry references still
-// reaches a process under its own name (byNameReaders), so those restart, and
-// nextActions says how to reference it. Populates resp with
+// reaches a process under its own name (byNameReaders): those are named for
+// the agent to restart if it needs to, never restarted — a restart stops its
+// dev servers — and nextActions says how to reference it. Populates resp with
 // the readers and the outcomes. Best-effort — a restart failure is a
 // warning; the env change itself has already succeeded.
 func applyAutoRestart(
@@ -404,7 +406,7 @@ func applyAutoRestart(
 	plan := planRestart(ctx, client, projectID, input, selfHostname, keys, deleting)
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
-	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+	unreadHint := joinSentences(nothingReadsHint(plan.unreadKeys, input), byNameHint(plan.byName))
 	switch {
 	case plan.poolOwner:
 		unreadHint = poolEnvHint(keys, input.ServiceHostname)
@@ -526,6 +528,9 @@ type restartPlan struct {
 	// idle are the readers that are not live: each reads the value when it
 	// starts.
 	idle []string
+	// byName are the live runtimes that have a key no entry references by its
+	// own name: never restarted by themselves, named for the agent to choose.
+	byName []string
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -588,9 +593,14 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 		if len(readers) == 0 {
 			plan.unreadKeys = append(plan.unreadKeys, key)
 			// No entry references it, yet the platform still hands an unreferenced Shared
-			// value to every service, and a service's own to that service, by its name: a
-			// running one keeps its old copy until it restarts.
-			readers = byNameReaders(scopes, owner, key, platformReadKeys[key] || plan.poolOwner || plan.boxOwner)
+			// value to every service, and a service's own to that service, by its name. In
+			// the Mate's own project a restart stops the agent's dev servers, so these are
+			// named for the agent to choose from, never restarted by themselves.
+			for _, name := range byNameReaders(scopes, owner, key, platformReadKeys[key] || plan.poolOwner || plan.boxOwner) {
+				if isAutoRestartEligible(byName[name], selfHostname) && !slices.Contains(plan.byName, name) {
+					plan.byName = append(plan.byName, name)
+				}
+			}
 		}
 		for _, name := range readers {
 			svc := byName[name]
@@ -645,6 +655,16 @@ func byNameReaders(scopes *ops.ProjectEnvScopes, owner, key string, none bool) [
 		readers = append(readers, svc.Hostname)
 	}
 	return readers
+}
+
+// byNameHint names the running services that have an unreferenced key by its
+// own name: nothing restarted them, and the agent chooses.
+func byNameHint(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s still %s it by its own name (an unreferenced value reaches the process anyway) and keeps the old value until it restarts: nothing restarted it, since a restart stops its dev server — restart the ones that need it (zerops_manage action=\"restart\").",
+		strings.Join(names, ", "), map[bool]string{true: "have", false: "has"}[len(names) > 1])
 }
 
 // nothingReadsHint is the fix for keys no service reads: reference them in

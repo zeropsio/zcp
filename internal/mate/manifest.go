@@ -57,6 +57,13 @@ const (
 	// (CarriesSecretAsk). Set at mate's release.
 	SecretAskMateVersion = "0.16.224"
 
+	// CardRestartMateVersion is the first mate release whose ask card, in the
+	// Mate's own project, restarts the running services that read a saved
+	// value and tells the agent which: zcp tells the agent to restart nothing
+	// itself only from it on (CarriesCardRestart); an older card restarts
+	// nothing, so the agent restarts them. Set at mate's release.
+	CardRestartMateVersion = "0.16.225"
+
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
 	// on stable v<major>.<minor>.<patch> tags, so this is the stable
@@ -275,6 +282,14 @@ func EnvelopeCarriesParts() bool {
 func CarriesSecretAsk(installed string) bool {
 	core, _, _ := strings.Cut(installed, "-")
 	return carriesParts(core, SecretAskMateVersion)
+}
+
+// CarriesCardRestart reports whether the installed mate version's ask card
+// restarts a saved value's readers in the Mate's own project. An unreadable
+// version carries nothing.
+func CarriesCardRestart(installed string) bool {
+	core, _, _ := strings.Cut(installed, "-")
+	return carriesParts(core, CardRestartMateVersion)
 }
 
 func carriesParts(minimum, accepting string) bool {

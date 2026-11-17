@@ -271,6 +271,28 @@ func TestEnvelopeCarriesParts(t *testing.T) {
 	}
 }
 
+// TestCarriesCardRestart: the agent is told its Mate's card restarts a
+// saved value's readers only from CardRestartMateVersion on (or a dev build
+// cut from it); an older or unreadable one restarts nothing, so the agent does.
+// witness: internal/mate/manifest.go | return carriesParts(core, CardRestartMateVersion) → return carriesParts(core, SecretAskMateVersion)
+func TestCarriesCardRestart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		installed string
+		want      bool
+	}{
+		{installed: mate.CardRestartMateVersion, want: true},
+		{installed: mate.CardRestartMateVersion + "-dev.a1b2c3", want: true},
+		{installed: mate.SecretAskMateVersion, want: false},
+		{installed: "", want: false},
+	}
+	for _, tt := range tests {
+		if got := mate.CarriesCardRestart(tt.installed); got != tt.want {
+			t.Errorf("CarriesCardRestart(%q) = %v, want %v", tt.installed, got, tt.want)
+		}
+	}
+}
+
 // TestCarriesSecretAsk: a stage or production secret is asked for only of a
 // Mate whose engine opens its card — a release at or past
 // SecretAskMateVersion, or a dev build cut from one — never of an older or

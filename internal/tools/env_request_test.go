@@ -262,10 +262,10 @@ func TestEnvTool_Request_WithoutVaultAsks_AsksEachTime(t *testing.T) {
 
 // TestEnvTool_Request_NamesTheRestartAfterTheSave: the person's save writes
 // the vault from their own client and zcp never sees it (Filip 10-26 20:56:
-// "Neither has restarted yet"), so their card restarts the running readers
-// once it saves. The answer names them and tells the agent to restart nothing
-// itself — never the service running this session. A key no entry references
-// reaches every running service by name, and the answer says how to reference it.
+// "Neither has restarted yet"). A Mate whose card restarts the readers has the
+// agent restart nothing itself; an older one's agent restarts each once a
+// message says saved — never the service running this session. A key no entry
+// references restarts nothing: the answer names who has it by name.
 func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 	t.Parallel()
 
@@ -275,33 +275,43 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 		wantReaders []string
 		wantRestart []string
 		wantNext    []string
+		// cardRestarts: the Mate's card restarts the readers at the save.
+		cardRestarts bool
 	}{
 		{
 			name:        "a Shared key a runtime reads",
 			args:        map[string]any{"action": "request", "project": true, "key": "STRIPE_SECRET_KEY", "label": "Stripe secret key", "why": "for checkout"},
 			wantReaders: []string{"web"},
 			wantRestart: []string{"web"},
-			wantNext:    []string{"the person's card restarts web", "Restart nothing yourself"},
+			wantNext:    []string{"Saving restarts nothing", `zerops_manage action="restart" serviceHostname="web"`},
+		},
+		{
+			name:         "a Mate whose card restarts: the agent restarts nothing itself",
+			args:         map[string]any{"action": "request", "project": true, "key": "STRIPE_SECRET_KEY", "label": "Stripe secret key", "why": "for checkout"},
+			wantReaders:  []string{"web"},
+			wantRestart:  []string{"web"},
+			wantNext:     []string{"the person's card restarts web", "Restart nothing yourself"},
+			cardRestarts: true,
 		},
 		{
 			name:        "a replaced Shared key this session's service reads too",
 			args:        map[string]any{"action": "request", "project": true, "key": "FOO", "label": "Foo", "why": "for the API", "replace": true, "replaceWhy": "it is a placeholder"},
 			wantReaders: []string{"api", "zcp"},
 			wantRestart: []string{"api"},
-			wantNext:    []string{"card restarts api", "zcp", "runs this session"},
+			wantNext:    []string{`serviceHostname="api"`, "zcp", "runs this session"},
 		},
 		{
 			name:        "a service's own key another service reads by its host",
 			args:        map[string]any{"action": "request", "serviceHostname": "api", "key": "TOKEN", "label": "Token", "why": "for the worker", "replace": true, "replaceWhy": "it expired"},
 			wantReaders: []string{"worker"},
 			wantRestart: []string{"worker"},
-			wantNext:    []string{"card restarts worker"},
+			wantNext:    []string{`serviceHostname="worker"`},
 		},
 		{
-			name:        "a key nothing references yet restarts every running service, which has it by name",
-			args:        map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
-			wantRestart: []string{"api", "worker", "web"},
-			wantNext:    []string{"No zerops.yaml entry references SENTRY_DSN yet", "deploy"},
+			name:         "a key nothing references yet restarts nothing and names who has it by name",
+			args:         map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
+			wantNext:     []string{"No zerops.yaml entry references SENTRY_DSN yet", "deploy", "still have it by its own name"},
+			cardRestarts: true,
 		},
 	}
 	for _, tt := range tests {
@@ -310,7 +320,7 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 			mock := readersMock().
 				WithAppVersionUserData("av-web", []platform.ServiceEnvVar{{Key: "STRIPE_KEY", Content: "${STRIPE_SECRET_KEY}"}})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, mock, "proj-1", "zcp")
+			RegisterEnv(srv, mock, "proj-1", "zcp", WithCardRestarts(func() bool { return tt.cardRestarts }))
 
 			got := parseRequest(t, callTool(t, srv, "zerops_env", tt.args))
 			if got.Requested == nil {

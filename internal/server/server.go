@@ -546,7 +546,10 @@ func (s *Server) registerTools() {
 	// second request for a key whose ask is open shows no second prompt.
 	var envOpts []tools.EnvOption
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient), tools.WithVaultAsks(stateDir))
+		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient), tools.WithVaultAsks(stateDir), tools.WithCardRestarts(func() bool {
+			installed, _ := mate.InstalledVersion()
+			return mate.CarriesCardRestart(installed)
+		}))
 	}
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName, envOpts...)
 

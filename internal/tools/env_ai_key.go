@@ -25,6 +25,9 @@ type envOptions struct {
 	// vaultAsks is the state directory a request's open ask is recorded
 	// under (WithVaultAsks); "" records none.
 	vaultAsks string
+	// cardRestarts says whether this Mate's ask card restarts a saved
+	// value's readers (WithCardRestarts); nil or false: the agent does.
+	cardRestarts func() bool
 }
 
 type orgAIKey struct {
