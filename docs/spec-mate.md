@@ -2074,7 +2074,8 @@ asks an Admin themselves, in Mate or in Zerops. Act:
 `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
-container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
+container `zerops_publish_page` (§5.9) and `zerops_list_mates` / `zerops_message_mate` (§6.10), which
+reach only its person's own Mates. The single-project surface acts on the empty own project and
 is not registered. A project's kind: the Chief registration; a Mate is tagged `mate` and runs a `zcp@*`
 service, its name the part of the project name after the last `" - "`; production and stage are
 named `"<application> - production"` / `"- stage"`. HQ is the configured shared origin (§3.5),
@@ -2266,8 +2267,13 @@ service and proposes the creation again rather than telling the person to run th
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
-Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
-and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
+Mate, and to answer short. In a Mate's container the Chief messages its person's own Mates with
+`zerops_message_mate` (§6.10), no card: one message per Mate, several in the same turn, never waiting
+or polling; each answer wakes it as a new message, and once every asked Mate has answered it gives the
+person one summary of what each did, what is left and what waits for review. A colleague's Mate,
+which direct messages cannot reach, gets a `mate.message` proposal. A Mate's message to the Chief is
+its own run, and the answer it ends with goes back to that Mate automatically. Outside a Mate's
+container, where no message tools register, project work goes as a `mate.message` proposal. A Mate's own section (`agents_application.md`)
 names its two proposal tools for stage and production, `zerops_propose_reveal` to show the person a
 secret (never printing or pasting one), `zerops_propose_create_service` and `zerops_propose_release`
 with where a release's outcome is read, and `zerops_propose_ask_chief` for what neither its project

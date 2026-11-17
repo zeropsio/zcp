@@ -1187,10 +1187,13 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 		rt        runtime.Info
 		guided    bool
 		wantPages bool
+		// wantMessages: a Mate's container messages the person's own Mates
+		// directly; elsewhere the hand-over is the card.
+		wantMessages bool
 	}{
 		{name: "local", rt: runtime.Info{Chief: true}},
 		{name: "guided is a single-project preference", rt: runtime.Info{Chief: true}, guided: true},
-		{name: "a Mate's container", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true},
+		{name: "a Mate's container", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true, wantMessages: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1206,7 +1209,6 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				"`zerops_org_propose_domain`", "DNS records",
 				"`zerops_org_propose_access`", "who has access",
 				"the person decides", "that project's Mate", "Answer short",
-				"From <Mate> in <project>:", "proposing a `mate.message` back",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("Chief section lacks %q", want)
@@ -1219,6 +1221,11 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 			}
 			if got := strings.Contains(out, "`zerops_publish_page`"); got != tc.wantPages {
 				t.Errorf("pages block = %v, want %v", got, tc.wantPages)
+			}
+			for _, direct := range []string{"`zerops_message_mate`", "no card for the person to press", "in this same turn", "Never wait, sleep or poll", "one summary", "never propose a message back"} {
+				if got := strings.Contains(out, direct); got != tc.wantMessages {
+					t.Errorf("direct messages %q = %v, want %v", direct, got, tc.wantMessages)
+				}
 			}
 		})
 	}
