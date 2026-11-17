@@ -26,9 +26,9 @@ func WithVaultAsks(stateDir string) EnvOption {
 // made, on a repeat while it is open: the person's prompt is that one — Mate
 // opens no second card for a key and vault whose card is open.
 // Readers are the services whose deployed run.envVariables read the key now;
-// RestartAfterSave the ones the agent restarts once a message says saved —
-// the save writes the vault from the person's own client, restarts nothing,
-// and zcp never sees it.
+// RestartAfterSave the running ones the person's card restarts once it saves
+// — the save and the restarts go from the person's own client, and zcp sees
+// neither.
 type envRequestResult struct {
 	Requested        *ops.EnvRequestResult `json:"requested,omitempty"`
 	AlreadySet       *ops.EnvRequestResult `json:"alreadySet,omitempty"`
@@ -118,7 +118,7 @@ func alreadySetWords(req *ops.EnvRequestResult) string {
 }
 
 // requestedWords is the agent's next step on an ask: say why in one sentence,
-// never ask in the chat, wait for the message, then restart what reads it.
+// never ask in the chat, wait for the message; the card restarts the readers.
 func requestedWords(req *ops.EnvRequestResult, restart string) string {
 	waiting := fmt.Sprintf("Now waiting on the person for the %s (%s).", req.Label, req.Key)
 	if req.Replace {
@@ -139,12 +139,11 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 		req.Label, req.Key, askedAt, vaultPlace(req), restart)
 }
 
-// restartAfterSaveWords names what the agent restarts once a message says the
-// value was saved. zcp cannot restart then itself: the person's client writes
-// the vault directly and Mate's engine words the message, so zcp sees neither
-// — and the save can come days later, to another zcp. It names the readers'
-// restarts as calls, never the service running this session; a key nothing
-// reads says how a service reads it.
+// restartAfterSaveWords names what restarts once the person saves: their
+// card restarts the running services that read the key, from their own
+// client, since zcp sees neither the save nor the message — and the save can
+// come days later, to another zcp. Never the service running this session; a
+// key nothing references says how a service reads it.
 func restartAfterSaveWords(key string, plan restartPlan, input EnvInput, selfHostname string) string {
 	switch {
 	case plan.poolOwner:
@@ -152,19 +151,12 @@ func restartAfterSaveWords(key string, plan restartPlan, input EnvInput, selfHos
 	case plan.boxOwner:
 		return "Saving restarts nothing, and nothing needs it: " + boxEnvHint([]string{key}, input.ServiceHostname)
 	case plan.unlisted:
-		return fmt.Sprintf("Saving restarts nothing, and zcp could not list the services to name the ones that read %s: when it says saved, restart each that does (zerops_manage action=\"restart\").", key)
+		return fmt.Sprintf("Once saved, the person's card restarts the running services that read %s; the message names one that did not restart.", key)
 	}
-	parts := []string{"Saving restarts nothing."}
+	parts := []string{"Saving restarts nothing: nothing running reads it."}
 	if len(plan.targets) > 0 {
-		calls := make([]string, 0, len(plan.targets))
-		for _, t := range plan.targets {
-			calls = append(calls, fmt.Sprintf("zerops_manage action=\"restart\" serviceHostname=%q", t.hostname))
-		}
-		parts = []string{fmt.Sprintf("Saving restarts nothing: when it says saved, restart each service that reads %s, since a running process keeps the env it started with — %s.",
-			key, strings.Join(calls, "; "))}
-		if plan.uncertain {
-			parts = append(parts, "zcp could not read every service's deployed env, so this names each runtime that might read it.")
-		}
+		parts = []string{fmt.Sprintf("Once saved, the person's card restarts %s, since a running process keeps the env it started with; the message names one that did not restart. Restart nothing yourself.",
+			strings.Join(targetNames(plan.targets), ", "))}
 	}
 	if plan.selfReads {
 		parts = append(parts, fmt.Sprintf("%s reads it too but runs this session: never restart it; it takes the value at its next deploy.", selfHostname))

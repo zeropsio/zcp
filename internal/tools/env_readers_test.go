@@ -63,8 +63,8 @@ type envChangeWire struct {
 // TestEnvChange_RestartsOnlyReaders — a set or delete restarts the runtimes
 // whose deployed run entries read the key (directly, through a chain, or as
 // `${host_KEY}`), never one that does not reference it, never the service
-// running this session; nothing reads it → no restart, and the response
-// says how to make a service read it.
+// running this session; a key no entry references reaches a process by its
+// own name, so those restart, and the response says how to reference it.
 func TestEnvChange_RestartsOnlyReaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -91,16 +91,18 @@ func TestEnvChange_RestartsOnlyReaders(t *testing.T) {
 			wantReaders:   map[string][]string{"TOKEN": {"worker"}},
 		},
 		{
-			name:        "nothing reads it — no restart, the fix in nextActions",
-			args:        map[string]any{"action": "set", "project": true, "variables": []any{"UNUSED=x"}},
-			wantReaders: map[string][]string{"UNUSED": nil},
-			wantNext:    []string{"Nothing reads UNUSED yet", "NAME: ${UNUSED}", "deploy"},
+			name:          "a Shared key nothing references reaches every service by name — each running one restarts, the fix in nextActions",
+			args:          map[string]any{"action": "set", "project": true, "variables": []any{"UNUSED=x"}},
+			wantRestarted: []string{"api", "web", "worker"},
+			wantReaders:   map[string][]string{"UNUSED": nil},
+			wantNext:      []string{"No zerops.yaml entry references UNUSED yet", "NAME: ${UNUSED}", "deploy"},
 		},
 		{
-			name:        "service key nothing reads names the host reference",
-			args:        map[string]any{"action": "set", "serviceHostname": "web", "variables": []any{"SIGNING=x"}},
-			wantReaders: map[string][]string{"SIGNING": nil},
-			wantNext:    []string{"Nothing reads SIGNING yet", "web", "${web_SIGNING}"},
+			name:          "a service key nothing references restarts that service and names the host reference",
+			args:          map[string]any{"action": "set", "serviceHostname": "web", "variables": []any{"SIGNING=x"}},
+			wantRestarted: []string{"web"},
+			wantReaders:   map[string][]string{"SIGNING": nil},
+			wantNext:      []string{"No zerops.yaml entry references SIGNING yet", "web", "${web_SIGNING}"},
 		},
 		{
 			name:          "delete restarts readers and warns they now read the literal",

@@ -385,8 +385,9 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 // the entries of its run.envVariables, so a reader is a runtime whose
 // deployed entries reference the key — `${KEY}` for its own value or the
 // Shared one, through a chain of its entries, or `${host_KEY}` for a
-// service's key (ops.ProjectEnvScopes). Nothing reads it → nothing restarts,
-// and nextActions says how to make a service read it. Populates resp with
+// service's key (ops.ProjectEnvScopes). A key no entry references still
+// reaches a process under its own name (byNameReaders), so those restart, and
+// nextActions says how to reference it. Populates resp with
 // the readers and the outcomes. Best-effort — a restart failure is a
 // warning; the env change itself has already succeeded.
 func applyAutoRestart(
@@ -586,6 +587,10 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 		plan.readers[key] = readers
 		if len(readers) == 0 {
 			plan.unreadKeys = append(plan.unreadKeys, key)
+			// No entry references it, yet the platform still hands an unreferenced Shared
+			// value to every service, and a service's own to that service, by its name: a
+			// running one keeps its old copy until it restarts.
+			readers = byNameReaders(scopes, owner, key, platformReadKeys[key] || plan.poolOwner || plan.boxOwner)
 		}
 		for _, name := range readers {
 			svc := byName[name]
@@ -617,6 +622,29 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 		addTarget(svc)
 	}
 	return plan
+}
+
+// byNameReaders are the services a key no entry references still reaches
+// under its own name (spec-zerops-env-lifecycle §3: project→service
+// inheritance is not gated): every service for a Shared key, its owner for a
+// service's own, unless an entry or the service's own value of that name
+// shadows it. None for a key the platform reads itself, or a pool's or a
+// Box's own.
+func byNameReaders(scopes *ops.ProjectEnvScopes, owner, key string, none bool) []string {
+	if none {
+		return nil
+	}
+	var readers []string
+	for _, svc := range scopes.Services {
+		if owner != "" && svc.Hostname != owner {
+			continue
+		}
+		if _, entry := svc.Entries[key]; entry || (owner == "" && svc.Own[key]) {
+			continue
+		}
+		readers = append(readers, svc.Hostname)
+	}
+	return readers
 }
 
 // nothingReadsHint is the fix for keys no service reads: reference them in
@@ -657,10 +685,10 @@ func appReadHint(keys []string, input EnvInput) string {
 	}
 	names := strings.Join(keys, ", ")
 	if input.Project.Bool() {
-		return fmt.Sprintf("Nothing reads %s yet — reference it in the run.envVariables of each service that needs it (e.g. `NAME: ${%s}`), then deploy.", names, keys[0])
+		return fmt.Sprintf("No zerops.yaml entry references %s yet — reference it in the run.envVariables of each service that needs it (e.g. `NAME: ${%s}`), then deploy.", names, keys[0])
 	}
 	host := input.ServiceHostname
-	return fmt.Sprintf("Nothing reads %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
+	return fmt.Sprintf("No zerops.yaml entry references %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
 		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
 }
 

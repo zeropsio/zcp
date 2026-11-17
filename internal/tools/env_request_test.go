@@ -261,11 +261,11 @@ func TestEnvTool_Request_WithoutVaultAsks_AsksEachTime(t *testing.T) {
 }
 
 // TestEnvTool_Request_NamesTheRestartAfterTheSave: the person's save writes
-// the vault from their own client — zcp never sees it, and nothing restarts
-// (Filip 10-26 20:56: "Neither has restarted yet"). So the answer names the
-// services whose deployed entries read the key and the call that restarts
-// each once a message says saved — never the service running this session,
-// never a restart of its own. A key nothing reads says how a service reads it.
+// the vault from their own client and zcp never sees it (Filip 10-26 20:56:
+// "Neither has restarted yet"), so their card restarts the running readers
+// once it saves. The answer names them and tells the agent to restart nothing
+// itself — never the service running this session. A key no entry references
+// reaches every running service by name, and the answer says how to reference it.
 func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 	t.Parallel()
 
@@ -281,26 +281,27 @@ func TestEnvTool_Request_NamesTheRestartAfterTheSave(t *testing.T) {
 			args:        map[string]any{"action": "request", "project": true, "key": "STRIPE_SECRET_KEY", "label": "Stripe secret key", "why": "for checkout"},
 			wantReaders: []string{"web"},
 			wantRestart: []string{"web"},
-			wantNext:    []string{"Saving restarts nothing", `zerops_manage action="restart" serviceHostname="web"`},
+			wantNext:    []string{"the person's card restarts web", "Restart nothing yourself"},
 		},
 		{
 			name:        "a replaced Shared key this session's service reads too",
 			args:        map[string]any{"action": "request", "project": true, "key": "FOO", "label": "Foo", "why": "for the API", "replace": true, "replaceWhy": "it is a placeholder"},
 			wantReaders: []string{"api", "zcp"},
 			wantRestart: []string{"api"},
-			wantNext:    []string{`serviceHostname="api"`, "zcp", "runs this session"},
+			wantNext:    []string{"card restarts api", "zcp", "runs this session"},
 		},
 		{
 			name:        "a service's own key another service reads by its host",
 			args:        map[string]any{"action": "request", "serviceHostname": "api", "key": "TOKEN", "label": "Token", "why": "for the worker", "replace": true, "replaceWhy": "it expired"},
 			wantReaders: []string{"worker"},
 			wantRestart: []string{"worker"},
-			wantNext:    []string{`serviceHostname="worker"`},
+			wantNext:    []string{"card restarts worker"},
 		},
 		{
-			name:     "a key nothing reads yet",
-			args:     map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
-			wantNext: []string{"Nothing reads SENTRY_DSN yet", "deploy"},
+			name:        "a key nothing references yet restarts every running service, which has it by name",
+			args:        map[string]any{"action": "request", "project": true, "key": "SENTRY_DSN", "label": "Sentry DSN", "why": "for error reports"},
+			wantRestart: []string{"api", "worker", "web"},
+			wantNext:    []string{"No zerops.yaml entry references SENTRY_DSN yet", "deploy"},
 		},
 	}
 	for _, tt := range tests {
