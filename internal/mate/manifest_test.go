@@ -270,3 +270,28 @@ func TestEnvelopeCarriesParts(t *testing.T) {
 		t.Error("zcp sends stages/devServers while no mate release accepts them")
 	}
 }
+
+// TestCarriesSecretAsk: a stage or production secret is asked for only of a
+// Mate whose engine opens its card — a release at or past
+// SecretAskMateVersion, or a dev build cut from one — never of an older or
+// unreadable one, which would show a plain row and ask nobody.
+// witness: internal/mate/manifest.go | return carriesParts(core, SecretAskMateVersion) → return carriesParts(installed, SecretAskMateVersion)
+func TestCarriesSecretAsk(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		installed string
+		want      bool
+	}{
+		{installed: mate.SecretAskMateVersion, want: true},
+		{installed: "99.0.0", want: true},
+		{installed: mate.SecretAskMateVersion + "-dev.a1b2c3", want: true},
+		{installed: "0.16.0", want: false},
+		{installed: "0.16.0-dev.a1b2c3", want: false},
+		{installed: "", want: false},
+	}
+	for _, tt := range tests {
+		if got := mate.CarriesSecretAsk(tt.installed); got != tt.want {
+			t.Errorf("CarriesSecretAsk(%q) = %v, want %v", tt.installed, got, tt.want)
+		}
+	}
+}

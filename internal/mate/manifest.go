@@ -50,6 +50,13 @@ const (
 	// (step 2) — EnvelopeCarriesParts.
 	PartsMateVersion = "0.15.119"
 
+	// SecretAskMateVersion is the first mate release whose engine opens a
+	// card for a stage or production secret (`zerops_propose_env
+	// secret=true`, docs/spec-mate.md §2.11): an older Mate shows the call
+	// as a plain row and nobody is asked, so zcp refuses the ask there
+	// (CarriesSecretAsk). Set at mate's release.
+	SecretAskMateVersion = "0.16.223"
+
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
 	// on stable v<major>.<minor>.<patch> tags, so this is the stable
@@ -260,6 +267,14 @@ func compareSemver(a, b string) (int, error) {
 // §2.8a.3 field-order step 3): only when every mate it drives accepts them.
 func EnvelopeCarriesParts() bool {
 	return carriesParts(MinimumMateVersion, PartsMateVersion)
+}
+
+// CarriesSecretAsk reports whether the installed mate version (a release, or
+// a dev build judged by the release it was cut from) opens a card for a
+// stage or production secret. An unreadable version carries nothing.
+func CarriesSecretAsk(installed string) bool {
+	core, _, _ := strings.Cut(installed, "-")
+	return carriesParts(core, SecretAskMateVersion)
 }
 
 func carriesParts(minimum, accepting string) bool {

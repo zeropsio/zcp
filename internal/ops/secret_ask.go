@@ -56,6 +56,10 @@ type SecretAsk struct {
 	Sensitive       bool                 `json:"sensitive"`
 	Environment     SecretAskEnvironment `json:"environment"`
 	Restart         []SecretAskService   `json:"restart,omitempty"`
+	// NotRunning are the named services that run nothing now (stopped, or
+	// waiting for their first deploy): nothing restarts them, and their next
+	// start or release reads the value.
+	NotRunning []string `json:"notRunning,omitempty"`
 	// Generate is the random value the card makes in the person's browser
 	// when they press, as a preprocessor expression in its canonical form;
 	// absent, the person types or pastes the value.
@@ -123,10 +127,16 @@ func ProposeSecretAsk(ctx context.Context, src AppSource, in SecretAskInput) (*S
 		}
 	}
 	restart := make([]SecretAskService, 0, len(named))
+	var notRunning []string
 	for _, ref := range named {
 		s, err := appService(p, ref)
 		if err != nil {
 			return nil, err
+		}
+		// A restart is for a running process; one that runs nothing reads the value when it starts.
+		if !s.IsLive() {
+			notRunning = append(notRunning, s.Name)
+			continue
 		}
 		restart = append(restart, SecretAskService{ServiceID: s.ID, Hostname: s.Name})
 	}
@@ -144,6 +154,7 @@ func ProposeSecretAsk(ctx context.Context, src AppSource, in SecretAskInput) (*S
 	if len(restart) > 0 {
 		ask.Restart = restart
 	}
+	ask.NotRunning = notRunning
 	ask.Generate = generate
 	return &SecretAskResult{Requested: ask, NextActions: secretAskWords(ask)}, nil
 }
@@ -233,13 +244,16 @@ func secretAskWords(ask SecretAsk) string {
 		}
 		restarted = fmt.Sprintf(" The card restarts %s once it is saved.", domainList(names))
 	}
+	if len(ask.NotRunning) > 0 {
+		restarted += fmt.Sprintf(" %s runs nothing now, so nothing restarts it: its next start or release reads the value.", domainList(ask.NotRunning))
+	}
 	made := "their card takes it, typed or generated, and saves it hidden with their own access."
 	if ask.Generate != "" {
 		made = "their card makes it in their browser at their press, never shown, and saves it hidden with their own access."
 	}
 	return fmt.Sprintf("Now waiting on the person for %s in %s: %s%s "+
 		"Tell them in one sentence why it is needed, and nothing about how they give it: never send them to a Vault page and never ask for the value in the chat. "+
-		"A message of its own tells you how it ended: saved to %s, or declined. Once saved, read zerops_observe action=logs for %s before you say it works. "+
+		"A message of its own tells you how it ended: saved to %s (naming a service that did not restart, and why), or declined. Once saved, read zerops_observe action=logs for %s before you say it works. "+
 		"The app reads it only through its service's zerops.yaml run.envVariables, under the name the app reads and never the same name (APP_KEY: ${%s}): the release review sees nothing else.",
 		ask.Key, ask.Environment.Name, made, restarted, secretAskPlace(ask), ask.Environment.Name, ask.Key)
 }

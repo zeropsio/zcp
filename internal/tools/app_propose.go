@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -105,6 +106,13 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 		Annotations: orgPropose("Propose a variable"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeEnvInput) (*mcp.CallToolResult, any, error) {
 		if in.Secret {
+			// A Mate older than the card, or one whose version cannot be read ("" carries
+			// nothing), shows the call as a plain row: nobody would be asked.
+			if installed, _ := mate.InstalledVersion(); !mate.CarriesSecretAsk(installed) {
+				return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+					"This Mate cannot ask the person for a stage or production secret yet: its card comes with a Mate update, so nothing was asked",
+					"Tell the person in one sentence which value the environment needs and that Mate will ask for it once it updates; never send them to a Vault page or ask for the value in the chat.")), nil, nil
+			}
 			ask, err := ops.ProposeSecretAsk(ctx, src, ops.SecretAskInput{
 				Project: in.Project, Scope: in.Scope, Service: in.Service, Key: in.Key,
 				Value: in.Value, Reason: in.Reason, Restart: in.Restart, Generate: in.Generate,

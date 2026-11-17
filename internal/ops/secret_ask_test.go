@@ -17,8 +17,9 @@ import (
 )
 
 // TestProposeSecretAsk_Shape pins the ask Mate's engine opens a card on: the
-// key, its vault and environment as Mate's menu names it, the services the
-// card restarts, always hidden, never a value.
+// key, its vault and environment as Mate's menu names it, the running
+// services the card restarts (one that runs nothing is named apart), always
+// hidden, never a value.
 // witness: internal/ops/secret_ask.go | Environment: SecretAskEnvironment{Kind: env.Kind, ProjectID: env.ProjectID, Name: env.Name}, → Environment: SecretAskEnvironment{Kind: env.Kind, Name: env.Name},
 func TestProposeSecretAsk_Shape(t *testing.T) {
 	t.Parallel()
@@ -36,6 +37,11 @@ func TestProposeSecretAsk_Shape(t *testing.T) {
 			name: "a service's own secret on stage restarts that service",
 			in:   SecretAskInput{Project: "pStage", Scope: "service", Service: "api", Key: "STRIPE_SECRET_KEY", Reason: "checkout needs it"},
 			want: `{"key":"STRIPE_SECRET_KEY","label":"Stripe secret key","why":"checkout needs it","scope":"service","serviceHostname":"api","sensitive":true,"environment":{"kind":"stage","projectId":"pStage","name":"Client demo"},"restart":[{"serviceId":"sStageApi","hostname":"api"}]}`,
+		},
+		{
+			name: "a stopped service is not restarted",
+			in:   SecretAskInput{Project: "production", Scope: "service", Service: "worker", Key: "QUEUE_SECRET", Reason: "r", Restart: []string{"api"}},
+			want: `{"key":"QUEUE_SECRET","label":"Queue secret","why":"r","scope":"service","serviceHostname":"worker","sensitive":true,"environment":{"kind":"production","projectId":"pProd","name":"Production"},"restart":[{"serviceId":"sApi","hostname":"api"}],"notRunning":["worker"]}`,
 		},
 		{
 			name: "nothing named to restart",
