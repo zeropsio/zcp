@@ -354,8 +354,11 @@ type groupRecipeComposition struct {
 	retiredDevs map[string]bool
 	inputs      bundle.GroupRecipeInputs
 	files       []recipe.File
-	warnings    []string
-	validator   *schema.ImportValidator
+	// tierHosts is, by tier import file, the composer's hostname for each
+	// service of the Mate's project that tier renames (recipe.Tier.Hostnames).
+	tierHosts map[string]map[string]string
+	warnings  []string
+	validator *schema.ImportValidator
 }
 
 func (c groupRecipeComposition) close() { c.scratch.Close() }
@@ -549,6 +552,10 @@ func composeGroupRecipe(
 	}
 	comp.validator = validator
 	comp.inputs, comp.files, comp.warnings = inputs, files, outcome.Warnings
+	comp.tierHosts = make(map[string]map[string]string, len(layout.Tiers))
+	for _, tier := range layout.Tiers {
+		comp.tierHosts[tier.ImportPath()] = tier.Hostnames
+	}
 	return comp, outcome, true
 }
 

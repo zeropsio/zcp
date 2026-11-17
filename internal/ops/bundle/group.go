@@ -421,6 +421,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 			Slug:       policy.slug,
 			ImportYAML: body,
 			Summary:    policy.summary,
+			Hostnames:  tier.hosts,
 		})
 	}
 
@@ -768,7 +769,10 @@ type groupPlan struct {
 // as written for a person to set (tierAddresses), and each public-address
 // read it keeps that no priority orders (orderSubdomainReads).
 type groupTier struct {
-	body     string
+	body string
+	// hosts maps each service of the Mate's project whose part this tier
+	// runs under another name to that name (recipe.Tier.Hostnames).
+	hosts    map[string]string
 	warnings []string
 	boxes    []string
 	unclosed []string
@@ -837,6 +841,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 		promote = plan.promoter.promote
 	}
 	addresses := plan.addressWriter(policy, promote)
+	hosts := map[string]string{}
 
 	// Every entry carries its priority, and the file lists the services in
 	// the order the platform creates them: highest first, the composer's own
@@ -880,6 +885,9 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 			for _, part := range plan.parts[r.DevHostname] {
 				if part.hostname != "" && !part.mateWired {
 					halves = append(halves, half{part.hostname, part.environmentSetup, part.envs, part.facts})
+					if source := partSource(r, part); source != "" && source != part.hostname {
+						hosts[source] = part.hostname
+					}
 				}
 			}
 		}
@@ -973,7 +981,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (groupTier, er
 	if err != nil {
 		return groupTier{}, err
 	}
-	return groupTier{body: body, warnings: warnings, boxes: carriedBoxes, unclosed: unclosed, kept: addresses.kept, notes: notes}, nil
+	return groupTier{body: body, hosts: hosts, warnings: warnings, boxes: carriedBoxes, unclosed: unclosed, kept: addresses.kept, notes: notes}, nil
 }
 
 // tierEntry is one service of a tier as it is composed: its priority, the
@@ -1404,6 +1412,20 @@ func groupSetupWarnings(runtimes []GroupRuntime, parts map[string][]groupPart) [
 		}
 	}
 	return warnings
+}
+
+// partSource is the service of the Mate's project a group environment's
+// runtime for part stands for — the one whose scale its entry is composed
+// from (groupPartFacts): the part's stage, or the dev service of a pair with
+// none. A pool's scale is a pool's, never a part's: "" then.
+func partSource(r GroupRuntime, part groupPart) string {
+	if part.stage != "" {
+		return part.stage
+	}
+	if r.DevPool {
+		return ""
+	}
+	return r.DevHostname
 }
 
 // groupTierProjectName names the project a tier creates. The AI Agent tier

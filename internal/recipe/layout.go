@@ -66,7 +66,15 @@ type Tier struct {
 	ImportYAML string
 	// Summary is one sentence, lifted into the recipe page for this tier.
 	Summary string
+	// Hostnames maps a service of the Mate's project to the hostname this
+	// tier runs it under, for each one it renames (a pair's stage `appstage`
+	// → `app`). A service it does not list keeps its own name, or is absent.
+	// Composed upstream with ImportYAML; no file carries it.
+	Hostnames map[string]string
 }
+
+// ImportPath is the tier's import file, relative to the recipe root.
+func (t Tier) ImportPath() string { return t.dirName() + "/import.yaml" }
 
 // File is one composed file, path relative to the recipe root.
 type File struct {
@@ -122,7 +130,7 @@ func Build(layout Layout) ([]File, error) {
 	files := []File{{Path: "README.md", Body: rootReadme(layout, tiers)}}
 	for _, tier := range tiers {
 		files = append(files,
-			File{Path: tier.dirName() + "/import.yaml", Body: ensureTrailingNewline(tier.ImportYAML)},
+			File{Path: tier.ImportPath(), Body: ensureTrailingNewline(tier.ImportYAML)},
 			File{Path: tier.dirName() + "/README.md", Body: tierReadme(layout, tier)},
 		)
 	}

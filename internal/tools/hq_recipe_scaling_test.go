@@ -186,6 +186,73 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 	}
 }
 
+// pairScalingClient is the recipe lab's project with the pair's stage
+// running at stageRAM GB.
+func pairScalingClient(stageRAM float64) *platform.Mock {
+	services := []platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			CustomAutoscaling: &platform.CustomAutoscaling{CPUMode: "SHARED", MinCPU: 1, MaxCPU: 4, MinRAM: stageRAM, MaxRAM: 8, MinFreeRAMGB: 0.25}},
+		{ID: "svc-db", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql:single@18", ServiceStackTypeCategoryName: "USER"}},
+	}
+	return platform.NewMock().
+		WithProject(&platform.Project{ID: labMate, Name: "acme-mate-1", Status: "ACTIVE"}).
+		WithServicesDirect(services).
+		WithServices(services)
+}
+
+// TestGroupRecipeScaling_PairsStageScale_ReachesEveryTiersEntryForItsPart is a
+// Mate scaling a pair's stage: the AI Agent tier runs it as `appstage`, a
+// group environment as the pair's runtime `app`, so the proposal changes
+// appstage's block in the one and app's in the others — never a tier's
+// entry for another part — and a part a tier does not run (the dev half in
+// a group environment) is left alone and said.
+//
+// witness: internal/tools/hq_recipe_scaling.go | name := tierHostname(tierHosts, file.Path, host) → name := host
+func TestGroupRecipeScaling_PairsStageScale_ReachesEveryTiersEntryForItsPart(t *testing.T) {
+	t.Parallel()
+	lab := newRecipeLab(t)
+	lab.hq.seed(hq.RecipeRepo)
+	if outcome := lab.proposeRecipe(pairScalingClient(0.5)); outcome.Change != 1 {
+		t.Fatalf("the first recipe was not proposed: %+v", outcome)
+	}
+	lab.hq.mergeChange(hq.RecipeRepo, 1)
+	lab.snapshotMate(t.Context())
+	main := lab.hq.recipeFiles("main")
+
+	answer, text := lab.proposeScaling(pairScalingClient(2), "appstage")
+	if answer == nil || answer.Change != 2 {
+		t.Fatalf("scaling proposal = %s", text)
+	}
+	proposed := lab.hq.recipeFiles(recipeBranch(2))
+	for path, host := range map[string]string{
+		"0 — AI Agent/import.yaml":         "appstage",
+		"3 — Stage/import.yaml":            "app",
+		"4 — Small Production/import.yaml": "app",
+	} {
+		lines := strings.Split(proposed[path], "\n")
+		start, end := hostEntryLines(lines, host)
+		if start < 0 || !strings.Contains(strings.Join(lines[start:end], "\n"), "      minRam: 2") {
+			t.Errorf("%s: %s's block does not carry the stage's new scale:\n%s", path, host, proposed[path])
+		}
+		if path == "0 — AI Agent/import.yaml" {
+			mainLines := strings.Split(main[path], "\n")
+			ds, de := hostEntryLines(lines, "appdev")
+			ms, me := hostEntryLines(mainLines, "appdev")
+			if !slices.Equal(lines[ds:de], mainLines[ms:me]) {
+				t.Errorf("%s: the dev half's entry changed with its stage's scale", path)
+			}
+		}
+	}
+	if !slices.ContainsFunc(answer.Tiers, func(s string) bool { return strings.HasPrefix(s, "3 — Stage (app): ") }) {
+		t.Errorf("tiers = %v, want Stage named with the hostname it runs the part under", answer.Tiers)
+	}
+
+	if _, text := lab.proposeScaling(pairScalingClient(2), "appdev"); !strings.Contains(text, "3 — Stage, 4 — Small Production run no appdev") {
+		t.Errorf("a part the group environments do not run = %s, want them left alone and said", text)
+	}
+}
+
 // TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh is a second
 // proposal for the same host: the change carries every tier as this
 // proposal writes it — a tier the first proposal changed and this one does

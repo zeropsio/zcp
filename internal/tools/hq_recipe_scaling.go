@@ -37,36 +37,62 @@ func recipeScalingTitle(host string) string {
 }
 
 // recipeScalingTier is one tier file on main that names a scaling
-// proposal's host: what the proposal writes to it — host's block replaced,
-// or main's own body when nothing changes or the splice refused (why, in
-// refused) — and the keys that change.
+// proposal's host: the hostname the tier runs it under (host, the composer's
+// name for its part there), what the proposal writes to it — that entry's
+// block replaced, or main's own body when nothing changes or the splice
+// refused (why, in refused) — and the keys that change.
 type recipeScalingTier struct {
 	path    string
+	host    string
 	body    string
 	changes []bundle.ScalingChange
 	refused string
 }
 
+// recipeScalingPlan is a scaling proposal's tiers, and the tiers of the
+// composed recipe main holds that have no entry for the proposal's host
+// (absent), which it leaves alone.
+type recipeScalingPlan struct {
+	tiers  []recipeScalingTier
+	absent []string
+}
+
+// tierHostname is the hostname the tier at path runs host under: the
+// composer's name for host's part there (tierHosts), else host's own.
+func tierHostname(tierHosts map[string]map[string]string, path, host string) string {
+	if name, ok := tierHosts[path][host]; ok {
+		return name
+	}
+	return host
+}
+
 // planRecipeScaling is, for each tier file of the composed recipe that main
-// holds and that names host, what replacing host's verticalAutoscaling block
-// with the composed one would change. Tiers are read at main, the commit a
-// proposal is written over.
-func planRecipeScaling(ctx context.Context, scratch *hq.Scratch, main string, files []recipe.File, host string) ([]recipeScalingTier, error) {
-	var tiers []recipeScalingTier
+// holds and that names host under the tier's own hostname for it
+// (tierHostname: a pair's stage `appstage` is `app` in a group environment),
+// what replacing that entry's verticalAutoscaling block with the composed
+// one would change. Tiers are read at main, the commit a proposal is written
+// over.
+func planRecipeScaling(ctx context.Context, scratch *hq.Scratch, main string, files []recipe.File, tierHosts map[string]map[string]string, host string) (recipeScalingPlan, error) {
+	var plan recipeScalingPlan
 	for _, file := range files {
 		if !strings.HasSuffix(file.Path, "/import.yaml") {
 			continue
 		}
 		mainBody, found, err := scratch.File(ctx, main, file.Path)
 		if err != nil {
-			return nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", file.Path, hq.RecipeRepo, err)
+			return recipeScalingPlan{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", file.Path, hq.RecipeRepo, err)
 		}
-		if !found || !bundle.TierNamesHost(mainBody, host) {
+		if !found {
 			continue
 		}
-		tier := recipeScalingTier{path: file.Path, body: mainBody}
-		if changes := bundle.HostScalingChanges(mainBody, file.Body, host); len(changes) > 0 {
-			spliced, err := bundle.SpliceHostScaling(mainBody, file.Body, host)
+		name := tierHostname(tierHosts, file.Path, host)
+		if !bundle.TierNamesHost(mainBody, name) {
+			plan.absent = append(plan.absent, tierTitle(file.Path))
+			continue
+		}
+		tier := recipeScalingTier{path: file.Path, host: name, body: mainBody}
+		if changes := bundle.HostScalingChanges(mainBody, file.Body, name); len(changes) > 0 {
+			spliced, err := bundle.SpliceHostScaling(mainBody, file.Body, name)
 			switch {
 			case err != nil:
 				tier.refused = err.Error()
@@ -74,20 +100,33 @@ func planRecipeScaling(ctx context.Context, scratch *hq.Scratch, main string, fi
 				tier.body, tier.changes = spliced, changes
 			}
 		}
-		tiers = append(tiers, tier)
+		plan.tiers = append(plan.tiers, tier)
 	}
-	return tiers, nil
+	return plan, nil
 }
 
-// changedTiers reads the tiers a proposal changes as "Tier: key old → new".
-func changedTiers(tiers []recipeScalingTier) []string {
+// changedTiers reads the tiers a proposal changes as "Tier: key old → new",
+// or "Tier (name): …" where the tier runs host under another name.
+func changedTiers(tiers []recipeScalingTier, host string) []string {
 	var out []string
 	for _, tier := range tiers {
 		if len(tier.changes) > 0 {
-			out = append(out, tierTitle(tier.path)+": "+scalingChangeText(tier.changes))
+			title := tierTitle(tier.path)
+			if tier.host != host {
+				title += " (" + tier.host + ")"
+			}
+			out = append(out, title+": "+scalingChangeText(tier.changes))
 		}
 	}
 	return out
+}
+
+// absentTiers says which tiers have no entry for host and are left alone.
+func absentTiers(absent []string, host string) string {
+	if len(absent) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" %s run no %s, and stay as they are.", strings.Join(absent, ", "), host)
 }
 
 // refusedTiers reads the tiers left as main has them, and why.
@@ -122,8 +161,8 @@ func groupRecipeScalingSteer(
 		return ""
 	}
 	defer comp.close()
-	tiers, err := planRecipeScaling(ctx, comp.scratch, comp.main, comp.files, host)
-	parts := changedTiers(tiers)
+	plan, err := planRecipeScaling(ctx, comp.scratch, comp.main, comp.files, comp.tierHosts, host)
+	parts := changedTiers(plan.tiers, host)
 	if err != nil || len(parts) == 0 {
 		return ""
 	}
@@ -179,14 +218,14 @@ func handleGroupRecipeScaling(
 			"Retry once this Mate is linked to its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
 	}
 	defer comp.close()
-	var tiers []recipeScalingTier
+	var plan recipeScalingPlan
 	written, err := writeRecipeChange(ctx, comp, openRecipeChange(comp.state), recipeScalingTitle(host),
 		"recipe: "+host+"'s scale, from "+comp.inputs.MateProjectName,
 		func(ctx context.Context, scratch *hq.Scratch, main string, _ []string) (map[string]string, error) {
-			planned, err := planRecipeScaling(ctx, scratch, main, comp.files, host)
-			tiers = planned
-			files := make(map[string]string, len(planned))
-			for _, tier := range planned {
+			planned, err := planRecipeScaling(ctx, scratch, main, comp.files, comp.tierHosts, host)
+			plan = planned
+			files := make(map[string]string, len(planned.tiers))
+			for _, tier := range planned.tiers {
 				files[tier.path] = tier.body
 			}
 			return files, err
@@ -194,7 +233,8 @@ func handleGroupRecipeScaling(
 	if err != nil {
 		return scalingProposalFailed(err.Error()), nil, nil
 	}
-	changed := changedTiers(tiers)
+	tiers := plan.tiers
+	changed := changedTiers(tiers, host)
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
 	if written.edited && len(changed) > 0 {
 		return recipeEditedRefusal("The scaling proposal", comp, written), nil, nil
@@ -216,13 +256,13 @@ func handleGroupRecipeScaling(
 		if written.pushed {
 			message += fmt.Sprintf(" Change #%d, which proposed it before, now adds nothing.", written.number)
 		}
-		result["message"] = message + refusedTiers(tiers) + recipeEditSteer
+		result["message"] = message + refusedTiers(tiers) + absentTiers(plan.absent, host) + recipeEditSteer
 		return jsonResult(result), nil, nil
 	}
 	result["branch"] = written.branch
 	result["tiers"] = changed
 	result["message"] = fmt.Sprintf("Proposed %s's scale to the recipe repository %q as change #%d (%s): it changes only %s's verticalAutoscaling (%s). %s.%s",
-		host, hq.RecipeRepo, written.number, result["changeUrl"], host, strings.Join(changed, "; "), recipeLanding, refusedTiers(tiers))
+		host, hq.RecipeRepo, written.number, result["changeUrl"], host, strings.Join(changed, "; "), recipeLanding, refusedTiers(tiers)+absentTiers(plan.absent, host))
 	return jsonResult(result), nil, nil
 }
 
