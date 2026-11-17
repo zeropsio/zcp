@@ -14,9 +14,23 @@ import (
 
 // initOptions are what `zcp init` and `zcp init sshfs` hand the init steps:
 // the lease check the lease restore asks before it mounts a lease
-// (docs/spec-workflows.md §8 DP-2).
+// (docs/spec-workflows.md §8 DP-2), and the admission a Mate's container
+// asks of its project's envIsolation (docs/spec-mate.md C-14).
 func initOptions() []zcpinit.Option {
-	return []zcpinit.Option{zcpinit.WithLeaseCheck(initLeaseCheck(resolveInitLeaseDeps))}
+	return []zcpinit.Option{
+		zcpinit.WithLeaseCheck(initLeaseCheck(resolveInitLeaseDeps)),
+		zcpinit.WithEnvAdmission(initEnvAdmission),
+	}
+}
+
+// initEnvAdmission is ops.AdmitContainerToProjectEnv over the API client and
+// project the container's own credentials resolve (resolveInitClient).
+func initEnvAdmission(ctx context.Context, host string) (ops.EnvIsolationAdmission, error) {
+	client, info, err := resolveInitClient(ctx)
+	if err != nil {
+		return ops.EnvIsolationAdmission{}, err
+	}
+	return ops.AdmitContainerToProjectEnv(ctx, client, info.ProjectID, host)
 }
 
 // initLeaseCheck is the lease check `zcp init` hands its lease restore, and
@@ -48,27 +62,36 @@ func initLeaseCheck(resolve func(context.Context) (ops.LeaseDeps, error)) zcpini
 	}
 }
 
-// resolveInitLeaseDeps builds what a lease check asks with the way serve mode
-// builds its client (runServer): the credentials (ZCP_API_KEY, else zcli's
-// login), the platform client, and the project auth resolves — validating the
-// token and binding the client to the project's org — plus the pools'
-// orchestrators.
+// resolveInitLeaseDeps builds what a lease check asks: the client and project
+// resolveInitClient builds, plus the pools' orchestrators.
 func resolveInitLeaseDeps(ctx context.Context) (ops.LeaseDeps, error) {
-	creds, err := auth.ResolveCredentials()
+	client, info, err := resolveInitClient(ctx)
 	if err != nil {
-		return ops.LeaseDeps{}, fmt.Errorf("auth: %w", err)
-	}
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
-	if err != nil {
-		return ops.LeaseDeps{}, fmt.Errorf("create platform client: %w", err)
-	}
-	info, err := auth.Resolve(ctx, client)
-	if err != nil {
-		return ops.LeaseDeps{}, fmt.Errorf("auth: %w", err)
+		return ops.LeaseDeps{}, err
 	}
 	return ops.LeaseDeps{
 		Client:    client,
 		ProjectID: info.ProjectID,
 		Swarm:     ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}),
 	}, nil
+}
+
+// resolveInitClient builds the API client the way serve mode does
+// (runServer): the credentials (ZCP_API_KEY, else zcli's login), the platform
+// client, and the project auth resolves — validating the token and binding
+// the client to the project's org.
+func resolveInitClient(ctx context.Context) (platform.Client, *auth.Info, error) {
+	creds, err := auth.ResolveCredentials()
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create platform client: %w", err)
+	}
+	info, err := auth.Resolve(ctx, client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	return client, info, nil
 }

@@ -57,9 +57,11 @@ type step struct {
 // Option configures Run and RunSSHFS.
 type Option func(*options)
 
-// options are what the command layer hands init: WithLeaseCheck.
+// options are what the command layer hands init: WithLeaseCheck,
+// WithEnvAdmission.
 type options struct {
-	leaseCheck LeaseCheck
+	leaseCheck   LeaseCheck
+	envAdmission EnvAdmission
 }
 
 func buildOptions(opts []Option) options {
@@ -108,6 +110,12 @@ func Run(baseDir string, rt runtime.Info, opts ...Option) error {
 		// Required: it is the local deliverable, and a local init is not a
 		// run.init command, so failing loudly costs no container start.
 		steps = append(steps, step{"MCP config", generateMCPConfig, ""})
+	}
+	// A Mate's container is a reader of its project's service variables:
+	// the data console reads a secret the API withholds from the Mate's key
+	// in the container's live env store (docs/spec-mate.md C-14).
+	if rt.InContainer && rt.MateEnabled {
+		steps = append(steps, step{"Project variable sharing", o.envAdmissionStep, "a service whose variables do not reach this container answers no_credentials in the data console"})
 	}
 	// The Mate step runs last, after container adapters, so its start sees
 	// every preceding init step. Register it only when there is a Mate to

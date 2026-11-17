@@ -70,6 +70,10 @@ type Client interface {
 	GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error)
 	CreateProjectEnv(ctx context.Context, projectID string, key, content string, sensitive bool) (*Process, error)
 	DeleteProjectEnv(ctx context.Context, envID string) (*Process, error)
+	// UpdateProjectEnv replaces one project entry's value in place, keeping
+	// its id: the one write for an entry the platform creates itself (a
+	// system entry such as envIsolation), which may be updated, never added.
+	UpdateProjectEnv(ctx context.Context, envID, key, content string, sensitive bool) (*Process, error)
 
 	// Export (returns re-importable YAML)
 	GetProjectExport(ctx context.Context, projectID string) (string, error)

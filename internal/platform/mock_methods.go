@@ -520,6 +520,27 @@ func (m *Mock) DeleteProjectEnv(_ context.Context, envID string) (*Process, erro
 	}, nil
 }
 
+// UpdateProjectEnv replaces the stored entry's value in place, as the
+// platform does.
+func (m *Mock) UpdateProjectEnv(_ context.Context, envID, key, content string, sensitive bool) (*Process, error) {
+	m.trackCall("UpdateProjectEnv")
+	if err := m.getError("UpdateProjectEnv"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.projectEnv {
+		if m.projectEnv[i].ID == envID {
+			m.projectEnv[i].Key, m.projectEnv[i].Content, m.projectEnv[i].Sensitive = key, content, sensitive
+		}
+	}
+	return &Process{
+		ID:         "proc-projenvput-" + envID,
+		ActionName: "stack.updateProjectEnvs",
+		Status:     "PENDING",
+	}, nil
+}
+
 func (m *Mock) GetProjectExport(_ context.Context, _ string) (string, error) {
 	if err := m.getError("GetProjectExport"); err != nil {
 		return "", err

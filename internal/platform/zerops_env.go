@@ -274,3 +274,22 @@ func (z *ZeropsClient) DeleteProjectEnv(ctx context.Context, envID string) (*Pro
 	proc := mapProcess(out)
 	return &proc, nil
 }
+
+func (z *ZeropsClient) UpdateProjectEnv(ctx context.Context, envID, key, content string, sensitive bool) (*Process, error) {
+	pathParam := path.ProjectEnvId{Id: uuid.EnvId(envID)}
+	envBody := body.ProjectEnvPut{
+		Key:       types.NewString(key),
+		Content:   types.NewText(content),
+		Sensitive: types.NewBool(sensitive),
+	}
+	resp, err := z.handler.PutProjectEnv(ctx, pathParam, envBody)
+	if err != nil {
+		return nil, mapSDKError(err, "project")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "project")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
+}
