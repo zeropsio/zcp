@@ -63,7 +63,7 @@ func RegisterMateMessages(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info) 
 		if err != nil {
 			return observeFailure(peersFailure(err, "your person's Mates could not be listed")), nil, nil
 		}
-		return textResult(listMates(peers)), nil, nil
+		return textResult(listMates(peers, chiefProject(rt))), nil, nil
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -123,21 +123,42 @@ func peerState(p hq.Peer) string {
 	return "awake"
 }
 
-func peerLines(peers []hq.Peer) string {
+// peerLines lists peers one per line, the one whose project is chief (""
+// for none) named as the person's Chief.
+func peerLines(peers []hq.Peer, chief string) string {
 	var b strings.Builder
 	for _, p := range peers {
-		fmt.Fprintf(&b, "\n- %s: %s; projectId %s", mateLabel(p.ProjectID, p.ProjectName, p.MateName), peerState(p), p.ProjectID)
+		label := mateLabel(p.ProjectID, p.ProjectName, p.MateName)
+		if chief != "" && p.ProjectID == chief {
+			label += ", your person's Chief"
+		}
+		fmt.Fprintf(&b, "\n- %s: %s; projectId %s", label, peerState(p), p.ProjectID)
 	}
 	return b.String()
 }
 
+// chiefProject is the project of the person's Chief, as the Mate's state
+// names it (docs/spec-mate.md §2.8), "" while no state is heard or it names
+// none. HQ's peers do not mark the Chief, so the list does.
+func chiefProject(rt runtime.Info) string {
+	doc, err := hqIdentity(rt).ReadMateState()
+	if err != nil {
+		return ""
+	}
+	state, err := doc.Heard()
+	if err != nil || state.Chief == nil {
+		return ""
+	}
+	return state.Chief.ProjectID
+}
+
 const noPeers = "Your person has no other Mates you can message."
 
-func listMates(peers []hq.Peer) string {
+func listMates(peers []hq.Peer, chief string) string {
 	if len(peers) == 0 {
 		return noPeers
 	}
-	return "Your person's other Mates. Ask one with zerops_message_mate, its name or projectId as `to`:" + peerLines(peers)
+	return "Your person's other Mates. Ask one with zerops_message_mate, its name or projectId as `to`:" + peerLines(peers, chief)
 }
 
 // resolvePeer is the peer `to` names: its project id, or its Mate name
@@ -160,11 +181,11 @@ func resolvePeer(peers []hq.Peer, to string) (hq.Peer, string) {
 	case len(matches) == 1:
 		return matches[0], ""
 	case len(matches) > 1:
-		return hq.Peer{}, "Several of your person's Mates go by that name, so nothing was sent. Name one by its projectId:" + peerLines(matches)
+		return hq.Peer{}, "Several of your person's Mates go by that name, so nothing was sent. Name one by its projectId:" + peerLines(matches, "")
 	case len(peers) == 0:
 		return hq.Peer{}, "There is no Mate of your person by that name. " + noPeers
 	}
-	return hq.Peer{}, "There is no Mate of your person by that name, so nothing was sent. Your person's other Mates:" + peerLines(peers)
+	return hq.Peer{}, "There is no Mate of your person by that name, so nothing was sent. Your person's other Mates:" + peerLines(peers, "")
 }
 
 // sentWords tells the agent where its message went and when the answer

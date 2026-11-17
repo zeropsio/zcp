@@ -135,7 +135,7 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, newID func() string) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_org_propose_message",
-		Description: "Propose handing work to a project's Mate: your words, optionally with an excerpt such as log lines. Runs nothing: the person approves it on a card, and it lands in that Mate's conversation.",
+		Description: "Propose handing work to a project's Mate: your words, optionally with an excerpt such as log lines. Runs nothing: the person approves it on a card, and it lands in that Mate's conversation. Where zerops_message_mate is offered, message your person's own Mates with it instead; this card is for a Mate it does not list.",
 		Annotations: orgPropose("Propose a message to a Mate"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProposeMessageInput) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.ProposeOrgAction(ctx, src, newID, ops.OrgActionInput{

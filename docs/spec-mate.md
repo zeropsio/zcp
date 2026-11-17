@@ -2074,7 +2074,8 @@ asks an Admin themselves, in Mate or in Zerops. Act:
 `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
-container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
+container `zerops_publish_page` (§5.9) and `zerops_list_mates` / `zerops_message_mate` (§6.10), which
+reach only its person's own Mates. The single-project surface acts on the empty own project and
 is not registered. A project's kind: the Chief registration; a Mate is tagged `mate` and runs a `zcp@*`
 service, its name the part of the project name after the last `" - "`; production and stage are
 named `"<application> - production"` / `"- stage"`. HQ is the configured shared origin (§3.5),
@@ -2088,7 +2089,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | service.create | release.offer | mate.message | chief.message | domain.add | access.set | mcp.add",
+    "kind": "service.restart | service.start | service.stop | env.set | env.reveal | service.create | release.offer | mate.message | domain.add | access.set | mcp.add",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -2126,33 +2127,10 @@ own `set-project-access` as the approving person, written on each member's own l
 words, to a person who may not change access. There is
 no delete, no token, no invitation and no scaling kind.
 
-**The reverse direction — a Mate asks its owner's Chief.** In project mode, in a Mate's
-container (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?,
-reason}` proposes the one kind a project makes outside itself, `chief.message`, only when HQ names
-its owner's Chief. The `chief` of the Mate's state (§2.8) answers it; no state heard offers no tool. `POST /api/mate/chief/proposals` reads it again and
-returns the offer id, binding the source project and the Chief at HQ. A person who may open the
-source Mate decides it, and only while that Chief is still theirs; HQ rechecks the binding when
-accepting a decision, including after the Chief moved. It sends nothing; org mode never registers it (the Chief does not ask itself). Its result has the same shape, from this
-project:
-
-```json
-{
-  "proposal": {
-    "id": "<uuid>",
-    "kind": "chief.message",
-    "summary": "Ask your Chief: <the words on one line, cut at 60 characters>",
-    "reason": "…",
-    "projectId": "<this project's id>", "projectName": "<this project's name>",
-    "params": {"words": "…", "attachment": {"title": "…", "text": "…"}}
-  },
-  "note": "Nothing has been sent. The person approves or declines it on the card."
-}
-```
-
-`attachment` is absent or complete (it has text); words and reason are non-empty; an attachment
-holds at most 64 Ki characters — the same checks as `mate.message`. On approval the client hands it
-to its owner's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
-proposing a `mate.message` back.
+**The reverse direction — a Mate asks its owner's Chief** by message, as it asks any of its
+person's Mates (§6.10): `zerops_list_mates` names the Chief among them, `zerops_message_mate` sends
+the ask with no card, and the Chief's answer comes back as a new message. No proposal kind asks the
+Chief.
 
 **A Mate proposes in its application's environments.** In project mode, in a Mate's container
 (`ZCP_MATE_ENABLED`), `zerops_propose_service {action, project, service, reason}` (`restart` |
@@ -2266,12 +2244,17 @@ service and proposes the creation again rather than telling the person to run th
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
 (`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
-Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
-and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
+Mate, and to answer short. In a Mate's container the Chief messages its person's own Mates with
+`zerops_message_mate` (§6.10), no card: one message per Mate, several in the same turn, never waiting
+or polling; each answer wakes it as a new message, and once every asked Mate has answered it gives the
+person one summary of what each did, what is left and what waits for review. A colleague's Mate,
+which direct messages cannot reach, gets a `mate.message` proposal. A Mate's message to the Chief is
+its own run, and the answer it ends with goes back to that Mate automatically. Outside a Mate's
+container, where no message tools register, project work goes as a `mate.message` proposal. A Mate's own section (`agents_application.md`)
 names its two proposal tools for stage and production, `zerops_propose_reveal` to show the person a
 secret (never printing or pasting one), `zerops_propose_create_service` and `zerops_propose_release`
-with where a release's outcome is read, and `zerops_propose_ask_chief` for what neither its project
-nor `zerops_observe` shows. The shared section tells a Mate to connect a tool with
+with where a release's outcome is read, and asking the person's Chief with `zerops_message_mate` for
+what neither its project nor `zerops_observe` shows. The shared section tells a Mate to connect a tool with
 `zerops_propose_mcp` and never to ask the person to paste a key in chat.
 
 | ID | Invariant |
@@ -2280,7 +2263,7 @@ nor `zerops_observe` shows. The shared section tells a Mate to connect a tool wi
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
 | OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops with the registered person's kept personal token, which never enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
-| OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
+| OM-5 | A Mate asks its person's Chief only by message: `zerops_list_mates` names the peer the Mate's state names as its person's Chief, and no tool proposes asking it. `TestListMates_PersonsChiefAmongThem_IsNamedTheChief`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
@@ -2788,7 +2771,9 @@ sequenceDiagram
   else takes over a Chief whose person left or lost access, and no Owner or Admin removes another
   person's Chief: it ends when its person leaves the organisation or loses the project, or when the
   project is deleted.
-- An ordinary Mate asks its owner's Chief; only the owner decides that ask while the Chief is theirs.
+- An ordinary Mate asks its owner's Chief by message, and the Chief asks its person's own Mates the
+  same way (§6.10); a colleague's Mate, which messages cannot reach, gets a proposal its person
+  approves (§2.11).
 - Every change stays the person's: the Chief proposes, and the person's client acts with the
   person's own Zerops token after their click (§2.11).
 
@@ -4693,7 +4678,9 @@ A Mate lists its person's other Mates and asks one of them for something in its 
 click per message. "Its person's" means the same owner: both Mates' HQ records name the same,
 non-null owner in the same organisation. A Mate is never its own peer, and automated Mates are
 neither listed nor reachable. zcp lists and sends; HQ decides who may be reached, stores and
-delivers each message, and makes the answer. zcp keeps no record of a message.
+delivers each message, and makes the answer. zcp keeps no record of a message. The Chief is one of
+its person's Mates: a Mate asks it this way, and it hands project work to its person's other Mates
+this way, one message per Mate, several in one turn.
 
 **The tools.** Both register in a Mate's container that can address its HQ (a project key, a
 project and HQ's origin), the Chief's included, and neither registers anywhere else
@@ -4702,7 +4689,9 @@ project and HQ's origin), the Chief's included, and neither registers anywhere e
 - `zerops_list_mates`, no input, lists the peers: each one's name and project, a plain state and
   its `projectId`. The state is the first of these that holds: "needs an update" (it has not
   advertised `identity.messages`), "asleep" (its link to HQ is closed), "not signed in" (no login
-  of it has the owner as its present signer), else "awake".
+  of it has the owner as its present signer), else "awake". HQ's peers do not mark the person's
+  Chief, so zcp names the peer whose project the `chief` of the Mate's state (§2.8) names as "your
+  person's Chief"; no state heard marks none.
 - `zerops_message_mate` takes `{ to, words, attachmentTitle?, attachmentText? }`. `to` is a
   Mate's name, matched case-insensitively against the peers, or its `projectId`. When it
   names none or several, nothing is sent and the answer lists the candidates. Otherwise it sends

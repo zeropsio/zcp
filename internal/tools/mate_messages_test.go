@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -27,5 +28,15 @@ func TestResolvePeer_NameSeveralMatesGoBy_SendsToNone(t *testing.T) {
 	peer, refusal := resolvePeer(messagePeers, "Milo")
 	if refusal == "" || peer.ProjectID != "" {
 		t.Errorf("resolvePeer = %+v, %q; want no Mate and a refusal listing the candidates", peer, refusal)
+	}
+}
+
+// witness: internal/tools/mate_messages.go | if chief != "" && p.ProjectID == chief { → if chief != "" && p.ProjectID != chief {
+func TestListMates_PersonsChiefAmongThem_IsNamedTheChief(t *testing.T) {
+	t.Parallel()
+	for _, line := range strings.Split(listMates(messagePeers, "p-blog"), "\n")[1:] {
+		if got, want := strings.Contains(line, "Chief"), strings.HasSuffix(line, "projectId p-blog"); got != want {
+			t.Errorf("line %q names the Chief = %v, want %v", line, got, want)
+		}
 	}
 }

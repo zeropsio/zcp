@@ -583,7 +583,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet", "zerops_propose_mcp"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "Chief", "addresses sheet", "zerops_propose_mcp"},
 		},
 		{
 			name: "a Mate",
@@ -591,7 +591,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			want: []string{
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp git <host>",
-				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
+				"ask the person's Chief", "`zerops_message_mate`", "another project's logs",
 				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
 				"`zerops_propose_reveal`", "never print or paste a secret value",
 				"`zerops_propose_create_service` before the release", "`zerops_propose_release`",
@@ -1187,10 +1187,13 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 		rt        runtime.Info
 		guided    bool
 		wantPages bool
+		// wantMessages: a Mate's container messages the person's own Mates
+		// directly; elsewhere the hand-over is the card.
+		wantMessages bool
 	}{
 		{name: "local", rt: runtime.Info{Chief: true}},
 		{name: "guided is a single-project preference", rt: runtime.Info{Chief: true}, guided: true},
-		{name: "a Mate's container", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true},
+		{name: "a Mate's container", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true, wantMessages: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1206,19 +1209,23 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				"`zerops_org_propose_domain`", "DNS records",
 				"`zerops_org_propose_access`", "who has access",
 				"the person decides", "that project's Mate", "Answer short",
-				"From <Mate> in <project>:", "proposing a `mate.message` back",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("Chief section lacks %q", want)
 				}
 			}
-			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief", "zerops_org_logs", "zerops_org_env", "zerops_org_costs", "zerops_org_usage", "zerops_org_failures", "zerops_org_processes"} {
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_org_logs", "zerops_org_env", "zerops_org_costs", "zerops_org_usage", "zerops_org_failures", "zerops_org_processes"} {
 				if strings.Contains(out, leak) {
 					t.Errorf("Chief section carries single-project doctrine %q", leak)
 				}
 			}
 			if got := strings.Contains(out, "`zerops_publish_page`"); got != tc.wantPages {
 				t.Errorf("pages block = %v, want %v", got, tc.wantPages)
+			}
+			for _, direct := range []string{"`zerops_message_mate`", "no card for the person to press", "in this same turn", "Never wait, sleep or poll", "one summary", "never propose a message back"} {
+				if got := strings.Contains(out, direct); got != tc.wantMessages {
+					t.Errorf("direct messages %q = %v, want %v", direct, got, tc.wantMessages)
+				}
 			}
 		})
 	}

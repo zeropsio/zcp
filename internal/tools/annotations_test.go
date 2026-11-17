@@ -4,8 +4,6 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -725,48 +723,6 @@ func TestAnnotations_PublishPageTool(t *testing.T) {
 	}
 	if !strings.Contains(tool.Description, "above your final reply") {
 		t.Error("the description says where the person sees the page")
-	}
-}
-
-// TestAnnotations_AskChiefTool: asking the Chief changes nothing on the
-// platform, so it reads as read-only; each call is a new card, so it is not
-// idempotent.
-func TestAnnotations_AskChiefTool(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/mate/chief/proposals":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"hq-chief-offer"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(chiefHQ.Close)
-	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
-	hqtest.State(t, `{"rev":1,"projectId":"p1","appId":null,"repos":[],"changes":[],"chief":{"projectId":"chief"}}`)
-
-	t.Chdir(t.TempDir())
-	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_propose_ask_chief"]
-	if tool == nil {
-		t.Fatal("zerops_propose_ask_chief should be registered in a Mate")
-	}
-	ann := tool.Annotations
-	if ann == nil || ann.Title != "Ask your Chief" || !ann.ReadOnlyHint || ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
-		t.Fatalf("annotations = %+v, want read-only, not idempotent, not destructive", ann)
-	}
-	if words := len(strings.Fields(tool.Description)); words > 60 {
-		t.Fatalf("description has %d words (max 60)", words)
-	}
-	schema, err := json.Marshal(tool.InputSchema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, field := range []string{`"words"`, `"attachmentTitle"`, `"attachmentText"`, `"reason"`} {
-		if !strings.Contains(string(schema), field) {
-			t.Errorf("input schema lacks %s: %s", field, schema)
-		}
 	}
 }
 
