@@ -2146,7 +2146,8 @@ plain value only, `secret: false`. A running process reads a changed value only 
 is set — a service's own value's service, then the hostnames the Mate names in `restart` (the
 readers of a project value), checked against that environment's `status` as the secret ask's are —
 and `notRunning`, the named ones that run nothing now, which read it when they next start; a name
-the environment lacks is refused. The card says before the press what it restarts, adds the
+the environment lacks is refused, and so is a running service with no deployed version (a
+database, cache or storage: HQ's `status` carries no type), which reads no value. The card says before the press what it restarts, adds the
 running readers the vault's references name, restarts one at a time with the person's own access,
 and settles "KEY is in the vault · app restarted"; a failed restart offers Try again and Finish
 without restart. Both fields are optional both ways: a card older than them sets the value and

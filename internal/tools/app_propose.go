@@ -259,9 +259,12 @@ func (a observedApp) Environments(ctx context.Context) ([]ops.AppEnvironment, er
 func (a observedApp) Services(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	var out struct {
 		Services []struct {
-			ID     string `json:"id"`
-			Name   string `json:"name"`
-			Status string `json:"status"`
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			Status        string `json:"status"`
+			ActiveVersion *struct {
+				ID string `json:"id"`
+			} `json:"activeVersion"`
 		} `json:"services"`
 	}
 	if err := a.observe(ctx, hq.ObservationRequest{Action: observeStatus, ProjectID: projectID}, &out); err != nil {
@@ -269,7 +272,12 @@ func (a observedApp) Services(ctx context.Context, projectID string) ([]platform
 	}
 	services := make([]platform.ServiceStack, 0, len(out.Services))
 	for _, s := range out.Services {
-		services = append(services, platform.ServiceStack{ID: s.ID, Name: s.Name, Status: s.Status})
+		service := platform.ServiceStack{ID: s.ID, Name: s.Name, Status: s.Status}
+		// The running version: what tells an app, which runs code, from a database or storage.
+		if s.ActiveVersion != nil {
+			service.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: s.ActiveVersion.ID}
+		}
+		services = append(services, service)
 	}
 	return services, nil
 }

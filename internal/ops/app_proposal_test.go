@@ -30,6 +30,9 @@ func (a *testApp) Services(_ context.Context, projectID string) ([]platform.Serv
 	return a.services[projectID], nil
 }
 
+// deployed is a running version: the service is an app, which reads values.
+var deployed = &platform.ActiveAppVersionDigest{ID: "v1"}
+
 func newTestApp() *testApp {
 	return &testApp{
 		envs: []AppEnvironment{
@@ -37,10 +40,11 @@ func newTestApp() *testApp {
 			{ProjectID: "pProd", Name: "shop-production", Kind: "production"},
 		},
 		services: map[string][]platform.ServiceStack{
-			"pStage": {{ID: "sStageApi", Name: "api", Status: platform.ServiceStatusActive}},
+			"pStage": {{ID: "sStageApi", Name: "api", Status: platform.ServiceStatusActive, ActiveAppVersion: deployed}},
 			"pProd": {
-				{ID: "sApi", Name: "api", Status: platform.ServiceStatusActive},
+				{ID: "sApi", Name: "api", Status: platform.ServiceStatusActive, ActiveAppVersion: deployed},
 				{ID: "sWorker", Name: "worker", Status: platform.ServiceStatusStopped},
+				{ID: "sFiles", Name: "files", Status: platform.ServiceStatusActive},
 			},
 		},
 	}
@@ -153,6 +157,7 @@ func TestProposeAppAction_Refuses(t *testing.T) {
 		{name: "a bad variable name", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "1X", Value: "v", Reason: "r"}, want: "not a variable name"},
 		{name: "a service variable without the service", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "service", Key: "X", Value: "v", Reason: "r"}, want: "needs the service"},
 		{name: "a value's reader the environment lacks", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "X", Value: "v", Reason: "r", Restart: []string{"web"}}, want: "zerops_observe"},
+		{name: "a storage named as a value's reader", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "X", Value: "v", Reason: "r", Restart: []string{"files"}}, want: "runs no code of yours"},
 		{name: "a kind beyond a Mate's", in: OrgActionInput{Kind: ProposalDomainAdd, Project: "production", Service: "api", Reason: "r"}, want: "service.restart"},
 	}
 	for _, tt := range tests {

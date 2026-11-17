@@ -201,8 +201,10 @@ func SecretGenerate(expr string) (string, error) {
 // readerRestarts splits the services a changed value's card restarts — a
 // service's own value's service, then the ones named — into the running ones
 // it restarts and the ones that run nothing now (stopped, or waiting for their
-// first deploy), which read the value when they next start. A name the
-// environment lacks is refused.
+// first deploy), which read the value when they next start. Only an app reads
+// a value: a running service with no deployed version (a database, a cache,
+// storage — HQ's status carries no type) is refused when named, and left out
+// as a value's own service. A name the environment lacks is refused.
 func readerRestarts(p *orgProject, service string, named []string) ([]SecretAskService, []string, error) {
 	var (
 		restart    []SecretAskService
@@ -212,6 +214,13 @@ func readerRestarts(p *orgProject, service string, named []string) ([]SecretAskS
 		s, err := appService(p, ref)
 		if err != nil {
 			return nil, nil, err
+		}
+		if s.IsLive() && s.ActiveAppVersion == nil {
+			if strings.TrimSpace(ref) == service {
+				continue
+			}
+			return nil, nil, invalid(fmt.Sprintf("%s runs no code of yours (a database, cache or storage), so it reads no value", s.Name),
+				"Name in restart only the apps whose zerops.yaml reads the value")
 		}
 		// A restart is for a running process; one that runs nothing reads the value when it starts.
 		if !s.IsLive() {
