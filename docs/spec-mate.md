@@ -3720,8 +3720,9 @@ slice.
   the mate server beside the bearer and never reaches a client.
 - **Credentials.** A service's plain values come from the Zerops API; a value the API withholds
   from the Mate's project-scoped key (a password, a secret key) is read from the container's live
-  env store as `<hostname>_<key>`, fresh on every request, so a database added later works without
-  a restart of anything. A service whose `envIsolation` does not admit the container answers
+  env store as `<hostname>_<key>`, each time a connection to the service is built, so a database
+  added later works without a restart of anything; a withheld key the connection never reads
+  refuses nothing. A service whose `envIsolation` does not admit the container answers
   `no_credentials` (`spec-dataconsole.md` §7.2), naming the service, never a value.
 - **Two hosts, two processes.** The Zerops Studio extension keeps spawning its own console for the
   code-server surface. Nothing is shared between them — not the process, not the port, not the

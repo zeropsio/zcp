@@ -215,6 +215,31 @@ func TestAdapter_ConnectionInfo_ValueTheAPIWithholds_IsReadFromTheContainersEnvS
 	}
 }
 
+// witness: internal/dataconsole/zcpadapter/adapter.go | if len(vars.missing) > 0 { → if len(vars.absent) > 0 {
+func TestAdapter_ConnectionInfo_WithheldKeyTheConnectionNeverReads_RefusesNothing(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{service("ms-id", "search", "meilisearch@1.44")}).
+		WithServiceEnv("ms-id", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "hostname", Content: "search"},
+			{ID: "e2", Key: "port", Content: "7700"},
+			{ID: "e3", Key: "masterKey", Content: platform.MaskedEnvValue, Sensitive: true},
+			{ID: "e4", Key: "defaultSearchKey", Content: platform.MaskedEnvValue, Sensitive: true},
+		})
+	adapter := New(client, &auth.Info{ProjectID: "p", ProjectName: "proj"})
+	adapter.env = storeOf(map[string]string{"search_masterKey": "m4ster"})
+	if _, err := adapter.ManagedServices(context.Background()); err != nil {
+		t.Fatalf("ManagedServices: %v", err)
+	}
+	info, err := adapter.ConnectionInfo(context.Background(), "ms-id")
+	if err != nil {
+		t.Fatalf("ConnectionInfo = %v, want the connection: defaultSearchKey is withheld and absent, but the connection reads masterKey", err)
+	}
+	if conn, ok := info.Descriptor.(provider.DocumentConn); !ok || conn.APIKey != "m4ster" {
+		t.Fatalf("descriptor = %#v, want the store's masterKey", info.Descriptor)
+	}
+}
+
 // witness: internal/dataconsole/zcpadapter/adapter.go | if !found { → if found {
 func TestAdapter_ConnectionInfo_ServiceThatDoesNotShareItsVariables_AnswersNoCredentialsNamingServiceAndKey(t *testing.T) {
 	t.Parallel()

@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 
@@ -94,9 +95,10 @@ func (a *Adapter) ManagedServices(ctx context.Context) ([]console.ManagedService
 // The API answers a sensitive value (a password, a secret key) as masked to a
 // project-scoped key; the container's live env store holds it as
 // <hostname>_<key> when the service's envIsolation admits this container, so
-// each withheld key is read there, fresh on every call. A withheld key the
-// store lacks is ErrNoCredentials; the error names the service and the keys,
-// never a value.
+// each withheld key is read there, fresh on every call. A value the
+// connection needs that neither holds is ErrNoCredentials; a withheld key the
+// connection never reads (Meilisearch's search keys) refuses nothing. The
+// error names the service and the keys, never a value.
 func (a *Adapter) ConnectionInfo(ctx context.Context, serviceID string) (console.ConnectionInfo, error) {
 	envs, err := ops.FetchServiceEnv(ctx, a.client, serviceID)
 	if err != nil {
@@ -110,24 +112,24 @@ func (a *Adapter) ConnectionInfo(ctx context.Context, serviceID string) (console
 	if !ok {
 		host = serviceID
 	}
-	var absent []string
+	vars := connVars{values: scalars, absent: map[string]bool{}}
 	for _, key := range masked {
 		v, found, err := a.env(host + "_" + key)
 		if err != nil {
 			return console.ConnectionInfo{}, fmt.Errorf("read %s's %s from the container's env: %w: %w", host, key, provider.ErrUpstream, err)
 		}
 		if !found {
-			absent = append(absent, key)
+			vars.absent[key] = true
 			continue
 		}
 		scalars[key] = v
 	}
-	if len(absent) > 0 {
-		return console.ConnectionInfo{}, fmt.Errorf("%s does not share %s with this container: %w", host, strings.Join(absent, ", "), provider.ErrNoCredentials)
-	}
-	desc, err := descriptorFor(typ, scalars)
+	desc, err := descriptorFor(typ, &vars)
 	if err != nil {
 		return console.ConnectionInfo{}, fmt.Errorf("%w: %w", provider.ErrUnsupported, err)
+	}
+	if len(vars.missing) > 0 {
+		return console.ConnectionInfo{}, fmt.Errorf("%s does not share %s with this container: %w", host, strings.Join(vars.missing, ", "), provider.ErrNoCredentials)
 	}
 	return console.ConnectionInfo{
 		Type:       typ,
@@ -136,34 +138,34 @@ func (a *Adapter) ConnectionInfo(ctx context.Context, serviceID string) (console
 	}, nil
 }
 
-func descriptorFor(serviceType string, s map[string]string) (provider.ConnectionDescriptor, error) {
+func descriptorFor(serviceType string, s *connVars) (provider.ConnectionDescriptor, error) {
 	base := provider.BaseType(serviceType)
 	switch provider.Classify(serviceType) {
 	case provider.FamilyObject:
 		return provider.ObjectConn{
-			Endpoint:  s["apiHost"],
-			AccessKey: s["accessKeyId"],
-			SecretKey: s["secretAccessKey"],
-			Bucket:    s["bucketName"],
-			Secure:    strings.HasPrefix(strings.ToLower(s["apiUrl"]), "https"),
+			Endpoint:  s.get("apiHost"),
+			AccessKey: s.get("accessKeyId"),
+			SecretKey: s.get("secretAccessKey"),
+			Bucket:    s.get("bucketName"),
+			Secure:    strings.HasPrefix(strings.ToLower(s.get("apiUrl")), "https"),
 		}, nil
 	case provider.FamilyTabular:
 		return sqlDescriptor(base, s)
 	case provider.FamilyKV:
 		return provider.KVConn{
-			Host:     s["hostname"],
-			Port:     s["port"],
-			Password: s["password"],
+			Host:     s.get("hostname"),
+			Port:     s.get("port"),
+			Password: s.get("password"),
 		}, nil
 	case provider.FamilyDocument:
 		return documentDescriptor(base, s)
 	case provider.FamilyStream:
 		return provider.StreamConn{
 			Engine:   base,
-			Host:     s["hostname"],
-			Port:     s["port"],
-			User:     firstScalar(s, "user", "username"),
-			Password: firstScalar(s, "password"),
+			Host:     s.get("hostname"),
+			Port:     s.get("port"),
+			User:     s.get("user", "username"),
+			Password: s.get("password"),
 		}, nil
 	case provider.FamilyFile, provider.FamilyUnknown:
 		return nil, fmt.Errorf("unsupported connection type %q", serviceType)
@@ -172,14 +174,14 @@ func descriptorFor(serviceType string, s map[string]string) (provider.Connection
 	}
 }
 
-func sqlDescriptor(base string, s map[string]string) (provider.SQLConn, error) {
+func sqlDescriptor(base string, s *connVars) (provider.SQLConn, error) {
 	conn := provider.SQLConn{
 		Dialect:  base,
-		Host:     s["hostname"],
-		Port:     s["port"],
-		User:     s["user"],
-		Password: s["password"],
-		Database: s["dbName"],
+		Host:     s.get("hostname"),
+		Port:     s.get("port"),
+		User:     s.get("user"),
+		Password: s.get("password"),
+		Database: s.get("dbName"),
 	}
 	switch base {
 	case "postgresql":
@@ -191,8 +193,8 @@ func sqlDescriptor(base string, s map[string]string) (provider.SQLConn, error) {
 		}
 	case "clickhouse":
 		conn.Driver = "clickhouse"
-		conn.Port = firstScalar(s, "portNative", "port")
-		conn.User = firstScalar(s, "user", "superUser")
+		conn.Port = s.get("portNative", "port")
+		conn.User = s.get("user", "superUser")
 		if conn.User == "" {
 			conn.User = "zerops"
 		}
@@ -205,34 +207,53 @@ func sqlDescriptor(base string, s map[string]string) (provider.SQLConn, error) {
 	return conn, nil
 }
 
-func documentDescriptor(base string, s map[string]string) (provider.DocumentConn, error) {
+func documentDescriptor(base string, s *connVars) (provider.DocumentConn, error) {
 	conn := provider.DocumentConn{
 		Engine:  base,
-		BaseURL: "http://" + net.JoinHostPort(s["hostname"], s["port"]),
+		BaseURL: "http://" + net.JoinHostPort(s.get("hostname"), s.get("port")),
 	}
 	switch base {
 	case "elasticsearch":
-		conn.User = firstScalar(s, "user", "username")
+		conn.User = s.get("user", "username")
 		if conn.User == "" {
 			conn.User = "elastic"
 		}
-		conn.APIKey = firstScalar(s, "password", "elasticPassword")
+		conn.APIKey = s.get("password", "elasticPassword")
 	case "meilisearch":
-		conn.APIKey = firstScalar(s, "masterKey", "defaultAdminKey", "apiKey", "password")
+		conn.APIKey = s.get("masterKey", "defaultAdminKey", "apiKey", "password")
 	case "typesense":
-		conn.APIKey = firstScalar(s, "apiKey", "adminApiKey", "password")
+		conn.APIKey = s.get("apiKey", "adminApiKey", "password")
 	case "qdrant":
-		conn.APIKey = firstScalar(s, "apiKey", "password")
+		conn.APIKey = s.get("apiKey", "password")
 	default:
 		return provider.DocumentConn{}, fmt.Errorf("unsupported document type %q", base)
 	}
 	return conn, nil
 }
 
-func firstScalar(s map[string]string, keys ...string) string {
+// connVars are a service's variables as its connection reads them: the API's
+// plain values with the withheld ones the env store holds filled in (values),
+// and the withheld keys it does not hold (absent).
+type connVars struct {
+	values map[string]string
+	absent map[string]bool
+	// missing are the absent keys a read needed: a read that found no value
+	// among keys a withheld key could have answered.
+	missing []string
+}
+
+// get is the first non-empty value of keys, a connection field's fallback
+// order. One that finds none while an absent withheld key could have
+// answered records those keys as missing.
+func (s *connVars) get(keys ...string) string {
 	for _, k := range keys {
-		if v := s[k]; v != "" {
+		if v := s.values[k]; v != "" {
 			return v
+		}
+	}
+	for _, k := range keys {
+		if s.absent[k] && !slices.Contains(s.missing, k) {
+			s.missing = append(s.missing, k)
 		}
 	}
 	return ""
