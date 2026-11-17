@@ -145,28 +145,34 @@ func chiefRefusal(read string, err error) error {
 	if !errors.As(err, &refused) {
 		return err
 	}
-	switch {
-	case refused.Code == "credential_required":
-		return &platform.PlatformError{
-			Code:       platform.ErrPrerequisiteMissing,
-			Message:    fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: it holds no personal token of theirs that Zerops takes (%v)", read, err),
-			Suggestion: "Tell your person to sign in to Mate once; HQ then keeps their token and the read works",
-			Cause:      err,
-		}
-	case refused.Code == "forbidden" && refused.Reason == "not_chief":
-		return &platform.PlatformError{
-			Code:       platform.ErrPermissionDenied,
-			Message:    fmt.Sprintf("HQ read nothing: this project is no person's Chief now (%v)", err),
-			Suggestion: "A person registers this project as their Chief in Mate",
-			Cause:      err,
-		}
-	case refused.Code == "forbidden" && refused.Reason != "":
-		return &platform.PlatformError{
-			Code:       platform.ErrPermissionDenied,
-			Message:    fmt.Sprintf("HQ read nothing: this Chief's person may not operate it now (%v)", err),
-			Suggestion: "Your person needs Basic user or more on this project, as an active member of the organisation; an Admin gives it",
-			Cause:      err,
-		}
+	var words, suggestion string
+	code := platform.ErrPermissionDenied
+	switch refused.Code + " " + refused.Reason {
+	case "credential_required personal_token_missing":
+		code = platform.ErrPrerequisiteMissing
+		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: it keeps no personal token of theirs", read)
+		suggestion = "Tell your person to sign in to Mate once; HQ then keeps their token and the read works"
+	case "credential_required personal_token_refused":
+		code = platform.ErrPrerequisiteMissing
+		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: Zerops refused the personal token HQ keeps for them", read)
+		suggestion = "Tell your person to sign in to Mate again; that replaces the token HQ keeps"
+	case "credential_required held":
+		code = platform.ErrPrerequisiteMissing
+		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: HQ holds the organisation", read)
+		suggestion = "Tell your person to sign in to Mate once, as HQ asks for a held organisation"
+	case "forbidden not_chief":
+		words = "HQ read nothing: this project is no person's Chief now"
+		suggestion = "A person registers this project as their Chief in Mate"
+	case "forbidden not_mate_operator":
+		words = "HQ read nothing: this Chief's person is below Basic user on this project"
+		suggestion = "An Admin gives your person Basic user or more on this project"
+	case "forbidden not_active_member":
+		words = "HQ read nothing: this Chief's person is not an active member of the organisation"
+		suggestion = "An Admin of the organisation makes your person an active member again"
+	case "forbidden project_gone":
+		words = "HQ read nothing: this Chief's project is gone in Zerops"
+	default:
+		return err
 	}
-	return err
+	return &platform.PlatformError{Code: code, Message: fmt.Sprintf("%s (%v)", words, err), Suggestion: suggestion, Cause: err}
 }
