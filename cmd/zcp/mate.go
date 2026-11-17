@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/update"
 )
 
 // statusManifestTimeout bounds `zcp mate status`'s manifest fetch — a small
@@ -20,10 +22,11 @@ import (
 const statusManifestTimeout = 5 * time.Second
 
 // runMateCmd implements `zcp mate status [--json] [--local]`,
-// `zcp mate update [--json] [--automatic]`, and `zcp mate fuse`, the keep job
-// its systemd units run (mate_fuse.go). args is everything after "mate".
+// `zcp mate update [--json] [--automatic]`, `zcp mate pin`, the dev pin's one
+// writer, and `zcp mate fuse`, the keep job its systemd units run
+// (mate_fuse.go). args is everything after "mate".
 func runMateCmd(args []string) int {
-	const usage = "usage: zcp mate <status|update> [--json] [--local] [--automatic]"
+	const usage = "usage: zcp mate <status|update> [--json] [--local] [--automatic] | zcp mate pin [--for <duration> --reason <text> | --end]"
 	if len(args) == 0 {
 		log.Print(usage)
 		return 1
@@ -37,6 +40,8 @@ func runMateCmd(args []string) int {
 		return runMateStatus(args[1:])
 	case "update":
 		return runMateUpdate(args[1:])
+	case "pin":
+		return runMatePin(args[1:])
 	case "fuse":
 		return runMateFuse(args[1:])
 	default:
@@ -69,6 +74,7 @@ type mateStatusResult struct {
 	ZCP             zcpReleaseStatus   `json:"zcp"`
 	RestartNeeded   bool               `json:"restartNeeded"`
 	Why             string             `json:"why,omitempty"`
+	DevPin          *mate.DevPin       `json:"devPin,omitempty"`
 }
 
 // mateUpdaterStatus is the status's "updater" key (§2.1d), in the shape the
@@ -111,6 +117,7 @@ func readMateStatus(zcpVersion string, local bool) mateStatusResult {
 	}
 	versions := mate.ReadVersions()
 	result.Installed = versions.Current
+	result.DevPin = versions.DevPin
 	if result.Installed != "" {
 		result.BelowFloor = mate.BelowFloor(result.Installed)
 		result.Updater = &mateUpdaterStatus{Protocol: 1, Phase: "idle", RunningVersion: result.Installed}
@@ -121,7 +128,7 @@ func readMateStatus(zcpVersion string, local bool) mateStatusResult {
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	zcpRelease := startZCPReleaseLookup(ctx, zcpVersion, local)
+	zcpRelease := startZCPReleaseLookup(ctx, zcpVersion, local, versions.DevPin != nil)
 	var desired mate.Manifest
 	var err error
 	if local {
@@ -166,12 +173,113 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 	default:
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
 	}
+	devZCP := !update.IsRelease(result.ZCP.Installed)
 	switch {
 	case result.ZCP.Behind:
 		fmt.Fprintf(os.Stdout, "zcp: installed %s, %s available; a restart installs it\n", result.ZCP.Installed, result.ZCP.Latest)
-	case result.RestartNeeded:
+	case devZCP:
+		latest := result.ZCP.Latest
+		if latest == "" {
+			latest = "unknown"
+		}
+		fmt.Fprintf(os.Stdout, "zcp: installed %s (dev build), latest %s\n", result.ZCP.Installed, latest)
+	}
+	if result.RestartNeeded && !result.ZCP.Behind {
 		fmt.Fprintf(os.Stdout, "restart needed: %s\n", result.Why)
 	}
+	if devZCP || mate.IsDevVersion(result.Installed) {
+		fmt.Fprintln(os.Stdout, devPinLine(result.DevPin))
+	}
+}
+
+// devPinLine says what keeps the installed dev builds (docs/spec-mate.md
+// §2.1a): the active pin, or the rule that replaces them without one.
+func devPinLine(pin *mate.DevPin) string {
+	if pin == nil {
+		return "no dev pin: a release newer than a dev build's base replaces it"
+	}
+	return fmt.Sprintf("dev builds pinned until %s (since %s): %s", pin.Until.Format(time.RFC3339), pin.Since.Format(time.RFC3339), pin.Reason)
+}
+
+// runMatePin implements `zcp mate pin`, the dev pin's one writer
+// (docs/spec-mate.md §2.1a): with --reason (and --for, DevPinDefault without
+// it) it places the pin in place of any earlier one, with --end it removes it,
+// and with neither it shows the active one. A refused pin exits 1 and writes
+// nothing. Container-only, with ZCP_MATE_ENABLED on.
+func runMatePin(args []string) int {
+	const usage = "usage: zcp mate pin [--for <duration> --reason <text> | --end]"
+	if slices.ContainsFunc(args, isHelpArg) {
+		fmt.Fprintln(os.Stdout, usage)
+		return 0
+	}
+	values := map[string]string{}
+	end := false
+	for rest := args; len(rest) > 0; rest = rest[1:] {
+		switch arg := rest[0]; arg {
+		case "--end":
+			end = true
+		case "--for", "--reason":
+			if len(rest) == 1 {
+				fmt.Fprintf(os.Stderr, "%s needs a value\n%s\n", arg, usage)
+				return 2
+			}
+			rest = rest[1:]
+			values[arg] = rest[0]
+		default:
+			fmt.Fprintf(os.Stderr, "unknown argument %q\n%s\n", arg, usage)
+			return 2
+		}
+	}
+	if end && len(values) > 0 {
+		fmt.Fprintf(os.Stderr, "--end takes no --for or --reason\n%s\n", usage)
+		return 2
+	}
+
+	rt := runtime.Detect()
+	if !rt.InContainer {
+		fmt.Fprintln(os.Stderr, "zcp mate pin only runs inside a Zerops container")
+		return 1
+	}
+	if !rt.MateEnabled {
+		fmt.Fprintln(os.Stderr, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
+		return 1
+	}
+
+	switch {
+	case end:
+		if err := mate.RemoveDevPin(); err != nil {
+			fmt.Fprintf(os.Stderr, "mate pin: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, devPinLine(nil))
+		return 0
+	case len(values) == 0:
+		if pin, ok := mate.ActiveDevPin(time.Now()); ok {
+			fmt.Fprintln(os.Stdout, devPinLine(&pin))
+		} else {
+			fmt.Fprintln(os.Stdout, "no dev pin")
+		}
+		return 0
+	}
+	d := mate.DevPinDefault
+	if raw, ok := values["--for"]; ok {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mate pin: --for %q is not a duration (e.g. 24h, 90m)\n", raw)
+			return 1
+		}
+		d = parsed
+	}
+	pin, err := mate.NewDevPin(time.Now(), d, values["--reason"])
+	if err == nil {
+		err = mate.WriteDevPin(pin)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mate pin: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(os.Stdout, devPinLine(&pin))
+	return 0
 }
 
 // mateUpdateResult is `zcp mate update --json`'s answer (MD-17).

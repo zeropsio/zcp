@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -32,15 +33,12 @@ type zcpReleaseStatus struct {
 // beside the manifest read and returns the wait for the "zcp" key; local
 // answers from the release last read instead, without a network call. Latest
 // stays "" when the release is unknown (offline, refused, nothing read yet
-// under local), and for a build no release names (update.IsRelease): a dev
-// build is compared with nothing and never sent to the network, since a
-// restart would replace it.
-func startZCPReleaseLookup(ctx context.Context, installed string, local bool) func() zcpReleaseStatus {
+// under local). A build no release names (update.IsRelease) is read the same
+// way and is behind only when pinned is false (no active dev pin) and its
+// base is older than latest (docs/spec-mate.md §2.1a).
+func startZCPReleaseLookup(ctx context.Context, installed string, local, pinned bool) func() zcpReleaseStatus {
 	if installed == "" {
 		installed = "dev"
-	}
-	if !update.IsRelease(installed) {
-		return func() zcpReleaseStatus { return zcpReleaseStatus{Installed: installed} }
 	}
 	done := make(chan zcpReleaseStatus, 1)
 	go func() {
@@ -51,9 +49,24 @@ func startZCPReleaseLookup(ctx context.Context, installed string, local bool) fu
 		} else if tag, err := checker.Latest(ctx); err == nil {
 			latest = tag
 		}
-		done <- zcpReleaseStatus{Installed: installed, Latest: latest, Behind: update.Behind(installed, latest)}
+		done <- zcpReleaseStatus{Installed: installed, Latest: latest, Behind: zcpBehind(installed, latest, pinned)}
 	}()
 	return func() zcpReleaseStatus { return <-done }
+}
+
+// zcpBehind is whether a restart, which installs latest, would replace
+// installed: a release older than latest, or a dev build with no active dev
+// pin whose base (its version up to the first "-") is older than latest or
+// is no release at all.
+func zcpBehind(installed, latest string, pinned bool) bool {
+	if update.IsRelease(installed) {
+		return update.Behind(installed, latest)
+	}
+	if pinned || !update.IsRelease(latest) {
+		return false
+	}
+	base, _, _ := strings.Cut(installed, "-")
+	return !update.IsRelease(base) || update.Behind(base, latest)
 }
 
 // mateWithoutUpdater reports whether the running Mate proved it predates

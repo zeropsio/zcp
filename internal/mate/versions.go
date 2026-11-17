@@ -6,14 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The versions a container holds, and the one choice made from them
 // (docs/spec-mate.md §2.1a). Every fact lives under Prefix(): `current` names
 // the version the unit starts, `last-good` the newest version that came up
 // under this zcp, `failed-version` the newest version that did not, versions/<v>
-// the downloaded versions, and manifest.json the release list as last read. The start job
-// (Start) is the one writer of the two links and the failed version.
+// the downloaded versions, manifest.json the release list as last read, and
+// dev-pin.json the dev pin (devpin.go). The start job (Start) is the one writer
+// of the two links and the failed version.
 
 // LastGoodLink names the newest version that came up under this zcp.
 func LastGoodLink() string { return filepath.Join(Prefix(), "last-good") }
@@ -22,21 +24,26 @@ func LastGoodLink() string { return filepath.Join(Prefix(), "last-good") }
 func FailedVersionPath() string { return filepath.Join(Prefix(), "failed-version") }
 
 // Versions is what a container holds about which Mate runs. An empty field is
-// a fact that is not there: nothing installed, nothing came up, nothing failed.
+// a fact that is not there: nothing installed, nothing came up, nothing failed,
+// no active dev pin.
 type Versions struct {
 	Current  string
 	LastGood string
 	Failed   string
+	DevPin   *DevPin
 }
 
-// ReadVersions reads the versions the container holds. A link or record that
-// cannot be read is one that is not there.
+// ReadVersions reads the versions the container holds and the dev pin active
+// now. A link or record that cannot be read is one that is not there.
 func ReadVersions() Versions {
 	var v Versions
 	v.Current, _ = InstalledVersion()
 	v.LastGood, _ = LastGoodVersion()
 	if raw, err := os.ReadFile(FailedVersionPath()); err == nil {
 		v.Failed = strings.TrimSpace(string(raw))
+	}
+	if pin, ok := ActiveDevPin(time.Now()); ok {
+		v.DevPin = &pin
 	}
 	return v
 }
@@ -49,10 +56,11 @@ func ReadVersions() Versions {
 // moves current back: a release list that is missing or goes backwards
 // changes nothing, and a current newer than last-good runs and is judged by
 // its start, whose verdict alone returns it to last-good (Start.down). A dev
-// build at or above MinimumMateVersion in current is kept as it is
-// (eval/scripts/mate-dev-push.sh). "" when nothing is installed.
+// build at or above MinimumMateVersion in current (eval/scripts/mate-dev-push.sh)
+// is kept under an active dev pin, and without one until latest is newer than
+// its base; from then the rule above decides. "" when nothing is installed.
 func VersionToRun(v Versions, latest string) string {
-	if IsDevVersion(v.Current) && !BelowFloor(v.Current) {
+	if IsDevVersion(v.Current) && !BelowFloor(v.Current) && (v.DevPin != nil || !releaseNewerThanBase(latest, v.Current)) {
 		return v.Current
 	}
 	if latest != "" && newerThan(latest, v.LastGood) && newerThan(latest, v.Failed) && !VersionOlder(latest, v.Current) {
@@ -62,6 +70,20 @@ func VersionToRun(v Versions, latest string) string {
 		return v.LastGood
 	}
 	return v.Current
+}
+
+// releaseNewerThanBase says the release latest is newer than the base of the
+// dev build dev, its version up to the first "-"; a base that is no version
+// is older than every release, and an unknown latest is newer than nothing.
+func releaseNewerThanBase(latest, dev string) bool {
+	if latest == "" {
+		return false
+	}
+	base, _, _ := strings.Cut(dev, "-")
+	if _, err := parseSemver(base); err != nil {
+		return true
+	}
+	return VersionOlder(base, latest)
 }
 
 // newerThan says version is newer than other; every version is newer than none.

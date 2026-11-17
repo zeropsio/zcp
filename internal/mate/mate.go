@@ -243,7 +243,8 @@ func packageIn(dir string) string { return filepath.Join(dir, "node_modules", Pa
 // the start job last activated, with no version check and no network in the
 // common case: that is what keeps a warm restart off the network, and what
 // makes the hand-delivered dev build (eval/scripts/mate-dev-push.sh, which
-// repoints CurrentLink() itself) and a fetched release one code path.
+// pins it and repoints CurrentLink() itself) and a fetched release one code
+// path.
 func BinPath() string { return binIn(CurrentLink()) }
 
 // EnvFilePath is where `zcp init` writes the environment contract. Deliberately
@@ -405,7 +406,8 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 // carrying a "-", e.g. "0.1.0-dev.a1b2c3" (the tag
 // eval/scripts/mate-dev-push.sh builds: <package version>-dev.<git sha>). That
 // is what distinguishes a hand-pushed dev build from a tagged release:
-// VersionToRun keeps one unless its base release is below MinimumMateVersion.
+// VersionToRun keeps one under an active dev pin, or until a release newer
+// than its base is out, unless its base is below MinimumMateVersion.
 func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
 
 // BelowFloor reports whether v, a release or a dev build, is older than

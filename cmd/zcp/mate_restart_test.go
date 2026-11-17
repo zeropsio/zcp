@@ -113,7 +113,7 @@ func checkRestart(t *testing.T, got mateStatusJSON, wantRestart bool, wantWhy st
 // reports this zcp, against the release install.sh installs, read from its
 // source on every status; --local answers from the release an earlier status
 // read. An unknown release reads latest "" and behind false, and a dev build
-// is compared with nothing.
+// with no dev pin is behind any release newer than its base.
 func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 	type zcpWant struct {
 		installed, latest string
@@ -136,8 +136,8 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
 		{"local with nothing read is unknown", "v9.220.0", "", "v9.227.0", []string{"--json", "--local"},
 			zcpWant{"v9.220.0", "", false}, false, "", 0},
-		{"dev build is compared with nothing", "dev", "v9.226.0", "v9.227.0", []string{"--json"},
-			zcpWant{"dev", "", false}, false, "", 0},
+		{"unpinned dev build is behind a release", "dev", "v9.226.0", "v9.227.0", []string{"--json"},
+			zcpWant{"dev", "v9.227.0", true}, true, "zcp v9.227.0 is out; a restart installs it", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

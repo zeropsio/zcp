@@ -150,7 +150,8 @@ func TestBinPath_ResolvesThroughCurrentLink(t *testing.T) {
 }
 
 // TestIsDevVersion: any prerelease is a dev build, which the version to run
-// keeps and last-good never names.
+// keeps under a dev pin or until a release newer than its base, and last-good
+// never names.
 // witness: internal/mate/mate.go | func IsDevVersion(v string) bool { return strings.Contains(v, "-") } → func IsDevVersion(v string) bool { return strings.Contains(v, "-dev") }
 func TestIsDevVersion(t *testing.T) {
 	tests := []struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/update"
 )
 
 // `zcp mate fuse` is the keep job (docs/spec-mate.md §2.1d): it decides when the
@@ -29,8 +30,10 @@ import (
 //     downloaded, and the server is asked whether it may restart now. Yes: the
 //     unit restarts. A version that cannot be staged fails the run, after
 //     step 3.
-//  3. A newer zcp is out, read from its source on every run: the same question.
-//     Yes: the container restarts, once per zcp release.
+//  3. A newer zcp is out, read from its source on every run (for a dev zcp:
+//     no active dev pin and a release newer than its base): the same
+//     question. Yes: the container restarts, once per installed zcp and
+//     release.
 //
 // --automatic asks with the organization's policy, whether or not the Mate has
 // an HQ link; --attended (a person's or an operator's update) asks without it.
@@ -46,9 +49,18 @@ var mateFuseRestartGrace = 5 * time.Minute
 const mateUnit = "zerops@" + mate.UnitName + ".service"
 
 // mateFuseRecord is the keep job's own memory: the zcp release it already
-// restarted the container for (one attempt per release).
+// restarted the container for, and the zcp installed then (one attempt per
+// installed zcp and release: a dev zcp placed after an attempt for the same
+// release is still replaced once its pin ends).
 type mateFuseRecord struct {
-	ZCPRestartedFor string `json:"zcpRestartedFor,omitempty"`
+	ZCPRestartedFor  string `json:"zcpRestartedFor,omitempty"`
+	ZCPRestartedFrom string `json:"zcpRestartedFrom,omitempty"`
+}
+
+// tried says the keep job already restarted the container for zcp's latest
+// release from the zcp installed now.
+func (r mateFuseRecord) tried(zcp zcpReleaseStatus) bool {
+	return r.ZCPRestartedFor == zcp.Latest && r.ZCPRestartedFrom == zcp.Installed
 }
 
 func mateFuseRecordPath() string { return filepath.Join(mate.Prefix(), "fuse.json") }
@@ -93,7 +105,8 @@ func runMateFuse(args []string) int {
 	// zcp is what repairs a staging defect, and where nobody can reach the
 	// container this run is the only way it arrives. The run still fails.
 	unstaged := ""
-	if run := mate.VersionToRun(mate.ReadVersions(), release.Version); run != "" && run != running {
+	versions := mate.ReadVersions()
+	if run := mate.VersionToRun(versions, release.Version); run != "" && run != running {
 		if err := stageMate(run, release); err != nil {
 			fmt.Fprintf(os.Stderr, "mate keep: stage Mate %s: %v; checking zcp all the same\n", run, err)
 			unstaged = run
@@ -105,19 +118,34 @@ func runMateFuse(args []string) int {
 	// The same for zcp's own release, bounded as a status read.
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	zcp := startZCPReleaseLookup(ctx, server.Version, false)()
-	if zcp.Behind && rec.ZCPRestartedFor != zcp.Latest {
+	zcp := startZCPReleaseLookup(ctx, server.Version, false, versions.DevPin != nil)()
+	if zcp.Behind && !rec.tried(zcp) {
 		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
 			return code
 		}
 		return 1
 	}
+	dev := devBuildsLine(versions, zcp)
 	if unstaged != "" {
-		fmt.Fprintf(os.Stderr, "mate keep: Mate %s keeps running, %s is not staged; zcp %s (latest %q)\n", running, unstaged, zcp.Installed, zcp.Latest)
+		fmt.Fprintf(os.Stderr, "mate keep: Mate %s keeps running, %s is not staged; zcp %s (latest %q)%s\n", running, unstaged, zcp.Installed, zcp.Latest, dev)
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "mate keep: Mate %s runs the version to run; zcp %s (latest %q)\n", running, zcp.Installed, zcp.Latest)
+	fmt.Fprintf(os.Stderr, "mate keep: Mate %s runs the version to run; zcp %s (latest %q)%s\n", running, zcp.Installed, zcp.Latest, dev)
 	return 0
+}
+
+// devBuildsLine ends a run's last line with what keeps the installed dev
+// builds (docs/spec-mate.md §2.1a): the active pin, or the rule that keeps an
+// unpinned one. "" with no dev build installed.
+func devBuildsLine(versions mate.Versions, zcp zcpReleaseStatus) string {
+	switch {
+	case update.IsRelease(zcp.Installed) && !mate.IsDevVersion(versions.Current):
+		return ""
+	case versions.DevPin != nil:
+		return fmt.Sprintf("; dev builds pinned until %s: %s", versions.DevPin.Until.Format(time.RFC3339), versions.DevPin.Reason)
+	default:
+		return "; dev build stays: no release is newer than its base"
+	}
 }
 
 // mateUnitRunning says systemd runs the Mate's unit: active, starting,
@@ -199,26 +227,29 @@ func restartMateUnit() error {
 // restart's initCommands install it, then the Mate's start job starts the
 // newest Mate. The running Mate first agrees, as for its own restart.
 func restartForZCP(unlock func(), rec mateFuseRecord, zcp zcpReleaseStatus, running string, automatic bool, lookup func(string) string) int {
-	fmt.Fprintf(os.Stderr, "mate keep: zcp %s is out (installed %s); asking to restart the container\n", zcp.Latest, zcp.Installed)
+	installed := zcp.Installed
+	if !update.IsRelease(installed) {
+		installed += ", a dev build with no pin"
+	}
+	fmt.Fprintf(os.Stderr, "mate keep: zcp %s is out (installed %s); asking to restart the container\n", zcp.Latest, installed)
 	if !askRestart(running, automatic) {
 		return 0
 	}
 	unlock()
-	tried := rec.ZCPRestartedFor
-	rec.ZCPRestartedFor = zcp.Latest
+	before := rec
+	rec.ZCPRestartedFor, rec.ZCPRestartedFrom = zcp.Latest, zcp.Installed
 	code := writeMateFuseRecord(rec)
 	if code == 0 {
 		code = runSelfCmd([]string{"restart"}, os.Stderr, lookup, newSelfRestartClient)
 		if code != 0 {
-			rec.ZCPRestartedFor = tried
-			_ = writeMateFuseRecord(rec)
+			_ = writeMateFuseRecord(before)
 		}
 	}
 	if code == 0 {
 		// An accepted request is not a restart that happened: the container's
 		// restart kills this process within the grace; still alive after it, the
 		// restart never came and the Mate admits work again. The record keeps
-		// the release: one attempt per release.
+		// the attempt: one per installed zcp and release.
 		time.Sleep(mateFuseRestartGrace)
 		fmt.Fprintf(os.Stderr, "mate keep: the container did not restart within %s\n", mateFuseRestartGrace)
 	}
