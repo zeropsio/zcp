@@ -368,8 +368,29 @@ job: the release the release list names when it is newer than `last-good`, newer
 version and not older than `current`; otherwise `current`, or `last-good` when `current` is missing or
 older. It never moves `current` back: a release list that is missing or goes backwards changes
 nothing, and a `current` newer than `last-good` (a start that was cut short, or an update the previous
-zcp left) runs and is judged; only that verdict returns it to `last-good`, never below `MinimumMateVersion` (step 4). A dev build in `current` (`0.1.0-dev.<sha>`, what
-`eval/scripts/mate-dev-push.sh` installs) at or above `MinimumMateVersion` is kept as it is.
+zcp left) runs and is judged; only that verdict returns it to `last-good`, never below `MinimumMateVersion` (step 4). A dev build in `current` (`<base>-dev.<sha>`, what
+`eval/scripts/mate-dev-push.sh` installs) at or above `MinimumMateVersion` is kept while a dev pin is
+active, and without one only until the release list names a release newer than its base; from then
+the rule above decides, as for any `current`.
+
+**The dev pin** (`~/.zcp/mate/dev-pin.json`, `{since, until, reason}` in RFC 3339 UTC) is the one
+permission for a hand-placed build to stay. There is one per container, covering every dev build in
+it: a dev Mate in `current` and a zcp binary no release names (a dev or git-describe build).
+`zcp mate pin --for <duration> --reason <text>` places it (`--for` defaults to 24 h and is at most
+7 days, longer is refused; the reason is required; placing it again replaces the record, `since`
+now), `zcp mate pin --end` removes it and `zcp mate pin` shows it; nothing else writes it. It is
+active while the file reads and `until` is in the future; an ended, missing or unreadable pin is no
+pin. Only its time or `--end` ends it: an update press, `zcp mate update` and a restart of the Mate
+do not, and ending it does not by itself return to a release. A dev build's **base** is its version
+up to the first `-` (`v9.256.0-16-g14dcbe7d5` → `v9.256.0`, `0.16.211-dev.959f81` → `0.16.211`); a
+base that is not a release (bare `dev`, a commit) is older than every release. Under an active pin
+every dev build stays; without one a dev build stays only until a release newer than its base is
+known, and then has no standing of its own: the version to run decides for the Mate, and a dev zcp
+reads `behind: true`, so the keep job asks for the container restart that installs the release
+(§2.1d), under the organization's policy like any release. The floor outranks the pin. A container
+restart replaces a dev zcp with the latest release whatever the pin says (`install.sh` in the
+service's `initCommands`, §2.6); the pin then still covers a dev Mate. Its two readers are
+`mate.VersionToRun` and zcp's reading of its own release (the status's `zcp` key).
 
 **The start job** (`mate.BeginStart`, `Start.Judge`), at every start of the unit, takes the install
 lock without waiting and:
@@ -442,14 +463,16 @@ behind}`**, always present, is this binary against the zcp release `install.sh` 
 `releases/latest` for `zeropsio/zcp`), read from that redirect on every status: one `HEAD` of
 `https://github.com/zeropsio/zcp/releases/latest`, bounded by 5 s, not the REST API and its
 per-address quota. The self-update (`zcp update`, and `zcp serve` at its start) reads it the same way.
-`latest` is `""` while that release is unknown, never guessed, and for a build no release names (a dev
-or git-describe build), which never reaches the network. Only a release older than a known `latest`
-reads `behind: true`. **`restartNeeded`** is always present, and **`why`**, one line for a person,
+`latest` is `""` while that release is unknown, never guessed; a build no release names (a dev or
+git-describe build) reads it the same way. `behind: true` is a release older than a known `latest`,
+or a dev build with no active dev pin whose base is older than a known `latest` (§2.1a).
+**`devPin: {since, until, reason}`** is present only while a dev pin is active. **`restartNeeded`** is always present, and **`why`**, one line for a person,
 only when it is true: zcp is behind, or the running Mate answered its loopback updater readiness with
 exactly 404 — older than protocol 1 — while a newer Mate is out. The Mate is asked only in an enabled
 Mate container (elsewhere 3773 is an ordinary user port), only when `updateAvailable`, and never under
 `--local`. The text status adds one line when zcp is behind, or names the restart when only the Mate
-needs it.
+needs it; it names a dev zcp that is not behind with its latest release, and with any dev build
+installed it ends with the active pin, or with the rule that replaces the build when there is none.
 
 ### 2.1b Disabling — the reverse direction
 
@@ -462,7 +485,8 @@ step does not even register.
 ### 2.1c The release manifest — no pin
 
 zcp does not pin a mate version. It tracks the fork's **stable release** the same way the container
-tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it cannot drive.
+tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it cannot drive. Releases
+are never pinned; the dev pin (§2.1a) concerns hand-placed builds only.
 
 **The manifest.** The fork's release workflow publishes, next to the tarball, a release asset
 `stable.json`:
@@ -550,13 +574,17 @@ another keep run asks, it does nothing. Then the first that applies:
    knows no newer release. A version that cannot be staged
    fails the run without skipping step 3: a newer zcp is what repairs a staging defect, and in a
    container nobody can reach the keep job is the only automatic way it arrives.
-3. **A newer zcp** (`zcp.behind`) the keep job has not restarted for → the same question. Yes → it
-   records the release (`zcpRestartedFor` in `~/.zcp/mate/fuse.json`) and `zcp self restart` asks the
-   platform for the container restart that is a boot: install.sh installs the newest zcp, the start
-   job the newest Mate (§2.9 step 7). Every run reads zcp's latest release from its source (bounded
-   as a status read). A refused restart forgets the record; an accepted one that does
-   not end the process within 5 minutes (the Mate server's own grace) cancels the question and keeps
-   the record: one attempt per release.
+3. **A newer zcp** (`zcp.behind`; for a dev zcp only without an active dev pin, §2.1a) the keep job
+   has not restarted for from the installed zcp → the same question. Yes → it records the release and
+   the installed zcp (`zcpRestartedFor`, `zcpRestartedFrom` in `~/.zcp/mate/fuse.json`) and `zcp self
+   restart` asks the platform for the container restart that is a boot: install.sh installs the
+   newest zcp, the start job the newest Mate (§2.9 step 7). Every run reads zcp's latest release from
+   its source (bounded as a status read). A refused restart forgets the record; an accepted one that
+   does not end the process within 5 minutes (the Mate server's own grace) cancels the question and
+   keeps the record: one attempt per installed zcp and release, so a dev zcp placed after an attempt
+   for the same release is still replaced once its pin ends. A record without `zcpRestartedFrom`
+   matches no installed zcp. With any dev build installed, the run's last line names the pin, or says
+   the build stays because no release is newer than its base.
 4. Otherwise nothing: no question, no restart.
 
 **The question** is the server's loopback updater (`http://127.0.0.1:3773/api/mate/update/`,
@@ -592,7 +620,7 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
   **positional** — writing it as the flag's value bootstraps the unit's launch directory instead.
   `--base-dir` (`~/.t3`) keeps thread history across a restart; a redeploy starts it empty.
 - **No flag depends on the bundle.** The CLI treats an unknown flag as a fatal parse error, and a
-  launch may start a bundle nothing vetted — a kept dev build, or the installed one after an install
+  launch may start a bundle nothing vetted — a dev build under its pin, or the installed one after an install
   failed. So the public prefix is not passed as `--base-path`: it rides `T3CODE_BASE_PATH`
   (`mate.LaunchEnvLines`, §2.3), the same setting, which every release since v0.1.0 reads. Nothing
   runs `serve --help` before a launch.
@@ -716,6 +744,7 @@ the shipped protocol. See the [readiness probe](#45-the-readiness-probe) and Mat
 |---|---|---|---|
 | `~/.zcp/mate/versions/*` (the bundles) | kept | lost | **kept — deliberately** |
 | `~/.zcp/mate/current`, `last-good`, `failed-version` | kept | lost | kept (`current` points at a version nothing runs) |
+| `~/.zcp/mate/dev-pin.json` (§2.1a) | kept | lost | kept |
 | `~/.t3` (threads, sessions, auth) | kept | **lost — recreated empty** | kept |
 | `~/.zcp/mate.env` | kept (rewritten anyway) | rewritten by the new container's init | removed |
 | `zerops@mate` unit | kept | lost, re-created by init | **stopped and removed** |
@@ -977,7 +1006,7 @@ Mate release artifact contains the server and no web client (C-6).
 | MD-10 | The release list comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest starts `current`; a version below the floor is never started. `TestDesiredRelease_*`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRunMateStatus_JSON_ReportsTheFloor`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
-| MD-13 | A version is installed into its own directory, smoke-tested, and only then made `current` by an atomic symlink rename; any failure leaves `current` as it was. The start job is the only installer and the only writer of `current`, `last-good` and the failed version; the start job and the keep job read one version to run (`mate.VersionToRun`), never older than `last-good`; an installed dev build at or above `MinimumMateVersion` is kept (§2.1a). |
+| MD-13 | A version is installed into its own directory, smoke-tested, and only then made `current` by an atomic symlink rename; any failure leaves `current` as it was. The start job is the only installer and the only writer of `current`, `last-good` and the failed version; the start job and the keep job read one version to run (`mate.VersionToRun`), never older than `last-good`; an installed dev build at or above `MinimumMateVersion` is kept under an active dev pin, and without one until a release newer than its base is out (§2.1a). |
 | MD-15 | Prepare installs nothing and never restarts a running Mate; the start job holds the install lock from its download until its verdict, and a keep run that finds the lock held does nothing (§2.1, §2.1a, §2.1d). `TestLockInstall`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
 | MD-17 | `zcp mate status --json` reads `DesiredRelease()` and the versions the container holds and never installs; `zcp mate update` starts the keep job and answers at once; both answer JSON a caller can act on without parsing prose; every status but `--local` reads the release source (§2.1a). `TestMateStatus_*`, `TestMateUpdate_*`. |
@@ -1964,7 +1993,7 @@ never repeatedly restarts on an uncertain response. No manually paired fallback 
 | MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field, and an update's outcome reads only the descriptor's version and `bootId` for equality with those it was pressed with. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
-| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown or for a dev build) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with `{"error":"…"}` and restarts nothing, plus `"refused":true` only when the restart certainly did not happen (no container, key or client, or the platform's 4xx) — never for a timeout, a dropped connection or a 5xx, which say the restart is unconfirmed. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite`, `TestCLIDispatch_SelfIsAVerb`. |
+| MU-4 | A restart is the update, and `zcp self restart` is how the Mate asks for one (step 7). `zcp mate status --json` always carries `zcp: {installed, latest, behind}` (`latest` `""` and `behind` false while the release is unknown; a dev build is behind only with no active dev pin and a release newer than its base) and `restartNeeded`, and `why` only when it is true; the restart is needed when zcp is behind or the running Mate answers its updater readiness with exactly 404 while a newer Mate is out. `zcp self restart --json` restarts the container's own service and answers exactly `{"processId":"…"}` once the platform accepted it; outside a container, without a key or refused, it exits 1 with `{"error":"…"}` and restarts nothing, plus `"refused":true` only when the restart certainly did not happen (no container, key or client, or the platform's 4xx) — never for a timeout, a dropped connection or a 5xx, which say the restart is unconfirmed. `TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest`, `TestRunMateStatus_RestartNeeded_ZCPBehindOrMateWithoutUpdater`, `TestRunMateStatus_Text_ZCPBehind_OneAddedLine`, `TestBehind_ReleaseAndDevBuilds_OnlyAnOlderReleaseIsBehind`, `TestRunSelfCmd_Restart_RestartsTheContainersOwnService`, `TestRunSelfCmd_Restart_RefusesOutsideAContainer`, `TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite`, `TestCLIDispatch_SelfIsAVerb`. |
 
 ### 2.10 A paired Mac — Mate's mechanism, zcp's guidance
 
