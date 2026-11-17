@@ -69,8 +69,7 @@ func NewProjectClient(ctx context.Context, token, apiHost, projectID string) (*Z
 	return z, nil
 }
 
-// newZeropsClientOn builds the client on a given HTTP client — the org
-// reader hands it one whose transport only reads (OpenOrgReader).
+// newZeropsClientOn builds the client on a given HTTP client.
 func newZeropsClientOn(token, endpoint string, httpClient *http.Client) *ZeropsClient {
 	z := &ZeropsClient{}
 	base := httpClient.Transport

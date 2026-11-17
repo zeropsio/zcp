@@ -11,7 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// fakeOrg is an organization held in memory, read the way OrgReader reads.
+// fakeOrg is an organization held in memory, as HQ answers the Chief's person's reach.
 type fakeOrg struct {
 	projects []platform.Project
 	services []platform.ServiceStack
@@ -114,8 +114,8 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ProjectsVisibleToProjectKey != 7 {
-		t.Fatalf("projectsVisibleToProjectKey=%d, want 7", got.ProjectsVisibleToProjectKey)
+	if got.ProjectsVisibleToPerson != 7 {
+		t.Fatalf("projectsVisibleToPerson=%d, want 7", got.ProjectsVisibleToPerson)
 	}
 	if len(got.Members) != 2 || got.Members[0].Role != "ADMIN" {
 		t.Errorf("members = %+v, want the organization's two people with their roles", got.Members)
@@ -160,7 +160,7 @@ func TestResolveOrgProject(t *testing.T) {
 		{name: "by id", ref: "pProd", want: "pProd"},
 		{name: "by full name, any case", ref: "contoso - production", want: "pProd"},
 		{name: "by a Mate's name", ref: "rossy", want: "pRossy"},
-		{name: "a project outside the org", ref: "pElsewhere", wantErr: "no project", wantScope: true},
+		{name: "a project outside the person's reach", ref: "pElsewhere", wantErr: "no project", wantScope: true},
 		{name: "a name two projects share", ref: "Headquarters", wantErr: "pHQ2"},
 		{name: "nothing", ref: " ", wantErr: "project is required"},
 	}
@@ -172,8 +172,8 @@ func TestResolveOrgProject(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
 				}
-				if tt.wantScope && !strings.Contains(err.Error(), "visible to this project key") {
-					t.Errorf("err = %v, want the project-key scope", err)
+				if tt.wantScope && !strings.Contains(err.Error(), "among the projects this Chief's person reaches") {
+					t.Errorf("err = %v, want the person's reach as the scope", err)
 				}
 				return
 			}

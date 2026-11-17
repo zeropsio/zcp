@@ -226,16 +226,24 @@ func mapServicePorts(sdkPorts []output.ServicePort) []Port {
 	for _, p := range sdkPorts {
 		portRouting, prFilled := p.PortRouting.Get()
 		httpRouting, hrFilled := p.HttpRouting.Get()
-		public := (prFilled && portRouting.Native()) || (hrFilled && httpRouting.Native())
-		ports = append(ports, Port{
-			Port:        int(p.Port),
-			Protocol:    p.Protocol.String(),
-			Public:      public,
-			HTTPSupport: hrFilled && httpRouting.Native(),
-			Scheme:      p.Scheme.String(),
-		})
+		ports = append(ports, NewPort(int(p.Port), p.Protocol.String(), p.Scheme.String(),
+			prFilled && portRouting.Native(), hrFilled && httpRouting.Native()))
 	}
 	return ports
+}
+
+// NewPort is a service's port from what Zerops holds of it: public when the
+// platform routes to it (portRouting or httpRouting), HTTP-routed when
+// httpRouting. The one derivation, whether Zerops is read directly or HQ
+// answers its fields as Zerops holds them.
+func NewPort(port int, protocol, scheme string, portRouting, httpRouting bool) Port {
+	return Port{
+		Port:        port,
+		Protocol:    protocol,
+		Public:      portRouting || httpRouting,
+		HTTPSupport: httpRouting,
+		Scheme:      scheme,
+	}
 }
 
 func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling {

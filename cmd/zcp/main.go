@@ -400,10 +400,9 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	// environment still reaches HQ.
 	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
 	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
-		apiHost := mate.ResolveAPIHost(getenv("ZCP_API_HOST"))
-		if access, ok := chiefAccess(mate.HQIdentity(getenv), apiHost, os.Stderr); ok {
+		if id := mate.HQIdentity(getenv); chiefAccess(id, os.Stderr) {
 			rt.Chief = true
-			return runOrgServer(mcpStdout, tel, access, rt)
+			return runOrgServer(mcpStdout, tel, id, rt)
 		}
 	}
 
@@ -481,10 +480,11 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	return srv, err
 }
 
-// chiefAccess selects the surface from the state the Mate's server last heard.
-func chiefAccess(id hq.Identity, apiHost string, stderr io.Writer) (platform.OrgAccess, bool) {
+// chiefAccess reports whether this project is the Chief, from the state the
+// Mate's server last heard.
+func chiefAccess(id hq.Identity, stderr io.Writer) bool {
 	if id.ProjectID == "" || id.Key == "" {
-		return platform.OrgAccess{}, false
+		return false
 	}
 	doc, err := id.ReadMateState()
 	if err == nil {
@@ -498,20 +498,19 @@ func chiefAccess(id hq.Identity, apiHost string, stderr io.Writer) (platform.Org
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "zcp: %v; serving the single-project surface\n", mate.StateReadError(err))
-		return platform.OrgAccess{}, false
+		return false
 	}
-	chief := state.Chief != nil && state.Chief.ProjectID == id.ProjectID
-	return platform.OrgAccess{APIHost: apiHost, ProjectID: id.ProjectID, Token: id.Key}, chief
+	return state.Chief != nil && state.Chief.ProjectID == id.ProjectID
 }
 
-// runOrgServer serves org mode: the organization read from the Zerops API
-// with the project's key. It never builds a client that could
-// write.
-func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.OrgAccess, rtInfo runtime.Info) (*server.Server, error) {
+// runOrgServer serves org mode: the organization read through HQ's Chief
+// read, presenting the project's key (docs/spec-mate.md §3.11). No Zerops
+// client exists in org mode.
+func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, id hq.Identity, rtInfo runtime.Info) (*server.Server, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	org, err := platform.OpenOrgReader(access)
+	org, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, id)
 	if err != nil {
 		return nil, fmt.Errorf("org mode: %w", err)
 	}

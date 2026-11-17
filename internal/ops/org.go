@@ -10,12 +10,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// OrgSource is what org mode reads the organization through — the
-// read-only platform.OrgReader in production, which reads the Zerops API
-// with the session's credential: projects, services and their state, members
-// with their roles (docs/spec-mate.md §2.11, OM-4). Every
-// project and service id an org operation acts on is resolved from these
-// org-scoped lists first, so an id from another organization is never read.
+// OrgSource is what org mode reads the organization through — HQ's client
+// in production (hq.Client), which HQ answers with what the Chief's
+// registered person reaches: projects, services and their state, members
+// with their roles (docs/spec-mate.md §2.11, OM-4). Every project and service
+// id an org operation acts on is resolved from these lists first, so a
+// project outside the person's reach is never read.
 type OrgSource interface {
 	ListProjects(ctx context.Context) ([]platform.Project, error)
 	ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error)
@@ -117,12 +117,12 @@ type OrgGroup struct {
 	Projects []OrgProjectSummary `json:"projects"`
 }
 
-// OrgOverviewResult is the projects the key can see, grouped by kind, and
-// the organization's members with their roles.
+// OrgOverviewResult is the projects the Chief's person reaches, grouped by
+// kind, and the organization's members with their roles.
 type OrgOverviewResult struct {
-	ProjectsVisibleToProjectKey int                       `json:"projectsVisibleToProjectKey"`
-	Groups                      []OrgGroup                `json:"groups"`
-	Members                     []platform.OverviewMember `json:"members"`
+	ProjectsVisibleToPerson int                       `json:"projectsVisibleToPerson"`
+	Groups                  []OrgGroup                `json:"groups"`
+	Members                 []platform.OverviewMember `json:"members"`
 }
 
 // orgSnapshot is the organization's projects and services, read once.
@@ -151,7 +151,7 @@ func readOrgSnapshot(ctx context.Context, src OrgSource) (*orgSnapshot, error) {
 	return snap, nil
 }
 
-// OrgOverview lists the projects the key can see, grouped by kind.
+// OrgOverview lists the projects the Chief's person reaches, grouped by kind.
 func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error) {
 	snap, err := readOrgSnapshot(ctx, src)
 	if err != nil {
@@ -177,7 +177,7 @@ func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error)
 	if err != nil {
 		return nil, fmt.Errorf("list the org's members: %w", err)
 	}
-	result := &OrgOverviewResult{ProjectsVisibleToProjectKey: len(snap.projects), Members: members}
+	result := &OrgOverviewResult{ProjectsVisibleToPerson: len(snap.projects), Members: members}
 	for _, kind := range orgKindOrder {
 		projects := grouped[kind]
 		if len(projects) == 0 {
@@ -194,8 +194,9 @@ func notRunning(s platform.ServiceStack) bool {
 	return s.Status == platform.ServiceStatusStopped || s.Status == platform.ServiceStatusFailed
 }
 
-// resolveOrgProject finds a project of the organization by id, by its full
-// name, or by its Mate's name — never outside the organization.
+// resolveOrgProject finds a project the Chief's person reaches by id, by its
+// full name, or by its Mate's name — never outside that reach, and a project
+// outside it is not said to exist.
 func resolveOrgProject(ctx context.Context, src OrgSource, ref string) (*orgProject, error) {
 	snap, err := readOrgSnapshot(ctx, src)
 	if err != nil {
@@ -240,8 +241,8 @@ func (snap *orgSnapshot) resolve(ref string) (*orgProject, error) {
 		return matches[0], nil
 	case 0:
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("no project %q visible to this project key", ref),
-			"zerops_org_overview lists the projects this key can see")
+			fmt.Sprintf("no project %q among the projects this Chief's person reaches", ref),
+			"zerops_org_overview lists them")
 	default:
 		ids := make([]string, 0, len(matches))
 		for _, m := range matches {

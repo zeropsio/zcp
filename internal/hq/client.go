@@ -45,16 +45,20 @@ func (r *RefusedError) Class() platform.ErrorClass {
 // UnavailableError is HQ not serving now — never a refusal, always "try
 // again": an HQ that does not answer, or one that answers 503 (one draining
 // or failing, unavailable; Zerops not answering it, zerops_unavailable) past
-// the wait the client gives it. Code is HQ's, ""
-// when it did not answer.
+// the wait the client gives it. Code and Reason are HQ's (escalation_unavailable
+// with key_secret), "" when it did not answer.
 type UnavailableError struct {
-	Code string
-	Err  error
+	Code   string
+	Reason string
+	Err    error
 }
 
 func (u *UnavailableError) Error() string {
 	if u.Err != nil {
 		return "hq unavailable: " + u.Err.Error()
+	}
+	if u.Reason != "" && u.Reason != u.Code {
+		return fmt.Sprintf("hq unavailable: %s (%s)", u.Code, u.Reason)
 	}
 	return "hq unavailable: " + u.Code
 }
@@ -241,9 +245,14 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 			return 0, fmt.Errorf("hq %s: answer has no Mate-State-Rev", path)
 		}
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit+1))
 	if err != nil {
 		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
+	}
+	if len(raw) > answerLimit {
+		// The rest is read only to name the answer's size.
+		rest, _ := io.Copy(io.Discard, resp.Body)
+		return 0, fmt.Errorf("hq %s: answer too large: %d bytes, over zcp's limit of %d", path, int64(len(raw))+rest, answerLimit)
 	}
 	// A 204 answers with nothing to decode.
 	if resp.StatusCode == http.StatusNoContent {
@@ -260,7 +269,7 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 		}
 		_ = json.Unmarshal(raw, &refusal)
 		if resp.StatusCode == http.StatusServiceUnavailable {
-			return retryAfter(resp.Header.Get("Retry-After")), &UnavailableError{Code: refusal.Code}
+			return retryAfter(resp.Header.Get("Retry-After")), &UnavailableError{Code: refusal.Code, Reason: refusal.Reason}
 		}
 		return 0, &RefusedError{Status: resp.StatusCode, Code: refusal.Code, Reason: refusal.Reason}
 	}

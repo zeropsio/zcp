@@ -156,9 +156,6 @@ const (
 	// ErrOrgAmbiguous: an org-filtered call on a client of a token in
 	// several orgs that no project bound (ZeropsClient.OrgID).
 	ErrOrgAmbiguous = "ORG_AMBIGUOUS"
-	// ErrOrgWriteRefused: org mode's reader (docs/spec-mate.md §2.11) stopped
-	// a request that was not a read — org mode never writes.
-	ErrOrgWriteRefused = "ORG_WRITE_REFUSED"
 )
 
 // Error subcodes narrow a specific top-level code into a stable, more
