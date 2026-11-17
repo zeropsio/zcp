@@ -2141,8 +2141,37 @@ Mate's observe credential, one request at a time: `environments` names the stage
 (by project id, name, kind or title), then `status` of that one environment its services. The
 proposal is the shape above, its `projectName` the environment's title as Mate's menu shows it
 ("Production"; a stage by its own name, or "Stage" where HQ made the name). `env.set` carries a
-plain value only, `secret: false`: a secret stays the person's, in Mate's Vault; its note adds that a
-running service reads the value after a restart. A refused or unavailable observation answers in
+plain value only, `secret: false`; its note adds that a running service reads the value after a
+restart.
+
+**A Mate asks for a secret in stage or production** (2026-11-17). `zerops_propose_env {project, scope,
+service?, key, reason, secret: true, restart?}` takes no value: one given is refused ("a secret is
+never in the call"), as are a key that is not a variable name, a name Mate's vault never lists and a
+reason holding a value (§5.8's rules), each before anything is observed and never repeated. zcp
+checks the environment as above and, when a service is named or `restart` names hostnames, that
+environment's `status` (a service's own secret restarts that service). Only a running service is
+restarted: one that runs nothing (stopped, or waiting for its first deploy) is named in
+`notRunning`, and its next start or release reads the value. A Mate below `SecretAskMateVersion`
+(`internal/mate/manifest.go`), whose engine opens no card for it, is refused before anything is
+observed, the agent told that Mate asks once it updates. It answers no proposal but env request's
+`requested` shape, so Mate's engine opens a `secret` ask on the call (§5.8), its own kind so a
+client that cannot write that project offers nothing:
+`{"requested": {"key", "label", "why", "scope": "shared" | "service", "serviceHostname"?,
+"sensitive": true, "environment": {"kind": "stage" | "production", "projectId", "name"},
+"restart"?: [{"serviceId", "hostname"}], "notRunning"?: ["…"], "generate"?}, "nextActions"}`. `generate`, for a random secret, is
+one preprocessor directive the card expands in the person's browser at their press, exactly as zParser
+does: `<@generateRandomString(<N>)>` (N 16…1024: N random bytes, each mapped onto zParser's 65-character
+alphabet) or `<@generateRandomInt(<min>, <max>)>` (uniform in [min, max]); anything else — a modifier, a
+literal beside it, `generateRandomBytes` — is refused. With it the card shows no field, only what it will
+make; the value is written sensitive, never shown and never sent to the engine. The card takes the value typed or
+generated, writes it hidden into that environment's vault with the person's own access, restarts the
+`restart` services through their own restart, and tells the engine saved — naming the project it
+wrote to, which must be the one asked for — or declined; the agent hears `saved to <environment> ·
+<vault>/<KEY>`, with `; <service> didn't restart: <reason>` when a restart failed and the person
+finished without it, or `declined`. Nothing is minted at HQ and nothing is
+recorded there. The agent asks this way whenever stage or production needs a secret — before a
+release whose `zerops.yml` reads one that environment lacks, after a crash naming a missing value —
+never by sending the person to a Vault page. A refused or unavailable observation answers in
 `zerops_observe`'s words; nothing is minted at HQ, and the decision is HQ's as for any card.
 A standalone zcp that observes through a configured HQ never registers them: no client draws its
 cards.
@@ -2251,8 +2280,9 @@ person one summary of what each did, what is left and what waits for review. A c
 which direct messages cannot reach, gets a `mate.message` proposal. A Mate's message to the Chief is
 its own run, and the answer it ends with goes back to that Mate automatically. Outside a Mate's
 container, where no message tools register, project work goes as a `mate.message` proposal. A Mate's own section (`agents_application.md`)
-names its two proposal tools for stage and production, `zerops_propose_reveal` to show the person a
-secret (never printing or pasting one), `zerops_propose_create_service` and `zerops_propose_release`
+names its two proposal tools for stage and production, asking for a secret there with
+`zerops_propose_env secret=true` (never sending the person to a Vault page), `zerops_propose_reveal`
+to show the person a secret (never printing or pasting one), `zerops_propose_create_service` and `zerops_propose_release`
 with where a release's outcome is read, and asking the person's Chief with `zerops_message_mate` for
 what neither its project nor `zerops_observe` shows. The shared section tells a Mate to connect a tool with
 `zerops_propose_mcp` and never to ask the person to paste a key in chat.
@@ -2267,6 +2297,7 @@ what neither its project nor `zerops_observe` shows. The shared section tells a 
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-8 | A Mate's `zerops_propose_service` and `zerops_propose_env` return a `service.*` or `env.set` proposal of the shape above for its application's stage or production, checked against HQ's observation of that one environment, and change nothing; only a Mate's project mode registers them. `TestProposeAppAction_Shape`, `TestProposeAppAction_ReadsOnlyTheTarget_OneEnvironment`, `TestProposeAppAction_Refuses`, `TestAppPropose_OverMCP_ProposesFromObservationAndRunsNothing`, `TestServer_AppProposeToolGating`. |
+| OM-8a | A Mate's `zerops_propose_env secret=true` answers env request's `requested` shape with the environment and the running services its card restarts, always sensitive, never a value: a value, a key holding one or a reason holding one is refused before anything is observed and never repeated; `generate` passes only the directives the card makes as zParser does; a Mate below `SecretAskMateVersion` is refused. `TestProposeSecretAsk_Shape`, `TestProposeSecretAsk_RefusesAValue`, `TestProposeSecretAsk_RefusesWhatIsNotThere`, `TestSecretGenerate_AllowList`, `TestSecretGenerate_ExpandsAsTheCardMakesIt`, `TestCarriesSecretAsk`. |
 | OM-9 | A Mate's `zerops_propose_mcp` returns an `mcp.add` proposal of the shape above from its own project, never carrying a secret value, and runs nothing; only a Mate's project mode registers it. `TestProposeMcp_Shape`, `TestProposeMcp_RefusesSecretsAndWhatCannotConnect`, `TestMcpPropose_OverMCP_ProposesAndRunsNothing`, `TestServer_AppProposeToolGating`. |
 | OM-10 | A Mate's `zerops_propose_reveal` returns an `env.reveal` proposal of the shape above naming a key in its application's stage or production or its own project, never a value: a key or reason holding one is refused before anything is read; only a Mate's project mode registers it. `TestProposeReveal_Shape`, `TestProposeReveal_RefusesAValue`, `TestProposeReveal_RefusesWhatIsNotThere`, `TestRevealPropose_OverMCP_ProposesANameNeverAValue`, `TestServer_AppProposeToolGating`. |
 | OM-11 | A Mate's `zerops_propose_create_service` returns a `service.create` proposal of the shape above for its application's production: hostnames the production tier on `main` declares and production's observed status lacks, with the recipe head the tier was read at, never an import; anything else is refused by the hostname. It creates nothing; only a Mate's project mode registers it. `TestProposeCreateService_DeclaredAndMissing_Shape`, `TestProposeCreateService_Refuses`, `TestAppPropose_CreateService_OverMCP_ProposesWhatProductionLacks`, `TestServer_AppProposeToolGating`. |
@@ -3763,6 +3794,14 @@ the values those entries reference.
   restart with `zerops_manage action="restart"` once the message says saved. The service running
   the session is never among them. Detail: spec-zerops-env-lifecycle §7. Additive both ways: an
   older mate ignores `replace`, `alreadyAsked` and the other new fields.
+- **A secret for stage or production** (2026-11-17). `zerops_propose_env secret=true` (§2.11)
+  answers the same `requested` shape with an `environment` (`kind`, `projectId`, `name`) and the
+  `restart` services, so the engine opens a `secret` ask, the vault ask's sibling: its card writes into that
+  environment's vault with the person's own access to its project, restarts the named services,
+  and answers saved or declined. A card open for a key and vault matches only an ask for the same
+  environment, a `set` answer, which names this Mate's vault, never settles one, and neither does a
+  saved answer naming another project. An engine older than it opens no ask for the call, so zcp
+  refuses the ask below `SecretAskMateVersion`.
 - **The organization's AI key, for an app** (2026-10-17). In a Mate, `zerops_env action=ai-key`
   asks HQ for the organization's key as the Mate (`POST /api/mate/ai-key`, one bounded try) and
   sets it in the Shared vault: the key sensitive under the variable HQ names (`NEBIUS_API_KEY`),

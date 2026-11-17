@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -28,15 +29,18 @@ type AppProposeServiceInput struct {
 	Reason  string `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
 }
 
-// AppProposeEnvInput is zerops_propose_env's input: a plain value, never a
-// secret — the person keeps secrets in Mate's Vault.
+// AppProposeEnvInput is zerops_propose_env's input: a plain value, or with
+// Secret an ask for a secret the person gives on the card — never its value.
 type AppProposeEnvInput struct {
-	Project string `json:"project"           jsonschema:"The environment: its projectId or name from zerops_observe action=environments."`
-	Scope   string `json:"scope"             jsonschema:"project (every app there reads it) or service (one service's own)."`
-	Service string `json:"service,omitempty" jsonschema:"The service's hostname when scope is service."`
-	Key     string `json:"key"               jsonschema:"The variable's name."`
-	Value   string `json:"value"             jsonschema:"A plain value, never a secret."`
-	Reason  string `json:"reason"            jsonschema:"Why, in one sentence, for the person deciding."`
+	Project  string   `json:"project"            jsonschema:"The environment: its projectId or name from zerops_observe action=environments, or stage or production."`
+	Scope    string   `json:"scope"              jsonschema:"project (every app there reads it) or service (one service's own)."`
+	Service  string   `json:"service,omitempty"  jsonschema:"The service's hostname when scope is service."`
+	Key      string   `json:"key"                jsonschema:"The variable's name as the vault keeps it, which zerops.yaml run.envVariables references under the name the app reads: APP_KEY: ${APP_KEY_SECRET}, never KEY: ${KEY}."`
+	Value    string   `json:"value,omitempty"    jsonschema:"A plain value; never with secret, never a secret."`
+	Secret   bool     `json:"secret,omitempty"   jsonschema:"true asks the person for a secret (a password, key or signing secret): they type or generate it on the card and it is saved hidden. Pass no value."`
+	Restart  []string `json:"restart,omitempty"  jsonschema:"With secret: hostnames of the services that read it, which the card restarts once it is saved (a service's own secret restarts that service)."`
+	Generate string   `json:"generate,omitempty" jsonschema:"With secret, for a random secret (a session, auth or app key): <@generateRandomString(<32>)> (16 to 1024 characters) or <@generateRandomInt(<min>, <max>)>, nothing else. The card makes it in the person's browser at one press. Omit it for a value from outside, such as a provider's API key."`
+	Reason   string   `json:"reason"             jsonschema:"Why, in one sentence, for the person deciding. Never a value."`
 }
 
 // AppProposeRevealInput is zerops_propose_reveal's input: where a hidden
@@ -98,9 +102,36 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_propose_env",
-		Description: "Propose setting a plain value in your application's stage or production, for every app there or one service's own. Runs nothing: the person approves or declines it on a card, and their client sets it.",
+		Description: "Propose a variable in your application's stage or production, for every app or one service. A plain value: the person approves it and their client sets it. A secret (secret=true, no value): the card asks the person for it, saves it hidden, restarts the services in restart; a message says how it ended. Never send the person to the Vault.",
 		Annotations: orgPropose("Propose a variable"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeEnvInput) (*mcp.CallToolResult, any, error) {
+		if in.Secret {
+			// A Mate older than the card, or one whose version cannot be read ("" carries
+			// nothing), shows the call as a plain row: nobody would be asked.
+			if installed, _ := mate.InstalledVersion(); !mate.CarriesSecretAsk(installed) {
+				return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+					"This Mate cannot ask the person for a stage or production secret yet: its card comes with a Mate update, so nothing was asked",
+					"Tell the person in one sentence which value the environment needs and that Mate will ask for it once it updates; never send them to a Vault page or ask for the value in the chat.")), nil, nil
+			}
+			ask, err := ops.ProposeSecretAsk(ctx, src, ops.SecretAskInput{
+				Project: in.Project, Scope: in.Scope, Service: in.Service, Key: in.Key,
+				Value: in.Value, Reason: in.Reason, Restart: in.Restart, Generate: in.Generate,
+			})
+			if err != nil {
+				return appAnswer(nil, err)
+			}
+			return jsonResult(ask), nil, nil
+		}
+		if in.Value == "" {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				"value is required for a plain value",
+				"For a secret pass secret=true and no value: the person gives it on the card")), nil, nil
+		}
+		if len(in.Restart) > 0 || in.Generate != "" {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				"restart and generate go with secret only",
+				"For a plain value propose the restart with zerops_propose_service once it is set")), nil, nil
+		}
 		result, err := ops.ProposeAppAction(ctx, src, uuid.NewString, ops.OrgActionInput{
 			Kind: ops.ProposalEnvSet, Project: in.Project, Service: in.Service, Reason: in.Reason,
 			Scope: in.Scope, Key: in.Key, Value: in.Value,

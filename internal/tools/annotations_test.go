@@ -758,7 +758,7 @@ func TestAnnotations_MateMessageTools(t *testing.T) {
 
 // TestAnnotations_AppProposeTools: a proposal changes nothing on the
 // platform, so it reads as read-only; each call is a new card, so it is not
-// idempotent. A plain variable leaves no way to mark a secret.
+// idempotent. A secret is asked for on a card, never sent to the Vault.
 func TestAnnotations_AppProposeTools(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("HOME", t.TempDir())
@@ -788,15 +788,12 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 	if d := tools["zerops_propose_release"].Description; !strings.Contains(d, "Only when the person asks to release") || !strings.Contains(d, "Never by yourself after a merge") {
 		t.Errorf("zerops_propose_release does not keep its card to the person's ask:\n%s", d)
 	}
-	schema, err := json.Marshal(tools["zerops_propose_env"].InputSchema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(schema), `"secret"`) {
-		t.Errorf("zerops_propose_env offers a secret: %s", schema)
+	// A secret in stage or production is asked for on a card, never by sending the person to the Vault.
+	if d := tools["zerops_propose_env"].Description; !strings.Contains(d, "secret=true, no value") || !strings.Contains(d, "Never send the person to the Vault") {
+		t.Errorf("zerops_propose_env does not ask for a secret on its card:\n%s", d)
 	}
 	// A server's fields are named and labelled; the person types their values on the card.
-	schema, err = json.Marshal(tools["zerops_propose_mcp"].InputSchema)
+	schema, err := json.Marshal(tools["zerops_propose_mcp"].InputSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
