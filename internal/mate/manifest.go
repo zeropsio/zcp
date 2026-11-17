@@ -55,7 +55,7 @@ const (
 	// secret=true`, docs/spec-mate.md §2.11): an older Mate shows the call
 	// as a plain row and nobody is asked, so zcp refuses the ask there
 	// (CarriesSecretAsk). Set at mate's release.
-	SecretAskMateVersion = "0.16.223"
+	SecretAskMateVersion = "0.16.224"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
