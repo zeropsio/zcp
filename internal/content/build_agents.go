@@ -195,7 +195,7 @@ func buildChiefMD(rt runtime.Info) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", name, err)
 		}
-		parts = append(parts, strings.TrimSpace(tmpl))
+		parts = append(parts, strings.TrimSpace(mateLines(tmpl, rt.InContainer && rt.MateEnabled)))
 	}
 	return "# Zerops\n\n" + strings.Join(parts, "\n\n") + "\n", nil
 }
@@ -282,7 +282,8 @@ func notImportPathRune(r rune) bool {
 // The shared body's lines that read differently in a Mate carry one of
 // these markers: a Mate's application owns its production, which the
 // person makes and releases in Mate, so a Mate keeps its own line and drops
-// the other.
+// the other. The Chief's guidance marks its lines about tools only its
+// Mate's container has.
 const (
 	inMateMarker      = "@in-mate "
 	outsideMateMarker = "@outside-mate "

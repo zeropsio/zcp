@@ -770,6 +770,36 @@ func TestAnnotations_AskChiefTool(t *testing.T) {
 	}
 }
 
+// TestAnnotations_MateMessageTools: listing the person's Mates reads only;
+// a message starts a run in another Mate, so it is no read, and each call
+// is a new message.
+// witness: internal/tools/mate_messages.go | Annotations: &mcp.ToolAnnotations{Title: "Message another Mate", DestructiveHint → Annotations: &mcp.ToolAnnotations{Title: "Message another Mate", ReadOnlyHint: true, DestructiveHint
+func TestAnnotations_MateMessageTools(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	hqtest.Link(t, "http://hq.invalid", "p1", "fixture")
+	t.Chdir(t.TempDir())
+	tools := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})
+	list, message := tools["zerops_list_mates"], tools["zerops_message_mate"]
+	if list == nil || message == nil {
+		t.Fatalf("zerops_list_mates = %v, zerops_message_mate = %v; both should be registered in a Mate linked to its HQ", list, message)
+	}
+	if ann := list.Annotations; ann == nil || !ann.ReadOnlyHint || !ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
+		t.Errorf("zerops_list_mates annotations = %+v, want read-only, idempotent, not destructive", ann)
+	}
+	if ann := message.Annotations; ann == nil || ann.ReadOnlyHint || ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
+		t.Errorf("zerops_message_mate annotations = %+v, want not read-only, not idempotent, not destructive", ann)
+	}
+	schema, err := json.Marshal(message.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"to"`, `"words"`, `"attachmentTitle"`, `"attachmentText"`} {
+		if !strings.Contains(string(schema), field) {
+			t.Errorf("input schema lacks %s: %s", field, schema)
+		}
+	}
+}
+
 // TestAnnotations_AppProposeTools: a proposal changes nothing on the
 // platform, so it reads as read-only; each call is a new card, so it is not
 // idempotent. A plain variable leaves no way to mark a secret.
