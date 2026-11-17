@@ -32,9 +32,10 @@ func fakeHQChief(t *testing.T) (*httptest.Server, func() []string) {
 	project := func(id, name string, tags ...string) map[string]any {
 		return map[string]any{"id": id, "name": name, "status": "ACTIVE", "tags": append([]string{}, tags...)}
 	}
-	service := func(id, projectID, name, typ, status string) map[string]any {
-		return map[string]any{"id": id, "projectId": projectID, "name": name, "status": status, "type": typ, "category": "USER"}
+	service := func(id, projectID, name, typ, status string, ports ...map[string]any) map[string]any {
+		return map[string]any{"id": id, "projectId": projectID, "name": name, "status": status, "type": typ, "category": "USER", "ports": append([]map[string]any{}, ports...)}
 	}
+	web := map[string]any{"port": 9000, "protocol": "tcp", "scheme": "http", "portRouting": false, "httpRouting": true}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
@@ -51,7 +52,7 @@ func fakeHQChief(t *testing.T) (*httptest.Server, func() []string) {
 			}}
 		case `POST /api/mate/chief/read {"read":"services"}`:
 			out = map[string]any{"services": []any{
-				service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE"),
+				service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE", web),
 				service("sZcp", "pRossy", "zcp", "zcp@1", "ACTIVE"),
 			}}
 		case `POST /api/mate/chief/read {"read":"members"}`:

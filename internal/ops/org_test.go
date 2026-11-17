@@ -187,6 +187,8 @@ func TestResolveOrgProject(t *testing.T) {
 func TestOrgServices_StatusTypePorts(t *testing.T) {
 	t.Parallel()
 	org := testOrg()
+	org.services[5].SubdomainAccess = true
+	org.services[5].Ports = []platform.Port{{Port: 9000, Protocol: "tcp", Scheme: "http"}}
 	got, err := OrgServices(context.Background(), org, "Contoso - production")
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +200,7 @@ func TestOrgServices_StatusTypePorts(t *testing.T) {
 	if medusa.Hostname != "medusa" {
 		medusa = got.Services[0]
 	}
-	if medusa.Type != "nodejs@22" || medusa.Status != "ACTIVE" {
+	if medusa.Type != "nodejs@22" || medusa.Status != "ACTIVE" || len(medusa.Ports) != 1 || medusa.Ports[0].Port != 9000 {
 		t.Errorf("medusa = %+v", medusa)
 	}
 }

@@ -53,7 +53,7 @@ type OrgProposeDomainInput struct {
 	Project string   `json:"project" jsonschema:"The project, usually an application's production: its id, its full name, or its Mate's name."`
 	Service string   `json:"service" jsonschema:"The hostname of the service that serves the web."`
 	Domains []string `json:"domains" jsonschema:"The person's domain names, bare (shop.example.com), its www. name when they want both, and *.shop.example.com for every subdomain."`
-	Port    int      `json:"port"    jsonschema:"The service's web port the domains point at."`
+	Port    int      `json:"port"    jsonschema:"The service's web port the domains point at (zerops_org_services lists its ports)."`
 	Reason  string   `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
 }
 
@@ -100,7 +100,7 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, newID func() string) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_org_services",
-		Description: "A project's services: hostname, type and status.",
+		Description: "A project's services: hostname, type, status and ports.",
 		Annotations: orgLook("Project services"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProjectInput) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.OrgServices(ctx, src, in.Project))

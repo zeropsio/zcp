@@ -2066,8 +2066,8 @@ Every change is the person's: their client makes it with their own Zerops token 
 **Tool surface.** Look: `zerops_org_overview` (the projects its person reaches, grouped as `mate`,
 `production`, `stage`, `other`, `chief`, and the members with their roles). Its
 `projectsVisibleToPerson` count is the number of projects the Chief's person reaches, not the
-organization's total. `zerops_org_services` reads a project's services, their type and their
-state, without ports (§3.11's allowlist). A project outside the person's reach is absent: a tool
+organization's total. `zerops_org_services` reads a project's services, their type, their state
+and their ports. A project outside the person's reach is absent: a tool
 naming it answers that no such project is among the projects the person reaches, never whether
 it exists. The Chief asks nobody on the person's behalf and uses no other credential; the person
 asks an Admin themselves, in Mate or in Zerops. Act:
@@ -2767,10 +2767,11 @@ sequenceDiagram
   person sees; a project or member outside that reach is absent. Each answer is the whole list,
   complete or refused, never paged: `projects` is `{projects:[{id,name,status,tags}]}`, the
   organisation's projects the person's token reaches; `services` is
-  `{services:[{id,projectId,name,status,type,category}]}`, every service of those projects, the
-  platform's own among them; `members` is `{members:[{userId,fullName,role,status}]}`, the
-  organisation's people. The allowlist is the organisation overview — projects, services and their
-  state, members with their roles. Never environment variables, token lists or anything else a
+  `{services:[{id,projectId,name,status,type,category,ports:[{port,protocol,scheme,portRouting,httpRouting}]}]}`,
+  every service of those projects, the platform's own among them, `ports` always present and as
+  Zerops holds them; `members` is `{members:[{userId,fullName,role,status}]}`, the
+  organisation's people. The allowlist is the organisation overview — projects, services with their
+  state and ports, members with their roles. Never environment variables, token lists or anything else a
   Zerops read could carry (non-sensitive variables read in clear, other Mates' keys among them). A
   read joins the allowlist only by the owner's decision written here. HQ's refusal `{code,reason?}`
   is shown once, in HQ's words (the route's states: mate-hq `spec/protocol.md`, Chief):

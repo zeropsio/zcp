@@ -59,6 +59,13 @@ func (c Client) ListServices(ctx context.Context, projectID string) ([]platform.
 			Status    string `json:"status"`
 			Type      string `json:"type"`
 			Category  string `json:"category"`
+			Ports     *[]struct {
+				Port        int    `json:"port"`
+				Protocol    string `json:"protocol"`
+				Scheme      string `json:"scheme"`
+				PortRouting bool   `json:"portRouting"`
+				HTTPRouting bool   `json:"httpRouting"`
+			} `json:"ports"`
 		} `json:"services"`
 	}
 	if err := c.chiefRead(ctx, "services", &answer); err != nil {
@@ -69,14 +76,18 @@ func (c Client) ListServices(ctx context.Context, projectID string) ([]platform.
 	}
 	services := []platform.ServiceStack{}
 	for _, s := range *answer.Services {
-		if s.ID == "" || s.ProjectID == "" {
+		if s.ID == "" || s.ProjectID == "" || s.Ports == nil {
 			return nil, malformedChiefRead("services")
 		}
 		if projectID != "" && s.ProjectID != projectID {
 			continue
 		}
+		var ports []platform.Port
+		for _, p := range *s.Ports {
+			ports = append(ports, platform.NewPort(p.Port, p.Protocol, p.Scheme, p.PortRouting, p.HTTPRouting))
+		}
 		services = append(services, platform.ServiceStack{
-			ID: s.ID, ProjectID: s.ProjectID, Name: s.Name, Status: s.Status,
+			ID: s.ID, ProjectID: s.ProjectID, Name: s.Name, Status: s.Status, Ports: ports,
 			// The category name unchanged: IsSystem keys on it (USER, CORE, BUILD, …).
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: s.Type, ServiceStackTypeCategoryName: s.Category},
 		})

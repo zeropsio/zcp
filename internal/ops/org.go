@@ -271,12 +271,21 @@ func (p *orgProject) service(ref string) (*platform.ServiceStack, error) {
 		"zerops_org_services lists the project's services")
 }
 
+// OrgServicePort is one of a service's ports.
+type OrgServicePort struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Scheme   string `json:"scheme,omitempty"`
+	Public   bool   `json:"public,omitempty"`
+}
+
 // OrgService is one service of a project.
 type OrgService struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	Type     string `json:"type"`
-	Status   string `json:"status"`
+	ID       string           `json:"id"`
+	Hostname string           `json:"hostname"`
+	Type     string           `json:"type"`
+	Status   string           `json:"status"`
+	Ports    []OrgServicePort `json:"ports,omitempty"`
 }
 
 // OrgServicesResult is a project's services.
@@ -286,7 +295,7 @@ type OrgServicesResult struct {
 }
 
 // OrgServices lists a project's own services — the platform's system
-// services and spent build containers left out — with status and type.
+// services and spent build containers left out — with status, type and ports.
 func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgServicesResult, error) {
 	p, err := resolveOrgProject(ctx, src, projectRef)
 	if err != nil {
@@ -297,7 +306,11 @@ func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgSer
 		if s.IsSystem() {
 			continue
 		}
-		result.Services = append(result.Services, OrgService{ID: s.ID, Hostname: s.Name, Type: s.ServiceStackTypeInfo.ServiceStackTypeVersionName, Status: s.Status})
+		out := OrgService{ID: s.ID, Hostname: s.Name, Type: s.ServiceStackTypeInfo.ServiceStackTypeVersionName, Status: s.Status}
+		for _, port := range s.Ports {
+			out.Ports = append(out.Ports, OrgServicePort{Port: port.Port, Protocol: port.Protocol, Scheme: port.Scheme, Public: port.Public})
+		}
+		result.Services = append(result.Services, out)
 	}
 	sort.SliceStable(result.Services, func(i, j int) bool { return result.Services[i].Hostname < result.Services[j].Hostname })
 	return result, nil
