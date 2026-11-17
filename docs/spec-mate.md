@@ -2063,10 +2063,14 @@ their services with their state, its members with their roles, each list whole โ
 never a variable, a log, a token list, a cost or any other read a Zerops credential could make.
 Every change is the person's: their client makes it with their own Zerops token after their click.
 
-**Tool surface.** Look: `zerops_org_overview` (the projects the key can see, grouped as `mate`, `production`,
-`stage`, `other`, `chief`, and the members with their roles). Its `projectsVisibleToProjectKey` count
-names that scope; a project key sees its own one project, not the organization's total.
-`zerops_org_services` reads each visible project's services and their state. Act:
+**Tool surface.** Look: `zerops_org_overview` (the projects its person reaches, grouped as `mate`,
+`production`, `stage`, `other`, `chief`, and the members with their roles). Its
+`projectsVisibleToPerson` count is the number of projects the Chief's person reaches, not the
+organization's total. `zerops_org_services` reads a project's services, their type and their
+state, without ports (ยง3.11's allowlist). A project outside the person's reach is absent: a tool
+naming it answers that no such project is among the projects the person reaches, never whether
+it exists. The Chief asks nobody on the person's behalf and uses no other credential; the person
+asks an Admin themselves, in Mate or in Zerops. Act:
 `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's

@@ -25,7 +25,7 @@ func (orgFake) ListProjects(context.Context) ([]platform.Project, error) {
 }
 func (orgFake) ListServices(_ context.Context, projectID string) ([]platform.ServiceStack, error) {
 	all := []platform.ServiceStack{
-		{ID: "sMedusa", ProjectID: "pProd", Name: "medusa", Status: "ACTIVE", Ports: []platform.Port{{Port: 9000, Protocol: "tcp", Scheme: "http"}}, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "sMedusa", ProjectID: "pProd", Name: "medusa", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		{ID: "sZcp", ProjectID: "pRossy", Name: "zcp", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1", ServiceStackTypeCategoryName: "USER"}},
 	}
 	var out []platform.ServiceStack
