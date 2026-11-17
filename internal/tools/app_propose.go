@@ -38,7 +38,7 @@ type AppProposeEnvInput struct {
 	Key      string   `json:"key"                jsonschema:"The variable's name as the vault keeps it, which zerops.yaml run.envVariables references under the name the app reads: APP_KEY: ${APP_KEY_SECRET}, never KEY: ${KEY}."`
 	Value    string   `json:"value,omitempty"    jsonschema:"A plain value; never with secret, never a secret."`
 	Secret   bool     `json:"secret,omitempty"   jsonschema:"true asks the person for a secret (a password, key or signing secret): they type or generate it on the card and it is saved hidden. Pass no value."`
-	Restart  []string `json:"restart,omitempty"  jsonschema:"With secret: hostnames of the services that read it, which the card restarts once it is saved (a service's own secret restarts that service)."`
+	Restart  []string `json:"restart,omitempty"  jsonschema:"Hostnames of the services that read it, which the card restarts once it is set or saved: name them for a project value; a service's own value restarts that service. Only a running one restarts."`
 	Generate string   `json:"generate,omitempty" jsonschema:"With secret, for a random secret (a session, auth or app key): <@generateRandomString(<32>)> (16 to 1024 characters) or <@generateRandomInt(<min>, <max>)>, nothing else. The card makes it in the person's browser at one press. Omit it for a value from outside, such as a provider's API key."`
 	Reason   string   `json:"reason"             jsonschema:"Why, in one sentence, for the person deciding. Never a value."`
 }
@@ -66,9 +66,26 @@ type AppProposeReleaseInput struct {
 	Reason string `json:"reason" jsonschema:"Why now, in a few words, for the person deciding. Never a restatement of the changes: the card lists them."`
 }
 
-// appEnvRestartNote follows a variable's proposal: a running service keeps
-// the environment it started with.
-const appEnvRestartNote = " A running service reads the new value only after a restart."
+// appEnvRestartNote follows a plain value's proposal: a running service keeps
+// the environment it started with, so the card restarts what reads it.
+func appEnvRestartNote(raw json.RawMessage) string {
+	var params ops.OrgEnvSetParams
+	if json.Unmarshal(raw, &params) != nil {
+		return ""
+	}
+	note := " Once it is set, the card restarts the running services that read it."
+	if len(params.Restart) > 0 {
+		names := make([]string, 0, len(params.Restart))
+		for _, s := range params.Restart {
+			names = append(names, s.Hostname)
+		}
+		note = fmt.Sprintf(" Once it is set, the card restarts %s.", strings.Join(names, ", "))
+	}
+	if len(params.NotRunning) > 0 {
+		note += fmt.Sprintf(" %s runs nothing now, so nothing restarts it: its next start or release reads the value.", strings.Join(params.NotRunning, ", "))
+	}
+	return note
+}
 
 // RegisterAppPropose registers a Mate's proposal tools for its application's
 // stage and production, checked against HQ's observation, its reveal of a
@@ -102,7 +119,7 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_propose_env",
-		Description: "Propose a variable in your application's stage or production, for every app or one service. A plain value: the person approves it and their client sets it. A secret (secret=true, no value): the card asks the person for it, saves it hidden, restarts the services in restart; a message says how it ended. Never send the person to the Vault.",
+		Description: "Propose a variable in stage or production, for every app or one service. Plain: once approved, their client sets it and restarts the running services in restart (a service's own: that service). Secret (secret=true, no value): the card asks the person, saves it hidden, restarts likewise; a message says how it ended. Never send the person to the Vault.",
 		Annotations: orgPropose("Propose a variable"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in AppProposeEnvInput) (*mcp.CallToolResult, any, error) {
 		if in.Secret {
@@ -127,17 +144,17 @@ func RegisterAppPropose(srv *mcp.Server, httpClient hq.Doer, projectID string, r
 				"value is required for a plain value",
 				"For a secret pass secret=true and no value: the person gives it on the card")), nil, nil
 		}
-		if len(in.Restart) > 0 || in.Generate != "" {
+		if in.Generate != "" {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				"restart and generate go with secret only",
-				"For a plain value propose the restart with zerops_propose_service once it is set")), nil, nil
+				"generate goes with secret only",
+				"For a random secret pass secret=true and generate, and no value")), nil, nil
 		}
 		result, err := ops.ProposeAppAction(ctx, src, uuid.NewString, ops.OrgActionInput{
 			Kind: ops.ProposalEnvSet, Project: in.Project, Service: in.Service, Reason: in.Reason,
-			Scope: in.Scope, Key: in.Key, Value: in.Value,
+			Scope: in.Scope, Key: in.Key, Value: in.Value, Restart: in.Restart,
 		})
 		if result != nil {
-			result.Note += appEnvRestartNote
+			result.Note += appEnvRestartNote(result.Proposal.Params)
 		}
 		return appAnswer(result, err)
 	})

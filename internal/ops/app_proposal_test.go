@@ -47,7 +47,8 @@ func newTestApp() *testApp {
 }
 
 // TestProposeAppAction_Shape pins the proposal a Mate's card is drawn from:
-// the same document the Chief's tools return, named by the environment.
+// the same document the Chief's tools return, named by the environment; a
+// value carries the running services its card restarts once it is set.
 func TestProposeAppAction_Shape(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -73,12 +74,22 @@ func TestProposeAppAction_Shape(t *testing.T) {
 		{
 			name: "env.set on a service",
 			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "production", Service: "api", Scope: "service", Key: "LOG_LEVEL", Value: "debug", Reason: "find the 502s"},
-			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set LOG_LEVEL on api in Production","reason":"find the 502s","projectId":"pProd","projectName":"Production","serviceId":"sApi","serviceName":"api","params":{"scope":"service","key":"LOG_LEVEL","value":"debug","secret":false}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set LOG_LEVEL on api in Production","reason":"find the 502s","projectId":"pProd","projectName":"Production","serviceId":"sApi","serviceName":"api","params":{"scope":"service","key":"LOG_LEVEL","value":"debug","secret":false,"restart":[{"serviceId":"sApi","hostname":"api"}]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 		{
 			name: "env.set on the project, by HQ's name",
 			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "shop-production", Scope: "project", Key: "APP_URL", Value: "https://shop.example.com", Reason: "the new domain"},
 			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set APP_URL in Production","reason":"the new domain","projectId":"pProd","projectName":"Production","params":{"scope":"project","key":"APP_URL","value":"https://shop.example.com","secret":false}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
+		},
+		{
+			name: "env.set on the project restarts the running readers named, and names the stopped ones",
+			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "AUTH_HOSTS", Value: "shop.example.com", Reason: "sign-in on the new domain", Restart: []string{"api", "worker", " api "}},
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set AUTH_HOSTS in Production","reason":"sign-in on the new domain","projectId":"pProd","projectName":"Production","params":{"scope":"project","key":"AUTH_HOSTS","value":"shop.example.com","secret":false,"restart":[{"serviceId":"sApi","hostname":"api"}],"notRunning":["worker"]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
+		},
+		{
+			name: "env.set on a stopped service restarts nothing",
+			in:   OrgActionInput{Kind: ProposalEnvSet, Project: "production", Service: "worker", Scope: "service", Key: "QUEUE", Value: "jobs", Reason: "r"},
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"env.set","summary":"Set QUEUE on worker in Production","reason":"r","projectId":"pProd","projectName":"Production","serviceId":"sWorker","serviceName":"worker","params":{"scope":"service","key":"QUEUE","value":"jobs","secret":false,"notRunning":["worker"]}},"note":"Nothing has run. The person approves or declines it on the card, which carries your reason and how it ends: never restate it or ask them to approve, and don't propose it again unless they ask. You are not told the outcome: read the state again before saying it ran."}`,
 		},
 	}
 	for _, tt := range tests {
@@ -141,6 +152,7 @@ func TestProposeAppAction_Refuses(t *testing.T) {
 		{name: "no reason", in: OrgActionInput{Kind: ProposalServiceRestart, Project: "production", Service: "api"}, want: "reason"},
 		{name: "a bad variable name", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "1X", Value: "v", Reason: "r"}, want: "not a variable name"},
 		{name: "a service variable without the service", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "service", Key: "X", Value: "v", Reason: "r"}, want: "needs the service"},
+		{name: "a value's reader the environment lacks", in: OrgActionInput{Kind: ProposalEnvSet, Project: "production", Scope: "project", Key: "X", Value: "v", Reason: "r", Restart: []string{"web"}}, want: "zerops_observe"},
 		{name: "a kind beyond a Mate's", in: OrgActionInput{Kind: ProposalDomainAdd, Project: "production", Service: "api", Reason: "r"}, want: "service.restart"},
 	}
 	for _, tt := range tests {

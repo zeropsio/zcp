@@ -67,9 +67,19 @@ func ProposeAppAction(ctx context.Context, src AppSource, newID func() string, i
 		params  any = struct{}{}
 	)
 	if in.Kind == ProposalEnvSet {
-		if summary, s, params, err = envProposal(p, in, service); err != nil {
+		var env OrgEnvSetParams
+		if summary, s, env, err = envProposal(p, in, service); err != nil {
 			return nil, err
 		}
+		// A running process reads a changed value only after a restart: the card restarts its readers.
+		owner := ""
+		if s != nil {
+			owner = s.Name
+		}
+		if env.Restart, env.NotRunning, err = readerRestarts(p, owner, in.Restart); err != nil {
+			return nil, err
+		}
+		params = env
 	} else {
 		if s, err = service(in.Service); err != nil {
 			return nil, err

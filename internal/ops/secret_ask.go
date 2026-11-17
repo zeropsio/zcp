@@ -36,8 +36,9 @@ type SecretAskEnvironment struct {
 	Name      string `json:"name"`
 }
 
-// SecretAskService is a service the person's card restarts once the secret
-// is saved: a running process reads a changed value only after a restart.
+// SecretAskService is a service the person's card restarts once a secret is
+// saved or a plain value set: a running process reads a changed value only
+// after a restart.
 type SecretAskService struct {
 	ServiceID string `json:"serviceId"`
 	Hostname  string `json:"hostname"`
@@ -119,26 +120,15 @@ func ProposeSecretAsk(ctx context.Context, src AppSource, in SecretAskInput) (*S
 	if err != nil {
 		return nil, err
 	}
-	named := secretAskRestarts(hostname, in.Restart)
 	p := &orgProject{Project: platform.Project{ID: env.ProjectID, Name: env.Name}}
-	if len(named) > 0 {
+	if len(secretAskRestarts(hostname, in.Restart)) > 0 {
 		if p.Services, err = src.Services(ctx, env.ProjectID); err != nil {
 			return nil, fmt.Errorf("read the services of %s: %w", env.Name, err)
 		}
 	}
-	restart := make([]SecretAskService, 0, len(named))
-	var notRunning []string
-	for _, ref := range named {
-		s, err := appService(p, ref)
-		if err != nil {
-			return nil, err
-		}
-		// A restart is for a running process; one that runs nothing reads the value when it starts.
-		if !s.IsLive() {
-			notRunning = append(notRunning, s.Name)
-			continue
-		}
-		restart = append(restart, SecretAskService{ServiceID: s.ID, Hostname: s.Name})
+	restart, notRunning, err := readerRestarts(p, hostname, in.Restart)
+	if err != nil {
+		return nil, err
 	}
 	ask := SecretAsk{
 		Key:         key,
@@ -208,8 +198,33 @@ func SecretGenerate(expr string) (string, error) {
 	return "", invalid("generate is not a directive the card can make", allowed)
 }
 
+// readerRestarts splits the services a changed value's card restarts — a
+// service's own value's service, then the ones named — into the running ones
+// it restarts and the ones that run nothing now (stopped, or waiting for their
+// first deploy), which read the value when they next start. A name the
+// environment lacks is refused.
+func readerRestarts(p *orgProject, service string, named []string) ([]SecretAskService, []string, error) {
+	var (
+		restart    []SecretAskService
+		notRunning []string
+	)
+	for _, ref := range secretAskRestarts(service, named) {
+		s, err := appService(p, ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		// A restart is for a running process; one that runs nothing reads the value when it starts.
+		if !s.IsLive() {
+			notRunning = append(notRunning, s.Name)
+			continue
+		}
+		restart = append(restart, SecretAskService{ServiceID: s.ID, Hostname: s.Name})
+	}
+	return restart, notRunning, nil
+}
+
 // secretAskRestarts is each service the card restarts, once: a service's
-// own secret's service first, then the ones named.
+// own value's service first, then the ones named.
 func secretAskRestarts(service string, named []string) []string {
 	var out []string
 	seen := map[string]bool{}
