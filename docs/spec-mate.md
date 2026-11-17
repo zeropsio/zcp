@@ -583,9 +583,11 @@ another keep run asks, it does nothing. Then the first that applies:
    newest zcp, the start job the newest Mate (§2.9 step 7). Every run reads zcp's latest release from
    its source (bounded as a status read). A refused restart forgets the record; an accepted one that
    does not end the process within 5 minutes (the Mate server's own grace) cancels the question and
-   keeps the record: one attempt per installed zcp and release, so a dev zcp placed after an attempt
-   for the same release is still replaced once its pin ends. A record without `zcpRestartedFrom`
-   matches no installed zcp. With any dev build installed, the run's last line names the pin, or says
+   keeps the record: one attempt per installed zcp and release. A run that finds another zcp
+   installed than `zcpRestartedFrom` forgets the record (the attempt took effect, and a build pushed
+   again, even under the same version, is a new placement), so a dev zcp placed after an attempt for
+   the same release is still replaced once its pin ends; a record without `zcpRestartedFrom` is
+   forgotten the same way. With any dev build installed, the run's last line names the pin, or says
    the build stays because no release is newer than its base.
 4. Otherwise nothing: no question, no restart.
 

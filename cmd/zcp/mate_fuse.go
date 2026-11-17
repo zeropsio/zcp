@@ -50,8 +50,9 @@ const mateUnit = "zerops@" + mate.UnitName + ".service"
 
 // mateFuseRecord is the keep job's own memory: the zcp release it already
 // restarted the container for, and the zcp installed then (one attempt per
-// installed zcp and release: a dev zcp placed after an attempt for the same
-// release is still replaced once its pin ends).
+// installed zcp and release). A run that finds another zcp installed forgets
+// it, so a dev zcp placed after an attempt, even one pushed again under the
+// same version, is still replaced once its pin ends.
 type mateFuseRecord struct {
 	ZCPRestartedFor  string `json:"zcpRestartedFor,omitempty"`
 	ZCPRestartedFrom string `json:"zcpRestartedFrom,omitempty"`
@@ -119,6 +120,12 @@ func runMateFuse(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
 	zcp := startZCPReleaseLookup(ctx, server.Version, false, versions.DevPin != nil)()
+	// Another zcp than the one the attempt restarted from: the attempt took
+	// effect, and the same build pushed again later is a new placement.
+	if rec != (mateFuseRecord{}) && rec.ZCPRestartedFrom != zcp.Installed {
+		rec = mateFuseRecord{}
+		_ = writeMateFuseRecord(rec)
+	}
 	if zcp.Behind && !rec.tried(zcp) {
 		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
 			return code
