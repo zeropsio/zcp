@@ -603,9 +603,12 @@ type versionEntry struct {
 
 // pruneOldVersions removes every VersionsDir() entry except the live one
 // (liveVersion, never removed regardless of age) and the single most
-// recently modified OTHER entry — two kept in the common case. Best-effort:
-// a listing or removal failure is silently skipped, never fatal to the
-// install that just succeeded.
+// recently modified OTHER release — two kept in the common case. A dev
+// build's directory (versions/dev, what eval/scripts/mate-dev-push.sh
+// installs) is never that other one: the version to run only ever names a
+// release directory, so once a release came up nothing runs the dev build
+// again and it is removed. Best-effort: a listing or removal failure is
+// silently skipped, never fatal to the install that just succeeded.
 func pruneOldVersions(liveVersion string) {
 	entries, err := os.ReadDir(VersionsDir())
 	if err != nil {
@@ -633,7 +636,9 @@ func pruneOldVersions(liveVersion string) {
 		if len(keep) >= 2 {
 			break
 		}
-		keep[v.name] = true
+		if _, err := parseSemver(v.name); err == nil && !IsDevVersion(v.name) {
+			keep[v.name] = true
+		}
 	}
 	for _, v := range versions {
 		if !keep[v.name] {

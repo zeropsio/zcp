@@ -431,7 +431,9 @@ lock without waiting and:
    (`mate.BootWindow`, 2 minutes), so a boot that keeps advancing is never judged by elapsed time.
    - Up → `last-good` names the version (never a dev build, nor one below the floor), a failed
      version it reached is forgotten, and old version directories are pruned to `current` and
-     `last-good` (the newest other one is kept when these name one version).
+     `last-good` (the newest other release is kept when these name one version). A dev build's
+     directory (`versions/dev`) is never kept: the version to run only ever names a release
+     directory, so once a release is up nothing runs the dev build again.
    - A version newer than `last-good` that is not up → it is ended, remembered as the failed
      version, `current` returns to `last-good`, and the job exits non-zero; systemd starts the unit
      again and the same job starts `last-good`. The switch back never targets a `last-good` below
