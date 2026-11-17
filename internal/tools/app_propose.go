@@ -34,7 +34,7 @@ type AppProposeEnvInput struct {
 	Project string   `json:"project"           jsonschema:"The environment: its projectId or name from zerops_observe action=environments, or stage or production."`
 	Scope   string   `json:"scope"             jsonschema:"project (every app there reads it) or service (one service's own)."`
 	Service string   `json:"service,omitempty" jsonschema:"The service's hostname when scope is service."`
-	Key     string   `json:"key"               jsonschema:"The variable's name."`
+	Key     string   `json:"key"               jsonschema:"The variable's name as the vault keeps it, which zerops.yaml run.envVariables references under the name the app reads: APP_KEY: ${APP_KEY_SECRET}, never KEY: ${KEY}."`
 	Value   string   `json:"value,omitempty"   jsonschema:"A plain value; never with secret, never a secret."`
 	Secret  bool     `json:"secret,omitempty"  jsonschema:"true asks the person for a secret (a password, key or signing secret): they type or generate it on the card and it is saved hidden. Pass no value."`
 	Restart []string `json:"restart,omitempty" jsonschema:"With secret: hostnames of the services that read it, which the card restarts once it is saved (a service's own secret restarts that service)."`

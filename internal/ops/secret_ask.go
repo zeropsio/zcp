@@ -171,6 +171,7 @@ func secretAskWords(ask SecretAsk) string {
 	}
 	return fmt.Sprintf("Now waiting on the person for %s in %s: their card takes it, typed or generated, and saves it hidden with their own access.%s "+
 		"Tell them in one sentence why it is needed, and nothing about how they give it: never send them to a Vault page and never ask for the value in the chat. "+
-		"A message of its own tells you how it ended: saved to %s, or declined. Once saved, read zerops_observe action=logs for %s before you say it works.",
-		ask.Key, ask.Environment.Name, restarted, secretAskPlace(ask), ask.Environment.Name)
+		"A message of its own tells you how it ended: saved to %s, or declined. Once saved, read zerops_observe action=logs for %s before you say it works. "+
+		"The app reads it only through its service's zerops.yaml run.envVariables, under the name the app reads and never the same name (APP_KEY: ${%s}): the release review sees nothing else.",
+		ask.Key, ask.Environment.Name, restarted, secretAskPlace(ask), ask.Environment.Name, ask.Key)
 }
