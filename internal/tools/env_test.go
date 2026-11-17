@@ -25,7 +25,7 @@ import (
 // non-actionable schema errors.
 func TestEnvSchema_GenerateDotenv_PrefersSetupOverHostname(t *testing.T) {
 	t.Parallel()
-	schema := envInputSchema(false)
+	schema := envInputSchema(false, false)
 
 	hostnameProp, ok := schema.Properties["serviceHostname"]
 	if !ok || hostnameProp == nil {
@@ -72,7 +72,7 @@ func TestEnvTool_GetAction_Success(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "get", "serviceHostname": "db",
@@ -131,7 +131,7 @@ func TestEnvGet_ServiceScoped_NoProjectEnvLeak(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "get", "serviceHostname": "db",
@@ -179,7 +179,7 @@ func TestEnvTool_GetAction_RequiresTarget(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{"action": "get"})
 
@@ -210,7 +210,7 @@ func TestEnvTool_GetAction_StringifiedBoolProject(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":  "get",
@@ -232,7 +232,7 @@ func TestEnvTool_Set_PollsToFinished(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":          "set",
@@ -268,7 +268,7 @@ func TestEnvTool_Delete_PollsToFinished(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":          "delete",
@@ -303,7 +303,7 @@ func TestEnvTool_EmptyAction(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	err := callToolMayError(t, srv, "zerops_env", map[string]any{
 		"action": "", "serviceHostname": "api",
@@ -326,7 +326,7 @@ func TestEnvTool_InvalidAction(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	err := callToolMayError(t, srv, "zerops_env", map[string]any{
 		"action": "wipe", "serviceHostname": "api",
@@ -374,7 +374,7 @@ func TestEnvTool_GenerateDotenv_LegacyHostname_AddsDeprecationWarning(t *testing
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "p1", "")
+	RegisterEnv(srv, mock, "p1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":          "generate-dotenv",
@@ -425,7 +425,7 @@ func TestEnvTool_GenerateDotenv_SetupParam_NoWarning(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "p1", "")
+	RegisterEnv(srv, mock, "p1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "generate-dotenv",
@@ -478,7 +478,7 @@ func TestEnvSet_ProjectScope_ShadowedByYaml_WarnsNotLive(t *testing.T) {
 		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},      // slim
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "set", "project": true, "variables": []any{"LOG_LEVEL=debug"},
@@ -517,7 +517,7 @@ func TestEnvSet_ProjectScope_NoShadow_Live(t *testing.T) {
 		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "set", "project": true, "variables": []any{"NEW_VAR=x"},
@@ -549,7 +549,7 @@ func TestEnvSet_ServiceScope_NoShadowDetection(t *testing.T) {
 		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},
 	).WithProjectEnv([]platform.ProjectEnvVar{{ID: "pe1", Key: "FOO", Content: "fromproject"}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "set", "serviceHostname": "api", "variables": []any{"FOO=fromservice"},
@@ -604,7 +604,7 @@ func TestEnvSet_ProjectScope_ShadowNamesNoValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, shadowSetMock(tt.baked, tt.slim), "proj-1", "")
+			RegisterEnv(srv, shadowSetMock(tt.baked, tt.slim), "proj-1", "", WithAskCard())
 			result := callTool(t, srv, "zerops_env", map[string]any{"action": "set", "project": true, "variables": tt.variables})
 			if result.IsError {
 				t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
@@ -646,7 +646,7 @@ func TestEnvSet_ProjectScope_ShadowScanUnavailable_DoesNotClaimLive(t *testing.T
 		nil,
 	).WithError("GetServiceEnv", errors.New("vpn down"))
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "set", "project": true, "variables": []any{"FOO=bar"},
@@ -685,7 +685,7 @@ func TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak(t *testing.T) {
 		WithProjectEnv([]platform.ProjectEnvVar{{ID: "pe1", Key: "PROJECT_SECRET", Content: "must-not-leak"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "")
+	RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "get", "serviceHostname": "api",
@@ -795,7 +795,7 @@ func TestEnvSet_StoredEcho_NamesKeysNeverValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, shadowSetMock(nil, nil), "proj-1", "")
+			RegisterEnv(srv, shadowSetMock(nil, nil), "proj-1", "", WithAskCard())
 			args := map[string]any{"action": "set", "skipRestart": true}
 			maps.Copy(args, tt.args)
 			result := callTool(t, srv, "zerops_env", args)
@@ -879,7 +879,7 @@ func TestEnvTool_Request(t *testing.T) {
 				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive}}).
 				WithProjectEnv([]platform.ProjectEnvVar{{ID: "p1", Key: "OPENAI_API_KEY", Content: "sk-live-secret", Sensitive: true}})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, mock, "proj-1", "")
+			RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 			result := callTool(t, srv, "zerops_env", tt.args)
 			text := getTextContent(t, result)
@@ -926,7 +926,7 @@ func TestEnvTool_Request_Refused(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+			RegisterEnv(srv, platform.NewMock(), "proj-1", "", WithAskCard())
 
 			result := callTool(t, srv, "zerops_env", tt.args)
 			if !result.IsError {
@@ -942,7 +942,7 @@ func TestEnvTool_Request_Refused(t *testing.T) {
 func TestEnvTool_Request_StaleSchema(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+	RegisterEnv(srv, platform.NewMock(), "proj-1", "", WithAskCard())
 
 	result := callTool(t, srv, "zerops_env", map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "reason": "for checkout"})
 	text := getTextContent(t, result)
@@ -977,7 +977,7 @@ func TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed(t *testing.T) {
 				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive}}).
 				WithProcess(&platform.Process{ID: "proc-1", Status: statusFinished})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, mock, "proj-1", "")
+			RegisterEnv(srv, mock, "proj-1", "", WithAskCard())
 
 			call := func(args map[string]any) map[string]any {
 				t.Helper()
@@ -1017,7 +1017,7 @@ func TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed(t *testing.T) {
 // says to ask when the feature using the value is being built.
 func TestEnvSchema_RequestAsksWhenTheFeatureUsingTheValueIsBeingBuilt(t *testing.T) {
 	t.Parallel()
-	action := envInputSchema(false).Properties["action"].Description
+	action := envInputSchema(false, true).Properties["action"].Description
 	if !strings.Contains(action, "request: ask the person, when the feature using it is being built, for a value only they have") {
 		t.Errorf("action description = %q, want request to say to ask when the feature using it is being built", action)
 	}

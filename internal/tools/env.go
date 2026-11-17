@@ -59,10 +59,15 @@ type EnvInput struct {
 // zerops.yaml — a UX failure that cost ~10 tool calls. Exposing `get`
 // as a first-class action eliminates that branch entirely.
 //
-// orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey).
-func envInputSchema(orgAIKey bool) *jsonschema.Schema {
-	actions := []any{"get", "set", "delete", "request", "generate-dotenv"}
-	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+// orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey);
+// asks adds request, which only a Mate's client draws (WithAskCard).
+func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
+	actions := []any{"get", "set", "delete", "generate-dotenv"}
+	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	if asks {
+		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
+		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	}
 	if orgAIKey {
 		actions = append(actions, "ai-key")
 		actionDescription += " ai-key: the organization's AI key into the Shared vault, unseen (NEBIUS_API_KEY sensitive, NEBIUS_BASE_URL), for an AI feature in the app; skipRestart as set."
@@ -246,14 +251,17 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 	for _, opt := range opts {
 		opt(&options)
 	}
-	actions := "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
+	actions := "get (keys), set (upsert), delete, generate-dotenv (local .env)"
+	if options.asks {
+		actions = "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
+	}
 	if options.aiKey != nil {
 		actions += ", ai-key (the organization's AI key into the Shared vault, unseen)"
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
 		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: " + actions + ". An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
-		InputSchema: envInputSchema(options.aiKey != nil),
+		InputSchema: envInputSchema(options.aiKey != nil, options.asks),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -342,7 +350,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 		case envActionRequest:
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
-			// conversation, this result, or any log.
+			// conversation, this result, or any log. Without a Mate's client
+			// nobody draws it, so nothing is asked and nothing recorded.
+			if !options.asks {
+				return noAskCard(input.Key), nil, nil
+			}
 			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls

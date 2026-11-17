@@ -17,7 +17,26 @@ import (
 // shows the person no second prompt (docs/spec-mate.md §5.8). Only a Mate's
 // client draws an ask, so only a Mate's zcp records them.
 func WithVaultAsks(stateDir string) EnvOption {
-	return func(o *envOptions) { o.vaultAsks = stateDir }
+	return func(o *envOptions) { o.vaultAsks, o.asks = stateDir, true }
+}
+
+// WithAskCard offers request: this zcp serves a Mate, whose client draws the
+// card that asks the person. WithVaultAsks implies it.
+func WithAskCard() EnvOption {
+	return func(o *envOptions) { o.asks = true }
+}
+
+// noAskCard answers a request where no Mate's client draws the card — a
+// project outside a Mate, plain zcp: nothing was asked and nothing recorded,
+// so the agent must not speak of a card or a request to decline.
+func noAskCard(key string) *mcp.CallToolResult {
+	name := strings.TrimSpace(key)
+	if name == "" {
+		name = "the value"
+	}
+	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		"Nothing was asked: no Mate's card can ask the person here, so there is no request for them to answer or decline",
+		fmt.Sprintf("Ask the person in one sentence to add %s themselves where this project's values are set (its variables in Zerops), and never to paste it into the chat; then reference it by name.", name)))
 }
 
 // WithCardRestarts tells a request whether this Mate's ask card restarts the
