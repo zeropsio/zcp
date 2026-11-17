@@ -15,7 +15,7 @@ import (
 
 // MessageMateInput is zerops_message_mate's input.
 type MessageMateInput struct {
-	To              string `json:"to"                        jsonschema:"The Mate: its projectId, its name or its project's name, from zerops_list_mates."`
+	To              string `json:"to"                        jsonschema:"The Mate: its name or projectId, from zerops_list_mates."`
 	Words           string `json:"words"                     jsonschema:"What you ask, written for that Mate: it has not seen this conversation."`
 	AttachmentTitle string `json:"attachmentTitle,omitempty" jsonschema:"A title for an attached excerpt, e.g. 'the failing request'."`
 	AttachmentText  string `json:"attachmentText,omitempty"  jsonschema:"The excerpt itself (log lines, an error, a spec); the lines that matter."`
@@ -140,8 +140,8 @@ func listMates(peers []hq.Peer) string {
 	return "Your person's other Mates. Ask one with zerops_message_mate, its name or projectId as `to`:" + peerLines(peers)
 }
 
-// resolvePeer is the peer `to` names: its project id, or a Mate or project
-// name matched case-insensitively. When it names none or several, nothing is
+// resolvePeer is the peer `to` names: its project id, or its Mate name
+// matched case-insensitively (HQ holds no project names for peers). When it names none or several, nothing is
 // sent and the refusal lists the candidates.
 func resolvePeer(peers []hq.Peer, to string) (hq.Peer, string) {
 	to = strings.TrimSpace(to)
@@ -152,7 +152,7 @@ func resolvePeer(peers []hq.Peer, to string) (hq.Peer, string) {
 	}
 	var matches []hq.Peer
 	for _, p := range peers {
-		if to != "" && (strings.EqualFold(p.MateName, to) || strings.EqualFold(p.ProjectName, to)) {
+		if to != "" && strings.EqualFold(p.MateName, to) {
 			matches = append(matches, p)
 		}
 	}
@@ -201,6 +201,8 @@ func sendRefusal(err error) string {
 		return fmt.Sprintf("The message could not be sent (%v).", err)
 	}
 	switch refused.Code + "/" + refused.Reason {
+	case "conflict/cannot_receive":
+		return "This Mate needs an update before it can message other Mates; tell your person."
 	case "conflict/too_many_hops":
 		return "These Mates have messaged each other too many times in a row; ask your person whether to go on."
 	case "too_many_requests/messages_per_hour":

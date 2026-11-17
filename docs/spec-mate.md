@@ -4695,7 +4695,7 @@ project and HQ's origin), the Chief's included, and neither registers anywhere e
   advertised `identity.messages`), "asleep" (its link to HQ is closed), "not signed in" (no login
   of it has the owner as its present signer), else "awake".
 - `zerops_message_mate` takes `{ to, words, attachmentTitle?, attachmentText? }`. `to` is a
-  `projectId`, or a Mate name or project name matched case-insensitively against the peers. When it
+  Mate's name, matched case-insensitively against the peers, or its `projectId`. When it
   names none or several, nothing is sent and the answer lists the candidates. Otherwise it sends
   and answers one JSON document, as the proposal tools do, in the one text block:
   `{ "message": { "id", "chainId", "hop", "to": { "projectId", "projectName", "mateName" },
@@ -4715,9 +4715,11 @@ project and HQ's origin), the Chief's included, and neither registers anywhere e
   receiver has not advertised `identity.messages`, `on-wake` when its link is closed, `on-sign-in`
   when no login of it has the owner as its present signer, else `now`. Refusals are `{ code,
   reason }`: `400 invalid/to|words|attachment`, `413 too_large` (a body over 64 KiB),
+  `403 forbidden/automated` (the caller is an automated Mate, whose peers list is empty too),
   `404 not_found/mate_not_found` (no Mate there, another person's, automated, or ownerless, alike
-  so nothing leaks), `409 conflict/self`, `409 conflict/too_many_hops`, and
-  `429 too_many_requests/messages_per_hour`.
+  so nothing leaks), `409 conflict/self`, `409 conflict/cannot_receive` (the caller's own latest
+  overview does not advertise `identity.messages`, so it could not take the answer),
+  `409 conflict/too_many_hops`, and `429 too_many_requests/messages_per_hour`.
 
 **What HQ and the Mate server do with it.** A Mate that takes messages says so in its overview,
 `identity.messages = { "protocol": 1 }`, and only such a link gets `message` frames. HQ re-checks
