@@ -1,6 +1,6 @@
 // Tests for: integration — org mode (docs/spec-mate.md §2.11, OM-4) through
-// the full MCP server and the real org reader, against a fake Zerops API that
-// records every request.
+// the full MCP server and the real HQ client, against a fake HQ that answers
+// the Chief read and records every request.
 
 package integration_test
 
@@ -10,37 +10,31 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
 
-// fakeZeropsOrg answers the Zerops API for a two-project organization that
-// owns the Chief's own project, and records every request it gets.
-func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
+// fakeHQChief answers HQ's Chief read for a two-project organization as the
+// Chief's person reaches it, and records every request it gets.
+func fakeHQChief(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var (
 		mu   sync.Mutex
 		seen []string
 	)
 	project := func(id, name string, tags ...string) map[string]any {
-		return map[string]any{"id": id, "clientId": "org1", "name": name, "status": "ACTIVE", "tagList": tags}
+		return map[string]any{"id": id, "name": name, "status": "ACTIVE", "tags": append([]string{}, tags...)}
 	}
 	service := func(id, projectID, name, typ, status string) map[string]any {
-		return map[string]any{
-			"id": id, "clientId": "org1", "projectId": projectID, "name": name, "status": status,
-			"serviceStackTypeInfo": map[string]any{"serviceStackTypeVersionName": typ, "serviceStackTypeCategory": "USER"},
-		}
+		return map[string]any{"id": id, "projectId": projectID, "name": name, "status": status, "type": typ, "category": "USER"}
 	}
-	medusa := service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE")
-	medusa["ports"] = []any{map[string]any{"port": 9000, "protocol": "tcp", "scheme": "http", "httpRouting": true}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
@@ -48,26 +42,25 @@ func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		var out any
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/rest/public/project/pChief":
-			out = project("pChief", "Chief - Dana", "chief")
-		case "POST /api/rest/public/project/search":
-			out = map[string]any{"items": []any{
+		switch r.Method + " " + r.URL.Path + " " + string(body) {
+		case `POST /api/mate/chief/read {"read":"projects"}`:
+			out = map[string]any{"projects": []any{
+				project("pChief", "Chief - Dana", "chief"),
 				project("pProd", "Contoso - production"),
 				project("pRossy", "Northwind Shop - Rossy", "mate"),
 			}}
-		case "POST /api/rest/public/service-stack/search":
-			out = map[string]any{"items": []any{
-				medusa,
+		case `POST /api/mate/chief/read {"read":"services"}`:
+			out = map[string]any{"services": []any{
+				service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE"),
 				service("sZcp", "pRossy", "zcp", "zcp@1", "ACTIVE"),
 			}}
-		case "POST /api/rest/public/client-user/search":
-			out = map[string]any{"totalHits": 1, "items": []any{
-				map[string]any{"userId": "u1", "status": "ACTIVE", "roleCode": "ADMIN", "user": map[string]any{"email": "dana@example.com", "fullName": "Dana"}},
+		case `POST /api/mate/chief/read {"read":"members"}`:
+			out = map[string]any{"members": []any{
+				map[string]any{"userId": "u1", "fullName": "Dana", "role": "ADMIN", "status": "ACTIVE"},
 			}}
 		default:
-			w.WriteHeader(http.StatusForbidden)
-			out = map[string]any{"error": map[string]any{"code": "forbidden", "message": "not an org-mode read"}}
+			w.WriteHeader(http.StatusBadRequest)
+			out = map[string]any{"code": "invalid"}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	}))
@@ -81,17 +74,18 @@ func fakeZeropsOrg(t *testing.T) (*httptest.Server, func() []string) {
 
 // TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Chief's tools the
 // way the model calls them: it sees the organization, proposes a restart, a
-// message to a Mate, a domain and access, and Zerops receives only the
-// allowlist's reads, each presenting the project's key; nothing reaches HQ.
+// message to a Mate, a domain and access, and HQ receives only the Chief
+// read of the allowlist's lists, each presenting the project's key; no
+// Zerops client exists.
 func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	// Non-parallel: t.Chdir (NewOrg derives its state dir from the cwd).
 	t.Chdir(t.TempDir())
-	zerops, seen := fakeZeropsOrg(t)
+	hqServer, seen := fakeHQChief(t)
 	ctx := context.Background()
 
-	org, err := platform.OpenOrgReader(platform.OrgAccess{APIHost: zerops.URL, ProjectID: "pChief", Token: "project-key"})
+	org, err := hq.Open(hqServer.Client(), hq.Identity{Origin: hqServer.URL, Key: "project-key", ProjectID: "pChief"})
 	if err != nil {
-		t.Fatalf("OpenOrgReader: %v", err)
+		t.Fatalf("hq.Open: %v", err)
 	}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
@@ -136,20 +130,14 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	if len(reqs) == 0 {
 		t.Fatal("org mode read nothing")
 	}
-	allowed := []string{
-		"GET /api/rest/public/project/pChief",
-		"POST /api/rest/public/project/search",
-		"POST /api/rest/public/service-stack/search",
-		"POST /api/rest/public/client-user/search",
-	}
 	for _, req := range reqs {
 		call, rest, _ := strings.Cut(req, " ")
 		path, rest, _ := strings.Cut(rest, " ")
 		authorization, _, _ := strings.Cut(rest, "|")
-		if !slices.Contains(allowed, call+" "+path) {
-			t.Errorf("org mode sent %s %s, outside the allowlist (%v)", call, path, allowed)
+		if call+" "+path != "POST /api/mate/chief/read" {
+			t.Errorf("org mode sent %s %s, not the Chief read", call, path)
 		}
-		if authorization != "Bearer project-key" {
+		if authorization != "Project project-key" {
 			t.Errorf("%s %s carried Authorization %q, want the project's key", call, path, authorization)
 		}
 	}

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *testing.T) {
@@ -42,13 +41,10 @@ func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *te
 			id := hq.Identity{Key: "project-key", ProjectID: "p-me", State: hq.NewFileMateStateSource(path, "p-me")}
 			var stderr bytes.Buffer
 
-			access, chief := chiefAccess(id, "api.example", &stderr)
+			chief := chiefAccess(id, &stderr)
 
 			if chief != tt.wantChief {
 				t.Fatalf("chief = %v, want %v (stderr %q)", chief, tt.wantChief, stderr.String())
-			}
-			if chief && (access != platform.OrgAccess{APIHost: "api.example", ProjectID: "p-me", Token: "project-key"}) {
-				t.Errorf("access = %+v, want the Zerops API, this project and the project key", access)
 			}
 			if !strings.Contains(stderr.String(), tt.wantStderr) || (tt.wantStderr == "" && stderr.Len() != 0) {
 				t.Errorf("stderr = %q, want it to hold %q", stderr.String(), tt.wantStderr)
@@ -60,7 +56,7 @@ func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *te
 func TestChiefAccess_ANoIdentityContainerIsNoChiefAndSaysNothing(t *testing.T) {
 	t.Parallel()
 	var stderr bytes.Buffer
-	if _, chief := chiefAccess(hq.Identity{}, "", &stderr); chief || stderr.Len() != 0 {
+	if chief := chiefAccess(hq.Identity{}, &stderr); chief || stderr.Len() != 0 {
 		t.Errorf("chief = %v, stderr = %q; want neither", chief, stderr.String())
 	}
 }

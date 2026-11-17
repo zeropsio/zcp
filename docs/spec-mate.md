@@ -2051,30 +2051,21 @@ heard is no Chief. A registration made or lost later restarts zcp: the Mate's se
 it when the `chief` of its link's `state` frame changes (§3.11), so org mode follows the registration
 both ways. No service variable switches it and no credential of its own exists.
 
-**No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only,
-its method set pinned name by name, every request through a transport that refuses anything but a
-GET or a search POST before the network. No write-capable client exists in org mode. Org mode reads
-the Zerops API with the Chief's project key, which reaches the Chief's own
-project. A person's token never enters the container: an agent there could read it, and it is a
-write token across every organisation of that person; the browser reads its own organisation-wide
-views with their token. Zerops cuts every answer to what the project key may see and
-refuses the rest (403, 400); org mode shows a refusal in Zerops' words and asks once, never with
-another credential. It reads the allowlist of §3.11 — the organization of its own project
-(`GET /project/{own}`), its projects and services with their state (the two searches, pinned to
-that organization), its members with their roles (`POST /client-user/search` filtered to that
-organization, integration tokens left out) — and nothing else: never a variable, a log, a token
-list, a cost or any other read a Zerops credential could make. Every change is the person's: their
-client makes it with their own Zerops token after their click.
-
-HQ separately exposes an allowlisted overview to an admitted Chief: project and service searches
-are cut to the registered person's reach, while members come from HQ's member reader (§3.11). zcp's
-`OrgReader` does not use that route.
+**No write, ever; HQ is the only door.** Org mode's only door to the organization is HQ's Chief read,
+`POST /api/mate/chief/read` (§3.11), presented the Chief's project key, the key every Mate presents
+to HQ. Org mode builds no Zerops client, and the Chief read only reads. HQ reads Zerops with the
+registered person's kept personal token, so the Chief sees exactly what its person sees. That token
+never enters the container: an agent there could read it, and it is a write token across every
+organisation of that person; the browser reads its own organisation-wide views with it. HQ's
+refusal is shown once, in HQ's words: never retried with another credential, and never answered by
+reading Zerops another way. The Chief reads the allowlist of §3.11 — the organization's projects,
+their services with their state, its members with their roles, each list whole — and nothing else:
+never a variable, a log, a token list, a cost or any other read a Zerops credential could make.
+Every change is the person's: their client makes it with their own Zerops token after their click.
 
 **Tool surface.** Look: `zerops_org_overview` (the projects the key can see, grouped as `mate`, `production`,
 `stage`, `other`, `chief`, and the members with their roles). Its `projectsVisibleToProjectKey` count
-names that scope; a project key sees its own one project, not the organization's total
-(`TestOrgOverview_ProjectKey`). Member search reads every page and rejects an incomplete response
-(`TestOrgReader_ListMembers_PagesTheOrganisationSearch`).
+names that scope; a project key sees its own one project, not the organization's total.
 `zerops_org_services` reads each visible project's services and their state. Act:
 `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
@@ -2281,10 +2272,10 @@ nor `zerops_observe` shows. The shared section tells a Mate to connect a tool wi
 
 | ID | Invariant |
 |---|---|
-| OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryReadPresentsTheSessionCredentialInTheHeaderOnly`. |
+| OM-1 | Org mode makes no write call to the Zerops API: it builds no Zerops client, and its one door, HQ's Chief read, only reads. `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | zcp org mode reads the allowlist of §3.11 from Zerops with the Chief's project key, never a person's token, and shows a Zerops refusal once, in Zerops' words. HQ's separate Chief overview is not this reader. `TestOrgReader_ReadsOnlyTheAllowlistFromZerops`, `TestOrgReader_ReadsTheOverviewAsZeropsAnswersIt`, `TestOrgReader_AZeropsRefusalIsShownOnceInItsOwnWords`, `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops with the registered person's kept personal token, which never enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
@@ -2329,7 +2320,7 @@ has it and keeps every upstream behaviour untouched.
 | Link          | Who dials                                      | Proof                                                                                                                                                                             | Carries                                                                                                                          |
 | ------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | HQ ↔ Zerops   | HQ                                             | a person's own access token at sign-in, at renewal and in a verb that decides on a role (§3.3, §3.7); a project key while it links or calls (§3.3); an environment's deploy token | the person's identity, and for a verb the roles it decides on; the key's own project and validity; an environment's deploys      |
-| Mate ↔ HQ     | the Mate (its server's link; zcp's calls; git) | the project's `ZCP_API_KEY` on the link and on zcp's calls; the Mate's Git credential for the dev service's git                                                                   | tickets and the Mate's answers to them, sign-outs, the Mate's state; zcp's Mate API; git |
+| Mate ↔ HQ     | the Mate (its server's link; zcp's calls; git) | the project's `ZCP_API_KEY` on the link and on zcp's calls; the Mate's Git credential for the dev service's git                                                                   | tickets and the Mate's answers to them, sign-outs, the Mate's state; zcp's Mate API, a Chief's reads of its organisation among it (§3.11); git |
 | person ↔ HQ   | the browser                                    | the person's Zerops access token at sign-in, at renewal and in a role-deciding verb's body; otherwise the HQ session                                                              | the structure, changes, releases, tickets                                                                                        |
 | person ↔ Mate | the browser, to the Mate's container origin    | a ticket HQ issued, then the open connection                                                                                                                                      | every Mate RPC: threads, terminals, files, the agent's sign-in                                                                   |
 
@@ -2766,14 +2757,27 @@ sequenceDiagram
   `chief` changes, so a Chief that loses its registration or its person's access leaves org mode and
   a newly registered one enters it. Rotation does not wait for background work; work running at
   rotation is lost.
-- zcp's org-mode reads go to Zerops with the Chief's project key; a person's token never enters
-  the container (§2.11). Zerops cuts them to that key's reach. The
-  allowlist is the organisation overview — projects, services and their state, members with their
-  roles. Never environment variables, token lists or anything else a Zerops read could carry
-  (non-sensitive variables read in clear, other Mates' keys among them). A read joins the allowlist
-  only by the owner's decision written here. HQ separately offers a Chief overview: its project and
-  service searches are restricted to the registered person's reach and read with the credentials HQ
-  holds for those projects, omitting projects without one; members come from HQ's member reader.
+- zcp's org-mode reads go to HQ: `POST /api/mate/chief/read` with the Chief's project key, body
+  exactly `{"read":"projects"|"services"|"members"}`. HQ reads Zerops with the registered person's
+  kept personal token, which never enters the container (§2.11), so the Chief sees exactly what its
+  person sees; a project or member outside that reach is absent. Each answer is the whole list,
+  complete or refused, never paged: `projects` is `{projects:[{id,name,status,tags}]}`, the
+  organisation's projects the person's token reaches; `services` is
+  `{services:[{id,projectId,name,status,type,category}]}`, every service of those projects, the
+  platform's own among them; `members` is `{members:[{userId,fullName,role,status}]}`, the
+  organisation's people. The allowlist is the organisation overview — projects, services and their
+  state, members with their roles. Never environment variables, token lists or anything else a
+  Zerops read could carry (non-sensitive variables read in clear, other Mates' keys among them). A
+  read joins the allowlist only by the owner's decision written here. HQ's refusal `{code,reason?}`
+  is shown once, in HQ's words (the route's states: mate-hq `spec/protocol.md`, Chief):
+
+  | HQ answers                                                                                        | What the Chief's tool says                                                 |
+  | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+  | `409 credential_required` (`personal_token_missing`, `personal_token_refused`, `held`)            | the Chief's person must sign in to Mate once, with the reason              |
+  | `403 forbidden` `not_chief`                                                                       | this project is no person's Chief now                                      |
+  | `403 forbidden` with the person's permission reason (`not_mate_operator`, `not_active_member`, …) | the Chief's person may not operate this Chief now, with the reason         |
+  | `503 …`, `502 zerops_unexpected_answer`, `403 zerops_refused`, `404`, any other                   | as every HQ call: HQ unavailable, or HQ's refusal with its code and reason |
+
 - Only the Chief's own person opens it or sees it in navigation, Owners and Admins included; HQ
   enforces the opening at ticket issue (§3.8). Nobody
   else takes over a Chief whose person left or lost access, and no Owner or Admin removes another
@@ -2987,7 +2991,7 @@ update or an idle container restart.
 | TC-7  | The Mate takes every connection's role from the ticket that opened or last extended it, ends it `4401` when its grant runs out unextended, and ends a person's connections on HQ's `close-session`; it reads no member at Zerops. mate `apps/server/src/zerops/ZeropsConnections.ts`. |
 | TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | TC-10 | The dev service stores no git credential; its git reaches HQ only through the relay, which carries the project key over its ssh session only and is never written into the dev service (§2.8). `TestRelayOnly_ADevServicesPushToHQIsAnsweredThroughTheRelayWithTheProjectKey`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| TC-11 | zcp's Chief reader reads Zerops with its project key, and the client reads Zerops with the person's token. HQ also offers an allowlisted Chief overview (§2.11, §3.11). `TestOrgReader_ReadsOnlyTheAllowlistFromZerops`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `internal/chief/service_test.go`. |
+| TC-11 | zcp's Chief reads its organisation through HQ with its project key, and HQ reads Zerops for it with the registered person's kept token; the client reads Zerops with the person's token (§2.11, §3.11). `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `spec/protocol.md`, Chief (S19c). |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-15 | Starting an HQ process leaves a healthy peer's links connected; stopping or losing the owning instance retires only its links. Covered by mate-hq's multi-process link and rolling-restart conformance cases.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the key itself. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -5119,7 +5123,8 @@ its application, made or joined (`POST /api/mate/repos`); its changes in a repos
 branch it names beside its one change opened naming none — an HQ that keeps them so says
 `openPerBranch: true` in the Mate's state and lists every open change there — or, from an older HQ,
 one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
-(`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a read
+(`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a Chief's
+reads of its organisation as its registered person (`POST /api/mate/chief/read`, §3.11); a read
 token for a GitHub repository at that call (`GET
 /api/mate/git-credential?host=github.com&path=…&access=read`, §5.10 — never one that can write);
 git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; HQ's named difference 3 — the address without it answers 404) with the Mate's Git credential (§3.3) or its project key (§2.8), which today takes a Mate's push only

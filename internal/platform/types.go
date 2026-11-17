@@ -34,6 +34,15 @@ type ClientMembership struct {
 	ClientUserID string `json:"clientUserId"`
 }
 
+// OverviewMember is a person of the organization with the role Zerops gives
+// them.
+type OverviewMember struct {
+	UserID   string `json:"userId"`
+	FullName string `json:"fullName"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
+}
+
 // Project represents a Zerops project.
 type Project struct {
 	ID     string `json:"id"`
