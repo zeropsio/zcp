@@ -342,20 +342,22 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	lister, ok := p.(interface {
-		List(context.Context, provider.Path, provider.Page) ([]provider.Node, string, error)
+	path, page := parsePath(r), parsePage(r)
+	got, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (nodePage, error) {
+		lister, ok := p.(interface {
+			List(context.Context, provider.Path, provider.Page) ([]provider.Node, string, error)
+		})
+		if !ok {
+			return nodePage{}, fmt.Errorf("tree: %w", provider.ErrUnsupported)
+		}
+		nodes, next, err := lister.List(ctx, path, page)
+		return nodePage{nodes, next}, err
 	})
-	if !ok {
-		writeErr(w, r, fmt.Errorf("tree: %w", provider.ErrUnsupported))
-		return
-	}
-	path := parsePath(r)
-	nodes, next, err := lister.List(r.Context(), path, parsePage(r))
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"nodes": nodes, "nextCursor": next})
+	writeJSON(w, map[string]any{"nodes": got.nodes, "nextCursor": got.next})
 }
 
 func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
@@ -363,14 +365,16 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	st, ok := p.(interface {
-		Stat(context.Context, provider.Path) (provider.Node, error)
+	path := parsePath(r)
+	node, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (provider.Node, error) {
+		st, ok := p.(interface {
+			Stat(context.Context, provider.Path) (provider.Node, error)
+		})
+		if !ok {
+			return provider.Node{}, fmt.Errorf("stat: %w", provider.ErrUnsupported)
+		}
+		return st.Stat(ctx, path)
 	})
-	if !ok {
-		writeErr(w, r, fmt.Errorf("stat: %w", provider.ErrUnsupported))
-		return
-	}
-	node, err := st.Stat(r.Context(), parsePath(r))
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -386,18 +390,22 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		rb, ok := p.(interface {
-			ReadBlob(context.Context, provider.Path) ([]byte, provider.BlobMeta, error)
+		path := parsePath(r)
+		blob, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (blobRead, error) {
+			rb, ok := p.(interface {
+				ReadBlob(context.Context, provider.Path) ([]byte, provider.BlobMeta, error)
+			})
+			if !ok {
+				return blobRead{}, fmt.Errorf("blob: %w", provider.ErrUnsupported)
+			}
+			data, meta, err := rb.ReadBlob(ctx, path)
+			return blobRead{data, meta}, err
 		})
-		if !ok {
-			writeErr(w, r, fmt.Errorf("blob: %w", provider.ErrUnsupported))
-			return
-		}
-		data, meta, err := rb.ReadBlob(r.Context(), parsePath(r))
 		if err != nil {
 			writeErr(w, r, err)
 			return
 		}
+		data, meta := blob.data, blob.meta
 		// Hardening: attacker-controlled bytes must never render inline on the
 		// console origin (stored-XSS → bearer theft). Force download semantics.
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -460,16 +468,22 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	dl, ok := p.(provider.BlobDownloader)
-	if !ok {
-		writeErr(w, r, fmt.Errorf("download: %w", provider.ErrUnsupported))
-		return
-	}
-	body, meta, err := dl.DownloadBlob(r.Context(), parsePath(r))
+	path := parsePath(r)
+	// Only the error DownloadBlob returns is read again on a rebuilt
+	// connection; nothing after the first streamed byte is.
+	dlr, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (download, error) {
+		dl, ok := p.(provider.BlobDownloader)
+		if !ok {
+			return download{}, fmt.Errorf("download: %w", provider.ErrUnsupported)
+		}
+		body, meta, err := dl.DownloadBlob(ctx, path)
+		return download{body, meta}, err
+	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
+	body, meta := dlr.body, dlr.meta
 	if body == nil || meta.Size < 0 {
 		if body != nil {
 			_ = body.Close()
@@ -511,14 +525,16 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rt, ok := p.(interface {
-		ReadTable(context.Context, provider.Path, provider.Page) (provider.TablePage, error)
+	path, page := parsePath(r), parsePage(r)
+	tp, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (provider.TablePage, error) {
+		rt, ok := p.(interface {
+			ReadTable(context.Context, provider.Path, provider.Page) (provider.TablePage, error)
+		})
+		if !ok {
+			return provider.TablePage{}, fmt.Errorf("table: %w", provider.ErrUnsupported)
+		}
+		return rt.ReadTable(ctx, path, page)
 	})
-	if !ok {
-		writeErr(w, r, fmt.Errorf("table: %w", provider.ErrUnsupported))
-		return
-	}
-	tp, err := rt.ReadTable(r.Context(), parsePath(r), parsePage(r))
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -532,12 +548,14 @@ func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	counter, ok := p.(provider.TableCounter)
-	if !ok {
-		writeErr(w, r, fmt.Errorf("table count: %w", provider.ErrUnsupported))
-		return
-	}
-	count, err := counter.CountTable(r.Context(), parsePath(r))
+	path := parsePath(r)
+	count, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (int64, error) {
+		counter, ok := p.(provider.TableCounter)
+		if !ok {
+			return 0, fmt.Errorf("table count: %w", provider.ErrUnsupported)
+		}
+		return counter.CountTable(ctx, path)
+	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -561,17 +579,18 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	q, ok := p.(interface {
-		Query(context.Context, string, provider.Page) (provider.TablePage, error)
-	})
-	if !ok {
-		writeErr(w, r, fmt.Errorf("query: %w", provider.ErrUnsupported))
-		return
-	}
 	if body.Page.Limit <= 0 || body.Page.Limit > 100 {
 		body.Page.Limit = 100
 	}
-	tp, err := q.Query(ctx, body.Stmt, body.Page)
+	tp, err := readOn(ctx, s.engine, body.Service, p, func(ctx context.Context, p provider.Provider) (provider.TablePage, error) {
+		q, ok := p.(interface {
+			Query(context.Context, string, provider.Page) (provider.TablePage, error)
+		})
+		if !ok {
+			return provider.TablePage{}, fmt.Errorf("query: %w", provider.ErrUnsupported)
+		}
+		return q.Query(ctx, body.Stmt, body.Page)
+	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -592,19 +611,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sr, ok := p.(interface {
-		Search(context.Context, provider.Path, string, provider.Page) ([]provider.Node, string, error)
+	path, query, page := parsePath(r), r.URL.Query().Get("q"), parsePage(r)
+	got, err := readOn(r.Context(), s.engine, r.URL.Query().Get("service"), p, func(ctx context.Context, p provider.Provider) (nodePage, error) {
+		sr, ok := p.(interface {
+			Search(context.Context, provider.Path, string, provider.Page) ([]provider.Node, string, error)
+		})
+		if !ok {
+			return nodePage{}, fmt.Errorf("search: %w", provider.ErrUnsupported)
+		}
+		nodes, next, err := sr.Search(ctx, path, query, page)
+		return nodePage{nodes, next}, err
 	})
-	if !ok {
-		writeErr(w, r, fmt.Errorf("search: %w", provider.ErrUnsupported))
-		return
-	}
-	nodes, next, err := sr.Search(r.Context(), parsePath(r), r.URL.Query().Get("q"), parsePage(r))
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"nodes": nodes, "nextCursor": next})
+	writeJSON(w, map[string]any{"nodes": got.nodes, "nextCursor": got.next})
 }
 
 func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
@@ -1003,6 +1025,41 @@ func (s *Server) providerFor(w http.ResponseWriter, r *http.Request) (provider.P
 		return nil, false
 	}
 	return p, true
+}
+
+// readOn runs a non-mutating provider call. A call the service refused for its
+// credentials (provider.ErrAuth) is run once more on a connection the engine
+// builds from freshly read credentials, and the request answers that run; a
+// rebuild that cannot read the credentials or reach the service answers its own
+// error. No other error is retried, and a mutating route never comes here, so a
+// write is never sent twice. ctx carries the route's deadline for both runs.
+func readOn[T any](ctx context.Context, e *console.Engine, service string, p provider.Provider, read func(context.Context, provider.Provider) (T, error)) (T, error) {
+	got, err := read(ctx, p)
+	if !errors.Is(err, provider.ErrAuth) {
+		return got, err
+	}
+	fresh, _, rerr := e.Rebuild(ctx, service, p)
+	if rerr != nil {
+		var zero T
+		return zero, rerr
+	}
+	return read(ctx, fresh)
+}
+
+// nodePage, blobRead and download carry a multi-value provider read through readOn.
+type nodePage struct {
+	nodes []provider.Node
+	next  string
+}
+
+type blobRead struct {
+	data []byte
+	meta provider.BlobMeta
+}
+
+type download struct {
+	body io.ReadCloser
+	meta provider.BlobDownloadMeta
 }
 
 // providerForWrite is providerFor's mutating-route counterpart: the ONE choke

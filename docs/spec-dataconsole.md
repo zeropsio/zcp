@@ -351,7 +351,14 @@ comes from the Zerops API for its plain values; a value the API withholds from a
 read each time a connection is built (a built connection is kept and reused); a value the
 connection needs that the store lacks — the service does not share its variables with the
 container — is `ErrNoCredentials`, its text naming the service and the keys, never a value, while a
-withheld key the connection never reads refuses nothing. The VPN gate (`showVPNGate`) is offered only to a console on a
+withheld key the connection never reads refuses nothing. A read the service refuses for the kept
+connection's credentials (`ErrAuth`, always joined to `ErrUpstream`, so still 502 `upstream`) is run
+once more on a connection built from freshly read credentials, and only that run's failure is
+answered; a write is never re-sent, the next read rebuilds. Tabular (SQLSTATE class `28` on
+PostgreSQL and MariaDB/MySQL, exception `516` on ClickHouse), document (401/403) and object (access
+denied) tell authentication apart; key-value and stream do not, and keep their connection until the console ends, as does a connection
+whose service stops sharing its variables while its password still works: no event reaches the
+console for either. The VPN gate (`showVPNGate`) is offered only to a console on a
 person's own machine: one running in the project's own container (a Mate's) is on the private
 network and carries no VPN hint (`TestEngine_VPNHint_OnlyOutsideTheProject`).
 

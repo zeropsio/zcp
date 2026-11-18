@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -57,10 +58,12 @@ var (
 // server.publicErrorMessage appends to the envelope's message (EXT-1) — the
 // sanitization in sanitizeEngineReason is exactly what makes that safe. The
 // ErrUpstream branch carries no detail (an outage has nothing per-attempt
-// worth showing beyond the generic "upstream error").
+// worth showing beyond the generic "upstream error"). A refused credential
+// joins ErrAuth to that ErrUpstream, so the engine rebuilds the connection
+// from fresh credentials once before a read answers the failure.
 func engineErr(op string, err error) error {
-	if isConnectivityErr(err) {
-		return fmt.Errorf("tabular: %s: %w", op, provider.ErrUpstream)
+	if isAuthErr(err) || isConnectivityErr(err) {
+		return upstreamErr(op, err)
 	}
 	return provider.WithPublicDetail(
 		fmt.Errorf("tabular: %s: %w", op, provider.ErrInvalid),
@@ -109,6 +112,42 @@ func isConnectivityErr(err error) bool {
 			return false
 		}
 		return isConnectivitySQLStateClass(string(myErr.SQLState[:]))
+	}
+	return false
+}
+
+// upstreamErr wraps a failed engine call that is an outage, not a rejection
+// of a caller's operand, as ErrUpstream; a refused credential joins ErrAuth.
+// Every call that opens a pool connection reports through it, because that
+// is where a changed password first shows.
+func upstreamErr(op string, err error) error {
+	if isAuthErr(err) {
+		return fmt.Errorf("tabular: %s: %w: %w", op, provider.ErrAuth, provider.ErrUpstream)
+	}
+	return fmt.Errorf("tabular: %s: %w", op, provider.ErrUpstream)
+}
+
+// clickHouseAuthenticationFailed is ClickHouse's AUTHENTICATION_FAILED
+// exception code: a live ClickHouse 25.3 answers a wrong password with it.
+const clickHouseAuthenticationFailed = 516
+
+// isAuthErr reports whether err is the engine refusing the connection's
+// credentials: SQLSTATE class "28" (invalid authorization specification) on
+// a typed *pgconn.PgError or *mysql.MySQLError, or ClickHouse's
+// authentication exception. It is the evidence that the credentials the
+// connection was built from are no longer the service's.
+func isAuthErr(err error) bool {
+	var chErr *clickhouse.Exception
+	if errors.As(err, &chErr) {
+		return chErr.Code == clickHouseAuthenticationFailed
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return sqlStateClass(pgErr.Code) == "28"
+	}
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) {
+		return sqlStateClass(string(myErr.SQLState[:])) == "28"
 	}
 	return false
 }

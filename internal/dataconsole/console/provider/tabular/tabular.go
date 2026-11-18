@@ -138,7 +138,7 @@ func (p *Provider) CountTable(ctx context.Context, path provider.Path) (int64, e
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return 0, countContextErr(err)
 		}
-		return 0, fmt.Errorf("tabular: count: %w", provider.ErrUpstream)
+		return 0, upstreamErr("count", err)
 	}
 	return count, nil
 }
@@ -337,7 +337,7 @@ func (p *Provider) Query(ctx context.Context, stmt string, page provider.Page) (
 	if p.d.supportsReadOnlyTx() {
 		tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 		if err != nil {
-			return provider.TablePage{}, fmt.Errorf("tabular: begin: %w", provider.ErrUpstream)
+			return provider.TablePage{}, upstreamErr("begin", err)
 		}
 		defer func() { _ = tx.Rollback() }()
 		rows, err = tx.QueryContext(ctx, stmt)
@@ -632,7 +632,7 @@ func isClickHouseAggregateState(dataType string) bool {
 func (p *Provider) readRows(ctx context.Context, q string) ([][]any, []struct{}, error) {
 	rows, err := p.db.QueryContext(ctx, q)
 	if err != nil {
-		return nil, nil, fmt.Errorf("tabular: read: %w", provider.ErrUpstream)
+		return nil, nil, upstreamErr("read", err)
 	}
 	defer func() { _ = rows.Close() }()
 	cols, _ := rows.Columns()
@@ -650,7 +650,7 @@ func (p *Provider) readRows(ctx context.Context, q string) ([][]any, []struct{},
 func (p *Provider) queryStrings(ctx context.Context, q string, args ...any) ([]string, error) {
 	rows, err := p.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("tabular: %w", provider.ErrUpstream)
+		return nil, upstreamErr("read", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []string
@@ -680,7 +680,7 @@ func (p *Provider) queryStringsPage(ctx context.Context, q string, limit, offset
 func (p *Provider) queryPairs(ctx context.Context, q string, args ...any) ([][2]string, error) {
 	rows, err := p.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("tabular: %w", provider.ErrUpstream)
+		return nil, upstreamErr("read", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out [][2]string

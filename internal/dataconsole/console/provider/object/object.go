@@ -414,7 +414,7 @@ func mapErr(err error) error {
 	case "NoSuchKey", "NoSuchBucket":
 		return provider.ErrNotFound
 	case "AccessDenied", "SignatureDoesNotMatch", "InvalidAccessKeyId":
-		return fmt.Errorf("object: access denied: %w", provider.ErrUpstream)
+		return fmt.Errorf("object: access denied: %w: %w", provider.ErrAuth, provider.ErrUpstream)
 	}
 	if errors.Is(err, context.Canceled) {
 		// A canceled request surfaces from net/http as a *url.Error carrying the

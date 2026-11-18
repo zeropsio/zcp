@@ -28,6 +28,12 @@ var (
 	// neither from the API (masked to this key) nor from the container's env
 	// store (the service does not share its variables with this container).
 	ErrNoCredentials = errors.New("credentials not readable") // 424
+	// ErrAuth: the service refused the connection's credentials. It is always
+	// joined with ErrUpstream (fmt.Errorf("…: %w: %w", ErrAuth, ErrUpstream)),
+	// which alone decides the status and code; ErrAuth only tells the engine
+	// that the credentials it built the connection from are no longer the
+	// service's, so a read is run once more on a connection built afresh.
+	ErrAuth = errors.New("authentication failed")
 )
 
 // HTTPStatus maps a sentinel error to its status code (default 500).

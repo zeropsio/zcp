@@ -104,7 +104,7 @@ func statusErr(code int) error {
 		// taken), not an opaque outage (S17).
 		return fmt.Errorf("doc: conflict: %w", provider.ErrConflict)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("doc: auth: %w", provider.ErrUpstream)
+		return fmt.Errorf("doc: %w: %w", provider.ErrAuth, provider.ErrUpstream)
 	default:
 		return fmt.Errorf("doc: upstream status %d: %w", code, provider.ErrUpstream)
 	}

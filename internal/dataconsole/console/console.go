@@ -204,6 +204,25 @@ func (e *Engine) ProviderFor(ctx context.Context, hostname string) (provider.Pro
 	return p, view, nil
 }
 
+// Rebuild replaces a connection that failed authentication with one built
+// from freshly read credentials. The failed provider leaves the cache only if
+// it is still the one cached for hostname, so requests that failed on the
+// same connection share one rebuild: a later caller finds the new one cached.
+// Closing the failed provider ends other requests still on it; they answer
+// their own error.
+func (e *Engine) Rebuild(ctx context.Context, hostname string, failed provider.Provider) (provider.Provider, ServiceView, error) {
+	e.mu.Lock()
+	stale := e.built[hostname] == failed
+	if stale {
+		delete(e.built, hostname)
+	}
+	e.mu.Unlock()
+	if stale {
+		_ = failed.Close()
+	}
+	return e.ProviderFor(ctx, hostname)
+}
+
 // Close releases every built provider.
 func (e *Engine) Close() {
 	e.mu.Lock()
