@@ -874,12 +874,13 @@ direct-to-3773 access do not work; `/mate/` is the only supported origin.
 ### 2.8 The zcp↔mate contract
 
 zcp and mate ship from two repositories on two schedules, and the coupling between them is the handful
-of facts below — none of which either side can change alone. The facts are numbered as **contract
-2**: a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
+of facts below — none of which either side can change alone. The facts are numbered as **contract 2**:
+a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
 `SupportedContract`, and a release declaring a number zcp does not know is refused rather than
-installed. Changing any fact below is a contract bump on both sides; so is a flag zcp starts passing that a
-release at or above `MinimumMateVersion` would reject — a setting older releases may lack rides the
-environment instead, never a probed flag (§2.2).
+installed. Changing any fact below is a contract bump on both sides, except an environment key every
+release at or above `MinimumMateVersion` ignores when added or reads as its own default when absent;
+so is a flag zcp starts passing that a release at or above `MinimumMateVersion` would reject — a
+setting older releases may lack rides the environment instead, never a probed flag (§2.2).
 
 | # | The fact | Owned by |
 |---|---|---|
