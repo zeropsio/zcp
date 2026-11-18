@@ -23,8 +23,8 @@ import (
 
 // A part planned in a Mate is born pooled by its plan (docs/spec-mate.md
 // §2.8b B-9): the plan's discover call ensures the repository all its parts
-// share in HQ, seeds its `main` from the one pool template when it holds
-// nothing (B-10) or checks the parts' setups on it, imports each part's dev
+// share in HQ, seeds its `main` from the one pool template when it is HQ's
+// empty first commit (B-10) or checks the parts' setups on it, imports each part's dev
 // pool and stage the project lacks, and then runs the stand-up's own pooled
 // build (standFrom) from the plan's parts in place of the recipe's tier —
 // under the stand-up's one lock and status, with its rows and verdict. Every
@@ -41,6 +41,7 @@ type partRepositories interface {
 	OpenScratch(ctx context.Context, appID, repo string) (*hq.Scratch, error)
 	OpenChange(ctx context.Context, repo, title, branch string) (hq.OpenedChange, error)
 	SeedChange(ctx context.Context, repo string, number int) (hq.Change, error)
+	CloseChange(ctx context.Context, repo string, number int) (hq.Change, error)
 }
 
 // pooledBirth is one call's way to create a Mate's plan's parts: the server's
@@ -335,14 +336,13 @@ func (b *pooledBirth) ensurePartRepository(ctx context.Context, repos partReposi
 	return repo.AppID, nil
 }
 
-// seedTitle is the seed change's title and its commit's message.
-const seedTitle = "Set up the pooled parts"
-
-// seedOrCheckMain is step 2: a `main` that is unborn or holds no file gets
-// the seed, from the one pool template, as the repository's first change,
-// which HQ's Core lands at zcp's ask (B-10; zcp never pushes `main`); a
-// `main` holding code is written nothing and is refused when it lacks a
-// part's setups, naming each one and its file.
+// seedOrCheckMain is step 2: HQ's empty first commit as `main` gets the
+// seed, from the one pool template, as the repository's first change, which
+// HQ's Core lands at zcp's ask (B-10; zcp never pushes `main`); a `main`
+// holding code is written nothing and is refused when it lacks a part's
+// setups, naming each one and its file; a repository with no `main` is
+// refused before any change is opened, for HQ lands a first change only onto
+// its own empty first commit.
 func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositories, appID, repository string, parts []pooledPlanPart) error {
 	full := appID + "/" + repository
 	scratch, err := repos.OpenScratch(ctx, appID, repository)
@@ -350,12 +350,18 @@ func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositorie
 		return pooledHQError("Could not open "+full+" in HQ", err)
 	}
 	defer scratch.Close()
-	head, written, err := b.readMain(ctx, scratch, full)
+	head, state, err := b.readMain(ctx, scratch, full)
 	if err != nil {
 		return err
 	}
-	if written {
+	switch state {
+	case ops.SeedMainWritten:
 		return checkMainSetups(ctx, scratch, appID, repository, head, parts)
+	case ops.SeedMainUnborn:
+		return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("%s has no %s (refused): a person made it empty, and HQ lands a Mate's first change only onto the empty first commit of a repository HQ made, so zcp cannot seed it", full, hqBase),
+			"Nothing was opened, written or imported. A person writes main's first commit, holding the parts' pool setups, or the plan names a repository the Mate makes (repository=\"<new name>\"); then send the plan again.")
+	case ops.SeedMainEmpty:
 	}
 
 	poolParts := make([]ops.PoolPart, 0, len(parts))
@@ -375,13 +381,19 @@ func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositorie
 	b.progress.say(fmt.Sprintf("opening the seed as %s's first change", full))
 	var opened hq.OpenedChange
 	if err := b.d.askHQ(ctx, b.progress, "the seed's change", func(ctx context.Context) (err error) {
-		opened, err = repos.OpenChange(ctx, repository, seedTitle, "")
+		opened, err = repos.OpenChange(ctx, repository, ops.SeedTitle, "")
 		return err
 	}); err != nil {
 		return pooledHQError("HQ did not open the seed's change in "+full, err)
 	}
 	change := opened.Change
-	if err := pushSeed(ctx, scratch, change.Branch, tree); err != nil {
+	commit, err := pushSeed(ctx, scratch, opened, tree, files)
+	if foreign := (*foreignSeedChangeError)(nil); errors.As(err, &foreign) {
+		return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("%s's %s is empty, but HQ answered the seed with this Mate's open change #%d there (%q), which %s (refused): the seed is written only onto a change of its own", full, hqBase, change.Number, change.Title, foreign.why),
+			fmt.Sprintf("Nothing was written to change #%d and nothing was imported. A person merges or closes change #%d, then send the same plan again.", change.Number, change.Number))
+	}
+	if err != nil {
 		return pooledHQError(fmt.Sprintf("Could not put the seed on change #%d of %s", change.Number, full), err)
 	}
 
@@ -393,31 +405,59 @@ func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositorie
 	// A refused ask is not a failure by itself: whoever wrote main meanwhile
 	// may have written the setups. main as it is now decides.
 	refusal := pooledHQError(fmt.Sprintf("HQ did not take the seed, change #%d of %s", change.Number, full), seedErr)
-	head, written, err = b.readMain(ctx, scratch, full)
-	if err != nil || !written {
+	head, state, err = b.readMain(ctx, scratch, full)
+	if err != nil || state != ops.SeedMainWritten {
 		return refusal
+	}
+	if err := b.closeOrphanedSeed(ctx, repos, scratch, repository, change.Number, commit); err != nil {
+		return pooledHQError(fmt.Sprintf("%s's %s was written meanwhile, and the seed's change #%d could not be closed", full, hqBase, change.Number), err)
 	}
 	return checkMainSetups(ctx, scratch, appID, repository, head, parts)
 }
 
-// readMain is full's `main` as HQ holds it now: its head, and whether it
-// holds a file (false for an unborn `main` and for HQ's empty root).
-func (b *pooledBirth) readMain(ctx context.Context, scratch *hq.Scratch, full string) (head string, written bool, err error) {
+// closeOrphanedSeed closes the seed's change number, its head commit, once
+// main was written by another than the seed's landing; a seed Core landed
+// whose answer was lost is in main's history and is left as it is.
+func (b *pooledBirth) closeOrphanedSeed(ctx context.Context, repos partRepositories, scratch *hq.Scratch, repository string, number int, commit string) error {
+	main, found, err := scratch.Fetch(ctx, hqBase)
+	if err != nil {
+		return fmt.Errorf("read main's history: %w", err)
+	}
+	onMain := false
+	if found {
+		if onMain, err = scratch.IsAncestor(ctx, commit, main); err != nil {
+			return fmt.Errorf("read main's history: %w", err)
+		}
+	}
+	if !ops.SeedOrphaned(found, onMain) {
+		return nil
+	}
+	b.progress.say(fmt.Sprintf("closing the seed's change #%d: main was written by another", number))
+	if _, err := repos.CloseChange(ctx, repository, number); err != nil {
+		return fmt.Errorf("close change #%d: %w", number, err)
+	}
+	return nil
+}
+
+// readMain is full's `main` as HQ holds it now: its head and what it is to
+// the seed.
+func (b *pooledBirth) readMain(ctx context.Context, scratch *hq.Scratch, full string) (string, ops.SeedMain, error) {
+	var head string
 	var found bool
 	if err := b.d.askHQ(ctx, b.progress, full+"'s "+hqBase, func(ctx context.Context) (err error) {
 		head, found, err = scratch.FetchTip(ctx, hqBase)
 		return err
 	}); err != nil {
-		return "", false, pooledHQError("Could not read "+full+"'s "+hqBase+" from HQ", err)
+		return "", 0, pooledHQError("Could not read "+full+"'s "+hqBase+" from HQ", err)
 	}
-	if !found {
-		return "", false, nil
+	var paths []string
+	if found {
+		var err error
+		if paths, err = scratch.Paths(ctx, head); err != nil {
+			return "", 0, pooledHQError("Could not read "+full+"'s "+hqBase, err)
+		}
 	}
-	paths, err := scratch.Paths(ctx, head)
-	if err != nil {
-		return "", false, pooledHQError("Could not read "+full+"'s "+hqBase, err)
-	}
-	return head, len(paths) > 0, nil
+	return head, ops.SeedMainOf(found, paths), nil
 }
 
 // checkMainSetups refuses a `main` at head that holds code without the
@@ -441,33 +481,53 @@ func checkMainSetups(ctx context.Context, scratch *hq.Scratch, appID, repository
 	return nil
 }
 
-// pushSeed brings the seed change's branch to tree: a commit with no parent
-// on a branch with no head, so the change is the first into an empty
-// repository; on a head (a plan sent again finds its own change) nothing
-// when the head holds tree, else a commit of tree on it.
-func pushSeed(ctx context.Context, scratch *hq.Scratch, branch, tree string) error {
+// foreignSeedChangeError is a change HQ handed back that the seed is not
+// written onto; why says what it is.
+type foreignSeedChangeError struct{ why string }
+
+func (e *foreignSeedChangeError) Error() string { return "the change " + e.why }
+
+// pushSeed brings the seed change's branch to tree as ops.SeedOnto decides
+// on the change HQ answered, and answers the branch's head after it: a commit
+// with no parent on a branch with no head, so the change is the first into an
+// empty repository; a head that is the seed already (a plan sent again finds
+// its own change) kept; a commit of tree on a head holding the seed's files;
+// any other change refused, written nothing.
+func pushSeed(ctx context.Context, scratch *hq.Scratch, opened hq.OpenedChange, tree string, files map[string]string) (string, error) {
+	branch := opened.Change.Branch
 	head, found, err := scratch.Fetch(ctx, branch)
 	if err != nil {
-		return err
+		return "", err
+	}
+	c := ops.SeedChange{Created: opened.Created, Title: opened.Change.Title, HeadFound: found}
+	if found {
+		if c.HeadTree, err = scratch.Tree(ctx, head); err != nil {
+			return "", err
+		}
+		if c.HeadPaths, err = scratch.Paths(ctx, head); err != nil {
+			return "", err
+		}
 	}
 	var parents []string
-	if found {
-		headTree, err := scratch.Tree(ctx, head)
-		if err != nil {
-			return err
+	switch ops.SeedOnto(c, tree, files) {
+	case ops.SeedWriteRefused:
+		if !c.Created && c.Title != ops.SeedTitle {
+			return "", &foreignSeedChangeError{why: "is not the seed's"}
 		}
-		if headTree == tree {
-			return nil
-		}
+		return "", &foreignSeedChangeError{why: "holds files besides the seed's"}
+	case ops.SeedWriteNothing:
+		return head, nil
+	case ops.SeedWriteOnHead:
 		parents = []string{head}
+	case ops.SeedWriteRoot:
 	}
 	commit, err := scratch.Commit(ctx, hq.CommitSpec{Tree: tree, Parents: parents,
-		Message: seedTitle + ": zerops.yaml and the dev-server declaration",
+		Message: ops.SeedTitle + ": zerops.yaml and the dev-server declaration",
 		Name:    ops.DeployGitIdentity.Name, Email: ops.DeployGitIdentity.Email})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return scratch.Push(ctx, commit, branch)
+	return commit, scratch.Push(ctx, commit, branch)
 }
 
 // importParts is step 3: one import, through ops.Import as zerops_import

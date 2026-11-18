@@ -138,3 +138,95 @@ func TestPoolTemplate_PTCheckSeed_SeedPassesTheCheck(t *testing.T) {
 		t.Errorf("the seed lacks:\n%s", strings.Join(lacks, "\n"))
 	}
 }
+
+// PT-SEED-UNBORN — A repository with no main is never seeded and a main
+// holding a file is never written: only HQ's own empty first commit takes
+// the seed.
+// witness: internal/ops/pool_template.go | case !found: → case found:
+func TestPoolTemplate_PTSeedUnborn_OnlyHQsEmptyFirstCommitIsSeeded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		found bool
+		paths []string
+		want  SeedMain
+	}{
+		{"no main", false, nil, SeedMainUnborn},
+		{"HQ's empty first commit", true, nil, SeedMainEmpty},
+		{"main holding code", true, []string{"index.js"}, SeedMainWritten},
+	}
+	for _, tt := range tests {
+		if got := SeedMainOf(tt.found, tt.paths); got != tt.want {
+			t.Errorf("%s: SeedMainOf = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+// seedFileSet is a seed's files by path: the paths are what SeedOnto reads.
+var seedFileSet = map[string]string{"zerops.yaml": "zerops: []\n", ".zcp/dev-servers.json": "{}\n"}
+
+// PT-SEED-FOREIGN — The seed is written only onto a change opened for it:
+// another open change HQ hands back, or a seed change whose head holds other
+// files, is refused and written nothing.
+// witness: internal/ops/pool_template.go | case !c.Created && c.Title != SeedTitle: → case !c.Created && c.Title == SeedTitle:
+func TestPoolTemplate_PTSeedForeign_AnotherChangeIsWrittenNothing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		change SeedChange
+	}{
+		{"the Mate's default change, nothing pushed yet", SeedChange{Title: "Mate change"}},
+		{"the Mate's change of code", SeedChange{Title: "Add the API", HeadFound: true, HeadTree: "t-code", HeadPaths: []string{"index.js", "zerops.yaml"}}},
+		{"a seed change a push added code to", SeedChange{Title: SeedTitle, HeadFound: true, HeadTree: "t-more", HeadPaths: []string{".zcp/dev-servers.json", "index.js", "zerops.yaml"}}},
+	}
+	for _, tt := range tests {
+		if got := SeedOnto(tt.change, "t-seed", seedFileSet); got != SeedWriteRefused {
+			t.Errorf("%s: SeedOnto = %d, want SeedWriteRefused (%d)", tt.name, got, SeedWriteRefused)
+		}
+	}
+}
+
+// PT-SEED-RESENT — A plan sent again after a stop reuses its open seed
+// change: a head that is the seed already is written nothing, a head holding
+// the seed's files with other content gets one commit on it.
+// witness: internal/ops/pool_template.go | case c.HeadTree == seedTree: → case c.HeadTree != seedTree:
+func TestPoolTemplate_PTSeedResent_OwnOpenChangeIsReused(t *testing.T) {
+	t.Parallel()
+	seedPaths := []string{".zcp/dev-servers.json", "zerops.yaml"}
+	tests := []struct {
+		name   string
+		change SeedChange
+		want   SeedWrite
+	}{
+		{"opened now", SeedChange{Created: true, Title: SeedTitle}, SeedWriteRoot},
+		{"own change, nothing pushed before the stop", SeedChange{Title: SeedTitle}, SeedWriteRoot},
+		{"own change, the seed pushed before the stop", SeedChange{Title: SeedTitle, HeadFound: true, HeadTree: "t-seed", HeadPaths: seedPaths}, SeedWriteNothing},
+		{"own change, an older template's seed", SeedChange{Title: SeedTitle, HeadFound: true, HeadTree: "t-older", HeadPaths: seedPaths}, SeedWriteOnHead},
+	}
+	for _, tt := range tests {
+		if got := SeedOnto(tt.change, "t-seed", seedFileSet); got != tt.want {
+			t.Errorf("%s: SeedOnto = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+// PT-SEED-ORPHAN — A seed change HQ did not land is closed once main was
+// written by another, and left as it is when main holds the seed's landing.
+// witness: internal/ops/pool_template.go | return mainWritten && !seedOnMain → return mainWritten
+func TestPoolTemplate_PTSeedOrphan_ClosedOnlyWhenAnotherWroteMain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                    string
+		mainWritten, seedOnMain bool
+		want                    bool
+	}{
+		{"another wrote main", true, false, true},
+		{"Core landed the seed, its answer lost", true, true, false},
+		{"main still empty", false, false, false},
+	}
+	for _, tt := range tests {
+		if got := SeedOrphaned(tt.mainWritten, tt.seedOnMain); got != tt.want {
+			t.Errorf("%s: SeedOrphaned = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

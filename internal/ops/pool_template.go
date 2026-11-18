@@ -16,8 +16,8 @@ import (
 // The one pool template's repository half (docs/spec-mate.md §2.8b B-10):
 // what a pooled part needs on the repository's main — a pool setup named
 // after its pool, a stage setup named after the part, and the dev-server
-// declaration's previewPortBase. SeedFiles writes it on a main that holds
-// nothing yet; CheckPoolSetups says what a main holding code lacks of it,
+// declaration's previewPortBase. SeedFiles writes it on HQ's empty first
+// commit, onto a change SeedOnto admits; CheckPoolSetups says what a main holding code lacks of it,
 // through pool-migrate's own predicates, so a setup pool-migrate's image step
 // accepts is accepted here. The pool's import half is bundle.PoolStanza: the
 // AI Agent tier in bundle writes it and bundle cannot import ops, while this
@@ -126,6 +126,94 @@ func SeedFiles(parts []PoolPart) (map[string]string, error) {
 		zeropsYmlPrimary:       yamlBuf.String(),
 		devsup.DeclarationPath: string(decl) + "\n",
 	}, nil
+}
+
+// SeedTitle is the seed change's title and its commit's message head.
+const SeedTitle = "Set up the pooled parts"
+
+// SeedMain is what a repository's main is to the seed.
+type SeedMain int
+
+const (
+	// SeedMainEmpty is HQ's own empty first commit: the one main HQ's Core
+	// lands a first change onto, so the seed goes there.
+	SeedMainEmpty SeedMain = iota
+	// SeedMainWritten holds a file: it is written nothing, its setups are
+	// checked.
+	SeedMainWritten
+	// SeedMainUnborn is a repository with no main (a person made it empty):
+	// HQ never lands a first change there, so only a person writes it.
+	SeedMainUnborn
+)
+
+// SeedMainOf is main as HQ answers it — found false when the repository has
+// no main, paths the files its head holds — to the seed.
+func SeedMainOf(found bool, paths []string) SeedMain {
+	switch {
+	case !found:
+		return SeedMainUnborn
+	case len(paths) > 0:
+		return SeedMainWritten
+	}
+	return SeedMainEmpty
+}
+
+// SeedChange is the change HQ answered the seed's open with and its head.
+type SeedChange struct {
+	Created   bool     // HQ opened it for this ask, not handed back an open one
+	Title     string   // its title
+	HeadFound bool     // its branch has a head
+	HeadTree  string   // the head's tree
+	HeadPaths []string // the files the head holds
+}
+
+// SeedWrite is what the seed writes onto the change HQ answered.
+type SeedWrite int
+
+const (
+	// SeedWriteRoot is a commit of the seed with no parent: the change's
+	// branch has no head.
+	SeedWriteRoot SeedWrite = iota
+	// SeedWriteOnHead is a commit of the seed on the head, which holds the
+	// seed's files with other content (a seed of an older template).
+	SeedWriteOnHead
+	// SeedWriteNothing: the head is the seed already, from a run that stopped.
+	SeedWriteNothing
+	// SeedWriteRefused: the change is not the seed's, or its head holds other
+	// files; nothing is written onto it.
+	SeedWriteRefused
+)
+
+// SeedOnto is what the seed, tree seedTree holding files, writes onto the
+// change c: only onto a change opened for the seed — one HQ opened for this
+// ask or an open one titled SeedTitle — and over a head only when that head
+// holds exactly the seed's files. Any other change HQ hands back (the Mate's
+// default change of code, a recipe change) is refused untouched.
+func SeedOnto(c SeedChange, seedTree string, files map[string]string) SeedWrite {
+	switch {
+	case !c.Created && c.Title != SeedTitle:
+		return SeedWriteRefused
+	case !c.HeadFound:
+		return SeedWriteRoot
+	case c.HeadTree == seedTree:
+		return SeedWriteNothing
+	case len(c.HeadPaths) != len(files):
+		return SeedWriteRefused
+	}
+	for _, path := range c.HeadPaths {
+		if _, ok := files[path]; !ok {
+			return SeedWriteRefused
+		}
+	}
+	return SeedWriteOnHead
+}
+
+// SeedOrphaned is whether the seed change HQ did not land is left without a
+// use: main was written (mainWritten) and not by the seed's landing
+// (seedOnMain false: the seed's commit is not in main's history). Closed then,
+// never left open; a seed that landed with its answer lost is not closed.
+func SeedOrphaned(mainWritten, seedOnMain bool) bool {
+	return mainWritten && !seedOnMain
 }
 
 // CheckPoolSetups is what a main whose zerops.yaml content is zeropsYaml and
