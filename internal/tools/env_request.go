@@ -142,7 +142,7 @@ func alreadySetWords(req *ops.EnvRequestResult, ownVault bool) string {
 	switch {
 	case ownVault:
 		where = "your own vault"
-		use = fmt.Sprintf("Run the command that needs it as `zcp with %s -- <command>` — its value is never read, and never print it.", req.Key)
+		use = fmt.Sprintf("Run the command that needs it as `zcp with %[1]s -- <command>`, or write `{{env:%[1]s}}` in a zerops_browser command for a page — its value is never read, and never print it.", req.Key)
 	case req.Scope == ops.EnvRequestScopeService:
 		where = req.ServiceHostname + "'s vault"
 	}
@@ -175,7 +175,7 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 
 // ownVaultAskWords stand where a request names what restarts once the
 // person saves, for a key of the Mate's own vault: nothing does, no app reads
-// it, and the value is used with `zcp with`.
+// it, and the value is used with `zcp with` or `{{env:KEY}}`.
 func ownVaultAskWords(key string) string {
 	return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. ", key) +
 		ownVaultUseWords([]string{key}, "Once the message says saved it is in this container a few seconds later")

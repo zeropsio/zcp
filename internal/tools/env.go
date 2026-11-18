@@ -825,11 +825,12 @@ func refuseHiddenName(names []string) error {
 
 // ownVaultUseWords say how a value of the Mate's own vault is used: it is in
 // the container's live env store soon after the write, where `zcp with`
-// hands it to one command, since the session's own processes keep the env
-// they started with. arrives opens the sentence, saying from when.
+// hands it to one command and `{{env:KEY}}` to one page, since the session's
+// own processes keep the env they started with. arrives opens the sentence,
+// saying from when.
 func ownVaultUseWords(keys []string, arrives string) string {
-	return fmt.Sprintf("%s, with no restart: run the command that needs it as `zcp with %s -- <command>`. A process started earlier, this session's shell too, keeps the env it started with. Never print it.",
-		arrives, strings.Join(keys, ","))
+	return fmt.Sprintf("%s, with no restart: run the command that needs it as `zcp with %s -- <command>`, or write `{{env:%s}}` in a zerops_browser command for a page. A process started earlier, this session's shell too, keeps the env it started with. Never print it.",
+		arrives, strings.Join(keys, ","), keys[0])
 }
 
 // ownVaultChangeWords is the next action for a set or a delete in the

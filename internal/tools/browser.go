@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -82,6 +83,9 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
 			"open, close, tab and window never run; each returns a failed invalid-command step. " +
+			"In any command argument, {{env:KEY}} is replaced with the value this container's env holds under KEY " +
+			"(a test sign-in from your own vault, zerops_env mate=true): the result shows the placeholder, never the value. " +
+			"A screenshot is not redacted: a password field shows dots, so never screenshot a secret typed into a visible field. " +
 			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image " +
 			"(cut to its top 8000 px; screenshot.capturedHeight gives its full height) — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +
@@ -106,6 +110,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			Isolation:      input.Isolation,
 			Screenshot:     input.Screenshot,
 			FullPage:       input.FullPage,
+			EnvStorePath:   mate.LiveEnvStorePath,
 		})
 		if err != nil {
 			return convertError(err), nil, nil
