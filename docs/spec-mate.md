@@ -2422,8 +2422,9 @@ a span attribute.
   container; zcp and the Mate's server read it there. Lives as the platform keeps it; a regenerate
   changes its value. Opens the Zerops API for its project (zcp's work, §8.1's flag write, the
   Mate's own project read, §3.13) and, presented to HQ, proves "the Mate of project P in organisation
-  O". HQ links only a key scoped to exactly one project: organisation role `NO_ACCESS`, one project
-  grant at `BASIC_USER` or `ADMIN`, `sudo` false; any other key names no single project and is
+  O". HQ links only a key scoped to exactly one project: its Zerops record names exactly one
+  organisation, organisation role `NO_ACCESS`, and exactly one project grant at `BASIC_USER` or
+  `ADMIN`; nothing else in the record is judged. Any other key names no single project and is
   refused `key_too_wide` ("narrow the key"). HQ also refuses a key it can read in clear: it reads
   the project's and its non-system services' variables with the presented key itself, and a key
   found there in clear is refused `key_not_sensitive` ("make it a
@@ -2542,7 +2543,7 @@ sequenceDiagram
     H->>Z: (background, through the gate, if stale) verify key
   else unknown
     H->>Z: /user/info as the key → one organisation
-    H->>Z: the key's own record → NO_ACCESS + one project + sudo false
+    H->>Z: the key's own record → NO_ACCESS + one project grant
     H-->>M: state
   end
   Note over H: key held in memory for fresh Observe parent verification (§3.3)
@@ -3044,7 +3045,7 @@ update or an idle container restart.
 | MS1-6 | In Zerops mode no browser-session cookie is ever issued. `server.test.ts` — "refuses to open a cookie session inside a Zerops project".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | MS1-7 | `exec:operate` is granted only to a connection HQ's ticket opened, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | MS1-8 | Outside a Zerops project every seam above is inert. `server.test.ts` — "leaves the websocket upgrade alone outside a Zerops project"; `ExecService.test.ts` — "is not offered outside a Zerops project".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| TC-1  | HQ links only a key of exactly one project (`NO_ACCESS` in the organisation, one grant at `BASIC_USER` or `ADMIN`, `sudo` false), learns project and organisation from Zerops and never from the Mate's claim, and persists only the key's hash (link memory: §3.3). Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| TC-1  | HQ links only a key of exactly one project (`NO_ACCESS` in the organisation, one grant at `BASIC_USER` or `ADMIN`; nothing else in the key's record judged), learns project and organisation from Zerops and never from the Mate's claim, and persists only the key's hash (link memory: §3.3). Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | TC-2  | A stale cached key admits a non-Git request at once and is verified in the background on that admission; only a definite refusal from verification drops it, never a timeout, a `5xx` or another resource's not-found. An idle link has no periodic verification. mate-hq `internal/projectkeys/keys.go`, `internal/matelink/link.go`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | TC-3  | The key travels only in the link's first frame or zcp's header, never in a URL, and no log line carries it. Test to be written (HQ link, zcp client).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | TC-4  | One link per project: a newer link supersedes the older with `superseded`, and the Mate does not treat it as a failure. Test to be written (HQ link, `ZeropsHqLink`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -4500,15 +4501,17 @@ Decision: zcp of a project without a Mate sends the header `Authorization: Proje
 
 Decision: on 401 key_refused zcp calls POST /api/project/key-recheck once and reports the refusal plainly; no retry loop.
 
-**What holds today (live check 2026-11-18).** HQ admits at this door only a key scoped to exactly
-one project, the rule §3.3 states for a Mate's key: organisation role `NO_ACCESS`, one project
-grant at `BASIC_USER` or `ADMIN`, `sudo` false. The key Zerops issues to a `zcp` service made
-through its development-container setup (the integration token `zcp-<project>`) carries `sudo`,
-and HQ refuses it `403 key_too_wide`. Nothing is enrolled; bootstrap completes; the pass reports
-the refusal once per pair in HQ's words (`HQ project repository: project self: hq refused: 403
-key_too_wide`); the checkout keeps its own commit and gets no remote. So a project made that way
-does not use this door. A key narrowed by hand to the admitted shape passes enrolment, repository,
-wiring and push. HQ checks that a key is not readable in clear (`key_not_sensitive`) only for a
+**Which key passes (live check 2026-11-18).** HQ admits at this door a key scoped to exactly one
+project, the rule §3.3 states for a Mate's key: its Zerops record names exactly one organisation,
+organisation role `NO_ACCESS`, and exactly one project grant at `BASIC_USER` or `ADMIN`; nothing
+else in the record is judged. The key Zerops issues to a `zcp` service made through its
+development-container setup (the integration token `zcp-<project>`) is admitted as issued:
+`GET /api/project/self` and `POST /api/project/repos` answer 200, `git push` through HQ succeeds
+and `POST /api/project/key-recheck` answers 204. A key with grants on more than one project, or
+with an organisation role, is refused `403 key_too_wide`: nothing is enrolled; bootstrap
+completes; the pass reports the refusal once per pair in HQ's words (`HQ project repository:
+project self: hq refused: 403 key_too_wide`); the checkout keeps its own commit and gets no
+remote. HQ checks that a key is not readable in clear (`key_not_sensitive`) only for a
 Mate's key, not at this door (HQ's protocol, Plain project calls).
 
 The repository pass selects this mode when `runtime.Info.MateEnabled` is false and the
