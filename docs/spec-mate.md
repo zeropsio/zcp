@@ -1458,7 +1458,7 @@ A dev service with one dev server shows today's card, without a server name.
 **`standIn` — the dev service pool-migrate holds as the repository's stand-in.** Inside a Mate the dev
 service's snapshot carries, after `stages` and `devServers`, `"standIn": {"for": "pool-migrate"}` while
 pool-migrate holds it as its repository's stand-in (`docs/spec-workflows.md` §13 PM-14): the dev half
-of a pair serving several parts — the one dev service with a stage per part a Mate plans for a monorepo
+of a pair serving several parts — a dev service with a stage per part made before a Mate's plan created pools
 (§10.10 "One repository per monorepo") — from the plan that made the pair until the retire re-keys it
 onto its pools, and every dev service of a variant-B pair. Absent otherwise: a pair of one stage, a pair
 keyed by its dev pool, every stage, and every snapshot outside a Mate. `zerops_dev_server` names the
@@ -1675,7 +1675,8 @@ up exactly as before.
     `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
     `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
   - The monorepo playbook gives every part its own dev pool and stage on one repository — in a
-    Mate through one dev service with a stage per part, then pool-migrate — and names pool-migrate
+    Mate the plan creates them (§2.8b B-9), and a dev service with a stage per part made before a
+    Mate's plan created pools reaches them through pool-migrate — and names pool-migrate
     for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
   - A plan still carrying `codeVolume` is refused naming the way instead: one dev service holding
     the repository with a stage per part, then pool-migrate giving each part a dev pool of its own
@@ -1949,9 +1950,9 @@ on it and never blocks.
   lands its decoder (field order above).
 
 
-### 2.8b The birth of a pooled part (B-1…B-8)
+### 2.8b The birth of a pooled part (B-1…B-10)
 
-A **pooled part** is a part whose development runs in a dev pool: the tier names its pool and its stage, paired by
+A **pooled part** is a part whose development runs in a dev pool: the tier or the plan names its pool and its stage, paired by
 name (`<part>pool`, `<part>stage`; only `workflow.ParseMateTier` reads the pairing). Its birth is zcp's (the owner's
 decision, 2026-11-16: birth by commit deploy from zcp). These rows add to contract 2 without a bump: the status
 file's version stays 1, and the verdict is a field an older reader ignores.
@@ -1966,6 +1967,8 @@ file's version stays 1, and the verdict is a field an older reader ignores.
 | B-6 | **Where the verdict shows.** The Mate server reads the verdict from zcp's status file as written and never derives a row or the headline itself. The public `/setup.json` carries only the headline, as the stand-up step's state; the rows go only over the signed-in feed | the Mate server |
 | B-7 | **One starter.** While a verdict exists, the Mate server starts no stand-up of its own and does not hold the composer; without one, today's path applies (§10.10) | the Mate server |
 | B-8 | **The action on a failed verdict.** When the headline is `failed` and no row is `building`, members who may operate the Mate get one action that starts an agent turn carrying the verdict, on the conversation's own agent; it starts at most one turn per verdict | the Mate server |
+| B-9 | **Born by the plan.** A part planned in a Mate is born pooled by the same run as B-1…B-8: the plan's discover step ensures the repository (one for all parts of the plan), the seed (B-10), the import and the pool pair's record, then runs the stand-up's pooled build from the plan's parts instead of the tier's; one run per project (B-2's lock), the same verdict (B-5). A plan outside a Mate is unchanged | zcp, the plan route |
+| B-10 | **The seed.** On a `main` that is unborn or HQ's empty tree, zcp opens the seed as the repository's first change (a commit with no parent, from the one pool template, holding exactly two files) and asks HQ to land it (`POST /api/mate/changes/:repo/:n/land`); HQ's Core lands it with no person, recorded as merged by Core with the Mate its author. zcp never pushes `main`. A plan sent again finds its own open change and asks on it; whatever HQ answers to the ask, zcp reads `main` again and judges it as below, and a `main` still without the setups refuses the plan with HQ's reason, nothing imported. `zerops.yaml` gives each part a pool setup named after its pool (`<part>pool`: `build.base` and `run.base` the part's type, `run.ports` `previewPortBase + 1` … `previewPortBase + maxContainers` each with `httpSupport: true`, `run.prepareCommands` the one `zcp-devsup` install line, `start: zcp-devsup run`; nothing baked, a branch's install is its dev server's `prepare`) and a stage setup named after the part (`<part>`: `build.base` and `run.base` the type, `build.deployFiles: ./`, and `run.start: zsc noop --silent` for a runtime class that takes a start command). `.zcp/dev-servers.json` is `{"version": 1, "previewPortBase": 4000, "servers": []}`; a part's server entry is added by a lease's first `zerops_dev_server action=start`, carrying `service: <pool>` (`spec-workflows.md` DP-22). Nothing else: no README, no `.gitignore`, no application file. A `main` holding the parts' setups is written nothing; a `main` holding code without them is refused before any import, naming each missing setup and the declaration | zcp, the pool template |
 
 Before any commit deploy the stand-up checks that `main` holds each pooled part's pool setup with the one setup check
 (`ops.CheckPoolSetups` over `main`'s zerops.yaml and `.zcp/dev-servers.json`, read from HQ); a miss fails the part's
@@ -5504,7 +5507,8 @@ As soon as a dev pair exists, zcp gives it a repository in the application HQ ho
 puts the pair's checkout on a `main` that descends from that repository's `main` (a fresh history
 cannot merge into a `main` holding code), or, while that `main` is HQ's unwritten root, on its own
 history as it is; a pair's work reaches `main` by plain git on a branch of the
-agent's own, landed by a merge (*A Mate's git*, below). It proposes the application's recipe — the whole app as the three tiers, composed by
+agent's own, landed by a merge (*A Mate's git*, below). A pooled part's repository is ensured by the
+plan (§2.8b B-9), one repository for all parts of the plan. It proposes the application's recipe — the whole app as the three tiers, composed by
 one policy table (`bundle`), every runtime keeping its `buildFromGit` and `zeropsSetup` pair, its
 `buildFromGit` the pair's repository in HQ (`https://<HQ>/git/<orgId>/<appId>/<repo>.git`; the stand-up
 reads the repository's name from its last segment), no secret's value in any file — to the
@@ -6092,12 +6096,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **One repository per monorepo** (owner decision, 2026-10-24; a split seen live 2026-10-27:
   one monorepo wired as three and as seven HQ repositories, one per dev service, which HQ cannot
   remove). A monorepo's every part gets its own dev pool and its own stage, nothing sharing a
-  container, all on ONE repository in HQ. A pair keyed by a dev pool exists only after
-  pool migration (docs/spec-workflows.md §13 PM-10, PM-12), so in a Mate the shape is reached
-  through one dev service holding the repository with a stage per part — one pair, wired to one
-  repository — then `pool-migrate` before building on it, each part landing on a pool of its own
-  keyed to that repository and the dev service retired; the monorepo playbook's §2 says so and a
-  dev service per part is never the end state (`TestPlaybookMonorepo_ContentPins_PartRules`).
+  container, all on ONE repository in HQ. In a Mate the plan creates each part's pool and stage on
+  that one repository (§2.8b B-9); a dev service with a stage per part made earlier keeps working,
+  and pool-migrate still moves it onto pools when a person wants; a dev service per part is never
+  the end state (`TestPlaybookMonorepo_ContentPins_PartRules`).
   zcp refuses the split itself, by root commit — two checkouts sharing a root commit whose tree is
   not the empty tree are one repository (`ops.ReadRepositoryRoots`, one read-only SSH round trip,
   `GIT_OPTIONAL_LOCKS=0`); a root of the empty tree is no evidence, since HQ seeds every
@@ -6121,21 +6123,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
     repository, the others leave the plan, and pool-migrate is named for once bootstrap closes. A
     dev service the plan creates holds no checkout yet and is not read
     (`TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair`).
-  - A Mate's classic plan of more than one dev/stage pair is refused before anything is recorded —
-    a classic bootstrap wires its pairs at its close, while their checkouts are still fresh from `zcp
-    init` and carry only empty-tree roots, so no read can tell the parts of one repository apart — with
-    the plan made from it: the first pair's dev service holding every pair's stage in `stages`, each
-    with its setup (the plan's own, else the part's name, the stage hostname without its `stage`
-    suffix), every dependency once (one another pair `SHARED` is created by the one pair), and
-    `zerops_workflow workflow="pool-migrate" service=<dev>` named for once bootstrap closes. A plan
-    whose pairs are genuinely separate repositories says so with `separateRepositories: true` beside
-    `plan` on `zerops_workflow action="complete" step="discover"` (its jsonschema description says
-    when), and is taken as it is — the root-commit check above still refuses existing dev services
-    holding one repository, whatever the plan says. One pair with a stage per part, the recipe route
-    and a group's stand-up (repositories named from the recipe), and every plan outside a Mate are
-    unchanged (`monorepoPlanError`;
-    `TestBootstrapPlan_InAMate_SeveralPairs_RefusedForOnePairWithAStagePerPart`,
-    `TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair`).
+  - All parts of a Mate's plan share the repository the plan names (§2.8b B-9); parts of different
+    repositories are planned in separate bootstraps.
 - **The agent's work** goes by plain git from the dev half's checkout, guided by AGENTS.md's git
   host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main` (a
   `main` that will not fast-forward: `git branch <name>`, then `git reset --keep origin/main`), `git
