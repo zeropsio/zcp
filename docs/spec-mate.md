@@ -924,6 +924,7 @@ setting older releases may lack rides the environment instead, never a probed fl
 | C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. The new-Mate import writes `MATE_SETUP` beside the project key; the server checks for that name once in its environment or live env store, and without it settles server-initiated stand-up as not due. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | mate `apps/server/src/zerops/ZeropsGitCredentialFile.ts`, `apps/server/src/zerops/zeropsSetupMarker.ts`, `apps/server/src/zerops/ZeropsSetup.ts`, `packages/client-runtime/src/zerops/newProject.ts`; zcp `internal/tools/hq_wiring.go`, `internal/tools/hq_dev_git.go` |
 | C-13 | **A Mate's project admits its container over SSH.** From the moment the `zcp` container is imported, the project's `sshIsolation` is `vpn service@<container>`: people on the VPN and the container may SSH into every service of the project, app code into none. The hosted client's container import (a birth and Finish setup) updates the platform's own entry just before it imports the container; zcp never writes the project's value and relies on it for SSH into every service without a value of its own (a dev half, a stage, a mount, a deploy's readiness check). A service's own value holds for that service alone | mate `packages/client-runtime/src/zerops/api.ts` (`importDevelopmentContainer`) |
 | C-14 | **A Mate's project shares its services' variables with its container.** Before the import the press sets the project's `envIsolation` to `service service@<container>` (the platform's own entry, updated, never added; equal already → nothing written). Every service that states no isolation of its own inherits it, also one added later, and the platform writes its variables into the container's live env store as `<hostname>_<key>` (`docs/spec-zerops-env-lifecycle.md` §5); a service that states its own keeps it. The data console reads a value the API withholds from the Mate's key there (§5.7). A project the press did not set (one born before it, or changed since) is brought over by the container itself: at every start, a start after a zcp update included, `zcp init` in a Mate's container reads the project's `envIsolation` once and, when it does not admit the container (`service@<container>` or `none`), updates the entry with the Mate's own key, adding `service@<container>` and keeping every other rule, and prints the one change; a `-service@<container>` rule is someone's choice and stays, as does every service's own value. A refusal is printed once by that start, the start completes and nothing retries; the data console then answers `no_credentials`. A container that is no Mate never asks. A Mate's container reads every service's variables of its project: a `service@<container>` removed by hand returns at the next start, and only `-service@<container>` keeps the container out | mate `packages/client-runtime/src/zerops/api.ts` (the press); zcp `ops.AdmitContainerToProjectEnv` (the start); `TestAdmitContainerToProjectEnv_ProjectNotAdmittingTheContainer_GainsItKeepingEveryOtherRule`, `TestRun_MateContainer_AdmissionRefused_InitCompletes`, `TestRun_MateDisabled_NoAdmission` |
+| C-15 | **Every variable Mate or zcp writes on a Mate's container for itself is named under a hidden rule.** The Mate's own vault is the container service's user variables minus two rules of names (§5.8a): in every vault `ZCP_*`, `MATE_*`, `GITEA_*` and `GIT_TOKEN`; in the Mate's own vault also `T3CODE_*`, `VSCODE_PASSWORD` and `*_LEASE_TOKEN`. zcp and the client each carry both rules and they agree, name for name, case-sensitive. A variable either side starts writing on the container for itself is named under one of the rules, or both lists gain its name in the same change: otherwise the person sees it in the Mate's vault as a value to change or remove, and the agent may list it and hand it to a command. Adding this fact changes no release's contract number: every release at or above `MinimumMateVersion` already writes only such names | zcp `ops.IsVaultHidden`, `ops.IsOwnVaultHidden`; mate `packages/client-runtime/src/data/projections/vault.ts`; `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault` |
 
 - **Registration and access.** HQ resolves a presented project key and checks whether that same key
   can read its own value in clear among the project's and non-system services' variables, refusing
@@ -3910,57 +3911,89 @@ a file in the container's home is lost on a rebuild. The person gives a value on
 as any other vault value, sees it listed in the Vault, and can change or remove it there.
 
 - **Where it is stored.** No new storage: the user variables of the Mate's own container service —
-  the `zcp` service of its project, the service zcp runs in — minus the names Mate and zcp keep
-  for themselves (`ZCP_*`, `MATE_*`, `GITEA_*`, `GIT_TOKEN`; §5.8, `ops.IsVaultHidden`), which stay
-  out of every list as before. The platform holds a service's variables through a restart and a
-  redeploy (the project key lives there), and writes a changed one into the container's live env
-  store (`mate.LiveEnvStorePath`) about two seconds after the write, with no restart; a process
-  started earlier keeps the env it started with, the Mate's server and every agent it runs among
-  them (MD-8). The project isolates its services' variables (C-14): the container reads theirs,
-  and no service is handed the container's — an app reads one only where its own zerops.yaml
-  names it as `${<container>_KEY}`, which nothing writes.
+  the `zcp` service of its project, the service zcp runs in — minus the hidden names below. The
+  platform holds a service's variables through a restart and a redeploy (the project key lives
+  there), and writes a changed one into the container's live env store
+  (`mate.LiveEnvStorePath`) a few seconds after the write (5–10 s measured,
+  `spec-zerops-env-lifecycle.md` §5), with no restart; a process started earlier keeps the env it
+  started with, the Mate's server and every agent it runs among them (MD-8). The project isolates
+  its services' variables (C-14): the container reads theirs, and no service is handed the
+  container's — an app reads one only where its own zerops.yaml names it as
+  `${<container>_KEY}`, which nothing writes.
+- **The hidden names.** Two rules keep a name out of the Mate's own vault (C-15). The first holds
+  in every vault: the names Mate and zcp keep for themselves, `ZCP_*`, `MATE_*`, `GITEA_*` and
+  `GIT_TOKEN` (§5.8, `ops.IsVaultHidden`). The second holds in the Mate's own vault only: the
+  container's own machinery, which Mate and zcp wrote on the container for themselves under other
+  names — prefix `T3CODE_` (the Mate server's launch environment), the exact name
+  `VSCODE_PASSWORD`, and suffix `_LEASE_TOKEN` (zcp's pool bearer references, `<pool>_LEASE_TOKEN`)
+  (`ops.IsOwnVaultHidden`). In the Shared vault and in an app's vault the names of the second rule
+  are ordinary. A hidden name is never listed, never asked for, never written or removed through
+  `mate=true`, and never handed out by `zcp with` or `{{env:KEY}}`. What does list is what a
+  person or the Mate put there for the Mate's tools.
 - **The wire does not change.** `zerops_env action=request mate=true` answers the service ask of
   §5.8, `requested: {key, label, why, scope: "service", serviceHostname: <the container's
   hostname>, sensitive}`, which the Mate's engine already passes on as the ask `{kind: "vault",
   scope: {kind: "service", hostname}}`: no new ask kind, no new scope, no new field, no version
   guard. The client tells the Mate's own vault by the service (`isZcpService`), never by a hostname
-  literal and never by a flag from zcp, so an agent that names the container's hostname by hand
-  gets the same answer and the same card. zcp's record of the open ask is the service ask's
+  literal and never by a flag from zcp. zcp's record of the open ask is the service ask's
   (`service.<hostname>.<KEY>.json`).
 - **The target.** `mate=true` is `zerops_env`'s third target, beside `serviceHostname` and
-  `project=true`: for `get`, `set`, `delete` and `request` it names the service zcp runs in. It is
-  offered only where asks are (a Mate's zcp, §5.8): elsewhere the schema does not list it and a
-  call with it is refused. With `project=true`, or with a `serviceHostname` that is another
-  service, it is refused as invalid usage. The container's own hostname names the same vault, so
-  what follows holds however it was named. `get` answers keys only, the hidden names left out;
-  `set` and `delete` refuse a hidden name; `request` is the flow of §5.8 with its records and its
-  hidden-name refusal.
-- **Nothing restarts, and the words say how the value is used.** No service is restarted for a key
-  of the Mate's own vault and none is named to restart: `set`, `delete` and `request` plan no
-  restart, read no service's deployed entries for it, and `requested` carries no `readers` and no
+  `project=true`, and the one way zcp names the Mate's own vault: for `get`, `set`, `delete` and
+  `request` it resolves to the service zcp runs in. It is offered only where asks are (a Mate's
+  zcp, §5.8): elsewhere the schema does not list it and a call with it is refused. With
+  `project=true`, or with a `serviceHostname` that is another service, it is refused as invalid
+  usage. `get` answers keys only, the hidden names left out; `set`, `delete` and `request` refuse
+  a hidden name before anything is written or asked. A call that names the container's hostname
+  by hand, without `mate=true`, is a call on that service's variables as it was before this
+  section: every name listed, written and removed, the readers looked for, the words of §5.8.
+- **Nothing restarts, and the words say how the value is used.** No service is restarted for a
+  `mate=true` key and none is named to restart: `set`, `delete` and `request` plan no restart, read
+  no service's deployed entries for it, and `requested` carries no `readers` and no
   `restartAfterSave`. No answer says that nothing reads the key or that it belongs in
   `run.envVariables`: the next step of a `set`, of `requested` and of `alreadySet` says the value
-  is the Mate's alone and no app reads it, that it is in this container about two seconds after
-  the write with no restart, that a process started earlier keeps its env, and how it is used —
-  `zcp with <KEY> -- <command>`.
+  is the Mate's alone and no app reads it, that it is in this container a few seconds after the
+  write with no restart, that a process started earlier keeps its env, and how it is used —
+  `zcp with <KEY> -- <command>` for a command, `{{env:<KEY>}}` in a `zerops_browser` command for
+  a page.
+- **One reader of the live store.** `zcp with` and `zerops_browser` take a value from the
+  container's live env store through one function (`ops.LiveEnvValues`), read at the call, with
+  one set of refusals, each made before anything runs and none carrying a value: what stands
+  where a key's name belongs is not one (letters, digits and `_`, no leading digit; never
+  echoed, since it may be a `KEY=value`); a hidden name of either rule; a key the store does not
+  hold — it is not saved yet (an open ask waits for the person), was saved moments ago, or was
+  never asked (`zerops_env action="request" mate=true`); a store that cannot be read (only the
+  system's error on the file is quoted, never one from its content). It serves any other key the
+  store holds, so a project's value is used the same way.
 - **`zcp with <KEY>[,<KEY>...] [--] <command> [<args>...]`** runs one command with the named
-  values (`cmd/zcp/with.go`). It reads the live env store as it is now, sets the named keys in the
-  command's environment on top of the caller's, and replaces itself with the command (`execve` on
-  unix; elsewhere it runs the command as a child and exits with its code): stdin, stdout, stderr,
-  signals and the exit code are the command's. zcp writes nothing to stdout itself and runs before
-  CLI telemetry, as `zcp run` and `zcp git` do (§6.8, §6.9). Before anything runs it refuses, on
-  stderr with exit 2: a key the store does not hold — it is not saved yet (an open ask waits for
-  the person), was saved moments ago, or was never asked (`zerops_env action="request"
-  mate=true`); a hidden name; an argument that is not key names (a `KEY=value` is never echoed);
-  no command; a store it cannot read. A command it cannot find exits 127, one it cannot start 126,
-  as a shell's. It prints no value, ever, in any error. It serves any key the store holds but the
-  hidden names, so a project's value is used the same way.
+  values (`cmd/zcp/with.go`). It sets the named keys in the command's environment on top of the
+  caller's and replaces itself with the command (`execve` on unix; elsewhere it runs the command
+  as a child and exits with its code): stdin, stdout, stderr, signals and the exit code are the
+  command's. zcp writes nothing to stdout itself and runs before CLI telemetry, as `zcp run` and
+  `zcp git` do (§6.8, §6.9). A refusal, and a call with no command, is one line on stderr with
+  exit 2. A command it cannot find exits 127, one it cannot start 126, as a shell's.
+- **`{{env:KEY}}` in a `zerops_browser` command** (`internal/ops/browser_env.go`) is how a value
+  reaches a page, where sign-ins happen. In any argument of a `commands` element, every
+  `{{env:KEY}}` — a whole argument or inside one: a fill's text, an eval's source — is replaced
+  with the value the store holds under KEY. A refusal fails the whole call before the browser is
+  asked for. The result never holds a substituted value where zcp can tell: a command comes back
+  in `steps` as it was written, with the placeholder, whatever the value's length; and in every
+  text the result carries — a step's result and error, an eval's value, `errorsOutput`,
+  `consoleOutput`, `networkOutput`, `message`, and so the `fullResult` file — each substituted
+  value of at least six bytes is replaced by its placeholder, in the forms zcp knows: verbatim,
+  as JSON text escapes it, and percent-encoded as a URL carries it. Not redacted: a value shorter
+  than six bytes outside the command it was written in (it would be a common fragment of ordinary
+  output — a short word, a number — and redacting it would shred the result while protecting
+  nothing a guess does not find); a value the page transformed (encoded another way, hashed, cut
+  in two); and a screenshot, which is pixels — a password field shows dots, and a secret typed
+  into a visible field is in the picture. The tool's description says the last.
 - **Checking behind a sign-in.** A Mate's AGENTS.md has one block for it
   (`templates/agents_own_vault.md`, Mate-gated like the other blocks of §2.0): where the app owns
   its users the agent makes a test user itself; where the identity comes from elsewhere it asks
   for an account made for testing — one with access to nothing that matters — with `zerops_env
-  action="request" mate=true`, says so in the why, never asks for the person's own sign-in and
-  never in the chat, uses the value with `zcp with` and never prints it.
+  action="request" mate=true`, each thing the sign-in takes as a value of its own (an e-mail as
+  `TEST_EMAIL`, not sensitive; a password as `TEST_PASSWORD`), says so in the why, never asks for
+  the person's own sign-in and never in the chat, uses a value in a command with `zcp with` and
+  in a page with `{{env:KEY}}`, and never prints it.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
@@ -4344,7 +4377,7 @@ The first Mate that draws the mirror card is 0.16.114; `MinimumMateVersion` is a
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
 | MF-18 | A secret the person gives never reaches the Mate's records or its agent: the engine takes saved or declined, never a value, and words the agent's line itself. Mate `EngineWire.test.ts`, zcp `TestEnvRequest_Refuses` |
 | MF-18 | A page the agent publishes is self-contained or refused: its local pictures and fonts are inlined only when they are regular files in the project that are what they are named as — a picture of at most 40 million pixels that decodes whole, re-encoded from its pixels; a font by its magic bytes; script, comment and CSS comment text is never read; a format zcp cannot decode, a reference that names no file and a remote resource are named as ones that will not load; a missing file is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_PicturesAndFonts_ByFormat`, `TestPublishPage_FontsAndHugePictures_Refused`, `TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames`, `TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
-| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a name Mate and zcp keep for themselves is neither listed, written nor removed there; `zcp with` hands the named values to one command, refuses a missing key and a hidden name before anything runs and prints no value. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
+| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a hidden name of either rule (C-15) is neither listed, asked for, written nor removed there, while the second rule's names stay ordinary in every other vault; `zcp with` hands the named values to one command and `{{env:KEY}}` in a `zerops_browser` command to one page, both through one reader of the live store that refuses a missing key and a hidden name before anything runs and prints no value; a browser result echoes a command as written and carries the placeholder where a substituted value came back. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue`, `TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens`, `TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
 
 ---
 
