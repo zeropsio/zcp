@@ -32,7 +32,7 @@ func submitPlanBesidePool(t *testing.T, route workflow.BootstrapRoute, plan []wo
 		{ID: "svc-sandbox", Name: "sandbox", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
 	})
 	input := WorkflowInput{Step: workflow.StepDiscover, Plan: plan}
-	result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil, input, nil, "proj-1", dir, nil, nil, runtime.Info{})
+	result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil, input, nil, "proj-1", dir, nil, nil, runtime.Info{}, nil)
 	if err != nil {
 		t.Fatalf("handleBootstrapComplete: %v", err)
 	}

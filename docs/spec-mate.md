@@ -6037,14 +6037,13 @@ own, commits and pushes it, and `main` moves only by a merge — a person's in H
 repository kept there (§5.10). zcp never commits, opens a change or pushes for the agent: a stage
 deploy deploys and delivers nothing, and no deploy response carries a `pullRequest`. Only a
 dev/stage pair can be a Mate's: the dev half is the checkout, the stage half the verified basis a
-production is promoted from. So zcp's classic route refuses a plan that gives a Mate a runtime with
-no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit — and says the
-rule before any plan: a Mate's classic discover step states that every runtime is a dev/stage pair,
-and both it and the refusal say that "no stage" (or "a dev service only") means creating the stage
-and leaving it empty — imported without code it stays READY_TO_DEPLOY with no containers — with
-nothing to ask the person (`hq_pair.go`, `TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair`,
-`TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`). On 2026-10-27 all three Mate sessions learned
-the rule from a refused plan and asked the person, 2–4 minutes each.
+production is promoted from. A part a Mate plans is born pooled (§2.8b B-9): zcp's classic route
+refuses a plan that gives a Mate a runtime other than a part's dev pool beside its one stage
+(`<part>pool`, `<part>stage`, `bootstrapMode` standard), naming that plan to re-submit — and says the
+rule before any plan: a Mate's classic discover step states that each part is a dev pool beside its
+stage, and both it and the refusal say that a dev service with its stage the project already has
+keeps working untouched (`hq_pair.go`). On 2026-10-27 all three Mate sessions learned the earlier
+pair rule from a refused plan and asked the person, 2–4 minutes each.
 
 **A Mate is HQ's by what it is, not by whether HQ answers (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the project key is only how zcp reaches
@@ -6061,8 +6060,7 @@ zcp's own route whatever files it holds. And in a Mate the repository, its crede
 builds from it are HQ's: `zerops_workflow` refuses `git-push-setup` and `build-integration` before
 touching anything (`hqRepositoryActions`) and says what zcp does instead; zcp's own wiring confirms
 through `confirmGitPushSetupContainer`, and a remote of the user's own stays theirs
-(`hqPairNeedsRepository`). `TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink`,
-`TestHandleLaunchProduction_AMateRefusesBeforeAnyStep`,
+(`hqPairNeedsRepository`). `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep`,
 `TestHandleRelease_HQHandsOffBeforeLegacyPreflight`, `TestHandleRelease_AKeyOutsideAMateKeepsTheSourceRelease`,
 `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestMateRepositoryActions_RefuseAndPointAtHQ`,
 `TestMateRepositoryActions_ZcpStillWiresThePair`.
@@ -6484,7 +6482,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 `ops/hq_base_branch.go`, `ops/lease_pool_credential.go`, `ops/pool_credential_record.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
 `TestReconcileHQRepositories_*`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`,
 `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`,
-`TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`, `TestBuildBaseBranchCommand_*`,
+`TestBuildBaseBranchCommand_*`,
 `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestHQGit_*`, `TestHQRetry_TriesOnlyWhileHQCannotServe`,
 `TestHQNotServingWords`, `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`,
 `TestClient_Bounded_EndsATryHQDoesNotAnswer`, `TestAPassSkipsAPairHeldElsewhere`, `TestLockPair`,

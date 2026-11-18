@@ -199,15 +199,21 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 			// Check dev runtime exists and is RUNNING. Skipped in local-
 			// mode + recipe route (see skipDevCheck rationale above) and
 			// when DevHostname is empty (other local-mode shapes).
+			// A Mate's plan pairs a part's dev pool with its stage: the
+			// pool's live type is the pool's, never the plan's runtime type,
+			// which its stages carry instead.
+			devIsPool := topology.IsPoolType(svcMap[target.Runtime.DevHostname].ServiceStackTypeInfo.ServiceStackTypeVersionName)
 			if !skipDevCheck && target.Runtime.DevHostname != "" {
 				checks = append(checks, checkServiceRunning(ctx, client, fetcher, projectID, svcMap, target.Runtime.DevHostname)...)
-				checks = append(checks, checkServiceType(svcMap, target.Runtime.DevHostname, target.Runtime.Type)...)
+				if !devIsPool {
+					checks = append(checks, checkServiceType(svcMap, target.Runtime.DevHostname, target.Runtime.Type)...)
+				}
 			}
 
 			// Check stage runtime exists in any alive status.
 			// Stage may be newly imported (NEW/READY_TO_DEPLOY) or already running (RUNNING/ACTIVE).
 			// Mixed cases (existing dev + new stage) are valid for adoption scenarios.
-			typeCheckStages := skipDevCheck || target.Runtime.DevHostname == ""
+			typeCheckStages := skipDevCheck || target.Runtime.DevHostname == "" || devIsPool
 			checks = append(checks, checkStagesProvisioned(ctx, client, fetcher, projectID, svcMap, target.Runtime, typeCheckStages)...)
 
 			// Check dependencies.

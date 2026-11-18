@@ -3,7 +3,6 @@
 package tools
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,80 +12,10 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
-
-func TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs(t *testing.T) {
-	t.Parallel()
-	simple := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "todoapp", Type: "nodejs@22", BootstrapMode: topology.PlanModeSimple}}}
-	devOnly := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeDev}}}
-	pair := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", ExplicitStage: "appstage", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard}}}
-
-	if pe := hqPairPlanError(simple, false); pe != nil {
-		t.Fatalf("a container that is not a Mate keeps zcp's own rules, got %q", pe.Message)
-	}
-	if pe := hqPairPlanError(pair, true); pe != nil {
-		t.Fatalf("a standard pair passes, got %q", pe.Message)
-	}
-	for name, plan := range map[string][]workflow.BootstrapTarget{"simple": simple, "dev-only": devOnly} {
-		pe := hqPairPlanError(plan, true)
-		if pe == nil {
-			t.Fatalf("%s: a Mate delivering through HQ refuses a runtime with no stage half", name)
-		}
-		if !strings.Contains(pe.Message, "dev/stage pair") || !strings.Contains(pe.Message, plan[0].Runtime.DevHostname) {
-			t.Fatalf("%s: the refusal names the rule and the target, got %q", name, pe.Message)
-		}
-		if !strings.Contains(pe.Suggestion, `bootstrapMode="standard"`) || !strings.Contains(pe.Suggestion, "stageHostname") {
-			t.Fatalf("%s: the fix is the standard pair with a stage hostname, got %q", name, pe.Suggestion)
-		}
-		// "No stage" is answered by the plan, not by a question to the
-		// person: the stage is created and left empty.
-		for _, want := range []string{"no stage", "leave it empty", "READY_TO_DEPLOY", "no containers"} {
-			if !strings.Contains(pe.Suggestion, want) {
-				t.Fatalf("%s: the suggestion does not say %q: %q", name, want, pe.Suggestion)
-			}
-		}
-	}
-	if got := stageNameFor("appdev"); got != "appstage" {
-		t.Fatalf("appdev's stage is appstage, got %q", got)
-	}
-	if got := stageNameFor("todoapp"); got != "todoappstage" {
-		t.Fatalf("todoapp's stage is todoappstage, got %q", got)
-	}
-}
-
-// TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair pins that a Mate's
-// classic discover step says the pair rule before any plan is submitted: every
-// runtime is a dev/stage pair, and "no stage" is a stage created and left
-// empty. All three Mate sessions on 2026-10-27 learned the rule from a refused
-// plan and then asked the person, 2-4 minutes each. A container that is not a
-// Mate hears nothing of it.
-//
-// Not parallel: the identity is the process environment (t.Setenv).
-func TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair(t *testing.T) {
-	for _, mate := range []bool{true, false} {
-		t.Run(map[bool]string{true: "a Mate", false: "not a Mate"}[mate], func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			linkAs(t, "missing")
-			dir := t.TempDir()
-			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
-			resp, err := engine.BootstrapStartWithRoute("proj-1", "a todo app", workflow.BootstrapRouteClassic, "")
-			if err != nil {
-				t.Fatalf("BootstrapStartWithRoute(classic): %v", err)
-			}
-			rt := runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: mate}
-			text := extractText(bootstrapResult(context.Background(), resp, engine, platform.NewMock(), "proj-1", rt))
-			for _, want := range []string{"every runtime is a dev/stage pair", "leave it empty", "READY_TO_DEPLOY", "nothing to ask"} {
-				if strings.Contains(text, want) != mate {
-					t.Errorf("discover says %q = %v, want %v", want, !mate, mate)
-				}
-			}
-		})
-	}
-}
 
 // linkAs leaves this test's container without a key for HQ ("missing") or
 // holding one ("kept"). Callers redirect HOME first, and the test is not
@@ -100,50 +29,6 @@ func linkAs(t *testing.T, state string) {
 		hqtest.Link(t, "https://hq.example", "p1", "c")
 	default:
 		t.Fatalf("unknown link state %q", state)
-	}
-}
-
-// TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink: being a Mate, not
-// holding a key for HQ, is what makes every runtime a pair. A Mate with no
-// key yet plans the same pairs it will deliver through once it has one; a
-// container that is not a Mate keeps zcp's own plans, a key in its
-// environment notwithstanding.
-//
-// Not parallel: the identity is the process environment (t.Setenv).
-func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink(t *testing.T) {
-	tests := []struct {
-		name       string
-		mate       bool
-		link       string
-		wantRefuse bool
-	}{
-		{name: "a Mate without a key yet", mate: true, link: "missing", wantRefuse: true},
-		{name: "a keyed Mate", mate: true, link: "kept", wantRefuse: true},
-		{name: "not a Mate, a key in its environment", link: "kept"},
-		{name: "not a Mate", link: "missing"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			linkAs(t, tt.link)
-			dir := t.TempDir()
-			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
-			if _, err := engine.BootstrapStartWithRoute("proj-1", "a todo app", workflow.BootstrapRouteClassic, ""); err != nil {
-				t.Fatalf("BootstrapStartWithRoute(classic): %v", err)
-			}
-			input := WorkflowInput{Step: workflow.StepDiscover, Plan: []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{
-				DevHostname: "todoapp", Type: "nodejs@22", BootstrapMode: topology.PlanModeSimple,
-			}}}}
-			rt := runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: tt.mate}
-			result, _, err := handleBootstrapComplete(context.Background(), engine, platform.NewMock(), nil, nil, input, nil, "proj-1", dir, nil, nil, rt)
-			if err != nil {
-				t.Fatalf("handleBootstrapComplete: %v", err)
-			}
-			text := extractText(result)
-			if refused := strings.Contains(text, "dev/stage pair"); refused != tt.wantRefuse {
-				t.Fatalf("refused as a Mate's plan = %v, want %v:\n%s", refused, tt.wantRefuse, text)
-			}
-		})
 	}
 }
 

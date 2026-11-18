@@ -78,11 +78,9 @@ type WorkflowInput struct {
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed. group-recipe: your branch for a tier edit."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
 
-	// SeparateRepositories says a Mate's classic plan of several dev/stage
-	// pairs is several repositories, each pair its own (docs/spec-mate.md
-	// §10.10): without it such a plan is refused for one pair with a stage
-	// per part (monorepoPlanError).
-	SeparateRepositories FlexBool `json:"separateRepositories,omitempty" jsonschema:"Mate, step=discover: true when each dev/stage pair of a classic plan is its own repository. Without it several pairs are refused: a monorepo is one dev service with a stage per part, then pool-migrate."`
+	// Repository is the HQ repository every part of a Mate's plan shares
+	// (docs/spec-mate.md §2.8b B-9): one plan, one repository.
+	Repository string `json:"repository,omitempty" jsonschema:"Mate, step=discover: the HQ repository all parts of this plan share; one part defaults to its name."`
 
 	// CopyGitToken is the person's yes to the pool getting the dev service's
 	// GIT_TOKEN, on the env step outside a Mate (docs/spec-workflows.md §13
@@ -341,7 +339,6 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "skipPipelineSetup")
 	patchFlexBoolProperty(s, "confirmLaunch")
 	patchFlexBoolProperty(s, "copyGitToken")
-	patchFlexBoolProperty(s, "separateRepositories")
 	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
 	// The plan runtime's codeVolume is derive-only: zcp sets up no new code
 	// volume (docs/spec-mate.md §2.8a.4a), so it is not published, and a plan
@@ -472,7 +469,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			OpenWorldHint:  boolPtr(false),
 		},
 		InputSchema: workflowInputSchema(),
-	}, namingRepoConfigFile(engine, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	}, namingRepoConfigFile(engine, func(ctx context.Context, req *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// retire is pool-migrate's last step: stateless like the flow, and
 		// it unmounts the dev and asks the pool's orchestrator about its
 		// lease (workflow_pool_migrate_retire.go).
@@ -489,7 +486,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 		}
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost)
+			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost, cfg.standup.birth(ctx, req))
 		}
 
 		// Immediate workflows (export) may be fetched without action.
@@ -534,6 +531,9 @@ type WorkflowOption func(*workflowToolConfig)
 type workflowToolConfig struct {
 	swarm  ops.SwarmFactory
 	devsup DevsupSource
+	// standup is the server's one stand-up, nil outside a Mate: a Mate's
+	// plan creates its parts pooled through it (pooled_part.go).
+	standup *Standup
 	// poolGuidance remembers the guidance each pool-migrate flow was sent.
 	poolGuidance *poolMigrateGuidanceSent
 }
@@ -542,6 +542,13 @@ type workflowToolConfig struct {
 // pool-migrate's image step names when a pool setup installs none.
 func WithDevsupForWorkflow(devsup DevsupSource) WorkflowOption {
 	return func(c *workflowToolConfig) { c.devsup = devsup }
+}
+
+// WithStandupForWorkflow gives a Mate's plan the server's one stand-up, which
+// creates the plan's parts pooled under its lock and status (pooled_part.go).
+// nil, outside a Mate, gives it none.
+func WithStandupForWorkflow(standup *Standup) WorkflowOption {
+	return func(c *workflowToolConfig) { c.standup = standup }
 }
 
 // WithPoolOrchestratorsForWorkflow lets pool-migrate's retire ask a pool's
@@ -574,7 +581,7 @@ func handleEngineFreeAction(ctx context.Context, projectID string, client platfo
 	return nil, nil, nil
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string, birth *pooledBirth) (*mcp.CallToolResult, any, error) {
 	if result, _, err := handleEngineFreeAction(ctx, projectID, client, httpClient, input, stateDir, sshDeployer, rt); result != nil || err != nil {
 		return result, nil, err
 	}
@@ -632,7 +639,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
-		return handleBootstrapComplete(ctx, engine, client, httpClient, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
+		return handleBootstrapComplete(ctx, engine, client, httpClient, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt, birth)
 	case "skip":
 		// Develop is stateless — step-based skipping is never valid.
 		if isDevelopStep(input.Step) {

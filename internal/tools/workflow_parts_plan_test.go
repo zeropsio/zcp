@@ -286,7 +286,7 @@ func submitPlanOverRepo(t *testing.T, route workflow.BootstrapRoute, dev, repo s
 	mock := platform.NewMock().WithServices(services)
 	repos := &partsRepos{out: map[string]string{dev: repo}}
 	input := WorkflowInput{Step: workflow.StepDiscover, Plan: plan}
-	result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil, input, nil, "proj-1", dir, nil, repos, rt)
+	result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil, input, nil, "proj-1", dir, nil, repos, rt, nil)
 	if err != nil {
 		t.Fatalf("handleBootstrapComplete: %v", err)
 	}
@@ -297,13 +297,11 @@ func submitPlanOverRepo(t *testing.T, route workflow.BootstrapRoute, dev, repo s
 // in a Mate every pair gets a repository of its own in HQ, so a plan pairing
 // two existing dev services whose checkouts are one repository — they share
 // a root commit that carries code — would split it. It is refused before
-// anything is recorded, on the classic and the adopt route, with the plan
-// made from it: the first dev service with every stage of the two, the other
-// left out, then pool-migrate — even when the plan says its runtimes are
-// separate repositories (separateRepositories, which a Mate's classic plan of
-// several pairs needs at all): the checkouts are the evidence. Two
-// repositories, a checkout that cannot be read and a plan outside a Mate stay
-// as they are.
+// anything is recorded on the adopt route — a Mate's classic route plans
+// parts pooled and reads no checkout — with the plan made from it: the first
+// dev service with every stage of the two, the other left out, then
+// pool-migrate: the checkouts are the evidence. Two repositories, a checkout
+// that cannot be read and a plan outside a Mate stay as they are.
 func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(t *testing.T) {
 	t.Parallel()
 	requireGitForLab(t)
@@ -325,10 +323,9 @@ func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(
 		rt          runtime.Info
 		wantRefused bool
 	}{
-		{name: "classic, one repository on both dev services", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, rt: mate, wantRefused: true},
 		{name: "adopt, one repository on both dev services", route: workflow.BootstrapRouteAdopt, box: monorepo, hq: monorepo, rt: mate, wantRefused: true},
-		{name: "classic, two repositories", route: workflow.BootstrapRouteClassic, box: monorepo, hq: map[string]string{"zerops.yml": "zerops:\n  - setup: dev\n  - setup: hq\n"}, rt: mate},
-		{name: "classic, one checkout cannot be read", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, unreadable: "hqdev", rt: mate},
+		{name: "adopt, two repositories", route: workflow.BootstrapRouteAdopt, box: monorepo, hq: map[string]string{"zerops.yml": "zerops:\n  - setup: dev\n  - setup: hq\n"}, rt: mate},
+		{name: "adopt, one checkout cannot be read", route: workflow.BootstrapRouteAdopt, box: monorepo, hq: monorepo, unreadable: "hqdev", rt: mate},
 		{name: "classic, outside a Mate", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, rt: runtime.Info{InContainer: true}},
 	}
 	for _, tt := range tests {
@@ -353,7 +350,7 @@ func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(
 			}
 
 			result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil,
-				WorkflowInput{Step: workflow.StepDiscover, Plan: plan, SeparateRepositories: true}, nil, "proj-1", dir, nil, ssh, tt.rt)
+				WorkflowInput{Step: workflow.StepDiscover, Plan: plan}, nil, "proj-1", dir, nil, ssh, tt.rt, nil)
 			if err != nil {
 				t.Fatalf("handleBootstrapComplete: %v", err)
 			}

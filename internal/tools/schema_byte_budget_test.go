@@ -156,7 +156,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// proposal of zcp's makes (docs/spec-mate.md §10.10): `branch` names
 		// it among its users; no new field — where to push and what zcp leaves
 		// alone live in the handler's answer.
-		"zerops_workflow":    21299,
+		// Lowered -143 (21299→21156): `separateRepositories` goes with the
+		// monorepo refusal it answered, and `repository`, the HQ repository
+		// all parts of a Mate's plan share (docs/spec-mate.md §2.8b B-9), a
+		// string with one line of when, takes its place.
+		"zerops_workflow":    21156,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

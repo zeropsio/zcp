@@ -276,6 +276,12 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	if meta.CodeVolume == nil {
 		meta.CodeVolume = existing.CodeVolume
 	}
+	// A pair recorded keyed by its dev pool stays so: a Mate's plan hands the
+	// engine its parts as existing targets, whose provision and close writes
+	// would otherwise read the pair as a dev service.
+	if meta.DevPool == nil {
+		meta.DevPool = existing.DevPool
+	}
 	// A pool-keyed pair recorded again keeps the dev service it moved from.
 	if meta.DevPool != nil && meta.DevPool.MigratedFrom == nil && existing.DevPool != nil {
 		meta.DevPool.MigratedFrom = existing.DevPool.MigratedFrom

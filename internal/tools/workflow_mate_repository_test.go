@@ -46,7 +46,7 @@ func TestMateRepositoryActions_RefuseAndPointAtHQ(t *testing.T) {
 				input := tt.input
 				input.Action = tt.action
 				engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
-				result, _, _ := handleWorkflowAction(context.Background(), "test-project", engine, platform.NewMock(), nil, nil, nil, input, stateDir, "zcp", nil, ssh, rt, "")
+				result, _, _ := handleWorkflowAction(context.Background(), "test-project", engine, platform.NewMock(), nil, nil, nil, input, stateDir, "zcp", nil, ssh, rt, "", nil)
 				text := extractText(result)
 
 				refused := result.IsError && strings.Contains(text, "HQ")

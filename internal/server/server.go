@@ -481,10 +481,21 @@ func (s *Server) registerTools() {
 		Override: os.Getenv("ZCP_DEVSUP_URL"),
 	}
 
+	// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
+	// D32), and its plan creates its parts pooled through the same stand-up
+	// (§2.8b B-9). Mate-gated like every mate-shaped effect (§2.0): a
+	// container without ZCP_MATE_ENABLED keeps the tool surface it had. One
+	// stand-up, so zerops_standup and the plan share its lock and status.
+	var standup *tools.Standup
+	if s.sshDeployer != nil && s.rtInfo.InContainer && s.rtInfo.MateEnabled {
+		standup = tools.NewStandup(s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir, devsup)
+	}
+
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost,
 		tools.WithPoolOrchestratorsForWorkflow(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})),
-		tools.WithDevsupForWorkflow(devsup))
+		tools.WithDevsupForWorkflow(devsup),
+		tools.WithStandupForWorkflow(standup))
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir, wfEngine)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
@@ -520,11 +531,8 @@ func (s *Server) registerTools() {
 			CarriesParts: mate.EnvelopeCarriesParts(),
 			Swarm:        ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}),
 		})
-		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
-		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
-		// without ZCP_MATE_ENABLED keeps the tool surface it had.
-		if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir, devsup)
+		if standup != nil {
+			tools.RegisterStandup(s.server, standup)
 		}
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)

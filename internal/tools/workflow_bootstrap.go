@@ -39,7 +39,7 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, birth *pooledBirth) (*mcp.CallToolResult, any, error) {
 	// Schema-derived catalog for plan validation + stack listing (the single
 	// client-side source; nil-safe when the cache is absent).
 	var schemas *schema.Schemas
@@ -144,25 +144,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
-			if pe := mateClassicPlanError(input, rt); pe != nil {
-				return convertError(pe, WithRecoveryStatus()), nil, nil
-			}
-			if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
-				return convertError(pe, WithRecoveryStatus()), nil, nil
-			}
-			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
-			if err != nil {
-				pe := platform.NewPlatformError(
-					platform.ErrInvalidParameter,
-					fmt.Sprintf("Plan validation failed: %v", err),
-					"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")
-				pe.Subcode = bootstrapPlanSubcode(err)
-				return convertError(pe, WithRecoveryStatus()), nil, nil
-			}
-			if needsStacks(resp) {
-				populateStacks(ctx, resp, schemaCache)
-			}
-			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
+			return handleClassicPlan(ctx, engine, client, schemas, schemaCache, input, projectID, sshDeployer, rt, birth), nil, nil
 		}
 	}
 
@@ -487,10 +469,19 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 		return nil
 	}
 
+	// A part's dev pool holds no checkout to mount: each lease mounts at
+	// /var/www/<pool>-<n> (zerops_lease). Read lag-free, by the live type.
+	pools := map[string]bool{}
+	if services, err := ops.ListProjectServicesDirect(ctx, client, projectID); err == nil {
+		for _, svc := range services {
+			pools[svc.Name] = topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		}
+	}
+
 	var results []workflow.AutoMountInfo
 	for _, target := range state.Bootstrap.Plan.Targets {
 		hostname := target.Runtime.DevHostname
-		if hostname == "" {
+		if hostname == "" || pools[hostname] {
 			continue
 		}
 		result, mountErr := ops.MountService(ctx, client, projectID, mounter, hostname)
@@ -578,13 +569,28 @@ func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, schem
 	}
 }
 
-// mateClassicPlanError is what a Mate refuses of a classic plan before
-// anything is recorded: a runtime with no stage half (hqPairPlanError), and a
-// repository split into a pair per part unless the plan says its pairs are
-// separate repositories (monorepoPlanError). nil outside a Mate.
-func mateClassicPlanError(input WorkflowInput, rt runtime.Info) *platform.PlatformError {
-	if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
-		return pe
+// handleClassicPlan completes the classic route's discover step with the
+// explicit plan the call carries: in a Mate the plan creates its parts pooled
+// (pooled_part.go, docs/spec-mate.md §2.8b B-9); elsewhere the plan is
+// preflighted and recorded for the provision step.
+func handleClassicPlan(ctx context.Context, engine *workflow.Engine, client platform.Client, schemas *schema.Schemas, schemaCache *schema.Cache, input WorkflowInput, projectID string, sshDeployer ops.SSHDeployer, rt runtime.Info, birth *pooledBirth) *mcp.CallToolResult {
+	if rt.MateEnabled && len(input.Plan) > 0 {
+		return handleMatePooledPlan(ctx, engine, client, schemas, schemaCache, input, projectID, sshDeployer, rt, birth)
 	}
-	return monorepoPlanError(input.Plan, rt.MateEnabled, input.SeparateRepositories.Bool())
+	if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
+		return convertError(pe, WithRecoveryStatus())
+	}
+	resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
+	if err != nil {
+		pe := platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Plan validation failed: %v", err),
+			"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")
+		pe.Subcode = bootstrapPlanSubcode(err)
+		return convertError(pe, WithRecoveryStatus())
+	}
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, schemaCache)
+	}
+	return bootstrapResult(ctx, resp, engine, client, projectID, rt)
 }

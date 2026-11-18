@@ -306,15 +306,39 @@ type tierService struct {
 // stem its stage is named by (pool-migrate's own naming).
 const poolHostnameSuffix = "pool"
 
+// PoolOfStage is the one pairing rule of a part's dev pool and its stage,
+// read from the stage: `<part>stage` pairs with `<part>pool` (apistage →
+// apipool), part naming the part. false for a hostname that names no stage.
+// StageOfPool is the same rule read from the pool.
+func PoolOfStage(stage string) (pool, part string, ok bool) {
+	if !IsStageHostname(stage) {
+		return "", "", false
+	}
+	part = strings.TrimSuffix(stage, stageHostnameSuffix)
+	return part + poolHostnameSuffix, part, true
+}
+
+// StageOfPool is PoolOfStage read from the pool: `<part>pool` pairs with
+// `<part>stage` (apipool → apistage). false for a hostname that names no
+// part's dev pool.
+func StageOfPool(pool string) (stage, part string, ok bool) {
+	part, found := strings.CutSuffix(pool, poolHostnameSuffix)
+	if !found || part == "" {
+		return "", "", false
+	}
+	return part + stageHostnameSuffix, part, true
+}
+
 // partPool is the dev pool of the part whose stage is stage, a runtime of
 // repo no dev service took: the tier's Swarm pool named after the stage
-// (`apistage` → `apipool`) that builds nothing or builds from repo. false
-// for a runtime that is no stage, or when the tier holds no such pool.
+// (PoolOfStage) that builds nothing or builds from repo. false for a runtime
+// that is no stage, or when the tier holds no such pool.
 func partPool(stage recipeImportService, repo string, pools map[string]tierService) (tierService, bool) {
-	if !IsStageHostname(stage.Hostname) {
+	name, _, ok := PoolOfStage(stage.Hostname)
+	if !ok {
 		return tierService{}, false
 	}
-	pool, ok := pools[strings.TrimSuffix(stage.Hostname, stageHostnameSuffix)+poolHostnameSuffix]
+	pool, ok := pools[name]
 	if !ok {
 		return tierService{}, false
 	}

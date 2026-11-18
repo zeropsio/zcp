@@ -22,7 +22,7 @@ func (l *hqLab) chooseMateOnly(choice map[string]bool) *mcp.CallToolResult {
 	engine := workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil)
 	input := WorkflowInput{Action: "group-recipe", MateOnly: choice}
 	l.snapshotMate(l.t.Context())
-	result, _, _ := handleWorkflowAction(l.t.Context(), labMate, engine, mateOwnRecipeClient(), l.hq.srv.Client(), l.schemas, nil, input, l.stateDir, "zcp", nil, nil, l.rt, "")
+	result, _, _ := handleWorkflowAction(l.t.Context(), labMate, engine, mateOwnRecipeClient(), l.hq.srv.Client(), l.schemas, nil, input, l.stateDir, "zcp", nil, nil, l.rt, "", nil)
 	l.snapshotMate(l.t.Context())
 	return result
 }

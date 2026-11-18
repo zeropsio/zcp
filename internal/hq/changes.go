@@ -263,6 +263,17 @@ func (c Client) CloseChange(ctx context.Context, repo string, number int) (Chang
 	return change, err
 }
 
+// SeedChange asks HQ to land the Mate's own open change number in repo as
+// the first change into an empty repository: HQ's Core lands it, with no
+// person, and answers it merged. HQ refuses every other change `409
+// conflict` with its reason, leaving it open (mate-hq spec/protocol.md,
+// "A Mate's ask to land").
+func (c Client) SeedChange(ctx context.Context, repo string, number int) (Change, error) {
+	var change Change
+	err := c.call.jsonWithRevision(ctx, http.MethodPost, changePath(repo, number)+"/land", c.authorization(), nil, &change, &change.StateRev)
+	return change, err
+}
+
 // ReleaseOffer reads what the person's application can release now.
 func (c Client) ReleaseOffer(ctx context.Context) (*ReleaseOffer, error) {
 	var answer struct {

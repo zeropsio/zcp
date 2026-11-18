@@ -103,11 +103,17 @@ type standupDeps struct {
 	runBound time.Duration
 }
 
-// RegisterStandup registers zerops_standup. The server registers it only in a
+// Standup is a Mate's stand-up as its server holds it: one set of deps and one
+// status section, which zerops_standup and a Mate's plan (pooled_part.go)
+// share, so both write one section and take one lock.
+type Standup struct {
+	deps standupDeps
+}
+
+// NewStandup is the server's one stand-up. The server makes it only in a
 // Mate — a container with ZCP_MATE_ENABLED and an SSH deployer — since only a
 // Mate has an application's recipe to stand up from (docs/spec-mate.md §2.0).
-func RegisterStandup(
-	srv *mcp.Server,
+func NewStandup(
 	client platform.Client,
 	httpClient ops.HTTPDoer,
 	projectID string,
@@ -118,8 +124,8 @@ func RegisterStandup(
 	rtInfo runtime.Info,
 	stateDir string,
 	devsup DevsupSource,
-) {
-	registerStandup(srv, standupDeps{
+) *Standup {
+	d := standupDeps{
 		batch: batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, devsup: devsup,
@@ -130,7 +136,14 @@ func RegisterStandup(
 		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
 		source:      ops.NewHQDeploySource(httpClient, hqIdentity(rtInfo)),
-	})
+	}
+	d.status = newStandupStatus(d.statusPath)
+	return &Standup{deps: d}
+}
+
+// RegisterStandup registers zerops_standup on the server's one stand-up.
+func RegisterStandup(srv *mcp.Server, s *Standup) {
+	registerStandup(srv, s.deps)
 }
 
 func registerStandup(srv *mcp.Server, d standupDeps) {
@@ -171,13 +184,23 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 		return textResult(runningStandupLine(d.statusPath))
 	}
 	defer release()
-	// The call's push session and tracking end with it.
+	return d.runHeld(ctx, progress, func(ctx context.Context, d standupDeps) (*mcp.CallToolResult, string) {
+		return d.stand(ctx, progress)
+	})
+}
+
+// runHeld runs stand once the project's stand-up is held: with the call's
+// push session and tracking, which end with it, and the run on the status
+// section from its begin to how it ended. A Mate's plan runs its parts'
+// birth through it too (pooled_part.go), so a run is one run whoever starts
+// it.
+func (d standupDeps) runHeld(ctx context.Context, progress *standupProgress, stand func(context.Context, standupDeps) (*mcp.CallToolResult, string)) *mcp.CallToolResult {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.session = newStandupPushes(d.pushes)
 	d.tracking = newStandupTracking(d.batch, d.session, progress.st())
 	progress.st().begin()
-	result, standUp := d.stand(ctx, progress)
+	result, standUp := stand(ctx, d)
 	switch {
 	case result.IsError:
 		progress.st().end(refusalText(result))
@@ -197,6 +220,15 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 	if stop != nil {
 		return stop.result(), ""
 	}
+	resp := d.standFrom(ctx, hqc, src, progress)
+	return jsonResult(resp), resp.StandUp
+}
+
+// standFrom stands src's tier up: the pooled rows first, every pair prepared,
+// the pooled parts built beside the classic pairs' deploys, and the report.
+// The tier is the recipe's for zerops_standup, a plan's parts for a Mate's
+// plan (pooled_part.go).
+func (d standupDeps) standFrom(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) standupResponse {
 	rows := d.startPooledRows(ctx, src.tier)
 	pairs, live := d.preparePairs(ctx, hqc, src, progress)
 	classic, pooled := pooledPairs(pairs)
@@ -211,7 +243,7 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 
 	resp := buildStandupResponse(src, pairs, live, outcome)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
-	return jsonResult(resp), resp.StandUp
+	return resp
 }
 
 // standupStop is a stand-up that stopped before touching anything: its words,

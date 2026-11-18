@@ -15,16 +15,15 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// A Mate keeps its code in HQ, and only a dev/stage pair fits it: the dev
-// half is the checkout the agent works and pushes from with plain git, the
-// stage half the verified basis a production is promoted from. The rules
-// below were each measured missing on 2026-09-17, when "create a todo app" on
-// a fresh Mate got bootstrapMode simple — one service, nothing pushed, no
-// change, and the person expanding it by hand:
-//
-//   - the classic route plans every runtime of such a Mate as a standard pair;
-//   - a push to HQ is watched for no build and offers no integration, and a
-//     wired pair's direct deploys are never redirected.
+// A Mate keeps its code in HQ, and a part it plans is born pooled
+// (docs/spec-mate.md §2.8b B-9): a dev pool the agent leases a container of
+// per branch, and a stage, the verified basis a production is promoted from.
+// The classic route plans every runtime of a Mate as one part of that shape —
+// `<part>pool` beside `<part>stage` (workflow.PoolOfStage) — and the plan's
+// discover call creates the parts through the stand-up's pooled run
+// (pooled_part.go). A dev service with its stage, made in a Mate before this
+// rule or added with an old application, keeps working as it is: it is read,
+// deployed and wired as before, and nothing moves it.
 
 // isStageOf reports whether hostname is one of m's stages; false for a nil meta.
 func isStageOf(m *workflow.ServiceMeta, hostname string) bool {
@@ -32,52 +31,80 @@ func isStageOf(m *workflow.ServiceMeta, hostname string) bool {
 	return ok
 }
 
-// hqPairPlanError refuses a classic-route plan that gives a Mate a runtime
-// with no stage half — linked to its HQ or not yet: the pairs it plans now
-// are the pairs it keeps its code in. mate is runtime.Info.MateEnabled. Nil
-// outside a Mate, or when every runtime is a standard pair.
-func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.PlatformError {
+// matePooledPart is the part a Mate's plan target names, by the pairing rule:
+// its pool, its stage and the part. ok is false for a target that is no
+// `<part>pool` beside its one `<part>stage` in a standard pair; the part is
+// then the one the target most likely means, for the refusal.
+func matePooledPart(rt workflow.RuntimeTarget) (pool, stage, part string, ok bool) {
+	stages := rt.StageHostnames()
+	if rt.EffectiveMode() != topology.PlanModeStandard {
+		stages = nil
+	}
+	if stage, part, found := workflow.StageOfPool(rt.DevHostname); found {
+		return rt.DevHostname, stage, part, len(stages) == 1 && stages[0] == stage
+	}
+	candidates := []string{stageNameFor(rt.DevHostname)}
+	if len(stages) > 0 {
+		candidates = append([]string{stages[0]}, candidates...)
+	}
+	for _, named := range candidates {
+		if pool, part, found := workflow.PoolOfStage(named); found {
+			return pool, named, part, false
+		}
+	}
+	return "", "", "", false
+}
+
+// matePooledPlanError refuses a Mate's classic plan whose runtime is not a
+// part's dev pool beside its one stage, before anything is recorded: the
+// error names the pooled plan for that target. mate is
+// runtime.Info.MateEnabled. Nil outside a Mate, or when every runtime is a
+// part.
+func matePooledPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.PlatformError {
 	if !mate {
 		return nil
 	}
 	for _, target := range plan {
 		rt := target.Runtime
-		if rt.EffectiveMode() == topology.PlanModeStandard && len(rt.StageRefs()) > 0 {
+		pool, stage, _, ok := matePooledPart(rt)
+		if ok {
 			continue
 		}
-		return platform.NewPlatformError(
+		pe := platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("Plan validation failed: target %q: this Mate keeps its code in HQ, where code lands on main through changes, so every runtime is a dev/stage pair — bootstrapMode %q with no stage half has no stage to check its work on or promote to production", rt.DevHostname, rt.EffectiveMode()),
-			fmt.Sprintf("Re-submit the plan with runtime.bootstrapMode=\"standard\" and an explicit stageHostname for %q (for example devHostname %q, stageHostname %q). %s", rt.DevHostname, rt.DevHostname, stageNameFor(rt.DevHostname), hqPairNoStage),
+			fmt.Sprintf("Plan validation failed: target %q: this Mate keeps its code in HQ and creates each part of the app as a dev pool beside its stage, so a runtime is planned as devHostname %q, stageHostname %q, bootstrapMode \"standard\"", rt.DevHostname, pool, stage),
+			fmt.Sprintf("Re-submit the plan with devHostname %q, stageHostname %q, the same type %q and bootstrapMode \"standard\" for this target; the call creates the repository, the pool and the stage. %s", pool, stage, rt.Type, matePooledPlanKeeps),
 		)
+		pe.Subcode = platform.SubcodeWorkerPlanShape
+		return pe
 	}
 	return nil
 }
 
-// hqPairNoStage is what "no stage" means in a Mate, said wherever the pair
-// rule is: the stage is created and left empty, never a question to the
-// person.
-const hqPairNoStage = "A person who wants no stage, or a dev service only, still gets the pair: create the stage and leave it empty — imported without code it stays READY_TO_DEPLOY with no containers until something deploys to it — and say so; there is nothing to ask the person."
+// matePooledPlanKeeps is what the pooled rule leaves as it is, said wherever
+// the rule is.
+const matePooledPlanKeeps = "A dev service with its stage this project already has keeps working untouched; nothing moves it."
 
-// hqPairDiscoverNote is the pair rule a Mate's classic discover step states
-// before any plan is submitted (hqPairPlanError refuses the plans it rules
-// out). All three Mate sessions on 2026-10-27 learned it only from a refused
-// plan, then asked the person.
-const hqPairDiscoverNote = "**This Mate keeps its code in HQ, so every runtime is a dev/stage pair.** " +
-	"Plan each runtime with `bootstrapMode=\"standard\"` and an explicit `stageHostname` (appdev → appstage); " +
-	"a plan with a dev or simple runtime is refused. " + hqPairNoStage
+// matePooledPlanNote is the pooled rule a Mate's classic discover step states
+// before any plan is submitted (matePooledPlanError refuses the plans it
+// rules out).
+const matePooledPlanNote = "**This Mate keeps its code in HQ and creates each part of the app as a dev pool beside its stage.** " +
+	"Plan each runtime as `devHostname=\"<part>pool\"`, `stageHostname=\"<part>stage\"`, its type and `bootstrapMode=\"standard\"` (apppool → appstage), " +
+	"and name the HQ repository all parts share with `repository` (one part defaults to its name). " +
+	"Completing discover with that plan creates the repository, its first commit, the pools and the stages and builds them — it takes minutes and reports progress; " +
+	"the same plan again continues where it stopped. A plan with a dev service or another pairing is refused. " + matePooledPlanKeeps
 
-// appendHQPairDiscoverNote adds hqPairDiscoverNote to the discover step's
+// appendMatePooledPlanNote adds matePooledPlanNote to the discover step's
 // guide of a Mate's classic route — a session records no route for classic —
 // and nothing outside a Mate, on another route or past discover.
-func appendHQPairDiscoverNote(resp *workflow.BootstrapResponse, engine *workflow.Engine, mate bool) {
+func appendMatePooledPlanNote(resp *workflow.BootstrapResponse, engine *workflow.Engine, mate bool) {
 	if !mate || resp == nil || resp.Current == nil || resp.Current.Name != workflow.StepDiscover {
 		return
 	}
 	if route := bootstrapSessionRoute(engine); route != "" && route != workflow.BootstrapRouteClassic {
 		return
 	}
-	resp.Current.DetailedGuide = strings.TrimSpace(resp.Current.DetailedGuide + "\n\n" + hqPairDiscoverNote)
+	resp.Current.DetailedGuide = strings.TrimSpace(resp.Current.DetailedGuide + "\n\n" + matePooledPlanNote)
 }
 
 // hqLaunchProductionRefusal refuses the whole launch-production workflow in a
