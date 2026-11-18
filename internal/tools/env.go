@@ -69,8 +69,10 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 	actions := []any{"get", "set", "delete", "generate-dotenv"}
 	target := "Service to operate on; required for get/set/delete/request unless project=true. generate-dotenv: deprecated fallback for setup."
 	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	var mate *jsonschema.Schema
 	if asks {
 		target = "Service to operate on; required for get/set/delete/request unless project=true or mate=true. generate-dotenv: deprecated fallback for setup."
+		mate = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`.")
 		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
 		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	}
@@ -122,8 +124,8 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 		"sensitive":   flexBoolSchema("set/request: true = sensitive (masked; Mate's vault shows it), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
 		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
 	}
-	if asks {
-		properties["mate"] = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`.")
+	if mate != nil {
+		properties["mate"] = mate
 	}
 	return objectSchema(properties, "action")
 }
