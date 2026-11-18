@@ -72,7 +72,7 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 	var mate *jsonschema.Schema
 	if asks {
 		target = "Service to operate on; required for get/set/delete/request unless project=true or mate=true. generate-dotenv: deprecated fallback for setup."
-		mate = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`, or `{{env:KEY}}` in a zerops_browser command.")
+		mate = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `{{env:KEY}}` in a zerops_browser command, or `zcp with KEY -- <command>` for a command that reads KEY from its environment.")
 		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
 		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	}
@@ -285,6 +285,9 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 
 		// Outside a Mate there is no ai-key action: it is an invalid one.
 		if input.Action == "ai-key" && options.aiKey != nil {
+			if err := refuseMateTarget(input); err != nil {
+				return convertError(err), nil, nil
+			}
 			return setOrgAIKey(ctx, client, projectID, selfHostname, options.aiKey, input, onProgress), nil, nil
 		}
 		switch input.Action {
@@ -361,7 +364,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, setKeys, false, &resp, onProgress)
 			return jsonResult(resp), nil, nil
-		case "delete":
+		case envActionDelete:
 			input, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
 				return convertError(err), nil, nil
@@ -391,6 +394,9 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			}
 			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
 		case "generate-dotenv":
+			if err := refuseMateTarget(input); err != nil {
+				return convertError(err), nil, nil
+			}
 			// Setup parameter takes precedence; serviceHostname falls
 			// through with a deprecation warning so existing callers
 			// keep working through the migration window.
@@ -795,7 +801,23 @@ func resolveEnvTarget(input EnvInput, selfHostname string, inMate bool) (EnvInpu
 			"Pass one: mate=true for your own vault, serviceHostname for that service's.")
 	}
 	input.ServiceHostname = selfHostname
-	return input, refuseHiddenName(append(slices.Clone(input.Variables), input.Key))
+	return input, refuseOwnVaultNames(input)
+}
+
+// envActionDelete is zerops_env's action that removes keys.
+const envActionDelete = "delete"
+
+// refuseMateTarget refuses mate=true on an action that names no vault —
+// ai-key writes the Shared one, generate-dotenv a local file — where it
+// would otherwise be taken and mean nothing.
+func refuseMateTarget(input EnvInput) error {
+	takesNone := input.Mate.Bool()
+	if !takesNone {
+		return nil
+	}
+	return platform.NewPlatformError(platform.ErrInvalidUsage,
+		fmt.Sprintf("mate=true names a vault, and %s takes none", input.Action),
+		fmt.Sprintf("Call %s without mate=true: it goes with get, set, delete and request.", input.Action))
 }
 
 // withoutHiddenNames leaves out of a get of the Mate's own vault the names
@@ -807,30 +829,52 @@ func withoutHiddenNames(envs []map[string]any) []map[string]any {
 	})
 }
 
-// refuseHiddenName refuses, in the Mate's own vault, the variables of a set
-// or a delete and the key of a request that carry a name the vault hides:
-// the person could not see what was stored or asked, and a removed one is a
-// key Mate or zcp runs on. Named by its key only — never what follows `=`.
-func refuseHiddenName(names []string) error {
-	for _, name := range names {
-		key, _, _ := strings.Cut(name, "=")
-		if ops.IsOwnVaultHidden(key) {
-			return platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("%q is a name Mate and zcp keep for themselves: your own vault never lists it, and zerops_env neither asks for, writes nor removes it there", key),
-				"Use another name: without the ZCP_, MATE_, GITEA_ or T3CODE_ prefix, not ending in _LEASE_TOKEN, and not GIT_TOKEN or VSCODE_PASSWORD.")
+// refuseOwnVaultNames refuses, in the Mate's own vault, what a call may not
+// name there, before anything is written, removed or asked. An entry of a
+// set or a delete whose key is not a key's name and nothing more — a set's
+// before its `=`, a delete's whole — is refused by its place, never its
+// text: a leading space would carry a hidden name past the rule, and what
+// stands there may be a value. A name the vault hides (ops.IsOwnVaultHidden)
+// is refused by its key: the person could not see what was stored or asked,
+// and a removed one is a key Mate or zcp runs on.
+func refuseOwnVaultNames(input EnvInput) error {
+	hidden := func(key string) error {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%q is a name Mate and zcp keep for themselves: your own vault never lists it, and zerops_env neither asks for, writes nor removes it there", key),
+			"Use another name: without the ZCP_, MATE_, GITEA_ or T3CODE_ prefix, not ending in _LEASE_TOKEN, and not GIT_TOKEN or VSCODE_PASSWORD.")
+	}
+	for at, entry := range input.Variables {
+		key := entry
+		if input.Action != envActionDelete {
+			key, _, _ = strings.Cut(entry, "=")
 		}
+		if !ops.IsEnvKeyName(key) {
+			return platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("Entry %d of variables does not name a key; nothing was written or removed", at+1),
+				"A key is letters, digits and `_`, not starting with a digit, with nothing before it: KEY=value for set, KEY alone for delete.")
+		}
+		if ops.IsOwnVaultHidden(key) {
+			return hidden(key)
+		}
+	}
+	if ops.IsOwnVaultHidden(input.Key) {
+		return hidden(input.Key)
 	}
 	return nil
 }
 
-// ownVaultUseWords say how a value of the Mate's own vault is used: it is in
-// the container's live env store soon after the write, where `zcp with`
-// hands it to one command and `{{env:KEY}}` to one page, since the session's
-// own processes keep the env they started with. arrives opens the sentence,
-// saying from when.
-func ownVaultUseWords(keys []string, arrives string) string {
-	return fmt.Sprintf("%s, with no restart: run the command that needs it as `zcp with %s -- <command>`, or write `{{env:%s}}` in a zerops_browser command for a page. A process started earlier, this session's shell too, keeps the env it started with. Never print it.",
-		arrives, strings.Join(keys, ","), keys[0])
+// ownVaultUseWords say how a value of the Mate's own vault is used without
+// being read: `{{env:KEY}}` hands it to a page, `zcp with` to a command —
+// into the command's environment, so the command is one that reads it there,
+// never a `$KEY` on `zcp with`'s own line, which the calling shell expands
+// and does not have. The session's own processes keep the env they started
+// with.
+func ownVaultUseWords(keys []string) string {
+	return fmt.Sprintf("Use it without reading it. In a page: `{{env:%[2]s}}` in a zerops_browser command. In a command: `zcp with %[1]s -- <command>` "+
+		"puts it in that command's environment, so <command> is a script or program that reads it there, or `sh -c '… \"$%[2]s\" …'` in single quotes; "+
+		"`$%[2]s` on the same line as `zcp with` is empty, since this shell expands it and does not have the value. "+
+		"A process started earlier, this session's shell too, keeps the env it started with. Never print it.",
+		strings.Join(keys, ","), keys[0])
 }
 
 // ownVaultChangeWords is the next action for a set or a delete in the
@@ -844,7 +888,7 @@ func ownVaultChangeWords(keys []string, deleting bool) string {
 		return names + ": removed from your own vault; nothing was restarted. It leaves this container a few seconds after the write; a process started earlier keeps the env it started with."
 	}
 	return names + ": stored in your own vault, which only you read — no app does, and nothing was restarted. " +
-		ownVaultUseWords(keys, "It is in this container a few seconds after the write")
+		"It is in this container a few seconds after the write, with no restart. " + ownVaultUseWords(keys)
 }
 
 // poolEnvHint is the next action for a pool's own keys: its service env

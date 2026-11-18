@@ -1118,6 +1118,7 @@ func TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVau
 				`zerops_env action="request" mate=true key="TEST_EMAIL" sensitive=false`,
 				`zerops_env action="request" mate=true key="TEST_PASSWORD"`,
 				`["fill","<sel>","{{env:TEST_PASSWORD}}"]`, "`zcp with TEST_EMAIL,TEST_PASSWORD -- <command>`",
+				`sh -c '<line with "$TEST_PASSWORD">'`,
 				"an account made for testing", "Never ask for the person's own sign-in",
 			} {
 				if strings.Contains(out, want) != tc.want {

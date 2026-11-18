@@ -134,15 +134,16 @@ func vaultPlace(req *ops.EnvRequestResult) string {
 }
 
 // alreadySetWords: nothing was asked, the key is referenced by name — a key
-// of the Mate's own vault (ownVault) used with `zcp with`, since no app
-// reads it — and a wrong saved value is replaced by asking with replace=true.
+// of the Mate's own vault (ownVault) used as ownVaultUseWords say, since no
+// app reads it — and a wrong saved value is replaced by asking with
+// replace=true.
 func alreadySetWords(req *ops.EnvRequestResult, ownVault bool) string {
 	where := "the Shared vault"
 	use := fmt.Sprintf("Reference it by name (`NAME: ${%s}` in run.envVariables) — its value is never read.", req.Key)
 	switch {
 	case ownVault:
-		where = "your own vault"
-		use = fmt.Sprintf("Run the command that needs it as `zcp with %[1]s -- <command>`, or write `{{env:%[1]s}}` in a zerops_browser command for a page — its value is never read, and never print it.", req.Key)
+		where = "your own vault, which only you read — no app does"
+		use = ownVaultUseWords([]string{req.Key})
 	case req.Scope == ops.EnvRequestScopeService:
 		where = req.ServiceHostname + "'s vault"
 	}
@@ -177,8 +178,8 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 // person saves, for a key of the Mate's own vault: nothing does, no app reads
 // it, and the value is used with `zcp with` or `{{env:KEY}}`.
 func ownVaultAskWords(key string) string {
-	return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. ", key) +
-		ownVaultUseWords([]string{key}, "Once the message says saved it is in this container a few seconds later")
+	return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. "+
+		"Once the message says saved it is in this container a few seconds later, with no restart. ", key) + ownVaultUseWords([]string{key})
 }
 
 // restartAfterSaveWords names what restarts once the person saves. A card

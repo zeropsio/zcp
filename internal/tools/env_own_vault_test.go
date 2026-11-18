@@ -8,6 +8,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -234,8 +236,18 @@ func TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue(t *test
 	}
 
 	held := parseOwnVault(t, callTool(t, srv, "zerops_env", map[string]any{"action": "request", "mate": true, "key": "TOOL_KEY", "why": "for the linter"}))
-	if held.AlreadySet == nil || !strings.Contains(held.NextActions, "`zcp with TOOL_KEY -- <command>`") || strings.Contains(held.NextActions, "run.envVariables") {
-		t.Errorf("a held key's answer does not say how it is used: %+v", held)
+	if held.AlreadySet == nil || strings.Contains(held.NextActions, "run.envVariables") {
+		t.Errorf("a held key's answer sends it to an app: %+v", held)
+	}
+	// How a command gets it, on both answers: its environment, so a `$KEY`
+	// goes inside single quotes, never on `zcp with`'s own line.
+	for name, next := range map[string]string{"requested": got.NextActions, "alreadySet": held.NextActions} {
+		key := map[string]string{"requested": "TEST_ACCOUNTS", "alreadySet": "TOOL_KEY"}[name]
+		for _, want := range []string{"`zcp with " + key + " -- <command>`", "`{{env:" + key + "}}`", "`sh -c '… \"$" + key + "\" …'`", "no app does"} {
+			if !strings.Contains(next, want) {
+				t.Errorf("%s: the next step lacks %q: %s", name, want, next)
+			}
+		}
 	}
 }
 
@@ -312,7 +324,8 @@ func TestEnvChange_OwnVault_RestartsNothing(t *testing.T) {
 // TestEnvChange_OwnVault_RefusesAHiddenName: a name Mate and zcp keep for
 // themselves is neither written, removed nor asked for in the Mate's own
 // vault — a stored one the person could never see, a removed one is a key
-// the Mate runs on — and the refusal carries no value.
+// the Mate runs on — not behind a leading space either, since an entry that
+// is not a key's name is refused too; and no refusal carries a value.
 // witness: internal/tools/env.go | if ops.IsOwnVaultHidden(key) { → if false {
 func TestEnvChange_OwnVault_RefusesAHiddenName(t *testing.T) {
 	t.Parallel()
@@ -326,6 +339,9 @@ func TestEnvChange_OwnVault_RefusesAHiddenName(t *testing.T) {
 		{name: "a set beside a listed name", args: map[string]any{"action": "set", "mate": true, "variables": []any{"TEST_ACCOUNTS=a:b", "GIT_TOKEN=" + value}}},
 		{name: "a delete", args: map[string]any{"action": "delete", "mate": true, "variables": []any{"ZCP_API_KEY"}}},
 		{name: "a request", args: map[string]any{"action": "request", "mate": true, "key": "GITEA_TOKEN", "why": "for the mirror"}},
+		{name: "a set whose name hides behind a space", args: map[string]any{"action": "set", "mate": true, "variables": []any{" ZCP_API_KEY=" + value}}},
+		{name: "a set of a value alone", args: map[string]any{"action": "set", "mate": true, "variables": []any{value + "!"}}},
+		{name: "a delete of more than a name", args: map[string]any{"action": "delete", "mate": true, "variables": []any{"TOOL_KEY=" + value}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -422,5 +438,33 @@ func TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault(
 	parseOwnVault(t, callTool(t, fenServer(t, mock), "zerops_env", map[string]any{"action": "delete", "serviceHostname": fenContainer, "variables": []any{"VSCODE_PASSWORD"}}))
 	if held := containerKeys(t, mock); slices.Contains(held, "VSCODE_PASSWORD") {
 		t.Errorf("a delete that names the container's hostname left VSCODE_PASSWORD: %v", held)
+	}
+}
+
+// unreachedHQ fails a test that reaches HQ: the call under test is refused
+// before anything is asked of it.
+type unreachedHQ struct{ t *testing.T }
+
+func (d unreachedHQ) Do(*http.Request) (*http.Response, error) {
+	d.t.Error("HQ was asked")
+	return nil, errors.New("not reached")
+}
+
+// TestEnvTool_MateTrue_RefusedOnAnActionThatNamesNoVault: ai-key writes the
+// Shared vault and generate-dotenv a local file; mate=true on either names a
+// vault the action does not take, and is refused instead of taken silently
+// — an agent that passed it would believe the key went to its own vault.
+// witness: internal/tools/env.go | takesNone := input.Mate.Bool() → takesNone := false
+func TestEnvTool_MateTrue_RefusedOnAnActionThatNamesNoVault(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"ai-key", "generate-dotenv"} {
+		mock := fenMock()
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterEnv(srv, mock, "proj-1", fenContainer, WithVaultAsks(t.TempDir()), WithOrgAIKey(unreachedHQ{t}))
+		result := callTool(t, srv, "zerops_env", map[string]any{"action": action, "mate": true})
+		if text := getTextContent(t, result); !result.IsError || !strings.Contains(text, platform.ErrInvalidUsage) || !strings.Contains(text, action) {
+			t.Errorf("%s mate=true was not refused as invalid usage, naming the action: %s", action, text)
+		}
 	}
 }
