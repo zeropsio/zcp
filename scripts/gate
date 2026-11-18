@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# zcp's gate, the one place that says what green means for a change to land on main: the static
+# witness check of origin/main..HEAD, native lint of the packages that range affects, go vet
+# (default and build-tagged) and go build. No test runs; the three-platform build and the
+# two-platform lint stay CI's. Run it from anywhere in a worktree:
+#
+#   scripts/gate
+#
+# Every check runs, so one red run names every red one. Green exits 0 with nothing on stdout; red
+# exits 1 with the red checks on one stdout line (` witness lint vet vet-tags build`, each with a
+# leading space; scripts/land puts it into its `gate` refusal). Everything else goes to stderr.
+# go vet and go build compile every non-ignored file on disk, so the gate judges the tree as it is;
+# scripts/land refuses untracked files before calling it. The gate holds every check itself: a
+# landing may run with git hooks off.
+set -uo pipefail
+
+# Without -trimpath Go keys every compiled package by its directory, so each new worktree would
+# recompile all of zcp instead of reusing the build cache.
+export GOFLAGS=-trimpath
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo " worktree"; echo "gate: not inside a git worktree" >&2; exit 1; }
+cd "$root" || { echo " worktree"; exit 1; }
+
+red=
+go run scripts/check-witness.go --base origin/main --head HEAD >&2 || red+=" witness"
+scripts/check-changed.sh --base origin/main >&2 || red+=" lint"
+go vet ./... >&2 || red+=" vet"
+make --no-print-directory vet-tags >&2 || red+=" vet-tags"
+go build ./... >&2 || red+=" build"
+[ -z "$red" ] || { echo "$red"; exit 1; }
