@@ -16,17 +16,16 @@ import (
 
 // `zcp with <KEY>[,<KEY>…] [--] <command> [<args>…]` runs one command with
 // the named values in its environment (docs/spec-mate.md §5.8a). The values
-// are read from the container's live env store as it is now — a value the
-// person saved a moment ago is there about two seconds after the write,
-// while the caller's own environment is the one it started with — and set on
-// top of the caller's. zcp then replaces itself with the command
-// (replaceWithCommand): stdin, stdout, stderr, signals and the exit code are
-// the command's. A call is refused before anything runs, with gitExitRefused
-// and one line on stderr saying why, for a key the store does not hold, a
-// name Mate and zcp keep for themselves (ops.IsVaultHidden), an argument that
-// is not key names, no command, and a store it cannot read. No line of
-// zcp's carries a value: an argument that is not a key's name is never
-// echoed, and a store that does not parse is not quoted. Like `zcp run` it
+// are read from the container's live env store as it is now
+// (ops.LiveEnvValues) — a value the person saved a moment ago is there a few
+// seconds after the write, while the caller's own environment is the one it
+// started with — and set on top of the caller's. zcp then replaces itself
+// with the command (replaceWithCommand): stdin, stdout, stderr, signals and
+// the exit code are the command's. A call is refused before anything runs,
+// with gitExitRefused and one line on stderr saying why, for no command and
+// for each refusal of the store's reader: a key it does not hold, a name
+// Mate and zcp keep for themselves, an argument that is not key names, and a
+// store it cannot read. No line of zcp's carries a value. Like `zcp run` it
 // writes nothing to stdout itself and runs before CLI telemetry.
 
 const withUsage = "usage: zcp with <KEY>[,<KEY>...] [--] <command> [<args>...]"
@@ -83,16 +82,6 @@ func runWithCmd(args []string, d withDeps) int {
 		return refuse("no key given; " + withUsage)
 	}
 	keys := strings.Split(args[0], ",")
-	for _, key := range keys {
-		if !ops.IsEnvKeyName(key) {
-			// Not echoed: what stands where the key names belong may be a
-			// KEY=value.
-			return refuse("the first argument is key names only (letters, digits and `_`, joined by commas), never KEY=value; " + withUsage)
-		}
-		if ops.IsVaultHidden(key) {
-			return refuse(key + " is a name Mate and zcp keep for themselves; zcp with hands it to no command")
-		}
-	}
 	argv := args[1:]
 	if len(argv) > 0 && argv[0] == "--" {
 		argv = argv[1:]
@@ -100,25 +89,13 @@ func runWithCmd(args []string, d withDeps) int {
 	if len(argv) == 0 {
 		return refuse("no command given; " + withUsage)
 	}
-	lines, err := mate.LoadLiveEnv(d.storePath)
-	if err != nil {
-		return refuse(storeUnreadWords(err))
-	}
-	held := make(map[string]string, len(lines))
-	for _, line := range lines {
-		if key, value, ok := strings.Cut(line, "="); ok {
-			held[key] = value
-		}
+	values, refused := ops.LiveEnvValues(d.storePath, keys)
+	if refused != nil {
+		return refuse(withRefusalWords(refused))
 	}
 	env := slices.Clone(d.environ)
 	for _, key := range keys {
-		value, ok := held[key]
-		if !ok {
-			return refuse(fmt.Sprintf("%s is not in this container's env, and nothing was run: it is not saved yet (an open ask waits for the person), "+
-				"was saved moments ago (it arrives about two seconds after the write: run this again), "+
-				"or was never asked for (zerops_env action=\"request\" mate=true key=%q)", key, key))
-		}
-		env = withValue(env, key, value)
+		env = withValue(env, key, values[key])
 	}
 	path, err := d.lookPath(argv[0])
 	if err != nil {
@@ -133,21 +110,33 @@ func runWithCmd(args []string, d withDeps) int {
 	return code
 }
 
+// withRefusalWords say why the store handed out no value, and what to do. No
+// line carries a value: what stood where the key names belong is not echoed,
+// and of a store that could not be read only the system's own error on the
+// file is quoted — one from reading its content may quote the content.
+func withRefusalWords(refused *ops.LiveEnvRefusal) string {
+	switch refused.Kind {
+	case ops.LiveEnvNotAName:
+		return "the first argument is key names only (letters, digits and `_`, joined by commas), never KEY=value; " + withUsage
+	case ops.LiveEnvHidden:
+		return refused.Key + " is a name Mate and zcp keep for themselves; zcp with hands it to no command"
+	case ops.LiveEnvNotHeld:
+		return fmt.Sprintf("%s is not in this container's env, and nothing was run: it is not saved yet (an open ask waits for the person), "+
+			"was saved moments ago (it arrives a few seconds after the write: run this again), "+
+			"or was never asked for (zerops_env action=\"request\" mate=true key=%q)", refused.Key, refused.Key)
+	case ops.LiveEnvStoreUnread:
+		var onFile *fs.PathError
+		if errors.As(refused.Err, &onFile) {
+			return fmt.Sprintf("this container's env store could not be read (%v); zcp with runs in a Zerops container, where the platform keeps it", onFile)
+		}
+	}
+	return "this container's env store does not read as the platform writes it; nothing was run"
+}
+
 // withValue is env with key set to value, whatever env held under key.
 func withValue(env []string, key, value string) []string {
 	env = slices.DeleteFunc(env, func(entry string) bool {
 		return strings.HasPrefix(entry, key+"=")
 	})
 	return append(env, key+"="+value)
-}
-
-// storeUnreadWords says why the live env store gave no values. Only the
-// system's own error on the file is quoted: one from reading its content may
-// quote the content.
-func storeUnreadWords(err error) string {
-	var onFile *fs.PathError
-	if errors.As(err, &onFile) {
-		return fmt.Sprintf("this container's env store could not be read (%v); zcp with runs in a Zerops container, where the platform keeps it", onFile)
-	}
-	return "this container's env store does not read as the platform writes it; nothing was run"
 }

@@ -20,17 +20,21 @@ const (
 	fenTestAccounts = "fen@example.test:pw-of-the-test-account"
 	fenToolKey      = "tk-of-the-linter"
 	fenZcpKey       = "zk-of-zcp-itself"
+	fenEditorPass   = "vp-of-the-editor"
+	fenLeaseToken   = "lt-of-the-appdev-pool"
 )
 
 // fenStoreValues are every value of fenStore: none may reach a line zcp
 // prints.
-var fenStoreValues = []string{fenTestAccounts, fenToolKey, fenZcpKey}
+var fenStoreValues = []string{fenTestAccounts, fenToolKey, fenZcpKey, fenEditorPass, fenLeaseToken}
 
 // fenStore writes the live env store of Fen's container and returns its path.
 func fenStore(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "env.json")
-	body := `{"TEST_ACCOUNTS":"` + fenTestAccounts + `","TOOL_KEY":"` + fenToolKey + `","ZCP_API_KEY":"` + fenZcpKey + `","PATH":"/store/bin"}`
+	body := `{"TEST_ACCOUNTS":"` + fenTestAccounts + `","TOOL_KEY":"` + fenToolKey + `","ZCP_API_KEY":"` + fenZcpKey +
+		`","VSCODE_PASSWORD":"` + fenEditorPass + `","appdev_LEASE_TOKEN":"` + fenLeaseToken +
+		`","T3CODE_ZEROPS_HQ_ORIGIN":"https://hq.example.test","PATH":"/store/bin"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write the store: %v", err)
 	}
@@ -96,7 +100,7 @@ func TestWith_RunsTheCommandWithTheNamedValues(t *testing.T) {
 // A key the store does not hold stops the call before the command runs, with
 // zcp's own exit code and words that say what to do: wait for the person, or
 // ask with mate=true.
-// witness: cmd/zcp/with.go | if !ok { → if !ok && key == "" {
+// witness: internal/ops/live_env.go | if !ok { → if !ok && key == "" {
 func TestWith_AMissingKey_RunsNothingAndSaysWhatToDo(t *testing.T) {
 	t.Parallel()
 
@@ -115,13 +119,14 @@ func TestWith_AMissingKey_RunsNothingAndSaysWhatToDo(t *testing.T) {
 	}
 }
 
-// A name Mate and zcp keep for themselves is never handed to a command,
-// though the store holds it.
-// witness: cmd/zcp/with.go | if ops.IsVaultHidden(key) { → if false {
+// A name Mate and zcp keep for themselves, the container's own machinery
+// included, is never handed to a command, though the store holds it.
+// witness: internal/ops/live_env.go | if IsOwnVaultHidden(key) { → if false {
 func TestWith_AHiddenName_IsHandedToNoCommand(t *testing.T) {
 	t.Parallel()
 
-	for _, keys := range []string{"ZCP_API_KEY", "TEST_ACCOUNTS,ZCP_API_KEY", "MATE_SETUP", "GITEA_TOKEN", "GIT_TOKEN"} {
+	for _, keys := range []string{"ZCP_API_KEY", "TEST_ACCOUNTS,ZCP_API_KEY", "MATE_SETUP", "GITEA_TOKEN", "GIT_TOKEN",
+		"T3CODE_ZEROPS_HQ_ORIGIN", "VSCODE_PASSWORD", "appdev_LEASE_TOKEN"} {
 		deps, run, stderr := withTestDeps(fenStore(t), 0)
 		code := runWithCmd([]string{keys, "--", "env"}, deps)
 		if code != gitExitRefused || run.ran {
@@ -134,7 +139,7 @@ func TestWith_AHiddenName_IsHandedToNoCommand(t *testing.T) {
 // No line zcp prints carries a value: not one typed where the key names
 // belong, not the content of a store that does not parse, not on a command
 // that is not found or cannot be started.
-// witness: cmd/zcp/with.go | if !ops.IsEnvKeyName(key) { → if false {
+// witness: internal/ops/live_env.go | if !IsEnvKeyName(key) { → if false {
 func TestWith_NoRefusal_PrintsAValue(t *testing.T) {
 	t.Parallel()
 
