@@ -3942,60 +3942,99 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
   `request` it resolves to the service zcp runs in. It is offered only where asks are (a Mate's
   zcp, §5.8): elsewhere the schema does not list it and a call with it is refused. With
   `project=true`, or with a `serviceHostname` that is another service, it is refused as invalid
-  usage. `get` answers keys only, the hidden names left out; `set`, `delete` and `request` refuse
-  a hidden name before anything is written or asked. A call that names the container's hostname
-  by hand, without `mate=true`, is a call on that service's variables as it was before this
-  section: every name listed, written and removed, the readers looked for, the words of §5.8.
+  usage, and so it is on `ai-key` and `generate-dotenv`, which take no vault to name. `get`
+  answers keys only, the hidden names left out; `set`, `delete` and `request` refuse a hidden
+  name before anything is written or asked, and `set` and `delete` refuse, by its place and
+  never by its text, an entry whose key is not a key's name (a leading space would carry a
+  hidden name past the rule; a `delete` entry is the name alone). A call that names the
+  container's hostname by hand, without `mate=true`, is a call on that service's variables as it
+  was before this section: every name listed, written and removed, the readers looked for, the
+  words of §5.8.
 - **Nothing restarts, and the words say how the value is used.** No service is restarted for a
   `mate=true` key and none is named to restart: `set`, `delete` and `request` plan no restart, read
   no service's deployed entries for it, and `requested` carries no `readers` and no
   `restartAfterSave`. No answer says that nothing reads the key or that it belongs in
   `run.envVariables`: the next step of a `set`, of `requested` and of `alreadySet` says the value
-  is the Mate's alone and no app reads it, that it is in this container a few seconds after the
-  write with no restart, that a process started earlier keeps its env, and how it is used —
-  `zcp with <KEY> -- <command>` for a command, `{{env:<KEY>}}` in a `zerops_browser` command for
-  a page.
+  is the Mate's alone and no app reads it, that a process started earlier keeps its env, and how
+  it is used — `{{env:<KEY>}}` in a `zerops_browser` command for a page, `zcp with <KEY> --
+  <command>` for a command — and a `set` and `requested` say that it is in this container a few
+  seconds after the write with no restart. They say how a command gets the value: `zcp with` puts
+  it in the command's environment, so the command is a script or program that reads it there, or
+  `sh -c '…"$KEY"…'` in single quotes; a `$KEY` on the same line as `zcp with` is expanded by the
+  calling shell, which is the one that does not have it, and arrives empty.
 - **One reader of the live store.** `zcp with` and `zerops_browser` take a value from the
   container's live env store through one function (`ops.LiveEnvValues`), read at the call, with
   one set of refusals, each made before anything runs and none carrying a value: what stands
   where a key's name belongs is not one (letters, digits and `_`, no leading digit; never
   echoed, since it may be a `KEY=value`); a hidden name of either rule; a key the store does not
-  hold — it is not saved yet (an open ask waits for the person), was saved moments ago, or was
-  never asked (`zerops_env action="request" mate=true`); a store that cannot be read (only the
-  system's error on the file is quoted, never one from its content). It serves any other key the
-  store holds, so a project's value is used the same way.
+  hold; a store that cannot be read (only the system's error on the file is quoted, never one
+  from its content). It serves any other key the store holds, so a project's value is used the
+  same way. Both run in every zcp container, and their words follow where zcp runs: in a Mate a
+  key the store does not hold is not saved yet (an open ask waits for the person), was saved
+  moments ago, or was never asked (`zerops_env action="request" mate=true`); in a container that
+  is no Mate, which has neither that ask nor `mate=true`, it is a variable this service does not
+  have, set with `zerops_env action="set" serviceHostname=<this service>` or by the person
+  where the project's values are set.
 - **`zcp with <KEY>[,<KEY>...] [--] <command> [<args>...]`** runs one command with the named
   values (`cmd/zcp/with.go`). It sets the named keys in the command's environment on top of the
   caller's and replaces itself with the command (`execve` on unix; elsewhere it runs the command
   as a child and exits with its code): stdin, stdout, stderr, signals and the exit code are the
   command's. zcp writes nothing to stdout itself and runs before CLI telemetry, as `zcp run` and
   `zcp git` do (§6.8, §6.9). A refusal, and a call with no command, is one line on stderr with
-  exit 2. A command it cannot find exits 127, one it cannot start 126, as a shell's.
-- **`{{env:KEY}}` in a `zerops_browser` command** (`internal/ops/browser_env.go`) is how a value
-  reaches a page, where sign-ins happen. In any argument of a `commands` element, every
-  `{{env:KEY}}` — a whole argument or inside one: a fill's text, an eval's source — is replaced
-  with the value the store holds under KEY. A refusal fails the whole call before the browser is
-  asked for. The result never holds a substituted value where zcp can tell: a command comes back
-  in `steps` as it was written, with the placeholder, whatever the value's length; and in every
-  text the result carries — a step's result and error, an eval's value, `errorsOutput`,
-  `consoleOutput`, `networkOutput`, `message`, and so the `fullResult` file — each substituted
-  value of at least six bytes is replaced by its placeholder, in the forms zcp knows: verbatim,
-  as JSON text escapes it, and percent-encoded as a URL carries it. Not redacted: a value shorter
-  than six bytes outside the command it was written in (it would be a common fragment of ordinary
-  output — a short word, a number — and redacting it would shred the result while protecting
-  nothing a guess does not find); a value the page transformed (encoded another way, hashed, cut
-  in two); and a screenshot, which is pixels — a password field shows dots, and a secret typed
-  into a visible field is in the picture. The tool says the last where a screenshot is asked for
-  (its `screenshot` parameter) and the rule where commands are written (its `commands`
-  parameter); its description, at Claude Code's 4096-unit cap, only points there.
+  exit 2. Its other codes are a shell's: 127 for a command that is not found, 126 for one that is
+  there and cannot be run — a file that is not executable, by its path or the first of its name
+  on `PATH`, a directory, or one the system refuses to start.
+- **`{{env:KEY}}` in a `zerops_browser` command** (`internal/ops/browser_env.go`,
+  `browser_redact.go`) is how a value reaches a page, where sign-ins happen. In any argument of a
+  `commands` element, every `{{env:KEY}}` — a whole argument or inside one — is replaced with the
+  value the store holds under KEY, once: a value that itself holds placeholder text is not read
+  again, and the call's `url` is not searched. Where the argument is JavaScript — an `eval`
+  step's source, the argument after a `wait`'s `--fn` — the placeholder is written inside a
+  quoted string, single, double or backtick, and the value is escaped so that the string is
+  exactly the value (the backslash, the three quotes, `$`, line ends and control characters); anywhere
+  else it stands as it is. A refusal fails the whole call before the browser is asked for. The
+  result never holds a substituted value where zcp can tell:
+  - **The echo is the input.** A step names its command as it was written, byte for byte: zcp
+    puts the caller's own command back by its place in the batch and never searches it. Every
+    text zcp itself composes about a step — one that got no answer, one it did not run — names
+    the command as written too, so neither the length of a value nor a way of escaping it
+    matters there.
+  - **Text from the browser side is searched.** What agent-browser and the page gave back —
+    each step's result (every string, every number, every key below its first level) and error,
+    and agent-browser's stderr — has each substituted value of at least six bytes replaced by
+    its placeholder before zcp reads or composes anything from it: `steps`, `errorsOutput`,
+    `consoleOutput`, `networkOutput`, `message` and the `fullResult` file are made from that.
+    Values that overlap in a text are replaced together.
+  - **The forms found.** The value's characters in order, each one as itself; as JSON text
+    escapes it, applied once, twice or three times (JSON inside a JSON string inside a JSON
+    string): `\"`, `\\`, `\/`, `\n` and the other short escapes, and `\uXXXX` in either hex case,
+    also for `<`, `>`, `&` and any character outside ASCII, a surrogate pair where it takes one;
+    or as the JavaScript escape an eval was given (`\'`, `` \` ``, `\$`), also JSON-escaped once
+    or twice on top. Each byte of any of these stands as itself; as its `%HH` escape in either
+    hex case, a space also as `+` — every percent-encoding of the value, whichever characters
+    the encoder chose to escape; or, for `&`, `<`, `>`, `"` and `'`, as its HTML entity (`&amp;`,
+    `&lt;`, `&gt;`, `&quot;` or `&#34;`, `&#39;`, `&#039;`, `&#x27;` or `&apos;`), as a snapshot
+    or a `get html` returns it.
+  - **Not redacted.** A value under six bytes in text from the browser side (it would be a
+    common fragment of ordinary output — a short word, a number — and redacting it would shred
+    the result while protecting nothing a guess does not find); any transformation not listed —
+    base64, a hash, another encoding, one of the listed ones applied where the list has it once
+    (a percent-encoded entity, a byte percent-encoded twice, a fourth level of JSON), the value
+    split, reordered or cut short; and a screenshot, which is pixels — a password field shows
+    dots, and a secret typed into a visible field is in the picture.
+
+  The tool says the screenshot rule where a screenshot is asked for (its `screenshot`
+  parameter) and the rest where commands are written (its `commands` parameter); its
+  description, at Claude Code's 4096-unit cap, only points there.
 - **Checking behind a sign-in.** A Mate's AGENTS.md has one block for it
   (`templates/agents_own_vault.md`, Mate-gated like the other blocks of §2.0): where the app owns
   its users the agent makes a test user itself; where the identity comes from elsewhere it asks
   for an account made for testing — one with access to nothing that matters — with `zerops_env
   action="request" mate=true`, each thing the sign-in takes as a value of its own (an e-mail as
   `TEST_EMAIL`, not sensitive; a password as `TEST_PASSWORD`), says so in the why, never asks for
-  the person's own sign-in and never in the chat, uses a value in a command with `zcp with` and
-  in a page with `{{env:KEY}}`, and never prints it.
+  the person's own sign-in and never in the chat, uses a value in a page with `{{env:KEY}}` and
+  in a command with `zcp with` — a program that reads its environment, or `sh -c` in single
+  quotes, never a `$KEY` on `zcp with`'s own line — and never prints it.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
@@ -4379,7 +4418,7 @@ The first Mate that draws the mirror card is 0.16.114; `MinimumMateVersion` is a
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
 | MF-18 | A secret the person gives never reaches the Mate's records or its agent: the engine takes saved or declined, never a value, and words the agent's line itself. Mate `EngineWire.test.ts`, zcp `TestEnvRequest_Refuses` |
 | MF-18 | A page the agent publishes is self-contained or refused: its local pictures and fonts are inlined only when they are regular files in the project that are what they are named as — a picture of at most 40 million pixels that decodes whole, re-encoded from its pixels; a font by its magic bytes; script, comment and CSS comment text is never read; a format zcp cannot decode, a reference that names no file and a remote resource are named as ones that will not load; a missing file is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_PicturesAndFonts_ByFormat`, `TestPublishPage_FontsAndHugePictures_Refused`, `TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames`, `TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
-| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a hidden name of either rule (C-15) is neither listed, asked for, written nor removed there, while the second rule's names stay ordinary in every other vault; `zcp with` hands the named values to one command and `{{env:KEY}}` in a `zerops_browser` command to one page, both through one reader of the live store that refuses a missing key and a hidden name before anything runs and prints no value; a browser result echoes a command as written and carries the placeholder where a substituted value came back. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue`, `TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens`, `TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
+| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a hidden name of either rule (C-15) is neither listed, asked for, written nor removed there, while the second rule's names stay ordinary in every other vault; `zcp with` hands the named values to one command and `{{env:KEY}}` in a `zerops_browser` command to one page, both through one reader of the live store that refuses a missing key and a hidden name before anything runs and prints no value; a browser result names each command as it was written, byte for byte, as does every text zcp composes about a step, and carries the placeholder where a substituted value came back from the browser side in a listed form. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue`, `TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens`, `TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder`, `TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharactersWereEscaped`, `TestBrowserBatch_EnvPlaceholder_AValueInNestedJSONOrHTMLIsFound`, `TestBrowserBatch_EnvPlaceholder_AStepWithNoAnswerIsNamedAsWritten`, `TestBrowserBatch_EnvPlaceholder_TheEchoIsTheCommandAsWritten`, `TestBrowserBatch_EnvPlaceholder_InAnEvalTheQuotedStringIsExactlyTheValue`, `TestEnvTool_MateTrue_RefusedOnAnActionThatNamesNoVault`, `TestWith_WordsFollowWhereZcpRuns`, `TestWith_ACommandThatCannotBeRun_ExitsAsAShellDoes`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
 
 ---
 
