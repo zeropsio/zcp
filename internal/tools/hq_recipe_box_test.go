@@ -125,14 +125,14 @@ func tierServiceTypes(t *testing.T, body string) map[string]string {
 // import takes it. Spec: spec-workflows.md §8 PS-3.
 func TestGroupRecipe_NoolaRunner_EveryTierCarriesTheBox(t *testing.T) {
 	metas := writeNoolaRunnerMeta(t, t.TempDir())
-	readMain := func(_ context.Context, repo string) string {
+	readMain := func(_ context.Context, repo string) recipeMainSetup {
 		if repo == "runnerdev" {
-			return noolaRunnerYAML
+			return recipeMainSetup{ZeropsYAML: noolaRunnerYAML}
 		}
-		return ""
+		return recipeMainSetup{}
 	}
 	inputs, readWarnings, err := composeGroupRecipeInputs(context.Background(), noolaRunnerProject(liveBox("svc-box", "box")),
-		"p1", "noola", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, readMain)
+		"p1", "noola", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, readMain)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestComposeGroupRecipeInputs_BoxKeyedOnType_NotHostname(t *testing.T) {
 	metas := writeNoolaRunnerMeta(t, t.TempDir())
 	static := publicBuildRuntime("svc-box", "box", "alpine/static", "https://github.com/zerops-recipe-apps/box-app")
 	inputs, _, err := composeGroupRecipeInputs(context.Background(), noolaRunnerProject(static, liveBox("svc-sandbox", "sandbox")),
-		"p1", "noola", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
+		"p1", "noola", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}

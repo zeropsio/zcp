@@ -27,7 +27,7 @@ func TestComposeGroupRecipeInputs_ProjectHostnames_EveryServiceTheProjectRuns(t 
 	}
 	pool := liveRuntime("svc-pool", "devpool", "swarm@1")
 	inputs, _, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(pool, liveBox("svc-box", "box")),
-		"p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
+		"p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}

@@ -475,7 +475,7 @@ func composeGroupRecipe(
 	}
 	var outcome recipeOutcome
 	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
-		recipePairMountRoot, hqc.Address(), hqc.OrgID(), repo.AppID, metas, wired, recipeMainYAML(hqc, repo.AppID, stateDir))
+		recipePairMountRoot, hqc.Address(), hqc.OrgID(), repo.AppID, rt.ServiceName, metas, wired, recipeMainSetupReader(hqc, repo.AppID, stateDir))
 	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)

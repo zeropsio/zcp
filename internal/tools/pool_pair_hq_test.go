@@ -413,7 +413,7 @@ func TestGroupRecipeInputs_PoolDevHalf_CarriedAsThePartsDevPool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas, nil)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, "zcp", metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 	}
@@ -520,7 +520,7 @@ func TestGroupRecipeInputs_PoolDevHalf_EveryPoolKeyingAPairIsCarried(t *testing.
 				t.Fatal(err)
 			}
 
-			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
+			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, nil)
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 			}
@@ -577,7 +577,7 @@ func TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage(t *testing.T)
 		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
 		WithServicesDirect(services).WithServices(services)
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas, nil)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, nil)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 	}
@@ -607,11 +607,11 @@ func TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage(t *testing.T)
 func TestGroupRecipeInputs_ZeropsYAMLFromHQ(t *testing.T) {
 	t.Parallel()
 	const onMain = "zerops:\n  - setup: pool\n  - setup: prod\n"
-	readMain := func(_ context.Context, repo string) string {
+	readMain := func(_ context.Context, repo string) recipeMainSetup {
 		if repo == "appdev" {
-			return onMain
+			return recipeMainSetup{ZeropsYAML: onMain}
 		}
-		return ""
+		return recipeMainSetup{}
 	}
 	tests := []struct {
 		name   string
@@ -650,7 +650,7 @@ func TestGroupRecipeInputs_ZeropsYAMLFromHQ(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas, readMain)
+			inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, "zcp", metas, metas, readMain)
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 			}

@@ -43,12 +43,17 @@ import (
 // checkout of its own, and a dev checkout is still empty when a classic
 // bootstrap closes, before develop puts the code in (the Mate Web Mate,
 // 2026-10-27, whose recipe never composed for want of it).
+//
+// A dev-service pair whose repository's main holds the pool setup of every
+// part is written as a dev pool per stage (groupRecipeMainPools): how a part
+// is developed is a fact of its repository, never of this Mate's project.
+// zcpHostname is this zcp service, the one a pool so written admits over SSH.
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
-	projectID, group, mountRoot, address, orgID, appID string,
+	projectID, group, mountRoot, address, orgID, appID, zcpHostname string,
 	metas, wired []*workflow.ServiceMeta,
-	readMain recipeRepoYAML,
+	readMain recipeRepoSetup,
 ) (bundle.GroupRecipeInputs, []string, error) {
 	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
 	if err != nil {
@@ -89,7 +94,7 @@ func composeGroupRecipeInputs(
 		ProjectHostnames: projectHostnames,
 	}
 	warnings := leftOut
-	mainYAML := map[string]string{}
+	mains := recipeMainsOfPass{read: readMain, setups: map[string]recipeMainSetup{}}
 	for _, m := range wired {
 		dev, ok := groupRecipeDevHalf(m, live)
 		if !ok {
@@ -130,19 +135,14 @@ func composeGroupRecipeInputs(
 		if dev.mounted {
 			yamlBody, _ = readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		}
-		if yamlBody == "" && readMain != nil {
-			body, read := mainYAML[m.HQ.Repo]
-			if !read {
-				body = readMain(ctx, m.HQ.Repo)
-				mainYAML[m.HQ.Repo] = body
-			}
-			yamlBody = body
+		if yamlBody == "" {
+			yamlBody = mains.of(ctx, m.HQ.Repo).ZeropsYAML
 		}
 		repoURL, err := hq.RepoURLAt(address, orgID, appID, m.HQ.Repo)
 		if err != nil {
 			return bundle.GroupRecipeInputs{}, nil, err
 		}
-		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
+		runtime := bundle.GroupRuntime{
 			DevHostname:      dev.hostname,
 			DevPool:          dev.pool,
 			Stages:           stages,
@@ -153,7 +153,14 @@ func composeGroupRecipeInputs(
 			SubdomainEnabled: dev.svc.SubdomainEnabled,
 			Scaling:          shape.Scaling,
 			ServiceEnvs:      devEnvs,
-		})
+		}
+		if parts := groupRecipeMainPools(m, live, func() recipeMainSetup { return mains.of(ctx, m.HQ.Repo) }); parts != nil {
+			pools, warning := groupRecipePoolRuntimes(m, parts, runtime, mains.of(ctx, m.HQ.Repo).ZeropsYAML, zcpHostname)
+			inputs.Runtimes = append(inputs.Runtimes, pools...)
+			warnings = append(warnings, warning)
+			continue
+		}
+		inputs.Runtimes = append(inputs.Runtimes, runtime)
 	}
 	if len(inputs.Runtimes) == 0 {
 		// What was left out says why nothing is carried.
@@ -216,9 +223,104 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
-// recipeRepoYAML reads a repository's zerops.yaml off its main in HQ: ""
-// when main holds none or it cannot be read.
-type recipeRepoYAML func(ctx context.Context, repo string) string
+// groupRecipeMainPools is the parts of the wired pair m, one per stage in
+// the record's order, that the AI Agent tier writes as dev pools because
+// main of m's repository holds their pool setups (docs/spec-mate.md
+// §2.8a.5); nil writes the pair as it runs. All of these hold, else nil: m
+// is a dev-service pair without a code volume; it has a stage, every stage's
+// hostname ends in `stage` and records its setup (a stage's setup is never
+// guessed here); the project runs no service named like a part's pool (a
+// pool-migrate in flight, written as it runs until the retire re-keys the
+// pair); and the one setup check names nothing main lacks for the parts.
+// main is asked only once the record and the live project pass.
+func groupRecipeMainPools(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo, main func() recipeMainSetup) []ops.PoolPart {
+	if m.DevIsPool() || m.CodeVolume != nil || len(m.Stages) == 0 {
+		return nil
+	}
+	parts := make([]ops.PoolPart, 0, len(m.Stages))
+	for _, stage := range m.Stages {
+		if !workflow.IsStageHostname(stage.Hostname) || stage.SetupName == "" {
+			return nil
+		}
+		pool := poolMigratePartPool(stage.Hostname)
+		if _, running := live[pool]; running {
+			return nil
+		}
+		parts = append(parts, ops.PoolPart{Part: stage.SetupName, Pool: pool, Stage: stage.Hostname, Type: live[stage.Hostname].Type})
+	}
+	setup := main()
+	if len(ops.CheckPoolSetups(setup.ZeropsYAML, setup.Declaration, parts)) > 0 {
+		return nil
+	}
+	return parts
+}
+
+// recipeMainsOfPass asks each repository's main once per pass; a nil read
+// reads none.
+type recipeMainsOfPass struct {
+	read   recipeRepoSetup
+	setups map[string]recipeMainSetup
+}
+
+func (p recipeMainsOfPass) of(ctx context.Context, repo string) recipeMainSetup {
+	if p.read == nil {
+		return recipeMainSetup{}
+	}
+	setup, read := p.setups[repo]
+	if !read {
+		setup = p.read(ctx, repo)
+		p.setups[repo] = setup
+	}
+	return setup
+}
+
+// groupRecipePoolRuntimes writes the dev-service pair m, whose runtime as it
+// runs is dev, as one dev pool per part (parts in the record's stage order),
+// the shape a pool-keyed pair composes: each pool beside its stage as dev
+// carries it, typed bundle.PoolType, its setup named after it, built from
+// main's zerops.yaml mainYAML, and from the dev service what pool-migrate's
+// provision and env steps give a pool made from it — its repository address
+// and subdomain, its vertical scale with both container bounds zeroed on a
+// copy (so the pool's maximum is the template's default, never the dev
+// service's count), its variables with the sshIsolation admitting the zcp
+// service zcpHostname. The warning names the pair, its pools and the
+// repository whose main holds them.
+func groupRecipePoolRuntimes(m *workflow.ServiceMeta, parts []ops.PoolPart, dev bundle.GroupRuntime, mainYAML, zcpHostname string) ([]bundle.GroupRuntime, string) {
+	var scaling *bundle.Scaling
+	if dev.Scaling != nil {
+		vertical := *dev.Scaling
+		vertical.MinContainers, vertical.MaxContainers = 0, 0
+		scaling = &vertical
+	}
+	envs := make([]bundle.ProjectEnvVar, 0, len(dev.ServiceEnvs)+1)
+	for _, env := range dev.ServiceEnvs {
+		if env.Key != bundle.PoolSSHIsolationKey {
+			envs = append(envs, env)
+		}
+	}
+	envs = append(envs, bundle.ProjectEnvVar{Key: bundle.PoolSSHIsolationKey, Value: bundle.PoolSSHIsolation(zcpHostname)})
+
+	runtimes := make([]bundle.GroupRuntime, 0, len(parts))
+	pools := make([]string, 0, len(parts))
+	for i, part := range parts {
+		pools = append(pools, part.Pool)
+		runtimes = append(runtimes, bundle.GroupRuntime{
+			DevHostname:      part.Pool,
+			DevPool:          true,
+			Stages:           []bundle.GroupStage{dev.Stages[i]},
+			ServiceType:      bundle.PoolType,
+			RepoURL:          dev.RepoURL,
+			SetupName:        part.Pool,
+			ZeropsYAMLBody:   mainYAML,
+			SubdomainEnabled: dev.SubdomainEnabled,
+			Scaling:          scaling,
+			ServiceEnvs:      envs,
+		})
+	}
+	return runtimes, fmt.Sprintf(
+		"%s is written on the AI Agent tier as the dev pools %s beside its stages: main of the repository %s holds their pool setups, so a Mate made from the tier develops through pools; this Mate keeps %s as it runs",
+		m.Hostname, strings.Join(pools, ", "), m.HQ.Repo, m.Hostname)
+}
 
 // groupDevHalf is the dev half the recipe carries for a wired pair: the
 // hostname the AI Agent tier gives it, the setup it builds, whether it is a
