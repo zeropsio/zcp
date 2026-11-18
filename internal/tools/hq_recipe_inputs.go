@@ -229,8 +229,11 @@ func composeGroupRecipeInputs(
 // main of m's repository holds their pool setups (docs/spec-mate.md
 // §2.8a.5); nil writes the pair as it runs. All of these hold, else nil: m
 // is a dev-service pair without a code volume; it has a stage, every stage's
-// hostname ends in `stage` and records its setup (a stage's setup is never
-// guessed here); the project runs no service named like a part's pool (a
+// hostname ends in `stage`, records its setup (a stage's setup is never
+// guessed here) and runs in the project (a pool's part takes its type,
+// scale and access from its stage alone, where a classic part's dev service
+// stands in for a stage that does not run: bundle's groupPartFacts and
+// partSource); the project runs no service named like a part's pool (a
 // pool-migrate in flight, written as it runs until the retire re-keys the
 // pair); and the one setup check names nothing main lacks for the parts.
 // main is asked only once the record and the live project pass. mainYAML is
@@ -244,6 +247,9 @@ func groupRecipeMainPools(m *workflow.ServiceMeta, live map[string]ops.ServiceIn
 	parts = make([]ops.PoolPart, 0, len(m.Stages))
 	for _, stage := range m.Stages {
 		if !workflow.IsStageHostname(stage.Hostname) || stage.SetupName == "" {
+			return nil, "", nil
+		}
+		if _, running := live[stage.Hostname]; !running {
 			return nil, "", nil
 		}
 		pool := poolMigratePartPool(stage.Hostname)
