@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // The test sign-in Fen's container holds: an e-mail, a password that JSON
@@ -34,10 +37,16 @@ const (
 // path.
 func fenEnvStore(t *testing.T) string {
 	t.Helper()
-	body, err := json.Marshal(map[string]string{
+	return envStoreOf(t, map[string]string{
 		"TEST_EMAIL": fenEmail, "TEST_PASSWORD": fenPassword, "TEST_PIN": fenPIN,
 		"ZCP_API_KEY": fenZcpKey, "VSCODE_PASSWORD": "vp-of-the-editor",
 	})
+}
+
+// envStoreOf writes a live env store holding values and returns its path.
+func envStoreOf(t *testing.T, values map[string]string) string {
+	t.Helper()
+	body, err := json.Marshal(values)
 	if err != nil {
 		t.Fatalf("encode the store: %v", err)
 	}
@@ -46,6 +55,48 @@ func fenEnvStore(t *testing.T) string {
 		t.Fatalf("write the store: %v", err)
 	}
 	return path
+}
+
+// walkRunner runs the walk itself (runBrowserSteps) over a scripted
+// agent-browser, so a step's fate is the walk's own.
+type walkRunner struct {
+	fakeBrowserRunner
+	exec browserStepExec
+}
+
+func (w *walkRunner) Run(ctx context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+	var steps [][]string
+	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
+		return "", "", false, err
+	}
+	return runBrowserSteps(ctx, steps, w.exec)
+}
+
+// signInWith opens a sign-in page whose commands are written and whose
+// container holds values, on runner.
+func signInWith(t *testing.T, runner browserRunner, values map[string]string, written [][]string) *BrowserBatchResult {
+	t.Helper()
+	defer OverrideBrowserRunnerForTest(runner)()
+	defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+	result, err := BrowserBatch(t.Context(), BrowserBatchInput{
+		URL: "https://appdev.example.invalid/sign-in", EnvStorePath: envStoreOf(t, values), InMate: true, Commands: written,
+	})
+	if err != nil {
+		t.Fatalf("BrowserBatch: %v", err)
+	}
+	return result
+}
+
+// stepOf is the step of result that ran command name, as the agent reads it.
+func stepOf(t *testing.T, result *BrowserBatchResult, name string) BrowserStepResult {
+	t.Helper()
+	for _, step := range result.Steps {
+		if len(step.Command) > 0 && step.Command[0] == name {
+			return step
+		}
+	}
+	t.Fatalf("the result has no %s step: %+v", name, result.Steps)
+	return BrowserStepResult{}
 }
 
 // pageRunner answers each step of the batch as answer says, and as
@@ -88,7 +139,7 @@ func (p *pageRunner) Run(_ context.Context, stdin string, _ time.Duration) (stri
 // argument (a fill's text) and inside one (an eval's source), every
 // occurrence — so a sign-in form can be filled without the value ever being
 // in the call.
-// witness: internal/ops/browser_env.go | return values[browserEnvRef.FindStringSubmatch(ref)[1]] → return ref
+// witness: internal/ops/browser_env.go | value := values[browserEnvRef.FindStringSubmatch(ref)[1]] → value := ref
 func TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue(t *testing.T) {
 	runner := &pageRunner{}
 	defer OverrideBrowserRunnerForTest(runner)()
@@ -174,7 +225,7 @@ func TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens(t *testing.T) 
 // result, an eval's value, an error, the console, a failed request's URL —
 // is its placeholder again, however JSON or the URL escaped it. A value too
 // short to look for stays in ordinary output, which is left whole.
-// witness: internal/ops/browser_env.go | replacer := strings.NewReplacer(pairs...) → replacer := strings.NewReplacer()
+// witness: internal/ops/browser_env.go | stderr = u.redactor.text(stderr) → return stdout, stderr, runErr
 func TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder(t *testing.T) {
 	runner := &pageRunner{answer: func(cmd []string) (any, string) {
 		switch cmd[0] {
@@ -237,7 +288,7 @@ func TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder(t *testing.T) 
 	if err := json.Indent(&text, read, "", " "); err != nil {
 		t.Fatalf("indent: %v", err)
 	}
-	for _, form := range valueForms(fenPassword) {
+	for _, form := range []string{fenPassword, `pw\"of`, "of<the>test", url.QueryEscape(fenPassword), url.PathEscape(fenPassword)} {
 		if strings.Contains(text.String(), form) || strings.Contains(string(answered), form) {
 			t.Errorf("the result holds the password as %q:\n%s", form, answered)
 		}
@@ -253,6 +304,300 @@ func TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder(t *testing.T) 
 	} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("the result lacks %q:\n%s", want, text.String())
+		}
+	}
+}
+
+// A percent-encoded value is found whichever characters the encoder chose to
+// escape: a failed sign-in comes back with the password in the request's
+// address and form body as the browser wrote it — `*`, `!`, `~` and a space
+// are escaped by one encoder and left by another — and it is the placeholder
+// there, never the password.
+// witness: internal/ops/browser_redact.go | if percentByte(text, pos) == int(b) { → if false {
+func TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharactersWereEscaped(t *testing.T) {
+	tests := []struct {
+		name, value, inURL, inBody string
+	}{
+		{name: "a form body leaves the star", value: "Tr0ub4dor&3*", inURL: "Tr0ub4dor%263*", inBody: "email=fen%40example.test&password=Tr0ub4dor%263*"},
+		{name: "encodeURIComponent leaves the bang", value: "P@ssw0rd!", inURL: "P%40ssw0rd!", inBody: "password=P%40ssw0rd%21"},
+		{name: "a form writes a space as a plus", value: "p@ss w0rd*~", inURL: "p%40ss+w0rd*%7E", inBody: "password=p%40ss%20w0rd%2a%7e"},
+		{name: "every byte escaped", value: "Pa$$w0rd", inURL: "%50%61%24%24%77%30%72%64", inBody: "password=Pa%24%24w0rd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{answer: func(cmd []string) (any, string) {
+				if cmd[0] != "network" {
+					return nil, ""
+				}
+				return map[string]any{"requests": []any{map[string]any{
+					"url": "https://appdev.example.invalid/login?password=" + tt.inURL, "method": "POST", "status": 401, "postData": tt.inBody,
+				}}}, ""
+			}}
+			result := signInWith(t, runner, map[string]string{"TEST_PASSWORD": tt.value}, [][]string{{"fill", "#password", "{{env:TEST_PASSWORD}}"}})
+			if len(result.NetworkOutput) != 1 || result.NetworkOutput[0].URL != "https://appdev.example.invalid/login?password={{env:TEST_PASSWORD}}" {
+				t.Errorf("the failed request is listed as %+v, want its password as the placeholder", result.NetworkOutput)
+			}
+			tail := string(stepOf(t, result, "network").Result)
+			if strings.Contains(tail, tt.inURL) || strings.Contains(tail, strings.TrimPrefix(tt.inBody[strings.LastIndex(tt.inBody, "=")+1:], "")) {
+				t.Errorf("the network step holds the password as the browser encoded it: %s", tail)
+			}
+			if strings.Count(tail, "{{env:TEST_PASSWORD}}") != 2 {
+				t.Errorf("the network step does not carry the placeholder in the address and in the body: %s", tail)
+			}
+		})
+	}
+}
+
+// A value is found inside JSON that is itself inside a JSON string — a
+// request body in the network lines, a page that logs JSON.stringify of what
+// it sent, a server's error echoing that again — and as HTML writes it, in a
+// snapshot or a `get html` of the form it was typed into.
+// witness: internal/ops/browser_redact.go | for depth := 1; depth <= browserRedactJSONDepth; depth++ { → for depth := 1; depth <= 0; depth++ {
+func TestBrowserBatch_EnvPlaceholder_AValueInNestedJSONOrHTMLIsFound(t *testing.T) {
+	const password = `pw"x\long<1>&'end`
+	nested := func(levels int) string {
+		text := password
+		for range levels {
+			encoded, err := json.Marshal(map[string]string{"password": text})
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			text = string(encoded)
+		}
+		return text
+	}
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		switch cmd[0] {
+		case "network":
+			return map[string]any{"requests": []any{map[string]any{"url": "https://appdev.example.invalid/login", "status": 401, "postData": nested(1)}}}, ""
+		case "console":
+			return map[string]any{"messages": []any{
+				map[string]any{"type": "log", "text": "sent " + nested(2)},
+				map[string]any{"type": "error", "text": "the server said " + nested(3)},
+			}}, ""
+		case "get":
+			return map[string]any{"html": `<input id="password" value="pw&quot;x\long&lt;1&gt;&amp;&#39;end">`}, ""
+		case "snapshot":
+			return map[string]any{"snapshot": `- textbox "Password": pw"x\long&lt;1&gt;&amp;'end`}, ""
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_PASSWORD": password}, [][]string{
+		{"fill", "#password", "{{env:TEST_PASSWORD}}"}, {"get", "html", "form"}, {"snapshot", "-i"},
+	})
+	answered, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("the result does not encode: %v", err)
+	}
+	// Read as the agent reads it: every string of the result, decoded, and
+	// each JSON text found in one decoded again.
+	var texts []string
+	var collect func(any)
+	collect = func(node any) {
+		switch value := node.(type) {
+		case map[string]any:
+			for key, child := range value {
+				texts = append(texts, key)
+				collect(child)
+			}
+		case []any:
+			for _, child := range value {
+				collect(child)
+			}
+		case string:
+			texts = append(texts, value)
+			if from := strings.Index(value, "{"); from >= 0 {
+				var inner any
+				if json.Unmarshal([]byte(value[from:]), &inner) == nil {
+					collect(inner)
+				}
+			}
+		}
+	}
+	var decoded any
+	if err := json.Unmarshal(answered, &decoded); err != nil {
+		t.Fatalf("the result does not decode: %v", err)
+	}
+	collect(decoded)
+	for _, text := range texts {
+		if strings.Contains(text, password) || strings.Contains(text, "x\\long") {
+			t.Errorf("the result holds the password in %q", text)
+		}
+	}
+	for _, want := range []string{`value="{{env:TEST_PASSWORD}}"`, `- textbox "Password": {{env:TEST_PASSWORD}}`, `{"password":"{{env:TEST_PASSWORD}}"}`} {
+		if !slices.ContainsFunc(texts, func(text string) bool { return strings.Contains(text, want) }) {
+			t.Errorf("the result lacks %q:\n%s", want, answered)
+		}
+	}
+}
+
+// A step that got no answer is named, in the message zcp writes about it, by
+// the command as it was written: the value it ran with is not there, however
+// short it is and whatever bytes it holds.
+// witness: internal/ops/browser_env.go | unanswered.command = u.written[unanswered.step] →
+func TestBrowserBatch_EnvPlaceholder_AStepWithNoAnswerIsNamedAsWritten(t *testing.T) {
+	tests := []struct {
+		name, value string
+		spellings   []string
+	}{
+		{name: "a PIN too short to search for", value: "4271", spellings: []string{"4271"}},
+		{name: "a control byte", value: "pass\x01word-long", spellings: []string{"pass\x01word-long", `pass\x01word-long`, `pass\u0001word-long`}},
+		{name: "a delete byte", value: "pass\x7fword-long", spellings: []string{"pass\x7fword-long", `pass\x7fword-long`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &walkRunner{exec: func(_ context.Context, args []string) (string, string, error) {
+				if args[0] == "fill" {
+					return "", "agent-browser: daemon connection lost", errors.New("exit status 1")
+				}
+				return `{"success":true,"data":{"ok":true}}`, "", nil
+			}}
+			result := signInWith(t, runner, map[string]string{"TEST_SECRET": tt.value}, [][]string{{"fill", "#field", "{{env:TEST_SECRET}}"}})
+			if !strings.Contains(result.Message, `fill #field {{env:TEST_SECRET}}`) {
+				t.Errorf("the message does not name the step as written: %q", result.Message)
+			}
+			for _, spelling := range tt.spellings {
+				if strings.Contains(result.Message, spelling) {
+					t.Errorf("the message holds the value as %q: %q", spelling, result.Message)
+				}
+			}
+		})
+	}
+}
+
+// Each step names its command exactly as it was written — never searched
+// for values: a password that is the word "password", a value equal to its
+// key's name and a value that is itself placeholder text leave the selector,
+// the waited-for text and the placeholders as the agent wrote them.
+// witness: internal/ops/browser_env.go | step.Command = u.written[i] →
+func TestBrowserBatch_EnvPlaceholder_TheEchoIsTheCommandAsWritten(t *testing.T) {
+	written := [][]string{
+		{"fill", "#password", "{{env:TEST_PASSWORD}}"},
+		{"fill", "#user", "{{env:TEST_USER}}"},
+		{"fill", "#note", "x{{env:TEST_NOTE}}y"},
+		{"wait", "--text", "Wrong password"},
+	}
+	runner := &pageRunner{}
+	result := signInWith(t, runner, map[string]string{
+		"TEST_PASSWORD": "password", "TEST_USER": "TEST_USER", "TEST_NOTE": "{{env:TEST_USER}}",
+	}, written)
+	var caller [][]string
+	for _, step := range result.Steps {
+		if step.Command[0] == "fill" || (step.Command[0] == "wait" && step.Command[1] == "--text") {
+			caller = append(caller, step.Command)
+		}
+	}
+	if !slices.EqualFunc(caller, written, slices.Equal[[]string]) {
+		t.Errorf("the steps name %q, want the commands as written %q", caller, written)
+	}
+	ran := parseStdinBatch(t, runner.lastStdin)
+	if want := []string{"fill", "#note", "x{{env:TEST_USER}}y"}; !slices.ContainsFunc(ran, func(cmd []string) bool { return slices.Equal(cmd, want) }) {
+		t.Errorf("a value that is placeholder text was read again: %q", ran)
+	}
+}
+
+// In JavaScript the placeholder stands inside a quoted string and the page
+// gets exactly the value: a password with a quote, a backslash, a backtick,
+// `${` or a line end neither breaks the script nor sets another string —
+// which would fail the sign-in as "wrong password" with nothing to see. An
+// error that quotes the source back is the placeholder too.
+// witness: internal/ops/browser_env.go | return jsStringEscape(value) → return value
+func TestBrowserBatch_EnvPlaceholder_InAnEvalTheQuotedStringIsExactlyTheValue(t *testing.T) {
+	const password = "it's \"a\" \\ `tick` ${x}\nnext"
+	// The password as a JavaScript string's body, by the language's own
+	// escapes: valid between ', " or `.
+	const literal = `it\'s \"a\" \\ \` + "`" + `tick\` + "`" + ` \${x}\nnext`
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		if cmd[0] == "eval" {
+			return nil, "SyntaxError: Unexpected identifier in " + cmd[1]
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_PASSWORD": password}, [][]string{
+		{"eval", "document.querySelector('#password').value = '{{env:TEST_PASSWORD}}'"},
+		{"wait", "--fn", "document.title === `{{env:TEST_PASSWORD}}`"},
+		{"fill", "#password", "{{env:TEST_PASSWORD}}"},
+	})
+	ran := parseStdinBatch(t, runner.lastStdin)
+	for _, want := range [][]string{
+		{"eval", "document.querySelector('#password').value = '" + literal + "'"},
+		{"wait", "--fn", "document.title === `" + literal + "`"},
+		{"fill", "#password", password},
+	} {
+		if !slices.ContainsFunc(ran, func(cmd []string) bool { return slices.Equal(cmd, want) }) {
+			t.Errorf("the page was not sent %q; the batch is %q", want, ran)
+		}
+	}
+	failed := stepOf(t, result, "eval")
+	if failed.Error == nil || !strings.HasSuffix(*failed.Error, "value = '{{env:TEST_PASSWORD}}'") {
+		t.Errorf("the error that quotes the source does not carry the placeholder: %v", failed.Error)
+	}
+}
+
+// Two values that overlap in a text are taken out together: nothing of one
+// is left standing beside the other's placeholder.
+// witness: internal/ops/browser_redact.go | last.end = max(last.end, end) →
+func TestBrowserBatch_EnvPlaceholder_OverlappingValuesAreReplacedTogether(t *testing.T) {
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		if cmd[0] == "get" {
+			return map[string]any{"text": "abcdefghi"}, ""
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_FIRST": "abcdef", "TEST_SECOND": "defghi"}, [][]string{
+		{"fill", "#first", "{{env:TEST_FIRST}}"}, {"fill", "#second", "{{env:TEST_SECOND}}"}, {"get", "text", "#both"},
+	})
+	if got := string(stepOf(t, result, "get").Result); got != `{"text":"{{env:TEST_FIRST}}{{env:TEST_SECOND}}"}` {
+		t.Errorf("the overlapping values came back as %s", got)
+	}
+}
+
+// An eval's value is the page's own, keys and numbers included, while the
+// names agent-browser wraps it in are not: a value that happens to be one of
+// those names is taken out of the page's value and the step still reads as
+// an eval's value.
+// witness: internal/ops/browser_env.go | keysFrom = 1 → keysFrom = 0
+func TestBrowserBatch_EnvPlaceholder_AnEvalsValueIsSearchedKeysAndNumbersToo(t *testing.T) {
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		if cmd[0] == "eval" {
+			return map[string]any{"origin": "https://appdev.example.invalid", "result": map[string]any{"result": "signed in", "pin-830142": 830142}}, ""
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_USER": "result", "TEST_PIN": "830142"}, [][]string{
+		{"fill", "#user", "{{env:TEST_USER}}"}, {"fill", "#pin", "{{env:TEST_PIN}}"}, {"eval", "state()"},
+	})
+	var text string
+	if err := json.Unmarshal(stepOf(t, result, "eval").Result, &text); err != nil {
+		t.Fatalf("the eval's value is not text: %v", err)
+	}
+	if want := `{"pin-{{env:TEST_PIN}}":"{{env:TEST_PIN}}","{{env:TEST_USER}}":"signed in"}`; text != want {
+		t.Errorf("the eval's value came back as %s, want %s", text, want)
+	}
+}
+
+// A key the store does not hold is worded by where zcp runs: a Mate is sent
+// to the ask that fills its own vault; a container that is no Mate, which
+// has neither that ask nor mate=true, to this service's variables — never to
+// a parameter its zerops_env refuses.
+// witness: internal/ops/browser_env.go | LiveEnvNotHeldWords(refused.Key, inMate, "call again") → LiveEnvNotHeldWords(refused.Key, true, "call again")
+func TestBrowserBatch_EnvPlaceholder_AMissingKeyIsWordedByWhereZcpRuns(t *testing.T) {
+	for _, inMate := range []bool{true, false} {
+		runner := &pageRunner{}
+		restoreRunner := OverrideBrowserRunnerForTest(runner)
+		restoreScale := OverrideBrowserScaleForTest(func(context.Context) error { return nil })
+		_, err := BrowserBatch(t.Context(), BrowserBatchInput{
+			URL: "https://appdev.example.invalid/sign-in", EnvStorePath: fenEnvStore(t), InMate: inMate,
+			Commands: [][]string{{"fill", "#key", "{{env:SIGNING_KEY}}"}},
+		})
+		restoreScale()
+		restoreRunner()
+		var refusal *platform.PlatformError
+		if !errors.As(err, &refusal) {
+			t.Fatalf("in a Mate = %v: the call was not refused: %v", inMate, err)
+		}
+		if strings.Contains(refusal.Suggestion, "mate=true") != inMate {
+			t.Errorf("in a Mate = %v, the refusal says: %s", inMate, refusal.Suggestion)
 		}
 	}
 }

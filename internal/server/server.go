@@ -590,7 +590,7 @@ func (s *Server) registerTools() {
 	// both container detection AND binary presence on PATH.
 	canBrowse := s.rtInfo.InContainer && ops.AgentBrowserAvailable()
 	if canBrowse {
-		tools.RegisterBrowser(s.server, stateDir)
+		tools.RegisterBrowser(s.server, stateDir, s.rtInfo.MateEnabled)
 	}
 	// A page the agent publishes is drawn in a Mate's conversation, read by
 	// the Mate server from the state dir (docs/spec-mate.md §5.9): Mate-gated

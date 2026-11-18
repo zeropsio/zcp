@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -31,6 +32,22 @@ type LiveEnvRefusal struct {
 	Kind LiveEnvRefusalKind
 	Key  string
 	Err  error
+}
+
+// LiveEnvNotHeldWords say what a key the store does not hold means and what
+// to do, by where zcp runs. In a Mate it is a value of the Mate's own vault
+// that is not there yet: an ask still open, a save moments old, or no ask at
+// all. A container that is no Mate has neither that ask nor mate=true: the
+// key is a variable this service does not have. again is what repeats the
+// call ("run this again").
+func LiveEnvNotHeldWords(key string, inMate bool, again string) string {
+	if inMate {
+		return fmt.Sprintf("It is not saved yet (an open ask waits for the person), was saved moments ago (it arrives a few seconds after the write: %s), "+
+			"or was never asked for (zerops_env action=\"request\" mate=true key=%q).", again, key)
+	}
+	return fmt.Sprintf("It is no variable of this service, or was set moments ago (it arrives a few seconds after the write: %s). "+
+		"Set it as this service's variable (zerops_env action=\"set\" with this service as serviceHostname, sensitive=true for a secret), "+
+		"or have the person add %s where the project's values are set.", again, key)
 }
 
 // LiveEnvValues answers the values the container's live env store at

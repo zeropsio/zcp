@@ -294,7 +294,7 @@ func (f *fullPageRunner) Run(_ context.Context, stdin string, _ time.Duration) (
 func browserSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterBrowser(srv, "")
+	RegisterBrowser(srv, "", false)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(t.Context(), st, nil); err != nil {
 		t.Fatalf("server connect: %v", err)

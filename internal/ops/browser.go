@@ -67,8 +67,10 @@ type BrowserBatchInput struct {
 	// EnvStorePath is the container's live env store
 	// (mate.LiveEnvStorePath), which a `{{env:KEY}}` in a command's argument
 	// is replaced from (substituteBrowserEnv). Read only for a call that
-	// holds a placeholder.
+	// holds a placeholder. InMate says zcp serves a Mate here: a refused
+	// placeholder is worded by it.
 	EnvStorePath string `json:"-"`
+	InMate       bool   `json:"-"`
 }
 
 // BrowserStepResult is one step from agent-browser's --json output.
@@ -588,12 +590,6 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if err != nil {
 		return nil, err
 	}
-	// Before the browser is asked for: a refused placeholder runs nothing.
-	commands, envUse, err := substituteBrowserEnv(input.Commands, input.EnvStorePath)
-	if err != nil {
-		return nil, err
-	}
-
 	timeout := resolveBrowserTimeout(input.TimeoutSeconds)
 	// One deadline bounds the whole call: the wait for the browser, the
 	// walk and the paint wait inside it.
@@ -607,7 +603,12 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	defer cleanupScreenshot()
 
-	batch, refused := buildCanonicalBatch(input.URL, commands, screenshotPath, input.FullPage)
+	written, refused := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
+	// Before the browser is asked for: a refused placeholder runs nothing.
+	batch, envUse, err := substituteBrowserEnv(written, input.EnvStorePath, input.InMate)
+	if err != nil {
+		return nil, err
+	}
 	stdinBytes, err := json.Marshal(batch)
 	if err != nil {
 		return nil, fmt.Errorf("marshal batch: %w", err)
@@ -638,6 +639,8 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	start := time.Now()
 	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout)
 	duration := time.Since(start)
+	// Everything below reads the walk's answer without the values it was given.
+	stdout, stderr, runErr = envUse.takeBack(stdout, stderr, runErr)
 
 	result := &BrowserBatchResult{
 		URL:             input.URL,
@@ -662,8 +665,6 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		result.Message = pageVerdict(result.Steps, timeout)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
-	// Every text the result will carry is in it now, at one level of JSON.
-	envUse.redact(result, refused)
 	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
 	result.Steps = append(refused, result.Steps...)

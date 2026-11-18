@@ -19,16 +19,18 @@ import (
 // an enum.
 type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
-	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array. In any argument, whole or inside it (a fill's text, an eval's source), {{env:KEY}} is replaced with the value this container's env holds under KEY — a test sign-in from your own vault (zerops_env mate=true) — and the result shows the placeholder, never the value; a KEY the env does not hold fails the call before the browser opens."`
+	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole call, including the wait for the browser and a slow page's load. Default 120, max 300."`
 	Isolation      string     `json:"isolation,omitempty"      jsonschema:"What the page remembers from earlier calls. tab (default): cookies, login, storage, HTTP cache and service workers carry over. fresh-context: none of them, for the first check after a deploy; it stops Chrome as the call ends. new-browser: also a fresh Chrome."`
 	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result. A screenshot is not redacted: a password field shows dots, so never screenshot a {{env:KEY}} value typed into a visible field."`
 	FullPage       bool       `json:"fullPage,omitempty"       jsonschema:"Capture the whole page instead of the viewport, as one image cut to its top 8000 px (screenshot.capturedHeight then says how tall the capture was). The capture does not scroll: content that loads when scrolled into view stays blank unless you scroll to it or wait for it first. Implies screenshot."`
 }
 
-// browserInputSchema derives the published schema from BrowserInput and
-// lists isolation's three levels.
-func browserInputSchema() *jsonschema.Schema {
+// browserInputSchema derives the published schema from BrowserInput, lists
+// isolation's three levels and says, where commands are written, what a
+// `{{env:KEY}}` in one becomes (docs/spec-mate.md §5.8a) — by where zcp
+// runs: only a Mate has a vault of its own for the value to come from.
+func browserInputSchema(inMate bool) *jsonschema.Schema {
 	s, err := jsonschema.For[BrowserInput](nil)
 	if err != nil || s == nil {
 		return nil
@@ -36,14 +38,24 @@ func browserInputSchema() *jsonschema.Schema {
 	if prop, ok := s.Properties["isolation"]; ok {
 		prop.Enum = []any{ops.BrowserIsolationTab, ops.BrowserIsolationFreshContext, ops.BrowserIsolationNewBrowser}
 	}
+	if prop, ok := s.Properties["commands"]; ok {
+		source := "a variable of this service"
+		if inMate {
+			source = "a test sign-in from your own vault (zerops_env mate=true)"
+		}
+		prop.Description += " In any argument, whole or inside it, {{env:KEY}} is replaced with the value this container's env holds under KEY — " + source +
+			" — and the result shows the placeholder, never the value; a KEY the env does not hold fails the call before the browser opens." +
+			" In JavaScript (an eval's source, a wait's --fn) write it inside a quoted string, '{{env:KEY}}': the value is escaped to be exactly that string."
+	}
 	return s
 }
 
 // RegisterBrowser registers the zerops_browser tool. Only called by server.go
 // when running inside the ZCP container (where agent-browser is installed).
 // stateDir is where a screenshot is kept as one of the Mate's pictures; ""
-// keeps none.
-func RegisterBrowser(srv *mcp.Server, stateDir string) {
+// keeps none. inMate says zcp serves a Mate here, whose own vault a
+// `{{env:KEY}}` value comes from: the words about it follow.
+func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
 		Description: "Drive Chrome via agent-browser in ONE bounded batch, lifecycle included: [open url] + " +
@@ -99,7 +111,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			DestructiveHint: boolPtr(false),
 			OpenWorldHint:   boolPtr(true),
 		},
-		InputSchema: browserInputSchema(),
+		InputSchema: browserInputSchema(inMate),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input BrowserInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.BrowserBatch(ctx, ops.BrowserBatchInput{
 			URL:            input.URL,
@@ -109,6 +121,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			Screenshot:     input.Screenshot,
 			FullPage:       input.FullPage,
 			EnvStorePath:   mate.LiveEnvStorePath,
+			InMate:         inMate,
 		})
 		if err != nil {
 			return convertError(err), nil, nil

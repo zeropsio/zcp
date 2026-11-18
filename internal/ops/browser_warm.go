@@ -225,7 +225,7 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 	var walkErr error
 	var page browserPage
 walk:
-	for _, step := range steps {
+	for at, step := range steps {
 		if err := ctx.Err(); err != nil {
 			walkErr = err
 			break
@@ -258,7 +258,7 @@ walk:
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				walkErr = ctxErr
 			} else {
-				walkErr = fmt.Errorf("step %q got no answer: %w", strings.Join(step, " "), errors.Join(runErr, err))
+				walkErr = &browserStepUnansweredError{step: at, command: step, err: errors.Join(runErr, err)}
 			}
 			break
 		}
@@ -292,6 +292,22 @@ walk:
 	}
 	return string(out), stderr.String(), truncated || stderr.truncated, walkErr
 }
+
+// browserStepUnansweredError is the error of a walk that ended on a step with no
+// answer: the step's place in the batch and its command. A caller that ran
+// the batch with other words than it was given names the step by its place
+// (browserEnvUse.takeBack).
+type browserStepUnansweredError struct {
+	step    int
+	command []string
+	err     error
+}
+
+func (e *browserStepUnansweredError) Error() string {
+	return fmt.Sprintf("step %q got no answer: %v", strings.Join(e.command, " "), e.err)
+}
+
+func (e *browserStepUnansweredError) Unwrap() error { return e.err }
 
 // browserNoAnswer is agent-browser's word for a step the daemon took and did
 // not answer within its client's own wait (at least 30 s): the step may still
