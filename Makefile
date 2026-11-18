@@ -101,10 +101,10 @@ clean: ## Remove build artifacts
 ###########
 # RELEASE #
 ###########
-release: ## Minor bump, vet, lint, tag, push (e.g. v2.61.0 → v2.62.0). Use V=x.y.z for explicit version.
+release: ## Minor bump of origin/main: vet, lint, tag, push the tag (e.g. v2.61.0 → v2.62.0). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=minor
 
-release-patch: ## Patch bump, vet, lint, tag, push (e.g. v2.61.0 → v2.61.1). Use V=x.y.z for explicit version.
+release-patch: ## Patch bump of origin/main: vet, lint, tag, push the tag (e.g. v2.61.0 → v2.61.1). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=patch
 
 _release:
@@ -113,6 +113,10 @@ _release:
 	fi; \
 	echo "Fetching remote tags..."; \
 	git fetch --tags --force || { echo "ERROR: cannot fetch tags from remote"; exit 1; }; \
+	git fetch -q origin main || { echo "ERROR: cannot fetch origin main"; exit 1; }; \
+	if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
+		echo "ERROR: HEAD is not origin/main. A release tags what main already holds; land first."; exit 1; \
+	fi; \
 	if [ -n "$(V)" ]; then \
 		NEXT="v$$(echo '$(V)' | sed 's/^v//')"; \
 	else \
@@ -141,8 +145,8 @@ _release:
 	go run ./cmd/mate-release-check || { echo "ERROR: compatible Mate release is not published, aborting release."; exit 1; }; \
 	echo "Tagging $$NEXT ($$COMMITS commits since $${LATEST:-no previous tag})..."; \
 	git tag -a "$$NEXT" -m "Release $$NEXT"; \
-	echo "Pushing..."; \
-	git push origin HEAD "$$NEXT" || { echo "ERROR: push failed, aborting release."; exit 1; }; \
+	echo "Pushing $$NEXT..."; \
+	git push origin "$$NEXT" || { echo "ERROR: push failed, aborting release."; exit 1; }; \
 	echo "Done: $$NEXT pushed. GitHub Actions will build and publish."
 
 ########
