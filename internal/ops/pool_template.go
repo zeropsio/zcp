@@ -2,6 +2,7 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -214,6 +216,23 @@ func SeedOnto(c SeedChange, seedTree string, files map[string]string) SeedWrite 
 // never left open; a seed that landed with its answer lost is not closed.
 func SeedOrphaned(mainWritten, seedOnMain bool) bool {
 	return mainWritten && !seedOnMain
+}
+
+// SeedLeftOpen is whether a change of the Mate in the repository, by its
+// title and state as HQ lists it, is a seed change an earlier run left open:
+// a plan sent again onto a main another wrote reads it against main
+// (SeedOrphaned), never leaving it open for good.
+func SeedLeftOpen(title, state string) bool {
+	return state == hq.ChangeOpen && title == SeedTitle
+}
+
+// SeedCloseDone is whether HQ's answer err to closing an orphaned seed change
+// leaves the seed settled: closed now, or no longer open (409
+// change_not_open), merged beneath a change that landed on top of it or
+// closed meanwhile, which fails no plan.
+func SeedCloseDone(err error) bool {
+	var refused *hq.RefusedError
+	return err == nil || errors.As(err, &refused) && refused.Reason == "change_not_open"
 }
 
 // CheckPoolSetups is what a main whose zerops.yaml content is zeropsYaml and

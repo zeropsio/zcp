@@ -89,11 +89,15 @@ func (s *Scratch) Close() { _ = os.RemoveAll(s.dir) }
 // errNoSuchRef is git finding no branch of the name at HQ.
 var errNoSuchRef = errors.New("no such branch")
 
-// Fetch takes HQ's branch into the scratch under the same name and answers
-// its head; found is false when HQ has no such branch, its head then unborn.
+// Fetch takes HQ's branch with its whole history into the scratch under the
+// same name and answers its head; found is false when HQ has no such branch,
+// its head then unborn. The infinite depth deepens a branch FetchTip took
+// before (a plain fetch keeps git's shallow mark at the tip, so an ancestry
+// read past it fails) and is git's own unshallow on a scratch that is not
+// shallow, where --unshallow is refused.
 func (s *Scratch) Fetch(ctx context.Context, branch string) (head string, found bool, err error) {
 	ref := "refs/heads/" + branch
-	if _, err := s.git(ctx, nil, "fetch", "-q", "--no-tags", s.url, "+"+ref+":"+ref); err != nil {
+	if _, err := s.git(ctx, nil, "fetch", "-q", "--no-tags", "--depth=2147483647", s.url, "+"+ref+":"+ref); err != nil {
 		if errors.Is(err, errNoSuchRef) {
 			return "", false, nil
 		}

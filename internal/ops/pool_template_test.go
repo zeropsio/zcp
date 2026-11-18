@@ -1,6 +1,9 @@
 package ops
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -8,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/hq"
 )
 
 // seedSetupsOf decodes the seed's zerops.yaml into its setups by name.
@@ -227,6 +231,52 @@ func TestPoolTemplate_PTSeedOrphan_ClosedOnlyWhenAnotherWroteMain(t *testing.T) 
 	for _, tt := range tests {
 		if got := SeedOrphaned(tt.mainWritten, tt.seedOnMain); got != tt.want {
 			t.Errorf("%s: SeedOrphaned = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// PT-SEED-LEFT-OPEN — A plan sent again onto a main another wrote closes the
+// seed change an earlier run left open, and closes no other change.
+// witness: internal/ops/pool_template.go | return state == hq.ChangeOpen && title == SeedTitle → return state == hq.ChangeOpen || title == SeedTitle
+func TestPoolTemplate_PTSeedLeftOpen_ClosedOnAMainAnotherWrote(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		title, state string
+		onMain       bool
+		want         bool
+	}{
+		{"the seed change left open, main written by a person's change", SeedTitle, hq.ChangeOpen, false, true},
+		{"the Mate's open change of code", "Add the API", hq.ChangeOpen, false, false},
+		{"the seed change merged", SeedTitle, hq.ChangeMerged, true, false},
+		{"the seed change closed", SeedTitle, hq.ChangeClosed, false, false},
+	}
+	for _, tt := range tests {
+		if got := SeedLeftOpen(tt.title, tt.state) && SeedOrphaned(true, tt.onMain); got != tt.want {
+			t.Errorf("%s: closed = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// PT-SEED-LANDED-BENEATH — Closing a seed change HQ answers no longer open
+// (landed beneath a change on top of it, or closed meanwhile) settles the
+// seed; any other answer fails the plan.
+// witness: internal/ops/pool_template.go | refused.Reason == "change_not_open" → refused.Reason == "change_not_found"
+func TestPoolTemplate_PTSeedLandedBeneath_NotOpenIsSettled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"closed now", nil, true},
+		{"merged beneath a later change", fmt.Errorf("close: %w", &hq.RefusedError{Status: http.StatusConflict, Code: "conflict", Reason: "change_not_open"}), true},
+		{"not the Mate's own", &hq.RefusedError{Status: http.StatusForbidden, Code: "forbidden"}, false},
+		{"HQ did not answer", errors.New("connection reset"), false},
+	}
+	for _, tt := range tests {
+		if got := SeedCloseDone(tt.err); got != tt.want {
+			t.Errorf("%s: SeedCloseDone = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
