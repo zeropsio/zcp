@@ -58,9 +58,15 @@ var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // platformKeyPrefix is the prefix the platform refuses on a custom env.
 const platformKeyPrefix = "ZEROPS_"
 
+// IsEnvKeyName reports whether text is an env key's name and nothing more —
+// never a KEY=value, which a caller must not echo.
+func IsEnvKeyName(text string) bool {
+	return envKeyPattern.MatchString(text)
+}
+
 // ValidateEnvKey refuses a key the vault cannot store under that name.
 func ValidateEnvKey(key string) error {
-	if !envKeyPattern.MatchString(key) {
+	if !IsEnvKeyName(key) {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is not an env key", key),
 			"An env key is letters, digits and `_`, not starting with a digit — the name only, never KEY=value.")

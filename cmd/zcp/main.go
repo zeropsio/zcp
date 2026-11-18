@@ -65,6 +65,9 @@ func run(args []string) int {
 	if isRun(args) {
 		return runRun(args[1:])
 	}
+	if isWith(args) {
+		return runWith(args[1:])
+	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
 			return runCLI(args, dispatch)
