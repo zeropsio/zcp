@@ -1755,9 +1755,10 @@ How zcp does it:
   Mate's own dev service stays as it runs. The pair is written as pools whole or not at all, and
   only when all of these hold. Its record is not keyed by a dev pool and keeps no code volume. It
   has a stage, every stage's hostname ends in `stage` and every stage has a recorded setup: a
-  stage's setup is never guessed. Every stage runs in the project: a pool's part is typed, scaled
-  and reached from its stage alone, where a dev service stands in for a stage that does not run, so
-  a pair with a stage gone is written as it runs. The project runs no service named like any part's pool
+  stage's setup is never guessed. Every stage exists in the project, running or stopped: a pool's
+  part is typed, scaled and reached from its stage alone, and a stopped stage still holds all
+  three, where a dev service stands in for a stage that does not exist, so a pair with a stage gone
+  is written as it runs. The project runs no service named like any part's pool
   (`webstage` → `webpool`): one running is a pool-migrate in flight, and that pair is written as it
   runs until the retire re-keys it. `main`'s zerops.yaml and `.zcp/dev-servers.json` were read at
   its head in HQ, never from the dev checkout (it may stand on a branch), and only for a pair that
