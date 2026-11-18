@@ -5546,9 +5546,9 @@ is read for every pair whose mount holds no zerops.yaml, and for every dev-servi
 setups: its head asked by `ls-remote`, only the tip fetched (`Scratch.RemoteHead`,
 `Scratch.FetchTip`), its zerops.yaml and `.zcp/dev-servers.json` kept per head under
 `.zcp/state/hq/main-setup/` once every file read at that head answered, so a large monorepo is read
-once per move of main. A main that could not be read leaves a zerops.yaml unread, as before, but
-fails the pass where it decides a dev-service pair's pools: the pass composes and writes nothing and
-says it retries on the next. Never from a mount of a pool, whose hostname reaches a random
+once per move of main. Only a main HQ answered proves it holds no zerops.yaml; a main that could
+not be read fails the pass, where it stands in for a mount without one as where it decides a
+dev-service pair's pools: the pass composes and writes nothing and says it retries on the next. Never from a mount of a pool, whose hostname reaches a random
 container.
 
 - **What serves the Mate (2026-10-28).** A tier made for a group environment carries the app, never

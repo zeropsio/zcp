@@ -124,19 +124,9 @@ func composeGroupRecipeInputs(
 			}
 			stages = append(stages, part)
 		}
-		// A pair that has never deployed has no setup recorded — the classic
-		// bootstrap route's ordinary state — and refusing there made the whole
-		// group recipe unproposable for a Mate that had not shipped yet. The
-		// conventional name is the pair's own hostname, the same fallback the
-		// git-push deploy already uses, and the pair's zerops.yaml is right
-		// there on the mount: reading it lets the composer VERIFY the block
-		// rather than warn that it could not.
-		yamlBody := ""
-		if dev.mounted {
-			yamlBody, _ = readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
-		}
-		if yamlBody == "" {
-			yamlBody = mains.zeropsYAML(ctx, m.HQ.Repo)
+		yamlBody, err := groupRecipePairYAML(ctx, mains, mountRoot, m, dev.mounted)
+		if err != nil {
+			return bundle.GroupRecipeInputs{}, nil, err
 		}
 		repoURL, err := hq.RepoURLAt(address, orgID, appID, m.HQ.Repo)
 		if err != nil {
@@ -293,11 +283,26 @@ func (p recipeMainsOfPass) of(ctx context.Context, repo string) (recipeMainSetup
 	return got.setup, got.err
 }
 
-// zeropsYAML is the zerops.yaml main of repo holds, "" for none or a main
-// that could not be read: the composer says what it could not verify then.
-func (p recipeMainsOfPass) zeropsYAML(ctx context.Context, repo string) string {
-	setup, _ := p.of(ctx, repo)
-	return setup.ZeropsYAML
+// groupRecipePairYAML is the zerops.yaml of the wired pair m: its dev
+// checkout's on the mount, else main's. A pair that has never deployed has
+// no setup recorded — the classic bootstrap route's ordinary state — and
+// refusing there made the whole group recipe unproposable for a Mate that
+// had not shipped yet. The conventional name is the pair's own hostname, the
+// same fallback the git-push deploy already uses, and reading the pair's
+// zerops.yaml lets the composer VERIFY the block rather than warn that it
+// could not. Only a main HQ answered proves the pair holds none: an unread
+// one is an error, since it would change the tier this pass composes.
+func groupRecipePairYAML(ctx context.Context, mains recipeMainsOfPass, mountRoot string, m *workflow.ServiceMeta, mounted bool) (string, error) {
+	if mounted {
+		if body, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname)); body != "" {
+			return body, nil
+		}
+	}
+	setup, err := mains.of(ctx, m.HQ.Repo)
+	if err != nil {
+		return "", fmt.Errorf("the zerops.yaml main of %s holds cannot be told: %w", m.Hostname, err)
+	}
+	return setup.ZeropsYAML, nil
 }
 
 // groupRecipePairRuntimes is what the AI Agent tier carries for the wired
