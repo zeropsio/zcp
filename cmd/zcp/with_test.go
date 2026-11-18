@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -49,15 +50,16 @@ type withRun struct {
 	env  []string
 }
 
-// withTestDeps is `zcp with` on a store at storePath, called from a shell
-// whose environment still holds an older TEST_ACCOUNTS; the command it
-// becomes exits with exit.
+// withTestDeps is `zcp with` in a Mate's container on a store at storePath,
+// called from a shell whose environment still holds an older TEST_ACCOUNTS;
+// the command it becomes exits with exit.
 func withTestDeps(storePath string, exit int) (withDeps, *withRun, *strings.Builder) {
 	var stderr strings.Builder
 	run := &withRun{}
 	return withDeps{
 		storePath: storePath,
 		environ:   []string{"HOME=/home/zerops", "TEST_ACCOUNTS=the-env-this-shell-started-with", "PATH=/usr/bin"},
+		inMate:    true,
 		lookPath:  func(command string) (string, error) { return "/usr/bin/" + command, nil },
 		replace: func(path string, argv, env []string) (int, error) {
 			*run = withRun{ran: true, path: path, argv: argv, env: env}
@@ -164,7 +166,7 @@ func TestWith_NoRefusal_PrintsAValue(t *testing.T) {
 		{name: "no store", args: []string{"TEST_ACCOUNTS", "sign-in"}, store: filepath.Join(t.TempDir(), "absent.json"), wantCode: gitExitRefused},
 		{name: "a store that does not parse", args: []string{"TEST_ACCOUNTS", "sign-in"}, store: broken, wantCode: gitExitRefused},
 		{name: "a command that is not found", args: []string{"TEST_ACCOUNTS", "sign-in"},
-			lookPath: func(string) (string, error) { return "", errors.New("not in PATH") }, wantCode: withExitNotFound},
+			lookPath: func(string) (string, error) { return "", exec.ErrNotFound }, wantCode: withExitNotFound},
 		{name: "a command that cannot be started", args: []string{"TEST_ACCOUNTS", "sign-in"},
 			replace:  func(string, []string, []string) (int, error) { return 0, errors.New("permission denied") },
 			wantCode: withExitNotStarted},
@@ -205,5 +207,60 @@ func assertNoStoreValue(t *testing.T, text string) {
 		if strings.Contains(text, value) {
 			t.Errorf("the line carries a value of the store: %s", text)
 		}
+	}
+}
+
+// A key the store does not hold is worded by where zcp runs: a Mate is sent
+// to the ask that fills its own vault; a container that is no Mate, which
+// has neither that ask nor mate=true, to this service's variables — never to
+// a parameter its zerops_env refuses.
+// witness: cmd/zcp/with.go | ops.LiveEnvNotHeldWords(refused.Key, inMate, "run this again") → ops.LiveEnvNotHeldWords(refused.Key, true, "run this again")
+func TestWith_WordsFollowWhereZcpRuns(t *testing.T) {
+	t.Parallel()
+
+	for _, inMate := range []bool{true, false} {
+		deps, run, stderr := withTestDeps(fenStore(t), 0)
+		deps.inMate = inMate
+		if code := runWithCmd([]string{"SIGNING_KEY", "--", "sign-in"}, deps); code != gitExitRefused || run.ran {
+			t.Errorf("in a Mate = %v: exit %d, ran %v; want refused before the command", inMate, code, run.ran)
+		}
+		if strings.Contains(stderr.String(), "mate=true") != inMate {
+			t.Errorf("in a Mate = %v, the refusal says: %s", inMate, stderr)
+		}
+		if !strings.Contains(stderr.String(), "SIGNING_KEY") {
+			t.Errorf("in a Mate = %v, the refusal does not name the key: %s", inMate, stderr)
+		}
+	}
+}
+
+// A command that is there and cannot be run ends the call with a shell's 126
+// — a file that is not executable, by its path or the first of its name on
+// PATH, and a directory — and one that is nowhere with its 127, so a script
+// around `zcp with` tells a wrong mode from a wrong name.
+// witness: cmd/zcp/with.go | case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist): → case err != nil:
+func TestWith_ACommandThatCannotBeRun_ExitsAsAShellDoes(t *testing.T) {
+	// Not parallel: the search of PATH reads this process's own.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sign-in"), []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write the file: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	tests := []struct {
+		name, command string
+		wantCode      int
+	}{
+		{name: "a file that is not executable, by its path", command: filepath.Join(dir, "sign-in"), wantCode: withExitNotStarted},
+		{name: "a file that is not executable, on PATH", command: "sign-in", wantCode: withExitNotStarted},
+		{name: "a directory", command: dir + string(filepath.Separator), wantCode: withExitNotStarted},
+		{name: "a path that is not there", command: filepath.Join(dir, "absent"), wantCode: withExitNotFound},
+		{name: "a name that is nowhere on PATH", command: "absent", wantCode: withExitNotFound},
+	}
+	for _, tt := range tests {
+		deps, run, stderr := withTestDeps(fenStore(t), 0)
+		deps.lookPath = lookCommand
+		if code := runWithCmd([]string{"TEST_ACCOUNTS", "--", tt.command}, deps); code != tt.wantCode || run.ran {
+			t.Errorf("%s: exit %d, ran %v; want %d and nothing run\n%s", tt.name, code, run.ran, tt.wantCode, stderr)
+		}
+		assertNoStoreValue(t, stderr.String())
 	}
 }
