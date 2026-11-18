@@ -70,7 +70,7 @@ type envRequestResult struct {
 // and tells the agent not to ask again, and counts an ask answered once the
 // vault holds the key written since. A record that cannot be read or written
 // never stops the ask: a second prompt is the lesser harm than none.
-func requestVaultValue(ctx context.Context, client platform.Client, projectID, selfHostname string, options envOptions, input EnvInput) *mcp.CallToolResult {
+func requestVaultValue(ctx context.Context, client platform.Client, projectID, selfHostname string, options envOptions, input EnvInput, ownVault bool) *mcp.CallToolResult {
 	req, err := ops.EnvRequest(ctx, client, projectID, ops.EnvRequestInput{
 		Hostname:   input.ServiceHostname,
 		Project:    input.Project.Bool(),
@@ -99,17 +99,24 @@ func requestVaultValue(ctx context.Context, client platform.Client, projectID, s
 		req.AlreadySet, req.Replace = false, true
 	}
 	if req.AlreadySet {
-		return jsonResult(envRequestResult{AlreadySet: req, NextActions: alreadySetWords(req, input.ownVault)})
+		return jsonResult(envRequestResult{AlreadySet: req, NextActions: alreadySetWords(req, ownVault)})
 	}
-	plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
+	// A key of the Mate's own vault has no reader to find or restart.
+	var plan restartPlan
+	var restart string
+	if ownVault {
+		restart = ownVaultAskWords(req.Key)
+	} else {
+		plan = planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
+		cardRestarts := options.cardRestarts != nil && options.cardRestarts()
+		restart = restartAfterSaveWords(req.Key, plan, input, selfHostname, cardRestarts)
+	}
 	if open == nil && options.vaultAsks != "" {
 		held, claimed, err := ops.ClaimVaultAsk(options.vaultAsks, req, ops.NewVaultAsk(req, time.Now()))
 		if err == nil && !claimed {
 			open = &held
 		}
 	}
-	cardRestarts := options.cardRestarts != nil && options.cardRestarts()
-	restart := restartAfterSaveWords(req.Key, plan, input, selfHostname, cardRestarts)
 	answer := envRequestResult{
 		Requested:        req,
 		Readers:          plan.readers[req.Key],
@@ -172,6 +179,14 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 		req.Label, req.Key, askedAt, vaultPlace(req), restart)
 }
 
+// ownVaultAskWords stand where a request names what restarts once the
+// person saves, for a key of the Mate's own vault: nothing does, no app reads
+// it, and the value is used with `zcp with`.
+func ownVaultAskWords(key string) string {
+	return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. ", key) +
+		ownVaultUseWords([]string{key}, "Once the message says saved it is in this container about two seconds later")
+}
+
 // restartAfterSaveWords names what restarts once the person saves. A card
 // that restarts (cardRestarts, mate.CarriesCardRestart) restarts the running
 // readers from the person's own client and the saved message names them, so
@@ -180,12 +195,8 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 // message, and the save can come days later, to another zcp. Never the
 // service running this session; a key nothing references says how a service
 // reads it and names the services that have it by name, never restarted for it.
-// A key of the Mate's own vault restarts nothing and says how it is used.
 func restartAfterSaveWords(key string, plan restartPlan, input EnvInput, selfHostname string, cardRestarts bool) string {
 	switch {
-	case plan.ownVault:
-		return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. ", key) +
-			ownVaultUseWords([]string{key}, "Once the message says saved it is in this container about two seconds later")
 	case plan.poolOwner:
 		return "Saving restarts nothing, and nothing needs it: " + poolEnvHint([]string{key}, input.ServiceHostname)
 	case plan.boxOwner:

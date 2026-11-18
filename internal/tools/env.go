@@ -50,9 +50,6 @@ type EnvInput struct {
 	Replace    FlexBool `json:"replace,omitempty"`
 	ReplaceWhy string   `json:"replaceWhy,omitempty"`
 	Again      FlexBool `json:"again,omitempty"`
-	// ownVault is true when the target is the Mate's own vault, however it
-	// was named. Never sent: resolveEnvTarget settles it once per call.
-	ownVault bool
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -300,7 +297,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// This action exists so the agent's natural first attempt (get)
 			// succeeds instead of bouncing through a decision tree of wrong
 			// actions.
-			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			input, ownVault, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -331,12 +328,12 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				return convertError(err), nil, nil
 			}
 			got := projectEnvGetResponse(result, input.Project.Bool())
-			if input.ownVault {
+			if ownVault {
 				got.Envs = withoutHiddenNames(got.Envs)
 			}
 			return jsonResult(got), nil, nil
 		case "set":
-			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			input, ownVault, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -360,10 +357,14 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			for _, st := range setResult.Stored {
 				setKeys = append(setKeys, st.Key)
 			}
+			if ownVault {
+				resp.NextActions = ownVaultChangeWords(setKeys, false)
+				return jsonResult(resp), nil, nil
+			}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, setKeys, false, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
-			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			input, ownVault, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -376,6 +377,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				delResult.Process, delTimedOut = pollManageProcess(ctx, client, delResult.Process, onProgress)
 			}
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
+			if ownVault {
+				resp.NextActions = ownVaultChangeWords(input.Variables, true)
+				return jsonResult(resp), nil, nil
+			}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case envActionRequest:
@@ -386,11 +391,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if !options.asks {
 				return noAskCard(input.Key), nil, nil
 			}
-			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			input, ownVault, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
+			return requestVaultValue(ctx, client, projectID, selfHostname, options, input, ownVault), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls
 			// through with a deprecation warning so existing callers
@@ -451,10 +456,6 @@ func applyAutoRestart(
 	onProgress ops.ProgressCallback,
 ) {
 	plan := planRestart(ctx, client, projectID, input, selfHostname, keys, deleting)
-	if plan.ownVault {
-		resp.NextActions = ownVaultChangeWords(keys, deleting)
-		return
-	}
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
 	unreadHint := joinSentences(nothingReadsHint(plan.unreadKeys, input), byNameHint(plan.byName))
@@ -570,10 +571,6 @@ type restartPlan struct {
 	// applies them at once, or on a reload for its API key, never through a
 	// restart (PS-8).
 	boxOwner bool
-	// ownVault is true when the changed keys are the Mate's own vault's: no
-	// app reads them, so nothing is restarted and no reader is looked for
-	// (docs/spec-mate.md §5.8a).
-	ownVault bool
 	// unlisted is true when the project's services could not be listed, so
 	// no reader is known.
 	unlisted bool
@@ -595,10 +592,7 @@ type restartPlan struct {
 // eligible runtime in scope (all of them for a Shared key, the named service
 // for its own) is restarted, as before readers were known.
 func planRestart(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, keys []string, deleting bool) restartPlan {
-	plan := restartPlan{readers: map[string][]string{}, ownVault: input.ownVault}
-	if plan.ownVault {
-		return plan
-	}
+	plan := restartPlan{readers: map[string][]string{}}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		plan.unlisted = true
@@ -774,29 +768,32 @@ func appReadHint(keys []string, input EnvInput) string {
 // mate=true is the Mate's own vault — the user variables of the service zcp
 // runs in (docs/spec-mate.md §5.8a) — offered only where asks are (inMate),
 // and refused beside another target. The container's own hostname names the
-// same vault, so ownVault is set however it was named, and a name that vault
-// never holds is refused here, before anything is written.
-func resolveEnvTarget(input EnvInput, selfHostname string, inMate bool) (EnvInput, error) {
-	own := inMate && selfHostname != ""
+// same vault, so ownVault says so however it was named: nothing restarts for
+// its keys, no app reads them, and a name it never holds is refused here,
+// before anything is written.
+func resolveEnvTarget(input EnvInput, selfHostname string, inMate bool) (resolved EnvInput, ownVault bool, err error) {
+	hasOwn := inMate && selfHostname != ""
 	if input.Mate.Bool() {
 		switch {
-		case !own:
-			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+		case !hasOwn:
+			return input, false, platform.NewPlatformError(platform.ErrInvalidUsage,
 				"mate=true names a Mate's own vault, and zcp serves no Mate here",
 				"Name the vault with serviceHostname, or project=true for the Shared one.")
 		case input.Project.Bool():
-			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+			return input, false, platform.NewPlatformError(platform.ErrInvalidUsage,
 				"mate=true and project=true name two vaults",
 				"Pass one: mate=true for your own vault, project=true for the Shared one.")
 		case input.ServiceHostname != "" && input.ServiceHostname != selfHostname:
-			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+			return input, false, platform.NewPlatformError(platform.ErrInvalidUsage,
 				fmt.Sprintf("mate=true and serviceHostname=%q name two vaults", input.ServiceHostname),
 				"Pass one: mate=true for your own vault, serviceHostname for that service's.")
 		}
 		input.ServiceHostname = selfHostname
 	}
-	input.ownVault = own && !input.Project.Bool() && input.ServiceHostname == selfHostname
-	return input, refuseHiddenOwnVaultName(input)
+	if !hasOwn || input.Project.Bool() || input.ServiceHostname != selfHostname {
+		return input, false, nil
+	}
+	return input, true, refuseHiddenName(input.Variables)
 }
 
 // withoutHiddenNames leaves out of a get of the Mate's own vault the names
@@ -808,16 +805,13 @@ func withoutHiddenNames(envs []map[string]any) []map[string]any {
 	})
 }
 
-// refuseHiddenOwnVaultName refuses a set or a delete (the actions that
-// carry variables), in the Mate's own vault, of a name Mate and zcp keep for
-// themselves: the vault never lists it, so the person could not see what was
-// stored, and a removed one is a key Mate or zcp runs on. Named by its key
-// only — never what follows `=`. A request refuses its own (ops.EnvRequest).
-func refuseHiddenOwnVaultName(input EnvInput) error {
-	if !input.ownVault {
-		return nil
-	}
-	for _, variable := range input.Variables {
+// refuseHiddenName refuses the variables of a set or a delete in the Mate's
+// own vault that carry a name Mate and zcp keep for themselves: the vault
+// never lists it, so the person could not see what was stored, and a removed
+// one is a key Mate or zcp runs on. Named by its key only — never what
+// follows `=`. A request refuses its own key (ops.EnvRequest).
+func refuseHiddenName(variables []string) error {
+	for _, variable := range variables {
 		key, _, _ := strings.Cut(variable, "=")
 		if ops.IsVaultHidden(key) {
 			return platform.NewPlatformError(platform.ErrInvalidParameter,

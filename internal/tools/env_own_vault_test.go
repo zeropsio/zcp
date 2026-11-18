@@ -168,15 +168,15 @@ func TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := resolveEnvTarget(tt.input, fenContainer, tt.inMate)
+			got, ownVault, err := resolveEnvTarget(tt.input, fenContainer, tt.inMate)
 			if (err != nil) != tt.refused {
 				t.Fatalf("refused = %v (%v), want %v", err != nil, err, tt.refused)
 			}
 			if tt.refused {
 				return
 			}
-			if got.ownVault != tt.wantOwn {
-				t.Errorf("own vault = %v, want %v", got.ownVault, tt.wantOwn)
+			if ownVault != tt.wantOwn {
+				t.Errorf("own vault = %v, want %v", ownVault, tt.wantOwn)
 			}
 			if tt.wantOwn && got.ServiceHostname != fenContainer {
 				t.Errorf("target = %q, want the service zcp runs in", got.ServiceHostname)
@@ -202,7 +202,7 @@ func TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate(t *testing.T) {
 // one whose entry names the key — while its next step says how the value is
 // used, never to reference it in run.envVariables, which would hand it to an
 // app.
-// witness: internal/tools/env_request.go | case plan.ownVault: → case false:
+// witness: internal/tools/env_request.go | if ownVault { → if false {
 func TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue(t *testing.T) {
 	t.Parallel()
 
@@ -266,7 +266,7 @@ func TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut(t *testing.T) {
 // restarts no service when set or deleted — not a running app whose deployed
 // entry names it — and the next step says how the value is used, never that
 // nothing reads it yet.
-// witness: internal/tools/env.go | ownVault: input.ownVault} → ownVault: false}
+// witness: internal/tools/env.go | if !hasOwn || input.Project.Bool() || input.ServiceHostname != selfHostname { → if true {
 func TestEnvChange_OwnVault_RestartsNothing(t *testing.T) {
 	t.Parallel()
 
