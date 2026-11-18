@@ -30,6 +30,9 @@ type EnvInput struct {
 	Project         FlexBool `json:"project,omitempty"`
 	Variables       []string `json:"variables,omitempty"`
 	SkipRestart     FlexBool `json:"skipRestart,omitempty"`
+	// Mate names the Mate's own vault, the third target beside
+	// ServiceHostname and Project (docs/spec-mate.md §5.8a).
+	Mate FlexBool `json:"mate,omitempty"`
 	// Sensitive is optional: nil lets the set pick per key by name.
 	Sensitive *FlexBool `json:"sensitive,omitempty"`
 	// Key, Label and Why are request's: the name asked for, what it is in
@@ -47,6 +50,9 @@ type EnvInput struct {
 	Replace    FlexBool `json:"replace,omitempty"`
 	ReplaceWhy string   `json:"replaceWhy,omitempty"`
 	Again      FlexBool `json:"again,omitempty"`
+	// ownVault is true when the target is the Mate's own vault, however it
+	// was named. Never sent: resolveEnvTarget settles it once per call.
+	ownVault bool
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -60,11 +66,14 @@ type EnvInput struct {
 // as a first-class action eliminates that branch entirely.
 //
 // orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey);
-// asks adds request, which only a Mate's client draws (WithAskCard).
+// asks adds request, which only a Mate's client draws (WithAskCard), and with
+// it mate, the Mate's own vault.
 func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 	actions := []any{"get", "set", "delete", "generate-dotenv"}
+	target := "Service to operate on; required for get/set/delete/request unless project=true. generate-dotenv: deprecated fallback for setup."
 	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	if asks {
+		target = "Service to operate on; required for get/set/delete/request unless project=true or mate=true. generate-dotenv: deprecated fallback for setup."
 		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
 		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	}
@@ -72,7 +81,7 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 		actions = append(actions, "ai-key")
 		actionDescription += " ai-key: the organization's AI key into the Shared vault, unseen (NEBIUS_API_KEY sensitive, NEBIUS_BASE_URL), for an AI feature in the app; skipRestart as set."
 	}
-	return objectSchema(map[string]*jsonschema.Schema{
+	properties := map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
 			Enum:        actions,
@@ -80,7 +89,7 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 		},
 		"serviceHostname": {
 			Type:        "string",
-			Description: "Service to operate on; required for get/set/delete/request unless project=true. generate-dotenv: deprecated fallback for setup.",
+			Description: target,
 		},
 		"key": {
 			Type:        "string",
@@ -115,7 +124,11 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 		},
 		"sensitive":   flexBoolSchema("set/request: true = sensitive (masked; Mate's vault shows it), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
 		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
-	}, "action")
+	}
+	if asks {
+		properties["mate"] = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`.")
+	}
+	return objectSchema(properties, "action")
 }
 
 // EnvGetResponse is the focused wire shape for `zerops_env action=get`.
@@ -251,8 +264,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 	for _, opt := range opts {
 		opt(&options)
 	}
+	vaults := "a service's own (serviceHostname) or the Shared (project=true)"
 	actions := "get (keys), set (upsert), delete, generate-dotenv (local .env)"
 	if options.asks {
+		vaults = "a service's own (serviceHostname), the Shared (project=true) or yours alone (mate=true: a test sign-in, a key for your own tools; no app reads it)"
 		actions = "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
 	}
 	if options.aiKey != nil {
@@ -260,7 +275,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: " + actions + ". An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
+		Description: "Manage the vault: " + vaults + ". Actions: " + actions + ". An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
 		InputSchema: envInputSchema(options.aiKey != nil, options.asks),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
@@ -285,6 +300,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// This action exists so the agent's natural first attempt (get)
 			// succeeds instead of bouncing through a decision tree of wrong
 			// actions.
+			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
 			if !input.Project.Bool() && input.ServiceHostname == "" {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
@@ -311,8 +330,16 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(projectEnvGetResponse(result, input.Project.Bool())), nil, nil
+			got := projectEnvGetResponse(result, input.Project.Bool())
+			if input.ownVault {
+				got.Envs = withoutHiddenNames(got.Envs)
+			}
+			return jsonResult(got), nil, nil
 		case "set":
+			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
 			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables, input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
@@ -336,6 +363,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, setKeys, false, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
+			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
 			delResult, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables)
 			if err != nil {
 				return convertError(err), nil, nil
@@ -354,6 +385,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// nobody draws it, so nothing is asked and nothing recorded.
 			if !options.asks {
 				return noAskCard(input.Key), nil, nil
+			}
+			input, err := resolveEnvTarget(input, selfHostname, options.asks)
+			if err != nil {
+				return convertError(err), nil, nil
 			}
 			return requestVaultValue(ctx, client, projectID, selfHostname, options, input), nil, nil
 		case "generate-dotenv":
@@ -416,6 +451,10 @@ func applyAutoRestart(
 	onProgress ops.ProgressCallback,
 ) {
 	plan := planRestart(ctx, client, projectID, input, selfHostname, keys, deleting)
+	if plan.ownVault {
+		resp.NextActions = ownVaultChangeWords(keys, deleting)
+		return
+	}
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
 	unreadHint := joinSentences(nothingReadsHint(plan.unreadKeys, input), byNameHint(plan.byName))
@@ -531,6 +570,10 @@ type restartPlan struct {
 	// applies them at once, or on a reload for its API key, never through a
 	// restart (PS-8).
 	boxOwner bool
+	// ownVault is true when the changed keys are the Mate's own vault's: no
+	// app reads them, so nothing is restarted and no reader is looked for
+	// (docs/spec-mate.md §5.8a).
+	ownVault bool
 	// unlisted is true when the project's services could not be listed, so
 	// no reader is known.
 	unlisted bool
@@ -552,7 +595,10 @@ type restartPlan struct {
 // eligible runtime in scope (all of them for a Shared key, the named service
 // for its own) is restarted, as before readers were known.
 func planRestart(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, keys []string, deleting bool) restartPlan {
-	plan := restartPlan{readers: map[string][]string{}}
+	plan := restartPlan{readers: map[string][]string{}, ownVault: input.ownVault}
+	if plan.ownVault {
+		return plan
+	}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		plan.unlisted = true
@@ -722,6 +768,84 @@ func appReadHint(keys []string, input EnvInput) string {
 	host := input.ServiceHostname
 	return fmt.Sprintf("No zerops.yaml entry references %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
 		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
+}
+
+// resolveEnvTarget settles the vault a get, set, delete or request names.
+// mate=true is the Mate's own vault — the user variables of the service zcp
+// runs in (docs/spec-mate.md §5.8a) — offered only where asks are (inMate),
+// and refused beside another target. The container's own hostname names the
+// same vault, so ownVault is set however it was named, and a name that vault
+// never holds is refused here, before anything is written.
+func resolveEnvTarget(input EnvInput, selfHostname string, inMate bool) (EnvInput, error) {
+	own := inMate && selfHostname != ""
+	if input.Mate.Bool() {
+		switch {
+		case !own:
+			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+				"mate=true names a Mate's own vault, and zcp serves no Mate here",
+				"Name the vault with serviceHostname, or project=true for the Shared one.")
+		case input.Project.Bool():
+			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+				"mate=true and project=true name two vaults",
+				"Pass one: mate=true for your own vault, project=true for the Shared one.")
+		case input.ServiceHostname != "" && input.ServiceHostname != selfHostname:
+			return input, platform.NewPlatformError(platform.ErrInvalidUsage,
+				fmt.Sprintf("mate=true and serviceHostname=%q name two vaults", input.ServiceHostname),
+				"Pass one: mate=true for your own vault, serviceHostname for that service's.")
+		}
+		input.ServiceHostname = selfHostname
+	}
+	input.ownVault = own && !input.Project.Bool() && input.ServiceHostname == selfHostname
+	return input, refuseHiddenOwnVaultName(input)
+}
+
+// withoutHiddenNames leaves out of a get of the Mate's own vault the names
+// Mate and zcp keep for themselves, which no vault lists.
+func withoutHiddenNames(envs []map[string]any) []map[string]any {
+	return slices.DeleteFunc(envs, func(env map[string]any) bool {
+		key, _ := env["key"].(string)
+		return ops.IsVaultHidden(key)
+	})
+}
+
+// refuseHiddenOwnVaultName refuses a set or a delete (the actions that
+// carry variables), in the Mate's own vault, of a name Mate and zcp keep for
+// themselves: the vault never lists it, so the person could not see what was
+// stored, and a removed one is a key Mate or zcp runs on. Named by its key
+// only — never what follows `=`. A request refuses its own (ops.EnvRequest).
+func refuseHiddenOwnVaultName(input EnvInput) error {
+	if !input.ownVault {
+		return nil
+	}
+	for _, variable := range input.Variables {
+		key, _, _ := strings.Cut(variable, "=")
+		if ops.IsVaultHidden(key) {
+			return platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("%q is a name Mate and zcp keep for themselves: your own vault never lists it, and zerops_env neither writes nor removes it there", key),
+				"Use another name, without the ZCP_, MATE_ or GITEA_ prefix and not GIT_TOKEN.")
+		}
+	}
+	return nil
+}
+
+// ownVaultUseWords say how a value of the Mate's own vault is used: it is in
+// the container's live env store soon after the write, and `zcp with` hands
+// it to one command, since the session's own processes keep the env they
+// started with. arrives opens the sentence, saying from when.
+func ownVaultUseWords(keys []string, arrives string) string {
+	return fmt.Sprintf("%s, with no restart: run the command that needs it as `zcp with %s -- <command>`. A process started earlier, this session's shell too, keeps the env it started with. Never print it.",
+		arrives, strings.Join(keys, ","))
+}
+
+// ownVaultChangeWords is the next action for a set or a delete in the
+// Mate's own vault: nothing reads it but the Mate, so nothing restarted.
+func ownVaultChangeWords(keys []string, deleting bool) string {
+	names := strings.Join(keys, ", ")
+	if deleting {
+		return names + ": removed from your own vault; nothing was restarted. It leaves this container about two seconds after the write; a process started earlier keeps the env it started with."
+	}
+	return names + ": stored in your own vault, which only you read — no app does, and nothing was restarted. " +
+		ownVaultUseWords(keys, "It is in this container about two seconds after the write")
 }
 
 // poolEnvHint is the next action for a pool's own keys: its service env

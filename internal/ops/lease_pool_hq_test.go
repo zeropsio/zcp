@@ -228,7 +228,7 @@ func TestPoolHQCredentialVariable_IsACredentialEverywhere(t *testing.T) {
 	if !topology.IsClassifyInfrastructure(key) {
 		t.Errorf("%s is not classified infrastructure: an export or launch bundle would copy it", key)
 	}
-	if !isVaultHidden(key) {
+	if !IsVaultHidden(key) {
 		t.Errorf("%s is listed in Mate's vault", key)
 	}
 }

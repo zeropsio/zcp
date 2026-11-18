@@ -122,8 +122,8 @@ var (
 	vaultHiddenNames    = []string{"GIT_TOKEN"}
 )
 
-// isVaultHidden reports whether Mate's vault keeps key out of every list.
-func isVaultHidden(key string) bool {
+// IsVaultHidden reports whether Mate's vault keeps key out of every list.
+func IsVaultHidden(key string) bool {
 	for _, prefix := range vaultHiddenPrefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
@@ -138,7 +138,7 @@ func validateRequestKey(key string) error {
 	if err := ValidateEnvKey(key); err != nil {
 		return err
 	}
-	if isVaultHidden(key) {
+	if IsVaultHidden(key) {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("%q is a name Mate and zcp keep for themselves: the vault never lists it, so the person could neither see nor remove the value", key),
 			"Ask for it under another name, without the ZCP_, MATE_ or GITEA_ prefix and not GIT_TOKEN, and reference that name in zerops.yaml.")

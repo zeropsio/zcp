@@ -199,7 +199,7 @@ func poolEnvNeverCopied(key string) string {
 		return PoolEnvReasonPoolSSHIsolation
 	case key == GitTokenEnvKey:
 		return ""
-	case zcpOwnedEnvKeys[key] || isVaultHidden(key):
+	case zcpOwnedEnvKeys[key] || IsVaultHidden(key):
 		return PoolEnvReasonZcpOwned
 	case !poolEnvKeyRe.MatchString(key) || strings.HasPrefix(strings.ToUpper(key), platformKeyPrefix) || platformRuntimeKeys[key]:
 		return PoolEnvReasonPlatform

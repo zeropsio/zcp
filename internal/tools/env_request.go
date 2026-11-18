@@ -99,7 +99,7 @@ func requestVaultValue(ctx context.Context, client platform.Client, projectID, s
 		req.AlreadySet, req.Replace = false, true
 	}
 	if req.AlreadySet {
-		return jsonResult(envRequestResult{AlreadySet: req, NextActions: alreadySetWords(req)})
+		return jsonResult(envRequestResult{AlreadySet: req, NextActions: alreadySetWords(req, input.ownVault)})
 	}
 	plan := planRestart(ctx, client, projectID, input, selfHostname, []string{req.Key}, false)
 	if open == nil && options.vaultAsks != "" {
@@ -132,16 +132,22 @@ func vaultPlace(req *ops.EnvRequestResult) string {
 	return "Shared/" + req.Key
 }
 
-// alreadySetWords: nothing was asked, the key is referenced by name — and a
-// wrong saved value is replaced by asking with replace=true.
-func alreadySetWords(req *ops.EnvRequestResult) string {
+// alreadySetWords: nothing was asked, the key is referenced by name — a key
+// of the Mate's own vault (ownVault) used with `zcp with`, since no app
+// reads it — and a wrong saved value is replaced by asking with replace=true.
+func alreadySetWords(req *ops.EnvRequestResult, ownVault bool) string {
 	where := "the Shared vault"
-	if req.Scope == ops.EnvRequestScopeService {
+	use := fmt.Sprintf("Reference it by name (`NAME: ${%s}` in run.envVariables) — its value is never read.", req.Key)
+	switch {
+	case ownVault:
+		where = "your own vault"
+		use = fmt.Sprintf("Run the command that needs it as `zcp with %s -- <command>` — its value is never read, and never print it.", req.Key)
+	case req.Scope == ops.EnvRequestScopeService:
 		where = req.ServiceHostname + "'s vault"
 	}
-	return fmt.Sprintf("%[1]s is already in %[2]s; nothing was asked. Reference it by name (`NAME: ${%[1]s}` in run.envVariables) — its value is never read. "+
+	return fmt.Sprintf("%s is already in %s; nothing was asked. %s "+
 		"If the saved value is wrong (a placeholder, an invalid or expired value), ask the person to replace it: the same request with replace=true and replaceWhy, "+
-		"one line they read on what is wrong with it (it is not in Google's format).", req.Key, where)
+		"one line they read on what is wrong with it (it is not in Google's format).", req.Key, where, use)
 }
 
 // requestedWords is the agent's next step on an ask: say why in one sentence,
@@ -174,8 +180,12 @@ func alreadyAskedWords(req *ops.EnvRequestResult, askedAt, restart string) strin
 // message, and the save can come days later, to another zcp. Never the
 // service running this session; a key nothing references says how a service
 // reads it and names the services that have it by name, never restarted for it.
+// A key of the Mate's own vault restarts nothing and says how it is used.
 func restartAfterSaveWords(key string, plan restartPlan, input EnvInput, selfHostname string, cardRestarts bool) string {
 	switch {
+	case plan.ownVault:
+		return fmt.Sprintf("Saving restarts nothing, and nothing needs it: %s goes to your own vault, which only you read — no app does. ", key) +
+			ownVaultUseWords([]string{key}, "Once the message says saved it is in this container about two seconds later")
 	case plan.poolOwner:
 		return "Saving restarts nothing, and nothing needs it: " + poolEnvHint([]string{key}, input.ServiceHostname)
 	case plan.boxOwner:
