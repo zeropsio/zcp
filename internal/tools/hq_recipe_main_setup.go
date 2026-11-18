@@ -40,46 +40,63 @@ type recipeMainSetupRecord struct {
 	Setup recipeMainSetup `json:"setup"`
 }
 
-// recipeRepoSetup reads a repository's setup files off its main in HQ: both
-// "" when main holds neither or it cannot be read.
-type recipeRepoSetup func(ctx context.Context, repo string) recipeMainSetup
+// recipeRepoSetup reads a repository's setup files off its main in HQ. A nil
+// error is HQ's answer: both "" when main holds neither, or when the
+// repository is empty or has no main. An error is a main that could not be
+// read, which proves nothing about what it holds.
+type recipeRepoSetup func(ctx context.Context, repo string) (recipeMainSetup, error)
 
 // recipeMainSetupReader is the reader of a repository's setup files off its
 // main in HQ for the application appID: the head asked first (no fetch), the
 // record kept for that head answering when it has one, else the tip alone
-// fetched into a scratch of zcp's own and its files read. Any failure reads
-// as none.
+// fetched into a scratch of zcp's own and its files read. The record is
+// written only when every file read answered, so a read cut short never
+// stands for an absent file at that head.
 func recipeMainSetupReader(hqc hq.Client, appID, stateDir string) recipeRepoSetup {
-	return func(ctx context.Context, repo string) recipeMainSetup {
+	return func(ctx context.Context, repo string) (recipeMainSetup, error) {
 		scratch, err := hqc.OpenScratch(ctx, appID, repo)
 		if err != nil {
-			return recipeMainSetup{}
+			return recipeMainSetup{}, fmt.Errorf("main of %s: %w", repo, err)
 		}
 		defer scratch.Close()
 		head, found, err := scratch.RemoteHead(ctx, hqBase)
-		if err != nil || !found {
-			return recipeMainSetup{}
+		if err != nil {
+			return recipeMainSetup{}, fmt.Errorf("main of %s: %w", repo, err)
+		}
+		if !found {
+			return recipeMainSetup{}, nil
 		}
 		path := filepath.Join(stateDir, hqStateDir, recipeMainSetupDir, appID+"-"+repo+".json")
 		if kept, ok := readRecipeMainSetup(path); ok && kept.Head == head {
-			return kept.Setup
+			return kept.Setup, nil
 		}
 		tip, found, err := scratch.FetchTip(ctx, hqBase)
-		if err != nil || !found {
-			return recipeMainSetup{}
+		if err != nil {
+			return recipeMainSetup{}, fmt.Errorf("main of %s: %w", repo, err)
+		}
+		if !found {
+			return recipeMainSetup{}, nil
 		}
 		var setup recipeMainSetup
 		for _, name := range []string{"zerops.yaml", "zerops.yml"} {
-			if file, ok, err := scratch.File(ctx, tip, name); err == nil && ok {
+			file, ok, err := scratch.File(ctx, tip, name)
+			if err != nil {
+				return recipeMainSetup{}, fmt.Errorf("main of %s: %s: %w", repo, name, err)
+			}
+			if ok {
 				setup.ZeropsYAML = strings.TrimRight(file, "\n")
 				break
 			}
 		}
-		if file, ok, err := scratch.File(ctx, tip, devsup.DeclarationPath); err == nil && ok {
+		file, ok, err := scratch.File(ctx, tip, devsup.DeclarationPath)
+		if err != nil {
+			return recipeMainSetup{}, fmt.Errorf("main of %s: %s: %w", repo, devsup.DeclarationPath, err)
+		}
+		if ok {
 			setup.Declaration = file
 		}
 		writeRecipeMainSetup(path, recipeMainSetupRecord{Head: tip, Setup: setup})
-		return setup
+		return setup, nil
 	}
 }
 

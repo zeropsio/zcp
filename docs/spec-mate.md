@@ -1758,7 +1758,11 @@ How zcp does it:
   stage's setup is never guessed. The project runs no service named like any part's pool
   (`webstage` → `webpool`): one running is a pool-migrate in flight, and that pair is written as it
   runs until the retire re-keys it. `main`'s zerops.yaml and `.zcp/dev-servers.json` were read at
-  its head in HQ, never from the dev checkout (it may stand on a branch). And the one setup check
+  its head in HQ, never from the dev checkout (it may stand on a branch), and only for a pair that
+  passes the conditions before. Only a `main` HQ answered proves it holds no pool setup: an empty
+  repository, or one without `main`, holds none and the pair is written as it runs; a `main` that
+  could not be read (HQ or Git failing, the pass cut short) fails the pass — nothing is composed,
+  proposed or kept for that head, and the pass says it retries on the next. And the one setup check
   (`ops.CheckPoolSetups`, the check the stand-up runs) names nothing `main` lacks for any part: the
   pool setup named after its pool, the stage setup the stage records, the pool setup's
   `zcp-devsup run`, its install line and preview ports with `httpSupport`, and `previewPortBase`.
@@ -5535,11 +5539,15 @@ holds the pool setup of every one of its parts as a pool per stage (§2.8a.5), a
 pair left out and said. A pair's zerops.yaml — which names a stage's setup nothing records, what
 each build reads and a part's type when its stage does not run — is read from the dev checkout on
 the mount (`zerops.yaml`, else `zerops.yml`), else from main of the pair's repository in HQ. Main
-is read for every pair keyed by its dev pool and for every dev-service pair with a stage: its head
-asked by `ls-remote`, only the tip fetched (`Scratch.RemoteHead`, `Scratch.FetchTip`), its
-zerops.yaml and `.zcp/dev-servers.json` kept per head under `.zcp/state/hq/main-setup/`, so a large
-monorepo is read once per move of main. Never from a mount
-of a pool, whose hostname reaches a random container.
+is read for every pair whose mount holds no zerops.yaml, and for every dev-service pair that passes
+§2.8a.5's conditions on its record and the live project, to tell whether main holds its pool
+setups: its head asked by `ls-remote`, only the tip fetched (`Scratch.RemoteHead`,
+`Scratch.FetchTip`), its zerops.yaml and `.zcp/dev-servers.json` kept per head under
+`.zcp/state/hq/main-setup/` once every file read at that head answered, so a large monorepo is read
+once per move of main. A main that could not be read leaves a zerops.yaml unread, as before, but
+fails the pass where it decides a dev-service pair's pools: the pass composes and writes nothing and
+says it retries on the next. Never from a mount of a pool, whose hostname reaches a random
+container.
 
 - **What serves the Mate (2026-10-28).** A tier made for a group environment carries the app, never
   the Mate's own infrastructure. What serves only this Mate is first the person's to say: a utility

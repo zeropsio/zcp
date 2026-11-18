@@ -607,11 +607,11 @@ func TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage(t *testing.T)
 func TestGroupRecipeInputs_ZeropsYAMLFromHQ(t *testing.T) {
 	t.Parallel()
 	const onMain = "zerops:\n  - setup: pool\n  - setup: prod\n"
-	readMain := func(_ context.Context, repo string) recipeMainSetup {
+	readMain := func(_ context.Context, repo string) (recipeMainSetup, error) {
 		if repo == "appdev" {
-			return recipeMainSetup{ZeropsYAML: onMain}
+			return recipeMainSetup{ZeropsYAML: onMain}, nil
 		}
-		return recipeMainSetup{}
+		return recipeMainSetup{}, nil
 	}
 	tests := []struct {
 		name   string

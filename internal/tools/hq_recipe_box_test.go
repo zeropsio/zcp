@@ -125,11 +125,11 @@ func tierServiceTypes(t *testing.T, body string) map[string]string {
 // import takes it. Spec: spec-workflows.md §8 PS-3.
 func TestGroupRecipe_NoolaRunner_EveryTierCarriesTheBox(t *testing.T) {
 	metas := writeNoolaRunnerMeta(t, t.TempDir())
-	readMain := func(_ context.Context, repo string) recipeMainSetup {
+	readMain := func(_ context.Context, repo string) (recipeMainSetup, error) {
 		if repo == "runnerdev" {
-			return recipeMainSetup{ZeropsYAML: noolaRunnerYAML}
+			return recipeMainSetup{ZeropsYAML: noolaRunnerYAML}, nil
 		}
-		return recipeMainSetup{}
+		return recipeMainSetup{}, nil
 	}
 	inputs, readWarnings, err := composeGroupRecipeInputs(context.Background(), noolaRunnerProject(liveBox("svc-box", "box")),
 		"p1", "noola", t.TempDir(), testHQAddress, testHQOrg, labApp, "zcp", metas, metas, readMain)

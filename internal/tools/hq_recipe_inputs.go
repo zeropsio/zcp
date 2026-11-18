@@ -94,7 +94,7 @@ func composeGroupRecipeInputs(
 		ProjectHostnames: projectHostnames,
 	}
 	warnings := leftOut
-	mains := recipeMainsOfPass{read: readMain, setups: map[string]recipeMainSetup{}}
+	mains := recipeMainsOfPass{read: readMain, setups: map[string]recipeMainRead{}}
 	for _, m := range wired {
 		dev, ok := groupRecipeDevHalf(m, live)
 		if !ok {
@@ -136,7 +136,7 @@ func composeGroupRecipeInputs(
 			yamlBody, _ = readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		}
 		if yamlBody == "" {
-			yamlBody = mains.of(ctx, m.HQ.Repo).ZeropsYAML
+			yamlBody = mains.zeropsYAML(ctx, m.HQ.Repo)
 		}
 		repoURL, err := hq.RepoURLAt(address, orgID, appID, m.HQ.Repo)
 		if err != nil {
@@ -154,13 +154,14 @@ func composeGroupRecipeInputs(
 			Scaling:          shape.Scaling,
 			ServiceEnvs:      devEnvs,
 		}
-		if parts := groupRecipeMainPools(m, live, func() recipeMainSetup { return mains.of(ctx, m.HQ.Repo) }); parts != nil {
-			pools, warning := groupRecipePoolRuntimes(m, parts, runtime, mains.of(ctx, m.HQ.Repo).ZeropsYAML, zcpHostname)
-			inputs.Runtimes = append(inputs.Runtimes, pools...)
-			warnings = append(warnings, warning)
-			continue
+		pair, warning, err := groupRecipePairRuntimes(m, live, runtime, zcpHostname, func() (recipeMainSetup, error) { return mains.of(ctx, m.HQ.Repo) })
+		if err != nil {
+			return bundle.GroupRecipeInputs{}, nil, err
 		}
-		inputs.Runtimes = append(inputs.Runtimes, runtime)
+		inputs.Runtimes = append(inputs.Runtimes, pair...)
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
 	}
 	if len(inputs.Runtimes) == 0 {
 		// What was left out says why nothing is carried.
@@ -232,46 +233,82 @@ func composeGroupRecipeInputs(
 // guessed here); the project runs no service named like a part's pool (a
 // pool-migrate in flight, written as it runs until the retire re-keys the
 // pair); and the one setup check names nothing main lacks for the parts.
-// main is asked only once the record and the live project pass.
-func groupRecipeMainPools(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo, main func() recipeMainSetup) []ops.PoolPart {
+// main is asked only once the record and the live project pass. mainYAML is
+// main's zerops.yaml the pools are built from. A main that could not be read
+// is an error, never a main without pool setups: only a main HQ answered
+// proves that.
+func groupRecipeMainPools(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo, main func() (recipeMainSetup, error)) (parts []ops.PoolPart, mainYAML string, err error) {
 	if m.DevIsPool() || m.CodeVolume != nil || len(m.Stages) == 0 {
-		return nil
+		return nil, "", nil
 	}
-	parts := make([]ops.PoolPart, 0, len(m.Stages))
+	parts = make([]ops.PoolPart, 0, len(m.Stages))
 	for _, stage := range m.Stages {
 		if !workflow.IsStageHostname(stage.Hostname) || stage.SetupName == "" {
-			return nil
+			return nil, "", nil
 		}
 		pool := poolMigratePartPool(stage.Hostname)
 		if _, running := live[pool]; running {
-			return nil
+			return nil, "", nil
 		}
 		parts = append(parts, ops.PoolPart{Part: stage.SetupName, Pool: pool, Stage: stage.Hostname, Type: live[stage.Hostname].Type})
 	}
-	setup := main()
-	if len(ops.CheckPoolSetups(setup.ZeropsYAML, setup.Declaration, parts)) > 0 {
-		return nil
+	setup, err := main()
+	if err != nil {
+		return nil, "", fmt.Errorf("whether main holds the pool setups of %s cannot be told: %w", m.Hostname, err)
 	}
-	return parts
+	if len(ops.CheckPoolSetups(setup.ZeropsYAML, setup.Declaration, parts)) > 0 {
+		return nil, "", nil
+	}
+	return parts, setup.ZeropsYAML, nil
 }
 
-// recipeMainsOfPass asks each repository's main once per pass; a nil read
-// reads none.
+// recipeMainsOfPass asks each repository's main once per pass, its answer or
+// its failure kept for the pass; a nil read reads none.
 type recipeMainsOfPass struct {
 	read   recipeRepoSetup
-	setups map[string]recipeMainSetup
+	setups map[string]recipeMainRead
 }
 
-func (p recipeMainsOfPass) of(ctx context.Context, repo string) recipeMainSetup {
+// recipeMainRead is one read of a repository's main.
+type recipeMainRead struct {
+	setup recipeMainSetup
+	err   error
+}
+
+func (p recipeMainsOfPass) of(ctx context.Context, repo string) (recipeMainSetup, error) {
 	if p.read == nil {
-		return recipeMainSetup{}
+		return recipeMainSetup{}, nil
 	}
-	setup, read := p.setups[repo]
+	got, read := p.setups[repo]
 	if !read {
-		setup = p.read(ctx, repo)
-		p.setups[repo] = setup
+		got.setup, got.err = p.read(ctx, repo)
+		p.setups[repo] = got
 	}
-	return setup
+	return got.setup, got.err
+}
+
+// zeropsYAML is the zerops.yaml main of repo holds, "" for none or a main
+// that could not be read: the composer says what it could not verify then.
+func (p recipeMainsOfPass) zeropsYAML(ctx context.Context, repo string) string {
+	setup, _ := p.of(ctx, repo)
+	return setup.ZeropsYAML
+}
+
+// groupRecipePairRuntimes is what the AI Agent tier carries for the wired
+// pair m, whose runtime as it runs is runtime: a dev pool per part where
+// main holds their pool setups (groupRecipeMainPools), with the warning
+// that says so, else runtime itself. An error is a main that could not be
+// read where it decides.
+func groupRecipePairRuntimes(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo, runtime bundle.GroupRuntime, zcpHostname string, main func() (recipeMainSetup, error)) ([]bundle.GroupRuntime, string, error) {
+	parts, mainYAML, err := groupRecipeMainPools(m, live, main)
+	if err != nil {
+		return nil, "", err
+	}
+	if parts == nil {
+		return []bundle.GroupRuntime{runtime}, "", nil
+	}
+	pools, warning := groupRecipePoolRuntimes(m, parts, runtime, mainYAML, zcpHostname)
+	return pools, warning, nil
 }
 
 // groupRecipePoolRuntimes writes the dev-service pair m, whose runtime as it
