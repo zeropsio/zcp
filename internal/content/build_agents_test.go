@@ -1089,6 +1089,41 @@ func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing
 	}
 }
 
+// TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault:
+// a Mate's agent that has to sign in with an identity it cannot make asks for
+// an account made for testing, into its own vault, and hands it to a command
+// with `zcp with` — and outside a Mate, where neither mate=true nor the ask
+// exists, AGENTS.md does not send the agent to them.
+// witness: internal/content/build_agents.go | {rt.MateEnabled, "agents_own_vault.md"}, → {true, "agents_own_vault.md"},
+func TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "the Chief", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				`zerops_env action="request" mate=true key="TEST_ACCOUNTS"`, "`zcp with TEST_ACCOUNTS -- <command>`",
+				"an account made for testing", "Never ask for the person's own sign-in",
+			} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage pins that a Mate's
 // agent lets Mate's preview pane frame the dev and stage services and keeps
 // production strict. The pane draws a service's page in a frame on Mate's

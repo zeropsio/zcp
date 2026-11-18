@@ -78,7 +78,8 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		// and only a Mate ships the `mac` command for the person's paired Mac
 		// (docs/spec-mate.md §2.10) and has zerops_env's ai-key action
 		// (§5.8). Only a Mate's preview pane frames its dev and stage
-		// (§10.10).
+		// (§10.10), and only a Mate has a vault of its own for the account
+		// it checks a sign-in with (§5.8a).
 		for _, block := range []struct {
 			include bool
 			name    string
@@ -92,6 +93,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			{rt.MateEnabled, "agents_live_facts.md"},
 			{rt.MateEnabled, "agents_mac.md"},
 			{rt.MateEnabled, "agents_ai.md"},
+			{rt.MateEnabled, "agents_own_vault.md"},
 		} {
 			if !block.include {
 				continue
