@@ -43,7 +43,7 @@ L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/
 
 ## Tests
 
-Tests run only when the owner explicitly asks (the dispatch-only `Tests` workflow, `make test*`, `scripts/check-changed.sh --tests`); nothing runs them automatically. Normal verification is lint (`make check-changed`), `go vet ./...` and `go build ./...`. A test you write or change: table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
+Tests run only when the owner explicitly asks (the dispatch-only `Tests` workflow, `make test*`, `scripts/check-changed.sh --tests`); nothing runs them automatically. Normal verification is `scripts/gate`: witness check and native lint of `origin/main..HEAD`, `go vet` (default and build-tagged) and `go build ./...`. A test you write or change: table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
 Admission, level and removal: the shared testing rules, `zeropsio/mate:docs/testing-rules.md`. `scripts/check-witness.go` enforces witness lines and drop trailers (touched test files per staged commit in `make check-changed`, touched owners per pushed range in pre-push). New tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/` (platform responses only from `e2e/recordings/`, written by `go test ./e2e -tags e2e -run TestRecord`), live `./e2e/ -tags e2e`. The zcp↔Mate seam's live case installs a released Mate through download → SHA-256 → install and boots `mate serve` (`TestMateInstall_Release_Serves`).
 
@@ -51,7 +51,8 @@ Admission, level and removal: the shared testing rules, `zeropsio/mate:docs/test
 
 - `make setup` — dev tools and git hooks.
 - `make check-changed` — witness lines and native lint of affected packages from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
-- CI runs build (all platforms), `go vet` (default and build-tagged), lint and the static witness check, no test. Pre-push runs only the static witness checks. `make lint-fast` and `make lint-local` are manual all-package lint.
+- `scripts/land` — lands the committed HEAD on `main`: lock, rebase onto `origin/main`, `scripts/gate`, fast-forward push; last line `LANDED <sha>` or `land: refused <class>: <reason>`. A clone whose git config sets `land.requireBranch` (extended regex) lands only matching branches, and its pre-push lets `main` move only through `scripts/land`.
+- CI runs build (all platforms), `go vet` (default and build-tagged), lint and the static witness check, no test. Pre-push runs only the static witness checks and, under `land.requireBranch`, the main rule. `make release` tags `origin/main` and pushes only the tag. `make lint-fast` and `make lint-local` are manual all-package lint.
 - Knowledge sync (gitignored markdown, pull before build): `zcp sync pull recipes [<slug>]` / `pull guides`; `zcp sync push recipes <slug> [--dry-run]` / `push guides` → GitHub PR; `zcp sync cache-clear [<slug>]`; `zcp sync recipe {create-repo,push-app,publish,export}`. Loop: pull → edit → push → merge → cache-clear → pull. Config: `.sync.yaml`, `.env STRAPI_API_TOKEN`.
 
 ## How to work

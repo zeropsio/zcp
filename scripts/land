@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# Land the checked-out HEAD on origin/main, zcp's one landing path: lock, fetch, rebase onto
+# origin/main, gate, fast-forward push. Run it in a committed worktree, no arguments:
+#
+#   scripts/land
+#
+# The last stdout line is `LANDED <sha>` (exit 0). A refusal exits 1, ends with
+# `land: refused <class>: <reason>` on stderr and has pushed nothing unless its reason says the push
+# may have landed: classes `conflict` and `gate` are the branch's to fix; `dirty`, `branch`, `lock`,
+# `fetch`, `merge`, `empty`, `moved`, `push` and `interrupted` (SIGTERM or SIGINT) are not.
+# Everything else goes to stderr. The contract is the one of zeropsio/mate:scripts/land.ts.
+#
+# A clone whose git config sets `land.requireBranch` (an extended regex) lands only a branch whose
+# name matches it, and its .githooks/pre-push lets main move only through this command (the
+# command exports ZCP_LAND_SHA for its own push). Unset, neither rule applies.
+#
+# A held lock is waited on until its holder exits; a dead holder's lock is taken over; a moved main
+# is landed again. The lock is a directory in the git common dir (shared by every worktree), renamed
+# into place with its holder's identity (pid and process start time) already inside, so a reused
+# pid never holds it. A waiter sleeps on the holder's exit (a kqueue process-exit event, no
+# polling): the wait's bound is the holder's life. A holder that died without unlocking is taken
+# over by one rename to a name only that holder has, which stays as the record; that is safe
+# because the push is fast-forward only. A lock naming no holder was not made here and is refused
+# `lock`. A push that loses to a moved main is landed again; `attempts` is land.ts's `attempts`,
+# keep the two equal.
+#
+# The gate is scripts/gate, run on the rebased commit; its red checks become the `gate` refusal.
+# It must judge exactly the commit it pushes, but go vet and go build compile every non-ignored file
+# on disk, so any untracked, non-ignored file is refused `dirty` (an ignored .go file still compiles).
+set -uo pipefail
+
+attempts=3
+
+refuse() {
+  echo "land: refused $1: $2" >&2
+  exit 1
+}
+
+# A process's start time as ps reports it; the lock helper reads it the same way.
+started() {
+  LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//'
+}
+
+# Takes the lock at argv[1] for the holder argv[2] (`<pid> <start time>`); exits 0 once held, 3 when
+# the lock names no holder, 4 when this platform has no process-exit event.
+acquire_py='
+import errno, os, re, select, shutil, subprocess, sys
+lock, me = sys.argv[1], sys.argv[2]
+
+def started(pid):
+    p = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                       env=dict(os.environ, LC_ALL="C", TZ="UTC"))
+    return (p.stdout.strip() if p.returncode == 0 else "") or None
+
+def inode():
+    try:
+        return os.stat(lock).st_ino
+    except FileNotFoundError:
+        return None
+
+def holder():
+    before = inode()
+    if before is None:
+        return "absent"
+    try:
+        with open(os.path.join(lock, "pid")) as f:
+            pid, at = f.read().strip().split(" ", 1)
+        return int(pid), at
+    except (OSError, ValueError):
+        return "unnamed" if inode() == before else "absent"
+
+def alive(pid, at):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    now = started(pid)
+    return now is None or now == at
+
+def wait_exit(pid):
+    if not hasattr(select, "kqueue"):
+        sys.exit(4)
+    kq = select.kqueue()
+    ev = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                       flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT)
+    try:
+        for e in kq.control([ev], 1, None):
+            if e.flags & select.KQ_EV_ERROR and e.data != errno.ESRCH:
+                raise OSError(e.data, os.strerror(e.data))
+    except ProcessLookupError:
+        pass
+    finally:
+        kq.close()
+
+fresh = lock + ".new-" + me.split(" ")[0]
+told = None
+while True:
+    shutil.rmtree(fresh, ignore_errors=True)
+    os.mkdir(fresh)
+    with open(os.path.join(fresh, "pid"), "w") as f:
+        f.write(me)
+    try:
+        os.rename(fresh, lock)
+        sys.exit(0)
+    except OSError as e:
+        shutil.rmtree(fresh, ignore_errors=True)
+        if e.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+            raise
+    h = holder()
+    if h == "absent":
+        continue
+    if h == "unnamed":
+        sys.exit(3)
+    pid, at = h
+    if not alive(pid, at):
+        record = lock + ".dead-" + str(pid) + "-" + re.sub("[^0-9A-Za-z]+", "-", at)
+        try:
+            os.rename(lock, record)
+            print("land: took over the lock of dead pid %d (moved to %s)" % (pid, record), file=sys.stderr)
+        except OSError as e:
+            if e.errno not in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY):
+                raise
+        continue
+    if told != h:
+        print("land: waiting for the landing held by pid %d" % pid, file=sys.stderr)
+        told = h
+    wait_exit(pid)
+'
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || refuse dirty "not inside a git worktree"
+cd "$root" || refuse dirty "cannot enter $root"
+[ -z "$(git status --porcelain)" ] || refuse dirty "the worktree has uncommitted changes or untracked files"
+
+# The clone's rule for which branches may land; the branch names the change being landed.
+rule=$(git config --get land.requireBranch)
+if [ -n "$rule" ]; then
+  branch=$(git symbolic-ref -q --short HEAD) || refuse branch "HEAD is detached; land.requireBranch needs a branch matching $rule"
+  printf '%s\n' "$branch" | grep -Eq -- "$rule" || refuse branch "branch $branch does not match land.requireBranch $rule"
+fi
+
+lock="$(git rev-parse --path-format=absolute --git-common-dir)/land.lock"
+self=$(started $$)
+[ -n "$self" ] || refuse lock "ps cannot report this process's start time"
+me="$$ $self"
+owned=
+rebasing=
+# Releases only a lock that still names this landing: renamed aside first, so nobody sees it half removed.
+release() {
+  [ "$(cat "$lock/pid" 2>/dev/null)" = "$me" ] || return 0
+  aside="$lock.gone-$$-$RANDOM"
+  mv "$lock" "$aside" 2>/dev/null && rm -rf "$aside"
+}
+cleanup() {
+  [ -z "$rebasing" ] || git rebase --abort >/dev/null 2>&1
+  [ -z "$owned" ] || release
+}
+trap cleanup EXIT
+# Once the push has started, origin decides: one read of its main says whether the push landed.
+pushing=
+interrupted() {
+  trap '' TERM INT
+  if [ -n "$pushing" ]; then
+    remote=$(git ls-remote origin refs/heads/main 2>/dev/null) ||
+      refuse interrupted "interrupted by $1 during the push; origin could not be read, the push may have landed"
+    if [ "${remote%%[[:space:]]*}" = "$pushing" ]; then
+      echo "LANDED $pushing"
+      exit 0
+    fi
+  fi
+  refuse interrupted "interrupted by $1"
+}
+trap 'interrupted SIGTERM' TERM
+trap 'interrupted SIGINT' INT
+
+python3 -c "$acquire_py" "$lock" "$me"
+case $? in
+0) owned=1 ;;
+3) refuse lock "$lock names no holder, so no landing made it; remove it once no landing runs" ;;
+4) refuse lock "this platform has no process-exit event to wait on $lock" ;;
+*) refuse lock "taking $lock failed" ;;
+esac
+echo "land: holding the landing lock" >&2
+# The wait may have been long: the tree is judged again now that the lock is held.
+[ -z "$(git status --porcelain)" ] || refuse dirty "the worktree has uncommitted changes or untracked files"
+
+for ((attempt = 1; attempt <= attempts; attempt++)); do
+  git fetch -q origin main >&2 || refuse fetch "git fetch origin main failed"
+  base=$(git rev-parse origin/main) || refuse fetch "origin/main unavailable"
+  # main itself has pull-request merges; only the commits this landing adds must be linear.
+  [ -z "$(git rev-list --merges origin/main..HEAD)" ] || refuse merge "HEAD has merge commits; rebase it onto origin/main instead"
+  rebasing=1
+  if ! git rebase -q origin/main >&2; then
+    paths=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+    git rebase --abort >/dev/null 2>&1
+    rebasing=
+    refuse conflict "rebase onto origin/main conflicts in: ${paths:-unknown}"
+  fi
+  rebasing=
+  sha=$(git rev-parse HEAD) || refuse fetch "HEAD unavailable"
+  [ "$sha" != "$base" ] || refuse empty "HEAD adds nothing to origin/main"
+
+  # The rebased commit's own gate judges it; its stdout is the red checks, one line.
+  red=$(scripts/gate) || refuse gate "gate red on $sha:${red:- scripts/gate failed}"
+
+  # An empty sha would make the refspec `:refs/heads/main`, which deletes main. The pre-push hook
+  # lets main move to exactly this sha.
+  pushing=$sha
+  if ZCP_LAND_SHA=$sha git push -q origin "${sha:?}:refs/heads/main" >&2; then
+    echo "LANDED $sha"
+    exit 0
+  fi
+  pushing=
+  git fetch -q origin main >&2 || refuse fetch "git fetch origin main failed"
+  moved=$(git rev-parse origin/main) || refuse fetch "origin/main unavailable"
+  [ "$moved" != "$base" ] || refuse push "git push to origin main failed"
+  echo "land: main moved to $moved during the gate; landing again" >&2
+done
+refuse moved "main moved $attempts times during the gate"

@@ -1,9 +1,23 @@
 #!/bin/bash
-# Pre-push hook: static witness and drop-trailer checks per pushed range; no
-# tests run. Native lint runs once in pre-commit; CI runs lint, vet and build.
+# Pre-push hook: in a clone that sets land.requireBranch, main moves only through scripts/land;
+# then the static witness and drop-trailer checks per pushed range. No tests run. Native lint
+# runs once in pre-commit; CI runs lint, vet and build.
 # Install: git config core.hooksPath .githooks (done by make setup)
+
+# git sends one line per ref it updates: <local ref> <local sha> <remote ref> <remote sha>.
+lines=$(cat)
+if [ -n "$(git config --get land.requireBranch)" ]; then
+	while read -r _ local_sha remote_ref _; do
+		[ "$remote_ref" = refs/heads/main ] || continue
+		[ -n "${ZCP_LAND_SHA:-}" ] && [ "$local_sha" = "$ZCP_LAND_SHA" ] && continue
+		echo "pre-push: main moves only through scripts/land in this clone" >&2
+		exit 1
+	done <<<"$lines"
+fi
+# scripts/land ran the witness check in its gate before this push.
+[ -z "${ZCP_LAND_SHA:-}" ] && [ -n "$lines" ] || exit 0
 
 # Worktrees share one hooks directory; a checkout from before the witness rule has no script.
 CHECK="$(git rev-parse --show-toplevel)/scripts/witness-check.sh"
 [ -x "$CHECK" ] || exit 0
-exec "$CHECK"
+printf '%s\n' "$lines" | "$CHECK"
