@@ -659,7 +659,7 @@ func poolSetupLacks(ctx context.Context, scratch *hq.Scratch, commit string, sp 
 	}
 	parts := make([]ops.PoolPart, 0, len(sp.pair.Stages))
 	for _, st := range sp.pair.Stages {
-		parts = append(parts, ops.PoolPart{Part: st.Setup, Pool: pool.Hostname, Stage: st.Hostname, Type: st.Type, MaxContainers: maxContainers})
+		parts = append(parts, ops.PoolPart{Part: st.Setup, Pool: pool.Hostname, Stage: st.Hostname, MaxContainers: maxContainers})
 	}
 	return ops.CheckPoolSetups(zeropsYaml, declaration, parts), nil
 }

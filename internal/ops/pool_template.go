@@ -22,13 +22,12 @@ import (
 // template spans the two packages by the import direction.
 
 // PoolPart is one pooled part as the template reads it: the part (its stage
-// setup's name), its pool and stage hostnames, the part's runtime type and
-// the pool's maxContainers (bundle.DefaultPoolMaxContainers for 0).
+// setup's name), its pool and stage hostnames, and the pool's maxContainers
+// (bundle.DefaultPoolMaxContainers for 0).
 type PoolPart struct {
 	Part          string
 	Pool          string
 	Stage         string
-	Type          string
 	MaxContainers int
 }
 

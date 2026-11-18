@@ -256,7 +256,7 @@ func groupRecipeMainPools(m *workflow.ServiceMeta, live map[string]ops.ServiceIn
 		if _, running := live[pool]; running {
 			return nil, "", nil
 		}
-		parts = append(parts, ops.PoolPart{Part: stage.SetupName, Pool: pool, Stage: stage.Hostname, Type: live[stage.Hostname].Type})
+		parts = append(parts, ops.PoolPart{Part: stage.SetupName, Pool: pool, Stage: stage.Hostname})
 	}
 	setup, err := main()
 	if err != nil {
