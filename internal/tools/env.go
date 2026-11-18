@@ -72,7 +72,7 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 	var mate *jsonschema.Schema
 	if asks {
 		target = "Service to operate on; required for get/set/delete/request unless project=true or mate=true. generate-dotenv: deprecated fallback for setup."
-		mate = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`.")
+		mate = flexBoolSchema("true: your own vault, the Mate's, instead of a service's or the Shared — values only you read (a test sign-in, a key for your own tools); no app reads it. Use one as `zcp with KEY -- <command>`, or `{{env:KEY}}` in a zerops_browser command.")
 		actions = []any{"get", "set", "delete", "request", "generate-dotenv"}
 		actionDescription = "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	}
