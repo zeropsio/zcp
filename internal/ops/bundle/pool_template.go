@@ -11,8 +11,8 @@ import (
 // (knowledge theme pools-and-box, "A part's dev pool"; docs/spec-workflows.md
 // §13.1). Pool-migrate's provision stanza renders it, the AI Agent tier
 // (groupPoolEntry) writes the same facts in its own commented form, and the
-// repository half — the setup check — is ops.CheckPoolSetups
-// (docs/spec-mate.md §2.8b). The template spans two
+// repository half — the seed and the setup check — is ops.SeedFiles and
+// ops.CheckPoolSetups (docs/spec-mate.md §2.8b B-10). The template spans two
 // packages because of the import direction: the AI Agent tier here needs the
 // stanza, and ops imports bundle, while the repository half needs ops' own
 // zerops.yaml reader (extends resolved) and zcp-devsup facts. Moving that half

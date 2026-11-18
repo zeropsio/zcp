@@ -1,33 +1,45 @@
 package ops
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// The one pool template's repository half: what a pooled part needs on the
-// repository's main — a pool setup named after its pool, a stage setup named
-// after the part, and the dev-server declaration's previewPortBase.
-// CheckPoolSetups says what a main lacks of it, through pool-migrate's own
-// predicates, so a setup pool-migrate's image step accepts is accepted here;
-// the stand-up runs it before a commit deploy (docs/spec-mate.md §2.8b) and
-// the AI Agent tier's composer before it writes a dev pair as pools
-// (§2.8a.5). The pool's import half is bundle.PoolStanza: the AI Agent tier
-// in bundle writes it and bundle cannot import ops, while this half reads
-// through ParseZeropsYmlContent and the zcp-devsup facts ops owns, so the
-// template spans the two packages by the import direction.
+// The one pool template's repository half (docs/spec-mate.md §2.8b B-10):
+// what a pooled part needs on the repository's main — a pool setup named
+// after its pool, a stage setup named after the part, and the dev-server
+// declaration's previewPortBase. SeedFiles writes it on a main that holds
+// nothing yet; CheckPoolSetups says what a main holding code lacks of it,
+// through pool-migrate's own predicates, so a setup pool-migrate's image step
+// accepts is accepted here. The pool's import half is bundle.PoolStanza: the
+// AI Agent tier in bundle writes it and bundle cannot import ops, while this
+// half reads through ParseZeropsYmlContent and the zcp-devsup facts ops owns,
+// so the template spans the two packages by the import direction.
+
+// SeedPreviewPortBase is the previewPortBase the seed declares: the value
+// zcp's pool guidance names.
+const SeedPreviewPortBase = 4000
+
+// seedIdleStart is a stage setup's run.start in the seed: the idle start
+// zcp teaches for a runtime with no application yet.
+const seedIdleStart = "zsc noop --silent"
 
 // PoolPart is one pooled part as the template reads it: the part (its stage
-// setup's name), its pool and stage hostnames, and the pool's maxContainers
-// (bundle.DefaultPoolMaxContainers for 0).
+// setup's name), its pool and stage hostnames, the part's runtime type and
+// the pool's maxContainers (bundle.DefaultPoolMaxContainers for 0).
 type PoolPart struct {
 	Part          string
 	Pool          string
 	Stage         string
+	Type          string
 	MaxContainers int
 }
 
@@ -37,6 +49,83 @@ func (p PoolPart) maxContainers() int {
 		return p.MaxContainers
 	}
 	return bundle.DefaultPoolMaxContainers
+}
+
+// seedDoc is the seed's zerops.yaml.
+type seedDoc struct {
+	Zerops []seedSetup `yaml:"zerops"`
+}
+
+type seedSetup struct {
+	Setup string    `yaml:"setup"`
+	Build seedBuild `yaml:"build"`
+	Run   seedRun   `yaml:"run"`
+}
+
+type seedBuild struct {
+	Base        string `yaml:"base"`
+	DeployFiles string `yaml:"deployFiles,omitempty"`
+}
+
+type seedRun struct {
+	Base            string     `yaml:"base"`
+	Ports           []seedPort `yaml:"ports,omitempty"`
+	PrepareCommands []string   `yaml:"prepareCommands,omitempty"`
+	Start           string     `yaml:"start,omitempty"`
+}
+
+type seedPort struct {
+	Port        int  `yaml:"port"`
+	HTTPSupport bool `yaml:"httpSupport"`
+}
+
+// SeedFiles are the seed commit's files by path: zerops.yaml with each part's
+// pool setup (the part's type as both bases, every preview port from
+// SeedPreviewPortBase+1 to SeedPreviewPortBase+maxContainers with
+// httpSupport, the zcp-devsup install line, `zcp-devsup run`; nothing baked)
+// and stage setup (the type as both bases, deployFiles ./, the idle start for
+// a runtime class that takes a start), and the dev-server declaration with
+// SeedPreviewPortBase and no server. Nothing else.
+func SeedFiles(parts []PoolPart) (map[string]string, error) {
+	doc := seedDoc{Zerops: make([]seedSetup, 0, 2*len(parts))}
+	for _, p := range parts {
+		ports := make([]seedPort, 0, p.maxContainers())
+		for port := SeedPreviewPortBase + 1; port <= SeedPreviewPortBase+p.maxContainers(); port++ {
+			ports = append(ports, seedPort{Port: port, HTTPSupport: true})
+		}
+		doc.Zerops = append(doc.Zerops, seedSetup{
+			Setup: p.Pool,
+			Build: seedBuild{Base: p.Type},
+			Run: seedRun{
+				Base:            p.Type,
+				Ports:           ports,
+				PrepareCommands: []string{DevsupPrepareCommand(DevsupLatestURL)},
+				Start:           DevsupStart,
+			},
+		})
+		stage := seedSetup{Setup: p.Part, Build: seedBuild{Base: p.Type, DeployFiles: "./"}, Run: seedRun{Base: p.Type}}
+		if topology.RuntimeClassFor(p.Type) == topology.RuntimeDynamic {
+			stage.Run.Start = seedIdleStart
+		}
+		doc.Zerops = append(doc.Zerops, stage)
+	}
+	var yamlBuf strings.Builder
+	enc := yaml.NewEncoder(&yamlBuf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return nil, fmt.Errorf("encode the seed's %s: %w", zeropsYmlPrimary, err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("encode the seed's %s: %w", zeropsYmlPrimary, err)
+	}
+	decl, err := json.MarshalIndent(devsup.Declaration{Version: 1, PreviewPortBase: SeedPreviewPortBase, Servers: []devsup.Server{}}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode the seed's %s: %w", devsup.DeclarationPath, err)
+	}
+	return map[string]string{
+		zeropsYmlPrimary:       yamlBuf.String(),
+		devsup.DeclarationPath: string(decl) + "\n",
+	}, nil
 }
 
 // CheckPoolSetups is what a main whose zerops.yaml content is zeropsYaml and
