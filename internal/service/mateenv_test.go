@@ -87,7 +87,7 @@ func TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin(t *testin
 		}
 		// What zcp writes by hand: the env file `zcp init` renders, the launch
 		// lines and the unit's ExecStart. None may name the public origin.
-		handWritten := append(mate.EnvLines("p-1", "api.app-prg1.zerops.io", "https://allowed.example"), mate.LaunchEnvLines()...)
+		handWritten := append(mate.EnvLines("p-1", "api.app-prg1.zerops.io"), mate.LaunchEnvLines()...)
 		envPath := filepath.Join(dir, "mate.env")
 		if err := os.WriteFile(envPath, []byte(strings.Join(handWritten, "\n")+"\n"), 0o600); err != nil {
 			t.Fatalf("write env file: %v", err)

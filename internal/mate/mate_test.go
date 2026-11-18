@@ -116,11 +116,10 @@ func TestLaunchEnvLines(t *testing.T) {
 
 func TestEnvLines(t *testing.T) {
 	tests := []struct {
-		name           string
-		projectID      string
-		apiHost        string
-		allowedOrigins string
-		want           []string
+		name      string
+		projectID string
+		apiHost   string
+		want      []string
 	}{
 		{
 			// The optional membership TTL is never written: an unset key is
@@ -133,21 +132,10 @@ func TestEnvLines(t *testing.T) {
 				"T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io",
 			},
 		},
-		{
-			name:           "allowed origins configured",
-			projectID:      "p1",
-			apiHost:        "api.app-prg1.zerops.io",
-			allowedOrigins: "https://code.example.com,https://staging.example.com",
-			want: []string{
-				"T3CODE_ZEROPS_PROJECT_ID=p1",
-				"T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io",
-				"T3CODE_ZEROPS_ALLOWED_ORIGINS=https://code.example.com,https://staging.example.com",
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mate.EnvLines(tt.projectID, tt.apiHost, tt.allowedOrigins)
+			got := mate.EnvLines(tt.projectID, tt.apiHost)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("EnvLines:\n got %q\nwant %q", got, tt.want)
 			}
@@ -155,7 +143,7 @@ func TestEnvLines(t *testing.T) {
 	}
 }
 
-// TestEnvContract_KeysAreTheSpecList pins C-3/§2.3: exactly these three keys,
+// TestEnvContract_KeysAreTheSpecList pins C-3/§2.3: exactly these two keys,
 // spelled exactly this way, are the environment contract — a rename here is a
 // two-repo break the fork's ZeropsEnvironment reader would silently stop
 // recognising.
@@ -163,44 +151,10 @@ func TestEnvContract_KeysAreTheSpecList(t *testing.T) {
 	want := []string{
 		"T3CODE_ZEROPS_PROJECT_ID",
 		"T3CODE_ZEROPS_API_HOST",
-		"T3CODE_ZEROPS_ALLOWED_ORIGINS",
 	}
-	got := []string{mate.EnvProjectID, mate.EnvAPIHost, mate.EnvAllowedOrigins}
+	got := []string{mate.EnvProjectID, mate.EnvAPIHost}
 	if !slices.Equal(got, want) {
 		t.Errorf("env contract keys:\n got %q\nwant %q", got, want)
-	}
-}
-
-// TestValidateAllowedOrigins covers the ZCP_MATE_ALLOWED_ORIGINS operator
-// input: a comma-separated list of origins in the exact https://<host>[:port]
-// form T3CODE_ZEROPS_ALLOWED_ORIGINS is matched against (spec-mate.md §3.4,
-// "matched exactly") — no bare host, no path, no wildcard, no non-https
-// scheme. Blank is valid (the unwritten/default case).
-func TestValidateAllowedOrigins(t *testing.T) {
-	tests := []struct {
-		name    string
-		raw     string
-		wantBad string
-		wantOK  bool
-	}{
-		{"empty is valid", "", "", true},
-		{"blank is valid", "   ", "", true},
-		{"single https origin", "https://code.example.com", "", true},
-		{"https origin with port", "https://code.example.com:8443", "", true},
-		{"list of https origins", "https://code.example.com,https://staging.example.com", "", true},
-		{"refuses a bare host", "code.example.com", "code.example.com", false},
-		{"refuses a path", "https://code.example.com/callback", "https://code.example.com/callback", false},
-		{"refuses a wildcard", "https://*.example.com", "https://*.example.com", false},
-		{"refuses a non-https scheme", "http://code.example.com", "http://code.example.com", false},
-		{"names the bad entry inside a list", "https://good.example.com,not-a-url", "not-a-url", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bad, ok := mate.ValidateAllowedOrigins(tt.raw)
-			if ok != tt.wantOK || bad != tt.wantBad {
-				t.Errorf("ValidateAllowedOrigins(%q) = (%q, %v), want (%q, %v)", tt.raw, bad, ok, tt.wantBad, tt.wantOK)
-			}
-		})
 	}
 }
 

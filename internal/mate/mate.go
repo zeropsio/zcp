@@ -30,7 +30,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,14 +105,8 @@ const (
 // Zerops project; nothing else votes. Without it the server keeps its upstream
 // pairing behaviour.
 const (
-	EnvProjectID      = "T3CODE_ZEROPS_PROJECT_ID"
-	EnvAPIHost        = "T3CODE_ZEROPS_API_HOST"
-	EnvAllowedOrigins = "T3CODE_ZEROPS_ALLOWED_ORIGINS"
-
-	// SourceAllowedOrigins is the service env an operator sets to add browser
-	// origins beyond the container's own and http://localhost:*. Absent ⇒
-	// EnvAllowedOrigins is not written at all, so the server keeps its default.
-	SourceAllowedOrigins = "ZCP_MATE_ALLOWED_ORIGINS"
+	EnvProjectID = "T3CODE_ZEROPS_PROJECT_ID"
+	EnvAPIHost   = "T3CODE_ZEROPS_API_HOST"
 )
 
 // LiveEnvStorePath is the container's live service-environment snapshot: a
@@ -697,46 +690,12 @@ func LaunchEnvLines() []string {
 	}
 }
 
-// allowedOriginPattern matches one entry of ZCP_MATE_ALLOWED_ORIGINS: scheme,
-// host, optional port, nothing else — the exact shape
-// T3CODE_ZEROPS_ALLOWED_ORIGINS is matched against (spec-mate.md §3.4,
-// "matched exactly"). No bare host, no path, no query, no wildcard, no
-// non-https scheme — any of those can never match a real Origin header, so
-// writing them would silently configure an allowlist entry that does nothing.
-var allowedOriginPattern = regexp.MustCompile(`^https://[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*(?::[0-9]{1,5})?$`)
-
-// ValidateAllowedOrigins checks raw — the operator-set ZCP_MATE_ALLOWED_ORIGINS
-// value — is well-formed: blank, or a comma-separated list of entries each
-// matching allowedOriginPattern. On the first malformed entry it returns it
-// trimmed as bad with ok=false, so the caller can name it in one diagnostic
-// line and fall back to the server's own default instead of writing a value
-// that can never match anything (MD-3's "carries only non-secret
-// identifiers" extends here to "or nothing that cannot possibly match").
-func ValidateAllowedOrigins(raw string) (bad string, ok bool) {
-	if strings.TrimSpace(raw) == "" {
-		return "", true
-	}
-	for entry := range strings.SplitSeq(raw, ",") {
-		trimmed := strings.TrimSpace(entry)
-		if !allowedOriginPattern.MatchString(trimmed) {
-			return trimmed, false
-		}
-	}
-	return "", true
-}
-
-// EnvLines renders the environment contract as KEY=VALUE entries. An empty
-// allowedOrigins omits its key entirely, so the server keeps its own default
-// rather than reading a configured-but-empty allowlist.
-func EnvLines(projectID, apiHost, allowedOrigins string) []string {
-	lines := []string{
+// EnvLines renders the environment contract as KEY=VALUE entries.
+func EnvLines(projectID, apiHost string) []string {
+	return []string{
 		EnvProjectID + "=" + projectID,
 		EnvAPIHost + "=" + apiHost,
 	}
-	if allowedOrigins != "" {
-		lines = append(lines, EnvAllowedOrigins+"="+allowedOrigins)
-	}
-	return lines
 }
 
 // ParseEnvFile reads the KEY=VALUE entries `zcp init` wrote, skipping blank
