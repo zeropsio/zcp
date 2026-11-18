@@ -16,13 +16,17 @@ import (
 
 const updateLoopback = "http://127.0.0.1:3773/api/mate/update/"
 
-// UpdateReadiness is the loopback updater API payload.
+// UpdateReadiness is the loopback updater API payload. Blockers (readiness)
+// and Why (a drain answered drained: false) are the Mate's own words on what
+// it waits on, opaque to zcp; an older Mate sends no Why.
 type UpdateReadiness struct {
-	Protocol int    `json:"protocol"`
-	Version  string `json:"version"`
-	BootID   string `json:"bootId"`
-	Ready    bool   `json:"ready"`
-	Drained  bool   `json:"drained"`
+	Protocol int      `json:"protocol"`
+	Version  string   `json:"version"`
+	BootID   string   `json:"bootId"`
+	Ready    bool     `json:"ready"`
+	Blockers []string `json:"blockers"`
+	Drained  bool     `json:"drained"`
+	Why      string   `json:"why"`
 }
 
 // BootFilePath is where a booting Mate reports its progress until it accepts

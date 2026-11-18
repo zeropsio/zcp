@@ -291,7 +291,7 @@ func TestRunMateStatus_AfterAManualUpdate_ReportsNoOlderAttempt(t *testing.T) {
 		}
 	})
 	var got struct {
-		Updater mateUpdaterStatus `json:"updater"`
+		Updater mate.UpdaterStatus `json:"updater"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatal(err)

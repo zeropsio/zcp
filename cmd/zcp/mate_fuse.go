@@ -48,28 +48,43 @@ var mateFuseRestartGrace = 5 * time.Minute
 // mateUnit is the Mate's systemd unit.
 const mateUnit = "zerops@" + mate.UnitName + ".service"
 
-// mateFuseRecord is the keep job's own memory: the zcp release it already
-// restarted the container for, and the zcp build installed then, its version
-// and build time (one attempt per installed build and release). A run that
-// finds another build installed forgets it, so a dev zcp placed after an
-// attempt, even one pushed again under the same version, is still replaced
-// once its pin ends.
-type mateFuseRecord struct {
-	ZCPRestartedFor       string `json:"zcpRestartedFor,omitempty"`
-	ZCPRestartedFrom      string `json:"zcpRestartedFrom,omitempty"`
-	ZCPRestartedFromBuilt string `json:"zcpRestartedFromBuilt,omitempty"`
-}
-
-// from says the attempt restarted from the zcp build installed now, which
-// zcp names; built is this binary's build time.
-func (r mateFuseRecord) from(zcp zcpReleaseStatus, built string) bool {
+// restartedFrom says the record's zcp restart attempt restarted from the zcp
+// build installed now, which zcp names; built is this binary's build time. A
+// run that finds another build installed forgets the attempt, so a dev zcp
+// placed after an attempt, even one pushed again under the same version, is
+// still replaced once its pin ends.
+func restartedFrom(r mate.KeepRecord, zcp zcpReleaseStatus, built string) bool {
 	return r.ZCPRestartedFrom == zcp.Installed && r.ZCPRestartedFromBuilt == built
 }
 
-// tried says the keep job already restarted the container for zcp's latest
-// release from the zcp build installed now.
-func (r mateFuseRecord) tried(zcp zcpReleaseStatus, built string) bool {
-	return r.ZCPRestartedFor == zcp.Latest && r.from(zcp, built)
+// restartTried says the keep job already restarted the container for zcp's
+// latest release from the zcp build installed now.
+func restartTried(r mate.KeepRecord, zcp zcpReleaseStatus, built string) bool {
+	return r.ZCPRestartedFor == zcp.Latest && restartedFrom(r, zcp, built)
+}
+
+// keepQuestion wires the Mate's loopback updater and rec, written to its
+// file, into the keep job's question.
+func keepQuestion(rec *mate.KeepRecord) mate.KeepQuestion {
+	return mate.KeepQuestion{
+		Drain:     mate.DrainUpdate,
+		Readiness: readMateReadiness,
+		Save: func(d *mate.Deferral) error {
+			rec.Deferred = d
+			return writeMateFuseRecord(*rec)
+		},
+		Cancel: func() { _ = mate.PostUpdate("cancel") },
+		Now:    time.Now,
+	}
+}
+
+// readMateReadiness is one loopback readiness read, bounded to 5 s.
+func readMateReadiness() (mate.UpdateReadiness, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var readiness mate.UpdateReadiness
+	err := mate.UpdateRequest(ctx, "readiness", nil, &readiness)
+	return readiness, err
 }
 
 func mateFuseRecordPath() string { return filepath.Join(mate.Prefix(), "fuse.json") }
@@ -105,8 +120,8 @@ func runMateFuse(args []string) int {
 		fmt.Fprintln(os.Stderr, "mate keep: the Mate is booting; nothing now")
 		return 0
 	}
-
 	release, err := mate.DesiredRelease(context.Background(), http.DefaultClient)
+	releaseRead := err == nil
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: release list not read: %v\n", err)
 	}
@@ -120,7 +135,7 @@ func runMateFuse(args []string) int {
 			fmt.Fprintf(os.Stderr, "mate keep: stage Mate %s: %v; checking zcp all the same\n", run, err)
 			unstaged = run
 		} else {
-			return restartForMate(unlock, running, run, automatic)
+			return restartForMate(unlock, &rec, running, run, automatic)
 		}
 	}
 
@@ -131,16 +146,19 @@ func runMateFuse(args []string) int {
 	// Another build than the one the attempt restarted from: the attempt took
 	// effect, and a build pushed again later, even under the same version, is
 	// a new placement.
-	if rec != (mateFuseRecord{}) && !rec.from(zcp, server.Built) {
-		rec = mateFuseRecord{}
+	if rec.Attempted() && !restartedFrom(rec, zcp, server.Built) {
+		rec = rec.WithoutAttempt()
 		_ = writeMateFuseRecord(rec)
 	}
-	if zcp.Behind && !rec.tried(zcp, server.Built) {
+	if zcp.Behind && !restartTried(rec, zcp, server.Built) {
 		if code := restartForZCP(unlock, rec, zcp, running, automatic, lookup); unstaged == "" {
 			return code
 		}
 		return 1
 	}
+	// Nothing asked: a deferral this run knows is over is cleared. A record
+	// that cannot be written is said and never fails the run.
+	_ = keepQuestion(&rec).Settle(rec.Deferred, mate.KeepRun{Running: running, ReleaseRead: releaseRead, Unstaged: unstaged, ZCPLatest: zcp.Latest})
 	dev := devBuildsLine(versions, release.Version, unstaged, zcp)
 	if unstaged != "" {
 		fmt.Fprintf(os.Stderr, "mate keep: Mate %s keeps running, %s is not staged; zcp %s (latest %q)%s\n", running, unstaged, zcp.Installed, zcp.Latest, dev)
@@ -224,9 +242,9 @@ func stageMate(run string, release mate.Manifest) error {
 
 // restartForMate restarts the unit for the staged run once the running server
 // agrees; its start job then starts run.
-func restartForMate(unlock func(), running, run string, automatic bool) int {
-	if !askRestart(run, automatic) {
-		return 0
+func restartForMate(unlock func(), rec *mate.KeepRecord, running, run string, automatic bool) int {
+	if yes, code := askRestart(rec, run, running, run, automatic); !yes {
+		return code
 	}
 	fmt.Fprintf(os.Stderr, "mate keep: restarting the Mate for %s (runs %s)\n", run, running)
 	unlock()
@@ -239,15 +257,18 @@ func restartForMate(unlock func(), running, run string, automatic bool) int {
 }
 
 // askRestart asks the running server "may I restart you now?" through its
-// drain route. Not now (a refusal, the deadline, no answer) reopens what the
-// question closed.
-func askRestart(version string, automatic bool) bool {
-	if _, err := mate.DrainUpdate(version, automatic); err != nil {
-		_ = mate.PostUpdate("cancel")
-		fmt.Fprintf(os.Stderr, "mate keep: not now: %v\n", err)
-		return false
+// drain route (mate.KeepQuestion.Ask). Not now prints why and is 1 only when
+// the deferral could not be recorded; a yes goes on whatever the record.
+func askRestart(rec *mate.KeepRecord, version, running, asked string, automatic bool) (yes bool, code int) {
+	yes, notNow, saveErr := keepQuestion(rec).Ask(rec.Deferred, version, running, asked, automatic)
+	if yes {
+		return true, 0
 	}
-	return true
+	fmt.Fprintf(os.Stderr, "mate keep: not now: %v\n", notNow)
+	if saveErr != nil {
+		return false, 1
+	}
+	return false, 0
 }
 
 func restartMateUnit() error {
@@ -265,20 +286,20 @@ func restartMateUnit() error {
 // restartForZCP brings a newer zcp in the way a container boot does: the
 // restart's initCommands install it, then the Mate's start job starts the
 // newest Mate. The running Mate first agrees, as for its own restart.
-func restartForZCP(unlock func(), rec mateFuseRecord, zcp zcpReleaseStatus, running string, automatic bool, lookup func(string) string) int {
+func restartForZCP(unlock func(), rec mate.KeepRecord, zcp zcpReleaseStatus, running string, automatic bool, lookup func(string) string) int {
 	installed := zcp.Installed
 	if !update.IsRelease(installed) {
 		installed += ", a dev build with no pin"
 	}
 	fmt.Fprintf(os.Stderr, "mate keep: zcp %s is out (installed %s); asking to restart the container\n", zcp.Latest, installed)
-	if !askRestart(running, automatic) {
-		return 0
+	if yes, code := askRestart(&rec, running, running, mate.ZCPAsked(zcp.Latest), automatic); !yes {
+		return code
 	}
 	unlock()
 	before := rec
 	rec.ZCPRestartedFor, rec.ZCPRestartedFrom, rec.ZCPRestartedFromBuilt = zcp.Latest, zcp.Installed, server.Built
-	code := writeMateFuseRecord(rec)
-	if code == 0 {
+	code := 1
+	if writeMateFuseRecord(rec) == nil {
 		code = runSelfCmd([]string{"restart"}, os.Stderr, lookup, newSelfRestartClient)
 		if code != 0 {
 			_ = writeMateFuseRecord(before)
@@ -296,15 +317,17 @@ func restartForZCP(unlock func(), rec mateFuseRecord, zcp zcpReleaseStatus, runn
 	return code
 }
 
-func readMateFuseRecord() mateFuseRecord {
-	var rec mateFuseRecord
+func readMateFuseRecord() mate.KeepRecord {
+	var rec mate.KeepRecord
 	if raw, err := os.ReadFile(mateFuseRecordPath()); err == nil {
 		_ = json.Unmarshal(raw, &rec)
 	}
 	return rec
 }
 
-func writeMateFuseRecord(rec mateFuseRecord) int {
+// writeMateFuseRecord writes rec through a temp-file rename and says a
+// failure on stderr.
+func writeMateFuseRecord(rec mate.KeepRecord) error {
 	body, err := json.Marshal(rec)
 	if err == nil {
 		err = os.MkdirAll(mate.Prefix(), 0o755)
@@ -317,7 +340,7 @@ func writeMateFuseRecord(rec mateFuseRecord) int {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: write record: %v\n", err)
-		return 1
+		return fmt.Errorf("write keep record: %w", err)
 	}
-	return 0
+	return nil
 }

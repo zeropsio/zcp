@@ -453,8 +453,13 @@ moves or restores the server's state.
 updateAvailable, updater, zcp, restartNeeded, why}` — the one reader of "is there a newer mate" in the
 whole product. `installed` is `current`; `updateAvailable` is `current` older than the version to
 run; `updater` is `{protocol: 1, phase: "idle", runningVersion: current, failedVersion}` while a
-Mate is installed, with `failedVersion` only when it is newer than `current` (zcp keeps no update in
-progress, so the phase is always `idle`). Every status reads both releases from their sources;
+Mate is installed, with `failedVersion` only when it is newer than `current`. While the keep job's
+record holds a deferral whose `from` is `current` (the running Mate answered its last question not
+now, §2.1d), the phase is `postponed` with `postponedSince` (the first not now of the unbroken row),
+`postponedFor` (what was asked for: the Mate version to run, or `zcp <version>`) and, when the Mate
+gave one, `postponedWhy` (its own words, opaque to zcp, at most 300 bytes), all plain strings. A
+Mate's automatic updates switched off by its organization reads the same while a newer release is
+out. The text status adds one line for it. Every status reads both releases from their sources;
 `--local` answers without a network call, from the releases as zcp last read them (the release list
 in `~/.zcp/mate/manifest.json`, §2.1c; zcp's latest in `~/.cache/zcp/update.json`, which reads as
 unknown when it is older than the installed zcp), for the Mate server's own read at its boot, which
@@ -571,7 +576,7 @@ another keep run asks, it does nothing. Then the first that applies:
    within the boot window. A booting, installing or busy server is never "not there".
 2. **The version to run differs from the running one** → it is downloaded (idempotent), and the
    server is asked "may I restart you now?". Yes → the unit restarts; its start job starts the
-   version to run. Not now → the next run. A failed release is never the version to run, so it causes
+   version to run. Not now → recorded (below), and the next run asks again. A failed release is never the version to run, so it causes
    no restarts. Every run reads the release list from its source for this; a run whose read fails
    knows no newer release. A version that cannot be staged
    fails the run without skipping step 3: a newer zcp is what repairs a staging defect, and in a
@@ -594,15 +599,41 @@ another keep run asks, it does nothing. Then the first that applies:
    release is newer than its base.
 4. Otherwise nothing: no question, no restart.
 
+**The deferral.** Every not now the Mate answers (a drain answered `drained: false`, at once or at its
+deadline, whatever the reason: not idle, not quiet, or the organization's automatic updates off), by
+either way of asking, is recorded as `deferred: {since, from, for, why}` in `~/.zcp/mate/fuse.json`:
+`since` is the first not now of an unbroken row, kept by every later one while `from`, the running
+Mate version, stays; `for` is what was asked for (the Mate version to run, or `zcp <version>` in step
+3); `why` is the drain answer's `why`, else the `blockers` of one `GET readiness` right after it
+(bounded to 5 s) joined with `; `, else empty, cut to 300 bytes. A drain without an answer
+(nothing listened, the connection broke, the request's own deadline) or with an answer that is not
+protocol 1 records nothing. The deferral is cleared when the Mate says yes, on a run that finds
+another version running than `from`, and on a run that asked nothing because it knew there was
+nothing to ask: the release list was read, no Mate version was left unstaged and, for a `zcp
+<version>` deferral, zcp's latest release was read. A run that failed to look knows nothing and
+leaves the deferral and its `since` as they are, and posts nothing. A yes whose restart never
+comes records nothing. `zcp mate status` reads it (§2.1a). The record is written before the
+`POST cancel` that follows the not now, and a run that clears a deferral without a restart posts
+`cancel` as well: the cancel is the Mate's cue to re-read its status. A record that cannot be
+written never holds up a question or a restart: the run says so and goes on, and only a not now it
+could not record ends the run with 1. No timer, retry or forced
+restart rides on it: a Mate that never says yes keeps its version until it, its person or an
+operator says yes.
+
 **The question** is the server's loopback updater (`http://127.0.0.1:3773/api/mate/update/`,
-protocol 1): `GET readiness` answers `{protocol: 1, version, bootId, ready}` once the server reached
-command readiness; `POST drain` with `{version, deadlineMs: 600000, automatic}` answers `drained`
-once it stopped taking work. An automatic question leaves the server open and waits up to 10 minutes
-for it to be idle and quiet, under the organization's policy; a person's question stops intake at
-once. Not now (a refusal, the deadline, no answer) is followed by `POST cancel`, which reopens what
-the question closed; a yes whose restart never comes is reopened the same way, and the server
-reopens by itself after its own bound. A keep run is not started again while one is waiting, so a
-busy Mate is never closed by being asked.
+protocol 1): `GET readiness` answers `{protocol: 1, version, bootId, ready, blockers}` once the
+server reached command readiness, `blockers` being the Mate's own words on what keeps it from idle;
+`POST drain` with `{version, deadlineMs: 600000, automatic}` answers `{protocol: 1, drained, bootId,
+why?}`, `drained` once it stopped taking work; `why`, sent with `drained: false`, is the Mate's one
+line on what it waits on or why it refuses, optional (zcp never requires it), at most 300 bytes on
+the wire: zcp decodes at most 4096 bytes of either answer; a drain answer it cannot decode is no
+answer and records nothing, a readiness answer it cannot decode leaves `why` empty. Both are opaque to zcp.
+An automatic question leaves the server open and waits up to 10 minutes for it to be idle and quiet,
+under the organization's policy; a person's question stops intake at once. Not now (a refusal, the
+deadline, no answer) is followed by `POST cancel`, which reopens what the question closed and makes
+the server re-read `zcp mate status --local`; a yes whose restart never comes is reopened the same
+way, and the server reopens by itself after its own bound. A keep run is not started again while one
+is waiting, so a busy Mate is never closed by being asked.
 
 **Without HQ.** The organization's policy holds whether or not the Mate has a link to HQ; a start of
 the Mate starts the version to run (§2.1a).
@@ -1951,8 +1982,8 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 1. **zcp reads.** `zcp mate status --json` (§2.1a) is the only place that compares an installed
    mate with the stable manifest.
 2. **The server relays.** The mate server runs it through `ZeropsCli` (a narrow spawner with its own
-   timeout and error types) once at start, then hourly, and on demand after
-   an update; the answer becomes the descriptor field `update: {installed, latest, available}` on
+   timeout and error types) at start (`--local`), on the keep job's `cancel` (`--local`, §2.1d) and
+   on demand; the answer becomes the descriptor field `update: {installed, latest, available}` on
    `/.well-known/t3/environment` and rides the existing `serverConfig` the client already holds. A
    missing `zcp` (a standalone server) leaves the field absent, and the client shows nothing.
 3. **The client shows, quietly.** `available: true` renders as one muted line on the Mate card in
@@ -1976,7 +2007,8 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    behind (`zcp.behind`, §2.1a) the server's own update is a container restart instead: the Mate
    drains its work, then runs `zcp self restart --json` (step 7).
 5. **One check: Check for updates.** The status behind the line is the server's last read of it —
-   the server re-reads status hourly — so a release just published is invisible for up to an hour.
+   at start, on the keep job's `cancel`, or on demand — so a release just published is invisible
+   until one of those.
    The Mate menu therefore always offers "Check for updates"
    wherever `capabilities.mateUpdate` is true; it calls `zerops.mate.checkUpdate` (read scope,
    never operate), whose handler runs `zcp mate status --json` — the same reader, which

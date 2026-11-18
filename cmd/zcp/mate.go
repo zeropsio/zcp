@@ -62,29 +62,19 @@ const mateVerbStatus = "status"
 // never a fresh install — and about this zcp against its latest release, with
 // whether a container restart would change either (§2.9).
 type mateStatusResult struct {
-	Installed       string             `json:"installed"`
-	Minimum         string             `json:"minimum"`
-	BelowFloor      bool               `json:"belowFloor"`
-	Latest          string             `json:"latest"`
-	Contract        int                `json:"contract"`
-	UpdateAvailable bool               `json:"updateAvailable"`
-	CheckedAt       string             `json:"checkedAt"`
-	Error           string             `json:"error,omitempty"`
-	Updater         *mateUpdaterStatus `json:"updater,omitempty"`
-	ZCP             zcpReleaseStatus   `json:"zcp"`
-	RestartNeeded   bool               `json:"restartNeeded"`
-	Why             string             `json:"why,omitempty"`
-	DevPin          *mate.DevPin       `json:"devPin,omitempty"`
-}
-
-// mateUpdaterStatus is the status's "updater" key (§2.1d), in the shape the
-// Mate server reads: protocol 1, phase "idle" (zcp keeps no update in
-// progress), the version current names, and a failed version newer than it.
-type mateUpdaterStatus struct {
-	Protocol       int    `json:"protocol"`
-	Phase          string `json:"phase"`
-	RunningVersion string `json:"runningVersion"`
-	FailedVersion  string `json:"failedVersion,omitempty"`
+	Installed       string              `json:"installed"`
+	Minimum         string              `json:"minimum"`
+	BelowFloor      bool                `json:"belowFloor"`
+	Latest          string              `json:"latest"`
+	Contract        int                 `json:"contract"`
+	UpdateAvailable bool                `json:"updateAvailable"`
+	CheckedAt       string              `json:"checkedAt"`
+	Error           string              `json:"error,omitempty"`
+	Updater         *mate.UpdaterStatus `json:"updater,omitempty"`
+	ZCP             zcpReleaseStatus    `json:"zcp"`
+	RestartNeeded   bool                `json:"restartNeeded"`
+	Why             string              `json:"why,omitempty"`
+	DevPin          *mate.DevPin        `json:"devPin,omitempty"`
 }
 
 // runMateStatus answers what zcp knows about the installed and latest mate
@@ -120,11 +110,8 @@ func readMateStatus(zcpVersion string, local bool) mateStatusResult {
 	result.DevPin = versions.DevPin
 	if result.Installed != "" {
 		result.BelowFloor = mate.BelowFloor(result.Installed)
-		result.Updater = &mateUpdaterStatus{Protocol: 1, Phase: "idle", RunningVersion: result.Installed}
-		if mate.VersionOlder(result.Installed, versions.Failed) {
-			result.Updater.FailedVersion = versions.Failed
-		}
 	}
+	result.Updater = mate.UpdaterStatusOf(versions, readMateFuseRecord().Deferred)
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
@@ -172,6 +159,13 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "mate: installed %s, %s available\n", installed, result.Latest)
 	default:
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
+	}
+	if u := result.Updater; u != nil && u.Phase == mate.PhasePostponed {
+		why := ""
+		if u.PostponedWhy != "" {
+			why = ": " + u.PostponedWhy
+		}
+		fmt.Fprintf(os.Stdout, "mate: update to %s postponed since %s%s\n", u.PostponedFor, u.PostponedSince, why)
 	}
 	devZCP := !update.IsRelease(result.ZCP.Installed)
 	switch {
