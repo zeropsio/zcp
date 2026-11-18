@@ -19,10 +19,10 @@ import (
 // an enum.
 type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
-	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array."`
+	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array. In any argument, whole or inside it (a fill's text, an eval's source), {{env:KEY}} is replaced with the value this container's env holds under KEY — a test sign-in from your own vault (zerops_env mate=true) — and the result shows the placeholder, never the value; a KEY the env does not hold fails the call before the browser opens."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole call, including the wait for the browser and a slow page's load. Default 120, max 300."`
 	Isolation      string     `json:"isolation,omitempty"      jsonschema:"What the page remembers from earlier calls. tab (default): cookies, login, storage, HTTP cache and service workers carry over. fresh-context: none of them, for the first check after a deploy; it stops Chrome as the call ends. new-browser: also a fresh Chrome."`
-	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result."`
+	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result. A screenshot is not redacted: a password field shows dots, so never screenshot a {{env:KEY}} value typed into a visible field."`
 	FullPage       bool       `json:"fullPage,omitempty"       jsonschema:"Capture the whole page instead of the viewport, as one image cut to its top 8000 px (screenshot.capturedHeight then says how tall the capture was). The capture does not scroll: content that loads when scrolled into view stays blank unless you scroll to it or wait for it first. Implies screenshot."`
 }
 
@@ -46,7 +46,7 @@ func browserInputSchema() *jsonschema.Schema {
 func RegisterBrowser(srv *mcp.Server, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
-		Description: "Drive Chrome via agent-browser in ONE bounded batch, lifecycle included (ZCP-container only): [open url] + " +
+		Description: "Drive Chrome via agent-browser in ONE bounded batch, lifecycle included: [open url] + " +
 			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
@@ -83,13 +83,11 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
 			"open, close, tab and window never run; each returns a failed invalid-command step. " +
-			"In any command argument, {{env:KEY}} is replaced with the value this container's env holds under KEY " +
-			"(a test sign-in from your own vault, zerops_env mate=true): the result shows the placeholder, never the value. " +
-			"A screenshot is not redacted: a password field shows dots, so never screenshot a secret typed into a visible field. " +
+			"{{env:KEY}} in an argument: see commands. " +
 			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image " +
 			"(cut to its top 8000 px; screenshot.capturedHeight gives its full height) — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +
-			"(screenshot.picture, e.g. \"shot-3\") for screenshot.keptFor: write ![what it shows](shot-3) in a " +
+			"(screenshot.picture) for screenshot.keptFor: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[], errorsOutput, consoleOutput, " +
 			"networkOutput (4xx/5xx; a request with no status — failed or in flight — is not listed), " +

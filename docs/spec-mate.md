@@ -3985,7 +3985,9 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
   output — a short word, a number — and redacting it would shred the result while protecting
   nothing a guess does not find); a value the page transformed (encoded another way, hashed, cut
   in two); and a screenshot, which is pixels — a password field shows dots, and a secret typed
-  into a visible field is in the picture. The tool's description says the last.
+  into a visible field is in the picture. The tool says the last where a screenshot is asked for
+  (its `screenshot` parameter) and the rule where commands are written (its `commands`
+  parameter); its description, at Claude Code's 4096-unit cap, only points there.
 - **Checking behind a sign-in.** A Mate's AGENTS.md has one block for it
   (`templates/agents_own_vault.md`, Mate-gated like the other blocks of §2.0): where the app owns
   its users the agent makes a test user itself; where the identity comes from elsewhere it asks
