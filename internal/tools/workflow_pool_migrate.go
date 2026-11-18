@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -10,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -78,15 +77,9 @@ const (
 	poolMigrateRefuseCrewWorktrees   = "crew-worktrees"
 )
 
-// The part's pool, as the provision step imports it: `<stem>pool`, no
-// container until a lease asks for one, at most three (docs/spec-workflows.md
-// §13.1).
-const (
-	poolMigratePoolType      = "swarm@1"
-	poolMigratePoolSuffix    = "pool"
-	poolMigrateMinContainers = 0
-	poolMigrateMaxContainers = 3
-)
+// poolMigratePoolSuffix names the part's pool: `<stem>pool`
+// (docs/spec-workflows.md §13.1); what it is imported as is bundle.PoolStanza.
+const poolMigratePoolSuffix = "pool"
 
 // The atoms carrying the flow's guidance: the plan on every answer, the move
 // step's on every answer that carries the census, the env step's on its
@@ -731,7 +724,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		Head:                  head,
 		Pool:                  call.pool,
 		DevSetup:              call.meta.PrimarySetupName,
-		FallbackMaxContainers: poolMigrateMaxContainers,
+		FallbackMaxContainers: bundle.DefaultPoolMaxContainers,
 		PartPools:             call.partPools,
 		SiblingPools:          siblings,
 		InstallURL: func() string {
@@ -1012,78 +1005,26 @@ func poolMigrateWorkBranchOf(meta *workflow.ServiceMeta, census *ops.PoolMigrate
 	}
 }
 
-// poolStanzaDoc is the provision step's import: the part's pool alone.
-type poolStanzaDoc struct {
-	Services []poolStanzaService `yaml:"services"`
-}
-
-type poolStanzaService struct {
-	Hostname      string `yaml:"hostname"`
-	Type          string `yaml:"type"`
-	MinContainers int    `yaml:"minContainers"`
-	MaxContainers int    `yaml:"maxContainers"`
-	// EnableSubdomainAccess switches the pool's subdomain on: each lease's
-	// preview is the pool's subdomain on the lease's preview port.
-	EnableSubdomainAccess bool                `yaml:"enableSubdomainAccess,omitempty"`
-	VerticalAutoscaling   *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
-	// Vault holds the pool's own service env. A service-level envVariables
-	// block is deprecated in the import schema, and sshIsolation reaches the
-	// pool's containers only as a service env variable.
-	Vault map[string]string `yaml:"vault"`
-}
-
-type poolStanzaVertical struct {
-	CPUMode string  `yaml:"cpuMode,omitempty"`
-	MinCPU  int     `yaml:"minCpu,omitempty"`
-	MaxCPU  int     `yaml:"maxCpu,omitempty"`
-	MinRAM  float64 `yaml:"minRam,omitempty"`
-	MaxRAM  float64 `yaml:"maxRam,omitempty"`
-	MinDisk float64 `yaml:"minDisk,omitempty"`
-	MaxDisk float64 `yaml:"maxDisk,omitempty"`
-}
-
-// renderPoolStanza renders the import the provision step names: the pool
-// hostname, swarm@1, no containers until a lease asks for one, at most
-// poolMigrateMaxContainers, the subdomain on when publicAccess says the dev's
-// public access carries over (poolMigratePublicAccess), the dev service's own
-// vertical scale (read by id, a direct read), and the sshIsolation that admits
-// this zcp service. It never carries a credential: GIT_TOKEN reaches the pool
-// in the env step.
+// renderPoolStanza renders the import the provision step names: the one
+// bundle.PoolStanza for the pool hostname, the subdomain on when publicAccess
+// says the dev's public access carries over (poolMigratePublicAccess), the
+// dev service's own vertical scale (read by id, a direct read), and the
+// sshIsolation that admits this zcp service.
 func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.ServiceStack, pool, zcpHostname string, publicAccess bool) (string, []string, error) {
-	svc := poolStanzaService{
-		Hostname:              pool,
-		Type:                  poolMigratePoolType,
-		MinContainers:         poolMigrateMinContainers,
-		MaxContainers:         poolMigrateMaxContainers,
-		EnableSubdomainAccess: publicAccess,
-		Vault:                 map[string]string{"sshIsolation": "vpn service@" + zcpHostname},
-	}
+	stanza := bundle.PoolStanza{Hostname: pool, EnableSubdomainAccess: publicAccess, ZcpHostname: zcpHostname}
 	var warnings []string
 	scaling, err := ops.FetchServiceScaling(ctx, client, dev.ID)
 	switch {
 	case err != nil:
 		warnings = append(warnings, fmt.Sprintf("%s's scale could not be read (%v); the stanza leaves the pool's verticalAutoscaling to the platform's defaults.", dev.Name, err))
 	case scaling != nil:
-		v := poolStanzaVertical{
-			CPUMode: scaling.CPUMode,
-			MinCPU:  scaling.MinCPU, MaxCPU: scaling.MaxCPU,
-			MinRAM: scaling.MinRAM, MaxRAM: scaling.MaxRAM,
-			MinDisk: scaling.MinDisk, MaxDisk: scaling.MaxDisk,
-		}
-		if v != (poolStanzaVertical{}) {
-			svc.VerticalAutoscaling = &v
-		}
+		stanza.Vertical = scaling
 	}
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(poolStanzaDoc{Services: []poolStanzaService{svc}}); err != nil {
-		return "", nil, fmt.Errorf("encode: %w", err)
+	out, err := stanza.Render()
+	if err != nil {
+		return "", nil, fmt.Errorf("render: %w", err)
 	}
-	if err := enc.Close(); err != nil {
-		return "", nil, fmt.Errorf("encode: %w", err)
-	}
-	return buf.String(), warnings, nil
+	return out, warnings, nil
 }
 
 // poolMigratePublicAccess reports whether the part's pool switches its

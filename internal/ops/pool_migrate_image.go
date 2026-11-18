@@ -354,7 +354,7 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 		Commit:        in.Head.Head,
 		Branch:        in.Head.Branch,
 		Setup:         in.Pool.Name,
-		MaxContainers: poolMigrateMaxContainers(in.Pool, in.FallbackMaxContainers),
+		MaxContainers: PoolMaxContainers(in.Pool, in.FallbackMaxContainers),
 	}
 	miss := func(check, msg string) {
 		img.Missing = append(img.Missing, PoolMigrateImageCheck{Check: check, Message: msg})
@@ -387,12 +387,8 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 		}
 	}
 	if entry != nil {
-		if start := strings.TrimSpace(entry.Run.Start); start != DevsupStart {
-			ran := "no run.start"
-			if start != "" {
-				ran = "run.start `" + start + "`"
-			}
-			miss(PoolMigrateImageStart, fmt.Sprintf("Setup %q has %s, not `%s`: a pool container runs its dev servers under the supervisor, so its run.start is `%s`.", img.Setup, ran, DevsupStart, DevsupStart))
+		if msg := poolSetupStartMessage(entry, img.Setup); msg != "" {
+			miss(PoolMigrateImageStart, msg)
 		}
 		if poolMigrateDevsupLine(yamlStrings(entry.Run.PrepareCommands)) == "" {
 			miss(PoolMigrateImageInstall, poolMigrateInstallMessage(img.Setup, doc, in))
@@ -415,9 +411,9 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 	return img
 }
 
-// poolMigrateMaxContainers is the pool's maxContainers, capped at what a pool
+// PoolMaxContainers is the pool's maxContainers, capped at what a pool
 // holds; fallback when the pool reads none.
-func poolMigrateMaxContainers(pool platform.ServiceStack, fallback int) int {
+func PoolMaxContainers(pool platform.ServiceStack, fallback int) int {
 	if a := effectiveAutoscaling(&pool); a != nil && a.HorizontalMaxCount > 0 {
 		return min(int(a.HorizontalMaxCount), poolContainerCeiling)
 	}
@@ -470,6 +466,21 @@ func poolMigrateSetupContent(config, setup string) (string, bool) {
 	return "", false
 }
 
+// poolSetupStartMessage says how a pool setup's run.start is not the
+// supervisor's, "" when it is: the one start predicate pool-migrate's image
+// step and CheckPoolSetups share.
+func poolSetupStartMessage(entry *ZeropsYmlEntry, setup string) string {
+	start := strings.TrimSpace(entry.Run.Start)
+	if start == DevsupStart {
+		return ""
+	}
+	ran := "no run.start"
+	if start != "" {
+		ran = "run.start `" + start + "`"
+	}
+	return fmt.Sprintf("Setup %q has %s, not `%s`: a pool container runs its dev servers under the supervisor, so its run.start is `%s`.", setup, ran, DevsupStart, DevsupStart)
+}
+
 // poolMigrateDevsupLine is the item of prepareCommands that installs
 // zcp-devsup — the download line AdoptSupervisorYAML recognizes — "" for none.
 func poolMigrateDevsupLine(prepareCommands []string) string {
@@ -485,24 +496,35 @@ func poolMigrateDevsupLine(prepareCommands []string) string {
 // whole line to add: the one the dev setup installs it with, when it carries
 // one, else the line with the zcp-devsup this zcp installs.
 func poolMigrateInstallMessage(setup string, doc *ZeropsYmlDoc, in PoolMigrateImageInput) string {
-	msg := fmt.Sprintf("Setup %q's run.prepareCommands install no zcp-devsup, and a pool's image carries the supervisor: ", setup)
 	for _, name := range []string{in.DevSetup, in.Dev, devSetupName} {
 		e := doc.FindEntry(name)
 		if name == "" || e == nil {
 			continue
 		}
 		if line := poolMigrateDevsupLine(yamlStrings(e.Run.PrepareCommands)); line != "" {
-			return msg + fmt.Sprintf("add the line the dev setup %q installs it with as the first item of run.prepareCommands — %s", name, line)
+			return poolSetupNoInstall(setup) + fmt.Sprintf("add the line the dev setup %q installs it with as the first item of run.prepareCommands — %s", name, line)
 		}
 	}
 	url := ""
 	if in.InstallURL != nil {
 		url = in.InstallURL()
 	}
+	return poolSetupInstallMessage(setup, url)
+}
+
+// poolSetupNoInstall opens the message for a pool setup installing no
+// zcp-devsup.
+func poolSetupNoInstall(setup string) string {
+	return fmt.Sprintf("Setup %q's run.prepareCommands install no zcp-devsup, and a pool's image carries the supervisor: ", setup)
+}
+
+// poolSetupInstallMessage names the install line of url (DevsupLatestURL for
+// "") for a pool setup installing no zcp-devsup.
+func poolSetupInstallMessage(setup, url string) string {
 	if url == "" {
 		url = DevsupLatestURL
 	}
-	return msg + "add this line as the first item of run.prepareCommands — " + DevsupPrepareCommand(url)
+	return poolSetupNoInstall(setup) + "add this line as the first item of run.prepareCommands — " + DevsupPrepareCommand(url)
 }
 
 // poolMigratePreviewBase reads previewPortBase from the commit's declaration,
@@ -519,14 +541,24 @@ func poolMigratePreviewBase(read poolMigrateCommitRead, short string, maxContain
 	case err != nil:
 		miss(PoolMigrateImagePreviewBase, fmt.Sprintf("%s at %s does not parse: %v.", devsup.DeclarationPath, short, err))
 		return 0, false
-	case decl.PreviewPortBase == 0:
+	case poolPreviewBaseUnset(decl.PreviewPortBase):
 		miss(PoolMigrateImagePreviewBase, fmt.Sprintf("%s at %s sets no previewPortBase: add `\"previewPortBase\": <port>` (%s) and commit it.", devsup.DeclarationPath, short, how))
 		return 0, false
-	case decl.PreviewPortBase+maxContainers > poolMigrateHighestPort:
+	case poolPreviewBaseTooHigh(decl.PreviewPortBase, maxContainers):
 		miss(PoolMigrateImagePreviewBase, fmt.Sprintf("previewPortBase %d in %s at %s puts the last preview port at %d, past %d, the highest port a container declares: lower it.", decl.PreviewPortBase, devsup.DeclarationPath, short, decl.PreviewPortBase+maxContainers, poolMigrateHighestPort))
 		return decl.PreviewPortBase, false
 	}
 	return decl.PreviewPortBase, true
+}
+
+// poolPreviewBaseUnset and poolPreviewBaseTooHigh are the preview-port-base
+// predicates pool-migrate's image step and CheckPoolSetups share: a
+// declaration sets no previewPortBase, or one whose last preview port for a
+// pool of maxContainers is past the highest port a container declares.
+func poolPreviewBaseUnset(base int) bool { return base == 0 }
+
+func poolPreviewBaseTooHigh(base, maxContainers int) bool {
+	return base+maxContainers > poolMigrateHighestPort
 }
 
 // poolMigratePreviewPortsMessage names the preview ports the setup's

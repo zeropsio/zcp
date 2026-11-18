@@ -20,16 +20,10 @@ import (
 // the project when its shape changes without ever writing over a person's
 // edit (spec-mate §2.8a.5, D30).
 
-// defaultPoolMaxContainers is the most containers a part's dev pool is
-// written with when its live scale was not read: the pool migration's own
-// stanza (docs/spec-workflows.md §13.1).
-const defaultPoolMaxContainers = 3
-
 // groupPoolEntry writes a part's dev pool on the AI Agent tier as zcp imports
-// one (pool-migrate's provision stanza; knowledge theme pools-and-box, "A
-// part's dev pool"): its hostname and type, no container until a lease asks
-// for one (a container the platform creates for the minimum cannot be reset,
-// DP-15), and its live maximum and vertical scale; the tier writes its own
+// one (PoolStanza; knowledge theme pools-and-box, "A part's dev pool"): its
+// hostname and type, PoolMinContainers, and its live maximum
+// (DefaultPoolMaxContainers when unread) and vertical scale; the tier writes its own
 // service variables beside them (groupPoolVault), the sshIsolation that
 // admits zcp among them. No build and no setup: a
 // pool's first image is deployed from main by the Mate's stand-up, never by
@@ -44,9 +38,9 @@ func groupPoolEntry(r GroupRuntime, priority int) (map[string]any, string) {
 		"hostname":      r.DevHostname,
 		"type":          r.ServiceType,
 		"priority":      priority,
-		"minContainers": 0,
+		"minContainers": PoolMinContainers,
 	}
-	maxContainers := defaultPoolMaxContainers
+	maxContainers := DefaultPoolMaxContainers
 	if r.Scaling != nil && r.Scaling.MaxContainers > 0 {
 		maxContainers = r.Scaling.MaxContainers
 	}
@@ -64,10 +58,6 @@ func groupPoolEntry(r GroupRuntime, priority int) (map[string]any, string) {
 	return entry, strings.Join(wrapWords(comment, commentWidth-4), "\n")
 }
 
-// poolSSHIsolationKey is a pool's SSH admission: which service its
-// containers answer SSH from.
-const poolSSHIsolationKey = "sshIsolation"
-
 // groupPoolVault is a pool's service variables as the AI Agent tier writes
 // them (groupVaultFields, through write), its sshIsolation as written: an
 // admission rule naming the zcp service, never a secret, which a generated
@@ -76,7 +66,7 @@ func groupPoolVault(envs []ProjectEnvVar, write valueWriter) []yamlField {
 	rest := make([]ProjectEnvVar, 0, len(envs))
 	var admission *yamlField
 	for _, env := range envs {
-		if env.Key == poolSSHIsolationKey {
+		if env.Key == PoolSSHIsolationKey {
 			admission = &yamlField{key: env.Key, value: newVaultValue(env.Key, env.Value, false)}
 			continue
 		}

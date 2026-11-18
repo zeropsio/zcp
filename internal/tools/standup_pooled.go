@@ -8,17 +8,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -282,7 +281,8 @@ func (d standupDeps) buildPooled(ctx context.Context, hqc hq.Client, pairs []*st
 }
 
 // buildPooledPair builds one pooled part: reads main's head once, checks the
-// zerops.yaml at it names each service's setup (F4), commit-deploys it to
+// zerops.yaml and the dev-server declaration at it hold the part's pool setup
+// (ops.CheckPoolSetups, F4), commit-deploys it to
 // every service of the part with no build, waits for each build, and reads
 // main again (F13). Answers the commit built and main's head when it moved.
 func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *standupPair, services []pooledService, live map[string]*platform.ServiceStack, rows *standupVerdictRows, progress *standupProgress) (commit string, built bool, ahead string) {
@@ -334,9 +334,18 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 		failAll(platform.ClassRefused, fmt.Sprintf("%s has no %s branch in HQ", sp.repository, hqBase))
 		return "", false, ""
 	}
-	setups, yamlName, class, err := zeropsYamlSetups(ctx, scratch, commit)
+	lacks, err := poolSetupLacks(ctx, scratch, commit, sp, live)
 	if err != nil {
-		failAll(class, fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
+		failAll(classOr(err), fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
+		return "", false, ""
+	}
+	if len(lacks) > 0 {
+		cause := fmt.Sprintf("%s at %s lacks the part's pool setup: %s", sp.repository, shortCommit(commit), strings.Join(lacks, " "))
+		for _, s := range toBuild {
+			rows.set(s.host, func(in *ops.StandupRowInput) {
+				in.Commit, in.Class, in.Cause = commit, platform.ClassRefused, cause
+			})
+		}
 		return "", false, ""
 	}
 
@@ -345,13 +354,6 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 	var joinedMu sync.Mutex
 	joined := "" // a build of another commit in flight, joined (F7)
 	for _, s := range toBuild {
-		if !slices.Contains(setups, s.setup) {
-			rows.set(s.host, func(in *ops.StandupRowInput) {
-				in.Commit, in.Class = commit, platform.ClassRefused
-				in.Cause = fmt.Sprintf("%s at %s in %s has no setup %q, which %s builds by", yamlName, shortCommit(commit), sp.repository, s.setup, s.host)
-			})
-			continue
-		}
 		wg.Go(func() {
 			ok, built := d.commitDeployOne(ctx, sp, s, live[s.host], commit, rows, progress)
 			if !ok {
@@ -630,34 +632,36 @@ func (d standupDeps) leaseDeps() ops.LeaseDeps {
 	}
 }
 
-// zeropsYamlSetups are the setups the repository's zerops.yaml names at
-// commit, and the file's name; on an error its class: a read's own, a file
-// absent or unreadable refused.
-func zeropsYamlSetups(ctx context.Context, scratch *hq.Scratch, commit string) ([]string, string, platform.ErrorClass, error) {
-	const yamlName = "zerops.yaml"
-	for _, name := range []string{yamlName, "zerops.yml"} {
+// poolSetupLacks is what main at commit lacks of the pooled pair's setup
+// (ops.CheckPoolSetups): its zerops.yaml (zerops.yml when it holds none) and
+// its dev-server declaration read from HQ, the part named by its stage's
+// setup, the pool's live maxContainers. An error is a read's own.
+func poolSetupLacks(ctx context.Context, scratch *hq.Scratch, commit string, sp *standupPair, live map[string]*platform.ServiceStack) ([]string, error) {
+	var zeropsYaml string
+	for _, name := range []string{"zerops.yaml", "zerops.yml"} {
 		body, found, err := scratch.File(ctx, commit, name)
 		if err != nil {
-			return nil, name, classOr(err), fmt.Errorf("could not read %s: %w", name, err)
+			return nil, fmt.Errorf("could not read %s: %w", name, err)
 		}
-		if !found {
-			continue
+		if found {
+			zeropsYaml = body
+			break
 		}
-		var doc struct {
-			Zerops []struct {
-				Setup string `yaml:"setup"`
-			} `yaml:"zerops"`
-		}
-		if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
-			return nil, name, platform.ClassRefused, fmt.Errorf("%s does not parse: %w", name, err)
-		}
-		setups := make([]string, 0, len(doc.Zerops))
-		for _, z := range doc.Zerops {
-			setups = append(setups, z.Setup)
-		}
-		return setups, name, "", nil
 	}
-	return nil, yamlName, platform.ClassRefused, errors.New("it has no " + yamlName)
+	declaration, _, err := scratch.File(ctx, commit, devsup.DeclarationPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not read %s: %w", devsup.DeclarationPath, err)
+	}
+	pool := sp.pair.Dev
+	maxContainers := bundle.DefaultPoolMaxContainers
+	if svc := live[pool.Hostname]; svc != nil {
+		maxContainers = ops.PoolMaxContainers(*svc, maxContainers)
+	}
+	parts := make([]ops.PoolPart, 0, len(sp.pair.Stages))
+	for _, st := range sp.pair.Stages {
+		parts = append(parts, ops.PoolPart{Part: st.Setup, Pool: pool.Hostname, Stage: st.Hostname, Type: st.Type, MaxContainers: maxContainers})
+	}
+	return ops.CheckPoolSetups(zeropsYaml, declaration, parts), nil
 }
 
 // askHQ makes one HQ call, waiting on an HQ that does not answer for up to
