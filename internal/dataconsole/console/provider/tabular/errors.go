@@ -62,7 +62,7 @@ var (
 // joins ErrAuth to that ErrUpstream, so the engine rebuilds the connection
 // from fresh credentials once before a read answers the failure.
 func engineErr(op string, err error) error {
-	if isAuthErr(err) || isConnectivityErr(err) {
+	if isConnectivityErr(err) {
 		return upstreamErr(op, err)
 	}
 	return provider.WithPublicDetail(
@@ -81,13 +81,13 @@ func engineErr(op string, err error) error {
 //
 // Where the driver exposes a typed, structured server error
 // (*pgconn.PgError, *mysql.MySQLError), its SQLSTATE class sharpens the
-// call: class "08" (connection exception) and class "28" (invalid
-// authorization specification — bad password/auth) are the two classes
-// that still mean connectivity even though the error is structured — an
-// auth failure surfacing mid-session is an outage, not a rejection of the
-// query text, and misclassifying it would misdirect the user into "fixing"
-// SQL that was never the problem. Both are the same two-digit class in
-// Postgres and MySQL/MariaDB's 5-character ANSI SQLSTATE. A
+// call: class "08" (connection exception) still means connectivity even
+// though the error is structured, and so does a refused credential
+// (isAuthErr, the one classifier for authentication) — an auth failure
+// surfacing mid-session is an outage, not a rejection of the query text,
+// and misclassifying it would misdirect the user into "fixing" SQL that was
+// never the problem. Class "08" is the same two-digit class in Postgres and
+// MySQL/MariaDB's 5-character ANSI SQLSTATE. A
 // *pgconn.PgError/*mysql.MySQLError value reaching this far already proves
 // the round-trip to the engine succeeded — the driver only constructs
 // these FROM a server response — so every other class is, by construction,
@@ -99,7 +99,7 @@ func isConnectivityErr(err error) bool {
 	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
 		return true
 	}
-	if provider.IsNetUnreachable(err) {
+	if provider.IsNetUnreachable(err) || isAuthErr(err) {
 		return true
 	}
 	var pgErr *pgconn.PgError
@@ -153,8 +153,7 @@ func isAuthErr(err error) bool {
 }
 
 func isConnectivitySQLStateClass(code string) bool {
-	class := sqlStateClass(code)
-	return class == "08" || class == "28"
+	return sqlStateClass(code) == "08"
 }
 
 func sqlStateClass(code string) string {
