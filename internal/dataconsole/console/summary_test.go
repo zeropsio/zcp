@@ -20,6 +20,7 @@ func (h summaryHost) ConnectionInfo(context.Context, string) (ConnectionInfo, er
 	return ConnectionInfo{Descriptor: h.descriptor}, nil
 }
 
+// witness: internal/dataconsole/console/summary.go | scheme = "clickhouse" → scheme = "postgresql"
 func TestConnectionSecretsStayInTheContainer(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -27,8 +28,9 @@ func TestConnectionSecretsStayInTheContainer(t *testing.T) {
 		descriptor provider.ConnectionDescriptor
 		want       string
 	}{
-		{"postgres", provider.SQLConn{Host: "db", Port: "5432", User: "secret-user", Password: "secret-password", Database: "app"}, "postgresql://••••:••••@db:5432/app"},
+		{"postgres", provider.SQLConn{Driver: "pgx", Host: "db", Port: "5432", User: "secret-user", Password: "secret-password", Database: "app"}, "postgresql://••••:••••@db:5432/app"},
 		{"mysql", provider.SQLConn{Driver: "mysql", Host: "db", Port: "3306", User: "secret-user", Password: "secret-password", Database: "app"}, "mysql://••••:••••@db:3306/app"},
+		{"clickhouse", provider.SQLConn{Driver: "clickhouse", Host: "ch", Port: "9000", User: "secret-user", Password: "secret-password", Database: "default"}, "clickhouse://••••:••••@ch:9000/default"},
 		{"redis", provider.KVConn{Host: "cache", Port: "6379", Password: "secret-password"}, "redis://:••••@cache:6379"},
 		{"object", provider.ObjectConn{Endpoint: "https://secret-user:secret-password@storage.example?signature=secret-signature", Bucket: "assets", AccessKey: "secret-access", SecretKey: "secret-key"}, "https://storage.example/assets"},
 	} {

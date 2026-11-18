@@ -29,9 +29,17 @@ func (e *Engine) Summary(ctx context.Context, hostname string) (ServiceSummary, 
 	}
 	switch d := ci.Descriptor.(type) {
 	case provider.SQLConn:
-		scheme := "postgresql"
-		if d.Driver == "mysql" {
+		// The scheme follows the driver the family's own builder set.
+		var scheme string
+		switch d.Driver {
+		case "pgx":
+			scheme = "postgresql"
+		case "mysql":
 			scheme = "mysql"
+		case "clickhouse":
+			scheme = "clickhouse"
+		default:
+			return ServiceSummary{}, provider.ErrUnsupported
 		}
 		return ServiceSummary{MaskedConnection: scheme + "://••••:••••@" + net.JoinHostPort(d.Host, d.Port) + "/" + url.PathEscape(d.Database)}, nil
 	case provider.KVConn:
