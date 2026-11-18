@@ -3983,49 +3983,81 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
   `zcp git` do (§6.8, §6.9). A refusal, and a call with no command, is one line on stderr with
   exit 2. Its other codes are a shell's: 127 for a command that is not found, 126 for one that is
   there and cannot be run — a file that is not executable, by its path or the first of its name
-  on `PATH`, a directory, or one the system refuses to start.
+  on `PATH`, a directory, or one the system refuses to start. An executable script with no `#!`
+  line, which the system refuses as a program, is run with `/bin/sh` as a shell runs it.
 - **`{{env:KEY}}` in a `zerops_browser` command** (`internal/ops/browser_env.go`,
-  `browser_redact.go`) is how a value reaches a page, where sign-ins happen. In any argument of a
-  `commands` element, every `{{env:KEY}}` — a whole argument or inside one — is replaced with the
-  value the store holds under KEY, once: a value that itself holds placeholder text is not read
-  again, and the call's `url` is not searched. Where the argument is JavaScript — an `eval`
-  step's source, the argument after a `wait`'s `--fn` — the placeholder is written inside a
-  quoted string, single, double or backtick, and the value is escaped so that the string is
-  exactly the value (the backslash, the three quotes, `$`, line ends and control characters); anywhere
-  else it stands as it is. A refusal fails the whole call before the browser is asked for. The
-  result never holds a substituted value where zcp can tell:
+  `browser_script.go`, `browser_redact.go`, `browser_match.go`) is how a value reaches a page,
+  where sign-ins happen. In any argument of a `commands` element, every `{{env:KEY}}` — a whole
+  argument or inside one — is replaced with the value the store holds under KEY, once: a value
+  that itself holds placeholder text is not read again, and the call's `url` is not searched.
+  Where the argument is JavaScript — an `eval` step's source, the argument after a `wait`'s
+  `--fn` — the placeholder stands inside a quoted string, single, double or backtick, and the
+  value is escaped so that the string is exactly the value (the backslash, the three quotes,
+  `$`, line ends and control characters); anywhere else it stands as it is. The whole call is
+  refused before the browser is asked for: by the store's reader (above); for a placeholder in
+  JavaScript that is not plain content of a string literal — in code, in a comment, after a
+  backslash, inside a template's `${…}` — or where zcp cannot tell (after a `/` in code that
+  opens no comment and may open a regular expression; in a `'` or `"` string that runs into a
+  line end), since the page's own syntax error would quote a piece of the value; and for a value
+  longer than 4096 bytes (`browserValueMaxLen`), which is more than the search below is bounded
+  for. The result never holds a substituted value where zcp can tell:
   - **The echo is the input.** A step names its command as it was written, byte for byte: zcp
     puts the caller's own command back by its place in the batch and never searches it. Every
     text zcp itself composes about a step — one that got no answer, one it did not run — names
     the command as written too, so neither the length of a value nor a way of escaping it
     matters there.
   - **Text from the browser side is searched.** What agent-browser and the page gave back —
-    each step's result (every string and every number, and the keys of the value an eval
-    returned) and error, and agent-browser's stderr — has each substituted value of at least six bytes replaced by
-    its placeholder before zcp reads or composes anything from it: `steps`, `errorsOutput`,
+    each step's result (every string and every number, and every key below the names
+    agent-browser itself wraps a result in: an eval's value, a storage's keys) and error, and
+    agent-browser's stderr — has each substituted value of at least six bytes replaced by its
+    placeholder before zcp reads or composes anything from it: `steps`, `errorsOutput`,
     `consoleOutput`, `networkOutput`, `message` and the `fullResult` file are made from that.
     Values that overlap in a text are replaced together.
-  - **The forms found.** The value's characters in order, each one as itself; as JSON text
-    escapes it, applied once, twice or three times (JSON inside a JSON string inside a JSON
-    string): `\"`, `\\`, `\/`, `\n` and the other short escapes, and `\uXXXX` in either hex case,
-    also for `<`, `>`, `&` and any character outside ASCII, a surrogate pair where it takes one;
-    or as the JavaScript escape an eval was given (`\'`, `` \` ``, `\$`), also JSON-escaped once
-    or twice on top. Each byte of any of these stands as itself; as its `%HH` escape in either
-    hex case, a space also as `+` — every percent-encoding of the value, whichever characters
-    the encoder chose to escape; or, for `&`, `<`, `>`, `"` and `'`, as its HTML entity (`&amp;`,
-    `&lt;`, `&gt;`, `&quot;` or `&#34;`, `&#39;`, `&#039;`, `&#x27;` or `&apos;`), as a snapshot
-    or a `get html` returns it.
-  - **Not redacted.** A value under six bytes in text from the browser side (it would be a
+  - **The value as a browser hands it back.** A value is searched for as it is stored and as a
+    page returns it once it was typed in: trimmed of the whitespace around it (an e-mail field
+    trims), with its line breaks removed (a one-line field strips them), with every line break
+    as LF (a textarea) and as CRLF (a submitted form), and each of its lines on its own (a
+    snapshot gives one text per line) — each of these where it is at least six bytes.
+  - **The forms found.** The characters of any of those in order, each one as itself; as a JSON
+    or JavaScript string escapes it — `\"`, `\\`, `\/`, `\n` and the other short escapes, `\'`,
+    `` \` `` and `\$` as an eval was given them, `\uXXXX` for any character with each hex digit
+    in either case (a surrogate pair where it takes one), `\xHH` for one up to U+00FF — and so
+    again inside JSON, up to three levels in all (JSON inside a JSON string inside a JSON
+    string), a quote, a slash, an apostrophe, a backtick and a dollar escaped again or not at
+    each level. Each byte of any of these stands as itself; as its `%HH` escape in either hex
+    case, a space also as `+` — every percent-encoding of the value, whichever characters the
+    encoder chose to escape; or as the HTML entity of its character: named for `&`, `<`, `>`,
+    `"`, `'` and the no-break space (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`), or
+    numeric, decimal or hexadecimal with any leading zeros (`&#39;`, `&#039;`, `&#x27;`), for
+    any character.
+  - **Not redacted.** A form under six bytes in text from the browser side (it would be a
     common fragment of ordinary output — a short word, a number — and redacting it would shred
     the result while protecting nothing a guess does not find); any transformation not listed —
-    base64, a hash, another encoding, one of the listed ones applied where the list has it once
-    (a percent-encoded entity, a byte percent-encoded twice, a fourth level of JSON), the value
-    split, reordered or cut short; and a screenshot, which is pixels — a password field shows
-    dots, and a secret typed into a visible field is in the picture.
+    base64, a hash, a change of letter case, another normal form of Unicode, another encoding,
+    one of the listed ones applied where the list has it once (a percent-encoded entity, a byte
+    percent-encoded twice, a fourth level of JSON), the value reordered or cut inside a line;
+    and a screenshot, which is pixels — a password field shows dots, and a secret typed into a
+    visible field is in the picture.
+  - **The search is bounded, and what was not searched is not returned.** The text is read
+    once: every reading of it that is still the beginning of a value is followed, and readings
+    that have come to the same place are one. Its work is counted — a step per character read
+    and per reading a character moves — and one call has a hundred million steps
+    (`browserRedactBudget`), about three seconds; an ordinary megabyte of output takes a few
+    million, and only a value that repeats one character against a text of that character
+    comes near the bound. When the search does not finish, the result withholds: every step
+    keeps its command as written and whether it succeeded, a failed one says its error is
+    withheld, there is no step result, no `errorsOutput`, `consoleOutput` or `networkOutput`,
+    and `message` says that text from the browser side was withheld and how to read it (fewer
+    or shorter values, less output). A capture that was cut at its cap — agent-browser's
+    stderr at a megabyte — loses its end from where a form of a value may have begun, so no
+    part of a value the cut went through remains.
 
   The tool says the screenshot rule where a screenshot is asked for (its `screenshot`
-  parameter) and the rest where commands are written (its `commands` parameter); its
-  description, at Claude Code's 4096-unit cap, only points there.
+  parameter) and the rest where commands are written (its `commands` parameter): that the
+  value comes back as the placeholder, what is not hidden (a value under six characters, one
+  the page changed beyond trimming and escaping), what is refused before the browser opens,
+  and that in JavaScript the placeholder goes inside a quoted string. Its description, at
+  Claude Code's 4096-unit cap, only points there.
 - **Checking behind a sign-in.** A Mate's AGENTS.md has one block for it
   (`templates/agents_own_vault.md`, Mate-gated like the other blocks of §2.0): where the app owns
   its users the agent makes a test user itself; where the identity comes from elsewhere it asks
@@ -4418,7 +4450,7 @@ The first Mate that draws the mirror card is 0.16.114; `MinimumMateVersion` is a
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
 | MF-18 | A secret the person gives never reaches the Mate's records or its agent: the engine takes saved or declined, never a value, and words the agent's line itself. Mate `EngineWire.test.ts`, zcp `TestEnvRequest_Refuses` |
 | MF-18 | A page the agent publishes is self-contained or refused: its local pictures and fonts are inlined only when they are regular files in the project that are what they are named as — a picture of at most 40 million pixels that decodes whole, re-encoded from its pixels; a font by its magic bytes; script, comment and CSS comment text is never read; a format zcp cannot decode, a reference that names no file and a remote resource are named as ones that will not load; a missing file is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_PicturesAndFonts_ByFormat`, `TestPublishPage_FontsAndHugePictures_Refused`, `TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames`, `TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
-| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a hidden name of either rule (C-15) is neither listed, asked for, written nor removed there, while the second rule's names stay ordinary in every other vault; `zcp with` hands the named values to one command and `{{env:KEY}}` in a `zerops_browser` command to one page, both through one reader of the live store that refuses a missing key and a hidden name before anything runs and prints no value; a browser result names each command as it was written, byte for byte, as does every text zcp composes about a step, and carries the placeholder where a substituted value came back from the browser side in a listed form. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue`, `TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens`, `TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder`, `TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharactersWereEscaped`, `TestBrowserBatch_EnvPlaceholder_AValueInNestedJSONOrHTMLIsFound`, `TestBrowserBatch_EnvPlaceholder_AStepWithNoAnswerIsNamedAsWritten`, `TestBrowserBatch_EnvPlaceholder_TheEchoIsTheCommandAsWritten`, `TestBrowserBatch_EnvPlaceholder_InAnEvalTheQuotedStringIsExactlyTheValue`, `TestBrowserBatch_EnvPlaceholder_OverlappingValuesAreReplacedTogether`, `TestBrowserBatch_EnvPlaceholder_AnEvalsValueIsSearchedKeysAndNumbersToo`, `TestBrowserBatch_EnvPlaceholder_AMissingKeyIsWordedByWhereZcpRuns`, `TestEnvTool_MateTrue_RefusedOnAnActionThatNamesNoVault`, `TestWith_WordsFollowWhereZcpRuns`, `TestWith_ACommandThatCannotBeRun_ExitsAsAShellDoes`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
+| MF-19 | A value of the Mate's own vault is the Mate's alone (§5.8a): `mate=true` names the service zcp runs in and nothing else, only in a Mate; its ask is the service ask on the container's hostname, with no new wire; no service is restarted or named to restart for its key, and the answers say how the value is used; a hidden name of either rule (C-15) is neither listed, asked for, written nor removed there, while the second rule's names stay ordinary in every other vault; `zcp with` hands the named values to one command and `{{env:KEY}}` in a `zerops_browser` command to one page, both through one reader of the live store that refuses a missing key and a hidden name before anything runs and prints no value; a browser result names each command as it was written, byte for byte, as does every text zcp composes about a step, and carries the placeholder where a substituted value came back from the browser side in a listed form. zcp `TestEnvTool_MateTrue_NamesTheServiceZcpRunsIn`, `TestEnvTool_MateTrue_RefusedWithAnotherTargetOrOutsideAMate`, `TestEnvTool_Request_OwnVault_IsTheServiceAskAndSaysHowToUseTheValue`, `TestEnvTool_Get_OwnVault_LeavesTheHiddenNamesOut`, `TestEnvChange_OwnVault_RestartsNothing`, `TestEnvChange_OwnVault_RefusesAHiddenName`, `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault`, `TestWith_RunsTheCommandWithTheNamedValues`, `TestWith_AMissingKey_RunsNothingAndSaysWhatToDo`, `TestWith_AHiddenName_IsHandedToNoCommand`, `TestWith_NoRefusal_PrintsAValue`, `TestBrowserBatch_EnvPlaceholder_ReachesThePageAsTheValue`, `TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens`, `TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder`, `TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharactersWereEscaped`, `TestBrowserBatch_EnvPlaceholder_AValueInNestedJSONOrHTMLIsFound`, `TestBrowserBatch_EnvPlaceholder_AStepWithNoAnswerIsNamedAsWritten`, `TestBrowserBatch_EnvPlaceholder_TheEchoIsTheCommandAsWritten`, `TestBrowserBatch_EnvPlaceholder_InAnEvalTheQuotedStringIsExactlyTheValue`, `TestBrowserBatch_EnvPlaceholder_OverlappingValuesAreReplacedTogether`, `TestBrowserBatch_EnvPlaceholder_AnEvalsValueIsSearchedKeysAndNumbersToo`, `TestBrowserBatch_EnvPlaceholder_AMissingKeyIsWordedByWhereZcpRuns`, `TestBrowserBatch_EnvPlaceholder_AValueTheBrowserNormalizedIsFound`, `TestBrowserBatch_EnvPlaceholder_InJavaScriptOutsideAQuotedStringIsRefused`, `TestBrowserBatch_EnvPlaceholder_PageOwnedKeysOfAnyStepAreSearched`, `TestBrowserBatch_EnvPlaceholder_AnyCharacterAsAUnicodeEscapeOrANumericEntityIsFound`, `TestBrowserBatch_EnvPlaceholder_AValueOverTheLengthLimitIsRefused`, `TestBrowserBatch_EnvPlaceholder_ASearchThatCannotFinishWithholdsTheText`, `TestBrowserBatch_EnvPlaceholder_ACaptureCutAtItsCapKeepsNoPartOfAValue`, `TestWith_AScriptWithNoInterpreterLine_RunsWithSh`, `TestEnvTool_MateTrue_RefusedOnAnActionThatNamesNoVault`, `TestWith_WordsFollowWhereZcpRuns`, `TestWith_ACommandThatCannotBeRun_ExitsAsAShellDoes`, `TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault`. |
 
 ---
 
