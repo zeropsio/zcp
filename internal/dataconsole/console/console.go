@@ -81,7 +81,14 @@ type Engine struct {
 
 	mu       sync.Mutex
 	services []ServiceView
-	built    map[string]provider.Provider // hostname -> provider
+	built    map[string]builtConn // hostname -> its one connection
+}
+
+// builtConn is a service's one connection and the descriptor it was built
+// from: Rebuild compares that descriptor with a fresh read, in memory only.
+type builtConn struct {
+	p    provider.Provider
+	from provider.ConnectionDescriptor
 }
 
 // EngineOption adjusts an Engine at NewEngine.
@@ -101,7 +108,7 @@ func NewEngine(host Host, policy *safety.Policy, factories map[provider.Family]F
 		host:      host,
 		policy:    policy,
 		factories: factories,
-		built:     map[string]provider.Provider{},
+		built:     map[string]builtConn{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -139,9 +146,9 @@ func (e *Engine) Refresh(ctx context.Context) error {
 	e.mu.Lock()
 	e.services = views
 	// Drop any built providers no longer present.
-	for host, p := range e.built {
+	for host, b := range e.built {
 		if !containsHost(views, host) {
-			_ = p.Close()
+			_ = b.p.Close()
 			delete(e.built, host)
 		}
 	}
@@ -171,11 +178,11 @@ func (e *Engine) ProviderFor(ctx context.Context, hostname string) (provider.Pro
 		e.mu.Unlock()
 		return nil, ServiceView{}, fmt.Errorf("service %q: %w", hostname, provider.ErrNotFound)
 	}
-	if p, ok := e.built[hostname]; ok {
+	if b, ok := e.built[hostname]; ok {
 		e.mu.Unlock()
-		return p, view, nil
+		return b.p, view, nil
 	}
-	factory, ok := e.factories[view.Family]
+	_, ok = e.factories[view.Family]
 	e.mu.Unlock()
 	if !ok {
 		return nil, view, fmt.Errorf("service %q (%s): %w", hostname, view.Family, provider.ErrUnsupported)
@@ -185,9 +192,17 @@ func (e *Engine) ProviderFor(ctx context.Context, hostname string) (provider.Pro
 	if err != nil {
 		return nil, view, fmt.Errorf("connection info for %q: %w", hostname, err)
 	}
-	p, err := factory(ci, e.policy)
+	p, err := e.build(ctx, hostname, view, ci)
+	return p, view, err
+}
+
+// build makes and preflights a connection from ci and caches it as the
+// service's one connection. When another request cached one meanwhile, the
+// new one is closed and the cached one returned: one pool per service.
+func (e *Engine) build(ctx context.Context, hostname string, view ServiceView, ci ConnectionInfo) (provider.Provider, error) {
+	p, err := e.factories[view.Family](ci, e.policy)
 	if err != nil {
-		return nil, view, fmt.Errorf("build provider for %q: %w", hostname, err)
+		return nil, fmt.Errorf("build provider for %q: %w", hostname, err)
 	}
 	// Preflight: prove reachable + authorized before caching. A provider built
 	// while the VPN is down (or with a dropped connection) is NOT cached, so a
@@ -196,23 +211,46 @@ func (e *Engine) ProviderFor(ctx context.Context, hostname string) (provider.Pro
 	// VPN hint on an auth failure.
 	if herr := p.Health(ctx); herr != nil {
 		_ = p.Close()
-		return nil, view, fmt.Errorf("preflight %q: %w", hostname, herr)
+		return nil, fmt.Errorf("preflight %q: %w", hostname, herr)
 	}
 	e.mu.Lock()
-	e.built[hostname] = p
+	if cached, ok := e.built[hostname]; ok {
+		e.mu.Unlock()
+		_ = p.Close()
+		return cached.p, nil
+	}
+	e.built[hostname] = builtConn{p: p, from: ci.Descriptor}
 	e.mu.Unlock()
-	return p, view, nil
+	return p, nil
 }
 
-// Rebuild replaces a connection that failed authentication with one built
-// from freshly read credentials. The failed provider leaves the cache only if
-// it is still the one cached for hostname, so requests that failed on the
-// same connection share one rebuild: a later caller finds the new one cached.
-// Closing the failed provider ends other requests still on it; they answer
-// their own error.
-func (e *Engine) Rebuild(ctx context.Context, hostname string, failed provider.Provider) (provider.Provider, ServiceView, error) {
+// Rebuild answers a connection that failed authentication. When another
+// request already replaced failed, its connection is returned. Otherwise the
+// service's credentials are read again: only when they differ from the ones
+// failed was built from is failed dropped, closed and a connection built from
+// the fresh ones; when they are the same, rebuilt is false and the healthy
+// pool stays, since a new one would fail the same way. Closing failed ends
+// other requests still on it; they answer their own error.
+func (e *Engine) Rebuild(ctx context.Context, hostname string, failed provider.Provider) (p provider.Provider, rebuilt bool, err error) {
 	e.mu.Lock()
-	stale := e.built[hostname] == failed
+	view, ok := findView(e.services, hostname)
+	cur, cached := e.built[hostname]
+	e.mu.Unlock()
+	if !ok {
+		return nil, false, fmt.Errorf("service %q: %w", hostname, provider.ErrNotFound)
+	}
+	if cached && cur.p != failed {
+		return cur.p, true, nil
+	}
+	ci, err := e.host.ConnectionInfo(ctx, view.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("connection info for %q: %w", hostname, err)
+	}
+	if cached && ci.Descriptor == cur.from {
+		return nil, false, nil
+	}
+	e.mu.Lock()
+	stale := e.built[hostname].p == failed
 	if stale {
 		delete(e.built, hostname)
 	}
@@ -220,17 +258,18 @@ func (e *Engine) Rebuild(ctx context.Context, hostname string, failed provider.P
 	if stale {
 		_ = failed.Close()
 	}
-	return e.ProviderFor(ctx, hostname)
+	p, err = e.build(ctx, hostname, view, ci)
+	return p, err == nil, err
 }
 
 // Close releases every built provider.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, p := range e.built {
-		_ = p.Close()
+	for _, b := range e.built {
+		_ = b.p.Close()
 	}
-	e.built = map[string]provider.Provider{}
+	e.built = map[string]builtConn{}
 }
 
 func containsHost(vs []ServiceView, host string) bool {

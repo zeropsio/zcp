@@ -354,7 +354,9 @@ container — is `ErrNoCredentials`, its text naming the service and the keys, n
 withheld key the connection never reads refuses nothing. A read the service refuses for the kept
 connection's credentials (`ErrAuth`, always joined to `ErrUpstream`, so still 502 `upstream`) is run
 once more on a connection built from freshly read credentials, and only that run's failure is
-answered; a write is never re-sent, the next read rebuilds. Tabular (SQLSTATE class `28` on
+answered; when the fresh credentials are the ones the connection holds, the failure is answered at
+once and the connection stays. A service has one connection: of two built at once, one is closed. A
+write is never re-sent, the next read rebuilds. Tabular (SQLSTATE class `28` on
 PostgreSQL and MariaDB/MySQL, exception `516` on ClickHouse), document (401/403) and object (access
 denied) tell authentication apart; key-value and stream do not, and keep their connection until the console ends, as does a connection
 whose service stops sharing its variables while its password still works: no event reaches the

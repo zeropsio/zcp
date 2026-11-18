@@ -1029,19 +1029,23 @@ func (s *Server) providerFor(w http.ResponseWriter, r *http.Request) (provider.P
 
 // readOn runs a non-mutating provider call. A call the service refused for its
 // credentials (provider.ErrAuth) is run once more on a connection the engine
-// builds from freshly read credentials, and the request answers that run; a
-// rebuild that cannot read the credentials or reach the service answers its own
-// error. No other error is retried, and a mutating route never comes here, so a
+// builds from freshly read credentials, and the request answers that run; when
+// the fresh credentials are the ones the connection already holds, the failure
+// is answered at once and the pool stays. A rebuild that cannot read the
+// credentials or reach the service answers its own error. No other error is retried, and a mutating route never comes here, so a
 // write is never sent twice. ctx carries the route's deadline for both runs.
 func readOn[T any](ctx context.Context, e *console.Engine, service string, p provider.Provider, read func(context.Context, provider.Provider) (T, error)) (T, error) {
 	got, err := read(ctx, p)
 	if !errors.Is(err, provider.ErrAuth) {
 		return got, err
 	}
-	fresh, _, rerr := e.Rebuild(ctx, service, p)
+	fresh, rebuilt, rerr := e.Rebuild(ctx, service, p)
 	if rerr != nil {
 		var zero T
 		return zero, rerr
+	}
+	if !rebuilt {
+		return got, err
 	}
 	return read(ctx, fresh)
 }
