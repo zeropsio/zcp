@@ -822,9 +822,10 @@ zerops_workflow action="build-integration" service="appdev" integration="webhook
 - `action="close-mode"` validates to one of `auto`, `git-push`, or `manual` and writes `ServiceMeta.CloseDeployMode` + `CloseDeployModeConfirmed=true`.
 - `action="git-push-setup"` writes `GitPushState=configured` + `RemoteURL`.
 - `action="build-integration"` writes `BuildIntegration` (only valid when `GitPushState=configured`).
-- All three actions can be called at ANY time — before, during, or between develop flows.
+- All three actions can be called at ANY time — before, during, or between develop flows — except where the last bullet refuses them.
 - Subsequent develop flow reads the updated values from meta.
 - Returns guidance for the chosen close-mode + capability state.
+- Which origin `git-push-setup` does not configure: in a Mate, `git-push-setup` and `build-integration` are refused, because the repository, its credential and what builds from it are HQ's (`internal/tools/hq_wiring.go` `hqRepositoryActions`, `spec-mate.md` §10.10). In a container without a Mate, a pair the plain-project door wired to HQ (`spec-mate.md` §6.7) is not configured by `git-push-setup`: the action needs a personal access token and HQ issues none, so the pair stays `unconfigured` and its git is `zcp hq git`.
 
 **Close-mode + capabilities are always read from meta, never cached in deploy session.** This means:
 - User changes close-mode between deploys → next close uses the new mode automatically.
@@ -1743,14 +1744,16 @@ any git host; new, imported and adopted projects alike; production always means 
 plus CI; Gitea inside Zerops is the optional default origin, not a requirement; mate
 collaboration happens over a shared repository. Since 2026-10-02 the default origin inside a
 Mate is its HQ, which replaced that Gitea (`spec-mate.md §10.10`, *A Mate's git*); a repository the
-person keeps on GitHub is the checkout's origin instead (`spec-mate.md §5.10`).
+person keeps on GitHub is the checkout's origin instead (`spec-mate.md §5.10`). A container without a
+Mate can have HQ as its origin too, through the plain-project door, authenticated by the project key
+instead of a PAT; which key HQ admits and what works on such a pair today: `spec-mate.md §6.7`.
 
 ### 12.1 Vocabulary
 
 | Term | Meaning | Home |
 |---|---|---|
 | checkout | `/var/www` of ONE dev service: one working tree, one process, one subdomain. The isolation unit is the service, never a directory — worktrees are refused (`spec-mate.md §6.3`). Two agents (or two mates) on one dev service share the same uncommitted files; independent parallel work is a SECOND dev service with its own checkout. | GLC-1, `spec-mate.md §6.1/§6.3` |
-| origin | The shared remote of a checkout: `ServiceMeta.RemoteURL` + `GitPushState`, written only by `git-push-setup` (probe-first, PAT as the `GIT_TOKEN` service secret, url-scoped credential helper). Optional for dev; mandatory for production (P-LP-10). | §4.3, §4.4 |
+| origin | The shared remote of a checkout: `ServiceMeta.RemoteURL` + `GitPushState`. `git-push-setup` writes both (probe-first, PAT as the `GIT_TOKEN` service secret, url-scoped credential helper); the plain-project pass (`spec-mate.md §6.7`, `internal/tools/hq_project.go`) writes `RemoteURL` alone and leaves `GitPushState` unconfigured. Optional for dev; mandatory for production (P-LP-10). | §4.3, §4.4 |
 | tracked ref | The ref a target consumes — what stage or prod is built from. Recorded once in `ServiceMeta.TrackedRef` by `git-push-setup`'s confirm step (explicit `trackedRef` input, else the push source's current branch, else the remote's default branch, else `"main"`); read by the `git-push` default branch, the Actions template's `branches:` trigger, and the launch gate's remote-HEAD compare — each falling back to `"main"` independently (`trackedRefOrDefault`) when a pre-existing meta carries none. | GF-7 |
 | delivery | Whatever turns a working tree or a commit into an appVersion on a target: the dev self-deploy (working tree, `-g`), deploy-from-commit (cross-deploy, §4.9), CI on push (§12.5), or the user's own CI that zcp cannot see. Which one applies is DERIVED (§4.3), never chosen by close-mode. | §4.3, §8 DM |
 | evidence | Deploy result and local Work Session attempt fields (`sha`, `appVersionId`, `dirty`), subject to the correlation limitation in §4.9. Platform state owns the ACTIVE appVersion; absent evidence means source unknown. | §4.9, GF-5 |
@@ -1760,9 +1763,10 @@ person keeps on GitHub is the checkout's origin instead (`spec-mate.md §5.10`).
 
 | Route | Source of code | Repo state after the route | Origin |
 |---|---|---|---|
-| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent. zcp seeds no ignore rules and the working tree stays uncommitted — the agent writes `.gitignore` and makes the baseline commit itself, guided (§12.6, GF-2). A buildFromGit build leaves the clone's `.git/` history in `/var/www` (observed live on the farm 2026-09-14, G2 run), so such a service adopts as `existing`; zcp does not depend on it. | none until `git-push-setup` |
+| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent. zcp seeds no ignore rules and the working tree stays uncommitted — the agent writes `.gitignore` and makes the baseline commit itself, guided (§12.6, GF-2). A buildFromGit build leaves the clone's `.git/` history in `/var/www` (observed live on the farm 2026-09-14, G2 run), so such a service adopts as `existing`; zcp does not depend on it. | none until `git-push-setup`, or the plain-project door (row below) |
 | user's existing repository | `git-push-setup remoteUrl=<their host>` on the dev service; reconstruction from the remote when `/var/www/.git` is missing (§4.4) | repo synced to origin, `GitPushState=configured` | the user's, any host |
-| `adopt` (§3) | a running service, with or without git | GLC-7: `initialized` (no repo / marker-only HEAD — brought to commit-ready state, working tree left uncommitted) or preserved existing HEAD; adoption appVersion and provenance recorded in metadata | none until `git-push-setup` |
+| `adopt` (§3) | a running service, with or without git | GLC-7: `initialized` (no repo / marker-only HEAD — brought to commit-ready state, working tree left uncommitted) or preserved existing HEAD; adoption appVersion and provenance recorded in metadata | none until `git-push-setup`, or the plain-project door (row below) |
+| plain-project door — a container without a Mate whose environment names HQ and whose key HQ admits (`spec-mate.md §6.7`); runs in the repository pass after bootstrap close, adopt and develop start; never in local mode (`internal/tools/hq_wiring.go:214-217`); a pair with an origin of the person's own, or keyed by its dev pool, is left alone (`internal/tools/hq_project.go:52`, `:62`) | the dev service's own tree | `origin` is the HQ repository named after the dev hostname; the checkout's `main` descends from HQ's seed commit; nothing pushed by zcp; `RemoteURL` recorded, `GitPushState` unconfigured | HQ, by `zcp hq git` with the project key; no `GIT_TOKEN`. With the key Zerops issues today the door refuses (`403 key_too_wide`) and the origin stays none (live check 2026-11-18) |
 | launch-production (§10) | never a clone: prod starts `startWithoutCode`, the first release is the first CI build | prod services carry no repo | the dev checkout's origin, mandatory |
 
 ### 12.3 The change path — one checkout
@@ -1808,11 +1812,12 @@ target, and leave an appVersion whose version name is that revision's sha.** Sha
 | GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name: `BuildIntegration=actions`'s setup-aware zcli workflow (`tools/workflow_build_integration.go`) passes `--version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"` in a bash step (GF-10; the compact wrapper-action variant, `zeropsio/actions`, cannot express it). The §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`, `ZEROPS_TOKEN_PROD`) does NOT yet — separate template, GF-10 not extended there. |
 | GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
 | A Mate's HQ deploying the application's environments from its own archive of a commit | built for stages and production (`spec-mate.md` §10.8, §10.11); zcp writes no workflow into a Mate's repositories | version name `<label> <sha7>`: `main` for a stage, the release tag for production (mate-hq `internal/releases/versions.go`) |
+| A project without a Mate on an HQ origin (plain-project door, `spec-mate.md §6.7`) | no delivery (live check 2026-11-18): HQ deploys nothing for such a project, it only stores its Git (a plain project "runs no Mate server and only calls", `spec-mate.md §3.5`); `strategy="git-push"` is refused (`unconfigured`); the platform refuses HQ's address as a `buildFromGit` source | none |
 | user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
 | zcp-owned webhook relay | **not needed**; removed from the plan | — |
 
 Platform limits that bound this table (verified 2026-09-14, `platform-verifier` memory):
-`buildFromGit` accepts only github.com / gitlab.com; webhook receivers exist only for those
+`buildFromGit` accepts only github.com / gitlab.com (re-checked 2026-11-18: an import naming another host answers `400 projectImportInvalidParameter`, "only https://github.com and https://gitlab.com repositories are supported"); webhook receivers exist only for those
 two and require the account's OAuth link; no generic authenticated build trigger carrying a
 ref; no sha on the appVersion DTO; integration tokens have no TTL. Asks to the platform
 team, in order of leverage: a host allowlist (or none) for `buildFromGit`; an authenticated

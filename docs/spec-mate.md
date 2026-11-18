@@ -2558,7 +2558,9 @@ sequenceDiagram
   installed Mate declares (`mate.hqOrigin` in its package.json, written from the server's constant
   at release; `mate.HQIdentity`). The server holds the single production default and puts the
   resolved origin into the environment of every process it starts; zcp's unit supervisor starts the
-  server and a plain shell is none of its children, so both read the declaration.
+  server and a plain shell is none of its children, so both read the declaration. A container
+  without a Mate has no installed Mate whose declaration it could read, so it addresses HQ only
+  when its own environment carries `T3CODE_ZEROPS_HQ_ORIGIN`; zcp sets that variable nowhere (§6.7).
 - The key travels in the link's first frame after the TLS upgrade and in zcp's header (§3.6), never
   in a URL. HQ's logger strips the header, and its first-frame handler runs outside any request
   logger.
@@ -4498,6 +4500,17 @@ Decision: zcp of a project without a Mate sends the header `Authorization: Proje
 
 Decision: on 401 key_refused zcp calls POST /api/project/key-recheck once and reports the refusal plainly; no retry loop.
 
+**What holds today (live check 2026-11-18).** HQ admits at this door only a key scoped to exactly
+one project, the rule §3.3 states for a Mate's key: organisation role `NO_ACCESS`, one project
+grant at `BASIC_USER` or `ADMIN`, `sudo` false. The key Zerops issues to a `zcp` service made
+through its development-container setup (the integration token `zcp-<project>`) carries `sudo`,
+and HQ refuses it `403 key_too_wide`. Nothing is enrolled; bootstrap completes; the pass reports
+the refusal once per pair in HQ's words (`HQ project repository: project self: hq refused: 403
+key_too_wide`); the checkout keeps its own commit and gets no remote. So a project made that way
+does not use this door. A key narrowed by hand to the admitted shape passes enrolment, repository,
+wiring and push. HQ checks that a key is not readable in clear (`key_not_sensitive`) only for a
+Mate's key, not at this door (HQ's protocol, Plain project calls).
+
 The repository pass selects this mode when `runtime.Info.MateEnabled` is false and the
 container has HQ's launch origin, project ID and key. Before enrollment it reads the
 checkout's actual origin as well as its recorded remote; an external origin is left alone
@@ -4511,10 +4524,21 @@ The plain door keeps the seeded-main join, which establishes shared history with
 checkout files: a plain project pushes `main` itself, with no change for HQ to land, so its `main`
 must descend from HQ's seed. A Mate's wiring never joins (§10.10); `ops.BuildProjectRepositoryCommand`
 alone asks for the join, `TestBuildProjectRepositoryCommand_JoinsTheSeed`.
+The pass itself pushes nothing (live check 2026-11-18). After the join, a checkout that held
+only zcp's own initial commit has HQ's seed commit as its history; zcp's commit is no longer in
+it. `main` moves on HQ only when someone runs `zcp hq git push` from the mounted checkout (seen:
+two pushes of `main` landed while the project was alone in its application).
 The remote is recorded without a Mate `ServiceMeta.HQ` record: plain Git storage does
 not create a Mate change, recipe or release. HQ owns ref permissions, including the
 difference between isolated and shared applications; zcp neither invents a branch policy
 nor retries a refused publication.
+`GitPushState` is not written and reads `unconfigured`, so for such a pair today (live check
+2026-11-18): `git-push-setup` still asks for a remote and a personal access token and answers
+`INVALID_PARAMETER` without one, and HQ issues no such token; `zerops_deploy
+strategy="git-push"` answers `PREREQUISITE_MISSING`; launch-production stops at
+`source-control-required` with blocker `git-push-unconfigured`; pool-migrate refuses `no-origin`
+(`spec-workflows.md` §13 PM-9); export answers `compose-ready` with a `buildFromGit` naming HQ's
+address and no warning, a bundle the platform's import refuses (`spec-workflows.md` §12.5).
 
 Plain passes share Mate wiring's pair lock and 30-second-to-10-minute backoff.
 A refused key stops further HQ calls for that pass, including further key rechecks.
@@ -4533,7 +4557,7 @@ remotes receive no HQ header. The wrapper redacts the exact key from stdout and
 stderr, including configuration listings. The key and origin are read again on each invocation.
 
 HTTP refusals preserve HQ's status, code and reason: missing/refused keys (`401`),
-wide/non-sensitive keys, non-plain placement or Zerops refusal (`403`), project removal
+wide keys, non-plain placement or Zerops refusal (`403`), project removal
 (`404`), invalid repository names (`400`), and unavailable/unanswered HQ or Zerops
 (`503`). A key recheck is one request with no recursive recheck; even a successful
 recheck does not replay the original operation. Project HTTP calls do not follow
