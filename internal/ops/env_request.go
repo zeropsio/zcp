@@ -138,6 +138,44 @@ func IsVaultHidden(key string) bool {
 	return slices.Contains(vaultHiddenNames, key)
 }
 
+// The names the Mate's own vault hides besides (docs/spec-mate.md §5.8a,
+// C-15): the container's own machinery, which Mate and zcp wrote on the
+// container service for themselves under names the first rule does not
+// cover — the Mate server's launch environment, the password of the
+// container's editor, and zcp's pool bearer references (leaseTokenAliasKey).
+// In the Shared vault and an app's vault these names are ordinary. A variable
+// zcp starts writing on the container for itself is named under one of the
+// two rules. This list must agree with the same rule for the Mate's own
+// vault in mate's packages/client-runtime/src/data/projections/vault.ts
+// (case-sensitive: one prefix, one exact name, one suffix).
+var (
+	ownVaultHiddenPrefixes = []string{"T3CODE_"}
+	ownVaultHiddenNames    = []string{"VSCODE_PASSWORD"}
+	ownVaultHiddenSuffixes = []string{"_" + leaseTokenAliasKey}
+)
+
+// IsOwnVaultHidden reports whether the Mate's own vault keeps key out of
+// every list: a name every vault hides, or the container's own machinery.
+func IsOwnVaultHidden(key string) bool {
+	return IsVaultHidden(key) || isContainerMachinery(key)
+}
+
+// isContainerMachinery reports whether key is one Mate or zcp wrote on the
+// Mate's container for itself, by the second rule's names.
+func isContainerMachinery(key string) bool {
+	for _, prefix := range ownVaultHiddenPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	for _, suffix := range ownVaultHiddenSuffixes {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return slices.Contains(ownVaultHiddenNames, key)
+}
+
 // validateRequestKey refuses a key the person could not be asked for: one the
 // vault cannot store, or one Mate's vault never lists.
 func validateRequestKey(key string) error {

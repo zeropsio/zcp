@@ -112,8 +112,9 @@ const (
 // LiveEnvStorePath is the container's live service-environment snapshot: a
 // root-owned, world-readable JSON object of string → string (~200 keys —
 // PATH, ZCP_API_KEY, the ZEROPS_* ids, VSCODE_PASSWORD, the agent flags,
-// …) that the platform rewrites on every service env change, ~2 s after the
-// write, no restart. It is the SAME source a login shell is populated from.
+// …) that the platform rewrites on every service env change, a few seconds
+// after the write (5–10 s measured, docs/spec-zerops-env-lifecycle.md §5), no
+// restart. It is the SAME source a login shell is populated from.
 //
 // mate's process environment = this store + the T3CODE_* contract file, so the
 // agents and `zcp` it spawns see what a login shell sees — the alternative,
