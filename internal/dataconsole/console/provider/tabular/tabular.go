@@ -650,7 +650,7 @@ func (p *Provider) readRows(ctx context.Context, q string) ([][]any, []struct{},
 func (p *Provider) queryStrings(ctx context.Context, q string, args ...any) ([]string, error) {
 	rows, err := p.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, upstreamErr("read", err)
+		return nil, upstreamErr("list", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []string
@@ -680,7 +680,7 @@ func (p *Provider) queryStringsPage(ctx context.Context, q string, limit, offset
 func (p *Provider) queryPairs(ctx context.Context, q string, args ...any) ([][2]string, error) {
 	rows, err := p.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, upstreamErr("read", err)
+		return nil, upstreamErr("describe", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out [][2]string
