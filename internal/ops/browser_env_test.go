@@ -979,3 +979,32 @@ func TestBrowserBatch_EnvPlaceholder_ACutKeepsNoUnfinishedEscapeOfAValuesFirstCh
 		})
 	}
 }
+
+// A call whose answer is withheld still ends a browser its answer showed
+// wedged: whether the browser goes back warm is read from the step errors as
+// they came, before they were withheld.
+// witness: internal/ops/browser.go | recycle = recycle || answer.endBrowser →
+func TestBrowserBatch_EnvPlaceholder_AWithheldAnswerStillEndsAWedgedBrowser(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spends the whole search bound, a second or two")
+	}
+	value := strings.Repeat("a", 4000)
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		switch cmd[0] {
+		case "get":
+			return map[string]any{"text": strings.Repeat("a", 1<<20)}, ""
+		case "click":
+			return nil, "Target closed"
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_VALUE": value}, [][]string{
+		{"fill", "#field", "{{env:TEST_VALUE}}"}, {"get", "text", "body"}, {"click", "#submit"},
+	})
+	if result.Message != browserWithheld {
+		t.Fatalf("the answer was not withheld: %.200q", result.Message)
+	}
+	if !result.BrowserRecycled {
+		t.Error("a browser whose step answered \"Target closed\" was handed back warm")
+	}
+}

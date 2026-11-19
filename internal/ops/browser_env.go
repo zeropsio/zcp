@@ -163,6 +163,19 @@ const browserWithheld = "Text from the browser side is withheld: taking the {{en
 	"so no step result or error, no errors, console or network output and nothing of agent-browser's own is returned — only each step's command as written and whether it succeeded. " +
 	"The page ran what it was given. To read the text, call again with fewer or shorter {{env:…}} values, or with less output."
 
+// browserTakenBack is a walk's answer without the values it was given
+// (browserEnvUse.takeBack).
+type browserTakenBack struct {
+	stdout, stderr string
+	// withheld says the search did not finish within its bound: the answer
+	// carries no text of the browser side at all (browserWithheld).
+	withheld bool
+	// endBrowser says, for a withheld answer, that what came named a browser
+	// that must not be handed back warm — a CDP wedge in a step's error, a
+	// fork budget spent in stderr — which the withheld text no longer shows.
+	endBrowser bool
+}
+
 // takeBack takes the substituted values out of what a walk answered, before
 // zcp reads or composes anything from it. A step names its command as it was
 // written — put back by its place in the batch, byte for byte, never
@@ -170,23 +183,26 @@ const browserWithheld = "Text from the browser side is withheld: taking the {{en
 // from the browser side is searched for the values (browserRedactor): each
 // step's result and error, and agent-browser's stderr — which, cut at its
 // cap (truncated), loses its end from where a form of a value may have
-// begun. When the search does not finish within its bound, withheld is true
-// and the answer carries no text of the browser side at all.
-func (u browserEnvUse) takeBack(stdout, stderr string, truncated bool, runErr error) (out, errOut string, withheld bool, err error) {
+// begun. When the search does not finish within its bound, the answer is
+// withheld and carries no text of the browser side at all; whether the
+// browser must end is read from what came before that.
+func (u browserEnvUse) takeBack(stdout, stderr string, truncated bool, runErr error) (browserTakenBack, error) {
 	if u.redactor == nil {
-		return stdout, stderr, false, runErr
+		return browserTakenBack{stdout: stdout, stderr: stderr}, runErr
 	}
 	var unanswered *browserStepUnansweredError
 	if errors.As(runErr, &unanswered) && unanswered.step < len(u.written) {
 		unanswered.command = u.written[unanswered.step]
 	}
+	var steps []BrowserStepResult
+	parsed := json.Unmarshal([]byte(stdout), &steps) == nil
+	_, wedged := scanStepsForCDPWedge(steps)
+	endBrowser := wedged || isForkExhausted(stderr)
 	if truncated {
 		stderr = u.redactor.cutText(stderr)
 	} else {
 		stderr = u.redactor.text(stderr)
 	}
-	var steps []BrowserStepResult
-	parsed := json.Unmarshal([]byte(stdout), &steps) == nil
 	if !parsed {
 		// Not the walk's own JSON: nothing in it is known to be a command.
 		stdout = u.redactor.text(stdout)
@@ -207,17 +223,20 @@ func (u browserEnvUse) takeBack(stdout, stderr string, truncated bool, runErr er
 			step.Error = &text
 		}
 	}
+	withheld := browserTakenBack{withheld: true, endBrowser: endBrowser}
 	if u.redactor.spent {
-		return u.withheldSteps(steps), "", true, runErr
+		withheld.stdout = u.withheldSteps(steps)
+		return withheld, runErr
 	}
 	if !parsed {
-		return stdout, stderr, false, runErr
+		return browserTakenBack{stdout: stdout, stderr: stderr}, runErr
 	}
 	redacted, marshalErr := json.Marshal(steps)
 	if marshalErr != nil {
-		return u.withheldSteps(steps), "", true, runErr
+		withheld.stdout = u.withheldSteps(steps)
+		return withheld, runErr
 	}
-	return string(redacted), stderr, false, runErr
+	return browserTakenBack{stdout: string(redacted), stderr: stderr}, runErr
 }
 
 // withheldSteps are a walk's steps with nothing of the browser side left in

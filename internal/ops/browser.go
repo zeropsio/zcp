@@ -640,7 +640,8 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout)
 	duration := time.Since(start)
 	// Everything below reads the walk's answer without the values it was given.
-	stdout, stderr, withheld, runErr := envUse.takeBack(stdout, stderr, truncated, runErr)
+	answer, runErr := envUse.takeBack(stdout, stderr, truncated, runErr)
+	stdout, stderr = answer.stdout, answer.stderr
 
 	result := &BrowserBatchResult{
 		URL:             input.URL,
@@ -650,6 +651,8 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 
 	done, recycle := classifyRunResult(result, stdout, stderr, runErr, timeout)
+	// A withheld answer no longer shows what ends the browser; takeBack read it.
+	recycle = recycle || answer.endBrowser
 	// Only a walk that ended on its own hands the browser back warm.
 	reuse := runErr == nil && !recycle
 	result.BrowserRecycled = !reuse
@@ -664,7 +667,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if result.Message == "" {
 		result.Message = pageVerdict(result.Steps, timeout)
 	}
-	if withheld {
+	if answer.withheld {
 		result.Message = browserWithheld
 	}
 	omitScreenshotTempPath(result, screenshotPath)
