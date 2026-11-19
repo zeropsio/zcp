@@ -862,3 +862,63 @@ func typedWithStderr(t *testing.T, value, stderr string) string {
 	}}
 	return signInWith(t, runner, map[string]string{"TEST_PASSWORD": value}, [][]string{{"fill", "#password", "{{env:TEST_PASSWORD}}"}}).Message
 }
+
+// agent-browser takes its global flags out of a command wherever they stand,
+// a value flag with the argument after it, and so does zcp: what it runs as
+// JavaScript — an eval's source, every argument of it joined with a space;
+// a wait's --fn or -f; the value of --restore-check-fn — is JavaScript
+// however many flags stand around it, refused outside a quoted string and
+// escaped inside one, and a flag's value is never taken for the command.
+// witness: internal/ops/browser_args.go | case slices.Contains(browserGlobalBoolFlags, arg): → case false:
+func TestBrowserBatch_EnvPlaceholder_JavaScriptIsReadPastAgentBrowsersGlobalFlags(t *testing.T) {
+	const password = "it's hunter2"
+	tests := []struct {
+		name    string
+		command []string
+		refused bool
+		runs    []string
+	}{
+		{name: "an eval after a flag, in code", command: []string{"--json", "eval", "x = {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "an eval after a flag set false", command: []string{"--headed", "false", "eval", "x = {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "an eval with a flag and its value inside", command: []string{"eval", "--session", "s1", "x = {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "an eval whose arguments join into code", command: []string{"eval", "x = '", "'{{env:TEST_PASSWORD}}'"}, refused: true},
+		{name: "an eval in base64", command: []string{"eval", "-b", "{{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "a wait's short -f", command: []string{"wait", "-f", "document.title === {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "a restore check function", command: []string{"--restore-check-fn", "x = {{env:TEST_PASSWORD}}", "get", "title"}, refused: true},
+		{
+			name: "an eval after a flag, quoted", command: []string{"--json", "eval", "x = '{{env:TEST_PASSWORD}}'"},
+			runs: []string{"--json", "eval", `x = 'it\'s hunter2'`},
+		},
+		{
+			name: "a flag's value that names a command", command: []string{"--session", "eval", "fill", "#password", "{{env:TEST_PASSWORD}}"},
+			runs: []string{"--session", "eval", "fill", "#password", password},
+		},
+		{
+			name: "a wait for an address runs no function", command: []string{"wait", "--url", "**/home", "--fn", "{{env:TEST_PASSWORD}}"},
+			runs: []string{"wait", "--url", "**/home", "--fn", password},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{}
+			defer OverrideBrowserRunnerForTest(runner)()
+			defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+			_, err := BrowserBatch(t.Context(), BrowserBatchInput{
+				URL: "https://appdev.example.invalid/sign-in", EnvStorePath: envStoreOf(t, map[string]string{"TEST_PASSWORD": password}), InMate: true,
+				Commands: [][]string{tt.command},
+			})
+			if (err != nil) != tt.refused {
+				t.Fatalf("refused = %v (%v), want %v", err != nil, err, tt.refused)
+			}
+			if tt.refused {
+				if runner.lastStdin != "" {
+					t.Errorf("the browser ran %q", runner.lastStdin)
+				}
+				return
+			}
+			if ran := parseStdinBatch(t, runner.lastStdin); !slices.ContainsFunc(ran, func(cmd []string) bool { return slices.Equal(cmd, tt.runs) }) {
+				t.Errorf("ran %q, want %q among them", ran, tt.runs)
+			}
+		})
+	}
+}

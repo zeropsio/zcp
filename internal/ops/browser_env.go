@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -21,9 +22,6 @@ import (
 // checked by the store's reader.
 var browserEnvRef = regexp.MustCompile(`\{\{env:(.*?)\}\}`)
 
-// browserFlagFn is the wait flag whose next argument is JavaScript.
-const browserFlagFn = "--fn"
-
 // browserEnvUse is what one call substituted: the batch as it was written
 // and as it ran, step for step, and the redactor of the values behind its
 // placeholders. The zero value is a call that held no placeholder.
@@ -37,7 +35,7 @@ func browserEnvPlaceholder(key string) string { return "{{env:" + key + "}}" }
 // substituteBrowserEnv answers the batch to run for the batch as written:
 // every `{{env:KEY}}` in a command's argument replaced, once, with the
 // store's value, read once for the call — escaped where the argument is
-// JavaScript (isBrowserScript), where the placeholder must stand inside a
+// JavaScript (browserScripts), where the placeholder must stand inside a
 // quoted string and is then exactly the value. The step that opens the
 // call's url is zcp's own and is not searched. The call is refused, and
 // nothing has run, for a placeholder in JavaScript outside a quoted string,
@@ -49,14 +47,25 @@ func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([]
 		if isCommand(cmd, browserCmdOpen) {
 			continue
 		}
-		for at, arg := range cmd {
-			refs := browserEnvRef.FindAllStringSubmatch(arg, -1)
-			if len(refs) > 0 && isBrowserScript(cmd, at) && !jsPlaceholdersQuoted(arg) {
-				return nil, browserEnvUse{}, platform.NewPlatformError(platform.ErrInvalidParameter,
-					"A {{env:…}} placeholder in JavaScript does not stand inside a quoted string, or zcp cannot tell that it does; the browser was not opened",
-					"In an eval's source and a wait's --fn write it between quotes — '{{env:KEY}}', \"{{env:KEY}}\" or `{{env:KEY}}` — not after a backslash and not inside ${…}: "+
-						"the value is escaped to be exactly that string. Where a / outside a string stands before it (a division, a regular expression), put it first: const v = '{{env:KEY}}'; …")
+		scripts, opaque := browserScripts(cmd)
+		for _, at := range opaque {
+			if browserEnvRef.MatchString(cmd[at]) {
+				return nil, browserEnvUse{}, browserEnvScriptRefusal()
 			}
+		}
+		for _, script := range scripts {
+			source := make([]string, len(script))
+			for i, at := range script {
+				source[i] = cmd[at]
+			}
+			// agent-browser joins an eval's arguments with a space: the
+			// placeholder is quoted, or not, in what the page runs.
+			if joined := strings.Join(source, " "); browserEnvRef.MatchString(joined) && !jsPlaceholdersQuoted(joined) {
+				return nil, browserEnvUse{}, browserEnvScriptRefusal()
+			}
+		}
+		for _, arg := range cmd {
+			refs := browserEnvRef.FindAllStringSubmatch(arg, -1)
 			for _, ref := range refs {
 				if !slices.Contains(keys, ref[1]) {
 					keys = append(keys, ref[1])
@@ -85,8 +94,9 @@ func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([]
 			continue
 		}
 		run[i] = make([]string, len(cmd))
+		scripts, _ := browserScripts(cmd)
 		for j, arg := range cmd {
-			script := isBrowserScript(cmd, j)
+			script := slices.ContainsFunc(scripts, func(script []int) bool { return slices.Contains(script, j) })
 			run[i][j] = browserEnvRef.ReplaceAllStringFunc(arg, func(ref string) string {
 				value := values[browserEnvRef.FindStringSubmatch(ref)[1]]
 				if script {
@@ -99,13 +109,14 @@ func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([]
 	return run, browserEnvUse{written: written, run: run, redactor: newBrowserRedactor(values)}, nil
 }
 
-// isBrowserScript reports whether argument at of cmd is JavaScript the page
-// runs: an eval's source, or what follows a wait's --fn.
-func isBrowserScript(cmd []string, at int) bool {
-	if isCommand(cmd, browserCmdEval) {
-		return at > 0
-	}
-	return at > 0 && cmd[at-1] == browserFlagFn
+// browserEnvScriptRefusal refuses a call whose JavaScript holds a
+// placeholder that is not plain content of a quoted string, or one zcp
+// cannot read: the page's own syntax error would quote a piece of the value.
+func browserEnvScriptRefusal() error {
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		"A {{env:…}} placeholder in JavaScript does not stand inside a quoted string, or zcp cannot tell that it does; the browser was not opened",
+		"In an eval's source and a wait's --fn write it between quotes — '{{env:KEY}}', \"{{env:KEY}}\" or `{{env:KEY}}` — not after a backslash and not inside ${…}: "+
+			"the value is escaped to be exactly that string. Where a / outside a string stands before it (a division, a regular expression), put it first: const v = '{{env:KEY}}'; …")
 }
 
 // browserEnvRefusal words a refusal of the store's reader for the agent:
