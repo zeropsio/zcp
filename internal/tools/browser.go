@@ -44,8 +44,9 @@ func browserInputSchema(inMate bool) *jsonschema.Schema {
 			source = "a test sign-in from your own vault (zerops_env mate=true)"
 		}
 		prop.Description += " In any argument, whole or inside it, {{env:KEY}} is replaced with the value this container's env holds under KEY — " + source +
-			" — and the result shows the placeholder, never the value; a KEY the env does not hold fails the call before the browser opens." +
-			" In JavaScript (an eval's source, a wait's --fn) write it inside a quoted string, '{{env:KEY}}': the value is escaped to be exactly that string."
+			" — and comes back as the placeholder. Not hidden: a value under six characters, or one the page changed beyond trimming and escaping (base64, a hash)." +
+			" A KEY the env does not hold, or a value over 4096 bytes, fails the call before the browser opens." +
+			" In JavaScript (an eval's source, a wait's --fn) write it inside a quoted string, '{{env:KEY}}', or the call is refused: the value is escaped to be exactly that string."
 	}
 	return s
 }
