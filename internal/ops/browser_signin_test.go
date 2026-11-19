@@ -471,7 +471,7 @@ func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
 }
 
 // A save agent-browser could not load back never replaces the kept sign-in.
-// witness: internal/ops/browser_signin.go | if err != nil || !validBrowserState(kept) { → if err != nil {
+// witness: internal/ops/browser_signin.go | if err != nil || !validBrowserState(saved) { → if err != nil {
 func TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave(t *testing.T) {
 	dir := readyStateDir(t)
 	writeKept(t, dir)
@@ -487,7 +487,7 @@ func TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave
 // Session storage never reaches the kept file: a load never usefully
 // restores it and the way out does not clear it, so a token a page keeps
 // there would only sit on disk. Cookies and local storage are kept.
-// witness: internal/ops/browser_signin.go | kept, err := withoutSessionStorage(data) → kept, err := data, error(nil)
+// witness: internal/ops/browser_signin.go | saved, err := withoutSessionStorage(data) → saved, err := data, error(nil)
 func TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile(t *testing.T) {
 	dir := readyStateDir(t)
 	saved := strings.Replace(signedInState, `"sessionStorage":[]`, `"sessionStorage":[{"name":"stok","value":"SESSIONSECRET"}]`, 1)
