@@ -650,7 +650,7 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	keptWhenIdle := ""
-	err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, func(context.Context) error {
+	err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
 		keptWhenIdle = keptState(t, dir)
 		return nil
 	})
@@ -674,7 +674,7 @@ func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	idle := false
-	err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, func(context.Context) error {
+	err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
 		idle = true
 		return nil
 	})

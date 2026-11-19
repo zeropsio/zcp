@@ -25,6 +25,9 @@ const (
 	browserLockPath = "/tmp/zcp-browser.lock"
 	// browserReleaseTimeout bounds the end-of-call tab cleanup and a stop.
 	browserReleaseTimeout = 15 * time.Second
+	// browserPresencePath is the running browser's presence of the kept
+	// sign-in (browserPresence); it dies with the service.
+	browserPresencePath = browserRuntimeDir + "/zcp-signin.json"
 )
 
 // browserHost is how this process reaches the warm browser (browser_warm.go).
@@ -109,7 +112,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 				return h.start(rctx, stateDir)
 			}
 			var err error
-			if note, err = restoreBrowserSignIn(ctx, h.step, stateDir, restart); err != nil {
+			if note, err = restoreBrowserSignIn(ctx, h.step, stateDir, browserPresencePath, time.Now(), restart); err != nil {
 				return err
 			}
 		}
@@ -132,7 +135,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		return nil, false, "", err
 	}
 	handBack := func(rctx context.Context) error {
-		return handBackBrowser(rctx, h.step, stateDir, func(mctx context.Context) error {
+		return handBackBrowser(rctx, h.step, stateDir, browserPresencePath, func(mctx context.Context) error {
 			w, _, err := readWarmBrowser(mctx)
 			if err != nil {
 				return err
@@ -281,5 +284,11 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return runBrowserSteps(rctx, steps, h.step)
+	stdout, stderr, truncated, walkErr := runBrowserSteps(rctx, steps, h.step)
+	// Inside the call's lock: the origins its open steps ended on are now
+	// ones a save reads.
+	if err := recordBrowserOpened(browserPresencePath, stdout); err != nil {
+		logBrowserSignIn(err)
+	}
+	return stdout, stderr, truncated, walkErr
 }
