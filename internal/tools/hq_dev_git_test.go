@@ -16,6 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -161,13 +162,49 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 		return d, ok
 	}
 
-	keepMateDevGit(t.Context(), deps, started, ticks, nil, func(string) {})
+	keepMateDevGit(t.Context(), deps, started, devGitRetryClock{ticks, func(bool) {}}, nil, func(string) {})
 
 	if sessions[2] != sessions[1] {
 		t.Errorf("a look within the wait reached the dev service %d time(s)", sessions[2]-sessions[1])
 	}
 	if lab.meta().HQ.Origin == nil {
 		t.Error("the start taken again once the wait was over did not record how the code is kept")
+	}
+}
+
+// witness: internal/tools/hq_dev_git.go | clock.arm(!settled) → clock.arm(true)
+func TestMateService_SettledGitStopsItsClockUntilAStateChangeNeedsARetry(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	ticks := make(chan time.Time)
+	receipts := make(chan bool, 2)
+	clock := devGitRetryClock{ticks, func(armed bool) { receipts <- armed }}
+	changed := make(chan struct{}, 1)
+	firstLook := true
+	deps := func(ctx context.Context) (devGitDeps, bool) {
+		if firstLook {
+			firstLook = false
+			changed <- struct{}{}
+			return lab.devGitDeps(ctx)
+		}
+		// The replacement frame connects an origin while the dev service is down.
+		lab.hq.keepOn(hq.RepoOrigin{URL: "https://github.com/acme/app", Mode: hq.OriginOnGitHub})
+		d, ok := lab.devGitDeps(ctx)
+		d.ssh = &unansweringSSH{}
+		close(ticks)
+		return d, ok
+	}
+
+	keepMateDevGit(t.Context(), deps, time.Now(), clock, changed, func(string) {})
+	close(receipts)
+	for _, step := range []struct {
+		after string
+		armed bool
+	}{{"the wired pair settled", false}, {"the changed wiring could not reach the dev service", true}} {
+		if got, ok := <-receipts; !ok || got != step.armed {
+			t.Fatalf("after %s: retry clock armed = %t (receipt = %t), want %t", step.after, got, ok, step.armed)
+		}
 	}
 }
 
@@ -274,7 +311,7 @@ func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
 	transport.DisableKeepAlives = true
 	client.Transport = transport
 	synctest.Test(t, func(t *testing.T) {
-		keepMateDevGit(t.Context(), deps, time.Time{}, ticks, nil, func(string) {})
+		keepMateDevGit(t.Context(), deps, time.Time{}, devGitRetryClock{ticks, func(bool) {}}, nil, func(string) {})
 	})
 
 	if len(ssh.within) == 0 {

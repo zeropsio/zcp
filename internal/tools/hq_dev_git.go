@@ -45,9 +45,14 @@ type devGitDeps struct {
 // lock, for an SSH session's own bound of minutes.
 const devGitSSHWithin = 15 * time.Second
 
-// devGitLookEvery is how often the Mate's service looks whether a start that
-// did not settle is due again (hqAttemptDue): a read of the clock.
+// devGitLookEvery is how often an unsettled start checks hqAttemptDue.
 const devGitLookEvery = 10 * time.Second
+
+// devGitRetryClock starts armed and keeps the same channel across stops and resets.
+type devGitRetryClock struct {
+	C   <-chan time.Time
+	arm func(bool)
+}
 
 // KeepMateDevGit keeps every wired pair's dev service on this Mate's HQ
 // (keepMateDevGit) for as long as ctx lasts, and releases the leases of every
@@ -70,7 +75,14 @@ func KeepMateDevGit(ctx context.Context, env func() func(string) string, log fun
 	}
 	ticker := time.NewTicker(devGitLookEvery)
 	defer ticker.Stop()
-	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), ticker.C, stateChanged, log)
+	clock := devGitRetryClock{C: ticker.C, arm: func(on bool) {
+		if on {
+			ticker.Reset(devGitLookEvery)
+		} else {
+			ticker.Stop()
+		}
+	}}
+	keepMateDevGit(ctx, liveDevGitDeps(env, log), time.Now(), clock, stateChanged, log)
 }
 
 // liveDevGitDeps is devGitDeps from the container's live env store: the
@@ -120,14 +132,12 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 }
 
 // keepMateDevGit keeps every wired pair's dev service on this Mate's HQ for
-// as long as ctx lasts and ticks come: the Mate's start (startDevGit) at
-// started. A start that did not settle is taken again on a state replacement
-// or on hqAttemptDue's backoff, counted in the ticks' own times. Finished
-// changes are looked for (followLeaseCompletion) at the
-// start — the file may already hold one — and at each wake changed sends,
-// never at a tick. deps is asked for at each look; false skips the look. A
-// line goes to log when the look of its kind before did not say it.
-func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, ticks <-chan time.Time, stateChanged <-chan struct{}, log func(string)) {
+// as long as ctx lasts. An unsettled start runs again on a state replacement
+// or on hqAttemptDue's backoff. Once settled, its retry clock stops until a
+// state replacement leaves work outstanding. Finished changes are looked for
+// at the start and on each state replacement (followLeaseCompletion). Missing
+// dependencies leave the start unsettled. Each new line from a look goes to log.
+func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps, bool), started time.Time, clock devGitRetryClock, stateChanged <-chan struct{}, log func(string)) {
 	var (
 		settled bool
 		retry   hqPairState
@@ -156,12 +166,16 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		saidCompletion = sayNew(saidCompletion, followLeaseCompletion(ctx, d))
 	}
 	look := func(turn func(devGitDeps)) {
-		d, ok := deps(ctx)
-		if !ok {
-			return
+		wasSettled := settled
+		if d, ok := deps(ctx); ok {
+			d.ssh = boundedSSH{SSHDeployer: d.ssh}
+			turn(d)
+		} else {
+			settled = false
 		}
-		d.ssh = boundedSSH{SSHDeployer: d.ssh}
-		turn(d)
+		if settled != wasSettled {
+			clock.arm(!settled)
+		}
 	}
 	look(func(d devGitDeps) {
 		start(d, started)
@@ -171,7 +185,7 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		select {
 		case <-ctx.Done():
 			return
-		case at, open := <-ticks:
+		case at, open := <-clock.C:
 			if !open {
 				return
 			}
