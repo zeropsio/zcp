@@ -132,7 +132,8 @@ func (r *browserRedactor) cutText(text string) string {
 }
 
 // search redacts text; cut also drops its end from where the earliest
-// reading of a value still under way at the text's end began.
+// reading of a value still under way at the text's end began, or from an
+// escape the cut left unfinished (unfinishedEscape), whichever is earlier.
 func (r *browserRedactor) search(text string, cut bool) string {
 	if r == nil || len(r.matcher.patterns) == 0 {
 		return text
@@ -147,7 +148,7 @@ func (r *browserRedactor) search(text string, cut bool) string {
 	}
 	limit := int32(len(text))
 	if cut {
-		limit = int32(pending)
+		limit = int32(min(pending, unfinishedEscape(text)))
 	}
 	var out strings.Builder
 	from := int32(0)
@@ -265,4 +266,45 @@ func browserJSONString(text string) json.RawMessage {
 		return json.RawMessage(`""`)
 	}
 	return bytes.TrimSuffix(out.Bytes(), []byte("\n"))
+}
+
+// unfinishedEscape is where an escape a cut may have left unfinished begins
+// at the end of text — a `%` or a `%` and one hex digit, or a `&` followed
+// by nothing but the beginning of an entity, without its `;` — and len(text)
+// when there is none. Its rest could have spelled a value's first character,
+// which no reading has begun with yet.
+func unfinishedEscape(text string) int {
+	n := len(text)
+	switch {
+	case n >= 1 && text[n-1] == '%':
+		return n - 1
+	case n >= 2 && text[n-2] == '%' && hexNibble(text[n-1]) >= 0:
+		return n - 2
+	}
+	amp := strings.LastIndexByte(text, '&')
+	if amp < 0 {
+		return n
+	}
+	tail := text[amp+1:]
+	var digits string
+	isDigit := func(c byte) bool { return c >= '0' && c <= '9' }
+	switch {
+	case strings.HasPrefix(tail, "#x"), strings.HasPrefix(tail, "#X"):
+		digits, isDigit = tail[2:], func(c byte) bool { return hexNibble(c) >= 0 }
+	case strings.HasPrefix(tail, "#"):
+		digits = tail[1:]
+	default:
+		for _, name := range entityNames {
+			if strings.HasPrefix(name, tail) {
+				return amp
+			}
+		}
+		return n
+	}
+	for i := range len(digits) {
+		if !isDigit(digits[i]) {
+			return n
+		}
+	}
+	return amp
 }

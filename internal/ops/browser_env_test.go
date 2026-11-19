@@ -957,3 +957,25 @@ func TestBrowserBatch_EnvPlaceholder_AfterAComment_APageReadsIsRefusedInCode(t *
 		})
 	}
 }
+
+// A capture cut at its cap does not keep the unfinished escape of a value's
+// first character either — a `%` and one hex digit, an entity without its
+// `;` — though no reading of the value had begun.
+// witness: internal/ops/browser_redact.go | limit = int32(min(pending, unfinishedEscape(text))) → limit = int32(pending)
+func TestBrowserBatch_EnvPlaceholder_ACutKeepsNoUnfinishedEscapeOfAValuesFirstCharacter(t *testing.T) {
+	tests := []struct{ name, value, tail string }{
+		{name: "a numeric entity", value: "!correct-horse", tail: "&#33"},
+		{name: "a percent escape", value: "!correct-horse", tail: "%2"},
+		{name: "a named entity", value: `"correct-horse`, tail: "&quot"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The step's own capture ended inside the escape.
+			said := "debug: typing " + tt.tail
+			message := typedWithStderr(t, tt.value, strings.Repeat("x", browserOutputCap-len(said))+said)
+			if !strings.HasSuffix(message, "debug: typing") {
+				t.Errorf("the message ends %q, want it to end where the value began", message[max(0, len(message)-40):])
+			}
+		})
+	}
+}
