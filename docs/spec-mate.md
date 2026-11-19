@@ -3990,17 +3990,24 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
   where sign-ins happen. In any argument of a `commands` element, every `{{env:KEY}}` — a whole
   argument or inside one — is replaced with the value the store holds under KEY, once: a value
   that itself holds placeholder text is not read again, and the call's `url` is not searched.
-  Where the argument is JavaScript — an `eval` step's source, the argument after a `wait`'s
-  `--fn` — the placeholder stands inside a quoted string, single, double or backtick, and the
-  value is escaped so that the string is exactly the value (the backslash, the three quotes,
-  `$`, line ends and control characters); anywhere else it stands as it is. The whole call is
-  refused before the browser is asked for: by the store's reader (above); for a placeholder in
-  JavaScript that is not plain content of a string literal — in code, in a comment, after a
-  backslash, inside a template's `${…}` — or where zcp cannot tell (after a `/` in code that
-  opens no comment and may open a regular expression; in a `'` or `"` string that runs into a
-  line end), since the page's own syntax error would quote a piece of the value; and for a value
-  longer than 4096 bytes (`browserValueMaxLen`), which is more than the search below is bounded
-  for. The result never holds a substituted value where zcp can tell:
+  A command is read as agent-browser reads it (agent-browser 0.38, `clean_args`): its global
+  flags, and the argument after one that takes a value, are taken out wherever they stand, so a
+  flag is never taken for the command's name nor a flag's value for one of its arguments. Where
+  an argument is JavaScript the page runs — an `eval` step's source, all its arguments joined
+  with a space as agent-browser joins them; the argument after a `wait`'s `--fn` or `-f`, unless
+  `--url` or `--load` makes it another wait; the value of `--restore-check-fn` — the placeholder
+  stands inside a quoted string, single, double or backtick, and the value is escaped so that
+  the string is exactly the value (the backslash, the three quotes, `$`, line ends and control
+  characters); anywhere else it stands as it is. The whole call is refused before the browser
+  is asked for: by the store's reader (above); for a placeholder in JavaScript that is not plain
+  content of a string literal — in code, after a backslash, inside a template's `${…}`, in a
+  comment, which is read as a page reads a classic script (`//` and `/* */`; `<!--` anywhere in
+  code; `-->` that begins a line, after nothing but white space and comments; `#!` at the very
+  start; a line ending at LF, CR, U+2028 or U+2029) — or where zcp cannot tell (after a `/` in
+  code that opens no comment and may open a regular expression; in a `'` or `"` string that
+  runs into a line end; in an `eval -b` source, which is base64), since the page's own syntax
+  error would quote a piece of the value; and for a value longer than 4096 bytes
+  (`browserValueMaxLen`), which is more than the search below is bounded for. The result never holds a substituted value where zcp can tell:
   - **The echo is the input.** A step names its command as it was written, byte for byte: zcp
     puts the caller's own command back by its place in the batch and never searches it. Every
     text zcp itself composes about a step — one that got no answer, one it did not run — names
@@ -4028,15 +4035,18 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
     case, a space also as `+` — every percent-encoding of the value, whichever characters the
     encoder chose to escape; or as the HTML entity of its character: named for `&`, `<`, `>`,
     `"`, `'` and the no-break space (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`), or
-    numeric, decimal or hexadecimal with any leading zeros (`&#39;`, `&#039;`, `&#x27;`), for
-    any character.
+    numeric, decimal or hexadecimal with any number of leading zeros (`&#39;`, `&#039;`,
+    `&#x27;`), for any character. A hex digit of an escape (`\uXXXX`, `\xHH`) is a byte of it
+    that is not itself searched as an entity, since no encoder writes one so.
   - **Not redacted.** A form under six bytes in text from the browser side (it would be a
     common fragment of ordinary output — a short word, a number — and redacting it would shred
     the result while protecting nothing a guess does not find); any transformation not listed —
     base64, a hash, a change of letter case, another normal form of Unicode, another encoding,
     one of the listed ones applied where the list has it once (a percent-encoded entity, a byte
     percent-encoded twice, a fourth level of JSON), the value reordered or cut inside a line;
-    and a screenshot, which is pixels — a password field shows dots, and a secret typed into a
+    a value the page kept — in storage or a cookie of the warm context — that a later call
+    reads without naming its key, since a call knows only the values it substituted; and a
+    screenshot, which is pixels — a password field shows dots, and a secret typed into a
     visible field is in the picture.
   - **The search is bounded, and what was not searched is not returned.** The text is read
     once: every reading of it that is still the beginning of a value is followed, and readings
@@ -4048,14 +4058,18 @@ as any other vault value, sees it listed in the Vault, and can change or remove 
     keeps its command as written and whether it succeeded, a failed one says its error is
     withheld, there is no step result, no `errorsOutput`, `consoleOutput` or `networkOutput`,
     and `message` says that text from the browser side was withheld and how to read it (fewer
-    or shorter values, less output). A capture that was cut at its cap — agent-browser's
-    stderr at a megabyte — loses its end from where a form of a value may have begun, so no
-    part of a value the cut went through remains.
+    or shorter values, less output); whether the browser goes back warm is still read from the
+    answer as it came (a CDP wedge, a spent fork budget). A capture that was cut at its cap —
+    agent-browser's stderr at a megabyte — loses its end from where a form of a value may have
+    begun: a reading of one still under way, or an escape the cut left unfinished that may have
+    spelled a value's first character (a `%`, a `%` and one hex digit, a `&` and the beginning
+    of an entity without its `;`), so no part of a value the cut went through remains.
 
   The tool says the screenshot rule where a screenshot is asked for (its `screenshot`
   parameter) and the rest where commands are written (its `commands` parameter): that the
   value comes back as the placeholder, what is not hidden (a value under six characters, one
-  the page changed beyond trimming and escaping), what is refused before the browser opens,
+  the page changed beyond trimming and escaping, one the page kept that a later call reads
+  without naming it), what is refused before the browser opens,
   and that in JavaScript the placeholder goes inside a quoted string. Its description, at
   Claude Code's 4096-unit cap, only points there.
 - **Checking behind a sign-in.** A Mate's AGENTS.md has one block for it
