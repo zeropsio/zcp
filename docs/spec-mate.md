@@ -841,9 +841,10 @@ can respawn a daemon outside it. systemd bounds it: `TasksMax=1000`, `CPUQuota` 
 with `SIGKILL`; `UMask=0077` makes every file it writes private to its user.
 Chrome's profile lives in `/tmp/zcp-browser`, which `ExecStopPost`
 removes on every stop; the sign-in outlives it apart (§2.6c). The daemon exits after
-5 idle minutes, and the service ends with it. The service and every step of a call get
-one environment, built by one function from the call's isolation, because agent-browser
-restarts a daemon whose settings differ from its client's
+5 idle minutes, and the service ends with it. The service and every step get one
+environment built by one function, the same for every isolation, because agent-browser
+restarts a daemon whose settings differ from its client's; it names no agent-browser
+session, so agent-browser itself never restores or saves a sign-in
 (`TestBrowserEnv_IdenticalForTheBrowserAndEveryStep`).
 
 A call waits on one container-wide `flock` until its own deadline, then fails as
@@ -890,10 +891,9 @@ wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNo
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
 so cookies, storage, HTTP cache and service workers carry over between calls, and the
-sign-in also across browser restarts (§2.6c); `fresh-context` never runs on the warm
-browser: it starts a browser of its own that keeps no sign-in and opens `window new`, a
-new browser context, in it; agent-browser cannot dispose one, so the service stops when
-that call ends; `new-browser` recycles the service before the call
+sign-in also across browser restarts (§2.6c); `fresh-context` is `window new`, a new
+browser context, which starts signed out; agent-browser cannot dispose one, so the
+service stops when that call ends; `new-browser` recycles the service before the call
 (`TestWarmBrowser_ReusableOnlyInsideItsBounds`). The Mate's stream endpoint
 `~/.agent-browser/default.stream` is a symlink
 into the runtime directory, and dangles (no stream) while no browser runs. No
@@ -905,75 +905,95 @@ lifetimes are outside this service.
 The warm browser is replaced often — after 5 idle minutes, after any call that did not
 end cleanly, at its max age, after a `fresh-context` or `new-browser` call, on a
 container restart — and its profile goes with it. What a sign-in leaves, the cookies and
-local storage of the default context, is kept apart through agent-browser's own restore
-of a named session (0.39.1), so the next browser starts signed in.
+local storage of the default context, is kept apart in one file zcp owns, so the next
+browser starts signed in. zcp both loads and saves it with agent-browser's `state load`
+and `state save` (0.39.1); the browser's start never restores anything, so no saved site
+can hold up or fail a start.
 
-- **Which browsers keep it.** A `tab` or `new-browser` call's browser runs with
-  `AGENT_BROWSER_SESSION_NAME=zcp`: as it starts it loads `zcp-default.json` into its
-  default context, and it saves there. `new-browser` recovers from a browser that
-  misbehaves — Chrome's process state, not who is signed in — so it keeps the sign-in;
-  a clean identity is `fresh-context`. A `fresh-context` call's browser names no
-  session, so it neither loads nor saves: it starts and stays signed out and leaves the
-  kept sign-in alone. It must not share the warm browser, because agent-browser saves
-  the cookies of the active tab's browser context (`Network.getAllCookies` on that tab's
-  session), and a save while a fresh context's tab is active would write its empty
-  context over the sign-in (`TestBrowserKeepsSignIn_TabAndNewBrowserKeepFreshContextNever`,
-  `TestBrowserEnv_OnlyABrowserThatKeepsTheSignInNamesItsSession`).
-- **When it is saved.** At the end of every call that hands the browser back warm,
-  inside the call's lock, while the call's own tab — a live page of the default context —
-  is still active, before its tabs close and the marker says `idle`. On the base tab's
+- **Which calls keep it.** A `tab` or `new-browser` call loads it into a browser started
+  for that call, and every call of either isolation that hands the browser back warm
+  saves it. `new-browser` recovers from a browser that misbehaves — Chrome's process
+  state, not who is signed in — so it keeps the sign-in; a clean identity is
+  `fresh-context`, which neither loads nor saves: its new context starts and stays
+  signed out, and the browser it ran in is stopped, never handed back, so nothing of it
+  is saved (`TestBrowserKeepsSignIn_TabAndNewBrowserKeepFreshContextNever`).
+- **The load.** Before the call's own steps, on the new browser's base tab, zcp runs
+  `state load <kept file>` and then `open about:blank`, so no restored page is left
+  running. agent-browser sets the cookies and opens each saved origin's root for its local
+  storage, so the load waits on the saved sites. Both steps share a 10 s bound out of the
+  call's own budget: a healthy load takes about half a second per origin with local
+  storage, and the bound keeps a site that is slow, paused, looping on load or never
+  answering from spending the call (`zerops_verify`'s render check has 30 s in all). A load
+  that fails or does not finish within it sets the kept file aside — renamed to
+  `zcp-default.json.aside`, one copy at most, never loaded again — stops that browser and
+  starts a clean one without loading, inside the same call, which then runs signed out;
+  the next clean save writes a new kept file. A browser whose load failed is replaced
+  even when agent-browser answered, because the load may have set the cookies before it
+  failed, and that half sign-in would be saved. The result's `message` then begins: "The
+  kept sign-in could not be restored: opening its saved site(s) <origins> did not finish
+  within 10s." (or "agent-browser could not load it." when the load answered), followed
+  by "This call ran signed out; signing in again keeps the new sign-in." The origins are
+  the ones the kept file lists with local storage, up to three; no value is named.
+  Measured with agent-browser 0.39.1: a saved site that never answers, one that loops on
+  load and one that answers after 15 s each cost that call 11.8 s in all and nothing
+  after it; a healthy load of one origin takes 0.6 s
+  (`TestRestoreBrowserSignIn_ALoadThatDoesNotFinish_SetsItAsideAndStartsClean`,
+  `TestRestoreBrowserSignIn_AFailedLoad_SetsItAsideOneCopyAtMostNeverLoadedAgain`,
+  `TestRestoreBrowserSignIn_ALoadedSignInLeavesNoRestoredPageRunning`,
+  `TestBrowserBatch_ASignInThatCouldNotBeRestored_SaysSoInTheMessage`).
+- **The save.** At the end of every call that hands the browser back warm, inside the
+  call's lock, while the call's own tab — a live page of the default context — is still
+  active, before its tabs close and the marker says `idle`. On the base tab's
   `about:blank` agent-browser reads every origin's storage through a temporary tab, and
-  such a save now and then stalled past 30 s (agent-browser 0.39.1, measured 2026-11-19:
-  2 of 29 saves on the base tab, none of 40 on the call's tab). zcp asks the daemon its
-  restore status (`session info`) and saves only when its restore loaded the file or found none —
-  after a failed restore the last good save stands, as agent-browser's own `auto` policy
-  keeps it; then `state save` writes a candidate into the directory's `.tmp`, and zcp
-  renames it over `zcp-default.json` only when it is a state agent-browser can load. So a
-  sign-in survives a recycle that follows within seconds. The save has 5 s (it takes about
-  0.15 s); one that fails or runs out is logged and neither fails the call nor recycles
-  the browser. agent-browser also saves as its daemon
-  exits idle (`AGENT_BROWSER_RESTORE_SAVE=auto`). It never saves periodically
-  (`AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0`): a page runs only inside a call and every
-  clean call ends with a save, so an idle save would repeat the last one while holding
-  the daemon's lock against the next call. A browser zcp stops — a recycle after an
-  unclean call or a wedge, `new-browser`, the max age, a `fresh-context` call's end — is
-  killed with `SIGKILL` and saves nothing: the last good save stands
+  such a save now and then stalled past 30 s (measured 2026-11-19: 2 of 29 saves on the
+  base tab, none of 40 on the call's tab). `state save` writes a candidate into the
+  directory's `.tmp`; zcp drops its session storage — never usefully restored, and not
+  cleared by the way out — and renames it over `zcp-default.json` only when it is a state
+  agent-browser can load. So a sign-in survives a recycle that follows within seconds. The
+  save has 5 s (it takes about 0.15 s); one that fails or runs out is logged and neither
+  fails the call nor recycles the browser. agent-browser saves nothing itself: no
+  periodic save and no save as its daemon exits idle. Nothing is lost by that: a page
+  runs only inside a call, and every clean call ends with a save, so the idle exit's
+  save would repeat the last one. A browser zcp stops — a recycle after an unclean call
+  or a wedge, `new-browser`, the max age, a `fresh-context` call's end — saves nothing:
+  the last good save stands
   (`TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle`,
   `TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack`,
-  `TestSaveBrowserSignIn_AfterAFailedRestore_TheLastGoodSaveStands`,
   `TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave`,
+  `TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile`,
   `TestReleaseBrowser_ARecycledBrowserIsNeverHandedBack`).
+- **Logged.** Every load or save that fails is logged on zcp's stderr with the kept
+  file's or the candidate's path and agent-browser's own message, never a value.
 - **What is kept.** Every cookie of the default context, and the local storage of each
   origin a page opened in the browser that saved it: agent-browser collects storage from
-  the origins its pages navigated to, so an origin it only restored, which no page opened
-  before its next save, is not in that save (measured: a browser life spent on another
-  origin kept the cookie and dropped the first origin's local storage). Restoring local
-  storage opens each saved origin in the new browser's base tab for half a second before
-  it goes back to `about:blank`, so a start that restores one takes about 1.05 s against
-  0.48 s. Session storage, the HTTP cache and service workers go with the profile.
-- **Where, and how private.** `$HOME/.agent-browser/sessions`, `$HOME` being
-  `/home/zerops` on a Zerops container: outside the workspace `/var/www`, which holds git
-  checkouts and is mounted into dev services, and no checkout itself. A `$HOME` that is
-  relative, `/`, or `/var/www` or inside it keeps nothing: every browser then names no
-  session, as a `fresh-context` one. Before a keeping browser starts, zcp creates
-  `sessions` and its `.tmp` with mode 0700, refuses either when it is a symlink, tightens
-  a looser one of them to 0700 and a looser file in them to 0600, and removes a
-  `zcp-default.json` agent-browser could not load (not JSON, or missing its cookies, its
-  origins or a field one of them needs), because after a
-  failed load `auto` would skip every save that follows; a directory zcp cannot create or
-  tighten fails the call. The file survives a browser stop and a container restart
-  (`$HOME` survives it); a redeploy may lose it
-  (`TestReadyBrowserState_LeavesTheSignInPrivate`,
+  the origins its pages navigated to, so an origin it only loaded, which no page opened
+  before the next save, is not in that save (measured: a browser life spent on another
+  origin kept the cookie and dropped the first origin's local storage). Session storage,
+  the HTTP cache and service workers are not kept.
+- **Where, and how private.** `$HOME/.agent-browser/sessions/zcp-default.json`, `$HOME`
+  being `/home/zerops` on a Zerops container: outside the workspace `/var/www`, which
+  holds git checkouts and is mounted into dev services, and no checkout itself. zcp
+  resolves `$HOME`'s symlinks first; a `$HOME` that is relative, `/`, or `/var/www` or
+  inside it keeps nothing, and every call runs signed out after a browser replacement.
+  Before a keeping browser starts, zcp creates `~/.agent-browser`, `sessions` and its
+  `.tmp` one by one with mode 0700 and refuses any of them that is a symlink, which
+  fails the call naming the path; it tightens a looser one of them to 0700 and its own
+  files (the kept file and the set-aside copy) to 0600; a symlink where one of its files
+  belongs is removed, never followed; and it reads and writes its files without following
+  a symlink. The unit's `UMask=0077` makes every file agent-browser writes 0600. The file
+  survives a browser stop and a container restart (`$HOME` survives it); a redeploy may
+  lose it (`TestReadyBrowserState_LeavesTheSignInPrivate`,
   `TestReadyBrowserState_RefusesASymlinkedDirectory`,
-  `TestReadyBrowserState_RemovesAStateAgentBrowserCannotLoad`,
+  `TestReadyBrowserState_ASymlinkedKeptFileIsRemovedNotFollowed`,
   `TestBrowserUnitArgs_FilesTheBrowserWritesArePrivate`).
-- **Expiry.** `AGENT_BROWSER_STATE_EXPIRE_DAYS=7`: as a keeping browser starts, the
-  daemon removes state files unsaved for a week — long enough to span a weekend and a
-  paused task, short enough that a sign-in nobody uses does not sit in the container for
-  weeks.
-- **No encryption.** `AGENT_BROWSER_ENCRYPTION_KEY` is not set: its key would live in
-  the same container, readable by the same user as the file, so it would protect against
-  nothing the modes do not, and a lost or changed key would leave the file unloadable.
+- **Expiry.** As a keeping browser starts, zcp removes its kept file and its set-aside
+  copy when they are older than 7 days — long enough to span a weekend and a paused task,
+  short enough that a sign-in nobody uses does not sit in the container for weeks — and
+  touches no other file in the folder, which other programs' saved sessions share
+  (`TestReadyBrowserState_ExpiresOnlyItsOwnFiles`).
+- **No encryption.** The file is not encrypted: a key would live in the same container,
+  readable by the same user as the file, so it would protect against nothing the modes
+  do not, and a lost or changed key would leave the file unloadable.
 - **The way out.** A Mate forgets the kept sign-in with `["cookies","clear"]` and
   `["storage","local","clear"]` on the signed-in page in a `tab` call: the save at that
   call's end keeps what the call left, so the next browser, even after a `SIGKILL`,
