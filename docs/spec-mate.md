@@ -4603,8 +4603,10 @@ either history."
 
 The reverse of §5.10: the code already lives in a repository of the Mate's application in HQ, and
 the person wants it on GitHub — a GitHub copy, GitHub pull requests from Mate's repository,
-"connect to GitHub". The agent asks; the person picks the GitHub account and repository in Mate
-and connects it through HQ, which then mirrors it (§5.10, *A repository HQ mirrors to GitHub*). No
+"connect to GitHub". The agent asks; the person picks the GitHub account and a repository there in
+Mate, or has HQ make a new empty private one on that account in the same press (where the account
+granted the organisation's GitHub app repository creation), and connects it through HQ, which then
+mirrors it (§5.10, *A repository HQ mirrors to GitHub*). No
 token or address crosses the conversation.
 
 - **Request.** `zerops_mirror action=request` (Mate-gated, §2.0) takes `repo`, the repository in
@@ -4626,7 +4628,8 @@ token or address crosses the conversation.
   nothing and asks HQ nothing; it answers
   `{"withdrawn":{"mirror":{"repo":"<repo>"}},"nextActions":"…"}`.
 - **mate.** The engine opens a mirror ask on a `requested` answer and draws a card holding the
-  GitHub account and repository picker for `repo`; the person connects through HQ, and the card
+  GitHub account and repository picker for `repo`, which also offers a new private repository named
+  like `repo` where HQ may make one (HQ `POST …/remote/app/new`); the person connects through HQ, and the card
   settles once HQ shows the repository's remote. A `withdrawn` answer closes the card of the ask
   naming `repo`; a `connected` answer draws none.
 - **Where the agent reads it.** AGENTS.md's git host paragraph names the call for a repository

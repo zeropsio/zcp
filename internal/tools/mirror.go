@@ -56,7 +56,7 @@ const mirrorActionWithdraw = "withdraw"
 func RegisterMirror(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mirror",
-		Description: "When the person wants a repository's code on GitHub — a GitHub copy, pull requests there — and it has no remote, ask them to connect it: Mate shows a card where they pick the GitHub account and repository. Writes nothing; never ask for a token or address. action=withdraw repo closes an unneeded ask — not in chat.",
+		Description: "When the person wants a repository's code on GitHub — a GitHub copy, pull requests there — and it has no remote, ask them to connect it: Mate shows a card where they pick the GitHub account and a repository there, or have a new private one made; no GitHub repository needs to exist first. Writes nothing; never ask for a token or address. action=withdraw repo closes an unneeded ask — not in chat.",
 		Annotations: &mcp.ToolAnnotations{Title: "Ask to connect a repository to GitHub", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in MirrorInput) (*mcp.CallToolResult, any, error) {
 		if in.Action == mirrorActionWithdraw {
@@ -139,7 +139,7 @@ func mirrorAnswerOf(req ops.MirrorRequest, repos []hq.AppRepo) (mirrorAnswer, er
 	}
 	return mirrorAnswer{
 		Requested: &mirrorRequested{Mirror: req},
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate shows a card where they pick the GitHub account and repository %[1]s connects to. "+
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate shows a card where they pick the GitHub account and the repository %[1]s connects to, or have a new private one made there. "+
 			"Say one sentence — that you asked them to connect %[1]s to GitHub, in the card above — and nothing about how they pick; never ask for a token or a repository address in the chat. "+
 			"Once connected, HQ pushes the repository to GitHub itself: never push to GitHub yourself. "+
 			"Should you no longer need it — re-planned, asked by mistake — withdraw it (`zerops_mirror action=\"withdraw\" repo=%[1]q`): Mate closes its card; never say in chat that it is outdated. "+
