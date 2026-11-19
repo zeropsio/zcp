@@ -311,7 +311,12 @@ off and restarting is a supported operation, not a state zcp only knows how to e
 
 ### 2.1 Three jobs — prepare, start, keep
 
-zcp has three small jobs for the Mate, and one owner per decision:
+zcp has three small jobs for the Mate, and one owner per decision.
+This section covers zcp's part in a Mate's birth, while
+`zeropsio/mate-hq:docs/architecture/lifecycle-and-runtime.md` traces the birth across the web,
+HQ, the platform and zcp and names its three ends (deployment active, HQ admission and first
+usable screen). The deployment is active once `zcp init` returns, before the start job has
+installed or launched anything.
 
 | Job | Runs | Does |
 |---|---|---|
@@ -426,9 +431,11 @@ lock without waiting and:
    `current`. A version below `MinimumMateVersion` is never started (`mate.BelowFloorError`; `zcp
    mate status --json` reports it as `belowFloor` beside `minimum`).
 4. **Launches and judges.** "Up" is the process this start launched answering the loopback updater
-   readiness (§2.1d) with its version; whether it is idle plays no part. Every advance of the server's
-   boot file (`ZCP_MATE_BOOT_FILE`, `{pid, progress, error}`) restarts the boot window
-   (`mate.BootWindow`, 2 minutes), so a boot that keeps advancing is never judged by elapsed time.
+   readiness (§2.1d) with its version; whether it is idle plays no part. The boot file
+   (`ZCP_MATE_BOOT_FILE`) contains `{protocol, pid, progress, error}` and the server's own record
+   of its boot steps (`startedAt`, `steps`, `readyAt`), which zcp does not read. Only an advance
+   of `progress` restarts the boot window (`mate.BootWindow`, 2 minutes), so a boot that keeps
+   advancing is never judged by elapsed time.
    - Up → `last-good` names the version (never a dev build, nor one below the floor), a failed
      version it reached is forgotten, and old version directories are pruned to `current` and
      `last-good` (the newest other release is kept when these name one version). A dev build's
