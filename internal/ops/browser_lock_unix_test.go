@@ -24,18 +24,18 @@ type lockingRunner struct {
 
 func (*lockingRunner) LookPath() (string, error) { return "/fake/agent-browser", nil }
 
-func (l *lockingRunner) Acquire(ctx context.Context, _ string) (func(bool) error, bool, error) {
+func (l *lockingRunner) Acquire(ctx context.Context, _ string) (func(bool) error, bool, string, error) {
 	if l.onAcquire != nil {
 		l.onAcquire()
 	}
 	unlock, err := waitBrowserLock(ctx, l.lock)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", err
 	}
-	return func(bool) error { unlock(); return nil }, false, nil
+	return func(bool) error { unlock(); return nil }, false, "", nil
 }
 
-func (l *lockingRunner) Run(_ context.Context, _, _ string, _ time.Duration) (string, string, bool, error) {
+func (l *lockingRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
 	if l.onRun != nil {
 		l.onRun()
 	}

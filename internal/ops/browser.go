@@ -253,13 +253,14 @@ type browserRunner interface {
 	// Acquire waits, until ctx ends, for the container's browser, readies it
 	// for one call at the given isolation and returns release. release(true)
 	// hands the browser back warm; release(false) recycles it. fresh reports
-	// that the browser was started for this call instead of reused.
-	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, fresh bool, err error)
-	// Run walks the JSON [][]string batch in stdin on the browser Acquire
-	// readied for the same isolation and answers with the JSON
-	// []BrowserStepResult of the steps that finished. err is set only when
-	// the walk could not finish (ctx ended, a step got no answer).
-	Run(ctx context.Context, isolation, stdin string, timeout time.Duration) (stdout, stderr string, truncated bool, err error)
+	// that the browser was started for this call instead of reused; note is
+	// what the call's result must say about the browser it got ("" when
+	// nothing: a kept sign-in it could not restore, docs/spec-mate.md §2.6c).
+	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, fresh bool, note string, err error)
+	// Run walks the JSON [][]string batch in stdin and answers with the
+	// JSON []BrowserStepResult of the steps that finished. err is set only
+	// when the walk could not finish (ctx ended, a step got no answer).
+	Run(ctx context.Context, stdin string, timeout time.Duration) (stdout, stderr string, truncated bool, err error)
 }
 
 // Isolation levels, from cheapest. A tab shares cookies, storage, HTTP cache
@@ -623,7 +624,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		)
 	}
 
-	release, fresh, err := browserRun.Acquire(ctx, isolation)
+	release, fresh, note, err := browserRun.Acquire(ctx, isolation)
 	if err != nil {
 		return nil, fmt.Errorf("acquire browser: %w", err)
 	}
@@ -638,7 +639,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 
 	start := time.Now()
-	stdout, stderr, truncated, runErr := browserRun.Run(ctx, isolation, string(stdinBytes), timeout)
+	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout)
 	duration := time.Since(start)
 	// Everything below reads the walk's answer without the values it was given.
 	answer, runErr := envUse.takeBack(stdout, stderr, truncated, runErr)
@@ -670,6 +671,11 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	if answer.withheld {
 		result.Message = browserWithheld
+	}
+	// What the browser's readying had to say comes first: the call ran
+	// without the sign-in the agent expects.
+	if note != "" {
+		result.Message = strings.TrimSpace(note + " " + result.Message)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)

@@ -40,7 +40,8 @@ import (
 type fakeBrowserRunner struct {
 	lookPathErr error
 	acquireErr  error
-	fresh       bool // Acquire started the browser for the call
+	fresh       bool   // Acquire started the browser for the call
+	note        string // what Acquire had to say about the browser it readied
 
 	lastIsolation string
 	lastStdin     string
@@ -61,9 +62,9 @@ func (f *fakeBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
-func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, bool, error) {
+func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, bool, string, error) {
 	if f.acquireErr != nil {
-		return nil, false, f.acquireErr
+		return nil, false, "", f.acquireErr
 	}
 	f.lastIsolation = isolation
 	return func(reuse bool) error {
@@ -71,10 +72,10 @@ func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(r
 		defer f.mu.Unlock()
 		f.releases = append(f.releases, reuse)
 		return nil
-	}, f.fresh, nil
+	}, f.fresh, f.note, nil
 }
 
-func (f *fakeBrowserRunner) Run(_ context.Context, _, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
 	f.lastStdin = stdin
 	f.lastTimeout = timeout
 	return f.runStdout, f.runStderr, f.runTruncated, f.runErr
@@ -931,7 +932,7 @@ type fakeEchoScreenshotRunner struct {
 	tempPath string
 }
 
-func (f *fakeEchoScreenshotRunner) Run(_ context.Context, _, stdin string, _ time.Duration) (string, string, bool, error) {
+func (f *fakeEchoScreenshotRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeEchoScreenshotRunner: parse stdin: %w", err)
@@ -990,7 +991,7 @@ type fakeScreenshotRunner struct {
 	capturedPath string
 }
 
-func (f *fakeScreenshotRunner) Run(ctx context.Context, isolation, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
@@ -1003,7 +1004,7 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, isolation, stdin string,
 			}
 		}
 	}
-	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, isolation, stdin, timeout)
+	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, stdin, timeout)
 	if stdout == "" {
 		// Default canned output when the embedded fake wasn't pre-seeded.
 		out := make([]map[string]any, 0, len(batch))
@@ -1812,5 +1813,31 @@ func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T
 				t.Errorf("message %q calls a %s a wedge", result.Message, tt.name)
 			}
 		})
+	}
+}
+
+// A call whose browser could not restore the kept sign-in says so first in
+// its message, so the agent knows it ran signed out and why.
+// witness: internal/ops/browser.go | if note != "" { → if false {
+func TestBrowserBatch_ASignInThatCouldNotBeRestored_SaysSoInTheMessage(t *testing.T) {
+	const note = "The kept sign-in could not be restored."
+	batch := [][]string{
+		{"set", "viewport", "1280", "577"},
+		{"open", "https://example.com/app"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
+		{"errors"},
+		{"console"},
+		{"network", "requests", "--status", "400-599"},
+	}
+	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch), fresh: true, note: note}
+	defer OverrideBrowserRunnerForTest(fake)()
+	defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com/app"})
+	if err != nil {
+		t.Fatalf("BrowserBatch: %v", err)
+	}
+	if !strings.HasPrefix(result.Message, note) {
+		t.Errorf("the message must begin with what the browser's readying said: %q", result.Message)
 	}
 }

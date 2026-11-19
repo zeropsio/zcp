@@ -27,17 +27,14 @@ const (
 	browserReleaseTimeout = 15 * time.Second
 )
 
-// browserHost is how this process reaches the warm browser (browser_warm.go)
-// for a call at one isolation. stateDir is where its browser keeps the
-// sign-in, "" when it keeps none.
+// browserHost is how this process reaches the warm browser (browser_warm.go).
 type browserHost struct {
-	home     string
-	binary   string
-	env      []string
-	stateDir string
+	home   string
+	binary string
+	env    []string
 }
 
-func newBrowserHost(isolation string) (browserHost, error) {
+func newBrowserHost() (browserHost, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return browserHost{}, fmt.Errorf("browser home: %w", err)
@@ -46,12 +43,7 @@ func newBrowserHost(isolation string) (browserHost, error) {
 	if err != nil {
 		return browserHost{}, fmt.Errorf("browser binary: %w", err)
 	}
-	keep := browserKeepsSignIn(isolation, home)
-	h := browserHost{home: home, binary: binary, env: browserEnv(home, os.Getenv("PATH"), keep)}
-	if keep {
-		h.stateDir = browserStateDir(home)
-	}
-	return h, nil
+	return browserHost{home: home, binary: binary, env: browserEnv(home, os.Getenv("PATH"))}, nil
 }
 
 // step runs one agent-browser command against the warm browser's socket.
@@ -69,15 +61,21 @@ func (h browserHost) step(ctx context.Context, args []string) (string, string, e
 	return out.String(), errBuf.String(), err
 }
 
-func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, bool, error) {
+func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, bool, string, error) {
 	unlock, err := waitBrowserLock(ctx, browserLockPath)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", err
 	}
-	h, err := newBrowserHost(isolation)
+	h, err := newBrowserHost()
 	if err != nil {
 		unlock()
-		return nil, false, err
+		return nil, false, "", err
+	}
+	// stateDir is where the call's browser keeps the sign-in, "" when the
+	// call keeps none (docs/spec-mate.md §2.6c).
+	stateDir := ""
+	if browserKeepsSignIn(isolation, h.home) {
+		stateDir = browserStateDir(h.home)
 	}
 	budget := browserDefaultTimeout
 	if deadline, ok := ctx.Deadline(); ok {
@@ -86,10 +84,11 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	warm, state, err := readWarmBrowser(ctx)
 	if err != nil {
 		unlock()
-		return nil, false, err
+		return nil, false, "", err
 	}
 	reused := warm.reusable(isolation, budget)
 	fresh := false
+	note := ""
 	ready := func(running bool) error {
 		fresh = true
 		if running {
@@ -97,8 +96,21 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 				return err
 			}
 		}
-		if err := h.start(ctx); err != nil {
+		if err := h.start(ctx, stateDir); err != nil {
 			return err
+		}
+		if stateDir != "" {
+			var restart bool
+			if note, restart = restoreBrowserSignIn(ctx, h.step, stateDir); restart {
+				// The load left the browser busy with a saved site or half
+				// signed in: a clean one runs the call signed out.
+				if err := stopBrowser(ctx); err != nil {
+					return err
+				}
+				if err := h.start(ctx, stateDir); err != nil {
+					return err
+				}
+			}
 		}
 		return h.setup(ctx, isolation)
 	}
@@ -116,10 +128,10 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		defer cancel()
 		err = errors.Join(err, stopBrowser(rctx))
 		unlock()
-		return nil, false, err
+		return nil, false, "", err
 	}
 	handBack := func(rctx context.Context) error {
-		return handBackBrowser(rctx, h.step, h.stateDir, func(mctx context.Context) error {
+		return handBackBrowser(rctx, h.step, stateDir, func(mctx context.Context) error {
 			w, _, err := readWarmBrowser(mctx)
 			if err != nil {
 				return err
@@ -131,7 +143,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		defer unlock()
 		return releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
 	}
-	return release, fresh, nil
+	return release, fresh, note, nil
 }
 
 // setup marks the browser busy (a caller that dies mid-call leaves it so,
@@ -147,13 +159,14 @@ func (h browserHost) setup(ctx context.Context, isolation string) error {
 	return walkBrowser(ctx, browserSetupSteps(isolation), h.step)
 }
 
-// start launches the warm browser's service, its kept sign-in readied first.
-func (h browserHost) start(ctx context.Context) error {
+// start launches the warm browser's service, the kept sign-in's folder in
+// stateDir readied first ("" when the call keeps none).
+func (h browserHost) start(ctx context.Context, stateDir string) error {
 	if err := os.MkdirAll(browserTmpDir, 0o700); err != nil {
 		return fmt.Errorf("browser profile directory: %w", err)
 	}
-	if h.stateDir != "" {
-		if err := readyBrowserState(h.stateDir); err != nil {
+	if stateDir != "" {
+		if err := readyBrowserState(stateDir, time.Now()); err != nil {
 			return err
 		}
 	}
@@ -256,12 +269,12 @@ func linkBrowserStream(home string) error {
 	return nil
 }
 
-func (execBrowserRunner) Run(ctx context.Context, isolation, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
 	var steps [][]string
 	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
 		return "", "", false, fmt.Errorf("browser batch: %w", err)
 	}
-	h, err := newBrowserHost(isolation)
+	h, err := newBrowserHost()
 	if err != nil {
 		return "", "", false, err
 	}

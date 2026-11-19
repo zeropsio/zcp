@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,24 +45,6 @@ const (
 	// browserMemoryPercent caps the browser at 75% of the container's memory
 	// at its start, so a page that grows without end is killed with it.
 	browserMemoryPercent = 75
-
-	// browserSession is agent-browser's session: the daemon's socket, pid
-	// and stream files are named after it.
-	browserSession = "default"
-	// browserSignIn names the kept sign-in, agent-browser's restore key: a
-	// browser that keeps it loads and saves <browserSignIn>-<browserSession>.json
-	// in browserStateDir (docs/spec-mate.md §2.6c).
-	browserSignIn     = "zcp"
-	browserSignInFile = browserSignIn + "-" + browserSession + ".json"
-	// browserStateTmp is agent-browser's own directory for a save's
-	// candidate, inside the state directory.
-	browserStateTmp = ".tmp"
-	// browserStateExpireDays: a starting browser removes a kept sign-in no
-	// browser saved for a week.
-	browserStateExpireDays = 7
-	// browserSignInSaveTimeout bounds the save at a call's end, inside the
-	// hand-back's own bound.
-	browserSignInSaveTimeout = 5 * time.Second
 )
 
 // browserPaintWait waits for the page's first contentful paint: it returns
@@ -75,49 +55,18 @@ var browserPaintWait = []string{"wait", "--fn", "performance.getEntriesByName('f
 // browserEnv is the whole environment of the warm browser's service and of
 // every step sent to it. agent-browser restarts a daemon whose settings
 // differ from the client's, so both sides get exactly this, never an
-// inherited AGENT_BROWSER_* variable. keep names the kept sign-in: such a
-// browser loads it as it starts and saves it as its daemon exits idle,
-// never on a timer — every clean call ends with zcp's own save
-// (handBackBrowser) — and drops one unsaved for browserStateExpireDays.
-func browserEnv(home, path string, keep bool) []string {
-	env := []string{
+// inherited AGENT_BROWSER_* variable. It names no agent-browser session, so
+// agent-browser itself never restores or saves a sign-in: zcp does
+// (browser_signin.go).
+func browserEnv(home, path string) []string {
+	return []string{
 		"HOME=" + home,
 		"PATH=" + path,
 		"TMPDIR=" + browserTmpDir,
 		"AGENT_BROWSER_SOCKET_DIR=" + browserRuntimeDir,
-		"AGENT_BROWSER_SESSION=" + browserSession,
+		"AGENT_BROWSER_SESSION=default",
 		"AGENT_BROWSER_IDLE_TIMEOUT_MS=" + strconv.FormatInt(browserIdleTimeout.Milliseconds(), 10),
 	}
-	if keep {
-		env = append(env,
-			"AGENT_BROWSER_SESSION_NAME="+browserSignIn,
-			"AGENT_BROWSER_RESTORE_SAVE=auto",
-			"AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0",
-			"AGENT_BROWSER_STATE_EXPIRE_DAYS="+strconv.Itoa(browserStateExpireDays),
-		)
-	}
-	return env
-}
-
-// browserKeepsSignIn reports whether a call's browser keeps the sign-in
-// across browser restarts. A fresh-context call's never does: agent-browser
-// saves the cookies of the active tab's context, so a save while its fresh
-// context is active would write that empty context over the sign-in. Nor
-// does any browser whose home would put the saved cookies outside a
-// private home: a relative one, /, or the workspace, which holds git
-// checkouts and is mounted into dev services.
-func browserKeepsSignIn(isolation, home string) bool {
-	if isolation == BrowserIsolationFreshContext || !filepath.IsAbs(home) {
-		return false
-	}
-	home = filepath.Clean(home)
-	return home != "/" && home != mountBase && !strings.HasPrefix(home, mountBase+"/")
-}
-
-// browserStateDir is where agent-browser keeps a named session's state
-// under the browser's home.
-func browserStateDir(home string) string {
-	return filepath.Join(home, ".agent-browser", "sessions")
 }
 
 // browserUnitArgs are the sudo arguments that start the warm browser: the
@@ -167,12 +116,11 @@ type warmBrowser struct {
 }
 
 // reusable reports whether a call at the given isolation and budget may run
-// on the warm browser: it is a tab call (a new browser asks for its own, and
-// a fresh context gets one that keeps no sign-in), the browser is running,
-// the last call in it ended cleanly, and neither its idle exit nor its max
-// age can cut the call.
+// on the warm browser: it did not ask for a new browser, the browser is
+// running, the last call in it ended cleanly, and neither its idle exit nor
+// its max age can cut the call.
 func (w warmBrowser) reusable(isolation string, budget time.Duration) bool {
-	return isolation == BrowserIsolationTab &&
+	return isolation != BrowserIsolationNewBrowser &&
 		w.Active && w.Marker == browserMarkerIdle &&
 		w.IdleFor < browserIdleTimeout-browserBoundMargin &&
 		w.Age+budget < browserMaxAge && w.quietWhileIdle()
@@ -287,176 +235,20 @@ func closeCallTabs(ctx context.Context, run browserStepExec) error {
 // a temporary tab, which now and then stalled the save past 30 s (measured
 // with agent-browser 0.39.1: 2 of 29 saves on the base tab, none of 40 on
 // the call's tab). A save that fails is logged and hands the browser back
-// all the same: the last good save stands, and the browser saves again
-// when its daemon exits idle.
+// all the same: the last good save stands.
 func handBackBrowser(ctx context.Context, run browserStepExec, stateDir string, markIdle func(context.Context) error) error {
 	if stateDir != "" {
 		sctx, cancel := context.WithTimeout(ctx, browserSignInSaveTimeout)
 		err := saveBrowserSignIn(sctx, run, stateDir)
 		cancel()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "zerops_browser: keep the sign-in: %v\n", err)
+			logBrowserSignIn(err)
 		}
 	}
 	if err := closeCallTabs(ctx, run); err != nil {
 		return err
 	}
 	return markIdle(ctx)
-}
-
-// saveBrowserSignIn saves the browser's default context into stateDir. It
-// saves nothing after a restore that failed, as agent-browser's own auto
-// policy does, so a file the browser could not load is never replaced by a
-// browser that started without it. agent-browser has no command that saves
-// the named session at once, so its state save writes a candidate in the
-// directory's own temporary folder and zcp renames it over the kept file
-// once it is a state agent-browser can load. It saves the context of the
-// active tab, which must be the default context's.
-func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir string) error {
-	out, _, err := run(ctx, []string{"session", "info"})
-	if err != nil {
-		return fmt.Errorf("session info: %w", err)
-	}
-	var info struct {
-		Data struct {
-			Runtime struct {
-				RestoreStatus string `json:"restoreStatus"`
-			} `json:"runtime"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &info); err != nil {
-		return fmt.Errorf("session info: %w", err)
-	}
-	// loaded: the kept file is in the browser; missing: there was none.
-	if status := info.Data.Runtime.RestoreStatus; status != "loaded" && status != "missing" {
-		return nil
-	}
-	candidate := filepath.Join(stateDir, browserStateTmp, browserSignInFile)
-	if err := walkBrowser(ctx, [][]string{{"state", "save", candidate}}, run); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(candidate)
-	if err != nil {
-		return fmt.Errorf("read the saved state: %w", err)
-	}
-	if !validBrowserState(data) {
-		_ = os.Remove(candidate)
-		return errors.New("the saved state is not one agent-browser can load")
-	}
-	if err := os.Rename(candidate, filepath.Join(stateDir, browserSignInFile)); err != nil {
-		return fmt.Errorf("keep the saved state: %w", err)
-	}
-	return nil
-}
-
-// validBrowserState reports whether data is a state agent-browser 0.39.1
-// loads: its cookies and origins, each cookie with its name, value, domain
-// and path, each origin with its origin and local storage, every field of
-// the type agent-browser reads.
-func validBrowserState(data []byte) bool {
-	type entry struct {
-		Name  *string `json:"name"`
-		Value *string `json:"value"`
-	}
-	var state struct {
-		Cookies *[]struct {
-			Name     *string `json:"name"`
-			Value    *string `json:"value"`
-			Domain   *string `json:"domain"`
-			Path     *string `json:"path"`
-			Expires  float64 `json:"expires"`
-			Size     int64   `json:"size"`
-			HTTPOnly bool    `json:"httpOnly"`
-			Secure   bool    `json:"secure"`
-			Session  bool    `json:"session"`
-			SameSite *string `json:"sameSite"`
-		} `json:"cookies"`
-		Origins *[]struct {
-			Origin         *string  `json:"origin"`
-			LocalStorage   *[]entry `json:"localStorage"`
-			SessionStorage []entry  `json:"sessionStorage"`
-		} `json:"origins"`
-	}
-	if json.Unmarshal(data, &state) != nil || state.Cookies == nil || state.Origins == nil {
-		return false
-	}
-	for _, c := range *state.Cookies {
-		if c.Name == nil || c.Value == nil || c.Domain == nil || c.Path == nil {
-			return false
-		}
-	}
-	for _, o := range *state.Origins {
-		if o.Origin == nil || o.LocalStorage == nil {
-			return false
-		}
-		for _, e := range append(slices.Clone(*o.LocalStorage), o.SessionStorage...) {
-			if e.Name == nil || e.Value == nil {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// readyBrowserState readies stateDir before a browser that keeps the
-// sign-in starts: the directory and its temporary folder exist, are no
-// symlink and are their user's alone (0700, every file in them 0600, a
-// looser mode tightened), and a kept file agent-browser could not load is
-// removed — after a failed load its auto policy would skip every save that
-// follows.
-func readyBrowserState(stateDir string) error {
-	tmp := filepath.Join(stateDir, browserStateTmp)
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return fmt.Errorf("browser state directory: %w", err)
-	}
-	for _, dir := range []string{stateDir, tmp} {
-		if err := tightenMode(dir, 0o700); err != nil {
-			return err
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return fmt.Errorf("browser state directory: %w", err)
-		}
-		for _, e := range entries {
-			if e.Type().IsRegular() {
-				if err := tightenMode(filepath.Join(dir, e.Name()), 0o600); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	file := filepath.Join(stateDir, browserSignInFile)
-	data, err := os.ReadFile(file)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	case err != nil:
-		return fmt.Errorf("browser state: %w", err)
-	case !validBrowserState(data):
-		if err := os.Remove(file); err != nil {
-			return fmt.Errorf("remove a browser state agent-browser cannot load: %w", err)
-		}
-	}
-	return nil
-}
-
-// tightenMode refuses a symlink at path and takes from its mode every
-// permission bit outside mode.
-func tightenMode(path string, mode os.FileMode) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("browser state: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("browser state: %s is a symlink", path)
-	}
-	if info.Mode().Perm()&^mode == 0 {
-		return nil
-	}
-	if err := os.Chmod(path, mode); err != nil {
-		return fmt.Errorf("browser state: %w", err)
-	}
-	return nil
 }
 
 // releaseBrowser ends a call: handBack readies the browser for the next call

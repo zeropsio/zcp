@@ -264,11 +264,11 @@ type fullPageRunner struct {
 }
 
 func (fullPageRunner) LookPath() (string, error) { return "/fake/agent-browser", nil }
-func (fullPageRunner) Acquire(context.Context, string) (func(bool) error, bool, error) {
-	return func(bool) error { return nil }, false, nil
+func (fullPageRunner) Acquire(context.Context, string) (func(bool) error, bool, string, error) {
+	return func(bool) error { return nil }, false, "", nil
 }
 
-func (f *fullPageRunner) Run(_ context.Context, _, stdin string, _ time.Duration) (string, string, bool, error) {
+func (f *fullPageRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
 	f.lastStdin = stdin
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {

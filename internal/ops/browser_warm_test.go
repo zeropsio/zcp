@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -305,15 +303,6 @@ func TestWarmBrowser_ReusableOnlyInsideItsBounds(t *testing.T) {
 			t.Error("a new-browser call must start a fresh browser, even beside an idle one")
 		}
 	})
-	// A fresh-context call never runs in the warm browser, which keeps the
-	// sign-in: a save there while the fresh context's tab is active would
-	// write that empty context over the kept sign-in.
-	// witness: internal/ops/browser_warm.go | return isolation == BrowserIsolationTab && → return isolation != BrowserIsolationNewBrowser &&
-	t.Run("a fresh-context call", func(t *testing.T) {
-		if idle.reusable(BrowserIsolationFreshContext, budget) {
-			t.Error("a fresh-context call must get a browser of its own, even beside an idle one")
-		}
-	})
 }
 
 // TestRunBrowserSteps_StepsCarryNoAgentBrowserLifecycle pins that a step's
@@ -371,7 +360,7 @@ func TestBrowserMarker_CarriesTheCPUUsedWhenTheCallEnded(t *testing.T) {
 // must never reach either side.
 func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_DEFAULT_TIMEOUT", "9000")
-	env := browserEnv("/home/zerops", "/usr/bin", true)
+	env := browserEnv("/home/zerops", "/usr/bin")
 	want := []string{
 		"HOME=/home/zerops",
 		"PATH=/usr/bin",
@@ -379,10 +368,6 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 		"AGENT_BROWSER_SOCKET_DIR=" + browserRuntimeDir,
 		"AGENT_BROWSER_SESSION=default",
 		"AGENT_BROWSER_IDLE_TIMEOUT_MS=300000",
-		"AGENT_BROWSER_SESSION_NAME=zcp",
-		"AGENT_BROWSER_RESTORE_SAVE=auto",
-		"AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0",
-		"AGENT_BROWSER_STATE_EXPIRE_DAYS=7",
 	}
 	if !slices.Equal(env, want) {
 		t.Errorf("env = %v, want %v", env, want)
@@ -404,7 +389,7 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 // of the warm browser: its own cgroup killed whole, a task and CPU ceiling,
 // a max age, and its profile removed on every stop.
 func TestBrowserUnitArgs_BoundEverythingTheBrowserRuns(t *testing.T) {
-	args := browserUnitArgs("/usr/bin/agent-browser", browserEnv("/home/zerops", "/usr/bin", true), 1000, 2, 4<<30)
+	args := browserUnitArgs("/usr/bin/agent-browser", browserEnv("/home/zerops", "/usr/bin"), 1000, 2, 4<<30)
 	for _, want := range []string{
 		"-n", "systemd-run",
 		"--unit=" + browserUnit,
@@ -646,205 +631,14 @@ func TestRunBrowserSteps_HealthyPage_RunsEveryCommand(t *testing.T) {
 	}
 }
 
-// A browser that keeps no sign-in — a fresh-context call's — names no
-// session, so agent-browser neither loads the kept sign-in into it nor saves
-// anything of it over the kept one.
-// witness: internal/ops/browser_warm.go | 	if keep { → 	if true {
-func TestBrowserEnv_OnlyABrowserThatKeepsTheSignInNamesItsSession(t *testing.T) {
-	for _, kv := range browserEnv("/home/agent", "/usr/local/bin:/usr/bin", false) {
-		for _, setting := range []string{"AGENT_BROWSER_SESSION_NAME=", "AGENT_BROWSER_RESTORE_SAVE=", "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=", "AGENT_BROWSER_STATE_EXPIRE_DAYS="} {
-			if strings.HasPrefix(kv, setting) {
-				t.Errorf("a browser that keeps no sign-in sets %q", kv)
-			}
-		}
-	}
-}
-
-// The sign-in survives browser restarts for tab and new-browser calls; a
-// fresh-context call's browser never keeps it, and neither does one whose
-// home would put the saved cookies anywhere but a private home: none, a
-// relative one, /, or the workspace that holds git checkouts and is mounted
-// into dev services.
-// witness: internal/ops/browser_warm.go | if isolation == BrowserIsolationFreshContext || !filepath.IsAbs(home) { → if !filepath.IsAbs(home) {
-func TestBrowserKeepsSignIn_TabAndNewBrowserKeepFreshContextNever(t *testing.T) {
-	tests := []struct {
-		isolation, home string
-		want            bool
-	}{
-		{BrowserIsolationTab, "/home/zerops", true},
-		{BrowserIsolationNewBrowser, "/home/zerops", true},
-		{BrowserIsolationFreshContext, "/home/zerops", false},
-		{BrowserIsolationTab, "", false},
-		{BrowserIsolationTab, "home/zerops", false},
-		{BrowserIsolationTab, "/", false},
-		{BrowserIsolationTab, "/var/www", false},
-		{BrowserIsolationTab, "/var/www/", false},
-		{BrowserIsolationTab, "/var/www/home", false},
-		{BrowserIsolationTab, "/var/wwwhome", true},
-	}
-	for _, tt := range tests {
-		if got := browserKeepsSignIn(tt.isolation, tt.home); got != tt.want {
-			t.Errorf("browserKeepsSignIn(%q, %q) = %v, want %v", tt.isolation, tt.home, got, tt.want)
-		}
-	}
-}
-
 // Every file the browser writes, the kept sign-in's cookies among them, is
 // its user's alone.
 // witness: internal/ops/browser_warm.go | 		"--property=UMask=0077", →
 func TestBrowserUnitArgs_FilesTheBrowserWritesArePrivate(t *testing.T) {
-	args := browserUnitArgs("/usr/local/bin/agent-browser", browserEnv("/home/agent", "/usr/bin", true), 2000, 4, 0)
+	args := browserUnitArgs("/usr/local/bin/agent-browser", browserEnv("/home/agent", "/usr/bin"), 2000, 4, 0)
 	if !slices.Contains(args, "--property=UMask=0077") {
 		t.Errorf("the browser unit must make its files private: %v", args)
 	}
-}
-
-// A state with a cookie and local storage, as agent-browser 0.39.1 saves it.
-const signedInState = `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/","expires":1795087979.0,"size":9,"httpOnly":false,"secure":false,"session":false}],` +
-	`"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"xyz789"}],"sessionStorage":[]}]}`
-
-// The kept sign-in's directories end up 0700 and every file in them 0600
-// before the browser starts: created so, or tightened from a looser mode
-// another tool or an older layout left.
-// witness: internal/ops/browser_warm.go | if info.Mode().Perm()&^mode == 0 { → if true {
-func TestReadyBrowserState_LeavesTheSignInPrivate(t *testing.T) {
-	fresh := browserStateDir(t.TempDir())
-	loose := browserStateDir(t.TempDir())
-	if err := os.MkdirAll(filepath.Join(loose, browserStateTmp), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{loose, filepath.Join(loose, browserStateTmp)} {
-		if err := os.Chmod(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, f := range []string{filepath.Join(loose, browserSignInFile), filepath.Join(loose, browserStateTmp, browserSignInFile)} {
-		if err := os.WriteFile(f, []byte(signedInState), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(f, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, dir := range []string{fresh, loose} {
-		if err := readyBrowserState(dir); err != nil {
-			t.Fatalf("readyBrowserState(%s): %v", dir, err)
-		}
-		for _, d := range []string{dir, filepath.Join(dir, browserStateTmp)} {
-			if info, err := os.Stat(d); err != nil || info.Mode().Perm() != 0o700 {
-				t.Errorf("%s must be 0700: %v %v", d, info.Mode(), err)
-			}
-		}
-	}
-	for _, f := range []string{filepath.Join(loose, browserSignInFile), filepath.Join(loose, browserStateTmp, browserSignInFile)} {
-		if info, err := os.Stat(f); err != nil || info.Mode().Perm() != 0o600 {
-			t.Errorf("%s must be 0600: %v %v", f, info.Mode(), err)
-		}
-	}
-}
-
-// A state directory that is a symlink is refused, so the kept cookies never
-// land wherever it points — the workspace, a checkout — and no mode is
-// changed through it.
-// witness: internal/ops/browser_warm.go | if info.Mode()&os.ModeSymlink != 0 { → if false {
-func TestReadyBrowserState_RefusesASymlinkedDirectory(t *testing.T) {
-	home := t.TempDir()
-	elsewhere := t.TempDir()
-	if err := os.Chmod(elsewhere, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dir := browserStateDir(home)
-	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(elsewhere, dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := readyBrowserState(dir); err == nil {
-		t.Error("a symlinked state directory must be refused")
-	}
-	if info, err := os.Stat(elsewhere); err != nil || info.Mode().Perm() != 0o755 {
-		t.Errorf("the symlink's target must be left as it was: %v %v", info.Mode(), err)
-	}
-}
-
-// A kept sign-in agent-browser could not load is removed before the browser
-// starts, so the browser starts signed out and its saves go on: after a
-// failed load agent-browser's auto policy would skip every save. One it can
-// load stays as it is.
-// witness: internal/ops/browser_warm.go | case !validBrowserState(data): → case !validBrowserState(data) && len(data) == 0:
-func TestReadyBrowserState_RemovesAStateAgentBrowserCannotLoad(t *testing.T) {
-	tests := []struct {
-		name, state string
-		kept        bool
-	}{
-		{"cut short", signedInState[:40], false},
-		{"no origins", `{"cookies":[]}`, false},
-		{"a cookie without its path", `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1"}],"origins":[]}`, false},
-		{"an origin without local storage", `{"cookies":[],"origins":[{"origin":"http://127.0.0.1:18731"}]}`, false},
-		{"a cookie's size not a whole number", strings.Replace(signedInState, `"size":9`, `"size":"9"`, 1), false},
-		{"signed in", signedInState, true},
-		{"signed out", `{"cookies":[],"origins":[]}`, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := browserStateDir(t.TempDir())
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			file := filepath.Join(dir, browserSignInFile)
-			if err := os.WriteFile(file, []byte(tt.state), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := readyBrowserState(dir); err != nil {
-				t.Fatalf("readyBrowserState: %v", err)
-			}
-			data, err := os.ReadFile(file)
-			switch {
-			case tt.kept && (err != nil || string(data) != tt.state):
-				t.Errorf("a state agent-browser loads must stay as it was: %q %v", data, err)
-			case !tt.kept && !errors.Is(err, os.ErrNotExist):
-				t.Errorf("a state agent-browser cannot load must be removed: %q %v", data, err)
-			}
-		})
-	}
-}
-
-// savingBrowser answers a hand-back's steps as agent-browser does: the tab
-// list, the restore status, and a state save that writes saved to the path
-// it is given. It records each command.
-func savingBrowser(restoreStatus, saved string, seen *[][]string) browserStepExec {
-	return func(_ context.Context, args []string) (string, string, error) {
-		*seen = append(*seen, args)
-		switch {
-		case slices.Equal(args, []string{"tab", "list"}):
-			return `{"success":true,"data":{"tabs":[{"tabId":"t1","url":"about:blank"},{"tabId":"t2","url":"http://127.0.0.1:18731/"}]},"error":null}`, "", nil
-		case slices.Equal(args, []string{"session", "info"}):
-			return `{"success":true,"data":{"active":true,"runtime":{"restoreKey":"zcp","restoreStatus":"` + restoreStatus + `"},"session":"default"}}`, "", nil
-		case len(args) == 3 && args[0] == "state" && args[1] == "save":
-			if saved == "" {
-				return `{"success":false,"data":null,"error":"Failed to write state"}`, "", errors.New("exit status 1")
-			}
-			if err := os.WriteFile(args[2], []byte(saved), 0o600); err != nil {
-				return "", "", err
-			}
-			return `{"success":true,"data":{"saved":true,"path":"` + args[2] + `"},"error":null}`, "", nil
-		}
-		return `{"success":true,"data":{},"error":null}`, "", nil
-	}
-}
-
-// keptState is the kept sign-in in dir, "" when there is none.
-func keptState(t *testing.T, dir string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, browserSignInFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return ""
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
 }
 
 // A clean call hands the browser back with its sign-in saved — on the
@@ -853,20 +647,17 @@ func keptState(t *testing.T, dir string) string {
 // finds the sign-in kept.
 // witness: internal/ops/browser_warm.go | 	if stateDir != "" { → 	if false {
 func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
-	dir := browserStateDir(t.TempDir())
-	if err := readyBrowserState(dir); err != nil {
-		t.Fatal(err)
-	}
+	dir := readyStateDir(t)
 	var seen [][]string
 	keptWhenIdle := ""
-	err := handBackBrowser(t.Context(), savingBrowser("missing", signedInState, &seen), dir, func(context.Context) error {
+	err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, func(context.Context) error {
 		keptWhenIdle = keptState(t, dir)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("handBackBrowser: %v", err)
 	}
-	if keptWhenIdle != signedInState {
+	if !strings.Contains(keptWhenIdle, `"abc123"`) {
 		t.Errorf("the browser went idle before its sign-in was kept: %q", keptWhenIdle)
 	}
 	closed := slices.IndexFunc(seen, func(a []string) bool { return slices.Equal(a, []string{"tab", "close", "t2"}) })
@@ -878,60 +669,17 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 
 // A save that fails neither fails the hand-back nor recycles the browser:
 // it goes back warm, and the last good save stands.
-// witness: internal/ops/browser_warm.go | fmt.Fprintf(os.Stderr, "zerops_browser: keep the sign-in: %v\n", err) → return err
+// witness: internal/ops/browser_warm.go | 			logBrowserSignIn(err) → 			return err
 func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
-	dir := browserStateDir(t.TempDir())
-	if err := readyBrowserState(dir); err != nil {
-		t.Fatal(err)
-	}
+	dir := readyStateDir(t)
 	var seen [][]string
 	idle := false
-	err := handBackBrowser(t.Context(), savingBrowser("loaded", "", &seen), dir, func(context.Context) error {
+	err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, func(context.Context) error {
 		idle = true
 		return nil
 	})
 	if err != nil || !idle {
 		t.Errorf("a failed save must still hand the browser back idle: err=%v idle=%v", err, idle)
-	}
-}
-
-// A browser whose restore failed saves nothing: the file it could not load
-// stays the last good save rather than being replaced by the signed-out
-// state the browser started with.
-// witness: internal/ops/browser_warm.go | if status := info.Data.Runtime.RestoreStatus; status != "loaded" && status != "missing" { → if false {
-func TestSaveBrowserSignIn_AfterAFailedRestore_TheLastGoodSaveStands(t *testing.T) {
-	dir := browserStateDir(t.TempDir())
-	if err := readyBrowserState(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(signedInState), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser("load_failed", `{"cookies":[],"origins":[]}`, &seen), dir); err != nil {
-		t.Fatalf("saveBrowserSignIn: %v", err)
-	}
-	if got := keptState(t, dir); got != signedInState {
-		t.Errorf("a browser whose restore failed must not save over the kept sign-in: %q", got)
-	}
-}
-
-// A save agent-browser could not load back never replaces the kept sign-in.
-// witness: internal/ops/browser_warm.go | if !validBrowserState(data) { → if !validBrowserState(data) && len(data) == 0 {
-func TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave(t *testing.T) {
-	dir := browserStateDir(t.TempDir())
-	if err := readyBrowserState(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(signedInState), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser("loaded", `{"cookies":[{"name":"sid"`, &seen), dir); err == nil {
-		t.Error("a save agent-browser cannot load must be reported")
-	}
-	if got := keptState(t, dir); got != signedInState {
-		t.Errorf("a broken save must not replace the kept sign-in: %q", got)
 	}
 }
 
