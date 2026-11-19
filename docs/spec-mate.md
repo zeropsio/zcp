@@ -917,30 +917,47 @@ can hold up or fail a start.
   `fresh-context`, which neither loads nor saves: its new context starts and stays
   signed out, and the browser it ran in is stopped, never handed back, so nothing of it
   is saved (`TestBrowserKeepsSignIn_TabAndNewBrowserKeepFreshContextNever`).
-- **The load.** Before the call's own steps, on the new browser's base tab, zcp runs
-  `state load <kept file>` and then `open about:blank`, so no restored page is left
-  running. agent-browser sets the cookies and opens each saved origin's root for its local
-  storage, so the load waits on the saved sites. Both steps share a 10 s bound out of the
-  call's own budget: a healthy load takes about half a second per origin with local
-  storage, and the bound keeps a site that is slow, paused, looping on load or never
-  answering from spending the call (`zerops_verify`'s render check has 30 s in all). A load
-  that fails or does not finish within it sets the kept file aside — renamed to
-  `zcp-default.json.aside`, one copy at most, never loaded again — stops that browser and
-  starts a clean one without loading, inside the same call, which then runs signed out;
-  the next clean save writes a new kept file. A browser whose load failed is replaced
-  even when agent-browser answered, because the load may have set the cookies before it
-  failed, and that half sign-in would be saved. The result's `message` then begins: "The
-  kept sign-in could not be restored: opening its saved site(s) <origins> did not finish
-  within 10s." (or "agent-browser could not load it." when the load answered), followed
-  by "This call ran signed out; signing in again keeps the new sign-in." The origins are
-  the ones the kept file lists with local storage, up to three; no value is named.
-  Measured with agent-browser 0.39.1: a saved site that never answers, one that loops on
-  load and one that answers after 15 s each cost that call 11.8 s in all and nothing
-  after it; a healthy load of one origin takes 0.6 s
-  (`TestRestoreBrowserSignIn_ALoadThatDoesNotFinish_SetsItAsideAndStartsClean`,
-  `TestRestoreBrowserSignIn_AFailedLoad_SetsItAsideOneCopyAtMostNeverLoadedAgain`,
-  `TestRestoreBrowserSignIn_ALoadedSignInLeavesNoRestoredPageRunning`,
-  `TestBrowserBatch_ASignInThatCouldNotBeRestored_SaysSoInTheMessage`).
+- **The load.** Before the call's own steps, on the new browser's base tab, zcp loads the
+  kept file part by part with `state load`, each part a copy it writes into the folder's
+  `.tmp`. The cookies go first and alone, under 5 s: they open no site, so a load of them
+  that fails or runs out marks a file agent-browser cannot load (as does one that is not
+  a state at all). It is set aside — renamed to `zcp-default.json.aside`, one copy at most,
+  never loaded again — and the call runs signed out in a clean browser; the next clean
+  save writes a new kept file. Then each origin's local storage alone, in the file's order
+  (the last save lists the origins it read first), under 4 s each: agent-browser opens the
+  origin's root and waits half a second there, so a site that answers within about 3 s
+  keeps its storage. An origin whose load fails or runs out — a site that is slow, paused,
+  looping on load or never answering — is dropped from the kept file and named; the
+  browser, still busy with that site, is replaced by a clean one, the cookies are loaded
+  again and the next origin goes on. The whole restore has 20 s and never more than a
+  third of the time the call has left, so a call with little time left restores the
+  cookies only: an origin the restore does not reach, or one cut by that budget rather
+  than by its own 4 s, is neither loaded nor dropped and stays kept for the next new
+  browser. After the last origin the base tab goes back to `about:blank` (3 s), so no
+  restored page keeps running. Measured with agent-browser 0.39.1: a healthy origin's
+  storage takes 0.6 s, 20 healthy origins 10.7 s, a dev server whose first request took
+  2.5 s 3.1 s and kept; one saved site that never answers, loops on load or answers after
+  15 s costs that call 5.6–6.2 s more, the other sites and the cookie restored
+  (`TestRestoreBrowserSignIn_AFileAgentBrowserCannotLoadIsSetAside`,
+  `TestRestoreBrowserSignIn_ASiteThatDoesNotAnswerLosesOnlyItsOwnStorage`,
+  `TestRestoreBrowserSignIn_ASlowSiteThatAnswersInTimeIsKept`,
+  `TestRestoreBrowserSignIn_ACallWithLittleTimeLeftRestoresTheCookiesOnly`,
+  `TestRestoreBrowserSignIn_ALoadedSignInLeavesNoRestoredPageRunning`).
+- **What the call says.** A call whose new browser could not restore all of the kept
+  sign-in says so in its result's `keptSignIn` field, never in `message`, and it never
+  marks the call failed; a later call on the same browser does not repeat it.
+  `zerops_verify` passes it on in its HTTP check's `keptSignIn` and keeps the rendered
+  body text. The words: a file set aside — "The kept sign-in could not be restored:
+  agent-browser could not load it, so it was set aside. This call ran signed out; signing
+  in again keeps the new sign-in."; dropped sites — "The saved local storage of <sites>
+  was dropped: the site did not answer within 4s while this call restored the kept
+  sign-in. Sign in there again if it needs it; the rest of the kept sign-in was
+  restored."; sites not reached — "The saved local storage of <sites> was not restored in
+  this call, which had too little time left; it is still kept."; cookies not reached —
+  "The kept sign-in was not restored: this call had too little time left. It is still
+  kept for the next new browser." Up to three sites are named; no value is
+  (`TestBrowserBatch_ASignInThatCouldNotBeRestored_IsItsOwnField`,
+  `TestRenderHTTPRoot_AKeptSignInNote_KeepsTheRenderAndIsPassedOn`).
 - **The save.** At the end of every call that hands the browser back warm, inside the
   call's lock, while the call's own tab — a live page of the default context — is still
   active, before its tabs close and the marker says `idle`. On the base tab's
@@ -948,28 +965,32 @@ can hold up or fail a start.
   such a save now and then stalled past 30 s (measured 2026-11-19: 2 of 29 saves on the
   base tab, none of 40 on the call's tab). `state save` writes a candidate into the
   directory's `.tmp`; zcp drops its session storage — never usefully restored, and not
-  cleared by the way out — and renames it over `zcp-default.json` only when it is a state
-  agent-browser can load. So a sign-in survives a recycle that follows within seconds. The
-  save has 5 s (it takes about 0.15 s); one that fails or runs out is logged and neither
-  fails the call nor recycles the browser. agent-browser saves nothing itself: no
-  periodic save and no save as its daemon exits idle. Nothing is lost by that: a page
-  runs only inside a call, and every clean call ends with a save, so the idle exit's
-  save would repeat the last one. A browser zcp stops — a recycle after an unclean call
-  or a wedge, `new-browser`, the max age, a `fresh-context` call's end — saves nothing:
-  the last good save stands
+  cleared by the way out — and merges it with the kept file: the saved cookies are the
+  whole truth, since every kept cookie was restored; a saved origin replaces its kept
+  entry and comes first; a kept origin the save holds nothing for keeps its saved
+  storage, since agent-browser saves only origins its pages opened in this browser and
+  only those with storage — save the origin of the page the save ran on, which the save
+  read directly, so its absence means empty (after a `storage local clear`, for one).
+  The result replaces `zcp-default.json` only when it is a state agent-browser can load.
+  So a sign-in survives a recycle that follows within seconds. The save has 5 s (it takes
+  about 0.15 s); one that fails or runs out is logged and neither fails the call nor
+  recycles the browser. agent-browser saves nothing itself: no periodic save and no save
+  as its daemon exits idle. Nothing is lost by that: a page runs only inside a call, and
+  every clean call ends with a save, so the idle exit's save would repeat the last one. A
+  browser zcp stops — a recycle after an unclean call or a wedge, `new-browser`, the max
+  age, a `fresh-context` call's end — saves nothing: the last good save stands
   (`TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle`,
   `TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack`,
+  `TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead`,
+  `TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears`,
   `TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave`,
   `TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile`,
   `TestReleaseBrowser_ARecycledBrowserIsNeverHandedBack`).
 - **Logged.** Every load or save that fails is logged on zcp's stderr with the kept
   file's or the candidate's path and agent-browser's own message, never a value.
-- **What is kept.** Every cookie of the default context, and the local storage of each
-  origin a page opened in the browser that saved it: agent-browser collects storage from
-  the origins its pages navigated to, so an origin it only loaded, which no page opened
-  before the next save, is not in that save (measured: a browser life spent on another
-  origin kept the cookie and dropped the first origin's local storage). Session storage,
-  the HTTP cache and service workers are not kept.
+- **What is kept.** Every cookie of the default context, and the local storage of every
+  origin a page of a keeping browser ever opened, until a restore drops it or a page of
+  its site clears it. Session storage, the HTTP cache and service workers are not kept.
 - **Where, and how private.** `$HOME/.agent-browser/sessions/zcp-default.json`, `$HOME`
   being `/home/zerops` on a Zerops container: outside the workspace `/var/www`, which
   holds git checkouts and is mounted into dev services, and no checkout itself. zcp
@@ -996,8 +1017,9 @@ can hold up or fail a start.
   do not, and a lost or changed key would leave the file unloadable.
 - **The way out.** A Mate forgets the kept sign-in with `["cookies","clear"]` and
   `["storage","local","clear"]` on the signed-in page in a `tab` call: the save at that
-  call's end keeps what the call left, so the next browser, even after a `SIGKILL`,
-  starts signed out. The tool's `isolation` words say so.
+  call's end keeps no cookie and nothing for that page's site, so the next browser, even
+  after a `SIGKILL`, starts signed out there; another site's saved storage is that site's
+  to clear. The tool's `isolation` words say so.
 
 ### 2.7 Base path on the mate side
 
