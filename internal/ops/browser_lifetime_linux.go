@@ -100,16 +100,17 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 			return err
 		}
 		if stateDir != "" {
-			var restart bool
-			if note, restart = restoreBrowserSignIn(ctx, h.step, stateDir); restart {
-				// The load left the browser busy with a saved site or half
-				// signed in: a clean one runs the call signed out.
-				if err := stopBrowser(ctx); err != nil {
+			// A clean browser in place of one a part of the load left busy
+			// with a saved site.
+			restart := func(rctx context.Context) error {
+				if err := stopBrowser(rctx); err != nil {
 					return err
 				}
-				if err := h.start(ctx, stateDir); err != nil {
-					return err
-				}
+				return h.start(rctx, stateDir)
+			}
+			var err error
+			if note, err = restoreBrowserSignIn(ctx, h.step, stateDir, restart); err != nil {
+				return err
 			}
 		}
 		return h.setup(ctx, isolation)

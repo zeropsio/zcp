@@ -33,7 +33,10 @@ const (
 )
 
 // renderHTTPRoot drives a bounded agent-browser walk against url and
-// returns (bodyText, consoleErrors). Both return values are best-effort:
+// returns (bodyText, consoleErrors, keptSignIn). keptSignIn is the walk's
+// own word on a kept sign-in its new browser could not restore, passed on
+// whatever the render gave (BrowserBatchResult.KeptSignIn); the others are
+// best-effort:
 // on any failure (agent-browser missing, fork recovery, CDP wedge, JSON
 // shape mismatch, ctx cancel) the function returns ("", nil) without
 // surfacing an error. The verify path treats absence as the normal
@@ -50,9 +53,9 @@ const (
 // invisible to textContent on rendered DOM (the browser itself
 // suppresses them) which is what the spec wanted "innerText" to
 // guarantee.
-func renderHTTPRoot(ctx context.Context, url string) (string, []string) {
+func renderHTTPRoot(ctx context.Context, url string) (string, []string, string) {
 	if strings.TrimSpace(url) == "" {
-		return "", nil
+		return "", nil, ""
 	}
 
 	result, err := BrowserBatch(ctx, BrowserBatchInput{
@@ -63,19 +66,19 @@ func renderHTTPRoot(ctx context.Context, url string) (string, []string) {
 	if err != nil {
 		// agent-browser missing / browser busy past the deadline / unmarshal of input.
 		// Best-effort path: silent no-op.
-		return "", nil
+		return "", nil, ""
 	}
 	// Fork exhaustion, CDP wedge, deadline timeout, or parse failure all
 	// leave Message set and the canonical [errors] step un-populated.
 	// Treat any of those as "no rendered text available" — never claim
 	// a partial walk produced data.
 	if result.BrowserRecycled || result.Message != "" {
-		return "", nil
+		return "", nil, result.KeptSignIn
 	}
 
 	bodyText := extractBodyText(result.Steps)
 	consoleErrors := extractConsoleErrors(result.ErrorsOutput)
-	return bodyText, consoleErrors
+	return bodyText, consoleErrors, result.KeptSignIn
 }
 
 // extractBodyText pulls the `get text body` step's text field out of

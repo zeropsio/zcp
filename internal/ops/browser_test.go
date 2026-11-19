@@ -1816,10 +1816,11 @@ func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T
 	}
 }
 
-// A call whose browser could not restore the kept sign-in says so first in
-// its message, so the agent knows it ran signed out and why.
-// witness: internal/ops/browser.go | if note != "" { → if false {
-func TestBrowserBatch_ASignInThatCouldNotBeRestored_SaysSoInTheMessage(t *testing.T) {
+// A call whose browser could not restore all of the kept sign-in says so
+// in a field of its own, which never marks the call failed: its message
+// stays the page's verdict.
+// witness: internal/ops/browser.go | 	result.KeptSignIn = note → 	result.Message, result.KeptSignIn = note, ""
+func TestBrowserBatch_ASignInThatCouldNotBeRestored_IsItsOwnField(t *testing.T) {
 	const note = "The kept sign-in could not be restored."
 	batch := [][]string{
 		{"set", "viewport", "1280", "577"},
@@ -1837,7 +1838,7 @@ func TestBrowserBatch_ASignInThatCouldNotBeRestored_SaysSoInTheMessage(t *testin
 	if err != nil {
 		t.Fatalf("BrowserBatch: %v", err)
 	}
-	if !strings.HasPrefix(result.Message, note) {
-		t.Errorf("the message must begin with what the browser's readying said: %q", result.Message)
+	if result.KeptSignIn != note || result.Message != "" {
+		t.Errorf("keptSignIn=%q message=%q, want the note in its own field and no message", result.KeptSignIn, result.Message)
 	}
 }

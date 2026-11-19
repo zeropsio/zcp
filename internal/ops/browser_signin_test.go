@@ -52,14 +52,15 @@ func keptState(t *testing.T, dir string, name ...string) string {
 }
 
 // savingBrowser answers a hand-back's steps as agent-browser does: the tab
-// list, and a state save that writes saved to the path it is given (a
-// failure when saved is ""). It records each command.
+// list (the call's tab, on the first site, active), and a state save that
+// writes saved to the path it is given (a failure when saved is ""). It
+// records each command.
 func savingBrowser(saved string, seen *[][]string) browserStepExec {
 	return func(_ context.Context, args []string) (string, string, error) {
 		*seen = append(*seen, args)
 		switch {
 		case slices.Equal(args, []string{"tab", "list"}):
-			return `{"success":true,"data":{"tabs":[{"tabId":"t1","url":"about:blank"},{"tabId":"t2","url":"http://127.0.0.1:18731/"}]},"error":null}`, "", nil
+			return `{"success":true,"data":{"tabs":[{"tabId":"t1","url":"about:blank"},{"tabId":"t2","url":"http://127.0.0.1:18731/","active":true}]},"error":null}`, "", nil
 		case len(args) == 3 && args[0] == "state" && args[1] == "save":
 			if saved == "" {
 				return `{"success":false,"data":null,"error":"Failed to write state"}`, "", errors.New("exit status 1")
@@ -68,25 +69,6 @@ func savingBrowser(saved string, seen *[][]string) browserStepExec {
 				return "", "", err
 			}
 			return `{"success":true,"data":{"saved":true,"path":"` + args[2] + `"},"error":null}`, "", nil
-		}
-		return `{"success":true,"data":{},"error":null}`, "", nil
-	}
-}
-
-// loadingBrowser answers a load's steps: state load as load says ("ok",
-// "fails", or "hangs" until the step's context ends), every other step a
-// success. It records each command.
-func loadingBrowser(load string, seen *[][]string) browserStepExec {
-	return func(ctx context.Context, args []string) (string, string, error) {
-		*seen = append(*seen, args)
-		if len(args) > 1 && args[0] == "state" && args[1] == "load" {
-			switch load {
-			case "fails":
-				return `{"success":false,"data":null,"error":"Invalid state file: expected value at line 1 column 1"}`, "", errors.New("exit status 1")
-			case "hangs":
-				<-ctx.Done()
-				return "", "", ctx.Err()
-			}
 		}
 		return `{"success":true,"data":{},"error":null}`, "", nil
 	}
@@ -264,66 +246,227 @@ func TestReadyBrowserState_ExpiresOnlyItsOwnFiles(t *testing.T) {
 	}
 }
 
-// A load that does not finish within its bound — a saved site that never
-// answers, or loops on load — sets the kept file aside and asks for a clean
-// browser, so the call runs signed out instead of failing, and its result
-// names the saved site.
-// witness: internal/ops/browser_signin.go | return browserRestoreNote(origins, finished), true → return browserRestoreNote(origins, finished), false
-func TestRestoreBrowserSignIn_ALoadThatDoesNotFinish_SetsItAsideAndStartsClean(t *testing.T) {
-	dir := readyStateDir(t)
-	writeKept(t, dir)
-	synctest.Test(t, func(t *testing.T) {
-		var seen [][]string
-		note, restart := restoreBrowserSignIn(context.Background(), loadingBrowser("hangs", &seen), dir)
-		if !restart {
-			t.Error("a load that did not finish must ask for a clean browser")
+// threeSites is a kept sign-in with a cookie and the local storage of three
+// sites, the second of which misbehaves in the tests that use it.
+const threeSites = `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/"}],"origins":[` +
+	`{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"a"}]},` +
+	`{"origin":"http://127.0.0.1:18735","localStorage":[{"name":"token","value":"b"}]},` +
+	`{"origin":"http://127.0.0.1:18732","localStorage":[{"name":"token","value":"c"}]}]}`
+
+// restoringBrowser answers a restore's steps as agent-browser does. A state
+// load reads the part it is given: one holding the origin bad is answered
+// as how says ("hangs" until the step's context ends, "fails"), cookies as
+// cookies says ("ok", "fails", "hangs"), anything else a success. It records
+// what each load held — "cookies" or the origin — and every other command.
+func restoringBrowser(bad, how, cookies string, seen *[]string) browserStepExec {
+	answer := func(ctx context.Context, mode string) (string, string, error) {
+		switch mode {
+		case "hangs":
+			<-ctx.Done()
+			return "", "", ctx.Err()
+		case "fails":
+			return `{"success":false,"data":null,"error":"Invalid state file: expected value at line 1 column 1"}`, "", errors.New("exit status 1")
 		}
-		if !strings.Contains(note, "http://127.0.0.1:18731") {
-			t.Errorf("the result must name the saved site the load opens: %q", note)
+		return `{"success":true,"data":{},"error":null}`, "", nil
+	}
+	return func(ctx context.Context, args []string) (string, string, error) {
+		if len(args) == 3 && args[0] == "state" && args[1] == "load" {
+			_, origins, _ := parseBrowserState(mustRead(args[2]))
+			if len(origins) == 0 {
+				*seen = append(*seen, "cookies")
+				return answer(ctx, cookies)
+			}
+			*seen = append(*seen, origins[0].name)
+			if origins[0].name == bad {
+				return answer(ctx, how)
+			}
+			return answer(ctx, "ok")
 		}
-	})
-	if keptState(t, dir) != "" || keptState(t, dir, browserSignInAside) != signedInState {
-		t.Errorf("the kept file must be set aside: kept %q, aside %q", keptState(t, dir), keptState(t, dir, browserSignInAside))
+		*seen = append(*seen, strings.Join(args, " "))
+		return answer(ctx, "ok")
 	}
 }
 
-// A load agent-browser refuses sets the kept file aside too, replacing an
-// older set-aside copy — one at most — and the copy is never loaded again:
-// the next browser loads nothing until a clean save writes a new kept file.
-// witness: internal/ops/browser_signin.go | if err := os.Rename(file, filepath.Join(stateDir, browserSignInAside)); err != nil { → if err := os.Rename(file, file+".old"); err != nil {
-func TestRestoreBrowserSignIn_AFailedLoad_SetsItAsideOneCopyAtMostNeverLoadedAgain(t *testing.T) {
+func mustRead(path string) []byte {
+	data, _ := os.ReadFile(path)
+	return data
+}
+
+// keptOrigins lists the origins of the kept sign-in in dir.
+func keptOrigins(t *testing.T, dir string) []string {
+	t.Helper()
+	_, origins, ok := parseBrowserState([]byte(keptState(t, dir)))
+	if !ok {
+		t.Fatalf("the kept sign-in is not loadable: %q", keptState(t, dir))
+	}
+	names := make([]string, 0, len(origins))
+	for _, o := range origins {
+		names = append(names, o.name)
+	}
+	return names
+}
+
+// A kept sign-in whose cookies agent-browser cannot load — or one that is
+// not a state at all — is set aside, never loaded again, and the call runs
+// signed out in a clean browser, saying so.
+// witness: internal/ops/browser_signin.go | 		if rctx.Err() == nil { → 		if false {
+func TestRestoreBrowserSignIn_AFileAgentBrowserCannotLoadIsSetAside(t *testing.T) {
 	dir := readyStateDir(t)
-	writeKept(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, browserSignInAside), []byte(`{"cookies":[],"origins":[]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(threeSites), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var seen [][]string
-	if note, restart := restoreBrowserSignIn(t.Context(), loadingBrowser("fails", &seen), dir); !restart || note == "" {
-		t.Errorf("a failed load must ask for a clean browser and say so: restart=%v note=%q", restart, note)
+	var seen []string
+	restarts := 0
+	note, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", "fails", &seen), dir, func(context.Context) error { restarts++; return nil })
+	if err != nil || note == "" || restarts != 1 {
+		t.Errorf("a file whose cookies do not load: note=%q err=%v restarts=%d", note, err, restarts)
 	}
-	if keptState(t, dir) != "" || keptState(t, dir, browserSignInAside) != signedInState {
-		t.Errorf("the kept file must replace the older set-aside copy: kept %q, aside %q", keptState(t, dir), keptState(t, dir, browserSignInAside))
+	if keptState(t, dir) != "" || keptState(t, dir, browserSignInAside) != threeSites {
+		t.Errorf("the file must be set aside: kept %q", keptState(t, dir))
+	}
+	if !slices.Equal(seen, []string{"cookies"}) {
+		t.Errorf("nothing but the cookies may be loaded from it: %v", seen)
 	}
 	seen = nil
-	if _, restart := restoreBrowserSignIn(t.Context(), loadingBrowser("ok", &seen), dir); restart || len(seen) != 0 {
-		t.Errorf("a set-aside file must never be loaded again: restart=%v sent %v", restart, seen)
+	if note, _ := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", "ok", &seen), dir, func(context.Context) error { return nil }); note != "" || len(seen) != 0 {
+		t.Errorf("a set-aside file must never be loaded again: note=%q loads %v", note, seen)
+	}
+}
+
+// A saved site that does not answer within its own bound loses only its own
+// saved storage: it is dropped from the kept file and named, the browser is
+// replaced and its cookies loaded again, and the other sites and the cookie
+// stay kept and restored.
+// witness: internal/ops/browser_signin.go | 			dropped = append(dropped, o.name) → 			dropped, kept = append(dropped, o.name), append(kept, o)
+func TestRestoreBrowserSignIn_ASiteThatDoesNotAnswerLosesOnlyItsOwnStorage(t *testing.T) {
+	dir := readyStateDir(t)
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(threeSites), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		var seen []string
+		restarts := 0
+		note, err := restoreBrowserSignIn(context.Background(), restoringBrowser("http://127.0.0.1:18735", "hangs", "ok", &seen), dir, func(context.Context) error { restarts++; return nil })
+		if err != nil || restarts != 1 || !strings.Contains(note, "http://127.0.0.1:18735") || strings.Contains(note, "18731") {
+			t.Errorf("one site that does not answer: note=%q err=%v restarts=%d", note, err, restarts)
+		}
+		want := []string{"cookies", "http://127.0.0.1:18731", "http://127.0.0.1:18735", "cookies", "http://127.0.0.1:18732", "open about:blank"}
+		if !slices.Equal(seen, want) {
+			t.Errorf("loads %v, want %v", seen, want)
+		}
+	})
+	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731", "http://127.0.0.1:18732"}) {
+		t.Errorf("the kept file must lose only the site that did not answer: %v", got)
+	}
+	if !strings.Contains(keptState(t, dir), `"abc123"`) || keptState(t, dir, browserSignInAside) != "" {
+		t.Errorf("the cookie must stay kept and nothing set aside: %q", keptState(t, dir))
+	}
+}
+
+// A slow site that still answers within its own bound — a dev server's
+// first request after a restart — keeps its storage.
+// witness: internal/ops/browser_signin.go | 	browserSignInOriginTimeout = 4 * time.Second → 	browserSignInOriginTimeout = 2 * time.Second
+func TestRestoreBrowserSignIn_ASlowSiteThatAnswersInTimeIsKept(t *testing.T) {
+	dir := readyStateDir(t)
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(threeSites), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		slow := restoringBrowser("", "", "ok", new([]string))
+		run := func(ctx context.Context, args []string) (string, string, error) {
+			if len(args) == 3 && args[1] == "load" && strings.Contains(string(mustRead(args[2])), "18735") {
+				select {
+				case <-time.After(3 * time.Second):
+				case <-ctx.Done():
+					return "", "", ctx.Err()
+				}
+			}
+			return slow(ctx, args)
+		}
+		if note, err := restoreBrowserSignIn(context.Background(), run, dir, func(context.Context) error { return nil }); note != "" || err != nil {
+			t.Errorf("a slow site that answers in time: note=%q err=%v", note, err)
+		}
+	})
+	if got := keptOrigins(t, dir); len(got) != 3 {
+		t.Errorf("every site must stay kept: %v", got)
+	}
+}
+
+// A call with little time left restores the cookies and leaves the sites'
+// storage kept for the next new browser instead of failing or dropping it.
+// witness: internal/ops/browser_signin.go | budget = min(budget, time.Until(deadline)/3) → budget = min(budget, time.Until(deadline))
+func TestRestoreBrowserSignIn_ACallWithLittleTimeLeftRestoresTheCookiesOnly(t *testing.T) {
+	dir := readyStateDir(t)
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(threeSites), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		defer cancel()
+		var seen []string
+		note, err := restoreBrowserSignIn(ctx, restoringBrowser("", "", "ok", &seen), dir, func(context.Context) error { return nil })
+		if err != nil || !slices.Equal(seen, []string{"cookies"}) || note == "" {
+			t.Errorf("little time left: loads %v note=%q err=%v", seen, note, err)
+		}
+	})
+	if keptState(t, dir) != threeSites {
+		t.Errorf("the kept file must stay as it was: %q", keptState(t, dir))
 	}
 }
 
 // A kept sign-in that loads leaves the base tab back on about:blank, so no
 // restored page keeps running — and using CPU — while the browser idles.
-// witness: internal/ops/browser_signin.go | err := walkBrowser(lctx, [][]string{{"state", "load", file}, {browserCmdOpen, "about:blank"}}, run) → err := walkBrowser(lctx, [][]string{{"state", "load", file}}, run)
+// witness: internal/ops/browser_signin.go | 	if onSite { → 	if onSite && false {
 func TestRestoreBrowserSignIn_ALoadedSignInLeavesNoRestoredPageRunning(t *testing.T) {
 	dir := readyStateDir(t)
 	writeKept(t, dir)
-	var seen [][]string
-	note, restart := restoreBrowserSignIn(t.Context(), loadingBrowser("ok", &seen), dir)
-	want := [][]string{{"state", "load", filepath.Join(dir, browserSignInFile)}, {"open", "about:blank"}}
-	if note != "" || restart || !slices.EqualFunc(seen, want, slices.Equal) {
-		t.Errorf("a load that worked: note=%q restart=%v sent %v, want %v", note, restart, seen, want)
+	var seen []string
+	note, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", "ok", &seen), dir, func(context.Context) error { return nil })
+	want := []string{"cookies", "http://127.0.0.1:18731", "open about:blank"}
+	if note != "" || err != nil || !slices.Equal(seen, want) {
+		t.Errorf("a load that worked: note=%q err=%v loads %v, want %v", note, err, seen, want)
 	}
 	if keptState(t, dir) != signedInState {
 		t.Error("a kept sign-in that loaded must stay kept")
+	}
+}
+
+// A save keeps the saved storage of every kept site the browser did not
+// read — one it only restored, or never opened — and replaces the cookies
+// and the sites it read.
+// witness: internal/ops/browser_signin.go | 			origins = append(origins, o) →
+func TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead(t *testing.T) {
+	dir := readyStateDir(t)
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(threeSites), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := `{"cookies":[{"name":"sid","value":"new","domain":"127.0.0.1","path":"/"}],"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"a2"}]}]}`
+	var seen [][]string
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir); err != nil {
+		t.Fatalf("saveBrowserSignIn: %v", err)
+	}
+	kept := keptState(t, dir)
+	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731", "http://127.0.0.1:18735", "http://127.0.0.1:18732"}) {
+		t.Errorf("sites the browser did not read must stay kept, the saved ones first: %v", got)
+	}
+	if !strings.Contains(kept, `"a2"`) || strings.Contains(kept, `"value":"a"`) || !strings.Contains(kept, `"new"`) || strings.Contains(kept, `"abc123"`) {
+		t.Errorf("the saved cookies and sites must replace the kept ones: %s", kept)
+	}
+}
+
+// The way out holds through the merge: after cookies clear and storage local
+// clear on the signed-in page, the save has no cookies and nothing for that
+// page's site, and the kept file keeps neither.
+// witness: internal/ops/browser_signin.go | 	have := map[string]bool{read: true} → 	have := map[string]bool{}
+func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
+	dir := readyStateDir(t)
+	writeKept(t, dir)
+	var seen [][]string
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir); err != nil {
+		t.Fatalf("saveBrowserSignIn: %v", err)
+	}
+	if kept := keptState(t, dir); kept != `{"cookies":[],"origins":[]}` {
+		t.Errorf("the way out must leave nothing kept: %s", kept)
 	}
 }
 

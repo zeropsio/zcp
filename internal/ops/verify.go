@@ -174,6 +174,12 @@ type CheckResult struct {
 	// chars. Absent under the same conditions as BodyText.
 	ConsoleErrors []string `json:"consoleErrors,omitempty"`
 
+	// KeptSignIn is set only when the browser walk behind BodyText started
+	// a browser that could not restore all of the kept sign-in: what was not
+	// restored and what to do (docs/spec-mate.md §2.6c). It concerns that
+	// walk alone and never marks the check failed.
+	KeptSignIn string `json:"keptSignIn,omitempty"`
+
 	// Server and Port name the dev server a per-port check probed — set only
 	// when a dev service declares several (PublicAccessInput.DevPorts).
 	Server string `json:"server,omitempty"`

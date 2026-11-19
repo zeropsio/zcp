@@ -348,9 +348,10 @@ func buildHTTPPublicChecks(ctx context.Context, client platform.Client, probe ht
 		probeURL += probePath(healthPath)
 		check := probe.probe(ctx, probeURL, checkNameHTTPRoot)
 		if check.HTTPStatus > 0 {
-			bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL)
+			bodyText, consoleErrors, keptSignIn := renderHTTPRoot(ctx, probeURL)
 			check.BodyText = bodyText
 			check.ConsoleErrors = consoleErrors
+			check.KeptSignIn = keptSignIn
 		}
 		return []CheckResult{check}
 	case obs.Observed.Subdomain == topology.SubdomainEnabling:

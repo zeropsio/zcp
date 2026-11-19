@@ -163,6 +163,11 @@ type BrowserBatchResult struct {
 	BrowserRecycled bool                     `json:"browserRecycled,omitempty"`
 	OutputTruncated bool                     `json:"outputTruncated,omitempty"`
 	Message         string                   `json:"message,omitempty"`
+	// KeptSignIn is set only on the call whose browser was started for it
+	// and could not restore all of the kept sign-in: what was not restored
+	// and what to do. A later call on the same browser does not repeat it,
+	// and it never marks the call failed (docs/spec-mate.md §2.6c).
+	KeptSignIn string `json:"keptSignIn,omitempty"`
 	// FullResult is the file holding the whole result when the reply cut its
 	// outputs to fit the model's text. Set by the tools layer.
 	FullResult string `json:"fullResult,omitempty"`
@@ -254,8 +259,8 @@ type browserRunner interface {
 	// for one call at the given isolation and returns release. release(true)
 	// hands the browser back warm; release(false) recycles it. fresh reports
 	// that the browser was started for this call instead of reused; note is
-	// what the call's result must say about the browser it got ("" when
-	// nothing: a kept sign-in it could not restore, docs/spec-mate.md §2.6c).
+	// what it could not restore of the kept sign-in, "" when nothing
+	// (BrowserBatchResult.KeptSignIn).
 	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, fresh bool, note string, err error)
 	// Run walks the JSON [][]string batch in stdin and answers with the
 	// JSON []BrowserStepResult of the steps that finished. err is set only
@@ -672,11 +677,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if answer.withheld {
 		result.Message = browserWithheld
 	}
-	// What the browser's readying had to say comes first: the call ran
-	// without the sign-in the agent expects.
-	if note != "" {
-		result.Message = strings.TrimSpace(note + " " + result.Message)
-	}
+	result.KeptSignIn = note
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.

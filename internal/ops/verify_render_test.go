@@ -170,7 +170,7 @@ func TestRenderHTTPRoot_PopulatesBodyAndErrors(t *testing.T) {
 	fake := &fakeBrowserRunner{runStdout: stdout}
 	defer OverrideBrowserRunnerForTest(fake)()
 
-	body, errs := renderHTTPRoot(context.Background(), url)
+	body, errs, _ := renderHTTPRoot(context.Background(), url)
 	if !strings.Contains(body, "ParseError") || !strings.Contains(body, "weather.blade.php") {
 		t.Errorf("body = %q, want to contain ParseError + weather.blade.php", body)
 	}
@@ -179,11 +179,28 @@ func TestRenderHTTPRoot_PopulatesBodyAndErrors(t *testing.T) {
 	}
 }
 
+// A render whose browser could not restore all of the kept sign-in still
+// reads the page, and passes the browser's word on to the check, so the
+// agent learns the walk ran without it.
+// witness: internal/ops/verify_render.go | 	return bodyText, consoleErrors, result.KeptSignIn → 	return bodyText, consoleErrors, ""
+func TestRenderHTTPRoot_AKeptSignInNote_KeepsTheRenderAndIsPassedOn(t *testing.T) {
+	const note = "The kept sign-in could not be restored."
+	url := "https://probe.example.com/"
+	fake := &fakeBrowserRunner{runStdout: makeRenderStdout(t, url, "Hello from the page", nil), fresh: true, note: note}
+	defer OverrideBrowserRunnerForTest(fake)()
+	defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+
+	body, _, kept := renderHTTPRoot(context.Background(), url)
+	if body != "Hello from the page" || kept != note {
+		t.Errorf("render with a kept sign-in note: body=%q keptSignIn=%q", body, kept)
+	}
+}
+
 func TestRenderHTTPRoot_AgentBrowserMissing_Silent(t *testing.T) {
 	fake := &fakeBrowserRunner{lookPathErr: errAgentBrowserMissing()}
 	defer OverrideBrowserRunnerForTest(fake)()
 
-	body, errs := renderHTTPRoot(context.Background(), "https://x/")
+	body, errs, _ := renderHTTPRoot(context.Background(), "https://x/")
 	if body != "" || errs != nil {
 		t.Errorf("missing agent-browser must yield empty result; got body=%q errs=%v", body, errs)
 	}
@@ -198,14 +215,14 @@ func TestRenderHTTPRoot_ForkExhaustion_Silent(t *testing.T) {
 	}
 	defer OverrideBrowserRunnerForTest(fake)()
 
-	body, errs := renderHTTPRoot(context.Background(), "https://x/")
+	body, errs, _ := renderHTTPRoot(context.Background(), "https://x/")
 	if body != "" || errs != nil {
 		t.Errorf("fork recovery must yield empty result; got body=%q errs=%v", body, errs)
 	}
 }
 
 func TestRenderHTTPRoot_EmptyURL_Silent(t *testing.T) {
-	body, errs := renderHTTPRoot(context.Background(), "   ")
+	body, errs, _ := renderHTTPRoot(context.Background(), "   ")
 	if body != "" || errs != nil {
 		t.Errorf("empty URL must yield empty result; got body=%q errs=%v", body, errs)
 	}
@@ -234,7 +251,7 @@ func TestVerify_HTTPRoot_AttachesRenderedBodyOn500(t *testing.T) {
 	if check.HTTPStatus != 500 {
 		t.Fatalf("checkHTTPRoot status = %d, want 500", check.HTTPStatus)
 	}
-	bodyText, consoleErrors := renderHTTPRoot(context.Background(), srv.URL+"/")
+	bodyText, consoleErrors, _ := renderHTTPRoot(context.Background(), srv.URL+"/")
 	check.BodyText = bodyText
 	check.ConsoleErrors = consoleErrors
 
@@ -260,7 +277,7 @@ func TestVerify_HTTPRoot_NoBodyTextWhenAgentBrowserMissing(t *testing.T) {
 	defer OverrideBrowserRunnerForTest(fake)()
 
 	check := checkHTTPRoot(context.Background(), srv.Client(), srv.URL+"/")
-	bodyText, consoleErrors := renderHTTPRoot(context.Background(), srv.URL+"/")
+	bodyText, consoleErrors, _ := renderHTTPRoot(context.Background(), srv.URL+"/")
 	check.BodyText = bodyText
 	check.ConsoleErrors = consoleErrors
 
