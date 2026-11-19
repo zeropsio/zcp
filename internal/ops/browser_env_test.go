@@ -64,7 +64,7 @@ type walkRunner struct {
 	exec browserStepExec
 }
 
-func (w *walkRunner) Run(ctx context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (w *walkRunner) Run(ctx context.Context, _, stdin string, _ time.Duration) (string, string, bool, error) {
 	var steps [][]string
 	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
 		return "", "", false, err
@@ -107,7 +107,7 @@ type pageRunner struct {
 	answer func(cmd []string) (result any, errText string)
 }
 
-func (p *pageRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (p *pageRunner) Run(_ context.Context, _, stdin string, _ time.Duration) (string, string, bool, error) {
 	p.lastStdin = stdin
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {

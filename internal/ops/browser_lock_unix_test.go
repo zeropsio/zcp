@@ -35,7 +35,7 @@ func (l *lockingRunner) Acquire(ctx context.Context, _ string) (func(bool) error
 	return func(bool) error { unlock(); return nil }, false, nil
 }
 
-func (l *lockingRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
+func (l *lockingRunner) Run(_ context.Context, _, _ string, _ time.Duration) (string, string, bool, error) {
 	if l.onRun != nil {
 		l.onRun()
 	}

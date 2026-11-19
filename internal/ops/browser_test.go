@@ -74,7 +74,7 @@ func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(r
 	}, f.fresh, nil
 }
 
-func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeBrowserRunner) Run(_ context.Context, _, stdin string, timeout time.Duration) (string, string, bool, error) {
 	f.lastStdin = stdin
 	f.lastTimeout = timeout
 	return f.runStdout, f.runStderr, f.runTruncated, f.runErr
@@ -931,7 +931,7 @@ type fakeEchoScreenshotRunner struct {
 	tempPath string
 }
 
-func (f *fakeEchoScreenshotRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (f *fakeEchoScreenshotRunner) Run(_ context.Context, _, stdin string, _ time.Duration) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeEchoScreenshotRunner: parse stdin: %w", err)
@@ -990,7 +990,7 @@ type fakeScreenshotRunner struct {
 	capturedPath string
 }
 
-func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeScreenshotRunner) Run(ctx context.Context, isolation, stdin string, timeout time.Duration) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
@@ -1003,7 +1003,7 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 			}
 		}
 	}
-	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, stdin, timeout)
+	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, isolation, stdin, timeout)
 	if stdout == "" {
 		// Default canned output when the embedded fake wasn't pre-seeded.
 		out := make([]map[string]any, 0, len(batch))

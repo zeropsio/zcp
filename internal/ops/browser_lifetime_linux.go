@@ -27,14 +27,17 @@ const (
 	browserReleaseTimeout = 15 * time.Second
 )
 
-// browserHost is how this process reaches the warm browser (browser_warm.go).
+// browserHost is how this process reaches the warm browser (browser_warm.go)
+// for a call at one isolation. stateDir is where its browser keeps the
+// sign-in, "" when it keeps none.
 type browserHost struct {
-	home   string
-	binary string
-	env    []string
+	home     string
+	binary   string
+	env      []string
+	stateDir string
 }
 
-func newBrowserHost() (browserHost, error) {
+func newBrowserHost(isolation string) (browserHost, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return browserHost{}, fmt.Errorf("browser home: %w", err)
@@ -43,7 +46,12 @@ func newBrowserHost() (browserHost, error) {
 	if err != nil {
 		return browserHost{}, fmt.Errorf("browser binary: %w", err)
 	}
-	return browserHost{home: home, binary: binary, env: browserEnv(home, os.Getenv("PATH"))}, nil
+	keep := browserKeepsSignIn(isolation, home)
+	h := browserHost{home: home, binary: binary, env: browserEnv(home, os.Getenv("PATH"), keep)}
+	if keep {
+		h.stateDir = browserStateDir(home)
+	}
+	return h, nil
 }
 
 // step runs one agent-browser command against the warm browser's socket.
@@ -61,34 +69,12 @@ func (h browserHost) step(ctx context.Context, args []string) (string, string, e
 	return out.String(), errBuf.String(), err
 }
 
-// walk runs housekeeping steps and fails unless every one succeeded.
-func (h browserHost) walk(ctx context.Context, steps [][]string) error {
-	stdout, stderr, _, err := runBrowserSteps(ctx, steps, h.step)
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr))
-	}
-	var results []BrowserStepResult
-	if err := json.Unmarshal([]byte(stdout), &results); err != nil {
-		return fmt.Errorf("browser steps: %w", err)
-	}
-	for _, r := range results {
-		if !r.Success {
-			reason := "failed"
-			if r.Error != nil {
-				reason = *r.Error
-			}
-			return fmt.Errorf("browser step %q: %s", strings.Join(r.Command, " "), reason)
-		}
-	}
-	return nil
-}
-
 func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, bool, error) {
 	unlock, err := waitBrowserLock(ctx, browserLockPath)
 	if err != nil {
 		return nil, false, err
 	}
-	h, err := newBrowserHost()
+	h, err := newBrowserHost(isolation)
 	if err != nil {
 		unlock()
 		return nil, false, err
@@ -133,14 +119,13 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		return nil, false, err
 	}
 	handBack := func(rctx context.Context) error {
-		if err := h.closeCallTabs(rctx); err != nil {
-			return err
-		}
-		w, _, err := readWarmBrowser(rctx)
-		if err != nil {
-			return err
-		}
-		return writeBrowserMarker(browserIdleMarker(w.CPU))
+		return handBackBrowser(rctx, h.step, h.stateDir, func(mctx context.Context) error {
+			w, _, err := readWarmBrowser(mctx)
+			if err != nil {
+				return err
+			}
+			return writeBrowserMarker(browserIdleMarker(w.CPU))
+		})
 	}
 	release := func(reuse bool) error {
 		defer unlock()
@@ -159,26 +144,18 @@ func (h browserHost) setup(ctx context.Context, isolation string) error {
 	if err := linkBrowserStream(h.home); err != nil {
 		return err
 	}
-	return h.walk(ctx, browserSetupSteps(isolation))
+	return walkBrowser(ctx, browserSetupSteps(isolation), h.step)
 }
 
-// closeCallTabs closes every tab but the base one.
-func (h browserHost) closeCallTabs(ctx context.Context) error {
-	list, _, err := h.step(ctx, []string{"tab", "list"})
-	if err != nil {
-		return fmt.Errorf("tab list: %w", err)
-	}
-	steps, err := browserCleanupSteps(list)
-	if err != nil {
-		return err
-	}
-	return h.walk(ctx, steps)
-}
-
-// start launches the warm browser's service.
+// start launches the warm browser's service, its kept sign-in readied first.
 func (h browserHost) start(ctx context.Context) error {
 	if err := os.MkdirAll(browserTmpDir, 0o700); err != nil {
 		return fmt.Errorf("browser profile directory: %w", err)
+	}
+	if h.stateDir != "" {
+		if err := readyBrowserState(h.stateDir); err != nil {
+			return err
+		}
 	}
 	memory, _ := containerMemoryMax()
 	args := browserUnitArgs(h.binary, h.env, os.Getuid(), runtime.GOMAXPROCS(0), memory)
@@ -279,12 +256,12 @@ func linkBrowserStream(home string) error {
 	return nil
 }
 
-func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (execBrowserRunner) Run(ctx context.Context, isolation, stdin string, timeout time.Duration) (string, string, bool, error) {
 	var steps [][]string
 	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
 		return "", "", false, fmt.Errorf("browser batch: %w", err)
 	}
-	h, err := newBrowserHost()
+	h, err := newBrowserHost(isolation)
 	if err != nil {
 		return "", "", false, err
 	}
