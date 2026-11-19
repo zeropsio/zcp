@@ -169,8 +169,8 @@ func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (str
 	return "", "", false, nil
 }
 
-func (*stubBrowserRunner) Acquire(_ context.Context, _ string) (func(bool) error, bool, string, error) {
-	return func(bool) error { return nil }, false, "", nil
+func (*stubBrowserRunner) Acquire(_ context.Context, _ string) (func(bool) (string, error), bool, string, error) {
+	return func(bool) (string, error) { return "", nil }, false, "", nil
 }
 
 // TestServer_BrowserToolGating locks the registration condition: zerops_browser

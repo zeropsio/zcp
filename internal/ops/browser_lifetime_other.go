@@ -10,7 +10,7 @@ import (
 
 var errBrowserNeedsLinux = errors.New("the managed browser requires a Linux systemd container")
 
-func (execBrowserRunner) Acquire(context.Context, string) (func(bool) error, bool, string, error) {
+func (execBrowserRunner) Acquire(context.Context, string) (func(bool) (string, error), bool, string, error) {
 	return nil, false, "", errBrowserNeedsLinux
 }
 

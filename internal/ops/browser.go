@@ -259,9 +259,10 @@ type browserRunner interface {
 	// for one call at the given isolation and returns release. release(true)
 	// hands the browser back warm; release(false) recycles it. fresh reports
 	// that the browser was started for this call instead of reused; note is
-	// what it could not restore of the kept sign-in, "" when nothing
-	// (BrowserBatchResult.KeptSignIn).
-	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, fresh bool, note string, err error)
+	// what it could not restore of the kept sign-in, "" when nothing, and
+	// release's note what its hand-back found of it (both
+	// BrowserBatchResult.KeptSignIn).
+	Acquire(ctx context.Context, isolation string) (release func(reuse bool) (note string, err error), fresh bool, note string, err error)
 	// Run walks the JSON [][]string batch in stdin and answers with the
 	// JSON []BrowserStepResult of the steps that finished. err is set only
 	// when the walk could not finish (ctx ended, a step got no answer).
@@ -665,7 +666,8 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	result.BrowserRecycled = !reuse
 	// agent-browser cannot dispose a browser context, so the browser that
 	// holds a fresh context ends with the call instead of keeping it.
-	if err := release(reuse && isolation != BrowserIsolationFreshContext); err != nil {
+	releaseNote, err := release(reuse && isolation != BrowserIsolationFreshContext)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "zerops_browser: browser release: %v\n", err)
 	}
 	if !done && runErr == nil {
@@ -677,12 +679,18 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if answer.withheld {
 		result.Message = browserWithheld
 	}
-	result.KeptSignIn = note
+	result.KeptSignIn = browserKeptSignInNote(note, releaseNote)
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
 	result.Steps = append(refused, result.Steps...)
 	return result, nil
+}
+
+// browserKeptSignInNote is a call's keptSignIn: what its browser's restore
+// said, then what its hand-back found.
+func browserKeptSignInNote(restored, handBack string) string {
+	return strings.TrimSpace(restored + " " + handBack)
 }
 
 // omitScreenshotTempPath takes the temp file the screenshot was written to out

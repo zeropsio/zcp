@@ -64,7 +64,7 @@ func (h browserHost) step(ctx context.Context, args []string) (string, string, e
 	return out.String(), errBuf.String(), err
 }
 
-func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, bool, string, error) {
+func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) (string, error), bool, string, error) {
 	unlock, err := waitBrowserLock(ctx, browserLockPath)
 	if err != nil {
 		return nil, false, "", err
@@ -90,6 +90,12 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		return nil, false, "", err
 	}
 	reused := warm.reusable(isolation, budget)
+	// A call that keeps the sign-in reuses only a browser holding it in the
+	// Chrome it was restored into; any other gets a fresh browser and a
+	// restore.
+	if reused && stateDir != "" && !keptSignInLetsReuse(ctx, h.step, browserPresencePath) {
+		reused = false
+	}
 	fresh := false
 	note := ""
 	ready := func(running bool) error {
@@ -134,18 +140,22 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		unlock()
 		return nil, false, "", err
 	}
+	saveNote := ""
 	handBack := func(rctx context.Context) error {
-		return handBackBrowser(rctx, h.step, stateDir, browserPresencePath, func(mctx context.Context) error {
+		var err error
+		saveNote, err = handBackBrowser(rctx, h.step, stateDir, browserPresencePath, func(mctx context.Context) error {
 			w, _, err := readWarmBrowser(mctx)
 			if err != nil {
 				return err
 			}
 			return writeBrowserMarker(browserIdleMarker(w.CPU))
 		})
+		return err
 	}
-	release := func(reuse bool) error {
+	release := func(reuse bool) (string, error) {
 		defer unlock()
-		return releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
+		err := releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
+		return saveNote, err
 	}
 	return release, fresh, note, nil
 }

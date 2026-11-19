@@ -28,8 +28,8 @@ func (browserAnnotationStub) LookPath() (string, error) { return "/fake/agent-br
 func (browserAnnotationStub) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
 	return "", "", false, nil
 }
-func (browserAnnotationStub) Acquire(_ context.Context, _ string) (func(bool) error, bool, string, error) {
-	return func(bool) error { return nil }, false, "", nil
+func (browserAnnotationStub) Acquire(_ context.Context, _ string) (func(bool) (string, error), bool, string, error) {
+	return func(bool) (string, error) { return "", nil }, false, "", nil
 }
 
 // nopMounter satisfies ops.Mounter for annotation tests (never called).

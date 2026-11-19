@@ -650,7 +650,7 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	keptWhenIdle := ""
-	err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
 		keptWhenIdle = keptState(t, dir)
 		return nil
 	})
@@ -669,12 +669,12 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 
 // A save that fails neither fails the hand-back nor recycles the browser:
 // it goes back warm, and the last good save stands.
-// witness: internal/ops/browser_warm.go | 			logBrowserSignIn(err) → 			return err
+// witness: internal/ops/browser_warm.go | 			logBrowserSignIn(err) → 			return "", err
 func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	idle := false
-	err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
 		idle = true
 		return nil
 	})
@@ -694,5 +694,26 @@ func TestReleaseBrowser_ARecycledBrowserIsNeverHandedBack(t *testing.T) {
 		func(context.Context) error { stopped = true; return nil })
 	if err != nil || handedBack || !stopped {
 		t.Errorf("a recycle must stop the browser without handing it back: err=%v handedBack=%v stopped=%v", err, handedBack, stopped)
+	}
+}
+
+// A save that finds Chrome relaunched empty during the call — its base tab
+// another one — saves nothing over the kept sign-in, says so in the call's
+// result, and leaves the browser holding nothing, so no later call reuses it.
+// witness: internal/ops/browser_signin.go | 	if base != presence.BaseTarget { → 	if base == "" {
+func TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing(t *testing.T) {
+	dir := readyStateDir(t)
+	writeKept(t, dir)
+	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}, BaseTarget: "A7E47918804A4FDA"})
+	var seen [][]string
+	note, err := handBackBrowser(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, func(context.Context) error { return nil })
+	if err != nil || note == "" {
+		t.Errorf("a relaunched Chrome: note=%q err=%v", note, err)
+	}
+	if keptState(t, dir) != signedInState {
+		t.Errorf("the kept sign-in must stay as it was: %s", keptState(t, dir))
+	}
+	if p := presenceAfter(t, presence); p.CookiesHeld || len(p.Opened) != 0 {
+		t.Errorf("the browser must be left holding nothing: %+v", p)
 	}
 }

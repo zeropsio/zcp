@@ -229,15 +229,16 @@ func closeCallTabs(ctx context.Context, run browserStepExec) error {
 // handBackBrowser readies the browser for the next call after a clean one:
 // it saves the sign-in into stateDir when the browser keeps one ("" when it
 // does not; presencePath is the browser's presence, browserPresence), closes
-// the call's tabs, and only then marks the browser idle,
-// so a call that follows finds the save done. The save runs while the
-// call's own tab, a live page of the default context, is active: on the
-// base tab's about:blank agent-browser reads every origin's storage through
-// a temporary tab, which now and then stalled the save past 30 s (measured
-// with agent-browser 0.39.1: 2 of 29 saves on the base tab, none of 40 on
-// the call's tab). A save that fails is logged and hands the browser back
-// all the same: the last good save stands.
-func handBackBrowser(ctx context.Context, run browserStepExec, stateDir, presencePath string, markIdle func(context.Context) error) error {
+// the call's tabs, and only then marks the browser idle, so a call that
+// follows finds the save done. The save runs while the call's own tab, a
+// live page of the default context, is active: on the base tab's about:blank
+// agent-browser reads every origin's storage through a temporary tab, which
+// now and then stalled the save past 30 s (measured with agent-browser
+// 0.39.1: 2 of 29 saves on the base tab, none of 40 on the call's tab). A
+// save that fails is logged and hands the browser back all the same: the
+// last good save stands. note is what the call's result says when the save
+// found Chrome relaunched empty during the call.
+func handBackBrowser(ctx context.Context, run browserStepExec, stateDir, presencePath string, markIdle func(context.Context) error) (note string, err error) {
 	if stateDir != "" {
 		sctx, cancel := context.WithTimeout(ctx, browserSignInSaveTimeout)
 		err := saveBrowserSignIn(sctx, run, stateDir, presencePath, time.Now())
@@ -245,11 +246,14 @@ func handBackBrowser(ctx context.Context, run browserStepExec, stateDir, presenc
 		if err != nil {
 			logBrowserSignIn(err)
 		}
+		if errors.Is(err, errBrowserRelaunched) {
+			note = browserSignInLostInTheCall
+		}
 	}
 	if err := closeCallTabs(ctx, run); err != nil {
-		return err
+		return note, err
 	}
-	return markIdle(ctx)
+	return note, markIdle(ctx)
 }
 
 // releaseBrowser ends a call: handBack readies the browser for the next call

@@ -17,10 +17,16 @@ import (
 const signedInState = `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/","expires":1795087979.0,"size":9,"httpOnly":false,"secure":false,"session":false}],` +
 	`"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"xyz789"}],"sessionStorage":[]}]}`
 
+// baseTarget is the base tab's CDP target in the fake browsers below.
+const baseTarget = "8CFDBD9D2FB7066D95420DA2712DC6D2"
+
 // presenceIn is a browser presence file in a runtime folder of its own,
 // written as p.
 func presenceIn(t *testing.T, p browserPresence) string {
 	t.Helper()
+	if p.BaseTarget == "" {
+		p.BaseTarget = baseTarget
+	}
 	path := filepath.Join(t.TempDir(), "zcp-signin.json")
 	if err := writeBrowserPresence(path, p); err != nil {
 		t.Fatal(err)
@@ -78,7 +84,7 @@ func savingBrowserOn(active, saved string, seen *[][]string) browserStepExec {
 		*seen = append(*seen, args)
 		switch {
 		case slices.Equal(args, []string{"tab", "list"}):
-			return `{"success":true,"data":{"tabs":[{"tabId":"t1","url":"about:blank"},{"tabId":"t2","url":"` + active + `","active":true}]},"error":null}`, "", nil
+			return `{"success":true,"data":{"tabs":[{"tabId":"t1","targetId":"` + baseTarget + `","url":"about:blank"},{"tabId":"t2","targetId":"3DF3","url":"` + active + `","active":true}]},"error":null}`, "", nil
 		case len(args) == 3 && args[0] == "state" && args[1] == "save":
 			if saved == "" {
 				return `{"success":false,"data":null,"error":"Failed to write state"}`, "", errors.New("exit status 1")
@@ -305,6 +311,9 @@ func restoringBrowser(bad, how string, cookies []string, seen *[]string) browser
 			}
 			return answer(ctx, "ok")
 		}
+		if slices.Equal(args, []string{"tab", "list"}) {
+			return `{"success":true,"data":{"tabs":[{"tabId":"t1","targetId":"` + baseTarget + `","url":"about:blank","active":true}]},"error":null}`, "", nil
+		}
 		*seen = append(*seen, strings.Join(args, " "))
 		return answer(ctx, "ok")
 	}
@@ -497,8 +506,8 @@ func TestRestoreBrowserSignIn_ACallWithLittleTimeLeftRestoresTheCookiesOnly(t *t
 			t.Errorf("little time left: loads %v note=%q err=%v", seen, note, err)
 		}
 	})
-	if got := keptOrigins(t, dir); len(got) != 3 || !presenceAfter(t, presence).CookiesHeld {
-		t.Errorf("the sites must stay kept and the cookies held: %v", got)
+	if got := keptOrigins(t, dir); len(got) != 3 || !presenceAfter(t, presence).CookiesHeld || len(presenceAfter(t, presence).Unrestored) != 3 {
+		t.Errorf("the sites must stay kept, unrestored, and the cookies held: %v %+v", got, presenceAfter(t, presence))
 	}
 }
 
@@ -619,7 +628,7 @@ func TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead(t *testing.T) {
 // The way out holds through the merge: after cookies clear and storage local
 // clear on the signed-in page, the save has no cookies and nothing for that
 // page's site, and the kept file keeps neither.
-// witness: internal/ops/browser_signin.go | 		read = append(read, active) →
+// witness: internal/ops/browser_signin.go | 	for _, name := range append(slices.Clone(p.Opened), active) { → 	for _, name := range slices.Clone(p.Opened) {
 func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
 	dir := readyStateDir(t)
 	writeKept(t, dir)
@@ -719,5 +728,51 @@ func TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile(t *testing.T) {
 	}
 	if !strings.Contains(kept, `"abc123"`) || !strings.Contains(kept, `"xyz789"`) || !validBrowserState([]byte(kept)) {
 		t.Errorf("the cookie and local storage must be kept: %s", kept)
+	}
+}
+
+// A site this browser did not get restored — no time was left — and a call
+// then opened is not erased by the save: an empty read of it says nothing of
+// its kept storage.
+// witness: internal/ops/browser_signin.go | 		if name != "" && !slices.Contains(p.Unrestored, name) { → 		if name != "" {
+func TestSaveBrowserSignIn_ASiteNotRestoredIsNotErasedByOpeningIt(t *testing.T) {
+	dir := readyStateDir(t)
+	writeState(t, dir, threeSites)
+	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18735"}, Unrestored: []string{"http://127.0.0.1:18735"}})
+	var seen [][]string
+	saved := `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/"}],"origins":[]}`
+	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18735/", saved, &seen), dir, presence, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := keptOrigins(t, dir); !slices.Contains(got, "http://127.0.0.1:18735") {
+		t.Errorf("a site never restored must keep its storage: %v", got)
+	}
+}
+
+// A call reuses the warm browser only while it holds the kept cookies in the
+// Chrome they were restored into: one agent-browser relaunched empty — an
+// OOM kill — or one that does not hold them gets a fresh browser and a
+// restore.
+// witness: internal/ops/browser_signin.go | 	return err == nil && base != "" && base == p.BaseTarget → 	return err == nil && base != ""
+func TestKeptSignInLetsReuse_OnlyTheChromeTheSignInWasRestoredInto(t *testing.T) {
+	run := savingBrowser("", new([][]string))
+	tests := []struct {
+		name     string
+		presence *browserPresence
+		want     bool
+	}{
+		{"the same Chrome, holding the cookies", &browserPresence{CookiesHeld: true}, true},
+		{"Chrome relaunched since the restore", &browserPresence{CookiesHeld: true, BaseTarget: "A7E47918804A4FDA"}, false},
+		{"the cookies not held", &browserPresence{}, false},
+		{"no restore in this browser", nil, false},
+	}
+	for _, tt := range tests {
+		path := filepath.Join(t.TempDir(), "zcp-signin.json")
+		if tt.presence != nil {
+			path = presenceIn(t, *tt.presence)
+		}
+		if got := keptSignInLetsReuse(t.Context(), run, path); got != tt.want {
+			t.Errorf("%s: keptSignInLetsReuse = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

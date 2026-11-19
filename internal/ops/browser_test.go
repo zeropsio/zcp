@@ -42,6 +42,7 @@ type fakeBrowserRunner struct {
 	acquireErr  error
 	fresh       bool   // Acquire started the browser for the call
 	note        string // what Acquire had to say about the browser it readied
+	releaseNote string // what release had to say about the hand-back
 
 	lastIsolation string
 	lastStdin     string
@@ -62,16 +63,16 @@ func (f *fakeBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
-func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, bool, string, error) {
+func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) (string, error), bool, string, error) {
 	if f.acquireErr != nil {
 		return nil, false, "", f.acquireErr
 	}
 	f.lastIsolation = isolation
-	return func(reuse bool) error {
+	return func(reuse bool) (string, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.releases = append(f.releases, reuse)
-		return nil
+		return f.releaseNote, nil
 	}, f.fresh, f.note, nil
 }
 
@@ -1819,7 +1820,7 @@ func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T
 // A call whose browser could not restore all of the kept sign-in says so
 // in a field of its own, which never marks the call failed: its message
 // stays the page's verdict.
-// witness: internal/ops/browser.go | 	result.KeptSignIn = note → 	result.Message, result.KeptSignIn = note, ""
+// witness: internal/ops/browser.go | 	result.KeptSignIn = browserKeptSignInNote(note, releaseNote) → 	result.Message, result.KeptSignIn = browserKeptSignInNote(note, releaseNote), ""
 func TestBrowserBatch_ASignInThatCouldNotBeRestored_IsItsOwnField(t *testing.T) {
 	const note = "The kept sign-in could not be restored."
 	batch := [][]string{
@@ -1840,5 +1841,31 @@ func TestBrowserBatch_ASignInThatCouldNotBeRestored_IsItsOwnField(t *testing.T) 
 	}
 	if result.KeptSignIn != note || result.Message != "" {
 		t.Errorf("keptSignIn=%q message=%q, want the note in its own field and no message", result.KeptSignIn, result.Message)
+	}
+}
+
+// What the hand-back found of the kept sign-in — Chrome relaunched empty
+// during the call — reaches the call's result beside what the restore said.
+// witness: internal/ops/browser.go | 	return strings.TrimSpace(restored + " " + handBack) → 	return restored
+func TestBrowserBatch_WhatTheHandBackFoundReachesKeptSignIn(t *testing.T) {
+	const handBack = "Chrome restarted empty during this call."
+	batch := [][]string{
+		{"set", "viewport", "1280", "577"},
+		{"open", "https://example.com/app"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
+		{"errors"},
+		{"console"},
+		{"network", "requests", "--status", "400-599"},
+	}
+	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch), releaseNote: handBack}
+	defer OverrideBrowserRunnerForTest(fake)()
+	defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com/app"})
+	if err != nil {
+		t.Fatalf("BrowserBatch: %v", err)
+	}
+	if result.KeptSignIn != handBack {
+		t.Errorf("keptSignIn = %q, want the hand-back's word", result.KeptSignIn)
 	}
 }

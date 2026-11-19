@@ -269,9 +269,63 @@ func pruneBrowserOrigins(origins []browserSavedOrigin, now time.Time) []browserS
 // this browser: agent-browser's save reads the storage of exactly those
 // (and of the page it runs on), never of an origin it only restored
 // (state.rs collects its visited origins, which only open adds, browser.rs).
+// Unrestored lists the kept origins with storage this browser did not get
+// restored: an empty read of one says nothing of its kept storage. BaseTarget
+// is the base tab's CDP target when the kept sign-in was restored: agent-
+// browser relaunches a Chrome whose process exited or whose connection died
+// (an OOM kill) on the next command, with a new, empty profile and a new
+// base tab, inside the same service (cdp/chrome.rs, actions.rs), so another
+// base tab means the kept sign-in is no longer in the browser.
 type browserPresence struct {
 	CookiesHeld bool     `json:"cookiesHeld"`
 	Opened      []string `json:"opened"`
+	Unrestored  []string `json:"unrestored,omitempty"`
+	BaseTarget  string   `json:"baseTarget"`
+}
+
+// browserTabs is what a save needs of agent-browser's tab list: the base
+// tab's CDP target and the active tab's origin ("" for about:blank and the
+// like).
+func browserTabs(ctx context.Context, run browserStepExec) (baseTarget, activeOrigin string, err error) {
+	out, _, err := run(ctx, []string{"tab", "list"})
+	if err != nil {
+		return "", "", fmt.Errorf("tab list: %w", err)
+	}
+	var answer struct {
+		Data struct {
+			Tabs []struct {
+				TargetID string `json:"targetId"`
+				Active   bool   `json:"active"`
+				URL      string `json:"url"`
+			} `json:"tabs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
+		return "", "", fmt.Errorf("tab list: %w", err)
+	}
+	if len(answer.Data.Tabs) == 0 {
+		return "", "", errors.New("tab list: no tabs")
+	}
+	for _, tab := range answer.Data.Tabs {
+		if tab.Active {
+			activeOrigin = browserOrigin(tab.URL)
+		}
+	}
+	return answer.Data.Tabs[0].TargetID, activeOrigin, nil
+}
+
+// keptSignInLetsReuse reports whether a call that keeps the sign-in may run
+// on the warm browser: its presence says it holds the kept cookies and its
+// base tab is still the one the kept sign-in was restored into, so Chrome
+// was not relaunched empty since. Otherwise the call starts a fresh browser
+// and restores the kept sign-in into it.
+func keptSignInLetsReuse(ctx context.Context, run browserStepExec, presencePath string) bool {
+	p, ok := readBrowserPresence(presencePath)
+	if !ok || !p.CookiesHeld {
+		return false
+	}
+	base, _, err := browserTabs(ctx, run)
+	return err == nil && base != "" && base == p.BaseTarget
 }
 
 // readBrowserPresence reads the running browser's presence; ok is false
@@ -366,6 +420,14 @@ func browserOrigin(raw string) string {
 func restoreBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, presencePath string, now time.Time, restart func(context.Context) error) (note string, err error) {
 	var p browserPresence
 	done := func(note string) (string, error) {
+		// The base tab the kept sign-in is in now; none read leaves the
+		// browser holding nothing a save may replace.
+		if base, _, err := browserTabs(ctx, run); err == nil {
+			p.BaseTarget = base
+		} else {
+			logBrowserSignIn(fmt.Errorf("read the base tab after the restore: %w", err))
+			p.CookiesHeld = false
+		}
 		return note, writeBrowserPresence(presencePath, p)
 	}
 	file := filepath.Join(stateDir, browserSignInFile)
@@ -518,6 +580,7 @@ func restoreBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, pr
 			missing = append(missing, o.name)
 		}
 	}
+	p.Unrestored = missing
 	return done(browserSignInNote(droppedNames, missing, p.CookiesHeld))
 }
 
@@ -568,6 +631,8 @@ const (
 		"This call ran signed out; signing in again keeps the new sign-in."
 	browserSignInNotHeld = "The kept sign-in's cookies were not restored in this call. " +
 		"They are still kept for the next new browser; a sign-in made in this browser is not kept."
+	browserSignInLostInTheCall = "Chrome restarted empty during this call, so the kept sign-in was not in it: " +
+		"it is still kept for the next call, and a sign-in made in this call was not kept."
 )
 
 // browserSignInNote says what a restore could not bring back: the origins
@@ -603,9 +668,16 @@ func browserSites(sites []string) string {
 // the kept cookies: its cookies would replace them.
 var errBrowserSignInNotHeld = errors.New("the browser does not hold the kept cookies, so nothing was saved; they stay kept")
 
+// errBrowserRelaunched refuses a save from a browser whose Chrome agent-
+// browser relaunched, empty, since the kept sign-in was restored into it.
+var errBrowserRelaunched = errors.New("the browser's Chrome was relaunched with an empty profile since the kept sign-in was restored, so nothing was saved; it stays kept")
+
 // saveBrowserSignIn merges the active tab's context — the call's own tab,
 // the default context's — into the kept sign-in, when the browser holds the
-// kept cookies (browserPresence; errBrowserSignInNotHeld otherwise).
+// kept cookies (browserPresence; errBrowserSignInNotHeld otherwise) in the
+// Chrome they were restored into. A browser whose base tab is another one
+// was relaunched empty: nothing is saved (errBrowserRelaunched), and its
+// presence then says it holds nothing, so no later call reuses it.
 // agent-browser's state save writes a candidate in the folder's temporary
 // folder (any file or symlink there is removed first); zcp drops its session
 // storage, which a load never usefully restores and the way out does not
@@ -620,9 +692,15 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 	if err := os.Remove(candidate); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear the candidate %s: %w", candidate, err)
 	}
-	active, err := browserActiveOrigin(ctx, run)
+	base, active, err := browserTabs(ctx, run)
 	if err != nil {
 		return err
+	}
+	if base != presence.BaseTarget {
+		if err := writeBrowserPresence(presencePath, browserPresence{}); err != nil {
+			logBrowserSignIn(err)
+		}
+		return errBrowserRelaunched
 	}
 	if err := walkBrowser(ctx, [][]string{{"state", "save", candidate}}, run); err != nil {
 		return err
@@ -636,10 +714,7 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 		_ = os.Remove(candidate)
 		return fmt.Errorf("the saved state %s is not one agent-browser can load", candidate)
 	}
-	read := slices.Clone(presence.Opened)
-	if active != "" {
-		read = append(read, active)
-	}
+	read := browserSaveRead(presence, active)
 	old, _ := readBrowserFile(filepath.Join(stateDir, browserSignInFile))
 	if err := writeBrowserFile(candidate, mergeBrowserState(old, saved, read, now)); err != nil {
 		return fmt.Errorf("write the saved state %s: %w", candidate, err)
@@ -648,6 +723,20 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 		return fmt.Errorf("keep the saved state %s: %w", candidate, err)
 	}
 	return nil
+}
+
+// browserSaveRead lists the origins a save read: those an open step ended on
+// in this browser, and active, the page it ran on. An origin this browser did
+// not get restored is left out: an empty read of it must not erase its kept
+// storage, and a save that holds storage for it replaces its entry anyway.
+func browserSaveRead(p browserPresence, active string) []string {
+	var read []string
+	for _, name := range append(slices.Clone(p.Opened), active) {
+		if name != "" && !slices.Contains(p.Unrestored, name) {
+			read = append(read, name)
+		}
+	}
+	return read
 }
 
 // mergeBrowserState is the kept sign-in after a save. The saved cookies
@@ -692,32 +781,6 @@ func mergeBrowserState(old, saved []byte, read []string, now time.Time) []byte {
 		}
 	}
 	return encodeBrowserState(cookies, pruneBrowserOrigins(origins, now))
-}
-
-// browserActiveOrigin is the origin of the active tab, the page a save reads
-// directly, as the page states it ("" for about:blank and the like).
-func browserActiveOrigin(ctx context.Context, run browserStepExec) (string, error) {
-	out, _, err := run(ctx, []string{"tab", "list"})
-	if err != nil {
-		return "", fmt.Errorf("tab list: %w", err)
-	}
-	var answer struct {
-		Data struct {
-			Tabs []struct {
-				Active bool   `json:"active"`
-				URL    string `json:"url"`
-			} `json:"tabs"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
-		return "", fmt.Errorf("tab list: %w", err)
-	}
-	for _, tab := range answer.Data.Tabs {
-		if tab.Active {
-			return browserOrigin(tab.URL), nil
-		}
-	}
-	return "", nil
 }
 
 // withoutSessionStorage is a saved state with every origin's session
