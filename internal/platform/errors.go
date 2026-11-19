@@ -94,7 +94,6 @@ const (
 	// recovery is "regenerate / re-scope PAT", not "set GIT_TOKEN". Emitted
 	// by the git-push-setup probe-first verifier.
 	ErrGitTokenInvalid    = "GIT_TOKEN_INVALID"
-	ErrSubagentMisuse     = "SUBAGENT_MISUSE"
 	ErrExportBlocked      = "EXPORT_BLOCKED"
 	ErrMissingEvidence    = "MISSING_EVIDENCE"
 	ErrTopicEmpty         = "TOPIC_EMPTY"

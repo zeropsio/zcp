@@ -175,6 +175,10 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 - **Plan.Primary** = `{close current bootstrap, rationale: "Only one workflow active per PID."}`
 - **Plan.Secondary** = `{continue (no tool needed — current state is already bootstrap-active), rationale: "Resume where you left off."}`
 
+#### 2.6.1 Bootstrap active, user starts a different workflow
+
+A `start` that conflicts with the active bootstrap returns `ErrWorkflowActive` naming the bootstrap session ID, its current step and the requested workflow. `zerops_workflow action="status"` shows what completes the step. Finish it with `action="complete" step="STEP"`, or wait for its result if that call is already running. When all steps are done and the session is still active, the error says no steps remain and suggests only `action="status"`.
+
 ### 2.7 Bootstrap provision failure
 
 Provision is single-shot: if a step checker fails, the session surfaces the error and escalates to the user. Bootstrap does not iterate; develop's iteration tiers and `defaultMaxIterations=5` do not apply to bootstrap.

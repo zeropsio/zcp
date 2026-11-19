@@ -20,9 +20,9 @@ import (
 //     adoption) so an agent joining a project that was adopted in a
 //     previous session still sees the actionable hint.
 //   - StateHint — terse summary of active sessions for the current PID.
-//     Surfaces live recipe / bootstrap / work sessions so the LLM doesn't
-//     blindly call zerops_workflow start and earn an ErrSubagentMisuse on
-//     its first tool call. Empty when no sessions are open for this PID.
+//     Surfaces open sessions so the agent can resume one. A conflicting
+//     workflow start returns WORKFLOW_ACTIVE. Empty when no sessions are
+//     open for this PID.
 //
 // The strict static/runtime split is the architecture invariant pinned
 // by TestBuildInstructions_NoStaticRulesLeak. See plans/instruction-

@@ -737,28 +737,19 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
-	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
-	// the main agent inside a running recipe calling action=start
-	// workflow=develop should not be told "Run bootstrap first" (the develop
-	// handler's prereq-missing message). The main agent owns workflow state;
-	// the sub-agent's job is whatever the dispatch brief scoped it to.
-	//
-	// The stateless workflows (export, launch-production) are forked before
-	// handleStart, so any workflow reaching here is session-backed: a
-	// different active session blocks starting a new one. Same-workflow
-	// re-starts fall through to the workflow-specific handler, which owns
-	// idempotency (e.g. handleRecipeStart returning the current state).
-	if active := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
+	// Only one session-backed workflow can be active at a time.
+	// Same-workflow starts fall through to their own handler.
+	if active, step := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
+		progress := "with no steps remaining"
+		suggestion := `zerops_workflow action="status"`
+		if step != "" {
+			progress = fmt.Sprintf("at step %q", step)
+			suggestion += fmt.Sprintf(` shows the step and what completes it. Finish it with action="complete" step=%q. If that call is already running, wait for its result.`, step)
+		}
 		return convertError(platform.NewPlatformError(
-			platform.ErrSubagentMisuse,
-			fmt.Sprintf(
-				"A %q workflow session is already active — cannot start a %q workflow inside it.",
-				active, input.Workflow,
-			),
-			"If you are a sub-agent spawned by the main agent inside an active session, "+
-				"do NOT call zerops_workflow. The main agent holds workflow state. "+
-				"Perform your scoped task using the tools you were given and return.",
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("A %q workflow session %s is active %s; a %q workflow cannot start until it ends.", active, engine.SessionID(), progress, input.Workflow),
+			suggestion,
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -796,19 +787,19 @@ func isDevelopStep(step string) bool {
 	return step == workflow.DeployStepPrepare || step == workflow.DeployStepExecute || step == workflow.DeployStepVerify
 }
 
-// detectActiveWorkflow returns the active workflow type from engine state.
-func detectActiveWorkflow(engine *workflow.Engine) string {
+// detectActiveWorkflow returns the active workflow and its current step.
+func detectActiveWorkflow(engine *workflow.Engine) (name, step string) {
 	if !engine.HasActiveSession() {
-		return ""
+		return "", ""
 	}
 	state, err := engine.GetState()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if state.Bootstrap != nil && state.Bootstrap.Active {
-		return workflowBootstrap
+		return workflowBootstrap, state.Bootstrap.CurrentStepName()
 	}
-	return ""
+	return "", ""
 }
 
 // resetReport is the structured audit returned by handleReset so the agent
