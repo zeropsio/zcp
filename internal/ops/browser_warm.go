@@ -243,6 +243,11 @@ walk:
 		}
 		out, serr, runErr := run(ctx, step)
 		_, _ = stderr.Write([]byte(serr))
+		// A step's own capture keeps browserOutputCap bytes of its stderr
+		// (browserHost.step): one that filled it may have been cut there.
+		if len(serr) >= browserOutputCap {
+			truncated = true
+		}
 		if len(out) > browserOutputCap {
 			truncated = true
 			msg := fmt.Sprintf("the answer exceeded %d bytes and was cut", browserOutputCap)

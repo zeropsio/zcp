@@ -225,7 +225,7 @@ func TestBrowserBatch_EnvPlaceholder_RefusedBeforeTheBrowserOpens(t *testing.T) 
 // result, an eval's value, an error, the console, a failed request's URL —
 // is its placeholder again, however JSON or the URL escaped it. A value too
 // short to look for stays in ordinary output, which is left whole.
-// witness: internal/ops/browser_env.go | stderr = u.redactor.text(stderr) → return stdout, stderr, runErr
+// witness: internal/ops/browser_env.go | step.Result = u.redactor.json(step.Result) →
 func TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder(t *testing.T) {
 	runner := &pageRunner{answer: func(cmd []string) (any, string) {
 		switch cmd[0] {
@@ -313,7 +313,7 @@ func TestBrowserBatch_EnvPlaceholder_TheResultKeepsThePlaceholder(t *testing.T) 
 // address and form body as the browser wrote it — `*`, `!`, `~` and a space
 // are escaped by one encoder and left by another — and it is the placeholder
 // there, never the password.
-// witness: internal/ops/browser_redact.go | if percentByte(text, pos) == int(b) { → if false {
+// witness: internal/ops/browser_match.go | if c == '%' && token.rawLen > 0 { → if false {
 func TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharactersWereEscaped(t *testing.T) {
 	tests := []struct {
 		name, value, inURL, inBody string
@@ -352,7 +352,7 @@ func TestBrowserBatch_EnvPlaceholder_APercentEncodedValueIsFoundWhicheverCharact
 // request body in the network lines, a page that logs JSON.stringify of what
 // it sent, a server's error echoing that again — and as HTML writes it, in a
 // snapshot or a `get html` of the form it was typed into.
-// witness: internal/ops/browser_redact.go | for depth := 1; depth <= browserRedactJSONDepth; depth++ { → for depth := 1; depth <= 0; depth++ {
+// witness: internal/ops/browser_match.go | for level := 1; level <= browserRedactJSONDepth; level++ { → for level := 1; level <= 1; level++ {
 func TestBrowserBatch_EnvPlaceholder_AValueInNestedJSONOrHTMLIsFound(t *testing.T) {
 	const password = `pw"x\long<1>&'end`
 	nested := func(levels int) string {
@@ -536,7 +536,7 @@ func TestBrowserBatch_EnvPlaceholder_InAnEvalTheQuotedStringIsExactlyTheValue(t 
 
 // Two values that overlap in a text are taken out together: nothing of one
 // is left standing beside the other's placeholder.
-// witness: internal/ops/browser_redact.go | last.end = max(last.end, end) →
+// witness: internal/ops/browser_match.go | end: max(last.end, span.end) → end: last.end
 func TestBrowserBatch_EnvPlaceholder_OverlappingValuesAreReplacedTogether(t *testing.T) {
 	runner := &pageRunner{answer: func(cmd []string) (any, string) {
 		if cmd[0] == "get" {
@@ -556,7 +556,7 @@ func TestBrowserBatch_EnvPlaceholder_OverlappingValuesAreReplacedTogether(t *tes
 // names agent-browser wraps it in are not: a value that happens to be one of
 // those names is taken out of the page's value and the step still reads as
 // an eval's value.
-// witness: internal/ops/browser_env.go | keysFrom = 1 → keysFrom = 0
+// witness: internal/ops/browser_redact.go | if depth >= 1 { → if depth >= 0 {
 func TestBrowserBatch_EnvPlaceholder_AnEvalsValueIsSearchedKeysAndNumbersToo(t *testing.T) {
 	runner := &pageRunner{answer: func(cmd []string) (any, string) {
 		if cmd[0] == "eval" {
@@ -599,6 +599,45 @@ func TestBrowserBatch_EnvPlaceholder_AMissingKeyIsWordedByWhereZcpRuns(t *testin
 		if strings.Contains(refusal.Suggestion, "mate=true") != inMate {
 			t.Errorf("in a Mate = %v, the refusal says: %s", inMate, refusal.Suggestion)
 		}
+	}
+}
+
+// A value comes back as the browser made it, not as it was stored: an
+// e-mail field trims it, a one-line field drops its line breaks, a textarea
+// gives LF for CRLF, a submitted form CRLF for LF, and a snapshot one text
+// per line. Each of those is the placeholder too.
+// witness: internal/ops/browser_redact.go | for _, form := range browserReturnForms(values[key]) { → for _, form := range []string{values[key]} {
+func TestBrowserBatch_EnvPlaceholder_AValueTheBrowserNormalizedIsFound(t *testing.T) {
+	values := map[string]string{
+		"TEST_EMAIL":    " fen+test@Example.test ",
+		"TEST_PASSWORD": "hunter2secret\n",
+		"TEST_NOTES":    "line1-secret\r\nline2-secret",
+		"TEST_ADDRESS":  "first-line-of-it\nsecond-line-of-it",
+	}
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		switch cmd[0] {
+		case "get":
+			return map[string]any{"values": []any{"fen+test@Example.test", "hunter2secret", "line1-secret\nline2-secret"}}, ""
+		case "snapshot":
+			return map[string]any{"snapshot": "- textbox: first-line-of-it\n- text: second-line-of-it"}, ""
+		case "network":
+			return []any{map[string]any{"status": 401, "url": "https://appdev.example.invalid/login?email=fen%2Btest%40Example.test&notes=line1-secret%0D%0Aline2-secret&a=first-line-of-it%0D%0Asecond-line-of-it"}}, ""
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, values, [][]string{
+		{"fill", "#email", "{{env:TEST_EMAIL}}"}, {"fill", "#password", "{{env:TEST_PASSWORD}}"},
+		{"fill", "#notes", "{{env:TEST_NOTES}}"}, {"fill", "#address", "{{env:TEST_ADDRESS}}"},
+		{"get", "value", "input"}, {"snapshot", "-i"},
+	})
+	if got := string(stepOf(t, result, "get").Result); got != `{"values":["{{env:TEST_EMAIL}}","{{env:TEST_PASSWORD}}","{{env:TEST_NOTES}}"]}` {
+		t.Errorf("the fields' values came back as %s", got)
+	}
+	if got := string(stepOf(t, result, "snapshot").Result); got != `{"snapshot":"- textbox: {{env:TEST_ADDRESS}}\n- text: {{env:TEST_ADDRESS}}"}` {
+		t.Errorf("the snapshot came back as %s", got)
+	}
+	if want := "https://appdev.example.invalid/login?email={{env:TEST_EMAIL}}&notes={{env:TEST_NOTES}}&a={{env:TEST_ADDRESS}}"; len(result.NetworkOutput) != 1 || result.NetworkOutput[0].URL != want {
+		t.Errorf("the submitted form is listed as %+v, want %s", result.NetworkOutput, want)
 	}
 }
 
@@ -646,4 +685,180 @@ func TestBrowserBatch_EnvPlaceholder_InJavaScriptOutsideAQuotedStringIsRefused(t
 			}
 		})
 	}
+}
+
+// What the page names is searched in any step, not only an eval's value: a
+// storage's keys are the page's own, and one that holds the e-mail or a
+// token comes back with the placeholder in it.
+// witness: internal/ops/browser_redact.go | key = leaf(key) →
+func TestBrowserBatch_EnvPlaceholder_PageOwnedKeysOfAnyStepAreSearched(t *testing.T) {
+	const email, token = "fen@example.test", "tok-of-the-session-1"
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		if cmd[0] == "storage" {
+			return map[string]any{"data": map[string]any{"auth." + email + ".idToken": "x", token: "1"}}, ""
+		}
+		return nil, ""
+	}}
+	result := signInWith(t, runner, map[string]string{"TEST_EMAIL": email, "TEST_TOKEN": token}, [][]string{
+		{"fill", "#email", "{{env:TEST_EMAIL}}"}, {"fill", "#token", "{{env:TEST_TOKEN}}"}, {"storage", "local"},
+	})
+	if got := string(stepOf(t, result, "storage").Result); got != `{"data":{"auth.{{env:TEST_EMAIL}}.idToken":"x","{{env:TEST_TOKEN}}":"1"}}` {
+		t.Errorf("the storage came back as %s", got)
+	}
+}
+
+// Any character of a value may come back escaped: as \uXXXX in any mix of
+// hex case — an encoder that keeps `+`, `'` or `=` out of its output writes
+// them so — as a surrogate pair, as a numeric HTML entity in decimal or
+// hex, and the no-break space by its name.
+// witness: internal/ops/browser_match.go | escapes = append(escapes, unicode) → if r == '<' || r == '>' || r == '&' || r >= utf8.RuneSelf { escapes = append(escapes, unicode) }
+func TestBrowserBatch_EnvPlaceholder_AnyCharacterAsAUnicodeEscapeOrANumericEntityIsFound(t *testing.T) {
+	u := func(hex string) string { return `\` + "u" + hex }
+	tests := []struct{ name, value, comesBack string }{
+		{name: "a plus as an escape", value: "fen+test@example.test", comesBack: "fen" + u("002B") + "test@example.test"},
+		{name: "an apostrophe as an escape", value: "it's-secret", comesBack: "it" + u("0027") + "s-secret"},
+		{name: "an equals sign as an escape", value: "base64==pad", comesBack: "base64" + u("003d") + u("003D") + "pad"},
+		{name: "a letter as an escape", value: "abcdef", comesBack: u("0061") + "bcdef"},
+		{name: "a pair, each half in its own case", value: "pw\U0001F600ok", comesBack: "pw" + u("D83d") + u("dE00") + "ok"},
+		{name: "one escape in mixed case", value: "pwïok-1", comesBack: "pw" + u("00eF") + "ok-1"},
+		{name: "a decimal entity", value: "tom&jerry", comesBack: "tom&#38;jerry"},
+		{name: "a hex entity with leading zeros", value: "fen+test@example.test", comesBack: "fen&#X002b;test@example.test"},
+		{name: "an entity past ASCII", value: "héslo-1", comesBack: "h&#233;slo-1"},
+		{name: "a no-break space by name", value: "ab cdef", comesBack: "ab&nbsp;cdef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{answer: func(cmd []string) (any, string) {
+				if cmd[0] == "get" {
+					return map[string]any{"text": "before " + tt.comesBack + " after"}, ""
+				}
+				return nil, ""
+			}}
+			result := signInWith(t, runner, map[string]string{"TEST_VALUE": tt.value}, [][]string{{"fill", "#field", "{{env:TEST_VALUE}}"}, {"get", "text", "#out"}})
+			if got := string(stepOf(t, result, "get").Result); got != `{"text":"before {{env:TEST_VALUE}} after"}` {
+				t.Errorf("%q came back as %s", tt.comesBack, got)
+			}
+		})
+	}
+}
+
+// A value longer than the search is bounded for is not substituted at all:
+// the call is refused before the browser opens, naming the key and not the
+// value.
+// witness: internal/ops/browser_env.go | if len(values[key]) > browserValueMaxLen { → if false {
+func TestBrowserBatch_EnvPlaceholder_AValueOverTheLengthLimitIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		length  int
+		refused bool
+	}{{length: 4096}, {length: 4097, refused: true}} {
+		runner := &pageRunner{}
+		restoreRunner := OverrideBrowserRunnerForTest(runner)
+		restoreScale := OverrideBrowserScaleForTest(func(context.Context) error { return nil })
+		value := strings.Repeat("k3y-", tt.length/4+1)[:tt.length]
+		_, err := BrowserBatch(t.Context(), BrowserBatchInput{
+			URL: "https://appdev.example.invalid/sign-in", EnvStorePath: envStoreOf(t, map[string]string{"TEST_KEY": value}), InMate: true,
+			Commands: [][]string{{"fill", "#key", "{{env:TEST_KEY}}"}},
+		})
+		restoreScale()
+		restoreRunner()
+		if (err != nil) != tt.refused || (tt.refused && runner.lastStdin != "") {
+			t.Errorf("a value of %d bytes: refused = %v (ran %v), want %v before the browser", tt.length, err != nil, runner.lastStdin != "", tt.refused)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "TEST_KEY") || strings.Contains(err.Error(), "k3y-k3y-")) {
+			t.Errorf("the refusal does not name the key, or carries the value: %.200s", err.Error())
+		}
+	}
+}
+
+// When taking the values out cannot finish within its bound, nothing of the
+// browser side is returned: text that was not searched is withheld, never
+// handed back, and the result says so. The steps still say what ran.
+// witness: internal/ops/browser_env.go | if u.redactor.spent { → if false {
+func TestBrowserBatch_EnvPlaceholder_ASearchThatCannotFinishWithholdsTheText(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spends the whole search bound, a second or two")
+	}
+	// A value of one repeated character against megabytes of that character
+	// keeps a reading alive for every place it could have begun.
+	value := strings.Repeat("a", 4000)
+	page := strings.Repeat("a", 1<<20)
+	runner := &pageRunner{answer: func(cmd []string) (any, string) {
+		switch cmd[0] {
+		case "get":
+			return map[string]any{"text": page}, ""
+		case "check":
+			return nil, "no element matches " + value
+		case "console":
+			return map[string]any{"messages": []any{map[string]any{"text": "typed " + value}}}, ""
+		}
+		return nil, ""
+	}}
+	written := [][]string{{"fill", "#field", "{{env:TEST_VALUE}}"}, {"get", "text", "body"}, {"check", "#missing"}}
+	result := signInWith(t, runner, map[string]string{"TEST_VALUE": value}, written)
+	if result.Message != browserWithheld {
+		t.Errorf("the result does not say its text was withheld: %.200q", result.Message)
+	}
+	answered, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("the result does not encode: %v", err)
+	}
+	if strings.Contains(string(answered), "aaaaaa") || len(result.ConsoleOutput) != 0 || len(result.ErrorsOutput) != 0 {
+		t.Errorf("the withheld result carries text of the browser side: %.300s", answered)
+	}
+	for _, want := range written {
+		if !slices.ContainsFunc(result.Steps, func(step BrowserStepResult) bool { return slices.Equal(step.Command, want) && step.Result == nil }) {
+			t.Errorf("no step names %q as written, without a result", want)
+		}
+	}
+	if failed := stepOf(t, result, "check"); failed.Success || failed.Error == nil || strings.Contains(*failed.Error, "aaa") {
+		t.Errorf("the failed step does not say so without its text: %+v", failed)
+	}
+}
+
+// A capture cut at its cap keeps no part of a value: where agent-browser's
+// stderr was cut in the middle of one, its end goes from where the value
+// began, so the first bytes of a password do not stand at the end of the
+// message.
+// witness: internal/ops/browser_env.go | stderr = u.redactor.cutText(stderr) → stderr = u.redactor.text(stderr)
+func TestBrowserBatch_EnvPlaceholder_ACaptureCutAtItsCapKeepsNoPartOfAValue(t *testing.T) {
+	const value = "correct-horse-battery-staple"
+	// The cap falls ten bytes into the value.
+	filler := strings.Repeat("x", browserOutputCap-len("debug: typing ")-10)
+	message := typedWithStderr(t, value, filler+"debug: typing "+value+"\n")
+	if !strings.HasSuffix(message, "debug: typing") {
+		t.Errorf("the message ends %q, want it to end where the value began", message[max(0, len(message)-40):])
+	}
+	if strings.Contains(message, value[:6]) {
+		t.Errorf("the message holds the beginning of the value: %q", message[max(0, len(message)-40):])
+	}
+}
+
+// A step's own capture keeps as many bytes of its stderr as the walk's, so
+// a step whose stderr filled it was cut there too: the value it went
+// through keeps no part either, though the walk's capture took it whole.
+// witness: internal/ops/browser_warm.go | if len(serr) >= browserOutputCap { → if false {
+func TestBrowserBatch_EnvPlaceholder_ACaptureCutByTheStepsOwnCapKeepsNoPartOfAValue(t *testing.T) {
+	const value = "correct-horse-battery-staple"
+	// The step's capture ended ten bytes into the value.
+	filler := strings.Repeat("x", browserOutputCap-len("debug: typing ")-10)
+	message := typedWithStderr(t, value, filler+"debug: typing "+value[:10])
+	if !strings.HasSuffix(message, "debug: typing") {
+		t.Errorf("the message ends %q, want it to end where the value began", message[max(0, len(message)-40):])
+	}
+	if strings.Contains(message, value[:6]) {
+		t.Errorf("the message holds the beginning of the value: %q", message[max(0, len(message)-40):])
+	}
+}
+
+// typedWithStderr is the message of a call that types value into a field
+// whose step fails with stderr.
+func typedWithStderr(t *testing.T, value, stderr string) string {
+	t.Helper()
+	runner := &walkRunner{exec: func(_ context.Context, args []string) (string, string, error) {
+		if args[0] == "fill" {
+			return "", stderr, errors.New("exit status 1")
+		}
+		return `{"success":true,"data":{"ok":true}}`, "", nil
+	}}
+	return signInWith(t, runner, map[string]string{"TEST_PASSWORD": value}, [][]string{{"fill", "#password", "{{env:TEST_PASSWORD}}"}}).Message
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"regexp"
 	"slices"
 
@@ -41,9 +40,9 @@ func browserEnvPlaceholder(key string) string { return "{{env:" + key + "}}" }
 // JavaScript (isBrowserScript), where the placeholder must stand inside a
 // quoted string and is then exactly the value. The step that opens the
 // call's url is zcp's own and is not searched. The call is refused, and
-// nothing has run, for a placeholder in JavaScript outside a quoted string
-// and for a refusal of the store's reader. A batch without a placeholder
-// never reads the store.
+// nothing has run, for a placeholder in JavaScript outside a quoted string,
+// for a refusal of the store's reader, and for a value longer than
+// browserValueMaxLen. A batch without a placeholder never reads the store.
 func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([][]string, browserEnvUse, error) {
 	var keys []string
 	for _, cmd := range written {
@@ -71,6 +70,13 @@ func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([]
 	values, refused := LiveEnvValues(storePath, keys)
 	if refused != nil {
 		return nil, browserEnvUse{}, browserEnvRefusal(refused, inMate)
+	}
+	for _, key := range keys {
+		if len(values[key]) > browserValueMaxLen {
+			return nil, browserEnvUse{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("%s: the value is longer than %d bytes, more than zerops_browser takes back out of a result; the browser was not opened", browserEnvPlaceholder(key), browserValueMaxLen),
+				fmt.Sprintf("Hand a value this long to a command instead: zcp with %s -- <command>.", key))
+		}
 	}
 	run := make([][]string, len(written))
 	for i, cmd := range written {
@@ -139,25 +145,40 @@ func browserEnvRefusal(refused *LiveEnvRefusal, inMate bool) error {
 		"Run the commands without {{env:…}}, or try again once the store is whole.")
 }
 
+// browserWithheld is what a result says when the values could not be taken
+// out of it within the search's bound (browserRedactBudget): the text from
+// the browser side is not returned, since it was not searched.
+const browserWithheld = "Text from the browser side is withheld: taking the {{env:…}} values out of this call's answer did not finish within its bound, " +
+	"so no step result or error, no errors, console or network output and nothing of agent-browser's own is returned — only each step's command as written and whether it succeeded. " +
+	"The page ran what it was given. To read the text, call again with fewer or shorter {{env:…}} values, or with less output."
+
 // takeBack takes the substituted values out of what a walk answered, before
 // zcp reads or composes anything from it. A step names its command as it was
 // written — put back by its place in the batch, byte for byte, never
 // searched — and so does the error of a step that got no answer. What came
 // from the browser side is searched for the values (browserRedactor): each
-// step's result and error, and agent-browser's stderr.
-func (u browserEnvUse) takeBack(stdout, stderr string, runErr error) (string, string, error) {
+// step's result and error, and agent-browser's stderr — which, cut at its
+// cap (truncated), loses its end from where a form of a value may have
+// begun. When the search does not finish within its bound, withheld is true
+// and the answer carries no text of the browser side at all.
+func (u browserEnvUse) takeBack(stdout, stderr string, truncated bool, runErr error) (out, errOut string, withheld bool, err error) {
 	if u.redactor == nil {
-		return stdout, stderr, runErr
+		return stdout, stderr, false, runErr
 	}
 	var unanswered *browserStepUnansweredError
 	if errors.As(runErr, &unanswered) && unanswered.step < len(u.written) {
 		unanswered.command = u.written[unanswered.step]
 	}
-	stderr = u.redactor.text(stderr)
+	if truncated {
+		stderr = u.redactor.cutText(stderr)
+	} else {
+		stderr = u.redactor.text(stderr)
+	}
 	var steps []BrowserStepResult
-	if json.Unmarshal([]byte(stdout), &steps) != nil {
+	parsed := json.Unmarshal([]byte(stdout), &steps) == nil
+	if !parsed {
 		// Not the walk's own JSON: nothing in it is known to be a command.
-		return u.redactor.text(stdout), stderr, runErr
+		stdout = u.redactor.text(stdout)
 	}
 	for i := range steps {
 		step := &steps[i]
@@ -169,21 +190,45 @@ func (u browserEnvUse) takeBack(stdout, stderr string, runErr error) (string, st
 				step.Command[j] = u.redactor.text(arg)
 			}
 		}
-		// An eval's value is the page's own, its keys included; every other
-		// result's keys are agent-browser's.
-		keysFrom := math.MaxInt
-		if isCommand(step.Command, browserCmdEval) {
-			keysFrom = 1
-		}
-		step.Result = u.redactor.json(step.Result, keysFrom)
+		step.Result = u.redactor.json(step.Result)
 		if step.Error != nil {
 			text := u.redactor.text(*step.Error)
 			step.Error = &text
 		}
 	}
-	redacted, err := json.Marshal(steps)
-	if err != nil {
-		return u.redactor.text(stdout), stderr, runErr
+	if u.redactor.spent {
+		return u.withheldSteps(steps), "", true, runErr
 	}
-	return string(redacted), stderr, runErr
+	if !parsed {
+		return stdout, stderr, false, runErr
+	}
+	redacted, marshalErr := json.Marshal(steps)
+	if marshalErr != nil {
+		return u.withheldSteps(steps), "", true, runErr
+	}
+	return string(redacted), stderr, false, runErr
+}
+
+// withheldSteps are a walk's steps with nothing of the browser side left in
+// them: each step of this batch by its command as written and whether it
+// succeeded, a failed one saying its error is withheld.
+func (u browserEnvUse) withheldSteps(steps []BrowserStepResult) string {
+	const note = "withheld: see message"
+	kept := make([]BrowserStepResult, 0, len(steps))
+	for i, step := range steps {
+		if i >= len(u.written) {
+			break
+		}
+		bare := BrowserStepResult{Command: u.written[i], Success: step.Success}
+		if step.Error != nil {
+			text := note
+			bare.Error = &text
+		}
+		kept = append(kept, bare)
+	}
+	out, err := json.Marshal(kept)
+	if err != nil {
+		return "[]"
+	}
+	return string(out)
 }

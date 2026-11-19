@@ -640,7 +640,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout)
 	duration := time.Since(start)
 	// Everything below reads the walk's answer without the values it was given.
-	stdout, stderr, runErr = envUse.takeBack(stdout, stderr, runErr)
+	stdout, stderr, withheld, runErr := envUse.takeBack(stdout, stderr, truncated, runErr)
 
 	result := &BrowserBatchResult{
 		URL:             input.URL,
@@ -663,6 +663,9 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	if result.Message == "" {
 		result.Message = pageVerdict(result.Steps, timeout)
+	}
+	if withheld {
+		result.Message = browserWithheld
 	}
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
