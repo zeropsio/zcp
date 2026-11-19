@@ -922,3 +922,38 @@ func TestBrowserBatch_EnvPlaceholder_JavaScriptIsReadPastAgentBrowsersGlobalFlag
 		})
 	}
 }
+
+// A page reads its script as a classic script: a `<!--` in code and a `-->`
+// that begins a line open a comment to the line's end, so does a `#!` at the
+// very start, and U+2028 and U+2029 end a line. A placeholder those leave in
+// code fails the call before the browser opens; one in a string after them
+// is the value.
+// witness: internal/ops/browser_script.go | case strings.HasPrefix(source[i:], "<!--"), strings.HasPrefix(source[i:], "//"), → case strings.HasPrefix(source[i:], "//"),
+func TestBrowserBatch_EnvPlaceholder_AfterAComment_APageReadsIsRefusedInCode(t *testing.T) {
+	tests := []struct {
+		name, source string
+		refused      bool
+	}{
+		{name: "after an HTML open comment", source: "1 <!-- `\n{{env:TEST_PASSWORD}}`", refused: true},
+		{name: "after an HTML close comment that begins a line", source: "1\n--> `\n{{env:TEST_PASSWORD}}`", refused: true},
+		{name: "after a close comment behind a comment with a line separator", source: "a /* */ --> `\n{{env:TEST_PASSWORD}}`", refused: true},
+		{name: "after a hashbang", source: "#!`\n{{env:TEST_PASSWORD}}`", refused: true},
+		{name: "after a line comment ended by a paragraph separator", source: "x // ` {{env:TEST_PASSWORD}}`", refused: true},
+		{name: "in a string after an HTML open comment", source: "x = 1 <!-- `\n'{{env:TEST_PASSWORD}}'"},
+		{name: "in a string after a line comment ended by a line separator", source: "x // ` '{{env:TEST_PASSWORD}}'"},
+		{name: "in a string after a decrement and a comparison", source: "x-->y; '{{env:TEST_PASSWORD}}'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{}
+			defer OverrideBrowserRunnerForTest(runner)()
+			defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+			_, err := BrowserBatch(t.Context(), BrowserBatchInput{
+				URL: "https://appdev.example.invalid/sign-in", EnvStorePath: fenEnvStore(t), InMate: true, Commands: [][]string{{"eval", tt.source}},
+			})
+			if (err != nil) != tt.refused {
+				t.Fatalf("refused = %v (%v), want %v", err != nil, err, tt.refused)
+			}
+		})
+	}
+}
