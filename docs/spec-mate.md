@@ -974,7 +974,17 @@ can hold up or fail a start.
   Those are the origins agent-browser's save reads: it collects the storage of the
   origins its `open` navigations ended on (its visited origins, which only `open` adds)
   and of the page it runs on, never of an origin it only restored, whose `state load`
-  navigates without recording it (`TestRecordBrowserOpened_TheOriginAnOpenEndedOnIsRead`).
+  navigates without recording it, nor of one a click navigated to. It also keeps the
+  kept origins with storage this browser did not get restored, and the base tab's CDP
+  target when the kept sign-in was restored: agent-browser relaunches a Chrome whose
+  process exited or whose connection died — an OOM kill, which `OOMScoreAdjust=1000`
+  makes likely — on the next command, inside the same service, with a new, empty profile
+  and a new base tab (`cdp/chrome.rs`, `actions.rs`), so another base tab means the kept
+  sign-in is no longer in the browser. A call that keeps the sign-in reuses the warm
+  browser only while it holds the kept cookies in the Chrome they were restored into;
+  any other — Chrome relaunched, or cookies not held — is stopped and the call restores
+  into a fresh one (`TestRecordBrowserOpened_TheOriginAnOpenEndedOnIsRead`,
+  `TestKeptSignInLetsReuse_OnlyTheChromeTheSignInWasRestoredInto`).
 - **The save.** At the end of every call that hands the browser back warm, inside the
   call's lock, while the call's own tab — a live page of the default context — is still
   active, before its tabs close and the marker says `idle`. On the base tab's
@@ -982,14 +992,19 @@ can hold up or fail a start.
   such a save now and then stalled past 30 s (measured 2026-11-19: 2 of 29 saves on the
   base tab, none of 40 on the call's tab). A browser that does not hold the kept cookies
   saves nothing — logged — so a call that restored them only in part never writes its own
-  over them. Otherwise `state save` writes a candidate into the directory's `.tmp`; zcp
+  over them; nor does one whose base tab is no longer the one they were restored into —
+  Chrome relaunched empty during the call: that save is refused and logged, the browser
+  is left holding nothing so no later call reuses it, and the call's `keptSignIn` says
+  "Chrome restarted empty during this call, so the kept sign-in was not in it: it is still
+  kept for the next call, and a sign-in made in this call was not kept." Otherwise `state save` writes a candidate into the directory's `.tmp`; zcp
   drops its session storage — never usefully restored, and not cleared by the way out —
   and merges it with the kept file: the saved cookies replace the kept ones, since the
   browser holds every kept cookie; each origin the save read (every origin an `open`
   step ended on in this browser, and the active tab's) is what the save holds for it,
   nothing when the save lacks it — agent-browser saves only origins with storage, so a
-  clear sticks wherever the page went afterwards; a kept origin the save did not read
-  keeps its kept entry. The result replaces `zcp-default.json` only when it is a state
+  clear sticks even after the page left the site; an origin this browser did not get
+  restored is not read unless the save holds storage for it, so opening it cannot erase
+  storage it never had; a kept origin the save did not read keeps its kept entry. The result replaces `zcp-default.json` only when it is a state
   agent-browser can load. So a sign-in survives a recycle that follows within seconds.
   The save has 5 s (it takes about 0.15 s); one that fails or runs out is logged and
   neither fails the call nor recycles the browser. agent-browser saves nothing itself: no
@@ -1004,6 +1019,9 @@ can hold up or fail a start.
   `TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead`,
   `TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears`,
   `TestSaveBrowserSignIn_AClearSticksWhereverThePageWent`,
+  `TestSaveBrowserSignIn_ASiteNotRestoredIsNotErasedByOpeningIt`,
+  `TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing`,
+  `TestBrowserBatch_WhatTheHandBackFoundReachesKeptSignIn`,
   `TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave`,
   `TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile`,
   `TestReleaseBrowser_ARecycledBrowserIsNeverHandedBack`).
@@ -1048,15 +1066,17 @@ can hold up or fail a start.
 - **No encryption.** The file is not encrypted: a key would live in the same container,
   readable by the same user as the file, so it would protect against nothing the modes
   do not, and a lost or changed key would leave the file unloadable.
-- **The way out.** A Mate forgets a sign-in with `["cookies","clear"]` and
-  `["storage","local","clear"]` on its site's page in a `tab` call: that page's origin is
-  one the save reads, wherever the page goes afterwards (a sign-out that redirects to an
-  identity provider, a popup), so the save at that call's end keeps no cookie and nothing
-  for that site, and the next browser, even after a `SIGKILL`, starts signed out there.
-  Another site's saved storage is that site's to clear. The tool's `isolation` words say
-  so: "To forget a sign-in, run ["cookies","clear"] and ["storage","local","clear"] on its
-  page in a tab call; wherever the page goes after, the next browser starts signed out
-  there."
+- **The way out.** A Mate forgets a sign-in by passing the signed-in page as `url` in a
+  `tab` call and running `["cookies","clear"]` and `["storage","local","clear"]` before the
+  call leaves it: that page's origin is one an `open` step ended on, so the save reads
+  it even after the page then leaves the site (an app's sign-out redirecting to an
+  identity provider, a popup), keeps no cookie and nothing for that site, and the next
+  browser, even after a `SIGKILL`, starts signed out there. A site reached only by a click
+  is not one agent-browser's save reads, so a clear there does not stick; another site's
+  saved storage is that site's to clear. The tool's `isolation` words say so: "To forget
+  a sign-in, pass the signed-in page as url in a tab call and run ["cookies","clear"] and
+  ["storage","local","clear"] before the call leaves it; the next browser starts signed
+  out there."
 
 ### 2.7 Base path on the mate side
 
