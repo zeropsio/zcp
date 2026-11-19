@@ -440,7 +440,7 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 	if !strings.HasPrefix(commit, res.Commit) {
 		progress.say(fmt.Sprintf("%s already builds %s; waiting on it, and main (%s) is ahead of it", s.host, shortCommit(res.Commit), shortCommit(commit)))
 	}
-	processStatus, settled := d.waitBuild(ctx, s.host, svc.ID, res, rows)
+	processStatus, settled := d.waitBuild(ctx, s.host, svc.ID, res, rows, progress)
 	if !settled {
 		return true, res.Commit
 	}
@@ -497,10 +497,14 @@ const standupBuildWait = 20 * time.Minute
 // the process's last status and whether the build ended; a build that did
 // not end within the bound, or a wait that failed, has its row failed with
 // the bound or the error named.
-func (d standupDeps) waitBuild(ctx context.Context, host, serviceID string, res ops.CommitDeployResult, rows *standupVerdictRows) (string, bool) {
+func (d standupDeps) waitBuild(ctx context.Context, host, serviceID string, res ops.CommitDeployResult, rows *standupVerdictRows, progress *standupProgress) (string, bool) {
 	bound, whose := d.runBound, "the stand-up's"
 	waitCtx := ctx
+	var onProgress ops.ProgressCallback
 	if bound <= 0 {
+		if send := progress.callback(); send != nil {
+			onProgress = func(message string, n, total float64) { send(host+": "+message, n, total) }
+		}
 		bound, whose = standupBuildWait, "the stand-up's wait for a build,"
 		var cancel context.CancelFunc
 		waitCtx, cancel = context.WithTimeout(ctx, bound)
@@ -510,9 +514,9 @@ func (d standupDeps) waitBuild(ctx context.Context, host, serviceID string, res 
 		var waited *ops.WaitResult
 		var err error
 		if res.ProcessID != "" {
-			waited, err = ops.WaitProcesses(waitCtx, d.batch.client, []string{res.ProcessID}, nil)
+			waited, err = ops.WaitProcesses(waitCtx, d.batch.client, []string{res.ProcessID}, onProgress)
 		} else {
-			waited, err = ops.WaitServiceSettled(waitCtx, d.batch.client, d.batch.projectID, host, nil)
+			waited, err = ops.WaitServiceSettled(waitCtx, d.batch.client, d.batch.projectID, host, onProgress)
 		}
 		switch {
 		case errors.Is(waitCtx.Err(), context.DeadlineExceeded):
@@ -731,6 +735,58 @@ func runningStandupLine(statusPath string) string {
 		line += fmt.Sprintf("; its verdict so far is %s: %s", v.Headline, strings.Join(rows, ", "))
 	}
 	return line + ". Call zerops_standup again once it has ended: it then reports the finished verdict and builds nothing twice."
+}
+
+// bootstrapStandupNote describes this process's current build wait. The verdict
+// supplies the rows and IDs even when the live phase cannot be read.
+func bootstrapStandupNote(ctx context.Context, client ops.ProcessGetter) string {
+	status, err := mate.ReadStatus(mate.StatusFilePath())
+	st := status.Standup
+	if err != nil || st.State != mate.StandupRunning || st.Process == nil || st.Verdict == nil {
+		return ""
+	}
+	self := mate.StandupProcess{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
+	if *st.Process != self {
+		return ""
+	}
+
+	rows := make([]string, len(st.Verdict.Rows))
+	var building bool
+	var waitID string
+	for i, r := range st.Verdict.Rows {
+		rows[i] = r.Hostname + " " + string(r.State)
+		if r.State != mate.RowBuilding {
+			continue
+		}
+		building = true
+		rows[i] += standupBuildIDs(&r)
+		if r.ProcessID == "" {
+			continue
+		}
+		waitID = cmp.Or(waitID, r.ProcessID)
+		proc, err := client.GetProcess(ctx, r.ProcessID)
+		if err != nil {
+			continue
+		}
+		if proc.AppVersion != nil {
+			rows[i] += " " + proc.AppVersion.Status
+		}
+		rows[i] += ops.ProcessElapsedSuffix(proc, time.Now())
+	}
+	if !building {
+		return ""
+	}
+
+	since := st.CallStartedAt
+	if started, err := time.Parse(time.RFC3339, since); err == nil {
+		since += fmt.Sprintf(" (%d s elapsed)", max(0, time.Since(started)/time.Second))
+	}
+	wait := "Wait for that result"
+	if waitID != "" {
+		wait += fmt.Sprintf(` or use zerops_process action="wait" processId=%s`, waitID)
+	}
+	return fmt.Sprintf("This step's stand-up has been running since %s.\n%s\nThe step completes when the call that started it returns. %s. Start no other workflow and send no second plan meanwhile.",
+		since, strings.Join(rows, "\n"), wait)
 }
 
 // projectHasPool reports whether the project holds a Swarm pool — the only

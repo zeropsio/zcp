@@ -424,6 +424,11 @@ func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Bootstrap status failed: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
+	if rt.MateEnabled {
+		if note := bootstrapStandupNote(ctx, client); note != "" {
+			resp.Message = note + "\n\n" + resp.Message
+		}
+	}
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)

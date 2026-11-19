@@ -288,7 +288,8 @@ func pollProcess(
 			return proc, nil
 		}
 
-		elapsed := cfg.clockNow().Sub(start)
+		now := cfg.clockNow()
+		elapsed := now.Sub(start)
 		if elapsed > cfg.timeout {
 			return nil, platform.NewPlatformError(
 				platform.ErrAPITimeout,
@@ -304,10 +305,12 @@ func pollProcess(
 			if progress > 100 {
 				progress = 100
 			}
-			onProgress(
-				fmt.Sprintf("Process %s: %s", processID, proc.Status),
-				progress, 100,
-			)
+			message := "Process " + processID + ": " + proc.Status
+			if v := proc.AppVersion; v != nil {
+				message += ", app version " + v.ID + " " + v.Status
+			}
+			message += ProcessElapsedSuffix(proc, now)
+			onProgress(message, progress, 100)
 		}
 
 		if elapsed > cfg.stepUpAfter {
@@ -320,4 +323,17 @@ func pollProcess(
 		case <-cfg.wait(interval):
 		}
 	}
+}
+
+// ProcessElapsedSuffix reports whole seconds since the process started. A
+// pending process has no start time, so its progress has no elapsed part.
+func ProcessElapsedSuffix(proc *platform.Process, now time.Time) string {
+	if proc.Started == nil {
+		return ""
+	}
+	started, err := time.Parse(time.RFC3339, *proc.Started)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf(", %d s", max(0, now.Sub(started)/time.Second))
 }

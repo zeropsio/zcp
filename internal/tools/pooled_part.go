@@ -225,6 +225,17 @@ func pooledPlanStoodLine(headline mate.StandupHeadline, rows []pooledPlanRow, pa
 	return line + fmt.Sprintf(" Work in a part through a lease of its pool, a branch per lease: zerops_lease action=\"acquire\" pools=[%s] branch=\"<your branch>\".", strings.Join(pools, ", "))
 }
 
+func standupBuildIDs(row *mate.StandupRow) string {
+	var ids string
+	if row.ProcessID != "" {
+		ids += ", process " + row.ProcessID
+	}
+	if row.AppVersionID != "" {
+		ids += ", app version " + row.AppVersionID
+	}
+	return ids
+}
+
 // pooledPlanFailed is the plan's answer when its parts did not stand: each
 // failed row with its cause and next step; nothing was completed.
 func pooledPlanFailed(stood standupResponse) *platform.PlatformError {
@@ -237,6 +248,7 @@ func pooledPlanFailed(stood standupResponse) *platform.PlatformError {
 		if s.Verdict.Class != "" {
 			row += " (" + string(s.Verdict.Class) + ")"
 		}
+		row += standupBuildIDs(s.Verdict)
 		if s.Verdict.Cause != "" {
 			row += ": " + s.Verdict.Cause
 		}
