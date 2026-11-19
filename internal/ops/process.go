@@ -41,9 +41,11 @@ type ProcessStatusResult struct {
 
 // ProcessCancelResult contains the result of a process cancellation.
 type ProcessCancelResult struct {
-	ProcessID string `json:"processId"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
+	ProcessID    string `json:"processId"`
+	Status       string `json:"status"`
+	AppVersionID string `json:"appVersionId,omitempty"`
+	Phase        string `json:"phase,omitempty"`
+	Message      string `json:"message"`
 }
 
 // GetProcessStatus retrieves the current status of an async process.
@@ -98,6 +100,10 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 			"Only PENDING or RUNNING processes can be canceled")
 	}
 
+	if p.Status == platform.ProcessStatusRunning && p.ActionName == actionStackBuild && p.AppVersion != nil && p.AppVersion.ID != "" {
+		return cancelRunningBuild(ctx, client, p)
+	}
+
 	_, err = client.CancelProcess(ctx, processID)
 	if err != nil {
 		var pe *platform.PlatformError
@@ -112,6 +118,42 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 		Status:    statusCanceled,
 		Message:   fmt.Sprintf("Process %s canceled", processID),
 	}, nil
+}
+
+func cancelRunningBuild(ctx context.Context, client platform.Client, p *platform.Process) (*ProcessCancelResult, error) {
+	version := p.AppVersion
+	wait := fmt.Sprintf(`zerops_process action="wait" processId=%q`, p.ID)
+	if !isBuildPhaseCancelable(version.Status) {
+		return nil, platform.NewPlatformError(platform.ErrProcessNotCancelable,
+			fmt.Sprintf("Process %s cannot be canceled while app version %s is in phase %q", p.ID, version.ID, version.Status),
+			"Zerops offers build cancellation only while the version is uploading, waiting to build or building. Use "+wait+" to wait for the process to end.")
+	}
+
+	if err := client.CancelAppVersionBuild(ctx, version.ID); err != nil {
+		return nil, fmt.Errorf("cancel build for app version %s: %w", version.ID, err)
+	}
+	status := p.Status
+	if current, err := client.GetProcess(ctx, p.ID); err == nil {
+		status = current.Status
+	}
+	return &ProcessCancelResult{
+		ProcessID:    p.ID,
+		Status:       status,
+		AppVersionID: version.ID,
+		Phase:        version.Status,
+		Message:      "Build cancellation requested. Use " + wait + " to confirm the process has ended.",
+	}, nil
+}
+
+// isBuildPhaseCancelable matches the Zerops console's isBuildInProgress in
+// frontend-legacy at c88b8fefb, libs/zui/src/process-item/process-item.component.ts.
+func isBuildPhaseCancelable(phase string) bool {
+	switch phase {
+	case platform.AppVersionStatusUploading, platform.BuildStatusWaitingToBuild, platform.BuildStatusBuilding:
+		return true
+	default:
+		return false
+	}
 }
 
 // isProcessCancelable reports whether a process can still be canceled: only

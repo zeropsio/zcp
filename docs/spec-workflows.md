@@ -653,12 +653,18 @@ hard-gates on it, and `zerops_process action="wait"` blocks until the work drain
   callers.
 - **"Busy" = a live process referencing the service** — status `PENDING`,
   `RUNNING`, `ROLLBACKING`, or `CANCELING` (`ops.IsProcessLive`, the SDK's
-  non-terminal set). The process is the SOLE busy-truth; it always carries a
-  cancelable `processId`. The embedded `process.appVersion` phase
-  (`BUILDING`/`DEPLOYING`) only refines the build/deploy LABEL of an already-busy
-  build process — it never makes a service busy on its own (a stuck `BUILDING`
-  whose build container died has no process to cancel; gating on it would
-  deadlock the gate).
+  non-terminal set). The live process alone makes the service busy. Its embedded
+  `appVersion` phase refines the build/deploy label.
+- **Cancel by process ID.** For a `RUNNING` `stack.build` with an app version ID
+  on the direct process read, `ops.CancelProcess` calls
+  `PUT /app-version/{id}/cancel-build` during `UPLOADING`, `WAITING_TO_BUILD`
+  or `BUILDING` (Zerops console, `frontend-legacy` at `c88b8fefb`,
+  `ProcessItemComponent.isBuildInProgress` and `ProcessBaseApi.buildCancel$`).
+  In other phases it returns `PROCESS_NOT_CANCELABLE` before requesting a cancel.
+  On acceptance it reports the app version ID, its phase at the request and the
+  status from one subsequent process read (the prior status if that read fails).
+  Use `zerops_process action="wait"` with the process ID to confirm the end.
+  All other `PENDING` or `RUNNING` processes use `PUT /process/{id}/cancel`.
 - **The full live-op SET, not a single representative** (`ops.ProjectActivity`
   returns `map[string][]LiveOp`; `ServiceInfo.Activity []LiveOp`). A service
   genuinely runs several ops at once — a buildFromGit import enqueues

@@ -36,6 +36,7 @@ const (
 	ErrInvalidHostname        = "INVALID_HOSTNAME"
 	ErrProcessNotFound        = "PROCESS_NOT_FOUND"
 	ErrProcessAlreadyTerminal = "PROCESS_ALREADY_TERMINAL"
+	ErrProcessNotCancelable   = "PROCESS_NOT_CANCELABLE" // The running build's app version is outside the cancelable phases.
 	ErrPermissionDenied       = "PERMISSION_DENIED"
 	ErrAPIError               = "API_ERROR"
 	ErrAPITimeout             = "API_TIMEOUT"

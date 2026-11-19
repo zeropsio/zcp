@@ -287,6 +287,11 @@ func (m *Mock) DeleteAppVersion(_ context.Context, _ string) error {
 	return m.getError("DeleteAppVersion")
 }
 
+func (m *Mock) CancelAppVersionBuild(_ context.Context, _ string) error {
+	m.trackCall("CancelAppVersionBuild")
+	return m.getError("CancelAppVersionBuild")
+}
+
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {
 	m.trackCall("GetService")
 	if err := m.getError("GetService"); err != nil {

@@ -291,6 +291,8 @@ const (
 	ProcessStatusFailed      = "FAILED"
 	ProcessStatusCanceled    = "CANCELED"
 
+	AppVersionStatusUploading       = "UPLOADING"
+	BuildStatusWaitingToBuild       = "WAITING_TO_BUILD"
 	BuildStatusBuilding             = "BUILDING"
 	BuildStatusDeploying            = "DEPLOYING"
 	BuildStatusBuildFailed          = "BUILD_FAILED"

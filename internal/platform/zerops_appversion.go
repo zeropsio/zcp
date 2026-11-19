@@ -247,13 +247,8 @@ func (z *ZeropsClient) RedeployAppVersion(ctx context.Context, appVersionID, zer
 	return &proc, nil
 }
 
-// App version statuses a commit deploy reads besides the build ones
-// (BuildStatus*): a created version is UPLOADING until build-and-deploy is
-// accepted, and ACTIVE once it runs.
-const (
-	AppVersionStatusUploading = "UPLOADING"
-	AppVersionStatusActive    = "ACTIVE"
-)
+// AppVersionStatusActive is the status of the running app version.
+const AppVersionStatusActive = "ACTIVE"
 
 // UploadStall bounds an upload by progress, not by its length: it fails
 // once no archive byte moved, or no answer came after the last, for this
@@ -391,6 +386,18 @@ func (z *ZeropsClient) BuildAndDeployAppVersion(ctx context.Context, appVersionI
 // DeleteAppVersion is DELETE /app-version/{id}.
 func (z *ZeropsClient) DeleteAppVersion(ctx context.Context, appVersionID string) error {
 	resp, err := z.handler.DeleteAppVersion(ctx, path.AppVersionId{Id: uuid.AppVersionId(appVersionID)})
+	if err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	if _, err := resp.Output(); err != nil {
+		return mapSDKError(err, "appVersion")
+	}
+	return nil
+}
+
+// CancelAppVersionBuild requests cancellation of the build for an app version.
+func (z *ZeropsClient) CancelAppVersionBuild(ctx context.Context, appVersionID string) error {
+	resp, err := z.handler.PutAppVersionCancelBuild(ctx, path.AppVersionId{Id: uuid.AppVersionId(appVersionID)})
 	if err != nil {
 		return mapSDKError(err, "appVersion")
 	}

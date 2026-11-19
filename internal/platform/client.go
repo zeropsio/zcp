@@ -97,6 +97,7 @@ type Client interface {
 	// Process
 	GetProcess(ctx context.Context, processID string) (*Process, error)
 	CancelProcess(ctx context.Context, processID string) (*Process, error)
+	CancelAppVersionBuild(ctx context.Context, appVersionID string) error
 
 	// Subdomain
 	EnableSubdomainAccess(ctx context.Context, serviceID string) (*Process, error)
