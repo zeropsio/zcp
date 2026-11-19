@@ -21,7 +21,7 @@ type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
 	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole call, including the wait for the browser and a slow page's load. Default 120, max 300."`
-	Isolation      string     `json:"isolation,omitempty"      jsonschema:"What the page remembers from earlier calls. tab (default): cookies, login, storage, HTTP cache and service workers carry over. fresh-context: none of them, for the first check after a deploy; it stops Chrome as the call ends. new-browser: also a fresh Chrome."`
+	Isolation      string     `json:"isolation,omitempty"      jsonschema:"What the page remembers from earlier calls. tab (default): cookies, login, storage, HTTP cache and service workers carry over; cookies, login and storage also across browser restarts. fresh-context: none of them, for the first check after a deploy or a signed-out view; it starts and stays signed out, in a Chrome of its own that stops as the call ends, and leaves the kept sign-in alone. new-browser: a fresh Chrome that keeps the sign-in. To forget the sign-in, run [\"cookies\",\"clear\"] and [\"storage\",\"local\",\"clear\"] on the signed-in page in a tab call; the next browser starts signed out."`
 	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result. A screenshot is not redacted: a password field shows dots, so never screenshot a {{env:KEY}} value typed into a visible field."`
 	FullPage       bool       `json:"fullPage,omitempty"       jsonschema:"Capture the whole page instead of the viewport, as one image cut to its top 8000 px (screenshot.capturedHeight then says how tall the capture was). The capture does not scroll: content that loads when scrolled into view stays blank unless you scroll to it or wait for it first. Implies screenshot."`
 }
@@ -45,7 +45,7 @@ func browserInputSchema(inMate bool) *jsonschema.Schema {
 		}
 		prop.Description += " In any argument, whole or inside it, {{env:KEY}} is replaced with the value this container's env holds under KEY — " + source +
 			" — and comes back as the placeholder. Not hidden: a value under six characters, one the page changed beyond trimming and escaping (base64, a hash)," +
-			" or one the page kept (storage, a cookie) that a later call reads without naming its KEY." +
+			" or one the page kept (storage, a cookie) that a later call reads without naming its KEY, even after a browser restart." +
 			" A KEY the env does not hold, or a value over 4096 bytes, fails the call before the browser opens." +
 			" In JavaScript (an eval's source, a wait's --fn) write it inside a quoted string, '{{env:KEY}}', or the call is refused: the value is escaped to be exactly that string."
 	}
@@ -69,12 +69,12 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds); " +
 			"each call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser. " +
-			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls — " +
+			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls, the sign-in also across browser restarts — " +
 			"right for re-checking a change after a deploy. " +
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
-			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first, for a page that misbehaves only in the warm browser. " +
-			"freshBrowser: true means Chrome was started for the call (always after new-browser); " +
+			"Every other call stays on \"tab\". \"new-browser\" restarts Chrome first, keeping the sign-in, for a page that misbehaves only in the warm browser. " +
+			"freshBrowser: true means Chrome was started for the call (always after new-browser or fresh-context); " +
 			"browserRecycled: true means the call ended unclean and the browser was stopped (not set by a fresh-context call's clean stop). " +
 			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
 			"(an unknown command, subcommand or find action: fix the command, not the page), " +
@@ -98,8 +98,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"or guess one; prefer find role|label|text or CSS. " +
 			"open, close, tab and window never run; each returns a failed invalid-command step. " +
 			"{{env:KEY}} in an argument: see commands. " +
-			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image " +
-			"(cut to its top 8000 px; screenshot.capturedHeight gives its full height) — returned as " +
+			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +
 			"(screenshot.picture) for screenshot.keptFor: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
