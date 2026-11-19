@@ -601,3 +601,49 @@ func TestBrowserBatch_EnvPlaceholder_AMissingKeyIsWordedByWhereZcpRuns(t *testin
 		}
 	}
 }
+
+// In JavaScript a placeholder that is not plain content of a quoted string
+// fails the call before the browser opens: left in code, the page's own
+// syntax error would quote a piece of the value back. Where the scan cannot
+// tell, it refuses too.
+// witness: internal/ops/browser_script.go | return false → return true
+func TestBrowserBatch_EnvPlaceholder_InJavaScriptOutsideAQuotedStringIsRefused(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+		refused bool
+	}{
+		{name: "in code", command: []string{"eval", "x = {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "in a selector built in code", command: []string{"eval", "document.querySelector({{env:TEST_PASSWORD}})"}, refused: true},
+		{name: "after a backslash", command: []string{"eval", `x = '\{{env:TEST_PASSWORD}}'`}, refused: true},
+		{name: "inside a template's expression", command: []string{"eval", "x = `${ {{env:TEST_PASSWORD}} }`"}, refused: true},
+		{name: "right after a template's dollar", command: []string{"eval", "x = `${{env:TEST_PASSWORD}}`"}, refused: true},
+		{name: "in a comment", command: []string{"eval", "x = 1 // {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "after a string that ended", command: []string{"eval", "x = 'a' + {{env:TEST_PASSWORD}} + 'b'"}, refused: true},
+		{name: "after what may be a regular expression", command: []string{"eval", "x = /'/.test(y) ? '{{env:TEST_PASSWORD}}' : ''"}, refused: true},
+		{name: "in a string that runs into a line end", command: []string{"eval", "x = 'a\n{{env:TEST_PASSWORD}}'"}, refused: true},
+		{name: "in a wait's function, in code", command: []string{"wait", "--fn", "document.title === {{env:TEST_PASSWORD}}"}, refused: true},
+		{name: "in single quotes", command: []string{"eval", "x = '{{env:TEST_PASSWORD}}'"}},
+		{name: "in double quotes", command: []string{"eval", `x = "user:{{env:TEST_PASSWORD}}"`}},
+		{name: "in a template, beside an expression", command: []string{"eval", "x = `${a}{{env:TEST_PASSWORD}}${b}`"}},
+		{name: "in a string after a comment and a path in a string", command: []string{"eval", "/* sign in */ fetch('/login', {body: '{{env:TEST_PASSWORD}}'})"}},
+		{name: "in a wait's function, quoted", command: []string{"wait", "--fn", "document.title === '{{env:TEST_PASSWORD}}'"}},
+		{name: "outside JavaScript, as it is", command: []string{"fill", "#password", "{{env:TEST_PASSWORD}}"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{}
+			defer OverrideBrowserRunnerForTest(runner)()
+			defer OverrideBrowserScaleForTest(func(context.Context) error { return nil })()
+			_, err := BrowserBatch(t.Context(), BrowserBatchInput{
+				URL: "https://appdev.example.invalid/sign-in", EnvStorePath: fenEnvStore(t), InMate: true, Commands: [][]string{tt.command},
+			})
+			if (err != nil) != tt.refused {
+				t.Fatalf("refused = %v (%v), want %v", err != nil, err, tt.refused)
+			}
+			if tt.refused && (runner.lastIsolation != "" || runner.lastStdin != "") {
+				t.Errorf("the browser was asked for (isolation %q) or ran %q", runner.lastIsolation, runner.lastStdin)
+			}
+		})
+	}
+}

@@ -175,48 +175,6 @@ func jsonRuneSpellings(r rune) []string {
 	return []string{string(r)}
 }
 
-// jsRuneEscape writes one character of a value so that, inside a JavaScript
-// string literal quoted with ', " or `, it is exactly that character: the
-// three quotes and the backslash escaped, `$` so that a template literal
-// starts no `${`, and line ends and control characters, which a quoted
-// literal cannot hold.
-func jsRuneEscape(r rune) string {
-	switch r {
-	case '\\':
-		return `\\`
-	case '\'':
-		return `\'`
-	case '"':
-		return `\"`
-	case '`':
-		return "\\`"
-	case '$':
-		return `\$`
-	case '\n':
-		return `\n`
-	case '\r':
-		return `\r`
-	case '\t':
-		return `\t`
-	case ' ', ' ':
-		return fmt.Sprintf(`\u%04x`, r)
-	}
-	if r < 0x20 || r == 0x7f {
-		return fmt.Sprintf(`\u%04x`, r)
-	}
-	return string(r)
-}
-
-// jsStringEscape is a value as it is substituted inside a quoted JavaScript
-// string (jsRuneEscape).
-func jsStringEscape(value string) string {
-	var escaped strings.Builder
-	for _, r := range value {
-		escaped.WriteString(jsRuneEscape(r))
-	}
-	return escaped.String()
-}
-
 // percentByte is the byte a %HH escape at text[pos] stands for, -1 when
 // there is none there.
 func percentByte(text string, pos int) int {

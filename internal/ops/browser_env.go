@@ -38,18 +38,27 @@ func browserEnvPlaceholder(key string) string { return "{{env:" + key + "}}" }
 // substituteBrowserEnv answers the batch to run for the batch as written:
 // every `{{env:KEY}}` in a command's argument replaced, once, with the
 // store's value, read once for the call — escaped where the argument is
-// JavaScript (isBrowserScript), so a placeholder written inside a quoted
-// string there is exactly the value. The step that opens the call's url is
-// zcp's own and is not searched. A refusal of the reader refuses the call:
-// nothing has run. A batch without a placeholder never reads the store.
+// JavaScript (isBrowserScript), where the placeholder must stand inside a
+// quoted string and is then exactly the value. The step that opens the
+// call's url is zcp's own and is not searched. The call is refused, and
+// nothing has run, for a placeholder in JavaScript outside a quoted string
+// and for a refusal of the store's reader. A batch without a placeholder
+// never reads the store.
 func substituteBrowserEnv(written [][]string, storePath string, inMate bool) ([][]string, browserEnvUse, error) {
 	var keys []string
 	for _, cmd := range written {
 		if isCommand(cmd, browserCmdOpen) {
 			continue
 		}
-		for _, arg := range cmd {
-			for _, ref := range browserEnvRef.FindAllStringSubmatch(arg, -1) {
+		for at, arg := range cmd {
+			refs := browserEnvRef.FindAllStringSubmatch(arg, -1)
+			if len(refs) > 0 && isBrowserScript(cmd, at) && !jsPlaceholdersQuoted(arg) {
+				return nil, browserEnvUse{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+					"A {{env:…}} placeholder in JavaScript does not stand inside a quoted string, or zcp cannot tell that it does; the browser was not opened",
+					"In an eval's source and a wait's --fn write it between quotes — '{{env:KEY}}', \"{{env:KEY}}\" or `{{env:KEY}}` — not after a backslash and not inside ${…}: "+
+						"the value is escaped to be exactly that string. Where a / outside a string stands before it (a division, a regular expression), put it first: const v = '{{env:KEY}}'; …")
+			}
+			for _, ref := range refs {
 				if !slices.Contains(keys, ref[1]) {
 					keys = append(keys, ref[1])
 				}
