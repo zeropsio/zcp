@@ -1008,3 +1008,29 @@ func TestBrowserBatch_EnvPlaceholder_AWithheldAnswerStillEndsAWedgedBrowser(t *t
 		t.Error("a browser whose step answered \"Target closed\" was handed back warm")
 	}
 }
+
+// A value's first character written as a numeric entity is found with any
+// number of leading zeros, and a long run of them is read once.
+// witness: internal/ops/browser_match.go | significant := strings.TrimLeft(digits, "0") → significant := digits
+func TestBrowserBatch_EnvPlaceholder_AFirstCharacterWithAnyLeadingZerosIsFound(t *testing.T) {
+	const value = "fen+test@example.test"
+	tests := []struct{ name, comesBack string }{
+		{name: "eleven zeros", comesBack: "&#00000000000102;en+test@example.test"},
+		{name: "hex with eleven zeros", comesBack: "&#x0000000000066;en+test@example.test"},
+		{name: "a megabyte of zeros", comesBack: "&#" + strings.Repeat("0", 1<<20) + "102;en+test@example.test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &pageRunner{answer: func(cmd []string) (any, string) {
+				if cmd[0] == "get" {
+					return map[string]any{"text": "before " + tt.comesBack + " after"}, ""
+				}
+				return nil, ""
+			}}
+			result := signInWith(t, runner, map[string]string{"TEST_EMAIL": value}, [][]string{{"fill", "#email", "{{env:TEST_EMAIL}}"}, {"get", "text", "#out"}})
+			if got := string(stepOf(t, result, "get").Result); got != `{"text":"before {{env:TEST_EMAIL}} after"}` {
+				t.Errorf("came back as %.120s", got)
+			}
+		})
+	}
+}

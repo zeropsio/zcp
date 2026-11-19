@@ -449,27 +449,38 @@ func (run *matchRun) digit(t matchThread, trie *runeTrie, digits string, c byte,
 }
 
 // entityAt is the character an HTML entity at text[pos] stands for, -1 when
-// none of the ones a value's character can be written as stands there.
+// none of the ones a value's character can be written as stands there. A
+// numeric one may have any number of leading zeros: they are read once, so
+// a long run of them costs only its length.
 func entityAt(text string, pos int) rune {
-	rest := text[pos+1 : min(len(text), pos+16)]
-	end := strings.IndexByte(rest, ';')
-	if end < 1 {
-		return -1
-	}
-	body := rest[:end]
-	if body[0] != '#' {
+	rest := text[pos+1:]
+	if !strings.HasPrefix(rest, "#") {
+		end := strings.IndexByte(rest[:min(len(rest), 6)], ';')
+		if end < 1 {
+			return -1
+		}
 		for r, name := range entityNames {
-			if name == body {
+			if name == rest[:end] {
 				return r
 			}
 		}
 		return -1
 	}
-	digits, base := body[1:], 10
+	digits, base := rest[1:], 10
 	if len(digits) > 0 && (digits[0] == 'x' || digits[0] == 'X') {
 		digits, base = digits[1:], 16
 	}
-	code, err := strconv.ParseInt(digits, base, 32)
+	significant := strings.TrimLeft(digits, "0")
+	// Past the zeros, U+10FFFF takes seven decimal digits.
+	end := strings.IndexByte(significant[:min(len(significant), 8)], ';')
+	switch {
+	case end < 0, end == 0 && len(significant) == len(digits):
+		return -1
+	case end == 0:
+		return 0
+	}
+	digits = significant
+	code, err := strconv.ParseInt(digits[:end], base, 32)
 	if err != nil {
 		return -1
 	}
