@@ -87,6 +87,7 @@ Read the home before new call sites:
 - Repo identity/emission uses topology.CanonicalRepoURL; store meta.RemoteURL verbatim (`TestCanonicalRepoURL*`).
 - Wrap SSH errors via tools.withSSHStderr to preserve Output (`TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr`).
 - Agent markdown uses zerops_knowledge uri=, never bare zerops:// or resources capability (`TestNoBareZeropsURIInAgentContent`, `TestServer_DoesNotAdvertiseResourcesCapability`).
+- AGENTS.md templates fit the budget of `TestAgentsBudget_AB1_EveryRenderFitsTheBudget` (`internal/content/agents_budget_SENTENCES.md`); run it before adding template text.
 - Markers use line-anchored content.IndexMarkerLine; damaged/absent blocks prepend without losing content (`TestNoRawMarkerMatching`, `TestInit_MidLine*`, `TestInit_Damaged*MD_NoDataLoss`).
 - Init steps default fatal; non-deliverables register step.degraded, never repair environment-owned broken paths (`TestRun_SkillRoots_UnusableRoot_DegradesNotFatal`, `TestRun_RequiredStepFailure_Aborts`).
 - Tool 2nd return stays nil; structuredContent strips guidance; use text envelopes (`docs/spec-mate.md` §1, `TestNoStructuredContentOnToolResults`).

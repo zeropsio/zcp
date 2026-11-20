@@ -1,6 +1,7 @@
 package content
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1210,6 +1211,54 @@ func TestBuildAgentsMD_MateNamesItself(t *testing.T) {
 			}
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("AGENTS.md lacks %q", tc.want)
+			}
+		})
+	}
+}
+
+// agentsBudget is the most bytes a rendered AGENTS.md may carry, the guided
+// or authoring block aside: every request of every Mate carries the file.
+const agentsBudget = 26624
+
+// TestAgentsBudget_AB1_EveryRenderFitsTheBudget renders AGENTS.md for every
+// flag BuildAgentsMD branches on, with names of typical length (real ones
+// vary), and holds each render to agentsBudget
+// (internal/content/agents_budget_SENTENCES.md AB-1).
+//
+// witness: internal/content/build_agents.go | preamble += "\n\n" + strings.TrimSpace(tmpl) → preamble += "\n\n" + strings.TrimSpace(tmpl) + "\n\n" + strings.TrimSpace(tmpl)
+func TestAgentsBudget_AB1_EveryRenderFitsTheBudget(t *testing.T) {
+	t.Parallel()
+	names := []string{"agents_guided.md", "agents_authoring.md"}
+	appended := make([]string, 0, len(names))
+	for _, name := range names {
+		tmpl, err := GetTemplate(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		appended = append(appended, "\n"+strings.TrimSpace(tmpl)+"\n")
+	}
+	for bits := range 32 {
+		chief, inContainer, mate, authoring, guided := bits&1 != 0, bits&2 != 0, bits&4 != 0, bits&8 != 0, bits&16 != 0
+		name := fmt.Sprintf("chief=%v container=%v mate=%v authoring=%v guided=%v", chief, inContainer, mate, authoring, guided)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(runtime.Info{
+				Chief: chief, InContainer: inContainer, MateEnabled: mate, Authoring: authoring,
+				ServiceName: "zcp", ProjectName: "Application - Mate",
+				SubdomainOrigin: "https://zcp-1a2b-3000.prg1.zerops.app",
+			}, guided)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			size := len(out)
+			for _, block := range appended {
+				if strings.HasSuffix(out, block) {
+					size -= len(block)
+				}
+			}
+			t.Logf("%d B", size)
+			if size > agentsBudget {
+				t.Errorf("AGENTS.md is %d B, over the %d B budget", size, agentsBudget)
 			}
 		})
 	}
