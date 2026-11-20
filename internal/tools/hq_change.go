@@ -457,7 +457,8 @@ func changeBranchWords(c workflow.HQChange) string {
 // each change handed to the Mate (hqTakeHanded) — and, at develop's start
 // (atStart), the open changes and where new work goes: on an HQ that keeps an
 // open change per branch every one its state names there listed, recorded in
-// the ledger or not (openChangesOf), new work on a branch of its own;
+// the ledger or not (openChangesOf), new work onto one of them only as
+// AGENTS.md's "What one change holds" says, otherwise on a branch of its own;
 // on one that keeps one per repository the open one, where the work goes
 // (hqOpenChangeWork). A change another step holds (a describe) is left to the
 // next pass. Changes of another application than the one HQ holds the Mate
@@ -549,7 +550,8 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 // openChangesOf is every open change state names in appID's repo, by number,
 // with its standing now — one this zcp never recorded too (opened by another
 // zcp, or naming no branch), since each counts toward the open changes HQ
-// keeps a Mate there. state is of appID's application.
+// keeps a Mate there — a handed one marked handed, which new work never goes
+// onto. state is of appID's application.
 func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQChange) []workflow.HQChange {
 	var open []workflow.HQChange
 	for _, s := range state.Changes {
@@ -560,7 +562,11 @@ func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQCha
 			continue
 		}
 		now := standingOf(s)
-		open = append(open, workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: s.Branch, Told: &now})
+		c := workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: s.Branch, Told: &now}
+		if s.Handed {
+			c.Source = workflow.HQChangeFromHanded
+		}
+		open = append(open, c)
 	}
 	for _, c := range kept {
 		if c.StateRev > state.Rev && (c.Told == nil || c.Told.State != hq.ChangeClosed) {
@@ -572,10 +578,11 @@ func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQCha
 }
 
 // openChangesWords lists a repository's open changes, by number and branch,
-// with each one's standing as told, and says where work goes: work on a change
-// stays on its own branch, new work goes on a branch of its own cut from an
-// up-to-date main, opening its own change — each taken where route runs the
-// repository's git. "" for none.
+// with each one's standing as told and a handed one labelled, and says where
+// work goes: work on a change stays on its own branch; new work goes onto an
+// open change only as AGENTS.md's "What one change holds" says, otherwise on
+// a branch of its own cut from an up-to-date main, opening its own change —
+// each taken where route runs the repository's git. "" for none.
 func openChangesWords(kept []workflow.HQChange, route repoRoute) string {
 	if len(kept) == 0 {
 		return ""
@@ -583,12 +590,16 @@ func openChangesWords(kept []workflow.HQChange, route repoRoute) string {
 	named := make([]string, 0, len(kept))
 	for _, c := range kept {
 		name := fmt.Sprintf("#%d on %q", c.Number, c.Branch)
-		if labels := changeLabels(c.Told); len(labels) > 0 {
+		labels := changeLabels(c.Told)
+		if c.Source == workflow.HQChangeFromHanded {
+			labels = append([]string{"handed to you"}, labels...)
+		}
+		if len(labels) > 0 {
 			name += " (" + strings.Join(labels, " · ") + ")"
 		}
 		named = append(named, name)
 	}
-	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (%s); new work goes on a branch of its own, cut from an up-to-date %q (%s), and opens its own change",
+	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (%s); new work joins an open change of yours only as AGENTS.md's \"What one change holds\" says — pushed to its branch, the change described again — and otherwise goes on a branch of its own, cut from an up-to-date %q (%s), opening its own change",
 		strings.Join(named, ", "), route.take("<branch>"), hqBase, route.fromMain("<branch>"))
 }
 

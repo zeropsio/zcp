@@ -6,6 +6,7 @@ package tools
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -481,7 +482,9 @@ func TestLeaseSyncRefusal_AfterHQsPush_NamesTheCause(t *testing.T) {
 // TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch: on an HQ
 // that keeps an open change per branch, develop's start lists the
 // repository's open changes by number and branch, and says new work goes on
-// a branch of its own — never that work goes on an open change's branch.
+// a branch of its own unless AGENTS.md's "What one change holds" adds it to
+// an open change — never, as an HQ that keeps one change per repository is
+// answered, that all work goes on the open change's branch.
 func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.T) {
 	lab := twoOpenChanges(t)
 	lab.mock.WithServices([]platform.ServiceStack{
@@ -491,7 +494,7 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 
 	text := lab.developStart()
 
-	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "new work goes on a branch of its own", "cut from an up-to-date",
+	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "on a branch of its own", "cut from an up-to-date",
 		"`zcp git appdev fetch origin <branch> && zcp git appdev checkout <branch>`",
 		"`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main && zcp git appdev checkout -b <branch>`"} {
 		if !strings.Contains(text, want) {
@@ -500,6 +503,26 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 	}
 	if strings.Contains(text, "rather than on a branch cut from") {
 		t.Errorf("develop's start sends new work onto an open change's branch:\n%s", text)
+	}
+}
+
+// TestOpenChangesOf_MarksAHandedChangeAsHanded: of the open changes the
+// Mate's state names, the one a person handed this Mate is marked handed and
+// no other is, so develop's start labels it and AGENTS.md's "What one change
+// holds" never sends new work onto it (docs/spec-mate.md §10.10, MB-53).
+// witness: internal/tools/hq_change.go | c.Source = workflow.HQChangeFromHanded →
+func TestOpenChangesOf_MarksAHandedChangeAsHanded(t *testing.T) {
+	t.Parallel()
+	state := hq.MateState{Rev: 3, OpenPerBranch: true, Changes: []hq.MateChange{
+		{Repo: "web", Number: 1, State: hq.ChangeOpen, Branch: "sort-orders"},
+		{Repo: "web", Number: 2, State: hq.ChangeOpen, Branch: "mate/gone/2", Handed: true},
+	}}
+	handed := map[int]bool{}
+	for _, c := range openChangesOf(state, "app-1", "web", nil) {
+		handed[c.Number] = c.Source == workflow.HQChangeFromHanded
+	}
+	if want := map[int]bool{1: false, 2: true}; !maps.Equal(handed, want) {
+		t.Errorf("open changes marked handed = %v, want %v", handed, want)
 	}
 }
 
