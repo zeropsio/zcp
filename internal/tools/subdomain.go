@@ -112,8 +112,9 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		if input.Action == actionEnable {
 			result.NextActions = nextActionSubdomainEnable
 		}
+		result.NextActions = processNext(result.Process, result.NextActions)
 		recordExplicitPublicAccessIntent(stateDir, input.ServiceHostname, input.Action)
-		return jsonResult(result), nil, nil
+		return processResult(result, result.Process), nil, nil
 	})
 }
 

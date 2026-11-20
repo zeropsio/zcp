@@ -132,7 +132,7 @@ func setOrgAIKey(ctx context.Context, client platform.Client, projectID, selfHos
 	resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, shared, selfHostname, set.Stored)
 	applyAutoRestart(ctx, client, projectID, shared, selfHostname, keys, false, &resp.envChangeResult, onProgress)
 	resp.NextActions = joinSentences(
-		fmt.Sprintf("Set %s (sensitive) and %s in the Shared vault. A service calls the model once its run.envVariables reads them under other names — `OPENAI_API_KEY: ${%s}` and `OPENAI_BASE_URL: ${%s}` — and it deploys.", key.Env, baseKey, key.Env, baseKey),
+		processNext(resp.Process, fmt.Sprintf("Set %s (sensitive) and %s in the Shared vault. A service calls the model once its run.envVariables reads them under other names — `OPENAI_API_KEY: ${%s}` and `OPENAI_BASE_URL: ${%s}` — and it deploys.", key.Env, baseKey, key.Env, baseKey)),
 		resp.NextActions)
-	return jsonResult(resp)
+	return processResult(resp, resp.Process)
 }

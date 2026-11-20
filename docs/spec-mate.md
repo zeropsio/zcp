@@ -4081,7 +4081,8 @@ the values those entries reference.
   `declined` in a run of its own, a wake joining the run that asked. The value never enters the
   engine's records, a log, the agent's context or HQ. A `set` answer names the vault its `stored`
   keys went to in the request's own fields (`scope`, `serviceHostname`), so an open ask for a key
-  the agent stored itself matches it by key and vault. zcp `TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed`.
+  the agent stored itself matches it by key and vault; a `set` that zcp answers as an error, its
+  write process FAILED or CANCELED, closes no ask. zcp `TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed`.
   The why is at most 280 characters, the engine's own cap (`REASON_MAX` in
   `engine/pump/vaultAsk.ts` and `originAsk.ts`), so the person reads all zcp takes — what the value
   is for and where they find it — and `zerops_origin`'s why takes the same.

@@ -127,6 +127,46 @@ func jsonResult(v any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}
 }
 
+// processResult is the tool result of a response whose operation ran as the
+// platform process proc (its final state, after pollManageProcess): v as JSON,
+// flagged as an error when proc ended FAILED or CANCELED, so a failed change
+// never reads as done. The body is unchanged — the agent still reads the
+// process, its failReason and its ids. A nil proc (the API answered without
+// one) or one still in flight (the poll timed out) stays a success.
+func processResult(v any, proc *platform.Process) *mcp.CallToolResult {
+	result := jsonResult(v)
+	if processFailed(proc) {
+		result.IsError = true
+	}
+	return result
+}
+
+// processFailed reports whether proc is a platform process that ended FAILED
+// or CANCELED.
+func processFailed(proc *platform.Process) bool {
+	return proc != nil &&
+		(proc.Status == platform.ProcessStatusFailed || proc.Status == platform.ProcessStatusCanceled)
+}
+
+// processNext is a result's next action: next, or processFailedNext when proc
+// ended FAILED or CANCELED.
+func processNext(proc *platform.Process, next string) string {
+	if processFailed(proc) {
+		return processFailedNext(proc)
+	}
+	return next
+}
+
+// processFailedNext is the sentence a failed or canceled process puts in place
+// of a handler's success text.
+func processFailedNext(proc *platform.Process) string {
+	ended := fmt.Sprintf("The platform's %s process ended %s", proc.ActionName, proc.Status)
+	if proc.FailReason != nil && *proc.FailReason != "" {
+		ended += ": " + *proc.FailReason
+	}
+	return ended + ". Nothing it was asked to change is confirmed; read the reason before calling again."
+}
+
 // textResult returns a plain text CallToolResult.
 func textResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}

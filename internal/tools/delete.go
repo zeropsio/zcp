@@ -119,7 +119,10 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		if timedOut {
 			resp.Warning = joinSentences("delete did not confirm within the poll window — verify with zerops_discover; the service may still be deleting.", unmountWarning)
 		}
-		return jsonResult(resp), nil, nil
+		if processFailed(finalProc) {
+			resp.Warning = joinSentences(processFailedNext(finalProc), unmountWarning)
+		}
+		return processResult(resp, finalProc), nil, nil
 	})
 }
 

@@ -53,7 +53,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStart}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageStart)}, finalProc), nil, nil
 		case "stop":
 			proc, svc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
@@ -61,7 +61,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 			next := withBoxLifecycleNotice(svc, ops.BoxActionStop, nextActionManageStop)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, next)}, finalProc), nil, nil
 		case "restart":
 			proc, svc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
@@ -69,14 +69,14 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 			next := withBoxLifecycleNotice(svc, ops.BoxActionRestart, nextActionManageRestart)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, next)}, finalProc), nil, nil
 		case "reload":
 			proc, err := ops.Reload(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageReload}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageReload)}, finalProc), nil, nil
 		case "connect-storage":
 			if input.StorageHostname == "" {
 				return convertError(platform.NewPlatformError(
@@ -88,7 +88,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageConnect}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageConnect)}, finalProc), nil, nil
 		case "disconnect-storage":
 			if input.StorageHostname == "" {
 				return convertError(platform.NewPlatformError(
@@ -100,7 +100,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageDisconnect}), nil, nil
+			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageDisconnect)}, finalProc), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",

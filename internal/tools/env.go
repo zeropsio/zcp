@@ -363,7 +363,8 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				setKeys = append(setKeys, st.Key)
 			}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, setKeys, false, &resp, onProgress)
-			return jsonResult(resp), nil, nil
+			resp.NextActions = processNext(resp.Process, resp.NextActions)
+			return processResult(resp, resp.Process), nil, nil
 		case envActionDelete:
 			input, err := resolveEnvTarget(input, selfHostname, options.asks)
 			if err != nil {
@@ -379,7 +380,8 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			}
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
-			return jsonResult(resp), nil, nil
+			resp.NextActions = processNext(resp.Process, resp.NextActions)
+			return processResult(resp, resp.Process), nil, nil
 		case envActionRequest:
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
@@ -511,6 +513,17 @@ func applyAutoRestart(
 				continue
 			}
 			resp.RestartedProcesses = append(resp.RestartedProcesses, polled)
+			if processFailed(polled) {
+				// The restart ran and failed: the reader still runs its old
+				// env, so it is counted failed and "live" is not claimed.
+				failed++
+				warning := fmt.Sprintf("%s: restart process %s ended %s", t.hostname, polled.ID, polled.Status)
+				if polled.FailReason != nil && *polled.FailReason != "" {
+					warning += ": " + *polled.FailReason
+				}
+				resp.RestartWarnings = append(resp.RestartWarnings, warning)
+				continue
+			}
 		}
 		resp.RestartedServices = append(resp.RestartedServices, t.hostname)
 	}
