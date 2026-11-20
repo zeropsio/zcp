@@ -38,7 +38,7 @@ func RegisterPublishPage(srv *mcp.Server, stateDir, cwd string, canCheck bool) {
 		Description: "Show the person a self-contained HTML page — a chart, comparison, plan or gallery — inline " +
 			"in the conversation, above your final reply. Pass title and html, or path to an .html file. Local " +
 			"pictures are inlined; the page loads nothing from the network, so inline scripts and styles. " +
-			fmt.Sprintf("At most %d MiB, pictures inlined. ", ops.PageMaxBytes>>20) +
+			fmt.Sprintf("Max %d MiB, pictures included. ", ops.PageMaxBytes>>20) +
 			"Call it before your final reply.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Publish a page to the conversation",
