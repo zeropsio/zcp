@@ -79,7 +79,7 @@ func writeFakeSudo(t *testing.T, bin, argsFile string, exit int) {
 	t.Helper()
 	body := "#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done > " + ShellQuote(argsFile) +
 		"\necho 'sudo: a password is required'\necho 'sudo: a password is required' >&2\nexit " + strconv.Itoa(exit) + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte(body), 0o755); err != nil { //nolint:gosec // the test's own executable fake
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -135,11 +135,11 @@ func TestBuildServiceRunCommand_NoScopeToBeHad_RunsAsBefore(t *testing.T) {
 			}
 			line := `read -r l; printf '%s|%s|%s' "$l" "$(pwd -P)" "$ZCP_PROBE"; echo a warning >&2; exit 7`
 			stdout, stderr, code := runScoped(t, BuildServiceRunCommand(dir, []string{"/bin/sh", "-c", line}), bin, "hi\n", "ZCP_PROBE=kept")
-			real, err := filepath.EvalSymlinks(dir)
+			resolved, err := filepath.EvalSymlinks(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := "hi|" + real + "|kept"; code != 7 || stdout != want || stderr != "a warning\n" {
+			if want := "hi|" + resolved + "|kept"; code != 7 || stdout != want || stderr != "a warning\n" {
 				t.Errorf("exit %d, stdout %q, stderr %q; want 7, %q, %q", code, stdout, stderr, want, "a warning\n")
 			}
 		})
