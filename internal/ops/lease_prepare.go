@@ -175,10 +175,11 @@ func leaseDeclarationCommand(workDir string) string {
 }
 
 // leasePrepareCommand runs the repository's prepare command in workDir, with
-// the ssh session's env and no stdin (a prompt fails instead of waiting).
-// Both are shell-quoted.
+// the ssh session's env and no stdin (a prompt fails instead of waiting), in
+// a scope of its own (ownScopeStep): an install starts as many processes as
+// a repository's checks. Both are shell-quoted.
 func leasePrepareCommand(workDir, prepare string) string {
-	return "cd " + shellQuote(workDir) + " && /bin/sh -c " + shellQuote(prepare) + " </dev/null"
+	return ownScopeStep(ownScopePrepare) + "cd " + shellQuote(workDir) + " && /bin/sh -c " + shellQuote(prepare) + " </dev/null"
 }
 
 // readLeaseCheckout reads the checked-out declaration and the supervisor's

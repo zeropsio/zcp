@@ -540,7 +540,8 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 }
 
 // buildRelayedGitCommand is a relayed call's remote command: /bin/sh runs a
-// script that scrubs the environment, keeps the session's stdin as
+// script that moves its shell into a scope of its own (ownScopeStep, as a
+// plain call's), scrubs the environment, keeps the session's stdin as
 // descriptor 3 (answers) and its stderr as 4 (frames), each with a copy — 8
 // and 9 — a helper checks them against (relayHelper), removes what it made
 // when it ends, reads a forwarded stdin into a file, changes into dir and
@@ -565,6 +566,7 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // (measured on alpine 3.21 and ubuntu 24.04).
 func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdin bool, allowProtocol string) string {
 	var b strings.Builder
+	b.WriteString(ownScopeStep(ownScopeGit))
 	b.WriteString(relayPrologue(nonce))
 	if stdin {
 		b.WriteString(relayStdinStep + "; ")

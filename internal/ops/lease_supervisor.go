@@ -83,11 +83,12 @@ const leaseSupervisorLog = "~/.zcp/devsup/supervisor.log"
 // one. The supervisor runs in its own session (setsid; nohup where there is
 // none), stdin from /dev/null, its output appended to leaseSupervisorLog and
 // the lock's descriptor closed, so it holds nothing of the ssh session and
-// outlives it. workDir is shell-quoted; nothing else is composed in.
+// outlives it, in a scope of its own (ownScopeStep) with the dev servers it
+// starts. workDir is shell-quoted; nothing else is composed in.
 func leaseSupervisorCommand(workDir string, waitSeconds int) string {
 	status := `zcp-devsup ctl status --json >/dev/null 2>&1`
 	run := `zcp-devsup run </dev/null >>"$d/supervisor.log" 2>&1 9>&-`
-	return strings.Join([]string{
+	return ownScopeStep(ownScopeDevsup) + strings.Join([]string{
 		`if ! command -v zcp-devsup >/dev/null 2>&1; then echo '@@zcp-devsup check 127'; exit 0; fi`,
 		`d="$HOME/.zcp/devsup"`,
 		`mkdir -p "$d" || exit 1`,

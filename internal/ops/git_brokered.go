@@ -129,7 +129,8 @@ const brokeredGitScrubbedEnv = "" +
 	"http_proxy HTTP_PROXY https_proxy HTTPS_PROXY ALL_PROXY all_proxy NO_PROXY no_proxy"
 
 // BuildBrokeredGitCommand is the remote command of a `zcp git` call: a
-// script that unsets the scrubbed variables, changes into dir — the checkout
+// script that moves its shell into a scope of its own (ownScopeStep: a hook
+// runs the repository's checks), unsets the scrubbed variables, changes into dir — the checkout
 // — and execs git with terminal prompts off, each argument through
 // ShellQuote, so every byte the caller gave reaches git as data. sshd hands
 // the command to the service user's login shell (bash on one image, busybox
@@ -146,6 +147,7 @@ func BuildBrokeredGitCommand(dir string, args BrokeredGitArgs) string {
 	argv = append(argv, args.Subcommand)
 	argv = append(argv, args.Rest...)
 	var b strings.Builder
+	b.WriteString(ownScopeStep(ownScopeGit))
 	b.WriteString("unset ")
 	b.WriteString(brokeredGitScrubbedEnv)
 	b.WriteString("; cd ")

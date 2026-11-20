@@ -67,8 +67,8 @@ func TestBuildBrokeredGitCommand_RunsUnderBinShWhateverTheLoginShell(t *testing.
 	if command != "/bin/sh -c "+ShellQuote(script) {
 		t.Errorf("remote command = %q, want /bin/sh -c and the whole script as one ShellQuoted argument", command)
 	}
-	if !strings.HasPrefix(script, "unset ") {
-		t.Errorf("script = %q, want it to unset the scrubbed variables first", script)
+	if !strings.HasPrefix(strings.TrimPrefix(script, ownScopeStep(ownScopeGit)), "unset ") {
+		t.Errorf("script = %q, want it to unset the scrubbed variables first, once in its own scope", script)
 	}
 	if want := `cd '/var/www' && GIT_TERMINAL_PROMPT=0 exec git 'commit' '-m' 'it'\''s'`; !strings.HasSuffix(script, want) {
 		t.Errorf("script = %q\nwant it to end with %q", script, want)
@@ -166,8 +166,8 @@ func TestBuildBrokeredGitCommand_ScrubsTraceAndAskpassEnv(t *testing.T) {
 	}
 	env = append(env, "GIT_TERMINAL_PROMPT=1")
 	command := BuildBrokeredGitCommand(t.TempDir(), BrokeredGitArgs{Subcommand: "status"})
-	if script := binShScript(t, command); !strings.HasPrefix(script, "unset ") {
-		t.Errorf("script = %q, want it to start by unsetting the scrubbed variables", script)
+	if script := binShScript(t, command); !strings.HasPrefix(strings.TrimPrefix(script, ownScopeStep(ownScopeGit)), "unset ") {
+		t.Errorf("script = %q, want it to start by unsetting the scrubbed variables, once in its own scope", script)
 	}
 	out := runBuiltCommand(t, command, env...)
 	_, gitEnv, ran := strings.Cut(out, "--env--")

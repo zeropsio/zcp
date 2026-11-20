@@ -25,8 +25,11 @@ import (
 // stays to say how the command ended, so one a signal ended — a `timeout`
 // that fired, a process the kernel killed for memory — is its 128+n, where
 // sshd would report a signalled top process and ssh end with its own 255.
+// The script first moves its shell into a scope of its own (ownScopeStep):
+// over ssh it would run under the platform agent's task limit.
 func BuildServiceRunCommand(dir string, argv []string) string {
 	var b strings.Builder
+	b.WriteString(ownScopeStep(ownScopeRun))
 	b.WriteString("cd ")
 	b.WriteString(ShellQuote(dir))
 	b.WriteString(" &&")
