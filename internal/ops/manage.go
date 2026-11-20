@@ -206,7 +206,10 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	// maximum deletes is read before the change is sent.
 	var shrink *PoolShrink
 	if cfg.approveShrink != nil && topology.IsPoolType(serviceType) && params.MaxContainers != nil {
-		plan := planPoolShrink(ctx, cfg.shrinkDeps, svc, current, *params.MaxContainers)
+		plan, err := planPoolShrink(ctx, cfg.shrinkDeps, svc, current, *params.MaxContainers)
+		if err != nil {
+			return nil, err
+		}
 		if plan.NeedsApproval() {
 			if err := cfg.approveShrink(plan); err != nil {
 				return nil, err

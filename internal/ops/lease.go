@@ -49,10 +49,11 @@ var _ SwarmAPI = (*platform.SwarmClient)(nil)
 
 // LeaseDeps are what the lease operations need.
 type LeaseDeps struct {
-	Client    platform.Client
-	ProjectID string
-	StateDir  string
-	Swarm     SwarmFactory
+	mateAcquire bool
+	Client      platform.Client
+	ProjectID   string
+	StateDir    string
+	Swarm       SwarmFactory
 	// Host is the ssh alias and mount side of a lease; the zero value does neither.
 	Host LeaseHost
 	// SSH runs git inside a leased container by its alias; nil means no
@@ -224,6 +225,7 @@ const (
 
 // LeaseView is a lease as the agent sees it.
 type LeaseView struct {
+	HolderID          string `json:"-"` // Only the DP-39 CLI answer carries this id.
 	Alias             string `json:"alias"`
 	Pool              string `json:"pool"`
 	ContainerHostname string `json:"containerHostname"`
@@ -768,7 +770,7 @@ const leaseLockReserved = "reserved"
 func lostView(r leaseRecord, why string) LeaseView {
 	v := r.view(LeaseStateLost)
 	v.AcquiredAt = r.AcquiredAt
-	v.Note = why + "; zcp does not re-lease it. zerops_lease action=release lease=" + r.alias() + " drops the record"
+	v.Note = why + "; zcp does not re-lease it. " + r.releaseCall() + " drops the record"
 	return v
 }
 
@@ -899,6 +901,10 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 // checkoutPending, notAnswering, devServers) are ignored when decoded and
 // never written again. It is never a ServiceMeta.
 type leaseRecord struct {
+	HolderID string `json:"holderId,omitempty"`
+	// Only the reservation that created this record or the matching id release
+	// may remove it. A record loaded by park or unpark retains a platform loss.
+	canDrop           bool
 	PoolHostname      string `json:"poolHostname"`
 	PoolServiceID     string `json:"poolServiceId"`
 	ContainerID       string `json:"containerId"`
@@ -926,7 +932,7 @@ func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.Contai
 // view is the record as the agent sees it: never the lease.
 func (r leaseRecord) view(state string) LeaseView {
 	return LeaseView{
-		Alias: r.alias(), Pool: r.PoolHostname, ContainerHostname: r.ContainerHostname,
+		HolderID: r.HolderID, Alias: r.alias(), Pool: r.PoolHostname, ContainerHostname: r.ContainerHostname,
 		Branch: r.Branch, Repo: topology.RepoIdentity(r.Repo), State: state, AcquiredAt: r.AcquiredAt,
 	}
 }
@@ -979,6 +985,13 @@ func writeLeaseRecord(stateDir string, rec leaseRecord) error {
 		return err
 	}
 	defer unlock()
+	current, found, err := readLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return err
+	}
+	if found && current.HolderID != "" {
+		return mateHeldRefusal(rec.alias())
+	}
 	return writeLeaseRecordLocked(stateDir, rec)
 }
 
@@ -1122,6 +1135,94 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	if err != nil {
 		return LeaseChange{}, err
 	}
+	if rec.HolderID != "" {
+		return LeaseChange{}, mateHeldRefusal(alias)
+	}
+	return releaseSingleLease(ctx, d, rec, force, guardLeaseRelease)
+}
+
+const mateLeaseReleaseCall = "zcp lease release --lease-id <id> --json"
+
+func (r leaseRecord) releaseCall() string {
+	if r.HolderID != "" {
+		return mateLeaseReleaseCall
+	}
+	return leaseReleaseCall(r.alias(), false)
+}
+
+func mateHeldRefusal(aliases ...string) *platform.PlatformError {
+	if len(aliases) == 1 {
+		return platform.NewPlatformError(platform.ErrPermissionDenied, aliases[0]+" is held by the Mate (zcp lease acquire); only the Mate releases it", mateLeaseReleaseCall)
+	}
+	return platform.NewPlatformError(platform.ErrPermissionDenied, strings.Join(aliases, ", ")+" are held by the Mate (zcp lease acquire); only the Mate releases them", mateLeaseReleaseCall)
+}
+
+// LeaseReleaseByID releases exactly the holding named by id. Take the same
+// group and key locks as a release before confirming the id or reaching the
+// container, so simultaneous removals see the first one's result.
+func LeaseReleaseByID(ctx context.Context, d LeaseDeps, id string) (LeaseChange, error) {
+	if id == "" {
+		return LeaseChange{}, platform.NewPlatformError(platform.ErrInvalidParameter, "A lease id is required", mateLeaseReleaseCall)
+	}
+	records, err := readLeaseRecords(d.StateDir)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	for _, candidate := range records {
+		if candidate.HolderID != id {
+			continue
+		}
+		unlock, err := lockReleaseGroup(ctx, d, []leaseRecord{candidate}, mateLeaseReleaseCall)
+		if err != nil {
+			return LeaseChange{}, err
+		}
+		defer unlock()
+		rec, found, err := matchLeaseID(d.StateDir, candidate.alias(), id)
+		if !found || err != nil {
+			return LeaseChange{}, err
+		}
+		var work []LeaseUnsavedWork
+		guard := func(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, error) {
+			result, w, err := inspectUnsavedWork(ctx, d, rec)
+			if err == nil && w.any() {
+				work = []LeaseUnsavedWork{unsavedWorkOf(ctx, d, rec.alias(), w)}
+				err = unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
+			}
+			return result, err
+		}
+		change, err := releaseSingleLease(ctx, d, rec, false, guard)
+		if len(work) > 0 {
+			err = &LeaseUnsavedError{Cause: err, Leases: work}
+		}
+		return change, err
+	}
+	return LeaseChange{}, nil
+}
+
+func matchLeaseID(stateDir, alias, id string) (leaseRecord, bool, error) {
+	unlock, err := lockLeaseRecord(stateDir, alias)
+	if err != nil {
+		return leaseRecord{}, false, err
+	}
+	defer unlock()
+	rec, found, err := readLeaseRecord(stateDir, alias)
+	if err != nil || !found || rec.HolderID != id {
+		return leaseRecord{}, false, err
+	}
+	return rec, true, nil
+}
+
+// An id release already holds these locks from before its record match.
+func lockSingleRelease(ctx context.Context, d LeaseDeps, rec leaseRecord, force bool) (func(), error) {
+	if rec.HolderID != "" {
+		return func() {}, nil
+	}
+	return lockReleaseGroup(ctx, d, []leaseRecord{rec}, leaseReleaseCall(rec.alias(), force))
+}
+
+func releaseSingleLease(ctx context.Context, d LeaseDeps, rec leaseRecord, force bool, check func(context.Context, LeaseDeps, leaseRecord) (leaseGuardResult, error)) (LeaseChange, error) {
+	alias := rec.alias()
+	var err error
 	// Check before mutate (O3): a container that is no longer this lease's is
 	// neither read nor released, and one the orchestrator does not answer
 	// about is not touched, forced or not.
@@ -1145,7 +1246,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 			}
 			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 		}
-		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
+		if guard, err = check(ctx, d, rec); err != nil {
 			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 		}
 		guard.note = joinNotes(restoreNote, wake.note(), guard.note)
@@ -1154,7 +1255,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	// The rewire, the release and the drop of the record run under the
 	// group's lock (lockLeaseGroup): a release of a sibling, or an acquire's
 	// rewire, computes its overlay before or after this one, never across it.
-	unlockGroup, err := lockReleaseGroup(ctx, d, []leaseRecord{rec}, leaseReleaseCall(alias, force))
+	unlockGroup, err := lockSingleRelease(ctx, d, rec, force)
 	if err != nil {
 		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 	}
@@ -1174,13 +1275,15 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		// rewire, either of which can outlast work landing there (a
 		// conversation sharing the lease): it reads it again right before
 		// the reset (DP-4).
-		again, err := guardLeaseRelease(ctx, d, rec)
+		again, err := check(ctx, d, rec)
 		if err != nil {
 			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, handBackOverlay(ctx, d, rec, siblings, rewired, err))
 		}
 		guard.lost, guard.note = again.lost, joinNotes(guard.note, again.note)
 	}
-	view, err := releaseGuarded(ctx, d, rec, guard, parkedContainer(verdict.container))
+	release := rec
+	release.canDrop = true
+	view, err := releaseGuarded(ctx, d, release, guard, parkedContainer(verdict.container))
 	if err != nil {
 		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, handBackOverlay(ctx, d, rec, siblings, rewired, err))
 	}
@@ -1195,7 +1298,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 // the container and the orchestrator releases and deletes nothing: a free
 // container is reset by a release whatever lease it carries.
 func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
-	unlock, err := lockReleaseGroup(ctx, d, []leaseRecord{rec}, leaseReleaseCall(rec.alias(), false))
+	unlock, err := lockSingleRelease(ctx, d, rec, false)
 	if err != nil {
 		return LeaseChange{}, err
 	}
@@ -1210,6 +1313,7 @@ func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) 
 		}
 		rewired = rewireLeases(ctx, d, siblings, map[string]bool{rec.alias(): true}, "without "+rec.alias())
 	}
+	rec.canDrop = true
 	view, err := dropLostLease(ctx, d, rec, why)
 	if err != nil {
 		return LeaseChange{}, err
@@ -1357,6 +1461,9 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 // it is the lease's own. The check and the removal hold the alias's record
 // lock, so no write of another process lands between them.
 func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (LeaseView, error) {
+	if rec.HolderID != "" && !rec.canDrop {
+		return LeaseView{}, mateHeldRefusal(rec.alias())
+	}
 	v := rec.view(state)
 	unlock, err := lockLeaseRecord(stateDir, rec.alias())
 	if err != nil {
@@ -1395,7 +1502,7 @@ func keptRecordNote(stateDir string, rec leaseRecord) string {
 	switch {
 	case err != nil:
 		return fmt.Sprintf("%s's record could not be read (%v), so zcp kept it rather than drop a record it cannot tell is this lease's: remove .zcp/state/leases/%s.json if no lease of yours should be recorded there", alias, err, alias)
-	case cur.Lease != rec.Lease || cur.ContainerID != rec.ContainerID:
+	case cur.Lease != rec.Lease || cur.ContainerID != rec.ContainerID || cur.HolderID != rec.HolderID:
 		return alias + " now names another lease — a zcp sharing this state directory took the pool's container again under it — so zcp left that lease's record, ssh alias and mount alone"
 	}
 	return ""
@@ -1414,19 +1521,29 @@ func loadLeaseRecord(stateDir, alias string) (leaseRecord, error) {
 			fmt.Sprintf("'%s' is not a lease alias", alias),
 			"A lease is addressed by <pool>-<container number>, e.g. devpool-3; zerops_lease action=status lists them")
 	}
+	rec, found, err := readLeaseRecord(stateDir, alias)
+	if err != nil || found {
+		return rec, err
+	}
+	return leaseRecord{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("No lease record for '%s'", alias),
+		"zerops_lease action=status lists the leases this zcp holds")
+}
+
+// readLeaseRecord distinguishes an absent alias from an unreadable record.
+// Callers validate the alias before using it as a filename.
+func readLeaseRecord(stateDir, alias string) (leaseRecord, bool, error) {
 	raw, err := os.ReadFile(filepath.Join(leaseDir(stateDir), alias+".json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return leaseRecord{}, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("No lease record for '%s'", alias),
-			"zerops_lease action=status lists the leases this zcp holds")
+		return leaseRecord{}, false, nil
 	}
 	if err != nil {
-		return leaseRecord{}, fmt.Errorf("read lease record %s: %w", alias, err)
+		return leaseRecord{}, false, fmt.Errorf("read lease record %s: %w", alias, err)
 	}
 	var rec leaseRecord
 	if err := json.Unmarshal(raw, &rec); err != nil || rec.alias() != alias {
-		return leaseRecord{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+		return leaseRecord{}, false, platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("The lease record for '%s' is unreadable", alias), "Remove .zcp/state/leases/"+alias+".json and check zerops_lease action=status")
 	}
-	return rec, nil
+	return rec, true, nil
 }

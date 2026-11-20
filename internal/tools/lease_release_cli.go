@@ -160,6 +160,17 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 		return LeaseReleaseAnswer{Refused: inUse}, LeaseReleaseExitRefused
 	}
 	change, err := ReleaseLeaseBranch(ctx, deps, repo, branch)
+	forgetLeaseSessions(deps.StateDir, releasedAliases(change.Leases))
+	return releaseLeaseAnswer(change, err, branch)
+}
+
+// ReleaseLeaseIDAnswer releases the Mate's writer copy, without an MCP session check.
+func ReleaseLeaseIDAnswer(ctx context.Context, deps ops.LeaseDeps, id string) (LeaseReleaseAnswer, int) {
+	change, err := ops.LeaseReleaseByID(ctx, deps, id)
+	return releaseLeaseAnswer(change, leaseBranchReleaseError(err), "")
+}
+
+func releaseLeaseAnswer(change ops.LeaseChange, err error, branch string) (LeaseReleaseAnswer, int) {
 	var unsaved *ops.LeaseUnsavedError
 	switch {
 	case errors.As(err, &unsaved):
@@ -186,7 +197,6 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 		}
 		answer.Released = append(answer.Released, LeaseReleasedEntry{Lease: v.Alias, Outcome: v.ReleaseOutcome()})
 	}
-	forgetLeaseSessions(deps.StateDir, releasedAliases(change.Leases))
 	// By alias: a group's leases are acquired at once, each stamped to the
 	// second its own reservation answered, so their acquire order is the
 	// clock's — the answer is not.

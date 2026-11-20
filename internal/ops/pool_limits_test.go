@@ -634,3 +634,32 @@ func TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) 
 		t.Errorf("ssh read %v with no listing to confirm them", hosts[reads:])
 	}
 }
+
+// witness: internal/ops/pool_limits.go | if r.HolderID != "" { → if r.HolderID == "" {
+func TestScale_MateHeldLease_RefusesShrink(t *testing.T) {
+	t.Parallel()
+	for _, to := range []int{3, 4} {
+		t.Run(strconv.Itoa(to), func(t *testing.T) {
+			t.Parallel()
+			client := shrinkPoolClient(5)
+			swarm := &fakeSwarm{containers: containersAt(leasedAt(4), 1, 2, 3, 4, 5)}
+			deps := LeaseDeps{Client: client, ProjectID: "p1", StateDir: t.TempDir(),
+				Swarm: func(string, string) SwarmAPI { return swarm }, Env: func(string) (string, bool) { return "", false }}
+			rec := leaseRecord{HolderID: "writer", PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: "c-4", ContainerNumber: 4, Lease: testLease, Branch: "crew/writer"}
+			if err := writeLeaseRecord(deps.StateDir, rec); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Scale(t.Context(), client, "p1", testPoolHost, ScaleParams{MaxContainers: scaleIntPtr(to)}, WithPoolShrinkGuard(deps, func(PoolShrink) error { return nil }))
+			if to == 4 {
+				if err != nil || client.sent == nil {
+					t.Fatalf("free container shrink: %v", err)
+				}
+				return
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || !strings.Contains(pe.Message, "devpool-4") || !strings.Contains(pe.Message, "Mate") || !strings.Contains(pe.Suggestion, "maxContainers 4") || client.sent != nil {
+				t.Fatalf("shrink over writer: %v, sent %v", err, client.sent != nil)
+			}
+		})
+	}
+}

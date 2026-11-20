@@ -431,35 +431,48 @@ func joinAnd(names []string) string {
 // deletes. A raise (to at or above the maximum the service runs with) can
 // delete nothing and reads nothing. Otherwise the orchestrator lists the
 // containers (check-before-mutate); one that cannot be asked leaves Unread.
-func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.ServiceStack, to int) PoolShrink {
+func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.ServiceStack, to int) (PoolShrink, error) {
 	s := PoolShrink{Pool: svc.Name, To: to}
 	if eff := effectiveAutoscaling(current); eff != nil && eff.HorizontalMaxCount > 0 && int(eff.HorizontalMaxCount) <= to {
-		return s
+		return s, nil
+	}
+	records, err := readLeaseRecords(d.StateDir)
+	if err != nil {
+		return s, fmt.Errorf("read lease holders before lowering %s: %w", svc.Name, err)
+	}
+	own := map[string]leaseRecord{}
+	var mate []string
+	for _, record := range records {
+		if record.PoolHostname == svc.Name && record.PoolServiceID == svc.ID {
+			own[record.ContainerID] = record
+			if record.HolderID != "" {
+				mate = append(mate, record.alias())
+			}
+		}
+	}
+	unread := func(why string) (PoolShrink, error) {
+		s.Unread = why
+		if len(mate) > 0 {
+			return s, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Cannot tell whether lowering %s would delete the Mate's lease (%s): %s", svc.Name, strings.Join(mate, ", "), why),
+				"Keep the current maximum until the pool can be checked")
+		}
+		return s, nil
 	}
 	if d.Swarm == nil {
-		s.Unread = "this zcp cannot ask the pool's orchestrator here"
-		return s
+		return unread("this zcp cannot ask the pool's orchestrator here")
 	}
 	rp, err := orchestratorFor(ctx, d, svc)
 	if err != nil {
-		s.Unread = errorNote(err)
-		return s
+		return unread(errorNote(err))
 	}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
-		s.Unread = errorNote(leaseOrchestratorError(ctx, d, rp, "list containers", err))
-		return s
+		return unread(errorNote(leaseOrchestratorError(ctx, d, rp, "list containers", err)))
 	}
 	s.Holds = len(containers)
 	sorted := slices.Clone(containers)
 	slices.SortFunc(sorted, func(a, b platform.SwarmContainer) int { return cmp.Compare(b.Number, a.Number) })
-	records, _ := readLeaseRecords(d.StateDir)
-	own := map[string]leaseRecord{}
-	for _, r := range records {
-		if r.PoolHostname == svc.Name && r.PoolServiceID == svc.ID {
-			own[r.ContainerID] = r
-		}
-	}
 	// Yours while the orchestrator renews the record's lease, or does not
 	// answer about it (DP-2): another holder's is theirs.
 	owned := reservedOwnership(ctx, d, rp, own, containers)
@@ -473,9 +486,14 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 		}
 		pc := PoolShrinkContainer{Alias: leaseAlias(svc.Name, c.Number), Leased: leased}
 		if r, ok := own[c.ID]; ok && leased && (owned[c.ID] == leaseOurs || owned[c.ID] == leaseUnverified) {
+			if r.HolderID != "" {
+				return s, platform.NewPlatformError(platform.ErrPermissionDenied,
+					fmt.Sprintf("Lowering %s to %d would delete %s, the Mate's lease", svc.Name, to, pc.Alias),
+					fmt.Sprintf("Keep maxContainers %d or higher, which deletes no lease", s.LowestSafe))
+			}
 			pc.Yours, pc.Branch = true, r.Branch
 		}
 		s.Deletes = append(s.Deletes, pc)
 	}
-	return s
+	return s, nil
 }

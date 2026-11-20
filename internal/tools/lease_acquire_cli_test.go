@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -29,6 +30,7 @@ func acquireCLIDeps(t *testing.T, orch http.Handler) ops.LeaseDeps {
 func TestAcquireLeaseAnswer_WriterCopy_ReportsIdentityAndReuse(t *testing.T) {
 	t.Parallel()
 	deps := acquireCLIDeps(t, &fakeOrchestrator{})
+	var id string
 	for _, reused := range []bool{false, true} {
 		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer")
 		raw, err := json.Marshal(answer)
@@ -36,7 +38,14 @@ func TestAcquireLeaseAnswer_WriterCopy_ReportsIdentityAndReuse(t *testing.T) {
 			t.Fatalf("exit %d, answer %s, marshal %v", code, raw, err)
 		}
 		stamp := acquiredAtOf(t, deps.StateDir, "devpool-3")
-		want := acquiredLeaseIdentity{Alias: "devpool-3", Pool: "devpool", Branch: "crew/writer", Repo: leaseTestRepo,
+		if !reused {
+			id = answer.Lease.ID
+			decoded, err := hex.DecodeString(id)
+			if err != nil || len(decoded) != 16 {
+				t.Fatal("the writer did not receive a 16-byte hex lease id")
+			}
+		}
+		want := acquiredLeaseIdentity{ID: id, Alias: "devpool-3", Pool: "devpool", Branch: "crew/writer", Repo: leaseTestRepo,
 			AcquiredAt: stamp, ContainerHostname: "node-id-3.runtime.devpool.zerops"}
 		var wire struct {
 			Lease  acquiredLeaseIdentity `json:"lease"`
@@ -47,7 +56,7 @@ func TestAcquireLeaseAnswer_WriterCopy_ReportsIdentityAndReuse(t *testing.T) {
 		}
 		var fields map[string]json.RawMessage
 		var lease map[string]string
-		if json.Unmarshal(raw, &fields) != nil || json.Unmarshal(fields["lease"], &lease) != nil || len(fields) != 2 || len(lease) != 6 {
+		if json.Unmarshal(raw, &fields) != nil || json.Unmarshal(fields["lease"], &lease) != nil || len(fields) != 2 || len(lease) != 7 {
 			t.Fatalf("unexpected fields in writer answer")
 		}
 		if _, err := os.Stat(filepath.Join(deps.StateDir, leaseSessionsDir)); !errors.Is(err, os.ErrNotExist) {
@@ -91,5 +100,25 @@ func TestAcquireLeaseAnswer_FailedAcquire_DistinguishesReservation(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+// witness: internal/ops/lease_group.go | case r.HolderID == "" && d.mateAcquire: → case r.HolderID != "" && d.mateAcquire:
+func TestAcquireLeaseAnswer_AgentHeldKey_RefusesTakeover(t *testing.T) {
+	t.Parallel()
+	deps := acquireCLIDeps(t, &fakeOrchestrator{})
+	for _, branch := range []string{"shared", "next"} {
+		_, err := ops.LeaseAcquireGroup(t.Context(), deps, []string{"devpool"}, leaseTestRepo, branch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, branch)
+		if code != 3 || answer.Refused == nil || !strings.Contains(answer.Refused.Message, "branch "+branch+" on pool devpool is held by an agent's lease devpool-3") {
+			t.Fatalf("unexpected takeover answer, exit %d", code)
+		}
+		change, err := ops.LeaseReleaseChange(t.Context(), deps, "devpool-3", true)
+		if err != nil || len(change.Leases) != 1 {
+			t.Fatalf("agent lost its lease: %v", err)
+		}
 	}
 }

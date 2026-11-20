@@ -32,6 +32,7 @@ type acquiredLease struct {
 }
 
 type acquiredLeaseIdentity struct {
+	ID                string `json:"id"`
 	Alias             string `json:"alias"`
 	Pool              string `json:"pool"`
 	Branch            string `json:"branch"`
@@ -55,7 +56,7 @@ func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, bra
 		return acquireAttempt{SwarmAPI: swarm(url, bearer), reservation: &reservation}
 	}
 	deps.PublicAccess = leasePublicAccess(deps.Client, deps.ProjectID, deps.StateDir)
-	change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, []string{pool}, repo, branch, "")
+	change, err := ops.LeaseAcquireForMate(ctx, deps, pool, repo, branch)
 	if err != nil {
 		message, failure := leaseReleaseFailure(err)
 		if reservation.refused(err) {
@@ -67,7 +68,7 @@ func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, bra
 	}
 	v := change.Leases[0] // One view per requested pool.
 	return LeaseAcquireAnswer{acquiredLease: &acquiredLease{
-		Lease: acquiredLeaseIdentity{Alias: v.Alias, Pool: v.Pool, Branch: v.Branch, Repo: v.Repo,
+		Lease: acquiredLeaseIdentity{ID: v.HolderID, Alias: v.Alias, Pool: v.Pool, Branch: v.Branch, Repo: v.Repo,
 			AcquiredAt: v.AcquiredAt, ContainerHostname: v.ContainerHostname},
 		Reused: v.Reused,
 	}}, LeaseAcquireExitHeld
@@ -107,7 +108,7 @@ func (r acquireReservation) refused(err error) bool {
 		return false
 	}
 	switch pe.Code {
-	case platform.ErrInvalidParameter, platform.ErrServiceNotFound, platform.ErrPrerequisiteMissing, platform.ErrAPITimeout:
+	case platform.ErrPermissionDenied, platform.ErrInvalidParameter, platform.ErrServiceNotFound, platform.ErrPrerequisiteMissing, platform.ErrAPITimeout:
 		return true
 	}
 	return false

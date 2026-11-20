@@ -12,6 +12,7 @@ import (
 // servers and verify need to address a lease instead of a service. It never
 // carries the lease string.
 type LeaseTargetInfo struct {
+	MateHeld          bool `json:"-"`
 	Alias             string
 	Pool              string
 	PoolServiceID     string
@@ -36,6 +37,7 @@ type LeaseTargetInfo struct {
 // targetInfo is the record as a lease target: never the lease.
 func (r leaseRecord) targetInfo() LeaseTargetInfo {
 	return LeaseTargetInfo{
+		MateHeld:          r.HolderID != "",
 		Alias:             r.alias(),
 		Pool:              r.PoolHostname,
 		PoolServiceID:     r.PoolServiceID,
@@ -113,7 +115,7 @@ func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (Le
 		case v.own.lost():
 			refusal := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("Lease %s cannot be %s: %s; zcp does not re-lease it, and nothing reached its container", host, what, v.why),
-				"zerops_lease action=release lease="+host+" drops the record")
+				rec.releaseCall()+" drops the record")
 			refusal.Cause = &leaseLostError{why: v.why}
 			return info, true, refusal
 		case v.own == leaseUnverified:

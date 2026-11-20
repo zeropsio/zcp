@@ -206,6 +206,9 @@ func leaseGroupsOnHQ(stateDir, address, appID string) []leaseGroupOnHQ {
 	leases, _ := ops.LeaseBranches(stateDir)
 	var groups []leaseGroupOnHQ
 	for _, l := range leases {
+		if l.MateHeld {
+			continue
+		}
 		app, repo, ok := hq.RepoOfURL(address, l.Repo)
 		if !ok || app != appID {
 			continue

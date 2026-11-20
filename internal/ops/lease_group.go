@@ -3,6 +3,7 @@ package ops
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -48,7 +49,8 @@ type groupMember struct {
 	missing *missingBearer
 	// held is the lease zcp held for the key before this call (returned,
 	// reused); nil for a member this call leases.
-	held *LeaseView
+	held    *LeaseView
+	records []leaseRecord // Existing records of this key, checked for the requesting holder.
 	// rec is the member's record once reserved is set.
 	rec      leaseRecord
 	reserved bool
@@ -60,7 +62,7 @@ type groupMember struct {
 	// acquire reads its dev servers at its end.
 	supervised bool
 	// checkedOut: a lease zcp held whose checkout had been cut short, checked
-	// out by heldLease already (resumeHeldCheckout).
+	// out by reuseHeldLease already (resumeHeldCheckout).
 	checkedOut bool
 }
 
@@ -90,6 +92,13 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	return LeaseAcquireGroupChangeFrom(ctx, d, pools, repo, branch, "")
 }
 
+// LeaseAcquireForMate reserves one writer's copy, or returns the same holding
+// on repeat acquire. Only this entry point mints a holder id (DP-40).
+func LeaseAcquireForMate(ctx context.Context, d LeaseDeps, pool, repo, branch string) (LeaseChange, error) {
+	d.mateAcquire = true
+	return LeaseAcquireGroupChangeFrom(ctx, d, []string{pool}, repo, branch, "")
+}
+
 // LeaseAcquireGroupChangeFrom is LeaseAcquireGroupChange with from, the branch
 // a branch new to origin is cut from instead of main ("" for main): every new
 // member of the group from the one commit the first was cut from (DP-17). A
@@ -105,8 +114,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	if err := refuseMainLease(branch); err != nil {
 		return LeaseChange{}, err
 	}
-	members, err := resolveGroupPools(ctx, d, pools)
-	if err != nil {
+	if err := validateAcquirePools(pools); err != nil {
 		return LeaseChange{}, err
 	}
 	if err := validateLeaseBranch(branch); err != nil {
@@ -129,17 +137,21 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			unlock()
 		}
 	}()
-	if err := acquireBearers(ctx, d, members); err != nil {
-		return LeaseChange{}, err
-	}
 	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
 	if err != nil {
+		return LeaseChange{}, err
+	}
+	members, err := resolveGroupPools(ctx, d, pools, group)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	if err := acquireBearers(ctx, d, members); err != nil {
 		return LeaseChange{}, err
 	}
 	var fresh []*groupMember
 	base := recordedBase(group)
 	for _, m := range members {
-		held, found, checkedOut, err := heldLease(ctx, d, m.pool, repoURL, branch, base, from, group)
+		held, found, checkedOut, err := reuseHeldLease(ctx, d, m, repoURL, branch, base, from)
 		if err != nil {
 			return LeaseChange{}, err
 		}
@@ -159,6 +171,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			// another member fails.
 			m.rec, m.reserved, m.checkedOut = *checkedOut, true, true
 			m.view = checkedOut.view(LeaseStateHeld)
+			m.view.Reused = d.mateAcquire
 			m.view.Note = "zcp held this lease, but its checkout had never put it on the branch (zcp stopped mid-checkout), so this acquire ran the checkout"
 			// Reported as status reports it: a mount that failed when the
 			// lease was taken is still missing after this checkout.
@@ -270,30 +283,73 @@ func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fres
 	return rewireLeases(ctx, d, others, nil, why)
 }
 
-// resolveGroupPools finds every pool (one service listing), refusing an empty
-// list, a pool named twice and a service that is not a pool before anything is
-// reserved; a pool zcp reads no bearer for is marked missing, for
-// acquireBearers to write under the keys' locks.
-func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*groupMember, error) {
+// Validate pool names before taking one key lock per pool.
+func validateAcquirePools(pools []string) error {
 	if len(pools) == 0 {
-		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")
 	}
 	seen := map[string]bool{}
 	for _, p := range pools {
 		if seen[p] {
-			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+			return platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("pools names '%s' twice", p), "Name each pool once: a group holds one lease per pool")
 		}
 		seen[p] = true
+	}
+	return nil
+}
+
+// heldLease selects the records of this key the caller may reuse. Every
+// requested pool is checked before any bearer write or resumed checkout.
+func heldLease(d LeaseDeps, pool string, group []leaseRecord) ([]leaseRecord, error) {
+	var records []leaseRecord
+	for _, r := range group {
+		if r.PoolHostname != pool {
+			continue
+		}
+		switch {
+		case r.HolderID != "" && !d.mateAcquire:
+			return nil, mateHeldRefusal(r.alias())
+		case r.HolderID == "" && d.mateAcquire:
+			return nil, platform.NewPlatformError(platform.ErrPermissionDenied,
+				fmt.Sprintf("branch %s on pool %s is held by an agent's lease %s", r.Branch, pool, r.alias()),
+				"Choose another branch or wait for the agent to release its lease")
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string, group []leaseRecord) ([]*groupMember, error) {
+	members := make([]*groupMember, 0, len(pools))
+	for _, pool := range pools {
+		records, err := heldLease(d, pool, group)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, &groupMember{pool: pool, records: records})
+	}
+	// A CLI acquire has exactly one pool. Resolve an existing holding by
+	// its recorded service id so a platform end also names its id release.
+	if d.mateAcquire && len(members[0].records) > 0 {
+		r := members[0].records[0]
+		rp, gone, err := recordPool(ctx, d, r)
+		if gone != "" {
+			return nil, lostAcquireRefusal(r, gone)
+		}
+		if err != nil {
+			return nil, err
+		}
+		members[0].rp = rp
+		return members, nil
 	}
 	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	members := make([]*groupMember, 0, len(pools))
-	for _, p := range pools {
-		svc, err := FindService(services, p)
+	for _, m := range members {
+		svc, err := FindService(services, m.pool)
 		if err != nil {
 			return nil, err
 		}
@@ -304,11 +360,10 @@ func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*gro
 		if err != nil {
 			return nil, err
 		}
-		m := &groupMember{pool: p, rp: &resolvedPool{svc: svc}, missing: missing}
+		m.rp, m.missing = &resolvedPool{svc: svc}, missing
 		if missing == nil {
 			m.rp = orchestratorClient(d, svc, token)
 		}
-		members = append(members, m)
 	}
 	return members, nil
 }
@@ -550,7 +605,7 @@ func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTarge
 	return lockLeaseGroup(ctx, stateDir, topology.CanonicalRepoURL(lease.Repo), cmp.Or(lease.Branch, leaseDefaultBranch))
 }
 
-// heldLease is the lease zcp already holds of branch on pool — one of the
+// reuseHeldLease checks the lease zcp already holds of branch on pool — one of the
 // group's records there that the orchestrator still reserves, as status
 // reports it (held, or unmounted with what it lacks), the earliest acquired
 // when an older zcp left several — marked reused; false when there is none. A
@@ -568,19 +623,16 @@ func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTarge
 // refused. Either way a checkout that ran returns its record as checkedOut,
 // with the base it recorded, which the group's later cuts start from. A parked lease, and a zcp with no ssh, cannot be asked: the lease
 // is reused as it stands.
-func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch, base, from string, group []leaseRecord) (held LeaseView, found bool, checkedOut *leaseRecord, err error) {
-	own := map[string]leaseRecord{}
-	var records []leaseRecord
-	for _, r := range group {
-		if r.PoolHostname == pool {
-			own[r.alias()] = r
-			records = append(records, r)
-		}
-	}
-	if len(records) == 0 {
+func reuseHeldLease(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, branch, base, from string) (held LeaseView, found bool, checkedOut *leaseRecord, err error) {
+	if len(m.records) == 0 {
 		return LeaseView{}, false, nil, nil
 	}
-	views, err := listPoolLeases(ctx, d, listingResolver(d), pool, records, true)
+	pool := m.pool
+	own := make(map[string]leaseRecord, len(m.records))
+	for _, r := range m.records {
+		own[r.alias()] = r
+	}
+	views, err := listPoolLeases(ctx, d, listingResolver(d), pool, m.records, true)
 	if err != nil {
 		return LeaseView{}, false, nil, err
 	}
@@ -627,11 +679,15 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, repoURL, branch, base, fr
 			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, cannot be verified as still zcp's (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, unverified.Alias, unverified.Note),
 			fmt.Sprintf("Acquire again once the pool's orchestrator answers: zerops_lease action=status pool=%s asks it again — a lease that is still zcp's is reused, one that is not is reported lost", pool))
 	case lost != nil:
-		return LeaseView{}, false, nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is lost (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, lost.Alias, lost.Note),
-			fmt.Sprintf("Drop its record, then acquire again: zerops_lease action=release lease=%s", lost.Alias))
+		return LeaseView{}, false, nil, lostAcquireRefusal(own[lost.Alias], lost.Note)
 	}
 	return LeaseView{}, false, nil, nil
+}
+
+func lostAcquireRefusal(r leaseRecord, why string) error {
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is lost (%s), and zcp keeps one lease per repository, branch and pool", recordBranch(r), r.PoolHostname, r.alias(), why),
+		"Drop its record, then acquire again: "+r.releaseCall())
 }
 
 // resumeHeldCheckout runs the checkout of rec, a lease of branch zcp holds,
@@ -719,6 +775,12 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 		PoolHostname: m.pool, PoolServiceID: rp.svc.ID,
 		ContainerID: got.Container.ID, ContainerNumber: got.Container.Number, ContainerHostname: got.Container.Hostname,
 		Lease: got.Lease.Secret(), Branch: branch, Repo: topology.CanonicalRepoURL(repoURL), AcquiredAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if d.mateAcquire {
+		var id [16]byte
+		_, _ = rand.Read(id[:])
+		rec.HolderID = hex.EncodeToString(id[:])
+		rec.canDrop = true // A failed acquire hands its own reservation back.
 	}
 	// The alias file is root-read ssh config whose render refuses the whole
 	// set over one record outside the shapes: such a container is never
@@ -987,6 +1049,7 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var group []leaseRecord
 	for _, r := range records {
 		if recordBranch(r) == branch && recordRepo(r) == "" {
@@ -996,10 +1059,14 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 			group = append(group, r)
 		}
 	}
+	return orderedLeaseGroup(group), nil
+}
+
+func orderedLeaseGroup(group []leaseRecord) []leaseRecord {
 	slices.SortFunc(group, func(a, b leaseRecord) int {
 		return cmp.Or(cmp.Compare(a.AcquiredAt, b.AcquiredAt), cmp.Compare(a.alias(), b.alias()))
 	})
-	return group, nil
+	return group
 }
 
 // releaseMember is one lease of a branch's release.
@@ -1378,27 +1445,22 @@ func mergeGroupRewires(before, after []LeaseRewire) []LeaseRewire {
 // no lease of. A record of the branch that names no repository refuses it
 // (recordWithoutRepo).
 func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
-	if strings.TrimSpace(repo) != "" {
+	repo = strings.TrimSpace(repo)
+	if repo != "" {
 		cloneURL, err := validateLeaseRepo(repo)
 		if err != nil {
 			return nil, err
 		}
-		group, err := leaseGroupRecords(stateDir, cloneURL, branch)
-		if err != nil {
-			return nil, err
-		}
-		if len(group) == 0 {
-			return nil, noLeaseOfBranch(branch, cloneURL)
-		}
-		return group, nil
+		repo = cloneURL
 	}
 	records, err := readLeaseRecords(stateDir)
 	if err != nil {
 		return nil, err
 	}
-	aliases := map[string][]string{} // repository identity → its leases of the branch
+	var agents []leaseRecord
+	var mate []string
+	aliases := map[string][]string{} // repository identity → agent-held aliases
 	var keys, named []string
-	var last leaseRecord
 	for _, r := range records {
 		if recordBranch(r) != branch {
 			continue
@@ -1407,19 +1469,31 @@ func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 		if of == "" {
 			return nil, recordWithoutRepo(r.alias())
 		}
+		if repo != "" && !topology.SameRepoURL(of, repo) {
+			continue
+		}
+		if r.HolderID != "" {
+			mate = append(mate, r.alias())
+			continue
+		}
+		agents = append(agents, r)
 		key := strings.ToLower(of)
 		if _, seen := aliases[key]; !seen {
 			keys = append(keys, key)
 			named = append(named, of)
 		}
 		aliases[key] = append(aliases[key], r.alias())
-		last = r
 	}
 	switch len(keys) {
 	case 0:
-		return nil, noLeaseOfBranch(branch, "")
+		if len(mate) > 0 {
+			refusal := mateHeldRefusal(mate...)
+			refusal.Cause = ErrNoLeaseOfBranch
+			return nil, refusal
+		}
+		return nil, noLeaseOfBranch(branch, repo)
 	case 1:
-		return leaseGroupRecords(stateDir, recordRepo(last), branch)
+		return orderedLeaseGroup(agents), nil
 	}
 	parts := make([]string, 0, len(keys))
 	for i, key := range keys {

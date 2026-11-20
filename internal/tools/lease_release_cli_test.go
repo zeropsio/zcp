@@ -7,13 +7,16 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -210,6 +213,85 @@ func TestLeaseTool_Acquire_RecordsItsSession(t *testing.T) {
 				if len(sessions) != 1 || sessions[0].PID != os.Getpid() || sessions[0].Reused || sessions[0].AcquiredAt != acquiredAtOf(t, stateDir, alias) {
 					t.Errorf("%s: sessions = %+v, want this one session as the acquirer, its reuse keeping that", alias, sessions)
 				}
+			}
+		})
+	}
+}
+
+// witness: internal/ops/lease.go | if candidate.HolderID != id { → if candidate.HolderID == id {
+func TestReleaseLeaseID_Holder_ControlsRelease(t *testing.T) {
+	t.Parallel()
+	const branch = "crew/writer"
+	const alias = "devpool-3"
+	for _, tt := range []struct {
+		name, files, wire string
+		lost              bool
+		exit              int
+	}{
+		{"clean", "", `{"released":[{"lease":"devpool-3","outcome":"reset"}]}`, false, 0},
+		{"unsaved", "?? notes.txt\n", `{"refused":[{"lease":"devpool-3","unsaved":{"files":["?? notes.txt"],"commits":[]}}]}`, false, 3},
+		{"platform ended", "", `{"released":[{"lease":"devpool-3","outcome":"lost"}]}`, true, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			orch := &fakeOrchestrator{}
+			deps := acquireCLIDeps(t, orch)
+			got, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch)
+			if code != 0 {
+				t.Fatalf("acquire exit %d: %s", code, got.Error)
+			}
+			id := got.Lease.ID
+			if tt.lost {
+				orch.reserved = false
+				lost, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch)
+				if code != 3 || lost.Refused == nil || !strings.Contains(lost.Refused.Suggestion, "--lease-id") {
+					t.Fatal("lost acquire did not name the id release")
+				}
+			}
+			denied := func(err error) {
+				t.Helper()
+				var pe *platform.PlatformError
+				if !errors.As(err, &pe) || pe.Code != platform.ErrPermissionDenied || !strings.Contains(pe.Message, alias) {
+					t.Fatalf("want a holder refusal for %s, got %v", alias, err)
+				}
+			}
+			_, err := ops.LeaseAcquireGroup(t.Context(), deps, []string{"devpool"}, completionRepo, branch)
+			denied(err)
+			for _, force := range []bool{false, true} {
+				_, err = ops.LeaseReleaseChange(t.Context(), deps, alias, force)
+				denied(err)
+				_, err = releaseLeaseBranch(t.Context(), deps, "", branch, force)
+				denied(err)
+			}
+			if groups := leaseGroupsOnHQ(deps.StateDir, completionHQ, "app-1"); len(groups) != 0 {
+				t.Fatal("completion selected the writer")
+			}
+			check := func(answer LeaseReleaseAnswer, exit, wantExit int, want string) {
+				t.Helper()
+				raw, err := json.Marshal(answer)
+				if err != nil || string(raw) != want || exit != wantExit {
+					t.Fatalf("exit %d, %s; want %d, %s", exit, raw, wantExit, want)
+				}
+			}
+			answer, exit := ReleaseLeaseBranchAnswer(t.Context(), deps, "", branch)
+			check(answer, exit, 0, `{"released":[]}`)
+			answer, exit = ReleaseLeaseIDAnswer(t.Context(), deps, "stale-id")
+			check(answer, exit, 0, `{"released":[]}`)
+			if !tt.lost {
+				// Without SSH a live lease cannot pass the unsaved-work guard.
+				answer, exit = ReleaseLeaseIDAnswer(t.Context(), deps, id)
+				if exit != 1 || answer.Error == "" {
+					t.Fatal("unreadable checkout was released")
+				}
+			}
+			deps.SSH = &guardSSH{files: map[string]string{alias: tt.files}}
+			answer, exit = ReleaseLeaseIDAnswer(t.Context(), deps, id)
+			check(answer, exit, tt.exit, tt.wire)
+			answer, exit = ReleaseLeaseIDAnswer(t.Context(), deps, id)
+			if tt.exit == 3 {
+				check(answer, exit, tt.exit, tt.wire)
+			} else {
+				check(answer, exit, 0, `{"released":[]}`)
 			}
 		})
 	}

@@ -2154,3 +2154,20 @@ func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/ops/lease.go | !found || rec.HolderID != id → !found || rec.HolderID == id
+func TestLeaseReleaseByID_ReassignedAlias_PreservesNewHolding(t *testing.T) {
+	t.Parallel()
+	for _, currentID := range []string{"", "new-writer"} {
+		dir := t.TempDir()
+		rec := leaseRecord{PoolHostname: "devpool", ContainerNumber: 3, ContainerID: "next", HolderID: currentID}
+		if err := writeLeaseRecord(dir, rec); err != nil {
+			t.Fatal(err)
+		}
+		// The initial id scan saw the previous holder here. By the time the
+		// release holds the group and record locks this alias is another lease.
+		if _, matched, err := matchLeaseID(dir, rec.alias(), "previous-writer"); err != nil || matched {
+			t.Fatalf("stale release matched the next holding: matched %t, error %v", matched, err)
+		}
+	}
+}

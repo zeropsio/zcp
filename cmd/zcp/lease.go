@@ -28,7 +28,7 @@ import (
 // These Mate server verbs run against the MCP server's lease state and read no stdin.
 const (
 	leaseAcquireUsage = "usage: zcp lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json"
-	leaseReleaseUsage = "usage: zcp lease release --branch <branch> [--repo <repo URL>] --json"
+	leaseReleaseUsage = "usage: zcp lease release --branch <branch> [--repo <repo URL>] --json or zcp lease release --lease-id <id> --json"
 	leaseUsage        = leaseAcquireUsage + "\n" + leaseReleaseUsage
 )
 
@@ -81,9 +81,11 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	fs := flag.NewFlagSet("lease "+args[0], flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	branch := fs.String("branch", "", "the branch to acquire or release")
-	var pool string
+	var pool, leaseID string
 	if acquire {
 		fs.StringVar(&pool, "pool", "", "the pool service hostname")
+	} else {
+		fs.StringVar(&leaseID, "lease-id", "", "the id returned by the writer’s acquire")
 	}
 	repo := fs.String("repo", "", "the repository's clone URL, when zcp leases the branch for several")
 	fs.Bool("json", false, "answer as JSON")
@@ -99,7 +101,13 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	if fs.NArg() > 0 {
 		return fail("unexpected argument " + fs.Arg(0) + ". " + usage)
 	}
-	if strings.TrimSpace(*branch) == "" {
+	provided := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	if provided["lease-id"] {
+		if strings.TrimSpace(leaseID) == "" || provided["branch"] || provided["repo"] {
+			return fail("--lease-id requires a nonempty id and cannot be combined with --branch or --repo. " + usage)
+		}
+	} else if strings.TrimSpace(*branch) == "" {
 		return fail("--branch names the branch whose leases to release. " + usage)
 	}
 
@@ -125,7 +133,11 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 		printLeaseJSON(stdout, answer)
 	} else {
 		var answer tools.LeaseReleaseAnswer
-		answer, code = tools.ReleaseLeaseBranchAnswer(ctx, deps, *repo, *branch)
+		if leaseID != "" {
+			answer, code = tools.ReleaseLeaseIDAnswer(ctx, deps, leaseID)
+		} else {
+			answer, code = tools.ReleaseLeaseBranchAnswer(ctx, deps, *repo, *branch)
+		}
 		printLease(stdout, answer, asJSON)
 	}
 	waitWithin(&background, leaseBackgroundWait)
