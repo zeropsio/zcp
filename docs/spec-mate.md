@@ -7468,11 +7468,11 @@ own change merged or landed with another (`landedWith`, MB-49), points at the pr
 change at all or one closed without merging, its work not on `main`, says the work goes to `main`
 first, a branch of the agent's own pushed and merged; with HQ not answering or refusing the key, it
 says so and that the answer is HQ's, to ask again once HQ answers. A container
-that is not a Mate keeps the classic route. The `idle-launch-entry` atom branches on "keeps its code in HQ" the same way and
-tells the agent not to start the workflow. `hq_pair.go`;
+that is not a Mate keeps the classic route. The `idle-launch-entry` atom, which offers the workflow, is
+not served in a Mate (`mate: [outside]` on the envelope's `mate` key, §1.1). `hq_pair.go`;
 `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep`,
-`TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`; golden
-`idle/bootstrapped-with-managed`. No zcp tool tags an HQ release; Core does so for the person.
+`TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`,
+`TestIdleGuidance_IG1_MateBootstrappedDeployed_NoLaunchNoRouteMenu`. No zcp tool tags an HQ release; Core does so for the person.
 Outside HQ, `action="release"` keeps tagging the pair's own checkout remote.
 
 **An agent's release request in HQ.** `zerops_workflow action="release"` returns

@@ -498,6 +498,45 @@ func TestScenario_S9b_IdleBootstrappedNotYetDeployed(t *testing.T) {
 	}
 }
 
+// IG-1 — A Mate's idle status never offers launch-production, which a Mate
+// refuses, nor the bootstrap protocol for a project already set up.
+// witness: internal/content/atoms/idle-launch-entry.md | mate: [outside] →
+func TestIdleGuidance_IG1_MateBootstrappedDeployed_NoLaunchNoRouteMenu(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		Mate:         true,
+		IdleScenario: IdleBootstrapped,
+		Services: []ServiceSnapshot{{
+			Hostname:      "appdev",
+			TypeVersion:   "nodejs@22",
+			RuntimeClass:  topology.RuntimeDynamic,
+			Mode:          topology.ModeStandard,
+			StageHostname: "appstage",
+			Bootstrapped:  true,
+			Deployed:      true,
+		}},
+	}
+
+	matches, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "IG-1", matches, "idle-develop-entry")
+	for _, m := range matches {
+		if m.AtomID == "idle-launch-entry" || m.AtomID == "bootstrap-route-options" {
+			t.Errorf("IG-1: a Mate's idle status of a set-up project selected %s", m.AtomID)
+		}
+	}
+}
+
 // TestScenario_S6_DevelopDeployOKPendingVerify pins the
 // deploy-succeeded/verify-not-yet branch of planDevelopActive. Branch 2
 // passes (no deploy needed) and branch 3 fires (verify pending).
