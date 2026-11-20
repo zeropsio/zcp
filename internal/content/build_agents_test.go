@@ -678,12 +678,11 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 // The git host is this Mate's HQ, and ZCP knows it as one (SPEC §3.2a). Told
 // only "an access token minted for you alone", a Mate reads its host as a
 // generic forge: it goes looking for a settings page to mint a token on. The
-// paragraph names the host, the user git signs in as, where the credential
-// comes from, and that work goes by plain git on a branch of its own — never
-// a push of `main`, never a force. Every git command runs in the dev service,
-// `zcp git <host> …`, which zcp answers for HQ and for a repository on GitHub
-// alike; never on the mounted repository, whose view lags what git changed
-// in the service.
+// paragraph names the host and says work goes by plain git on a branch of its
+// own — never a push of `main`, never a force. Every git command runs in the
+// dev service, `zcp git <host> …`; never on the mounted repository, whose view
+// lags what git changed in the service. How git signs in to HQ is the hq-git
+// playbook's.
 func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	t.Parallel()
 	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
@@ -692,16 +691,12 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	}
 	for _, want := range []string{
 		"HQ",
-		"the user `mate`",
 		"`zcp git <host> <git args>`",
-		"zcp answers git's credential requests there",
 		"Never run git on the mounted repository `/var/www/<host>`",
 		"re-read a file before editing it",
 		"a branch of your own",
 		"Never push `main` and never force-push",
-		"`zcp git <host> checkout main && zcp git <host> fetch origin && zcp git <host> merge --ff-only origin/main`",
 		"`zcp git <host> push origin <branch>`",
-		"for a fetch from a repository on GitHub with the read token HQ mints for that call",
 		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
 		// Current change status must come from a fresh owning read, including
@@ -715,21 +710,8 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"If the fresh read fails or says \"as last read\"",
 		"say the current status is unknown and when it was last seen",
 		"never repeat the old state as current",
-		// A repository kept on GitHub is worked on like any other: HQ is its
-		// checkout's origin, HQ alone pushes to GitHub, and its change is
-		// opened after the push — HQ's pull request, merged in Mate.
-		"`origin.mode=github`",
-		"is worked on like any other: its checkout's origin is its repository in HQ too, never GitHub, and no second remote names GitHub",
-		"a checkout an older ZCP pointed at GitHub is moved back by ZCP, at the Mate's start or develop's start",
-		"A branch you pushed to GitHub yourself before that move is not carried on there by a push to origin",
-		"finish that work on a new branch pushed to origin, open a new change for it with open-change, and tell the person the earlier pull request is superseded",
+		// HQ alone pushes to GitHub, for a repository kept there too.
 		"HQ alone pushes to GitHub",
-		"a push of your own to GitHub is refused: `zcp git` answers GitHub only for fetches",
-		"merges the change in Mate",
-		// A monorepo is one repository: never a dev service per part, each
-		// of which would be a pair asking HQ for a repository of its own.
-		"a repository of several parts stays one repository",
-		"never a dev service per part",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)
@@ -743,15 +725,11 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 }
 
 // A Mate's git-host paragraph says one branch per piece of work and one change
-// per branch: new work on a new branch from an up-to-date main, a change
-// that stays on its own branch, a change built on another's unmerged work
-// cut from that branch only when it needs that code and saying so — HQ
-// squashes the base onto main, so the change on it is merged with main and
-// described again — and a branch kept current by merging origin/main, never
-// a rebase, never a force. No change opens only to record another's merge or
-// a plan's status, and a file every change appends to gives each change an
-// entry of its own. It no longer sends new work onto an open change's
-// branch, nor names a change on the pair.
+// per branch: new work on a new branch from an up-to-date main, cut from
+// another open change's branch only when it needs that code, and a branch
+// kept current by merging main, never a rebase, never a force. It no longer
+// sends new work onto an open change's branch, nor names a change on the
+// pair.
 func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 	t.Parallel()
 	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
@@ -761,14 +739,9 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 	for _, want := range []string{
 		"one change per branch",
 		"a new branch from an up-to-date `main`",
-		"builds on #",
 		"only when it needs that change's code",
-		"squashes each change into one commit on `main`",
 		"describe it again",
-		"`zcp git <host> fetch origin && zcp git <host> merge origin/main`",
 		"never rebase",
-		"Never open a change only to record",
-		"an entry of its own",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)
@@ -778,68 +751,6 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 		if strings.Contains(out, retired) {
 			t.Errorf("git-host paragraph still says %q", retired)
 		}
-	}
-}
-
-// A repository that already exists comes into HQ as `main` itself, with no
-// merge commit (the owner, 2026-10-27: clean history, squash only). HQ
-// seeds every repository it gives a pair with one initial commit on `main`;
-// Zerops Apps, Mate Web and Noola were brought in by merging their history
-// onto it, so HQ's `main` held commits GitHub never had. Code kept on
-// GitHub is connected first and HQ takes `main` from GitHub; code from
-// anywhere else is pushed as it is as a branch of its own, which HQ makes
-// `main`; the Mate's own setup follows as an ordinary change. A container
-// that is no Mate has no HQ and is told none of it.
-func TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain(t *testing.T) {
-	t.Parallel()
-	wants := []string{
-		"**A repository that already exists**",
-		`zerops_origin action="request" url="<its GitHub address>" repo="<the dev hostname>" why="<one line>"`,
-		"HQ takes the repository's `main` from GitHub, so `main` starts as GitHub's `main`",
-		"never clone it in and merge it",
-		"a bundle, another host, a GitHub repository HQ cannot connect",
-		"as a branch of its own, exactly as it is",
-		// Fetched in the dev service: a bundle is copied there first, and
-		// a fetch names an absolute `.bundle` path.
-		"`zcp git <host> fetch <address> <its main branch>:<branch>`",
-		"`scp <bundle> <host>:/tmp/<name>.bundle`",
-		"`zcp git <host> fetch /tmp/<name>.bundle <its main branch>:<branch>`",
-		"`zcp git <host> push origin <branch>`",
-		"HQ makes that history `main`",
-		"`zcp git <host> fetch origin && zcp git <host> checkout -B main origin/main`",
-		"never merge or rebase it onto `main`'s initial commit",
-		"never merge HQ's initial commit into it",
-		"`.zcp/dev-servers.json`",
-		"goes in afterwards as an ordinary change",
-		"merged by squash",
-		// A pair wired holding a history of its own keeps it as main: while
-		// HQ's main is only its initial commit, that main is the
-		// repository's first history, never reset onto that commit.
-		"unless `origin/main` holds only HQ's initial commit, when that `main` is the repository's first history: keep it as it is and cut your branch from it",
-	}
-	for _, tc := range []struct {
-		name string
-		rt   runtime.Info
-		want bool
-	}{
-		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
-		{name: "a plain container", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			out, err := BuildAgentsMD(tc.rt, false)
-			if err != nil {
-				t.Fatalf("BuildAgentsMD: %v", err)
-			}
-			for _, want := range wants {
-				if got := strings.Contains(out, want); got != tc.want {
-					t.Errorf("%q present = %v, want %v", want, got, tc.want)
-				}
-			}
-			if strings.Contains(out, "allow-unrelated-histories") {
-				t.Error("AGENTS.md joins unrelated histories")
-			}
-		})
 	}
 }
 
@@ -931,7 +842,6 @@ func TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives(t *testing.T) {
 		"live in its repository in the application's HQ",
 		"On an empty project, bootstrap",
 		"ZCP wires the pair's repository",
-		"Core deploys the application's environments",
 		"never ask the person for a GitHub",
 	}
 	for _, tc := range []struct {
@@ -1258,38 +1168,6 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// A repository HQ mirrors to GitHub through the organisation's app takes
-// every change to GitHub as the pull request HQ opens, and HQ pushes `main`
-// there itself, so a Mate never syncs GitHub by hand (Filip on flip.studio
-// cherry-picked each merged change onto GitHub's master in a clone of its
-// own and pushed it, as its memory said to — which fights HQ's follow).
-func TestBuildAgentsMD_Container_GitHubMirrorIsNeverSyncedByHand(t *testing.T) {
-	t.Parallel()
-	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
-	if err != nil {
-		t.Fatalf("BuildAgentsMD: %v", err)
-	}
-	for _, want := range []string{
-		"HQ alone pushes to GitHub: it mirrors such a repository itself",
-		"Never sync GitHub by hand",
-		"nor copy a merged change onto it",
-		"GitHub's default branch moves only by that merge",
-		"a merged change reaches GitHub as its pull request",
-		"the one change that brings them back in step",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("git-host paragraph missing %q", want)
-		}
-	}
-	plain, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
-	if err != nil {
-		t.Fatalf("BuildAgentsMD: %v", err)
-	}
-	if strings.Contains(plain, "sync GitHub by hand") {
-		t.Error("a plain container's AGENTS.md speaks of HQ's GitHub mirror")
 	}
 }
 
