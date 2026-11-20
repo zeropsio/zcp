@@ -381,7 +381,10 @@ type standupPair struct {
 	// stages are the pair's stages, as the tier orders them.
 	stages  []*standupStage
 	adopted string // standupNow | standupAlready
-	wired   string
+	// containers is what holding the pair's dev services at one container
+	// changed or could not change, one line each (holdDevContainers).
+	containers []string
+	wired      string
 	// failed is what stopped the pair before any deploy, exactly; next is
 	// the model's call for it; failedHost is the half it is about, when one.
 	failed, next, failedHost string
@@ -501,6 +504,15 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
 			adoptedNow = append(adoptedNow, target)
+		}
+		// A recorded dev half runs one container (§8 O7); a dev pool's
+		// containers are leased, never held.
+		if sp.failed == "" && !sp.pair.DevPool {
+			hosts := []string{sp.pair.Dev.Hostname}
+			for _, rt := range sp.pair.DevServices {
+				hosts = append(hosts, rt.Hostname)
+			}
+			sp.containers = holdDevContainers(ctx, d.batch.client, d.batch.projectID, d.batch.stateDir, hosts)
 		}
 	}
 	d.recordReflog(adoptedNow)

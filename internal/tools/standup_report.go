@@ -82,6 +82,9 @@ type standupService struct {
 	Failed    string            `json:"failed,omitempty"`
 	Deploy    *standupDeploy    `json:"deploy,omitempty"`
 	DevServer *standupDevServer `json:"devServer,omitempty"`
+	// Containers is what holding the pair's dev services at one container
+	// changed, on the dev half's entry (docs/spec-workflows.md §8 O7).
+	Containers string `json:"containers,omitempty"`
 	// CodeVolume is a variant-B dev half's code volume: filled once, and
 	// every dev service's supervisor reloaded.
 	CodeVolume *standupCodeVolume `json:"codeVolume,omitempty"`
@@ -251,7 +254,7 @@ func standupDevService(sp *standupPair) standupService {
 	s := standupService{
 		Hostname: p.Dev.Hostname, Role: standupRoleDev, Pair: p.FirstStage().Hostname,
 		Repository: sp.repository, Setup: p.Dev.Setup,
-		Adopted: sp.adopted, Wired: sp.wired, Failed: sp.failed,
+		Adopted: sp.adopted, Containers: strings.Join(sp.containers, " "), Wired: sp.wired, Failed: sp.failed,
 		Deploy: sp.devDeploy, DevServer: sp.devServer, CodeVolume: sp.codeVolume,
 	}
 	switch d := sp.devDeploy; {

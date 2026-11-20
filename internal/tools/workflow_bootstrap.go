@@ -185,6 +185,14 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	// reflect-and-report can see them at all.
 	reconcileGitPushOnBootstrapFinish(ctx, client, sshDeployer, rt, projectID, stateDir, resp)
 
+	// The terminal step is where every route records its runtimes complete —
+	// the moment a dev runtime is set to one container (§8 O7).
+	if resp != nil && resp.Current == nil {
+		if lines := holdDevContainers(ctx, client, projectID, stateDir, bootstrapDevHostnames(engine)); len(lines) > 0 {
+			resp.Message += " " + strings.Join(lines, " ")
+		}
+	}
+
 	// A1 and A2 (guide 2.1) belong to the same moment, and for the same
 	// reason: until bootstrap closes, a pair's meta is the PARTIAL one
 	// provision wrote — no BootstrappedAt — and every repository reconcile
@@ -214,6 +222,22 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		return bootstrapResultWithRepoStatus(ctx, resp, engine, client, projectID, rt, sshDeployer), nil, nil
 	}
 	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
+}
+
+// bootstrapDevHostnames is every runtime the finished bootstrap's plan may
+// record as a dev service: each target's dev hostname and its code volume's
+// further dev services. Which of them is one, the service meta says.
+func bootstrapDevHostnames(engine *workflow.Engine) []string {
+	state, err := engine.GetState()
+	if err != nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
+		return nil
+	}
+	var hosts []string
+	for _, t := range state.Bootstrap.Plan.Targets {
+		hosts = append(hosts, t.Runtime.DevHostname)
+		hosts = append(hosts, t.Runtime.CodeVolume.DevServiceHostnames()...)
+	}
+	return hosts
 }
 
 // bootstrapPlanSubcode narrows a discover-step plan-completion failure into

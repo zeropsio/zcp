@@ -636,6 +636,16 @@ func (m *ServiceMeta) ModeFor(hostname string) topology.Mode {
 	return ""
 }
 
+// IsOneContainerDev reports whether hostname is a dev runtime this meta
+// records — a standalone dev service, the dev half of a standard pair or a
+// further dev service of its code volume — which zcp keeps at exactly one
+// container (docs/spec-workflows.md §8 O7). A stage, a simple service, a local
+// topology and a dev pool project to another mode (ModeFor) and are not.
+func (m *ServiceMeta) IsOneContainerDev(hostname string) bool {
+	mode := m.ModeFor(hostname)
+	return mode == topology.ModeDev || mode == topology.ModeStandard
+}
+
 // PushSourceCheckFor classifies whether hostname is a source-of-push within
 // this meta's pair scope, returning the discriminating reason so callers can
 // render reason-specific remediation. Replaced the boolean IsPushSourceFor

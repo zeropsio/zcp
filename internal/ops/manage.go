@@ -141,6 +141,15 @@ type ScaleOption func(*scaleConfig)
 type scaleConfig struct {
 	shrinkDeps    LeaseDeps
 	approveShrink func(PoolShrink) error
+	devService    bool
+}
+
+// WithDevService makes Scale hold the service at one container: a call asking
+// minContainers or maxContainers above 1 is refused before anything is read
+// (docs/spec-workflows.md §8 O7). The caller states that the service is a dev
+// runtime; the service meta that says so is the workflow layer's.
+func WithDevService() ScaleOption {
+	return func(c *scaleConfig) { c.devService = true }
 }
 
 // WithPoolShrinkGuard makes Scale check, before it lowers a pool's
@@ -165,6 +174,11 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
+	}
+	if cfg.devService {
+		if err := validateDevContainerCounts(hostname, params); err != nil {
+			return nil, err
+		}
 	}
 
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
@@ -256,6 +270,91 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 
 	return result, nil
+}
+
+// devOneContainerWhy is why a dev service runs exactly one container: the
+// platform adds a container under load, ssh by hostname then reaches it — a
+// clean checkout of the deployed version without the work in progress — and
+// scale-in deletes the newer container with every file written to it
+// (reproduced live 2026-11-20).
+const devOneContainerWhy = "a dev service runs one container: a second one is reached by ssh with a clean checkout of the deployed version, without the uncommitted work, and scale-in deletes the newer container with its files"
+
+// validateDevContainerCounts refuses a container count above 1 for a dev
+// service, naming why and what to do instead.
+func validateDevContainerCounts(hostname string, p ScaleParams) error {
+	for _, f := range []struct {
+		name string
+		v    *int
+	}{{"minContainers", p.MinContainers}, {"maxContainers", p.MaxContainers}} {
+		if f.v != nil && *f.v > 1 {
+			return platform.NewPlatformError(platform.ErrInvalidScaling,
+				fmt.Sprintf("%s %d refused for %s: %s", f.name, *f.v, hostname, devOneContainerWhy),
+				fmt.Sprintf("Scale %s vertically (minCpu/maxCpu, minRam/maxRam), or put the load on a stage or simple service, which may run several containers.", hostname))
+		}
+	}
+	return nil
+}
+
+// DevContainerHold is what HoldDevAtOneContainer did to a dev service's
+// container counts: Changed when it set them, with the counts before and the
+// counts read back after (0 where the platform returned none).
+type DevContainerHold struct {
+	Hostname             string
+	Changed              bool
+	BeforeMin, BeforeMax int32
+	AfterMin, AfterMax   int32
+}
+
+// Line is the hold as one sentence of a step's result; "" when nothing changed.
+func (h DevContainerHold) Line() string {
+	if !h.Changed {
+		return ""
+	}
+	return fmt.Sprintf("%s set from minContainers %d, maxContainers %d to minContainers %d, maxContainers %d — %s.",
+		h.Hostname, h.BeforeMin, h.BeforeMax, h.AfterMin, h.AfterMax, devOneContainerWhy)
+}
+
+// HoldDevAtOneContainer sets a dev service's horizontal autoscaling to
+// minContainers 1, maxContainers 1 through Scale when it is not so already,
+// waits for the change and reads it back (docs/spec-workflows.md §8 O7).
+func HoldDevAtOneContainer(ctx context.Context, client platform.Client, projectID, hostname string) (DevContainerHold, error) {
+	hold := DevContainerHold{Hostname: hostname}
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
+	if err != nil {
+		return hold, fmt.Errorf("hold %s at one container: %w", hostname, err)
+	}
+	current, err := client.GetService(ctx, svc.ID)
+	if err != nil {
+		return hold, fmt.Errorf("hold %s at one container: read autoscaling: %w", hostname, err)
+	}
+	if before := effectiveAutoscaling(current); before != nil {
+		if before.HorizontalMinCount == 1 && before.HorizontalMaxCount == 1 {
+			return hold, nil
+		}
+		hold.BeforeMin, hold.BeforeMax = before.HorizontalMinCount, before.HorizontalMaxCount
+	}
+	one := 1
+	result, err := Scale(ctx, client, projectID, hostname, ScaleParams{MinContainers: &one, MaxContainers: &one})
+	if err != nil {
+		return hold, fmt.Errorf("hold %s at one container: %w", hostname, err)
+	}
+	if result.Process != nil && result.Process.ID != "" {
+		proc, err := PollProcess(ctx, client, result.Process.ID, nil)
+		if err != nil {
+			return hold, fmt.Errorf("hold %s at one container: %w", hostname, err)
+		}
+		if proc.Status != platform.ProcessStatusFinished {
+			return hold, fmt.Errorf("hold %s at one container: scaling process %s ended %s", hostname, proc.ID, proc.Status)
+		}
+	}
+	if err := ReadBackScale(ctx, client, result); err != nil {
+		return hold, fmt.Errorf("hold %s at one container: %w", hostname, err)
+	}
+	hold.Changed = true
+	if eff := result.Effective; eff != nil {
+		hold.AfterMin, hold.AfterMax = eff.HorizontalMinCount, eff.HorizontalMaxCount
+	}
+	return hold, nil
 }
 
 // ReadBackScale reads the service once a scale landed: Effective is what

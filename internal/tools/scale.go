@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // ScaleInput is the input type for zerops_scale.
@@ -52,7 +53,8 @@ type scaleToolConfig struct {
 // through swarm, which containers lowering its maxContainers deletes, and
 // tell zcp's own leases (records under stateDir) from other holders'.
 // Without it zcp cannot check, and every lowering of a pool's maximum needs
-// an acknowledgment.
+// an acknowledgment. The service metas under stateDir also say which services
+// are dev runtimes, held at one container (docs/spec-workflows.md §8 O7).
 func WithPoolOrchestratorsForScale(stateDir string, swarm ops.SwarmFactory) ScaleToolOption {
 	return func(c *scaleToolConfig) { c.stateDir, c.swarm = stateDir, swarm }
 }
@@ -130,7 +132,7 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string, st
 			MinFreeRAMPercent: input.MinFreeRAMPercent,
 			MinFreeCPUCores:   input.MinFreeCPUCores,
 			MinFreeCPUPercent: input.MinFreeCPUPercent,
-		}, guard)
+		}, scaleOptions(cfg.stateDir, input.ServiceHostname, guard)...)
 		if err != nil {
 			if refused != nil {
 				return convertError(err, WithWouldDestroy(refused)), nil, nil
@@ -162,6 +164,52 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string, st
 		}
 		return processResult(resp, result.Process), nil, nil
 	})
+}
+
+// scaleOptions are guard and, for a dev runtime the service metas under
+// stateDir record, the hold at one container (docs/spec-workflows.md §8 O7).
+// A meta that cannot be read leaves the scale unguarded: the platform's own
+// rules still apply.
+func scaleOptions(stateDir, hostname string, guard ops.ScaleOption) []ops.ScaleOption {
+	opts := []ops.ScaleOption{guard}
+	if stateDir == "" {
+		return opts
+	}
+	if meta, err := workflow.FindServiceMeta(stateDir, hostname); err == nil && meta != nil && meta.IsOneContainerDev(hostname) {
+		opts = append(opts, ops.WithDevService())
+	}
+	return opts
+}
+
+// holdDevContainers sets every dev runtime among hosts that the service
+// metas under stateDir record to one container (ops.HoldDevAtOneContainer)
+// — the moment zcp records a runtime as a dev service — and returns one
+// line per service it changed or could not change. Best-effort: a failure
+// is reported, never a refusal of the step that recorded the service.
+func holdDevContainers(ctx context.Context, client platform.Client, projectID, stateDir string, hosts []string) []string {
+	if client == nil || stateDir == "" || len(hosts) == 0 {
+		return nil
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return []string{fmt.Sprintf("zcp could not read its service records to hold the dev services at one container: %v.", err)}
+	}
+	byHost := workflow.ManagedRuntimeIndex(metas)
+	var lines []string
+	for _, host := range hosts {
+		if meta := byHost[host]; meta == nil || !meta.IsOneContainerDev(host) {
+			continue
+		}
+		hold, err := ops.HoldDevAtOneContainer(ctx, client, projectID, host)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("%s keeps its container counts: %v. Set them with zerops_scale serviceHostname=%q minContainers=1 maxContainers=1.", host, err, host))
+			continue
+		}
+		if line := hold.Line(); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 // poolShrinkDestruction is what lowering a pool's maxContainers would erase,
