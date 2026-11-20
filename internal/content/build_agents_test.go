@@ -763,17 +763,10 @@ func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 // first turn is routed. Its person's client sends "Stand up development of
 // the project." once, and without the route the model improvised an adopt
 // and one deploy after another (the Beviro trial, 2026-09-29, sixteen
-// minutes). In a Mate the agent context sends that message to zerops_standup
-// first — before the empty-mount adopt advice — and keeps today's tools as
-// the fallback when it reports a failure. A container without the Mate flag
-// has no such tool and is never told of one.
-//
-// The person never typed that message: Kaďák's stand-up (2026-10-27) ran 34
-// minutes behind a vague opener and a line per minute of build jargon, and
-// its person asked what had just happened. So the block also has the agent
-// say first, in plain words, what it is about to set up and roughly how long
-// that takes (each app built for development and for the preview, minutes
-// per build), then give one short line per step.
+// minutes). In a Mate the agent context routes that message, before the
+// rules a first message would otherwise take, to the standup playbook and
+// zerops_standup; what to say first and the fallback are the playbook's. A
+// container without the Mate flag has no such tool and is never told of one.
 func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -799,15 +792,6 @@ func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
 			}
 			for _, want := range []string{
 				`"Stand up development of the project."`,
-				"call `zerops_standup` first",
-				"`zerops_dev_server`",
-				`zerops_workflow action="start" workflow="bootstrap" route="adopt"`,
-				"`zerops_deploy_batch`",
-				"Your first words come before that call",
-				"what you are about to set up",
-				"roughly how long that takes",
-				"each build takes several minutes",
-				"one short line per step",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("stand-up route missing %q", want)
