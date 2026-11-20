@@ -64,7 +64,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
-			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
+			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"] up to 120000; text that has not come by then on a dev server: read zerops_dev_server action=logs, then wait again); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
 			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds); " +
 			"each call's tabs close when it ends. A call that times out, is cancelled " +

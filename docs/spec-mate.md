@@ -946,7 +946,12 @@ are then dropped, so each appears once; the `network requests` step stays whole,
 `consoleOutput` keeps agent-browser's `{"messages":[...]}` with only its `warning`, `error` and
 `assert` messages, each as its `type` and `text`, and `belowWarning` counting the others it left
 out; a caller's own `["console"]` step keeps every level. Only `wait` polls (agent-browser's
-25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
+25 s default, at most 120 s when asked); `click`, `fill`, `check`, `find`, `get` and `is` look
+once. A caller's `wait` whose own `--timeout` asks more than 120000 runs with 120000 and its step
+names that; one that times out there adds to its error that zcp ends a wait at 120 s and, on a dev
+server, to read `zerops_dev_server action=logs` and call again to wait on. In November 6 of 161
+timed-out agent waits asked more and lost at least 570 s, no clean walk with a longer wait ran
+past 98 s, and waits that succeeded after 60 s were measured, so the bound is not lower.
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
 so cookies, storage, HTTP cache and service workers carry over between calls, and the

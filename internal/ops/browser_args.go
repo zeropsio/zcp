@@ -2,6 +2,7 @@ package ops
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -90,6 +91,43 @@ func browserCommandArgs(cmd []string) (own, restoreFns []int) {
 		}
 	}
 	return own, restoreFns
+}
+
+// browserWaitCapMs is the longest a caller's wait polls, in milliseconds. In
+// November 6 of 161 timed-out agent waits asked more than it and lost at
+// least 570 s; no clean walk with a longer wait ran past 98 s, while waits
+// that succeeded after 60 s were measured.
+const browserWaitCapMs = 120000
+
+// browserWaitTimeout finds the value of a wait command's own --timeout: its
+// place in cmd and the number it holds; ok is false for any other command,
+// a wait without one, or a value that is no whole number.
+func browserWaitTimeout(cmd []string) (at int, ms int64, ok bool) {
+	own, _ := browserCommandArgs(cmd)
+	if len(own) == 0 || cmd[own[0]] != browserCmdWait {
+		return 0, 0, false
+	}
+	for j := 1; j+1 < len(own); j++ {
+		if cmd[own[j]] != "--timeout" {
+			continue
+		}
+		ms, err := strconv.ParseInt(cmd[own[j+1]], 10, 64)
+		return own[j+1], ms, err == nil
+	}
+	return 0, 0, false
+}
+
+// capBrowserWait lowers a wait command's own --timeout to browserWaitCapMs
+// when it asks more; any other command comes back as it came. cmd itself is
+// never changed.
+func capBrowserWait(cmd []string) []string {
+	at, ms, ok := browserWaitTimeout(cmd)
+	if !ok || ms <= browserWaitCapMs {
+		return cmd
+	}
+	capped := slices.Clone(cmd)
+	capped[at] = strconv.Itoa(browserWaitCapMs)
+	return capped
 }
 
 // browserScripts are the JavaScript agent-browser hands the page from cmd,

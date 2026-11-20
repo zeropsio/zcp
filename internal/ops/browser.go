@@ -693,6 +693,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	result.KeptSignIn = browserKeptSignInNote(note, releaseNote)
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
+	noteCappedWaits(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
 	result.Steps = append(refused, result.Steps...)
 	result.FailedSteps = countFailedSteps(result.Steps)
@@ -700,6 +701,27 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		result.Message = failedStepsMessage(result.Steps, result.FailedSteps)
 	}
 	return result, nil
+}
+
+// browserWaitCapNote is what a wait that ran out at browserWaitCapMs adds to
+// its error: where the text that did not come may be, and that waiting on
+// takes a call of its own. Its 120 s is browserWaitCapMs.
+const browserWaitCapNote = "; zcp ends a wait at 120 s; on a dev server read zerops_dev_server action=logs, then call again to wait on"
+
+// noteCappedWaits adds browserWaitCapNote to each wait that timed out at
+// browserWaitCapMs.
+func noteCappedWaits(steps []BrowserStepResult) {
+	for i := range steps {
+		s := &steps[i]
+		if s.Success || s.Error == nil || s.ErrorKind != ErrorKindTimeout {
+			continue
+		}
+		if _, ms, ok := browserWaitTimeout(s.Command); !ok || ms != browserWaitCapMs {
+			continue
+		}
+		text := *s.Error + browserWaitCapNote
+		s.Error = &text
+	}
 }
 
 // browserMessageCommandCap is how much of a failed step's command the
@@ -1064,7 +1086,8 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 // loads at that size instead of reflowing from the default width; without
 // one, browserDefaultViewport runs there, so no call inherits the viewport an
 // earlier call set. The steps come back in the order they ran, the caller's
-// commands in the order sent.
+// commands in the order sent. A caller's wait asking more than
+// browserWaitCapMs runs, and comes back, with that.
 func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) (batch [][]string, refused []BrowserStepResult) {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
@@ -1075,7 +1098,7 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 			refused = append(refused, BrowserStepResult{Command: cmd, Error: &why, ErrorKind: ErrorKindInvalidCommand})
 			continue
 		}
-		inner = append(inner, cmd)
+		inner = append(inner, capBrowserWait(cmd))
 	}
 	batch = make([][]string, 0, len(inner)+7)
 	if len(inner) > 0 && isSetViewport(inner[0]) {
