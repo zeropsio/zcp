@@ -47,11 +47,12 @@ func main() {
 }
 
 // run is the single entry point for both CLI subcommand dispatch and MCP
-// server mode. A recognized first argument routes to runCLI (telemetry:
-// one cli_command event, spec §5.5); anything else — including no
-// arguments — falls through to runServe (telemetry: session_start/
-// session_end), preserving the original code's behavior where an
-// unrecognized first argument still starts the MCP server.
+// server mode. No arguments or a first argument `serve` start runServe
+// (telemetry: session_start/session_end); a recognized verb routes to runCLI
+// (telemetry: one cli_command event, spec §5.5). Any other first argument is
+// refused with exit 2 before telemetry, the crash log or any credential, so a
+// launcher calling a verb this release does not know fails instead of
+// starting a server.
 func run(args []string) int {
 	if isHQGit(args) {
 		return runHQGit(args[2:])
@@ -68,17 +69,25 @@ func run(args []string) int {
 	if isWith(args) {
 		return runWith(args[1:])
 	}
-	if len(args) > 0 {
-		if dispatch, ok := cliDispatch()[args[0]]; ok {
-			return runCLI(args, dispatch)
-		}
+	if len(args) == 0 || args[0] == serveVerb {
+		return runServe()
 	}
-	return runServe()
+	if dispatch, ok := cliDispatch()[args[0]]; ok {
+		return runCLI(args, dispatch)
+	}
+	fmt.Fprintf(os.Stderr, "zcp: unknown command %q\n", args[0])
+	printUsage(os.Stderr)
+	return 2
 }
 
+// serveVerb names the MCP server on stdio. It stays out of cliDispatch: a
+// verb there runs through runCLI, whose telemetry disclosure writes to
+// stdout, the MCP stream.
+const serveVerb = "serve"
+
 // cliDispatch is the single source of truth for first-level CLI verbs: a
-// verb absent from this map is NOT a CLI subcommand — run() falls through
-// to MCP serve mode for it. Built fresh per call (run() invokes it at most
+// first argument absent from this map and other than serve is refused by
+// run(). Built fresh per call (run() invokes it at most
 // once per process) rather than as a package-level var, to stay clear of
 // any global-mutable-state ambiguity — the map itself is never mutated
 // after construction either way.
@@ -232,8 +241,8 @@ func printUsage(w io.Writer) {
 	sort.Strings(verbs)
 	fmt.Fprintln(w, "usage: zcp <command> [args]")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "  serve")
-	fmt.Fprintln(w, "    the MCP server on stdio, which an agent starts; also what any other word starts")
+	fmt.Fprintln(w, "  "+serveVerb)
+	fmt.Fprintln(w, "    the MCP server on stdio, which an agent starts")
 	for _, verb := range verbs {
 		fmt.Fprintf(w, "  %s\n", verb)
 	}
@@ -354,9 +363,8 @@ func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.S
 		ts, reason, pid, uptime, calls)
 }
 
-// runServe starts the MCP server on STDIO — the fallback path for no
-// arguments or an unrecognized first argument (preserves the original
-// behavior). Telemetry: session_start after consent resolve, session_end
+// runServe starts the MCP server on STDIO, for no arguments or a first
+// argument `serve`. Telemetry: session_start after consent resolve, session_end
 // inside logShutdown, final Shutdown(750ms) flush before returning.
 func runServe() int {
 	// Ignore SIGPIPE: when Claude Code closes the stdio pipe, Go's default
