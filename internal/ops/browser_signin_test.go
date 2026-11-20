@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-// A state with a cookie and local storage, as agent-browser 0.39.1 saves it.
+// non-parallel: these tests replace browserCDPDial with an in-process Chrome.
+
+// A kept sign-in with a cookie and local storage, in agent-browser 0.39.1's
+// state format.
 const signedInState = `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/","expires":1795087979.0,"size":9,"httpOnly":false,"secure":false,"session":false}],` +
 	`"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"xyz789"}],"sessionStorage":[]}]}`
 
@@ -47,9 +50,7 @@ func readyStateDir(t *testing.T) string {
 // writeKept writes signedInState as the kept sign-in file into dir.
 func writeKept(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(signedInState), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeState(t, dir, signedInState)
 }
 
 // keptState is the file name in dir, "" when there is none.
@@ -69,33 +70,69 @@ func keptState(t *testing.T, dir string, name ...string) string {
 	return string(data)
 }
 
-// savingBrowser answers a hand-back's steps as agent-browser does, the
-// call's tab active on the first site (savingBrowserOn).
-func savingBrowser(saved string, seen *[][]string) browserStepExec {
-	return savingBrowserOn("http://127.0.0.1:18731/", saved, seen)
-}
-
-// savingBrowserOn answers a hand-back's steps as agent-browser does: the tab
-// list (the call's tab active on active), and a state save that writes saved
-// to the path it is given (a failure when saved is ""). It records each
-// command.
-func savingBrowserOn(active, saved string, seen *[][]string) browserStepExec {
+// browserOn answers agent-browser's steps around a save or restore: the
+// tab list — the base tab t1 on about:blank, then each of tabs as
+// "<id> <url>" — and the DevTools URL of its Chrome, which a test reaches
+// through fakeChrome. It records each command.
+func browserOn(seen *[][]string, tabs ...string) browserStepExec {
 	return func(_ context.Context, args []string) (string, string, error) {
 		*seen = append(*seen, args)
 		switch {
 		case slices.Equal(args, []string{"tab", "list"}):
-			return `{"success":true,"data":{"tabs":[{"tabId":"t1","targetId":"` + baseTarget + `","url":"about:blank"},{"tabId":"t2","targetId":"3DF3","url":"` + active + `","active":true}]},"error":null}`, "", nil
-		case len(args) == 3 && args[0] == "state" && args[1] == "save":
-			if saved == "" {
-				return `{"success":false,"data":null,"error":"Failed to write state"}`, "", errors.New("exit status 1")
+			listed := make([]string, 0, 1+len(tabs))
+			listed = append(listed, `{"tabId":"t1","targetId":"`+baseTarget+`","url":"about:blank"}`)
+			for _, tab := range tabs {
+				id, url, _ := strings.Cut(tab, " ")
+				listed = append(listed, fmt.Sprintf(`{"tabId":%q,"targetId":"T%s","url":%q}`, id, id, url))
 			}
-			if err := os.WriteFile(args[2], []byte(saved), 0o600); err != nil {
-				return "", "", err
-			}
-			return `{"success":true,"data":{"saved":true,"path":"` + args[2] + `"},"error":null}`, "", nil
+			return `{"success":true,"data":{"tabs":[` + strings.Join(listed, ",") + `]},"error":null}`, "", nil
+		case slices.Equal(args, []string{"get", "cdp-url"}):
+			return `{"success":true,"data":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/0b5c"},"error":null}`, "", nil
 		}
 		return `{"success":true,"data":{},"error":null}`, "", nil
 	}
+}
+
+// keptOrigins lists the origins of the kept sign-in in dir.
+func keptOrigins(t *testing.T, dir string) []string {
+	t.Helper()
+	_, origins, ok := parseBrowserState([]byte(keptState(t, dir)))
+	if !ok {
+		t.Fatalf("the kept sign-in is not a kept state: %q", keptState(t, dir))
+	}
+	names := make([]string, 0, len(origins))
+	for _, o := range origins {
+		names = append(names, o.name)
+	}
+	return names
+}
+
+// writeState writes state as the kept sign-in in dir.
+func writeState(t *testing.T, dir, state string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// presenceAfter reads the presence a restore wrote.
+func presenceAfter(t *testing.T, path string) browserPresence {
+	t.Helper()
+	p, ok := readBrowserPresence(path)
+	if !ok {
+		t.Fatal("the restore wrote no presence")
+	}
+	return p
+}
+
+// usedSites is a kept sign-in whose sites were last used at these ages.
+func usedSites(now time.Time, ages ...time.Duration) string {
+	entries := make([]string, 0, len(ages))
+	for i, age := range ages {
+		entries = append(entries, fmt.Sprintf(`{"origin":"http://127.0.0.1:%d","localStorage":[{"name":"token","value":"v"}],"zcpLastUsed":%q}`,
+			18740+i, now.Add(-age).UTC().Format(time.RFC3339)))
+	}
+	return `{"cookies":[],"origins":[` + strings.Join(entries, ",") + `]}`
 }
 
 // The sign-in survives browser restarts for tab and new-browser calls; a
@@ -277,284 +314,178 @@ const threeSites = `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0
 	`{"origin":"http://127.0.0.1:18735","localStorage":[{"name":"token","value":"b"}]},` +
 	`{"origin":"http://127.0.0.1:18732","localStorage":[{"name":"token","value":"c"}]}]}`
 
-// restoringBrowser answers a restore's steps as agent-browser does. A state
-// load reads the part it is given: one holding the origin bad is answered
-// as how says ("hangs" until the step's context ends, "fails"), cookies as
-// cookies says — one answer per load in turn, the last one repeated ("ok",
-// "fails", "hangs") — anything else a success. It records what each load
-// held — "cookies" or the origin — and every other command.
-func restoringBrowser(bad, how string, cookies []string, seen *[]string) browserStepExec {
-	answer := func(ctx context.Context, mode string) (string, string, error) {
-		switch mode {
-		case "hangs":
-			<-ctx.Done()
-			return "", "", ctx.Err()
-		case "fails":
-			return `{"success":false,"data":null,"error":"Invalid state file: expected value at line 1 column 1"}`, "", errors.New("exit status 1")
-		}
-		return `{"success":true,"data":{},"error":null}`, "", nil
-	}
-	return func(ctx context.Context, args []string) (string, string, error) {
-		if len(args) == 3 && args[0] == "state" && args[1] == "load" {
-			_, origins, _ := parseBrowserState(mustRead(args[2]))
-			if len(origins) == 0 {
-				*seen = append(*seen, "cookies")
-				mode := cookies[0]
-				if len(cookies) > 1 {
-					cookies = cookies[1:]
-				}
-				return answer(ctx, mode)
-			}
-			*seen = append(*seen, origins[0].name)
-			if origins[0].name == bad {
-				return answer(ctx, how)
-			}
-			return answer(ctx, "ok")
-		}
-		if slices.Equal(args, []string{"tab", "list"}) {
-			return `{"success":true,"data":{"tabs":[{"tabId":"t1","targetId":"` + baseTarget + `","url":"about:blank","active":true}]},"error":null}`, "", nil
-		}
-		*seen = append(*seen, strings.Join(args, " "))
-		return answer(ctx, "ok")
-	}
-}
-
-var cookiesLoad = []string{"ok"}
-
-func mustRead(path string) []byte {
-	data, _ := os.ReadFile(path)
-	return data
-}
-
-// keptOrigins lists the origins of the kept sign-in in dir.
-func keptOrigins(t *testing.T, dir string) []string {
-	t.Helper()
-	_, origins, ok := parseBrowserState([]byte(keptState(t, dir)))
-	if !ok {
-		t.Fatalf("the kept sign-in is not loadable: %q", keptState(t, dir))
-	}
-	names := make([]string, 0, len(origins))
-	for _, o := range origins {
-		names = append(names, o.name)
-	}
-	return names
-}
-
-// writeState writes state as the kept sign-in in dir.
-func writeState(t *testing.T, dir, state string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, browserSignInFile), []byte(state), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// presenceAfter reads the presence a restore wrote.
-func presenceAfter(t *testing.T, path string) browserPresence {
-	t.Helper()
-	p, ok := readBrowserPresence(path)
-	if !ok {
-		t.Fatal("the restore wrote no presence")
-	}
-	return p
-}
-
-// noRestart is a restart that only counts.
-func noRestart(count *int) func(context.Context) error {
-	return func(context.Context) error { *count++; return nil }
-}
-
-// A kept sign-in whose cookies agent-browser cannot load — or one that is
-// not a state at all — is set aside, never loaded again, and the call runs
-// signed out in a clean browser, saying so.
-// witness: internal/ops/browser_signin.go | 		if rctx.Err() == nil { → 		if false {
-func TestRestoreBrowserSignIn_AFileAgentBrowserCannotLoadIsSetAside(t *testing.T) {
+// A kept file that is no kept state zcp can read is set aside, never
+// restored again, and the call runs signed out, saying so; Chrome is not
+// asked to take any of it.
+// witness: internal/ops/browser_signin.go | 	if err != nil || !ok { → 	if err != nil {
+func TestRestoreBrowserSignIn_AFileThatIsNoKeptStateIsSetAside(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
-	writeState(t, dir, threeSites)
+	writeState(t, dir, `{"cookies":[{"name":"sid"`)
 	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	var seen []string
-	restarts := 0
-	note, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", []string{"fails"}, &seen), dir, presence, time.Now(), noRestart(&restarts))
-	if err != nil || note == "" || restarts != 1 {
-		t.Errorf("a file whose cookies do not load: note=%q err=%v restarts=%d", note, err, restarts)
+	var seen [][]string
+	note, err := restoreBrowserSignIn(t.Context(), browserOn(&seen), dir, presence, time.Now())
+	if err != nil || note == "" {
+		t.Errorf("a file that is no kept state: note=%q err=%v", note, err)
 	}
-	if keptState(t, dir) != "" || keptState(t, dir, browserSignInAside) != threeSites {
+	if keptState(t, dir) != "" || keptState(t, dir, browserSignInAside) != `{"cookies":[{"name":"sid"` {
 		t.Errorf("the file must be set aside: kept %q", keptState(t, dir))
 	}
-	if !slices.Equal(seen, []string{"cookies"}) {
-		t.Errorf("nothing but the cookies may be loaded from it: %v", seen)
+	if len(chrome.cookieNames()) != 0 || !presenceAfter(t, presence).CookiesHeld {
+		t.Errorf("nothing of it may reach Chrome, and the clean browser holds what is kept, nothing: %v", chrome.cookieNames())
 	}
-	seen = nil
-	if note, _ := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", cookiesLoad, &seen), dir, presence, time.Now(), noRestart(&restarts)); note != "" || len(seen) != 0 {
-		t.Errorf("a set-aside file must never be loaded again: note=%q loads %v", note, seen)
-	}
-}
-
-// A saved site that does not answer within its own bound loses only its own
-// saved storage: it is dropped from the kept file and named, and the other
-// sites and the cookie stay kept.
-// witness: internal/ops/browser_signin.go | 			dropped = append(dropped, o) →
-func TestRestoreBrowserSignIn_ASiteThatDoesNotAnswerLosesOnlyItsOwnStorage(t *testing.T) {
-	dir := readyStateDir(t)
-	writeState(t, dir, threeSites)
-	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	synctest.Test(t, func(t *testing.T) {
-		var seen []string
-		restarts := 0
-		note, err := restoreBrowserSignIn(context.Background(), restoringBrowser("http://127.0.0.1:18735", "hangs", cookiesLoad, &seen), dir, presence, time.Now(), noRestart(&restarts))
-		if err != nil || restarts != 1 || !strings.Contains(note, "http://127.0.0.1:18735") {
-			t.Errorf("one site that does not answer: note=%q err=%v restarts=%d", note, err, restarts)
-		}
-	})
-	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731", "http://127.0.0.1:18732"}) {
-		t.Errorf("the kept file must lose only the site that did not answer: %v", got)
-	}
-	if !strings.Contains(keptState(t, dir), `"abc123"`) || keptState(t, dir, browserSignInAside) != "" {
-		t.Errorf("the cookie must stay kept and nothing set aside: %q", keptState(t, dir))
+	if note, _ := restoreBrowserSignIn(t.Context(), browserOn(&seen), dir, presence, time.Now()); note != "" {
+		t.Errorf("a set-aside file must never be restored again: note=%q", note)
 	}
 }
 
-// A restart during the restore brings back the cookies and the sites
-// already restored before the next site, so none is silently lost and the
-// result names nothing but the site that did not answer.
-// witness: internal/ops/browser_signin.go | 			back = append(back, o) →
-func TestRestoreBrowserSignIn_ARestartBringsBackTheSitesAlreadyRestored(t *testing.T) {
+// A new browser gets every kept cookie and every kept site's local storage
+// back, and no site is loaded for it: no agent-browser open or state load,
+// and the stub tab the storage went through is closed.
+// witness: internal/ops/browser_signin.go | 	refused, err := cdp.setCookies(rctx, kept) → 	refused, err := cdp.setCookies(rctx, nil)
+func TestRestoreBrowserSignIn_EveryKeptCookieAndSiteComesBackWithNoSiteLoaded(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeState(t, dir, threeSites)
 	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	synctest.Test(t, func(t *testing.T) {
-		var seen []string
-		restarts := 0
-		note, err := restoreBrowserSignIn(context.Background(), restoringBrowser("http://127.0.0.1:18735", "hangs", cookiesLoad, &seen), dir, presence, time.Now(), noRestart(&restarts))
-		want := []string{"cookies", "http://127.0.0.1:18731", "http://127.0.0.1:18735", "cookies", "http://127.0.0.1:18731", "http://127.0.0.1:18732", "open about:blank"}
-		if err != nil || !slices.Equal(seen, want) {
-			t.Errorf("loads %v, want %v (err %v)", seen, want, err)
-		}
-		if strings.Contains(note, "18731") || strings.Contains(note, "18732") {
-			t.Errorf("the sites brought back must not be named: %q", note)
-		}
-	})
-}
-
-// Cookies that do not come back after a restart leave the browser without
-// them: its presence says so, so no save can replace the kept cookies, and
-// the result says the kept sign-in is still kept and a new one would not be.
-// witness: internal/ops/browser_signin.go | 			p.CookiesHeld, restored = false, nil → 			restored = nil
-func TestRestoreBrowserSignIn_CookiesThatDoNotComeBackStopTheSaves(t *testing.T) {
-	dir := readyStateDir(t)
-	writeState(t, dir, threeSites)
-	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	synctest.Test(t, func(t *testing.T) {
-		var seen []string
-		restarts := 0
-		note, err := restoreBrowserSignIn(context.Background(), restoringBrowser("http://127.0.0.1:18735", "hangs", []string{"ok", "fails"}, &seen), dir, presence, time.Now(), noRestart(&restarts))
-		if err != nil || note == "" {
-			t.Errorf("cookies that do not come back: note=%q err=%v", note, err)
-		}
-	})
-	if presenceAfter(t, presence).CookiesHeld {
-		t.Error("a browser without the kept cookies must not be marked as holding them")
-	}
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", time.Now()); err == nil || keptState(t, dir) == `{"cookies":[],"origins":[]}` {
-		t.Errorf("its save must be refused and the kept sign-in stay: err=%v kept %q", err, keptState(t, dir))
+	note, err := restoreBrowserSignIn(t.Context(), browserOn(&seen), dir, presence, time.Now())
+	if note != "" || err != nil {
+		t.Fatalf("a restore that worked: note=%q err=%v", note, err)
+	}
+	if got := chrome.cookieNames(); !slices.Equal(got, []string{"sid"}) {
+		t.Errorf("the kept cookie must be in Chrome: %v", got)
+	}
+	for origin, want := range map[string]string{"http://127.0.0.1:18731": "a", "http://127.0.0.1:18735": "b", "http://127.0.0.1:18732": "c"} {
+		if got := chrome.storageOf(origin); !slices.Equal(got, []browserStorageItem{{"token", want}}) {
+			t.Errorf("the local storage of %s = %v, want token=%s", origin, got, want)
+		}
+	}
+	for _, step := range seen {
+		if step[0] == "open" || step[0] == "state" {
+			t.Errorf("the restore loaded a site: %v", step)
+		}
+	}
+	if open := chrome.openTabs(); len(open) != 0 {
+		t.Errorf("the stub tab must be closed: %v", open)
+	}
+	if p := presenceAfter(t, presence); !p.CookiesHeld || p.BaseTarget != baseTarget || len(p.Unrestored) != 0 {
+		t.Errorf("the browser holds the whole kept sign-in: %+v", p)
 	}
 }
 
-// A slow site that still answers within its own bound — a dev server's
-// first request after a restart — keeps its storage.
-// witness: internal/ops/browser_signin.go | 	browserSignInOriginTimeout = 4 * time.Second → 	browserSignInOriginTimeout = 2 * time.Second
-func TestRestoreBrowserSignIn_ASlowSiteThatAnswersInTimeIsKept(t *testing.T) {
+// A kept site whose local storage Chrome refuses to take back loses only
+// its own saved storage: it is dropped from the kept file and named, and the
+// other sites and the cookie are restored and stay kept.
+// witness: internal/ops/browser_signin.go | 				dropped = append(dropped, o.name) → 				missing = append(missing, o.name)
+func TestRestoreBrowserSignIn_ASiteChromeRefusesLosesOnlyItsOwnStorage(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.refuse["http://127.0.0.1:18735"] = true
+	dir := readyStateDir(t)
+	writeState(t, dir, threeSites)
+	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
+	var seen [][]string
+	note, err := restoreBrowserSignIn(t.Context(), browserOn(&seen), dir, presence, time.Now())
+	if err != nil || !strings.Contains(note, "http://127.0.0.1:18735") || !strings.Contains(note, "dropped") {
+		t.Errorf("one site Chrome refuses: note=%q err=%v", note, err)
+	}
+	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731", "http://127.0.0.1:18732"}) {
+		t.Errorf("the kept file must lose only the refused site: %v", got)
+	}
+	if !strings.Contains(keptState(t, dir), `"abc123"`) || len(chrome.storageOf("http://127.0.0.1:18732")) != 1 {
+		t.Errorf("the cookie must stay kept and the next site restored: %q", keptState(t, dir))
+	}
+}
+
+// A restore that runs out of its bound — a stub write that never comes back
+// — drops nothing: the sites it did not get to stay kept, are named as not
+// restored, and an empty read of them in this browser cannot erase them; the
+// cookies it set are held, and the stub tab is closed.
+// witness: internal/ops/browser_signin.go | 			if bounded := ctx.Err() != nil; bounded { → 			if bounded := false; bounded {
+func TestRestoreBrowserSignIn_ARestoreThatRunsOutDropsNothing(t *testing.T) {
 	dir := readyStateDir(t)
 	writeState(t, dir, threeSites)
 	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
 	synctest.Test(t, func(t *testing.T) {
-		quick := restoringBrowser("", "", cookiesLoad, new([]string))
-		run := func(ctx context.Context, args []string) (string, string, error) {
-			if len(args) == 3 && args[1] == "load" && strings.Contains(string(mustRead(args[2])), "18735") {
-				select {
-				case <-time.After(3 * time.Second):
-				case <-ctx.Done():
-					return "", "", ctx.Err()
-				}
-			}
-			return quick(ctx, args)
+		chrome := newFakeChrome().dialedBy(t)
+		chrome.stall["http://127.0.0.1:18735"] = true
+		var seen [][]string
+		note, err := restoreBrowserSignIn(context.Background(), browserOn(&seen), dir, presence, time.Now())
+		if err != nil || !strings.Contains(note, "18735") || !strings.Contains(note, "18732") || strings.Contains(note, "dropped") {
+			t.Errorf("a restore that ran out: note=%q err=%v", note, err)
 		}
-		restarts := 0
-		if note, err := restoreBrowserSignIn(context.Background(), run, dir, presence, time.Now(), noRestart(&restarts)); note != "" || err != nil {
-			t.Errorf("a slow site that answers in time: note=%q err=%v", note, err)
+		if open := chrome.openTabs(); len(open) != 0 {
+			t.Errorf("the stub tab must be closed: %v", open)
 		}
 	})
 	if got := keptOrigins(t, dir); len(got) != 3 {
 		t.Errorf("every site must stay kept: %v", got)
 	}
+	if p := presenceAfter(t, presence); !p.CookiesHeld || !slices.Equal(p.Unrestored, []string{"http://127.0.0.1:18735", "http://127.0.0.1:18732"}) {
+		t.Errorf("the cookies are held and the sites not reached unrestored: %+v", p)
+	}
 }
 
-// A call with little time left restores the cookies and leaves the sites'
-// storage kept for the next new browser instead of failing or dropping it.
-// witness: internal/ops/browser_signin.go | budget = min(budget, time.Until(deadline)/3) → budget = min(budget, time.Until(deadline))
-func TestRestoreBrowserSignIn_ACallWithLittleTimeLeftRestoresTheCookiesOnly(t *testing.T) {
+// Cookies that do not get into the new browser — its Chrome not reached —
+// leave it without them: its presence says so, so no save can replace the
+// kept cookies, and the result says the kept sign-in is still kept and a new
+// one would not be.
+// witness: internal/ops/browser_signin.go | 		return done(browserSignInNotHeld) → 		p.CookiesHeld = true; return done(browserSignInNotHeld)
+func TestRestoreBrowserSignIn_CookiesThatDoNotGetInStopTheSaves(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeState(t, dir, threeSites)
 	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
-		defer cancel()
-		var seen []string
-		restarts := 0
-		note, err := restoreBrowserSignIn(ctx, restoringBrowser("", "", cookiesLoad, &seen), dir, presence, time.Now(), noRestart(&restarts))
-		if err != nil || !slices.Equal(seen, []string{"cookies"}) || note == "" {
-			t.Errorf("little time left: loads %v note=%q err=%v", seen, note, err)
+	unreached := func(ctx context.Context, args []string) (string, string, error) {
+		if slices.Equal(args, []string{"get", "cdp-url"}) {
+			return `{"success":false,"data":null,"error":"Browser not launched"}`, "", errors.New("exit status 1")
 		}
-	})
-	if got := keptOrigins(t, dir); len(got) != 3 || !presenceAfter(t, presence).CookiesHeld || len(presenceAfter(t, presence).Unrestored) != 3 {
-		t.Errorf("the sites must stay kept, unrestored, and the cookies held: %v %+v", got, presenceAfter(t, presence))
+		return browserOn(new([][]string))(ctx, args)
+	}
+	note, err := restoreBrowserSignIn(t.Context(), unreached, dir, presence, time.Now())
+	if err != nil || note != browserSignInNotHeld {
+		t.Errorf("cookies that did not get in: note=%q err=%v", note, err)
+	}
+	if presenceAfter(t, presence).CookiesHeld {
+		t.Error("a browser without the kept cookies must not be marked as holding them")
+	}
+	var seen [][]string
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18731/"), dir, presence, "t2", time.Now()); err == nil || keptState(t, dir) != threeSites {
+		t.Errorf("its save must be refused and the kept sign-in stay: err=%v kept %q", err, keptState(t, dir))
 	}
 }
 
-// A kept sign-in that loads leaves the base tab back on about:blank, so no
-// restored page keeps running — and using CPU — while the browser idles.
-// witness: internal/ops/browser_signin.go | 	if onSite { → 	if onSite && false {
-func TestRestoreBrowserSignIn_ALoadedSignInLeavesNoRestoredPageRunning(t *testing.T) {
+// A kept cookie Chrome refuses costs only itself: the other cookies and
+// the sites are restored, and the browser holds the kept sign-in.
+// witness: internal/ops/browser_cdp.go | 	if !errors.As(err, &refusal) { → 	if true {
+func TestRestoreBrowserSignIn_ACookieChromeRefusesCostsOnlyItself(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.refuseCookie = "bad"
 	dir := readyStateDir(t)
-	writeKept(t, dir)
+	writeState(t, dir, strings.Replace(signedInState, `"cookies":[`, `"cookies":[{"name":"bad","value":"x","domain":"","path":"/"},`, 1))
 	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
-	var seen []string
-	restarts := 0
-	note, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", cookiesLoad, &seen), dir, presence, time.Now(), noRestart(&restarts))
-	want := []string{"cookies", "http://127.0.0.1:18731", "open about:blank"}
-	if note != "" || err != nil || !slices.Equal(seen, want) {
-		t.Errorf("a load that worked: note=%q err=%v loads %v, want %v", note, err, seen, want)
+	note, err := restoreBrowserSignIn(t.Context(), browserOn(new([][]string)), dir, presence, time.Now())
+	if note != "" || err != nil || !presenceAfter(t, presence).CookiesHeld {
+		t.Errorf("one refused cookie: note=%q err=%v", note, err)
 	}
-	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731"}) || !presenceAfter(t, presence).CookiesHeld {
-		t.Errorf("a kept sign-in that loaded must stay kept: %v", got)
+	if got := chrome.cookieNames(); !slices.Equal(got, []string{"sid"}) || len(chrome.storageOf("http://127.0.0.1:18731")) != 1 {
+		t.Errorf("the other cookie and the site must be restored: cookies %v", got)
 	}
-}
-
-// usedSites is a kept sign-in whose sites were last used at these ages.
-func usedSites(now time.Time, ages ...time.Duration) string {
-	entries := make([]string, 0, len(ages))
-	for i, age := range ages {
-		entries = append(entries, fmt.Sprintf(`{"origin":"http://127.0.0.1:%d","localStorage":[{"name":"token","value":"v"}],"zcpLastUsed":%q}`,
-			18740+i, now.Add(-age).UTC().Format(time.RFC3339)))
-	}
-	return `{"cookies":[],"origins":[` + strings.Join(entries, ",") + `]}`
 }
 
 // A kept site no call used for 7 days — gone, renamed, never answering — is
-// dropped before the restore loads anything, so it stops costing every new
-// browser a load.
+// dropped before the restore, so it stops costing every new browser a write.
 // witness: internal/ops/browser_signin.go | 		if now.Sub(o.lastUsed) <= browserSignInOriginMaxAge { → 		if true {
 func TestRestoreBrowserSignIn_ASiteUnusedForAWeekIsDropped(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
 	now := time.Now()
 	dir := readyStateDir(t)
 	writeState(t, dir, usedSites(now, time.Hour, 8*24*time.Hour))
-	var seen []string
-	restarts := 0
-	if _, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", cookiesLoad, &seen), dir, filepath.Join(t.TempDir(), "p.json"), now, noRestart(&restarts)); err != nil {
+	if _, err := restoreBrowserSignIn(t.Context(), browserOn(new([][]string)), dir, filepath.Join(t.TempDir(), "p.json"), now); err != nil {
 		t.Fatal(err)
 	}
-	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18740"}) || slices.Contains(seen, "http://127.0.0.1:18741") {
-		t.Errorf("a site unused for 8 days must be dropped, not loaded: kept %v, loads %v", got, seen)
+	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18740"}) || slices.Contains(chrome.sites(), "http://127.0.0.1:18741") {
+		t.Errorf("a site unused for 8 days must be dropped, not restored: kept %v, restored %v", got, chrome.sites())
 	}
 }
 
@@ -562,6 +493,7 @@ func TestRestoreBrowserSignIn_ASiteUnusedForAWeekIsDropped(t *testing.T) {
 // bounded however many sites the Mate ever opened.
 // witness: internal/ops/browser_signin.go | 	if len(kept) > browserSignInOriginCap { → 	if false {
 func TestRestoreBrowserSignIn_KeepsTheTwentyMostRecentlyUsedSites(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	now := time.Now()
 	ages := make([]time.Duration, 25)
 	for i := range ages {
@@ -569,9 +501,7 @@ func TestRestoreBrowserSignIn_KeepsTheTwentyMostRecentlyUsedSites(t *testing.T) 
 	}
 	dir := readyStateDir(t)
 	writeState(t, dir, usedSites(now, ages...))
-	var seen []string
-	restarts := 0
-	if _, err := restoreBrowserSignIn(t.Context(), restoringBrowser("", "", cookiesLoad, &seen), dir, filepath.Join(t.TempDir(), "p.json"), now, noRestart(&restarts)); err != nil {
+	if _, err := restoreBrowserSignIn(t.Context(), browserOn(new([][]string)), dir, filepath.Join(t.TempDir(), "p.json"), now); err != nil {
 		t.Fatal(err)
 	}
 	got := keptOrigins(t, dir)
@@ -609,11 +539,13 @@ func TestRecordBrowserOpened_TheOriginAnOpenEndedOnIsRead(t *testing.T) {
 // and the sites it read.
 // witness: internal/ops/browser_signin.go | 			origins = append(origins, kept[o.name]) →
 func TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.cookies = []map[string]any{{"name": "sid", "value": "new", "domain": "127.0.0.1", "path": "/"}}
+	chrome.storage["http://127.0.0.1:18731"] = []browserStorageItem{{"token", "a2"}}
 	dir := readyStateDir(t)
 	writeState(t, dir, threeSites)
-	saved := `{"cookies":[{"name":"sid","value":"new","domain":"127.0.0.1","path":"/"}],"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"a2"}]}]}`
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18731/"), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	kept := keptState(t, dir)
@@ -628,12 +560,13 @@ func TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead(t *testing.T) {
 // The way out holds through the merge: after cookies clear and storage local
 // clear on the signed-in page, the save has no cookies and nothing for that
 // page's site, and the kept file keeps neither.
-// witness: internal/ops/browser_signin.go | 	for _, name := range append(slices.Clone(p.Opened), active) { → 	for _, name := range slices.Clone(p.Opened) {
+// witness: internal/ops/browser_signin.go | 	for _, name := range append(slices.Clone(p.Opened), ownPage) { → 	for _, name := range slices.Clone(p.Opened) {
 func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18731/"), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	if kept := keptState(t, dir); kept != `{"cookies":[],"origins":[]}` {
@@ -642,15 +575,16 @@ func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
 }
 
 // A clear sticks wherever the page went afterwards: a site an open step
-// ended on whose storage the save lacks — its own sign-out cleared it, then
-// sent the page to an identity provider — keeps nothing.
+// ended on whose storage the save finds empty — its own sign-out cleared it,
+// then sent the page to an identity provider — keeps nothing.
 // witness: internal/ops/browser_signin.go | 		seen[name] = true → 		_ = name
 func TestSaveBrowserSignIn_AClearSticksWhereverThePageWent(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}})
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("https://login.example.test/authorize", `{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 https://login.example.test/authorize"), dir, presence, "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	if kept := keptState(t, dir); strings.Contains(kept, "18731") {
@@ -662,10 +596,11 @@ func TestSaveBrowserSignIn_AClearSticksWhereverThePageWent(t *testing.T) {
 // that restored them only in part never writes its own cookies over them.
 // witness: internal/ops/browser_signin.go | 	if !ok || !presence.CookiesHeld { → 	if !ok {
 func TestSaveBrowserSignIn_ABrowserWithoutTheKeptCookiesSavesNothing(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{}), "t2", time.Now()); err == nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18731/"), dir, presenceIn(t, browserPresence{}), "t2", time.Now()); err == nil {
 		t.Error("a save from a browser without the kept cookies must be refused")
 	}
 	if keptState(t, dir) != signedInState {
@@ -678,13 +613,14 @@ func TestSaveBrowserSignIn_ABrowserWithoutTheKeptCookiesSavesNothing(t *testing.
 // opens it any more.
 // witness: internal/ops/browser_signin.go | 			origins = append(origins, kept[o.name]) → 			origins = append(origins, kept[o.name].usedAt(now))
 func TestSaveBrowserSignIn_OnlyUseRenewsAKeptSite(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.storage["http://127.0.0.1:18741"] = []browserStorageItem{{"token", "v"}}
 	now := time.Now()
 	dir := readyStateDir(t)
 	writeState(t, dir, usedSites(now, 6*24*time.Hour, 6*24*time.Hour))
-	saved := `{"cookies":[],"origins":[{"origin":"http://127.0.0.1:18741","localStorage":[{"name":"token","value":"v"}]}]}`
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18741"}})
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18741/", saved, &seen), dir, presence, "t2", now); err != nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18741/"), dir, presence, "t2", now); err != nil {
 		t.Fatal(err)
 	}
 	_, origins, _ := parseBrowserState([]byte(keptState(t, dir)))
@@ -697,51 +633,81 @@ func TestSaveBrowserSignIn_OnlyUseRenewsAKeptSite(t *testing.T) {
 	}
 }
 
-// A save agent-browser could not load back never replaces the kept sign-in.
-// witness: internal/ops/browser_signin.go | if err != nil || !validBrowserState(saved) { → if err != nil {
-func TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave(t *testing.T) {
+// A save that runs out of its bound — a read on the stub tab that never
+// comes back — leaves the kept sign-in exactly as it was and closes the stub
+// tab; it never waits past its bound.
+// witness: internal/ops/browser_signin.go | 			if ctxErr := ctx.Err(); ctxErr != nil { → 			if ctxErr := ctx.Err(); ctxErr == context.Canceled {
+func TestSaveBrowserSignIn_ASaveThatRunsOutKeepsTheLastSave(t *testing.T) {
 	dir := readyStateDir(t)
 	writeKept(t, dir)
-	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err == nil {
-		t.Error("a save agent-browser cannot load must be reported")
-	}
+	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731", "http://127.0.0.1:18736"}})
+	synctest.Test(t, func(t *testing.T) {
+		chrome := newFakeChrome().dialedBy(t)
+		chrome.stall["http://127.0.0.1:18736"] = true
+		ctx, cancel := context.WithTimeout(context.Background(), browserSignInSaveTimeout)
+		defer cancel()
+		start := time.Now()
+		if err := saveBrowserSignIn(ctx, browserOn(new([][]string), "t2 http://127.0.0.1:18731/"), dir, presence, "t2", time.Now()); err == nil {
+			t.Error("a save that ran out must be reported")
+		}
+		if waited := time.Since(start); waited > browserSignInSaveTimeout+browserStubCloseTimeout {
+			t.Errorf("the save waited %s", waited)
+		}
+		if open := chrome.openTabs(); len(open) != 0 {
+			t.Errorf("the stub tab must be closed: %v", open)
+		}
+	})
 	if got := keptState(t, dir); got != signedInState {
-		t.Errorf("a broken save must not replace the kept sign-in: %q", got)
+		t.Errorf("a save that ran out must not replace the kept sign-in: %q", got)
 	}
 }
 
-// Session storage never reaches the kept file: a load never usefully
-// restores it and the way out does not clear it, so a token a page keeps
-// there would only sit on disk. Cookies and local storage are kept.
-// witness: internal/ops/browser_signin.go | saved, err := withoutSessionStorage(data) → saved, err := data, error(nil)
-func TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile(t *testing.T) {
+// A kept site whose read fails on the stub tab keeps its kept storage: a
+// failed read says nothing of what the site holds.
+// witness: internal/ops/browser_signin.go | 			items, err := stub.readStorage(ctx, name) → 			items, _ := stub.readStorage(ctx, name)
+func TestSaveBrowserSignIn_ASiteWhoseReadFailsKeepsItsStorage(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.fail["http://127.0.0.1:18731"] = true
 	dir := readyStateDir(t)
-	saved := strings.Replace(signedInState, `"sessionStorage":[]`, `"sessionStorage":[{"name":"stok","value":"SESSIONSECRET"}]`, 1)
-	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
-		t.Fatalf("saveBrowserSignIn: %v", err)
+	writeKept(t, dir)
+	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}})
+	if err := saveBrowserSignIn(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18731/"), dir, presence, "t2", time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	kept := keptState(t, dir)
-	if strings.Contains(kept, "SESSIONSECRET") {
-		t.Errorf("session storage reached the kept file: %s", kept)
-	}
-	if !strings.Contains(kept, `"abc123"`) || !strings.Contains(kept, `"xyz789"`) || !validBrowserState([]byte(kept)) {
-		t.Errorf("the cookie and local storage must be kept: %s", kept)
+	if kept := keptState(t, dir); !strings.Contains(kept, `"xyz789"`) {
+		t.Errorf("a site whose read failed must keep its storage: %s", kept)
 	}
 }
 
-// A site this browser did not get restored — no time was left — and a call
-// then opened is not erased by the save: an empty read of it says nothing of
-// its kept storage.
-// witness: internal/ops/browser_signin.go | 		if name != "" && !slices.Contains(p.Unrestored, name) { → 		if name != "" {
+// The save reads the call's own page, never a popup's: a popup still open
+// on an identity provider as the call ends does not put the provider's
+// storage in the kept file.
+// witness: internal/ops/browser_signin.go | 	if i := slices.IndexFunc(tabs, func(t browserTab) bool { return t.ID == ownTab }); i > 0 { → 	if i := len(tabs) - 1; i > 0 {
+func TestSaveBrowserSignIn_ReadsTheCallsOwnPageNotAPopups(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.storage["http://127.0.0.1:18731"] = []browserStorageItem{{"token", "app"}}
+	chrome.storage["https://login.example.test"] = []browserStorageItem{{"pkce", "provider"}}
+	dir := readyStateDir(t)
+	err := saveBrowserSignIn(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18731/", "t3 https://login.example.test/authorize"), dir,
+		presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keptOrigins(t, dir); !slices.Equal(got, []string{"http://127.0.0.1:18731"}) {
+		t.Errorf("the save must read the call's own page alone: %v", got)
+	}
+}
+
+// A site this browser did not get restored — its restore ran out — and a
+// call then opened is not erased by the save: an empty read of it says
+// nothing of its kept storage.
+// witness: internal/ops/browser_signin.go | 		if name != "" && !slices.Contains(p.Unrestored, name) && !slices.Contains(read, name) { → 		if name != "" && !slices.Contains(read, name) {
 func TestSaveBrowserSignIn_ASiteNotRestoredIsNotErasedByOpeningIt(t *testing.T) {
+	newFakeChrome().dialedBy(t)
 	dir := readyStateDir(t)
 	writeState(t, dir, threeSites)
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18735"}, Unrestored: []string{"http://127.0.0.1:18735"}})
-	var seen [][]string
-	saved := `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/"}],"origins":[]}`
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18735/", saved, &seen), dir, presence, "t2", time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18735/"), dir, presence, "t2", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if got := keptOrigins(t, dir); !slices.Contains(got, "http://127.0.0.1:18735") {
@@ -755,7 +721,7 @@ func TestSaveBrowserSignIn_ASiteNotRestoredIsNotErasedByOpeningIt(t *testing.T) 
 // restore.
 // witness: internal/ops/browser_signin.go | 	return err == nil && base != "" && base == p.BaseTarget → 	return err == nil && base != ""
 func TestKeptSignInLetsReuse_OnlyTheChromeTheSignInWasRestoredInto(t *testing.T) {
-	run := savingBrowser("", new([][]string))
+	run := browserOn(new([][]string))
 	tests := []struct {
 		name     string
 		presence *browserPresence

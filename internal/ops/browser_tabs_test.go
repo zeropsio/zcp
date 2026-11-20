@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -471,74 +470,6 @@ func TestRunCallSteps_AFollowWithLittleTimeLeftOnlySwitchesAndSaysSo(t *testing.
 			t.Errorf("the popup must still be followed, and the click's step must say it was not waited on: %+v", results)
 		}
 	})
-}
-
-// savingTabs answers a hand-back as agent-browser does, tabs and all: the base
-// tab t1 on about:blank, the call's own t2 on the app and a popup t3 on the
-// provider, active as given; a switch makes a listed tab active, and a state
-// save writes saved. It records each command.
-func savingTabs(active, saved string, tabs []string, seen *[][]string) browserStepExec {
-	urls := map[string]string{"t1": "about:blank", "t2": "http://127.0.0.1:18731/", "t3": "https://login.example.test/authorize"}
-	return func(_ context.Context, args []string) (string, string, error) {
-		*seen = append(*seen, args)
-		switch {
-		case slices.Equal(args, []string{"tab", "list"}):
-			listed := make([]string, 0, len(tabs))
-			for i, id := range tabs {
-				target := "T" + id
-				if i == 0 {
-					target = baseTarget
-				}
-				listed = append(listed, fmt.Sprintf(`{"tabId":%q,"targetId":%q,"url":%q,"active":%t}`, id, target, urls[id], id == active))
-			}
-			return `{"success":true,"data":{"tabs":[` + strings.Join(listed, ",") + `]},"error":null}`, "", nil
-		case len(args) == 2 && args[0] == "tab":
-			if !slices.Contains(tabs, args[1]) {
-				return `{"success":false,"data":null,"error":"Tab ` + args[1] + ` not found"}`, "", nil
-			}
-			active = args[1]
-		case len(args) == 3 && args[0] == "state" && args[1] == "save":
-			if err := os.WriteFile(args[2], []byte(saved), 0o600); err != nil {
-				return "", "", err
-			}
-		}
-		return `{"success":true,"data":{},"error":null}`, "", nil
-	}
-}
-
-// The save at a call's end reads the call's own tab, made active first: a
-// popup that opened after the walk's last look is active at the next
-// command, and a save from it would record the provider's site.
-// witness: internal/ops/browser_signin.go | 	switched := walkBrowser(ctx, [][]string{{browserCmdTab, ownTab}}, run) → 	var switched error
-func TestHandBackBrowser_TheSaveReadsTheCallsOwnTabMadeActive(t *testing.T) {
-	dir := readyStateDir(t)
-	var seen [][]string
-	_, err := handBackBrowser(t.Context(), savingTabs("t3", signedInState, []string{"t1", "t2", "t3"}, &seen), dir,
-		presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error { return nil })
-	if err != nil {
-		t.Fatalf("handBackBrowser: %v", err)
-	}
-	if !strings.Contains(keptState(t, dir), `"abc123"`) {
-		t.Errorf("the sign-in was not saved from the call's own tab: %v", seen)
-	}
-}
-
-// A save that cannot see the call's own tab active — gone, so agent-browser
-// sits on the base tab's about:blank, where a save stalled — saves nothing,
-// and the last save stands.
-// witness: internal/ops/browser_signin.go | 	if switched != nil || active.ID != ownTab || active.Base || active.Origin == "" { → 	if switched != nil && active.ID == "" {
-func TestHandBackBrowser_NoSaveOffTheCallsOwnTab(t *testing.T) {
-	dir := readyStateDir(t)
-	writeKept(t, dir)
-	var seen [][]string
-	_, err := handBackBrowser(t.Context(), savingTabs("t1", `{"cookies":[],"origins":[]}`, []string{"t1"}, &seen), dir,
-		presenceIn(t, browserPresence{CookiesHeld: true}), "t4", func(context.Context) error { return nil })
-	if err != nil {
-		t.Fatalf("handBackBrowser: %v", err)
-	}
-	if keptState(t, dir) != signedInState {
-		t.Errorf("a save off the call's tab replaced the kept sign-in: %s", keptState(t, dir))
-	}
 }
 
 // A step that failed with "Target closed" because its popup closed under it

@@ -106,8 +106,8 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	}
 	fresh := false
 	note := ""
-	// ownTab is the call's own tab, the one its setup opened: the hand-back
-	// saves the sign-in from it. ownTarget is its CDP target.
+	// ownTab is the call's own tab, the one its setup opened: the hand-back's
+	// save reads its page's origin. ownTarget is its CDP target.
 	ownTab, ownTarget := "", ""
 	setup := func() (err error) {
 		ownTab, ownTarget, err = h.setup(ctx, isolation)
@@ -124,16 +124,8 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 			return err
 		}
 		if stateDir != "" {
-			// A clean browser in place of one a part of the load left busy
-			// with a saved site.
-			restart := func(rctx context.Context) error {
-				if err := stopBrowser(rctx); err != nil {
-					return err
-				}
-				return h.start(rctx, stateDir)
-			}
 			var err error
-			if note, err = restoreBrowserSignIn(ctx, h.step, stateDir, browserPresencePath, time.Now(), restart); err != nil {
+			if note, err = restoreBrowserSignIn(ctx, h.step, stateDir, browserPresencePath, time.Now()); err != nil {
 				return err
 			}
 		}

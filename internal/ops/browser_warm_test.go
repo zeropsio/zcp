@@ -641,16 +641,17 @@ func TestBrowserUnitArgs_FilesTheBrowserWritesArePrivate(t *testing.T) {
 	}
 }
 
-// A clean call hands the browser back with its sign-in saved — on the
-// call's own tab, before its tabs close, and before the browser is marked
-// idle — so a recycle right after it, a page timeout in the next call, still
-// finds the sign-in kept.
+// A clean call hands the browser back with its sign-in saved — before its
+// tabs close, and before the browser is marked idle — so a recycle right
+// after it, a page timeout in the next call, still finds the sign-in kept.
 // witness: internal/ops/browser_warm.go | 	if stateDir != "" { → 	if false {
 func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	chrome.cookies = []map[string]any{{"name": "sid", "value": "abc123", "domain": "127.0.0.1", "path": "/"}}
 	dir := readyStateDir(t)
 	var seen [][]string
 	keptWhenIdle := ""
-	_, err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), browserOn(&seen, "t2 http://127.0.0.1:18731/"), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
 		keptWhenIdle = keptState(t, dir)
 		return nil
 	})
@@ -661,9 +662,9 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 		t.Errorf("the browser went idle before its sign-in was kept: %q", keptWhenIdle)
 	}
 	closed := slices.IndexFunc(seen, func(a []string) bool { return slices.Equal(a, []string{"tab", "close", "t2"}) })
-	saved := slices.IndexFunc(seen, func(a []string) bool { return len(a) > 1 && a[0] == "state" && a[1] == "save" })
+	saved := slices.IndexFunc(seen, func(a []string) bool { return slices.Equal(a, []string{"get", "cdp-url"}) })
 	if saved < 0 || closed < saved {
-		t.Errorf("the save must run on the call's tab, before its tabs close: %v", seen)
+		t.Errorf("the save must run before the call's tabs close: %v", seen)
 	}
 }
 
@@ -672,14 +673,20 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 // witness: internal/ops/browser_warm.go | 			logBrowserSignIn(err) → 			return "", err
 func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
 	dir := readyStateDir(t)
-	var seen [][]string
+	writeKept(t, dir)
+	unreached := func(ctx context.Context, args []string) (string, string, error) {
+		if slices.Equal(args, []string{"get", "cdp-url"}) {
+			return `{"success":false,"data":null,"error":"Browser not launched"}`, "", errors.New("exit status 1")
+		}
+		return browserOn(new([][]string), "t2 http://127.0.0.1:18731/")(ctx, args)
+	}
 	idle := false
-	_, err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), unreached, dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
 		idle = true
 		return nil
 	})
-	if err != nil || !idle {
-		t.Errorf("a failed save must still hand the browser back idle: err=%v idle=%v", err, idle)
+	if err != nil || !idle || keptState(t, dir) != signedInState {
+		t.Errorf("a failed save must still hand the browser back idle, the last save standing: err=%v idle=%v", err, idle)
 	}
 }
 
@@ -705,8 +712,8 @@ func TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing(t *testing.T
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}, BaseTarget: "A7E47918804A4FDA"})
-	var seen [][]string
-	note, err := handBackBrowser(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", func(context.Context) error { return nil })
+	newFakeChrome().dialedBy(t)
+	note, err := handBackBrowser(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18731/"), dir, presence, "t2", func(context.Context) error { return nil })
 	if err != nil || note == "" {
 		t.Errorf("a relaunched Chrome: note=%q err=%v", note, err)
 	}
