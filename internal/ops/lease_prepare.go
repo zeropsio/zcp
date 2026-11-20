@@ -56,7 +56,8 @@ type LeasePrepare struct {
 // answered before the checkout, run.start's in a container the platform just
 // created, which booted on an empty /var/www — a reload after that overlay,
 // so the declared servers start under it. It fills v's prepare report, the
-// overlay the supervisor took and the notes, and answers whether a supervisor
+// overlay the supervisor took, the supervisor step's time on a lease the
+// acquire reserved (v.Timings) and the notes, and answers whether a supervisor
 // answers on the lease now — one zcp found or started — whose dev servers the
 // acquire then reads; nothing in it fails the acquire.
 func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *LeaseView) bool {
@@ -68,6 +69,7 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 			note = staleImageNote(v.Pool, alias, v.Prepare)
 		}
 	}
+	supervisorBegun := d.now()
 	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
 	r.log = scrubSecrets(r.log, secrets)
 	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
@@ -88,6 +90,9 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 		}
 	} else {
 		_, _, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
+	}
+	if v.Timings != nil {
+		v.Timings.SupervisorMs = d.sinceMs(supervisorBegun)
 	}
 	v.Note = joinNotes(v.Note, note, wireNote, scrubSecrets(leaseSupervisorNote(alias, r, err), secrets), refused)
 	return supervised

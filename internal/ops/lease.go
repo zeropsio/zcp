@@ -270,6 +270,10 @@ type LeaseView struct {
 	// URLs, never a secret. nil when the declaration names no sibling
 	// variable or the supervisor did not take the overlay (the note says why).
 	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
+	// Timings is how long each step of the acquire that reserved this lease
+	// took (DP-5); nil on every other view, on a lease returned reused, and
+	// on a held lease the acquire only finished the checkout of.
+	Timings *LeaseTimings `json:"timings,omitempty"`
 	// Activity is what a status call read of the lease's checkout, or why it
 	// could not (DP-21); nil when it was not read (another action, or no ssh).
 	Activity *topology.LeaseActivity `json:"activity,omitempty"`
@@ -309,6 +313,31 @@ type LeaseView struct {
 	// when it would have dropped it — another lease's by then, or unreadable
 	// (dropLeaseRecord); "" when it was dropped.
 	recordKept string
+}
+
+// LeaseTimings are the milliseconds each step of an acquire took for one
+// lease it reserved, read with the lease deps' clock (DP-5). A step that did
+// not run is 0. TotalMs runs from the call's start to its answer, so the
+// locks, bearer writes and waits for sibling members are its gap to the
+// steps' sum; the prepare keeps its own LeasePrepare.Millis.
+type LeaseTimings struct {
+	// ReserveMs is the reservation, a preparing container's wait included.
+	ReserveMs int64 `json:"reserveMs"`
+	// AttachMs is the alias and the mount.
+	AttachMs int64 `json:"attachMs"`
+	// CheckoutMs is the ownership checks and the checkout, a warm clone's
+	// wait included.
+	CheckoutMs int64 `json:"checkoutMs"`
+	// SupervisorMs is the supervisor's find or start, its overlay and reload.
+	SupervisorMs   int64 `json:"supervisorMs"`
+	PublicAccessMs int64 `json:"publicAccessMs"`
+	DevServersMs   int64 `json:"devServersMs"`
+	TotalMs        int64 `json:"totalMs"`
+}
+
+// sinceMs is the milliseconds from begun to now on the deps' clock.
+func (d LeaseDeps) sinceMs(begun time.Time) int64 {
+	return d.now().Sub(begun).Milliseconds()
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes

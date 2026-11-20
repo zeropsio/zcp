@@ -163,6 +163,7 @@ func reservationStartRefusal(branch, pool string) error {
 // — is refused at once (refuseMainLease); a lease of it held from before is
 // still released, parked and listed.
 func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []string, repo, branch, from string) (LeaseChange, error) {
+	callBegun := d.now()
 	branch = cmp.Or(branch, leaseDefaultBranch)
 	if err := refuseMainLease(branch); err != nil {
 		return LeaseChange{}, err
@@ -287,12 +288,25 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 			}
 			on := false
 			if d.PublicAccess != nil {
+				begun := d.now()
 				var note string
 				on, note = d.PublicAccess(ctx, m.rec.alias())
 				m.view.Note = joinNotes(m.view.Note, note)
+				if m.view.Timings != nil {
+					m.view.Timings.PublicAccessMs = d.sinceMs(begun)
+				}
 			}
+			begun := d.now()
 			m.view.DevServers = acquiredDevServers(ctx, d, m.rec, on)
+			if m.view.Timings != nil {
+				m.view.Timings.DevServersMs = d.sinceMs(begun)
+			}
 		})
+	}
+	for _, m := range fresh {
+		if m.view.Timings != nil {
+			m.view.Timings.TotalMs = d.sinceMs(callBegun)
+		}
 	}
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {
@@ -843,7 +857,9 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	// A create in progress refuses it containers-preparing, reserving nothing:
 	// it is retried within its own deadline (DP-27).
 	acqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
+	reserveBegun := d.now()
 	got, waitNote, err := acquireThroughPreparing(acqCtx, d, rp)
+	timings := &LeaseTimings{ReserveMs: d.sinceMs(reserveBegun)}
 	cancel()
 	if err != nil {
 		m.err = leaseAcquireError(ctx, d, rp, err)
@@ -885,7 +901,11 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	m.rec, m.reserved = rec, true
 	m.view = rec.view(LeaseStateHeld)
 	m.view.Note = waitNote
-	if note := d.Host.attach(ctx, d, rec); note != "" {
+	m.view.Timings = timings
+	attachBegun := d.now()
+	note := d.Host.attach(ctx, d, rec)
+	timings.AttachMs = d.sinceMs(attachBegun)
+	if note != "" {
 		// The lease is real and stays recorded; zcp init (or the next status)
 		// finds the alias or mount missing and restores it.
 		m.view.State = LeaseStateUnmounted
@@ -914,6 +934,10 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 	}
 	groupBase := base
 	checkout := func(m *groupMember, cutFrom string) string {
+		if m.view.Timings != nil {
+			begun := d.now()
+			defer func() { m.view.Timings.CheckoutMs = d.sinceMs(begun) }()
+		}
 		switch v := renewOwnership(ctx, d, m.rp, m.rec); {
 		case v.own.lost():
 			m.err, m.reserved = memberEnded(ctx, d, m.rec, v.why, "before its checkout, so nothing was checked out in it"), false
