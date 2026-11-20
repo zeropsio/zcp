@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -113,7 +115,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema: browserInputSchema(inMate),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input BrowserInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input BrowserInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.BrowserBatch(ctx, ops.BrowserBatchInput{
 			URL:            input.URL,
 			Commands:       input.Commands,
@@ -123,6 +125,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			FullPage:       input.FullPage,
 			EnvStorePath:   mate.LiveEnvStorePath,
 			InMate:         inMate,
+			Call:           requestBrowserCall(req),
 		})
 		if err != nil {
 			return convertError(err), nil, nil
@@ -130,6 +133,52 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 		keepBrowserPicture(stateDir, result)
 		return browserToolResult(result), nil, nil
 	})
+}
+
+// browserCallIDKeys are the `_meta` keys under which a client sends its own
+// id of the tool call, by client: Claude Code's tool_use id ("toolu_…",
+// recorded from Claude Code 2.1.326). Codex, Cursor, OpenCode, Grok and
+// Antigravity are not known to send one.
+var browserCallIDKeys = []string{"claudecode/toolUseId"}
+
+// browserCallIDMax bounds an id zcp publishes; a longer one is no tool-call
+// id it publishes, never one it cuts.
+const browserCallIDMax = 256
+
+// requestBrowserCall is the call a zerops_browser request runs for: the
+// client's own tool-call id and its name from initialize (browserCall).
+func requestBrowserCall(req *mcp.CallToolRequest) ops.BrowserCall {
+	if req == nil || req.Params == nil {
+		return ops.BrowserCall{}
+	}
+	var init *mcp.InitializeParams
+	if req.Session != nil {
+		init = req.Session.InitializeParams()
+	}
+	call := browserCall(req.Params.Meta, init)
+	if call.ID == "" {
+		keys := slices.Sorted(maps.Keys(req.Params.Meta))
+		fmt.Fprintf(os.Stderr, "zerops_browser: client %q sent no tool-call id; its _meta keys: %v\n", call.Client, keys)
+	}
+	return call
+}
+
+// browserCall reads the client's own tool-call id from a tools/call
+// request's _meta, verbatim, and the client's name: an id under a key
+// browserCallIDKeys does not name, or one that is no string, empty or past
+// browserCallIDMax, is none. zcp never makes one up.
+func browserCall(meta mcp.Meta, init *mcp.InitializeParams) ops.BrowserCall {
+	var call ops.BrowserCall
+	if init != nil && init.ClientInfo != nil {
+		call.Client = init.ClientInfo.Name
+	}
+	for _, key := range browserCallIDKeys {
+		if id, ok := meta[key].(string); ok && id != "" && len(id) <= browserCallIDMax {
+			call.ID = id
+			break
+		}
+	}
+	return call
 }
 
 // keepBrowserPicture keeps a captured screenshot as one of the Mate's pictures
