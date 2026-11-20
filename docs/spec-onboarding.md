@@ -31,10 +31,14 @@ Owner: `internal/content/templates/agents_onboarding.md`, composed by `BuildAgen
   ("get me started with Zerops", "I'm new here — what now?") enters the onboarding
   conversation. A request to get started with a **specific technology or task** ("help me
   get started with PostgreSQL", "deploy this repo") is normal routing, never intercepted.
-- On trigger the agent: fetches `zerops_knowledge uri="zerops://playbooks/onboarding"`
-  once and follows it; mutates nothing until the person picks a direction; hands off to
-  normal routing (and guided, when present) after the choice; and reports tool/auth
-  unavailability plainly, surfacing the reported recovery — never simulating onboarding.
+- The block carries the trigger, the fetch and the unavailability rule: on trigger the
+  agent fetches `zerops_knowledge uri="zerops://playbooks/onboarding"` once and follows
+  it; when Zerops tools are unavailable or auth fails it says so plainly and surfaces the
+  reported recovery — never simulating onboarding. The unavailability rule stays in the
+  block because the playbook is fetched through a Zerops tool, unreachable exactly then.
+  The playbook carries the rest: the tool-call-free opening, nothing mutates until the
+  person picks a direction, and normal routing (and guided, when present) owns the work
+  after the choice.
 - The block must not violate the composition-wide content constraints: no
   ``- `bootstrap` ``/`- `develop` `` bullet tokens (first-occurrence ordering pins), no
   environment-specific strings, no authoring tokens, no guided marker, tools-only
@@ -187,7 +191,7 @@ additions:
 
 | # | Invariant | Pinned by |
 |---|---|---|
-| O1 | Trigger block renders iff `!Authoring`, both envs, guided-independent, ordered before the routing table; trigger copy carries exact phrase + variant + negative rule + fetch directive | `TestBuildAgentsMD_OnboardingGate_UserOnly`, `TestBuildAgentsMD_OnboardingFirst_BeforeRouting`, `TestBuildAgentsMD_OnboardingTriggerCopy`, `TestRefreshAgentContext_OnboardingPreserved` |
+| O1 | Trigger block renders iff `!Authoring`, both envs, guided-independent, ordered before the routing table; trigger copy carries exact phrase + variant + negative rule + fetch directive + the unavailability rule, and the playbook the rest (O2-O4) | `TestBuildAgentsMD_OnboardingGate_UserOnly`, `TestBuildAgentsMD_OnboardingFirst_BeforeRouting`, `TestBuildAgentsMD_OnboardingTriggerCopy`, `TestRefreshAgentContext_OnboardingPreserved` |
 | O2 | Playbook opens tool-call-free; on-demand state resolution is status-first, classified from discover only; fresh rule = all non-system rows `zcp-self`, no activity/warnings; demand-driven ordering greet→choice→status→discover→consent | `TestPlaybookOnboarding_ContentPins_CoreContract` (ordering + wording pins) |
 | O3 | Menu block verbatim (full bullet lines + escape line pinned, not labels alone; Build-something example is the imperative "create a weather dashboard in Bun"); **Continue this project** post-state only; ONE consent rule — show the returned recipe plan, get one plain yes before `zerops_import` (everything else deferred to workflow guidance, minimal-instruction principle); no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
 | O4 | Mapping slugs resolve in the embedded corpus with non-empty import YAML; stage URL handed over exactly as the workflow reports it, never composed; ownership offer (git-push-setup/export + surfaced GUI link, never composed from the corpus slug); orientation branch fetches `zerops://playbooks/orientation` only; playbook defers to workflow guidance after the route commit | `TestPlaybookOnboarding_ContentPins_CoreContract`, `TestPlaybookMapping_SlugsResolveInCorpus`, `TestPlaybookOrientation_ContentPins_CoreContract` |
