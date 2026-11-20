@@ -22,7 +22,6 @@ func (emptyOrg) ListProjects(context.Context) ([]platform.Project, error) { retu
 func (emptyOrg) ListServices(context.Context, string) ([]platform.ServiceStack, error) {
 	return nil, nil
 }
-func (emptyOrg) ListMembers(context.Context) ([]platform.OverviewMember, error) { return nil, nil }
 
 // orgTools is org mode's own surface.
 var orgTools = []string{

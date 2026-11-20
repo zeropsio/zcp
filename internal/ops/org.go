@@ -12,14 +12,13 @@ import (
 
 // OrgSource is what org mode reads the organization through — HQ's client
 // in production (hq.Client), which HQ answers with what the Chief's
-// registered person reaches: projects, services and their state, members
-// with their roles (docs/spec-mate.md §2.11, OM-4). Every project and service
+// registered person reaches: projects and services with their state
+// (docs/spec-mate.md §2.11, OM-4). Every project and service
 // id an org operation acts on is resolved from these lists first, so a
 // project outside the person's reach is never read.
 type OrgSource interface {
 	ListProjects(ctx context.Context) ([]platform.Project, error)
 	ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error)
-	ListMembers(ctx context.Context) ([]platform.OverviewMember, error)
 }
 
 // OrgProjectKind is what a project is to the organization.
@@ -118,11 +117,10 @@ type OrgGroup struct {
 }
 
 // OrgOverviewResult is the projects the Chief's person reaches, grouped by
-// kind, and the organization's members with their roles.
+// kind.
 type OrgOverviewResult struct {
-	ProjectsVisibleToPerson int                       `json:"projectsVisibleToPerson"`
-	Groups                  []OrgGroup                `json:"groups"`
-	Members                 []platform.OverviewMember `json:"members"`
+	ProjectsVisibleToPerson int        `json:"projectsVisibleToPerson"`
+	Groups                  []OrgGroup `json:"groups"`
 }
 
 // orgSnapshot is the organization's projects and services, read once.
@@ -173,11 +171,7 @@ func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error)
 		}
 		grouped[class.Kind] = append(grouped[class.Kind], summary)
 	}
-	members, err := src.ListMembers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list the org's members: %w", err)
-	}
-	result := &OrgOverviewResult{ProjectsVisibleToPerson: len(snap.projects), Members: members}
+	result := &OrgOverviewResult{ProjectsVisibleToPerson: len(snap.projects)}
 	for _, kind := range orgKindOrder {
 		projects := grouped[kind]
 		if len(projects) == 0 {

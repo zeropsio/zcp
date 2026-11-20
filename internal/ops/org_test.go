@@ -15,7 +15,6 @@ import (
 type fakeOrg struct {
 	projects []platform.Project
 	services []platform.ServiceStack
-	members  []platform.OverviewMember
 }
 
 func (f *fakeOrg) ListProjects(context.Context) ([]platform.Project, error) {
@@ -30,9 +29,6 @@ func (f *fakeOrg) ListServices(_ context.Context, projectID string) ([]platform.
 	}
 	return out, nil
 }
-func (f *fakeOrg) ListMembers(context.Context) ([]platform.OverviewMember, error) {
-	return f.members, nil
-}
 
 func svc(id, project, name, typ, category, status string) platform.ServiceStack {
 	return platform.ServiceStack{
@@ -44,10 +40,6 @@ func svc(id, project, name, typ, category, status string) platform.ServiceStack 
 // testOrg is a small organization with one of every kind of project.
 func testOrg() *fakeOrg {
 	return &fakeOrg{
-		members: []platform.OverviewMember{
-			{UserID: "u1", FullName: "Dana", Role: "ADMIN", Status: "ACTIVE"},
-			{UserID: "u2", FullName: "Eli", Role: "READ_ONLY", Status: "ACTIVE"},
-		},
 		projects: []platform.Project{
 			{ID: "pMM", Name: "Chief - Chief", Status: "ACTIVE", Tags: []string{"mate", "chief"}},
 			{ID: "pRossy", Name: "Northwind Shop - Rossy", Status: "ACTIVE", Tags: []string{"mate"}},
@@ -116,9 +108,6 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	}
 	if got.ProjectsVisibleToPerson != 7 {
 		t.Fatalf("projectsVisibleToPerson=%d, want 7", got.ProjectsVisibleToPerson)
-	}
-	if len(got.Members) != 2 || got.Members[0].Role != "ADMIN" {
-		t.Errorf("members = %+v, want the organization's two people with their roles", got.Members)
 	}
 	count := map[OrgProjectKind]int{}
 	for _, g := range got.Groups {

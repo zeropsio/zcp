@@ -36,9 +36,6 @@ func (orgFake) ListServices(_ context.Context, projectID string) ([]platform.Ser
 	}
 	return out, nil
 }
-func (orgFake) ListMembers(context.Context) ([]platform.OverviewMember, error) {
-	return []platform.OverviewMember{{UserID: "u1", FullName: "Dana", Role: "ADMIN", Status: "ACTIVE"}}, nil
-}
 
 var _ ops.OrgSource = orgFake{}
 
@@ -48,7 +45,7 @@ func orgServer() *mcp.Server {
 	return srv
 }
 
-type orgWithHQNamedService struct{ orgFake }
+type orgWithHQNamedService struct{}
 
 func (orgWithHQNamedService) ListProjects(ctx context.Context) ([]platform.Project, error) {
 	projects, err := (orgFake{}).ListProjects(ctx)
@@ -129,7 +126,6 @@ func TestOrgTools_EachAnswersWithItsDocument(t *testing.T) {
 		notIn   string
 	}{
 		{tool: "zerops_org_overview", args: map[string]any{}, wantKey: "groups", wantIn: `"mate":"Rossy"`},
-		{tool: "zerops_org_overview", args: map[string]any{}, wantKey: "members", wantIn: `"role":"ADMIN"`},
 		{tool: "zerops_org_services", args: map[string]any{"project": "Contoso - production"}, wantKey: "services", wantIn: `"hostname":"medusa"`},
 		{tool: "zerops_org_propose_service", args: map[string]any{"action": "restart", "project": "pProd", "service": "medusa", "reason": "stuck"}, wantKey: "proposal", wantIn: `"kind":"service.restart"`},
 		{tool: "zerops_org_propose_env", args: map[string]any{"project": "pProd", "scope": "project", "key": "APP_URL", "value": "https://x", "reason": "domain"}, wantKey: "proposal", wantIn: `"kind":"env.set"`},

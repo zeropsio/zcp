@@ -2505,18 +2505,19 @@ both ways. No service variable switches it and no credential of its own exists.
 
 **No write, ever; HQ is the only door.** Org mode's only door to the organization is HQ's Chief read,
 `POST /api/mate/chief/read` (§3.11), presented the Chief's project key, the key every Mate presents
-to HQ. Org mode builds no Zerops client, and the Chief read only reads. HQ reads Zerops with the
-registered person's kept personal token, so the Chief sees exactly what its person sees. That token
-never enters the container: an agent there could read it, and it is a write token across every
-organisation of that person; the browser reads its own organisation-wide views with it. HQ's
-refusal is shown once, in HQ's words: never retried with another credential, and never answered by
-reading Zerops another way. The Chief reads the allowlist of §3.11 — the organization's projects,
-their services with their state, its members with their roles, each list whole — and nothing else:
-never a variable, a log, a token list, a cost or any other read a Zerops credential could make.
-Every change is the person's: their client makes it with their own Zerops token after their click.
+to HQ. Org mode builds no Zerops client, and the Chief read only reads. HQ asks Zerops' private API
+(`GetMemberProjects`) under its own identity for the registered person's projects and services, so
+the Chief sees exactly what its person sees. No person token exists anywhere on this path: HQ keeps
+none for it and none enters the container. HQ's refusal is shown once, in HQ's words: never retried
+with another credential, and never answered by reading Zerops another way. The Chief reads the
+allowlist of §3.11 — the organization's projects and their services with their state and ports,
+each list whole — and nothing else: never a variable, a log, a token list, a cost or any other read
+a Zerops credential could make. The organisation's people are not read: Zerops' private API has no
+members method; the list returns when Zerops delivers one. Every change is the person's: their
+client makes it with their own Zerops token after their click.
 
 **Tool surface.** Look: `zerops_org_overview` (the projects its person reaches, grouped as `mate`,
-`production`, `stage`, `other`, `chief`, and the members with their roles). Its
+`production`, `stage`, `other`, `chief`; no members). Its
 `projectsVisibleToPerson` count is the number of projects the Chief's person reaches, not the
 organization's total. `zerops_org_services` reads a project's services, their type, their state
 and their ports. A project outside the person's reach is absent: a tool
@@ -2755,7 +2756,7 @@ neither its project nor `zerops_observe` shows included. The shared section tell
 | OM-1 | Org mode makes no write call to the Zerops API: it builds no Zerops client, and its one door, HQ's Chief read, only reads. `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops with the registered person's kept personal token, which never enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops' private API under its own identity, not a kept token of the registered person, and no person token enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate asks its person's Chief only by message: `zerops_list_mates` names the peer the Mate's state names as its person's Chief, and no tool proposes asking it. `TestListMates_PersonsChiefAmongThem_IsNamedTheChief`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
@@ -3246,25 +3247,23 @@ sequenceDiagram
   a newly registered one enters it. Rotation does not wait for background work; work running at
   rotation is lost.
 - zcp's org-mode reads go to HQ: `POST /api/mate/chief/read` with the Chief's project key, body
-  exactly `{"read":"projects"|"services"|"members"}`. HQ reads Zerops with the registered person's
-  kept personal token, which never enters the container (§2.11), so the Chief sees exactly what its
-  person sees; a project or member outside that reach is absent. Each answer is the whole list,
-  complete or refused, never paged: `projects` is `{projects:[{id,name,status,tags}]}`, the
-  organisation's projects the person's token reaches; `services` is
+  exactly `{"read":"projects"|"services"}`. HQ asks Zerops' private API (`GetMemberProjects`) under
+  its own identity for the registered person's projects and services; no person token exists on this
+  path (§2.11), so the Chief sees exactly what its person sees; a project outside that reach is
+  absent. Each answer is the whole list, complete or refused, never paged: `projects` is
+  `{projects:[{id,name,status,tags}]}`, the organisation's projects the person reaches; `services` is
   `{services:[{id,projectId,name,status,type,category,ports:[{port,protocol,scheme,portRouting,httpRouting}]}]}`,
   every service of those projects, the platform's own among them, `ports` always present and as
-  Zerops holds them; `members` is `{members:[{userId,fullName,role,status}]}`, the
-  organisation's people. The allowlist is the organisation overview — projects, services with their
-  state and ports, members with their roles. Never environment variables, token lists or anything else a
-  Zerops read could carry (non-sensitive variables read in clear, other Mates' keys among them). A
+  Zerops holds them. The allowlist is the organisation overview — projects, services with their
+  state and ports. The organisation's people are not read (§2.11). Never environment variables,
+  token lists or anything else a Zerops read could carry (non-sensitive variables read in clear, other Mates' keys among them). A
   read joins the allowlist only by the owner's decision written here. HQ's refusal `{code,reason?}`
   is shown once, in HQ's words (the route's states: mate-hq `spec/protocol.md`, Chief):
 
   | HQ answers                                                                                        | What the Chief's tool says                                                 |
   | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-  | `409 credential_required` (`personal_token_missing`, `personal_token_refused`, `held`)            | the Chief's person must sign in to Mate once, with the reason              |
   | `403 forbidden` `not_chief`                                                                       | this project is no person's Chief now                                      |
-  | `403 forbidden` with the person's permission reason (`not_mate_operator`, `not_active_member`, …) | the Chief's person may not operate this Chief now, with the reason         |
+  | `403 forbidden` with the person's permission reason (`not_mate_operator`, `not_active_member`, `org_not_found` — the organisation Zerops does not have, …) | the Chief's person may not operate this Chief now, with the reason |
   | `503 …`, `502 zerops_unexpected_answer`, `403 zerops_refused`, `404`, any other                   | as every HQ call: HQ unavailable, or HQ's refusal with its code and reason |
 
 - Only the Chief's own person opens it or sees it in navigation, Owners and Admins included; HQ
@@ -3482,7 +3481,7 @@ update or an idle container restart.
 | TC-7  | The Mate takes every connection's role from the ticket that opened or last extended it, ends it `4401` when its grant runs out unextended, and ends a person's connections on HQ's `close-session`; it reads no member at Zerops. mate `apps/server/src/zerops/ZeropsConnections.ts`. |
 | TC-8  | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | TC-10 | The dev service stores no git credential; its git reaches HQ only through the relay, which carries the project key over its ssh session only and is never written into the dev service (§2.8). `TestRelayOnly_ADevServicesPushToHQIsAnsweredThroughTheRelayWithTheProjectKey`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| TC-11 | zcp's Chief reads its organisation through HQ with its project key, and HQ reads Zerops for it with the registered person's kept token; the client reads Zerops with the person's token (§2.11, §3.11). `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `spec/protocol.md`, Chief (S19c). |
+| TC-11 | zcp's Chief reads its organisation through HQ with its project key, and HQ reads Zerops' private API for it under its own identity, not the registered person's kept token; the client reads Zerops with the person's token (§2.11, §3.11). `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `spec/protocol.md`, Chief (S19c). |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | TC-15 | Starting an HQ process leaves a healthy peer's links connected; stopping or losing the owning instance retires only its links. Covered by mate-hq's multi-process link and rolling-restart conformance cases.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the key itself. Test to be written (HQ link).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |

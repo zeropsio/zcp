@@ -92,7 +92,7 @@ func orgAnswer[T any](result T, err error) (*mcp.CallToolResult, any, error) {
 func RegisterOrg(srv *mcp.Server, src ops.OrgSource, newID func() string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_org_overview",
-		Description: "The projects your person reaches, read through HQ, grouped by kind with their status and services stopped or failing; then the organization's people with their roles. A project your person does not reach is not listed. Start here.",
+		Description: "The projects your person reaches, read through HQ, grouped by kind with their status and services stopped or failing. A project your person does not reach is not listed. Start here.",
 		Annotations: orgLook("Organization overview"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.OrgOverview(ctx, src))

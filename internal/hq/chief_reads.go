@@ -12,11 +12,11 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// A Chief's reads of its organisation (docs/spec-mate.md §3.11): HQ reads
-// Zerops with the Chief's registered person's kept personal token and answers
-// each list whole, complete or refused. The token never reaches zcp; the
-// Chief presents only its project key. ListProjects, ListServices and
-// ListMembers are ops.OrgSource, org mode's one source.
+// A Chief's reads of its organisation (docs/spec-mate.md §3.11): HQ asks
+// Zerops' private API, under HQ's own identity, for the projects and services
+// of the Chief's registered person and answers each list whole, complete or
+// refused. The Chief presents only its project key. ListProjects and
+// ListServices are ops.OrgSource, org mode's one source.
 
 // chiefReadPath is HQ's Chief read.
 const chiefReadPath = "/api/mate/chief/read"
@@ -95,32 +95,13 @@ func (c Client) ListServices(ctx context.Context, projectID string) ([]platform.
 	return services, nil
 }
 
-// ListMembers is the organisation's people as the Chief's person reads them.
-func (c Client) ListMembers(ctx context.Context) ([]platform.OverviewMember, error) {
-	var answer struct {
-		Members *[]platform.OverviewMember `json:"members"`
-	}
-	if err := c.chiefRead(ctx, "members", &answer); err != nil {
-		return nil, err
-	}
-	if answer.Members == nil {
-		return nil, malformedChiefRead("members")
-	}
-	for _, m := range *answer.Members {
-		if m.UserID == "" {
-			return nil, malformedChiefRead("members")
-		}
-	}
-	return *answer.Members, nil
-}
-
 // chiefRead is one Chief read of the list read, decoded strictly into out:
 // a field HQ's wire does not name is an answer zcp does not read. HQ's
 // refusal says what it means for the Chief, with HQ's own code and reason.
 func (c Client) chiefRead(ctx context.Context, read string, out any) error {
 	var raw json.RawMessage
 	if err := c.call.json(ctx, http.MethodPost, chiefReadPath, c.authorization(), map[string]string{"read": read}, &raw); err != nil {
-		return chiefRefusal(read, err)
+		return chiefRefusal(err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -140,7 +121,7 @@ func malformedChiefRead(read string) error {
 
 // chiefRefusal is what HQ's no to a Chief read means for the Chief; any other
 // failure is as every HQ call's (RefusedError, UnavailableError).
-func chiefRefusal(read string, err error) error {
+func chiefRefusal(err error) error {
 	var refused *RefusedError
 	if !errors.As(err, &refused) {
 		return err
@@ -148,18 +129,6 @@ func chiefRefusal(read string, err error) error {
 	var words, suggestion string
 	code := platform.ErrPermissionDenied
 	switch refused.Code + " " + refused.Reason {
-	case "credential_required personal_token_missing":
-		code = platform.ErrPrerequisiteMissing
-		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: it keeps no personal token of theirs", read)
-		suggestion = "Tell your person to sign in to Mate once; HQ then keeps their token and the read works"
-	case "credential_required personal_token_refused":
-		code = platform.ErrPrerequisiteMissing
-		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: Zerops refused the personal token HQ keeps for them", read)
-		suggestion = "Tell your person to sign in to Mate again; that replaces the token HQ keeps"
-	case "credential_required held":
-		code = platform.ErrPrerequisiteMissing
-		words = fmt.Sprintf("HQ could not read the organisation's %s as this Chief's person: HQ holds the organisation", read)
-		suggestion = "Tell your person to sign in to Mate once, as HQ asks for a held organisation"
 	case "forbidden not_chief":
 		words = "HQ read nothing: this project is no person's Chief now"
 		suggestion = "A person registers this project as their Chief in Mate"
