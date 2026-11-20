@@ -569,8 +569,9 @@ func TestAgentsLocal_NoContainerPaths(t *testing.T) {
 // to LOOK — reach is a property of the container's own token, and a flag
 // mirroring it here would be a second copy free to drift. A Mate's token
 // reaches no other project: its application's stage and production are
-// observed through HQ (zerops_observe), and its other Mates not at all. The
-// git-host block is a Mate's: only a Mate delivers its code to HQ.
+// observed through HQ (zerops_observe); how, and the proposals, the Chief and
+// the person's other Mates, are the mate-application playbook's. The git-host
+// block is a Mate's: only a Mate delivers its code to HQ.
 func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -589,15 +590,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name: "a Mate",
 			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
 			want: []string{
-				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
-				"reaches none of them", "other Mates", "zcp git <host>",
-				"ask the person's Chief", "`zerops_message_mate`", "another project's logs",
-				"`zerops_propose_service`", "`zerops_propose_env`", "nothing runs until the person approves the card",
-				"`zerops_propose_reveal`", "never print or paste a secret value",
-				"`zerops_propose_create_service` before the release", "`zerops_propose_release`",
-				`action="deployments"`, "never tell the person to run the deploy again",
-				"act on this Mate's own project only", "another application's production error",
-				"Mate's Addresses", "DNS records", "AAAA", "Full (strict)",
+				"`zerops_observe`", "other Mates", "zcp git <host>",
 				"`zerops_propose_mcp`", "never ask the person to paste a key in chat",
 			},
 			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential",
