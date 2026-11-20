@@ -2,6 +2,7 @@
 id: bootstrap-route-options
 priority: 1
 phases: [idle]
+idleScenarios: [empty, adopt, incomplete]
 title: "Bootstrap route discovery"
 references-fields: [workflow.BootstrapDiscoveryResponse.RouteOptions, workflow.BootstrapRouteOption.Route, workflow.BootstrapRouteOption.ResumeSession, workflow.BootstrapRouteOption.AdoptServices, workflow.BootstrapRouteOption.RecipeSlug, workflow.BootstrapRouteOption.Collisions]
 ---
