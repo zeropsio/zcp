@@ -5319,20 +5319,21 @@ typed capabilities in `spi/`. Delivery guarantee, fixture format and the porting
 
 ## 8. Agent authorization (S7)
 
-A Zerops user with a Claude or ChatGPT subscription signs the agent CLI in **from inside mate**; nothing
-credential-shaped enters a thread, a feed or the ledger. Two halves: the **agent-auth feed** (what the
-container knows about each agent's login) and the **login session** (how the user gets there).
+A Zerops user signs an agent CLI in with an account of their own — Claude (Claude Code), ChatGPT
+(Codex), Google (Antigravity), Grok or Cursor — **from inside mate**; nothing credential-shaped
+enters a thread, a feed or the ledger. Two halves: the **agent-auth feed** (what the container
+knows about each agent's login) and the **login session** (how the user gets there).
 
-**Agents Mate signs nobody in to** (2026-10-03, the owner: "all of them should still work with everything
-we've been doing"). Cursor, OpenCode, Grok and Antigravity sign in through their own CLI or the Zerops GUI,
-never through mate, and stay outside the feed. A Mate whose only ready agent is one of them works like any
-other: one shared readiness test — installed, enabled, available, ready, signed in (`authenticated`), at least
+**The agent Mate signs nobody in to** (2026-10-03, the owner: "all of them should still work with
+everything we've been doing"; narrowed 2026-11-19, when Cursor, Grok and Antigravity joined the
+feed). OpenCode runs on free models with no account and stays outside the feed. A Mate whose only
+ready agent is OpenCode works like any other: one shared readiness test — installed, enabled, available, ready, signed in (`authenticated`), at least
 one model — lifts the sign-in screen in its conversation and Crew tab, its stand-up starts on that instance
-(the asker's own Claude Code or Codex sign-in first, the conversation's own instance next), and its first
+(the asker's own sign-in first, the conversation's own instance next), and its first
 browser to find the agent ready records which driver runs. In the upstream Gitea backbone that was
 the project tag `mate:runs:<driver>`, with its maker (`mate:by:`, else `mate:standup:`)
 as owner. In the rebuild a project tag proves no owner: HQ holds the maker and stand-up
-records (§10.6, §10.10), while the Mate holds Claude Code and Codex signers (§10.5).
+records (§10.6, §10.10), while the Mate holds the signers of every agent it signs in (§10.5).
 The shared readiness test still applies to every agent. A crew runs on an agent whose adapter carries
 the thread profile (Claude Code, Codex, Grok, OpenCode); Cursor and Antigravity are refused until their gate
 is seen live, since zcp pre-approves the Zerops tools in Cursor's project config. zcp gives OpenCode the
@@ -5341,25 +5342,38 @@ only where it does not overrule the user's permission rules, and lists the proje
 `AGENTS.md` in `instructions`: OpenCode looks for AGENTS.md only up to a session's git root, so a
 crew lane or a dev mount would otherwise run without it (`TestOpenCode_*`).
 
+Antigravity runs on the `agy` CLI's own ACP server, `agy acp` (agy 1.5.0 or newer; an older agy
+reads as unusable, with `agy update` named), signed in with the Google login `agy acp --login`
+saved. Mate no longer downloads Google's standalone ACP server or signs Antigravity in from its
+settings. Full access is agy's own `--dangerously-skip-permissions`. Every `agy` the server runs —
+sessions, `agy models`, the sign-in check — runs without `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+`GOOGLE_APPLICATION_CREDENTIALS` or the `GOOGLE_CLOUD_*` / `GOOGLE_GENAI_USE_VERTEXAI` variables,
+so a project's own key never puts the agent on that key's bill.
+
 ### 8.1 The agent-auth feed
 
-`subscribeZeropsAgentAuth` (stream, snapshot-typed) publishes, per agent (`claude-code`, `codex`;
-Google Antigravity, offered since the 2026-09-05 intake, is **not** in the feed — it signs in through
-upstream's own flow, the Google URL in the settings provider setup and a pasted callback forwarded
-from inside the container; adding it here and to the flag writer is a separate slice, its MCP attachment
-is `z3` `questions.md` Q-14):
-`credPresent` (the credential artifact exists — `~/.claude/.credentials.json`, `~/.codex/auth.json`;
-presence only, never contents), `flagOAuth` / `flagToken` (the platform flags `ZCP_AGENT_OAUTH_<S>`,
-`ZCP_AGENT_TOKEN_<S>` read from the zembed env store), `state` (the welcome panel's five-value
+`subscribeZeropsAgentAuth` (stream, snapshot-typed) publishes, per agent (`claude-code`, `codex`,
+`antigravity`, `grok`, `cursor`): `credPresent` (the credential artifact exists —
+`~/.claude/.credentials.json`, `~/.codex/auth.json`,
+`~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.grok/auth.json`,
+`~/.config/cursor/auth.json`; presence only, never contents), `flagOAuth` / `flagToken` (the
+platform flags `ZCP_AGENT_OAUTH_<S>`, `ZCP_AGENT_TOKEN_<S>`, `<S>` one of `CLAUDE_CODE`, `CODEX`,
+`ANTIGRAVITY`, `GROK`, `CURSOR`, read from the zembed env store), `state` (the welcome panel's five-value
 matrix, `spec-welcome-mode.md §3`, verbatim), `providerAuth` (`authenticated | unauthenticated |
 unknown`) and, while a login runs, `login` (§8.2). The server watches the credential FILE (parent
 directory filtered by basename; a missing `~/.claude`/`~/.codex` is watched for via `$HOME`) and the
-env store; events coalesce (~1 s, single-flight per agent).
+env store; events coalesce (~1 s, single-flight per agent). Antigravity's MCP attachment (`z3`
+`questions.md` Q-14) stays open; it is no longer tied to the feed.
 
 **Presence is not authentication.** On a credential event the server verifies with the agent itself —
-`claude auth status` (JSON `loggedIn`) / Codex's app-server `account/read` (an account, or no OpenAI
-login required; `codex login status` reads only the file and says "Logged in" over a token OpenAI no
-longer refreshes) — and only a fresh `authenticated` result writes the flag. The mate server writes it itself, on its own zcp service, through the Zerops
+`claude auth status` (JSON `loggedIn`) / Codex's app-server `account/read` (an account, or no
+OpenAI login required; `codex login status` reads only the file and says "Logged in" over a token
+OpenAI no longer refreshes) / `cursor-agent status --format json` (`isAuthenticated`) / `grok
+models` ("You are logged in", "not authenticated") / `agy models` ("Please sign in" is signed out;
+a clean exit listing models after "Fetching available models..." is signed in), each with its own
+time limit and anything else read as `unknown` — and only a fresh `authenticated` result writes
+the flag. Grok's and Antigravity's answers are read by their drivers' own parsers (mate
+`spi/agentSignInChecks.ts`), so the picker and the flag never disagree on what a line means. The mate server writes it itself, on its own zcp service, through the Zerops
 API with its own key (`GET /service-stack/{serviceId}/env`, `POST /service-stack/{serviceId}/user-data`,
 `DELETE /user-data/{id}`; the hardened key may, measured 2026-09-22): absent → create, a
 non-sensitive `true` → nothing, any other value or a sensitive row → replaced. The flag is written
@@ -5398,24 +5412,33 @@ when the flag disappears from the env store or a sign-out invalidates it. Verifi
 
 The client never types into a terminal. `zerops.agentLogin.start {agentId, threadId}` opens a
 terminal named for the agent, writes the login command (`claude /login`; `codex login --device-auth`
-— plain `codex login` opens a `localhost:1455` callback the user's browser cannot reach), attaches to
+— plain `codex login` opens a `localhost:1455` callback the user's browser cannot reach; `grok login
+--device-auth`, a device code the user confirms on xAI's page; `NO_OPEN_BROWSER=1 cursor-agent
+login`, a link the user approves on Cursor's page with nothing typed back; `agy acp --login`, a
+Google link whose page shows the code the user pastes back, or its whole address), attaches to
 the PTY stream and runs the pure output parser ported from the Zerops GUI walker: chunk-boundary-safe
-URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, and a stall timer that
-presses Enter through any unrecognized screen (Claude's login-method menu). The parsed prompt rides
+URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, and, for Claude Code
+and Codex only, a stall timer that presses Enter through any unrecognized screen (Claude's
+login-method menu). No other CLI gets that Enter: Antigravity's prompt would take it as an empty
+code and cancel the sign-in. The parsed prompt rides
 the feed as `login.phase` (`starting | menu | awaiting-browser | awaiting-code | succeeded | failed |
-verifying-code | cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId` and
+verifying-code | cancelled`) with `url`, `code` (Codex's and Grok's device code), `message`, `terminalId` and
 `startedBy` (the Zerops user id of the connection that started it, from its ticket (§3.8) — never from input;
 optional on the wire: a Mate keeps its installed version while the hosted client moves on, and a
 required field an older server does not send fails the whole snapshot).
 The card renders the URL as an "Open sign-in link" action (+ copy link / copy code).
+A login terminal that exits after it showed its link, with no success or failure line
+recognized, is settled by the agent's own status check (§8.1): `verifying-code` while it runs,
+then `succeeded` if it reads signed in, else `failed` ("ended before it finished"). A cancel
+during the check wins; a terminal closed by a dropped connection is never checked.
 
 Claude's code comes back through a field, as in the Zerops GUI dialog: `zerops.agentLogin.submitCode
 {agentId, code}` (scope `terminal:operate`, like start/cancel; offered where the descriptor's
 `capabilities.agentLoginCode` is true — without it the dialog asks for the code in the terminal, as
 before) types the code into the login terminal
 and, 100 ms later, Enter — the GUI measured that an Enter in the same chunk can be dropped, and Claude's
-prompt takes one chunk as a paste. It is accepted only while a paste-code login sits at its prompt
-(`awaiting-browser` or `awaiting-code`: Claude 2.1.278 prints "Paste code here if prompted >" right
+prompt takes one chunk as a paste. It is accepted only while a paste-code login (Claude Code's or
+Antigravity's) sits at its prompt (`awaiting-browser` or `awaiting-code`: Claude 2.1.278 prints "Paste code here if prompted >" right
 under the URL, measured live 2026-09-22), and only as one run of printable ASCII — a control character
 or a line break could run something else in that terminal. The phase becomes `verifying-code` until the
 CLI answers: "Login successful" → `succeeded`; a wrong code prints "OAuth error: Request failed with
@@ -5427,17 +5450,22 @@ verification of §8.1. One session per agent; `zerops.agentLogin.cancel` sends C
 terminal. A dialog opened after a login ended shows no trace of it: only an attempt started from that
 opening counts.
 
-`start` over a live login is how an account is switched or taken over: the CLI shows a first login's
-screens, and a cancelled one leaves the old login untouched (measured 2026-09-22). A running turn
-keeps the token it holds after the credential file is replaced and completes (measured), so a
-takeover stops nothing.
+`start` over a live login is how an account is switched or taken over. Every sign-in runs in a
+scratch home of its own (`~/.mate/pending/<key>`: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `HOME`
+with `XDG_CONFIG_HOME` under it for Antigravity, Grok and Cursor), and only a sign-in that
+succeeded moves its credential into the login's home, in one rename (Antigravity's companion
+`~/.config/antigravity/credential-user-scope` first), so a cancelled or failed attempt leaves the
+old login signed in. A running turn keeps the token it holds after the credential file is
+replaced and completes (measured), so a takeover stops nothing. Logins beyond an agent's default
+are Claude Code's and Codex's only.
 
 `zerops.agentLogin.signOut {agentId}` (scope `terminal:operate`; offered where
 `capabilities.agentSignOut` is true) ends a login for any client: a token-authorized agent is refused
 (the token belongs to the project); then the login session is cancelled, that agent's live sessions
 are stopped (`thread.session.stop` for every thread whose session runs on it, waited for up to 10 s —
 a running turn would otherwise go on with the token it holds), the CLI logs out (`claude auth
-logout` / `codex logout`, removing the credential file if it remains), the flag is deleted (with
+logout` / `codex logout` / `grok logout` / `cursor-agent logout`; `agy` has no logout, so its
+credential file is removed; any credential file that remains is removed), the flag is deleted (with
 `ZCP_AGENT_AUTH_TYPE_<S>` when it says `oauth`) and the feed re-checks. Every step after the token
 check is best-effort. Threads stay. Who signed it in is not touched: the server lets that record go
 once the credential's absence lasts (§10.5), a record without a credential speaks for nobody, and
@@ -5474,7 +5502,7 @@ again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking�
 | MA-2 | The flag is written only after a fresh `authenticated` verification, once per credential appearance; `unauthenticated`/`unknown` never write; a burst of file events coalesces into one verification; a probe older than a sign-out never writes; a failed write is retried. `ZeropsAgentAuthIo.test.ts`, `ZeropsAgentAuthVerify.test.ts`. |
 | MA-3 | The OAuth flag is written non-sensitive and a legacy sensitive row is replaced (`migrated:true`); sign-out deletes it and an `oauth` auth-type row, never a token's. `ZeropsAgentFlag.test.ts` (`planMarkSignedIn`, `planClearSignedIn`). |
 | MA-4 | The agent-auth feed verifies through the agent CLI's own status command and the platform flag, never through the registry's probe; it reaches the registry only through `spi/providerInstances.ts`, to re-probe a picker snapshot that contradicts a changed verified status. `ZeropsAgentAuth.test.ts` — "verification spawns only the CLI status command"; `ZeropsAgentAuthIo.test.ts` — "hands every CHANGE of the verified status to the model picker's reconcile"; `spi/providerInstances.test.ts`; `scripts/mate-zone-architecture.test.ts` (no `provider/**` import from `apps/server/src/zerops/**`). |
-| MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
+| MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex and Grok device URL + code; Claude menu → oauth URL; Cursor's approval link; Antigravity's Google link), only Claude Code's and Codex's screens get the stall Enter, and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts` — "never presses Enter for an agent whose CLI is only slow to print its link". |
 | MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
 | MA-9 | The signer is the person whose session started the sign-in this server walked to success, kept before anything else hears of it and across a restart; a credential's absence lets it go only once it lasts; a finished login never overrides the verified status in a row. `ZeropsAgentLogin.test.ts` — "keeps who signed in last, and lets it go with the credential", "a credential absent for one reading, then there again: its sign-in is kept", "a sign-in made while its credential reads absent outlives that absence"; `zeropsSignIns.test.ts`; `agentLogin.test.ts` (`classifyAgentRowLogin`). |
 | MA-11 | Sign-out refuses a token agent, then cancels the login, stops that agent's live sessions, logs the CLI out, deletes the flag and re-checks, in that order, best-effort. `ZeropsAgentSignOut.test.ts` (`threadsToStopForAgent`, call order). |
