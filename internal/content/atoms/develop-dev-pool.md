@@ -59,7 +59,8 @@ its containers away from the app.
    naming the branch's lease preview URLs as where to try it and saying it
    built and verified on the stage. One branch, one
    change: pushing to the branch again moves the change, and it asks for
-   review again once described again.
+   review again once described again. To add work to it, lease its branch
+   again if it was released.
 5. `zerops_lease action=release lease="<alias>"` hands the leased container
    back: reset, as the pool's warm container, or removed when the pool
    already has one, it runs an outdated version, or the pool is full (its
@@ -95,8 +96,7 @@ stage before its change is described.
 `zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
 with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
 check. A build that fails leaves the stage on what it ran; fix the branch,
-push, and check again. Say in the change's description that it built and
-verified on the stage. Run one branch's check at a time per stage: a check
+push, and check again. Run one branch's check at a time per stage: a check
 from another lease replaces it. Deploy `main` onto a stage only when you or
 the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
@@ -156,9 +156,10 @@ stays unleased.
 5. `zerops_lease action=release branch="<branch>"` releases every lease of
    the branch, or none: unsaved work in one refuses them all.
 
-**Parallel work.** Several pieces of work at once — subagents, or several
-conversations — each go on a branch of its own with leases of its own; the
-leases are keyed by branch, so they never meet.
+**Parallel work.** Independent pieces of work at once — subagents, or
+several conversations — each go on a branch of its own with leases of its
+own; the leases are keyed by branch, so they never meet. Parallel work on
+one piece is folded before review (AGENTS.md's "What one change holds").
 
 - Name each subagent's branch in its brief: unique, short, saying what the
   work is, never `main` and never under `mate/`.

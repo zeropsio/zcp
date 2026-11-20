@@ -95,4 +95,6 @@ gone, its URL with it; the stage deploys from a lease of the pool
 `retire.gaps` names what a migrated part does not have yet. In a Mate the
 answer also names a lease branch no change proposes yet, with the
 `open-change` call: the work reaches `main` only through a change the person
-reviews, so open it once the work is ready.
+reviews, so open it once the work is ready — or, where AGENTS.md's "What one
+change holds" says so, add the work to an open change of yours that the
+answer names.

@@ -29,9 +29,9 @@ Wired to this Mate's HQ — take `main` in and start the work on a branch of you
 zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout main && zcp git <push-source-host> merge --ff-only origin/main && zcp git <push-source-host> checkout -b <your-branch>
 ```
 
-One branch per piece of work, one change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch), and new work starts on a new branch cut as above. Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
+One change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch). Whether new work goes onto an open change of yours or starts on a new branch cut as above is AGENTS.md's "What one change holds". Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
 
-Keep one change open at a time on the dev service unless two pieces of work are truly independent: a person reviews and merges each, so fewer, larger, self-contained changes beat a queue of small dependent ones. Its `/var/www` is what its dev server runs and what deploys read: checking out another branch there changes what runs, and files that branch lacks disappear. To update another open change's branch — merge `main` in, a fix that needs no run — use a worktree the dev service holds below `/tmp/wt-`:
+On the dev service, work that rule adds to your open change also spares a branch switch: its `/var/www` is what its dev server runs and what deploys read, so checking out another branch there changes what runs, and files that branch lacks disappear. To update another open change's branch — merge `main` in, fold a change into it, a fix that needs no run — use a worktree the dev service holds below `/tmp/wt-`:
 
 ```
 zcp git <push-source-host> fetch origin
@@ -41,7 +41,7 @@ zcp git <push-source-host> -C /tmp/wt-<branch> push origin HEAD:<branch>
 zcp git <push-source-host> worktree remove /tmp/wt-<branch>
 ```
 
-Nothing runs or deploys from it; remove it once pushed.
+To fold a change into that branch, merge `origin/<the branch it folds>` there in place of `origin/main`. Nothing runs or deploys from it; remove it once pushed.
 
 A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`zcp git <push-source-host> branch <name>`), then `zcp git <push-source-host> reset --keep origin/main`, and say so rather than carrying them silently into new work. On this Mate's HQ, while `origin/main` holds only HQ's initial commit, a `main` sharing no history with it is the repository's first history instead: leave it as it is, cut your branch from it, push the branch and open its change — merged, HQ makes it `main`; never merge or rebase it onto that commit.
 

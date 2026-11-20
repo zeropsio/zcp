@@ -218,7 +218,7 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 // one `.git`, one of them over the mount, break it, and zcp answers the dev
 // service's git for HQ and GitHub. After a command that changes files the
 // mount can show the old ones for a while, so a file is re-read before it is
-// edited. The dev service keeps one change open at a time; its checkout is
+// edited. The dev service's checkout is
 // what the dev server runs, so another open change's branch is updated in a
 // worktree the dev service holds below `/tmp/wt-`, pushed and removed — a
 // namespace no older session's zcp-side `/tmp/<branch>` worktree takes.
@@ -248,7 +248,6 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairRunsGitInItsDevService(t *te
 		"never on the mounted checkout",
 		"re-read a file before editing it",
 		"zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout main && zcp git <push-source-host> merge --ff-only origin/main && zcp git <push-source-host> checkout -b <your-branch>",
-		"one change open at a time",
 		"what its dev server runs",
 		"zcp git <push-source-host> worktree add --detach /tmp/wt-<branch> origin/<branch>",
 		"zcp git <push-source-host> -C /tmp/wt-<branch> merge origin/main",
