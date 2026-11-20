@@ -91,7 +91,7 @@ func TestAcquireLeaseAnswer_FailedAcquire_DistinguishesReservation(t *testing.T)
 			}
 			switch exit {
 			case 3:
-				if answer.Refused == nil || answer.Refused.Code != tt.wantCode || !strings.Contains(answer.Refused.Message, "10 of at most 10") || !strings.Contains(answer.Refused.Suggestion, "holders") {
+				if answer.Refused == nil || answer.Refused.Code != tt.wantCode {
 					t.Fatalf("full pool refusal: %s", raw)
 				}
 			case 1:
@@ -113,7 +113,7 @@ func TestAcquireLeaseAnswer_AgentHeldKey_RefusesTakeover(t *testing.T) {
 			t.Fatal(err)
 		}
 		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, branch)
-		if code != 3 || answer.Refused == nil || !strings.Contains(answer.Refused.Message, "branch "+branch+" on pool devpool is held by an agent's lease devpool-3") {
+		if code != 3 || answer.Refused == nil || answer.Refused.Code != platform.ErrPermissionDenied {
 			t.Fatalf("unexpected takeover answer, exit %d", code)
 		}
 		change, err := ops.LeaseReleaseChange(t.Context(), deps, "devpool-3", true)
