@@ -20,17 +20,19 @@ import (
 // it — and Production is not (nothingLive); from an older HQ every function
 // here answers "" and the text is what it was. A production of a kind zcp
 // does not know says nothing about production: neither that a release
-// publishes to it nor that nothing is live.
+// publishes to it nor that nothing is live. onePieceOfWork is what one change
+// holds, which AGENTS.md's "What one change holds" words in full
+// (docs/spec-mate.md §10.10).
 const (
 	noProductionYet         = "this application has no production yet, so never call merged work live, deployed or released"
 	hasProductionLead       = "this application has a production"
 	releasePublishes        = hasProductionLead + ", and a merge does not publish to it, a release does: say so when you report the work, and never call it live before a release"
 	productionRunsOutside   = "this application's production runs outside Mate, so Mate releases nothing to it and cannot tell what a merge publishes there — a merge may reach production by itself: never tell the person merged work is live, and never tell them it is not; say it is on main, and that whoever runs production knows when it goes out"
-	keepChangesSmall        = "keep each change small and able to merge on its own"
+	onePieceOfWork          = "keep each change to one piece of work, anything with a wider blast radius in a change of its own"
 	describeProductionRisks = "in its description, under a plain heading, call out what could hurt production: data changes, setup or environment changes, anything a rollback would not undo"
 	stageRunsMain           = "after a merge the application's Stage runs what is on main"
 	stageChecksFirst        = ": that is where it is checked before it goes live"
-	othersWorkHere          = "other Mates work in this application too: start new work from an up-to-date main, expect main to move, and " + keepChangesSmall
+	othersWorkHere          = "other Mates work in this application too: start new work from an up-to-date main, expect main to move, and " + onePieceOfWork
 )
 
 // releasedByMate reports a production HQ releases to: only a release
@@ -96,7 +98,7 @@ func applicationOpenedWords(state hq.MateState) string {
 	if !releasedByMate(state) && !runsOutside(state) {
 		return ""
 	}
-	return sentencesOf(hasProductionLead + ": " + keepChangesSmall + ", and " + describeProductionRisks)
+	return sentencesOf(hasProductionLead + ": " + onePieceOfWork + ", and " + describeProductionRisks)
 }
 
 // applicationReadyWords follow a change described and ready: what a merge
@@ -116,7 +118,7 @@ func applicationStartWords(state hq.MateState) string {
 	case state.Mates > 1:
 		return othersWorkHere
 	case releasedByMate(state), runsOutside(state):
-		return hasProductionLead + ": " + keepChangesSmall
+		return hasProductionLead + ": " + onePieceOfWork
 	}
 	return ""
 }
