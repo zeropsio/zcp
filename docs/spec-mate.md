@@ -95,6 +95,7 @@ Touchpoints between mate and zcp, closed list:
 - `zcp` argv the server runs, a closed list (MA-6): `zcp mate status` (what is installed and
   available, for the screen) / `zcp mate update` (a person's "update now", §2.9 MU-2), `zcp studio
   console serve`, the loopback data console the mate server hosts and brokers (§5.7), `zcp version`,
+  `zcp lease acquire` (a crew writer's copy, `docs/spec-workflows.md` §8 DP-39),
   `zcp lease release` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35) and
   `zcp self restart` (§2.9 step 7, MU-4); the agent sign-in flag it writes through the Zerops API
   (§8.1);
@@ -116,7 +117,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0), and `self restart --json` (§2.9 step 7, MU-4: once the Mate has drained, gated on `zcp version` ≥ 9.226.0). `scripts/mate-boundaries.test.ts`. |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0), `lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json` (DP-39: a crew writer's copy, at Apply, gated on `zcp version` ≥ the first release with it), and `self restart --json` (§2.9 step 7, MU-4: once the Mate has drained, gated on `zcp version` ≥ 9.226.0). `scripts/mate-boundaries.test.ts`. |
 | MA-7 | The Mate server sends `ZCP_API_KEY` only to HQ, in the first frame of its link, and to Zerops for project and organisation reads and flag writes (§3.9, §8.1); it never forwards it anywhere else. mate `apps/server/src/zerops/ZeropsHqLink.ts`, `apps/server/src/zerops/ZeropsAccessRead.ts`. |
 
 ## 1. Envelope on the wire

@@ -25,15 +25,15 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// `zcp lease release --branch <branch> [--repo <repo URL>] --json` is the
-// Mate server's release of a conversation's branch on its archive
-// (docs/spec-workflows.md §8 DP-35, docs/spec-mate.md MA-6): the tool's branch
-// release over the deps the MCP server runs it on, never forced. It reads no
-// stdin — a verb run() did not know would fall through to serve mode and wait
-// on it — and writes its one answer to stdout; exit 0 released, 3 refused, 1
-// anything else (tools.LeaseReleaseAnswer).
+// These Mate server verbs run against the MCP server's lease state and read no stdin.
+const (
+	leaseAcquireUsage = "usage: zcp lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json"
+	leaseReleaseUsage = "usage: zcp lease release --branch <branch> [--repo <repo URL>] --json"
+	leaseUsage        = leaseAcquireUsage + "\n" + leaseReleaseUsage
+)
 
-const leaseUsage = "usage: zcp lease release --branch <branch> [--repo <repo URL>] --json"
+// The verb supplies its name when the container prerequisite fails.
+var errLeaseOutsideContainer = errors.New("runs inside the project's zcp container: a pool's orchestrator answers only there")
 
 // leaseCallBudget bounds one `zcp lease release` end to end, inside the
 // Mate's own 3 minute bound for it: a release waits up to 2 minutes for a
@@ -46,10 +46,11 @@ const leaseCallBudget = 150 * time.Second
 // next acquire's or release's to finish, and status says what never answered.
 const leaseBackgroundWait = 20 * time.Second
 
-// runLeaseCmd implements `zcp lease release`. args is everything after
+// runLeaseCmd dispatches acquire and release. args is everything after
 // "lease"; resolve builds the lease operations' deps in this container.
 func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) (ops.LeaseDeps, error)) int {
-	asJSON := false
+	acquire := len(args) > 0 && args[0] == "acquire"
+	asJSON := acquire
 	for _, a := range args {
 		if a == "--json" || a == "-json" {
 			asJSON = true
@@ -63,34 +64,53 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	fail := func(msg string) int {
 		return failWith(platform.NewPlatformError(platform.ErrInvalidUsage, msg, ""))
 	}
-	if len(args) == 0 || args[0] != "release" {
+	if len(args) == 0 || (!acquire && args[0] != "release") {
 		return fail(leaseUsage)
 	}
+	usage := leaseReleaseUsage
+	budget := leaseCallBudget
+	if acquire {
+		usage = leaseAcquireUsage
+		budget = ops.LeaseCallTimeout
+	}
 	for _, a := range args[1:] {
-		if name := strings.TrimLeft(strings.SplitN(a, "=", 2)[0], "-"); strings.HasPrefix(a, "-") && name == "force" {
-			return fail("zcp lease release never forces: a lease holding unsaved work keeps its branch, and only the agent's zerops_lease action=release force=true, once the person agreed, discards it. " + leaseUsage)
+		if name := strings.TrimLeft(strings.SplitN(a, "=", 2)[0], "-"); strings.HasPrefix(a, "-") && name == "force" && !acquire {
+			return fail("zcp lease release never forces: a lease holding unsaved work keeps its branch, and only the agent's zerops_lease action=release force=true, once the person agreed, discards it. " + usage)
 		}
 	}
-	fs := flag.NewFlagSet("lease release", flag.ContinueOnError)
+	fs := flag.NewFlagSet("lease "+args[0], flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	branch := fs.String("branch", "", "the branch whose leases to release")
+	branch := fs.String("branch", "", "the branch to acquire or release")
+	var pool string
+	if acquire {
+		fs.StringVar(&pool, "pool", "", "the pool service hostname")
+	}
 	repo := fs.String("repo", "", "the repository's clone URL, when zcp leases the branch for several")
 	fs.Bool("json", false, "answer as JSON")
 	if err := fs.Parse(args[1:]); err != nil {
-		return fail(err.Error() + ". " + leaseUsage)
+		if acquire {
+			return fail(usage)
+		}
+		return fail(err.Error() + ". " + usage)
+	}
+	if acquire && (fs.NArg() > 0 || strings.TrimSpace(pool) == "" || strings.TrimSpace(*branch) == "") {
+		return fail(usage)
 	}
 	if fs.NArg() > 0 {
-		return fail("unexpected argument " + fs.Arg(0) + ". " + leaseUsage)
+		return fail("unexpected argument " + fs.Arg(0) + ". " + usage)
 	}
 	if strings.TrimSpace(*branch) == "" {
-		return fail("--branch names the branch whose leases to release. " + leaseUsage)
+		return fail("--branch names the branch whose leases to release. " + usage)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, leaseCallBudget)
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	deps, err := resolve(ctx)
+	if errors.Is(err, errLeaseOutsideContainer) {
+		err = fmt.Errorf("zcp lease %s %w", args[0], err)
+	}
 	if err != nil {
 		return failWith(err)
 	}
@@ -98,8 +118,16 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	if deps.Warm != nil {
 		deps.Warm.Go = background.Go
 	}
-	answer, code := tools.ReleaseLeaseBranchAnswer(ctx, deps, *repo, *branch)
-	printLease(stdout, answer, asJSON)
+	var code int
+	if acquire {
+		var answer tools.LeaseAcquireAnswer
+		answer, code = tools.AcquireLeaseAnswer(ctx, deps, pool, *repo, *branch)
+		printLeaseJSON(stdout, answer)
+	} else {
+		var answer tools.LeaseReleaseAnswer
+		answer, code = tools.ReleaseLeaseBranchAnswer(ctx, deps, *repo, *branch)
+		printLease(stdout, answer, asJSON)
+	}
 	waitWithin(&background, leaseBackgroundWait)
 	return code
 }
@@ -120,11 +148,7 @@ func waitWithin(wg *sync.WaitGroup, d time.Duration) {
 // printLease writes answer to stdout: JSON under --json, else one line.
 func printLease(stdout io.Writer, answer tools.LeaseReleaseAnswer, asJSON bool) {
 	if asJSON {
-		data, err := json.Marshal(answer)
-		if err != nil {
-			data = []byte(`{"error":"marshal the answer"}`)
-		}
-		_, _ = fmt.Fprintln(stdout, string(data))
+		printLeaseJSON(stdout, answer)
 		return
 	}
 	switch {
@@ -147,6 +171,14 @@ func printLease(stdout io.Writer, answer tools.LeaseReleaseAnswer, asJSON bool) 
 	}
 }
 
+func printLeaseJSON(stdout io.Writer, answer any) {
+	data, err := json.Marshal(answer)
+	if err != nil {
+		data = []byte(`{"error":"marshal the answer"}`)
+	}
+	_, _ = fmt.Fprintln(stdout, string(data))
+}
+
 // resolveLiveLeaseDeps builds the lease operations' deps the way the Mate's
 // service builds its platform client (tools.KeepMateDevGit): the container's
 // live env store — the Mate server's own environment carries neither the key
@@ -157,7 +189,7 @@ func resolveLiveLeaseDeps(ctx context.Context) (ops.LeaseDeps, error) {
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
 	rt := runtime.DetectFrom(lookup)
 	if !rt.InContainer {
-		return ops.LeaseDeps{}, errors.New("zcp lease release runs inside the project's zcp container: a pool's orchestrator answers only there")
+		return ops.LeaseDeps{}, errLeaseOutsideContainer
 	}
 	key := lookup(hq.EnvKey)
 	if key == "" {

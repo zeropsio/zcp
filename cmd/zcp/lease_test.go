@@ -33,7 +33,8 @@ func TestRunLeaseCmd_BadArguments_ErrorOnStdoutExitOne(t *testing.T) {
 		want string
 	}{
 		{"no subcommand", []string{"--json"}, "usage"},
-		{"unknown subcommand", []string{"acquire", "--json"}, "usage"},
+		{"unknown subcommand", []string{"status", "--json"}, "usage"},
+		{"acquire without a pool or branch", []string{"acquire", "--json"}, "usage"},
 		{"no branch", []string{"release", "--json"}, "--branch"},
 		{"empty branch", []string{"release", "--branch", "", "--json"}, "--branch"},
 		{"force is never taken", []string{"release", "--branch", "feat-x", "--force", "--json"}, "force"},
@@ -89,5 +90,44 @@ func TestRunLeaseCmd_NothingHeld_ReleasedNothingExitZero(t *testing.T) {
 		func(context.Context) (ops.LeaseDeps, error) { return ops.LeaseDeps{StateDir: stateDir}, nil })
 	if code != 0 || strings.TrimSpace(out.String()) != `{"released":[]}` {
 		t.Errorf("exit %d, stdout %q; want 0 and nothing released", code, out.String())
+	}
+}
+
+// witness: cmd/zcp/lease.go | fs.StringVar(&pool, "pool", "", → fs.StringVar(&pool, "pools", "",
+func TestRunLeaseCmd_Acquire_DispatchesSinglePool(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name     string
+		args     []string
+		wantExit int
+	}{
+		{"main refused by acquire", []string{"--pool", "devpool", "--branch", "main"}, 3},
+		{"pool required", []string{"--branch", "main"}, 1},
+		{"branch required", []string{"--pool", "devpool"}, 1},
+		{"several pools", []string{"--pools", "devpool,webpool", "--branch", "main"}, 1},
+		{"from", []string{"--pool", "devpool", "--branch", "main", "--from", "feature"}, 1},
+		{"force", []string{"--pool", "devpool", "--branch", "main", "--force"}, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			args := append([]string{"acquire", "--json"}, tt.args...)
+			exit := runLeaseCmd(args, &out, func(context.Context) (ops.LeaseDeps, error) {
+				return ops.LeaseDeps{}, nil // main is refused before any platform read.
+			})
+			var a struct {
+				Refused *struct {
+					Code string `json:"code"`
+				} `json:"refused"`
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &a); err != nil || exit != tt.wantExit {
+				t.Fatalf("exit %d, stdout %q, want %d and one JSON answer", exit, out.String(), tt.wantExit)
+			}
+			if exit == 3 && (a.Refused == nil || a.Refused.Code != platform.ErrInvalidParameter) ||
+				exit == 1 && a.Code != platform.ErrInvalidUsage {
+				t.Fatalf("unexpected answer %s", out.String())
+			}
+		})
 	}
 }
