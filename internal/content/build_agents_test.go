@@ -1218,7 +1218,7 @@ func TestBuildAgentsMD_MateNamesItself(t *testing.T) {
 
 // agentsBudget is the most bytes a rendered AGENTS.md may carry, the guided
 // or authoring block aside: every request of every Mate carries the file.
-const agentsBudget = 26624
+const agentsBudget = 22528
 
 // TestAgentsBudget_AB1_EveryRenderFitsTheBudget renders AGENTS.md for every
 // flag BuildAgentsMD branches on, with names of typical length (real ones
