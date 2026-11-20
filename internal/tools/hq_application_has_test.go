@@ -33,10 +33,10 @@ func TestApplicationWords_SayWhatAChangeHoldsBesideAProductionOrOtherMates(t *te
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := strings.Contains(applicationOpenedWords(tt.state), onePieceOfWork); got != tt.opened {
+			if got := strings.Contains(applicationOpenedWords(tt.state), oneRunOfAsks); got != tt.opened {
 				t.Errorf("open-change says what a change holds = %v, want %v", got, tt.opened)
 			}
-			if got := strings.Contains(applicationStartWords(tt.state), onePieceOfWork); got != tt.start {
+			if got := strings.Contains(applicationStartWords(tt.state), oneRunOfAsks); got != tt.start {
 				t.Errorf("develop's start says what a change holds = %v, want %v", got, tt.start)
 			}
 		})
