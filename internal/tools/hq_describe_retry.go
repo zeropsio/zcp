@@ -81,19 +81,20 @@ func describeClient(hqc hq.Client) hq.Client {
 // try puts the same words, and a picture already attached is not attached
 // again, so a try again changes nothing a landed one did. away says, when
 // HQ was still away after the tries, whether any of them may have landed —
-// HQ has no read of a change's words to ask.
-func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) (tries int, away describeAway, err error) {
+// HQ has no read of a change's words to ask. change is HQ's answer to the
+// try it answered.
+func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) (change hq.Change, tries int, away describeAway, err error) {
 	client := describeClient(hqc)
 	unconfirmed := false
 	tries = describeRetry.run(ctx, func() hqAnswer {
-		err = putChangeDescription(ctx, client, stateDir, ref, text, title)
+		change, err = putChangeDescription(ctx, client, stateDir, ref, text, title)
 		if !describeTransient(err) {
 			return hqAnswered
 		}
 		unconfirmed = unconfirmed || !hqNotReached(err)
 		return hqNotServing
 	})
-	return tries, describeAwayOf(err, unconfirmed), err
+	return change, tries, describeAwayOf(err, unconfirmed), err
 }
 
 // hqNotReached reports whether a try HQ did not serve surely never reached

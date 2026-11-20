@@ -186,6 +186,9 @@ type Change struct {
 	UpdatedAt    string  `json:"updatedAt"`
 	Mergeability string  `json:"mergeability"`
 	Behind       bool    `json:"behind"`
+	// Ready is whether the change asks for review (HqChange.ready); nil from
+	// an older HQ, which sends none, and is read as ready.
+	Ready *bool `json:"ready"`
 }
 
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in

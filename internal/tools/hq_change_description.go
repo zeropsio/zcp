@@ -63,7 +63,10 @@ type changeDescriptionResult struct {
 	PullRequestURL string   `json:"pullRequestUrl,omitempty"`
 	Described      bool     `json:"described"`
 	Kept           bool     `json:"kept,omitempty"`
-	Message        string   `json:"message"`
+	// Labels are the described change's standing in HQ's answer to the
+	// write (describedLabels), as status labels it.
+	Labels  []string `json:"labels,omitempty"`
+	Message string   `json:"message"`
 }
 
 // errCannotAttach is a picture HQ will never keep for a change — larger than
@@ -185,7 +188,8 @@ func handleDescribeChange(
 	keepErr := keepChangeDescription(stateDir, ref, pick, text, title)
 
 	url := hqc.ChangeURL(target.AppID, target.Repo, number)
-	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title); err != nil {
+	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title)
+	if err != nil {
 		var gone *picturesGoneError
 		if errors.As(err, &gone) {
 			forgetChangeDescription(stateDir, ref, text)
@@ -244,9 +248,22 @@ func handleDescribeChange(
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
-		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that moves it makes it a draft again, until you describe it again.",
+		Labels:         describedLabels(answered),
+		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that changes its diff makes it a draft again, until you describe it again; HQ keeps it ready when it can tell the diff is unchanged.",
 			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited),
 	}), nil, nil
+}
+
+// describedLabels labels the change HQ answered the describe with, as status
+// labels a change (changeLabels): the write's own answer, so no state read
+// older than it judges the change. An answer without ready comes from an
+// older HQ and is read as ready.
+func describedLabels(c hq.Change) []string {
+	ready := true
+	if c.Ready != nil {
+		ready = *c.Ready
+	}
+	return changeLabels(&workflow.HQChangeTold{State: c.State, Ready: &ready, Mergeability: c.Mergeability, Behind: c.Behind})
 }
 
 // changeRef is one change of the Mate's in HQ: appID's repo, number.
@@ -412,11 +429,12 @@ func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text
 // then, at the head it has. Once HQ took it, the words the ledger kept are
 // forgotten, unless newer ones were kept meanwhile, which stay for the next
 // put. Nothing is written when a picture could not be attached: never a
-// description with a broken picture.
-func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) error {
+// description with a broken picture. It answers the change as HQ answered the
+// edit.
+func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) (hq.Change, error) {
 	body, err := changeBody(ctx, hqc, stateDir, ref, text)
 	if err != nil {
-		return err
+		return hq.Change{}, err
 	}
 	edit := hq.ChangeEdit{Body: &body}
 	if title != "" {
@@ -427,14 +445,14 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, r
 	change, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit)
 	if change.StateRev > 0 {
 		if recordErr := rememberChangeRevision(stateDir, ref, change.StateRev); recordErr != nil {
-			return fmt.Errorf("record HQ's write after edit: %w", recordErr)
+			return hq.Change{}, fmt.Errorf("record HQ's write after edit: %w", recordErr)
 		}
 	}
 	if err != nil {
-		return err
+		return hq.Change{}, err
 	}
 	forgetChangeDescription(stateDir, ref, text)
-	return nil
+	return change, nil
 }
 
 // changeBody is text as it is published on change number: every picture it
