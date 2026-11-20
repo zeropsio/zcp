@@ -1090,12 +1090,11 @@ func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing
 }
 
 // TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault:
-// a Mate's agent that has to sign in with an identity it cannot make asks for
-// an account made for testing, each thing the sign-in takes as a value of its
-// own in its own vault, and uses one without reading it — in a page through
-// `{{env:KEY}}`, in a command through `zcp with` — and outside a Mate, where
-// neither mate=true nor the ask exists, AGENTS.md does not send the agent to
-// them.
+// a Mate's agent checks work behind a sign-in signed in with an account made
+// for testing, never the person's own, and AGENTS.md sends it to the
+// sign-in-check playbook for how to ask for one into its own vault and use it
+// unseen; outside a Mate, where neither mate=true nor the ask exists,
+// AGENTS.md does not send the agent there.
 // witness: internal/content/build_agents.go | {rt.MateEnabled, "agents_own_vault.md"}, → {true, "agents_own_vault.md"},
 func TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVault(t *testing.T) {
 	t.Parallel()
@@ -1115,11 +1114,8 @@ func TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVau
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
 			for _, want := range []string{
-				`zerops_env action="request" mate=true key="TEST_EMAIL" sensitive=false`,
-				`zerops_env action="request" mate=true key="TEST_PASSWORD"`,
-				`["fill","<sel>","{{env:TEST_PASSWORD}}"]`, "`zcp with TEST_EMAIL,TEST_PASSWORD -- <command>`",
-				`sh -c '<line with "$TEST_PASSWORD">'`,
 				"an account made for testing", "Never ask for the person's own sign-in",
+				`zerops_knowledge uri="zerops://playbooks/sign-in-check"`,
 			} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
