@@ -6,17 +6,21 @@ import (
 	"errors"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 )
 
 // fakeChrome is Chrome on the DevTools protocol, in process: its cookie jar,
-// each origin's local storage and its open tabs. A stub tab's navigation is
-// answered only once the client fulfils the request Chrome paused for it, as
-// Chrome holds it; a navigation to an origin in stall is never answered, and
-// a storage write on one in refuse throws, and one in fail is answered with
-// a navigation error. Storage.setCookies refuses a batch
+// each origin's local storage, the page each tab is on, the tabs opened
+// through it and the DevTools sessions still attached. A navigation to a
+// site is answered only once the client fulfils the request Chrome paused
+// for it, as Chrome holds it; one to about:blank pauses nothing; a navigation to an origin in stall is never answered, and
+// a storage write on one in refuse throws, one in fail is answered with a
+// navigation error, one in upgrade lands on its https:// twin (Chrome's
+// HTTPS upgrade), and dies makes Chrome die at the first navigation: the
+// connection closes. Storage.setCookies refuses a batch
 // holding the cookie named refuseCookie, and that cookie alone.
 type fakeChrome struct {
 	mu           sync.Mutex
@@ -28,12 +32,14 @@ type fakeChrome struct {
 	stall        map[string]bool
 	refuse       map[string]bool
 	fail         map[string]bool
+	upgrade      map[string]bool
+	dies         bool
 	refuseCookie string
-	tabs         []string
+	created      []string
+	sessions     map[string]string
 	pages        map[string]string
 	paused       map[string]pausedNavigation
 	visited      []string
-	nextTarget   int
 	nextRequest  int
 }
 
@@ -45,14 +51,16 @@ type pausedNavigation struct {
 
 func newFakeChrome() *fakeChrome {
 	return &fakeChrome{
-		out:     make(chan []byte, 1024),
-		closed:  make(chan struct{}),
-		storage: map[string][]browserStorageItem{},
-		stall:   map[string]bool{},
-		refuse:  map[string]bool{},
-		fail:    map[string]bool{},
-		pages:   map[string]string{},
-		paused:  map[string]pausedNavigation{},
+		out:      make(chan []byte, 1024),
+		closed:   make(chan struct{}),
+		storage:  map[string][]browserStorageItem{},
+		stall:    map[string]bool{},
+		refuse:   map[string]bool{},
+		fail:     map[string]bool{},
+		upgrade:  map[string]bool{},
+		sessions: map[string]string{},
+		pages:    map[string]string{baseTarget: "about:blank"},
+		paused:   map[string]pausedNavigation{},
 	}
 }
 
@@ -127,31 +135,63 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 		f.cookies = append(f.cookies, p.Cookies...)
 		reply(map[string]any{})
 	case "Target.createTarget":
-		f.nextTarget++
-		id := "STUB" + string(rune('0'+f.nextTarget))
-		f.tabs = append(f.tabs, id)
+		var p struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		id := "NEW" + strconv.Itoa(len(f.created)+1)
+		f.created = append(f.created, id)
+		f.pages[id] = p.URL
 		reply(map[string]any{"targetId": id})
 	case "Target.attachToTarget":
 		var p struct {
 			TargetID string `json:"targetId"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
-		reply(map[string]any{"sessionId": "S-" + p.TargetID})
-	case "Target.closeTarget":
+		if _, ok := f.pages[p.TargetID]; !ok {
+			refuse("No target with given id found")
+			return nil
+		}
+		session := "S" + strconv.Itoa(len(f.sessions)+1) + "-" + p.TargetID
+		f.sessions[session] = p.TargetID
+		reply(map[string]any{"sessionId": session})
+	case "Target.getTargetInfo":
 		var p struct {
 			TargetID string `json:"targetId"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
-		f.tabs = slices.DeleteFunc(f.tabs, func(id string) bool { return id == p.TargetID })
-		reply(map[string]any{"success": true})
+		if _, ok := f.pages[p.TargetID]; !ok {
+			refuse("No target with given id found")
+			return nil
+		}
+		reply(map[string]any{"targetInfo": map[string]any{"targetId": p.TargetID, "type": "page"}})
+	case "Target.detachFromTarget":
+		var p struct {
+			SessionID string `json:"sessionId"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		delete(f.sessions, p.SessionID)
+		reply(map[string]any{})
 	case "Page.navigate":
 		var p struct {
 			URL string `json:"url"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
+		if p.URL == "about:blank" {
+			f.pages[f.sessions[msg.SessionID]] = p.URL
+			reply(map[string]any{"frameId": "F1"})
+			return nil
+		}
+		if f.dies {
+			f.closeOnce.Do(func() { close(f.closed) })
+			return nil
+		}
 		u, _ := url.Parse(p.URL)
 		origin := u.Scheme + "://" + u.Host
 		f.visited = append(f.visited, origin)
+		if f.upgrade[origin] {
+			origin = "https://" + u.Host
+		}
 		if f.stall[origin] {
 			return nil
 		}
@@ -174,7 +214,7 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 			return nil
 		}
 		delete(f.paused, p.RequestID)
-		f.pages[nav.session] = nav.origin
+		f.pages[f.sessions[nav.session]] = nav.origin
 		reply(map[string]any{})
 		f.send(map[string]any{"id": nav.id, "result": map[string]any{"frameId": "F1", "loaderId": "L1"}})
 	case "Runtime.evaluate":
@@ -182,30 +222,42 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 			Expression string `json:"expression"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
-		origin := f.pages[msg.SessionID]
-		switch {
-		case p.Expression == browserStorageRead:
-			items := f.storage[origin]
-			if items == nil {
-				items = []browserStorageItem{}
+		origin := f.pages[f.sessions[msg.SessionID]]
+		call := func(fn string, args any) bool {
+			if !strings.HasPrefix(p.Expression, fn+"(") {
+				return false
 			}
-			page, err := json.Marshal(struct {
-				Origin       string               `json:"origin"`
-				LocalStorage []browserStorageItem `json:"localStorage"`
-			}{origin, items})
+			_ = json.Unmarshal([]byte("["+strings.TrimSuffix(strings.TrimPrefix(p.Expression, fn+"("), ")")+"]"), args)
+			return true
+		}
+		var asked string
+		var items []browserStorageItem
+		switch {
+		case call(browserStorageRead, &[]any{&asked}):
+			answer := map[string]any{"elsewhere": origin}
+			if origin == asked {
+				stored := f.storage[origin]
+				if stored == nil {
+					stored = []browserStorageItem{}
+				}
+				answer = map[string]any{"localStorage": stored}
+			}
+			page, err := json.Marshal(answer)
 			if err != nil {
 				return err
 			}
 			reply(map[string]any{"result": map[string]any{"type": "string", "value": string(page)}})
-		case strings.HasPrefix(p.Expression, browserStorageWrite+"("):
+		case call(browserStorageWrite, &[]any{&asked, &items}):
+			if origin != asked {
+				reply(map[string]any{"result": map[string]any{"type": "string", "value": origin}})
+				return nil
+			}
 			if f.refuse[origin] {
 				reply(map[string]any{"result": map[string]any{"type": "object"}, "exceptionDetails": map[string]any{"text": "Uncaught", "exception": map[string]any{"description": "QuotaExceededError"}}})
 				return nil
 			}
-			var items []browserStorageItem
-			_ = json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(p.Expression, browserStorageWrite+"("), ")")), &items)
 			f.storage[origin] = append(f.storage[origin], items...)
-			reply(map[string]any{"result": map[string]any{"type": "string", "value": origin}})
+			reply(map[string]any{"result": map[string]any{"type": "string", "value": ""}})
 		default:
 			refuse("unknown expression")
 		}
@@ -215,11 +267,24 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 	return nil
 }
 
-// openTabs is every stub tab still open.
-func (f *fakeChrome) openTabs() []string {
+// leftBehind says what the kept sign-in left in the browser: tabs it
+// opened, DevTools sessions still attached, and the base tab's page when it
+// is anything but about:blank. Nothing, for one that leaves the browser as
+// agent-browser had it.
+func (f *fakeChrome) leftBehind() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.tabs)
+	var left []string
+	for _, id := range f.created {
+		left = append(left, "tab "+id)
+	}
+	for session := range f.sessions {
+		left = append(left, "session "+session)
+	}
+	if page := f.pages[baseTarget]; page != "about:blank" {
+		left = append(left, "base tab on "+page)
+	}
+	return left
 }
 
 // sites is every origin a navigation went to.

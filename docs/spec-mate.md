@@ -1056,8 +1056,9 @@ agent-browser's `get cdp-url` names, since only its daemon knows the Chrome it r
 (a relaunched Chrome has a new port and profile folder) — and never loads a site for
 either: cookies are read and set browser-wide (`Storage.getCookies`,
 `Storage.setCookies`), and local storage, which Chrome hands out only to a page of its
-origin, through one stub tab whose every request zcp answers itself with an empty page
-(`Fetch`), with service workers bypassed, so the stub never reaches the network. Why: with
+origin, on the base tab, borrowed through a DevTools session of zcp's own: while zcp holds
+it, it answers every request of the tab itself with an empty page (`Fetch`), with service
+workers bypassed, so the tab never reaches the network. Why: with
 agent-browser's own `state save` and `state load` (0.39.1), both of which open each origin
 for real, a real Mate's end-of-call save added more than 5 s to 23 of 73 measured calls
 (at most 20 s), and on a Mac 7–9 of 32 saves stalled about 35 s inside agent-browser's
@@ -1078,16 +1079,23 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   restore. The kept origins are pruned first (see **Use and expiry**). A kept file zcp
   cannot read, or that is no kept state, is set aside — renamed to
   `zcp-default.json.aside`, one copy at most, never restored again — and the call runs
-  signed out; the next clean save writes a new kept file. Otherwise every kept cookie is
-  set, all in one command; when Chrome refuses that, one by one, so a cookie Chrome
-  refuses costs only itself (logged, as a count). Then each kept origin's local storage,
-  most recently used first, is written on the stub tab, which is closed after the last
-  one. An origin whose write Chrome refuses is dropped from the kept file and named; one
-  the bound cuts off — not reached, or its write not back — is neither: it stays kept and
-  is named as not restored, and an empty read of it in this browser cannot erase it.
-  Cookies that do not get in — Chrome not reached, or the bound out before they are set —
-  leave the browser without the kept cookies: its saves are refused (see **The save**),
-  so they stay kept, and no later call reuses it. A restore never restarts the browser.
+  signed out; the next clean save writes a new kept file. Otherwise, into the Chrome
+  whose base tab agent-browser lists — the connection must find that tab — every kept
+  cookie is set, all in one command; when Chrome refuses that, one by one, so a cookie
+  Chrome refuses costs only itself: it is named, and the next save no longer keeps it.
+  Then each kept origin's local storage, most recently used first, is written on the
+  borrowed base tab, given back after the last one. The write checks the page's origin
+  before it writes: a stub that landed elsewhere — Chrome's HTTPS upgrade of a kept
+  `http://` site — writes nothing, and the site stays kept, named as not restored. Only
+  a site whose page refuses the write (its script throws: a quota) is dropped from the
+  kept file and named. Any other failure — the bound out, the connection closed, the tab
+  or Chrome dead — stops the restore there: that site and every one after it stay kept
+  and are named as not restored, and an empty read of them in this browser cannot erase
+  them. Cookies that do not get in — Chrome not reached, or the bound out before they
+  are set — and a base tab that is another one after the restore — Chrome died and
+  agent-browser relaunched it empty — leave the browser without the kept cookies: its
+  saves are refused (see **The save**), so they stay kept, and no later call reuses it.
+  A restore never restarts the browser.
   Measured on a Mac with agent-browser 0.39.1 and Chrome 157: a fresh browser got back an
   httpOnly cookie and the local storage of four sites — among them a dead `.invalid`
   origin, a site whose service worker hangs every navigation and a page that never
@@ -1096,14 +1104,25 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   `TestRestoreBrowserSignIn_EveryKeptCookieAndSiteComesBackWithNoSiteLoaded`,
   `TestRestoreBrowserSignIn_ASiteChromeRefusesLosesOnlyItsOwnStorage`,
   `TestRestoreBrowserSignIn_ARestoreThatRunsOutDropsNothing`,
+  `TestRestoreBrowserSignIn_AChromeThatDiesMidRestoreKeepsEverything`,
+  `TestRestoreBrowserSignIn_ASiteChromeUpgradesToHTTPSIsKeptNotWrittenElsewhere`,
   `TestRestoreBrowserSignIn_CookiesThatDoNotGetInStopTheSaves`,
   `TestRestoreBrowserSignIn_ACookieChromeRefusesCostsOnlyItself`).
-- **The stub tab.** Opened by zcp on the default context for one restore or save and
-  closed whatever happened, its bound run out included (2 s of its own for the close),
-  before the call's tab opens or the call's tabs close. agent-browser lists a tab it did
-  not open after the tabs it had, so a stub tab left by a crash is never the base tab —
-  the first listed — nor the call's own tab, whose id the setup's `tab new` answered; a
-  crash never leaves the browser marked idle, so the next call recycles it anyway.
+- **The borrowed base tab.** zcp opens no tab of its own: agent-browser adopts every tab
+  it discovers (its daemon drains Chrome's target events every 100 ms), and a stub tab
+  opened and closed behind its back left it a stale entry — on a Mate with agent-browser
+  0.39.4 every hand-back then failed closing a tab agent-browser no longer had, which
+  stopped the warm browser after every call, and a new browser's next command waited
+  out agent-browser's 30 s read limit. So zcp borrows the base tab, which agent-browser
+  keeps on `about:blank` and never runs a call in, for one restore or save, and gives it
+  back whatever happened, its bound run out included (2 s of its own): back on
+  `about:blank`, its DevTools session detached, which takes the request answering and the
+  service-worker bypass with it. agent-browser's tab list is the same before and after
+  (`TestSaveBrowserSignIn_OpensNoTabAndGivesTheBaseTabBack`). Measured on a Mac with
+  agent-browser 0.39.4 and Chrome 157 through zcp's own steps: a fresh browser's restore
+  10 ms, each hand-back (save, tabs closed) 72–79 ms with no error, the next `tab` call
+  reused the warm browser, and a `new-browser` call took the browser's start (1.1 s) +
+  restore (42 ms) + setup and walk (0.1 s).
 - **What the call says.** A call whose new browser could not restore all of the kept
   sign-in says so in its result's `keptSignIn` field, never in `message`, and it never
   marks the call failed; a later call on the same browser does not repeat it.
@@ -1111,13 +1130,15 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   body text. The words, joined as they apply: a file set aside — "The kept sign-in could
   not be restored: its file could not be read, so it was set aside. This call ran signed
   out; signing in again keeps the new sign-in."; dropped sites — "The saved local storage
-  of <sites> was dropped: Chrome refused to take it back while this call restored the
-  kept sign-in. Sign in there again if it needs it."; sites not restored — "The saved
-  local storage of <sites> was not restored in this call, whose restore ran out of time;
-  it is still kept."; cookies not restored — "The kept sign-in's cookies were not
+  of <sites> was dropped: the page refused to take it back while this call restored the
+  kept sign-in. Sign in there again if it needs it."; refused cookies — "Chrome refused
+  the kept cookies <name (domain), …>, so they are no longer kept. Sign in there again if
+  it needs it."; sites not restored — "The saved local storage of <sites> was not
+  restored in this call; it is still kept."; cookies not restored — "The kept sign-in's cookies were not
   restored in this call. They are still kept for the next new browser; a sign-in made in
   this browser is not kept."; and "The rest of the kept sign-in was restored." only after
-  dropped sites when it is true. Up to three sites are named; no value is
+  dropped sites or refused cookies when it is true. Up to three sites or cookies are
+  named; no value is
   (`TestBrowserBatch_ASignInThatCouldNotBeRestored_IsItsOwnField`,
   `TestRenderHTTPRoot_AKeptSignInNote_KeepsTheRenderAndIsPassedOn`).
 - **What the browser holds.** zcp keeps, in the browser's runtime folder — so it dies with
@@ -1145,12 +1166,14 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   call reuses it, and the call's `keptSignIn` says "Chrome restarted empty during this
   call, so the kept sign-in was not in it: it is still kept for the next call, and a
   sign-in made in this call was not kept." Otherwise zcp reads every cookie of the
-  default context and, on the stub tab, the local storage of each origin it reads: every
+  default context and, on the borrowed base tab, the local storage of each origin it reads: every
   origin an `open` step ended on in this browser, and the origin of the call's own tab's
   page — the one the setup opened, found in the tab list whatever is active, so a popup
   still open on an identity provider never puts its site in the kept file. An origin this
   browser did not get restored is not read, so opening it cannot erase storage it never
-  got; one whose read fails is logged and keeps its kept entry. Session storage is never
+  got; one whose read fails — the stub landed elsewhere, an HTTPS upgrade among them — is
+  logged and keeps its kept entry. The connection must find the base tab agent-browser
+  listed: a Chrome relaunched between the tab list and the read saves nothing. Session storage is never
   read. zcp merges the result with the kept file: the saved cookies replace the kept
   ones, since the browser holds every kept cookie; each origin read is what the save
   holds for it, nothing when its storage is empty, so a clear sticks even after the page
@@ -1176,6 +1199,7 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   `TestSaveBrowserSignIn_ASiteWhoseReadFailsKeepsItsStorage`,
   `TestSaveBrowserSignIn_ReadsTheCallsOwnPageNotAPopups`,
   `TestSaveBrowserSignIn_ASaveThatRunsOutKeepsTheLastSave`,
+  `TestSaveBrowserSignIn_AnotherChromeThanTheListedOneSavesNothing`,
   `TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing`,
   `TestBrowserBatch_WhatTheHandBackFoundReachesKeptSignIn`,
   `TestReleaseBrowser_ARecycledBrowserIsNeverHandedBack`).

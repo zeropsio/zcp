@@ -20,14 +20,15 @@ import (
 // the browser target, never through agent-browser's state save or state load.
 // Cookies are read and written browser-wide (Storage.getCookies,
 // Storage.setCookies); local storage, which Chrome hands out only to a page of
-// its origin, through one stub tab whose every request zcp answers itself with
-// an empty page, so no site is ever loaded.
+// its origin, on the base tab, whose every request zcp answers itself with
+// an empty page while it borrows it, so no site is ever loaded.
 
-// browserStubCloseTimeout bounds closing the stub tab, which runs after the
-// save's or restore's own bound may have run out.
+// browserStubCloseTimeout bounds giving the base tab back, which runs after
+// the save's or restore's own bound may have run out.
 const browserStubCloseTimeout = 2 * time.Second
 
-// browserStubPage is the page every request of the stub tab is answered with.
+// browserStubPage is the page every request of the borrowed base tab is
+// answered with.
 var browserStubPage = base64.StdEncoding.EncodeToString([]byte("<!doctype html><title>zcp kept sign-in</title>"))
 
 // browserCDPConn is one websocket to Chrome's DevTools protocol, whole JSON
@@ -337,11 +338,11 @@ func (k browserCookie) cookieParam() map[string]any {
 
 // setCookies sets cookies into the browser's default context, all in one
 // command; when Chrome refuses that, one by one, so a cookie it refuses costs
-// only itself. refused counts those; err is a connection that failed or ctx's
+// only itself. refused names those; err is a connection that failed or ctx's
 // end.
-func (c *browserCDP) setCookies(ctx context.Context, cookies []browserCookie) (refused int, err error) {
+func (c *browserCDP) setCookies(ctx context.Context, cookies []browserCookie) (refused []string, err error) {
 	if len(cookies) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	params := make([]map[string]any, 0, len(cookies))
 	for _, k := range cookies {
@@ -350,12 +351,16 @@ func (c *browserCDP) setCookies(ctx context.Context, cookies []browserCookie) (r
 	err = c.call(ctx, "", "Storage.setCookies", map[string]any{"cookies": params}, nil)
 	var refusal *browserCDPError
 	if !errors.As(err, &refusal) {
-		return 0, err
+		return nil, err
 	}
-	for _, p := range params {
+	for i, p := range params {
 		err := c.call(ctx, "", "Storage.setCookies", map[string]any{"cookies": []map[string]any{p}}, nil)
 		if errors.As(err, &refusal) {
-			refused++
+			name := cookies[i].Name
+			if cookies[i].Domain != "" {
+				name += " (" + cookies[i].Domain + ")"
+			}
+			refused = append(refused, name)
 			continue
 		}
 		if err != nil {
@@ -365,43 +370,49 @@ func (c *browserCDP) setCookies(ctx context.Context, cookies []browserCookie) (r
 	return refused, nil
 }
 
-// browserStub is a tab zcp opened on the browser for the kept sign-in: every
-// request of it is answered with browserStubPage, never by a site, and no
-// service worker answers it.
+// holds reports whether this Chrome still has target, the base tab
+// agent-browser listed: a Chrome agent-browser relaunched since has another.
+func (c *browserCDP) holds(ctx context.Context, target string) error {
+	if err := c.call(ctx, "", "Target.getTargetInfo", map[string]any{"targetId": target}, nil); err != nil {
+		return fmt.Errorf("the base tab %s is not in this Chrome: %w", target, err)
+	}
+	return nil
+}
+
+// browserStub is the base tab, borrowed by zcp for the kept sign-in through a
+// DevTools session of its own: while zcp holds it, every request of the tab
+// is answered with browserStubPage, never by a site, and no service worker
+// answers it. zcp opens no tab of its own: agent-browser tracks every tab it
+// discovers, and a tab opened and closed behind its back left it a stale
+// entry — a hand-back closing a tab it no longer had, a command waiting 30 s
+// on a closed active tab (agent-browser 0.39.4 on a Mate).
 type browserStub struct {
 	cdp             *browserCDP
 	target, session string
 }
 
-// withStub runs use on a stub tab it opens, and closes the tab whatever
-// use did, its bound run out included: a stub tab left open would sit beside
-// the call's tabs.
-func (c *browserCDP) withStub(ctx context.Context, use func(*browserStub) error) error {
-	stub, err := c.openStub(ctx)
+// withStub runs use on the base tab (target) as a stub, and gives the tab
+// back whatever use did, its bound run out included: on about:blank, as
+// agent-browser left it, and without zcp's session, which takes its request
+// answering and service-worker bypass with it.
+func (c *browserCDP) withStub(ctx context.Context, target string, use func(*browserStub) error) error {
+	stub, err := c.openStub(ctx, target)
 	if err != nil {
-		return fmt.Errorf("open the stub tab: %w", err)
+		return fmt.Errorf("borrow the base tab: %w", err)
 	}
 	defer stub.close(ctx)
 	return use(stub)
 }
 
-// openStub opens the stub tab; withStub closes it.
-func (c *browserCDP) openStub(ctx context.Context) (*browserStub, error) {
-	var created struct {
-		TargetID string `json:"targetId"`
-	}
-	if err := c.call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"}, &created); err != nil {
-		return nil, err
-	}
-	s := &browserStub{cdp: c, target: created.TargetID}
+// openStub attaches to target and makes it a stub; withStub gives it back.
+func (c *browserCDP) openStub(ctx context.Context, target string) (*browserStub, error) {
 	var attached struct {
 		SessionID string `json:"sessionId"`
 	}
-	if err := c.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": s.target, "flatten": true}, &attached); err != nil {
-		s.close(ctx)
+	if err := c.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true}, &attached); err != nil {
 		return nil, err
 	}
-	s.session = attached.SessionID
+	s := &browserStub{cdp: c, target: target, session: attached.SessionID}
 	for _, step := range []struct {
 		method string
 		params any
@@ -419,16 +430,29 @@ func (c *browserCDP) openStub(ctx context.Context) (*browserStub, error) {
 	return s, nil
 }
 
-// close closes the stub tab under its own bound, ctx's end aside.
+// close sends the base tab back to about:blank and detaches zcp's session,
+// under its own bound, ctx's end aside.
 func (s *browserStub) close(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), browserStubCloseTimeout)
 	defer cancel()
-	if err := s.cdp.call(cctx, "", "Target.closeTarget", map[string]any{"targetId": s.target}, nil); err != nil {
-		logBrowserSignIn(fmt.Errorf("close the stub tab: %w", err))
+	if err := s.cdp.call(cctx, s.session, "Page.navigate", map[string]any{"url": "about:blank"}, nil); err != nil {
+		logBrowserSignIn(fmt.Errorf("send the base tab back to about:blank: %w", err))
+	}
+	if err := s.cdp.call(cctx, "", "Target.detachFromTarget", map[string]any{"sessionId": s.session}, nil); err != nil {
+		logBrowserSignIn(fmt.Errorf("detach from the base tab: %w", err))
 	}
 }
 
-// visit puts the stub tab on origin's root.
+// errBrowserStubElsewhere is a stub that did not land on the origin asked
+// for — a navigation error, or Chrome's HTTPS upgrade of an http:// site —
+// where nothing was read or written.
+var errBrowserStubElsewhere = errors.New("the stub did not land on the origin")
+
+// errBrowserStorageRefused is the page refusing a write of local storage —
+// a quota, say: its script threw.
+var errBrowserStorageRefused = errors.New("the page refused the local storage")
+
+// visit puts the stub on origin's root.
 func (s *browserStub) visit(ctx context.Context, origin string) error {
 	var nav struct {
 		ErrorText string `json:"errorText"`
@@ -437,13 +461,26 @@ func (s *browserStub) visit(ctx context.Context, origin string) error {
 		return err
 	}
 	if nav.ErrorText != "" {
-		return fmt.Errorf("open the stub of %s: %s", origin, nav.ErrorText)
+		return fmt.Errorf("%w: %s: %s", errBrowserStubElsewhere, origin, nav.ErrorText)
 	}
 	return nil
 }
 
-// eval evaluates expression in the stub's page and answers its string value.
-func (s *browserStub) eval(ctx context.Context, expression string) (string, error) {
+// eval calls fn, a function expression, with args in the stub's page and
+// answers its string value. A script that threw is errBrowserScriptThrew;
+// any other failure is the connection's or the tab's.
+func (s *browserStub) eval(ctx context.Context, fn string, args ...any) (string, error) {
+	// json.Marshal escapes U+2028 and U+2029, so its output is a JavaScript
+	// literal as it stands.
+	literals := make([]string, 0, len(args))
+	for _, arg := range args {
+		literal, err := json.Marshal(arg)
+		if err != nil {
+			return "", fmt.Errorf("encode the stub's script: %w", err)
+		}
+		literals = append(literals, string(literal))
+	}
+	expression := fn + "(" + strings.Join(literals, ", ") + ")"
 	var answer struct {
 		Result struct {
 			Value json.RawMessage `json:"value"`
@@ -463,7 +500,7 @@ func (s *browserStub) eval(ctx context.Context, expression string) (string, erro
 		if reason == "" {
 			reason = d.Text
 		}
-		return "", fmt.Errorf("the stub page threw: %s", reason)
+		return "", fmt.Errorf("%w: %s", errBrowserScriptThrew, reason)
 	}
 	var value string
 	if err := json.Unmarshal(answer.Result.Value, &value); err != nil {
@@ -472,60 +509,66 @@ func (s *browserStub) eval(ctx context.Context, expression string) (string, erro
 	return value, nil
 }
 
+// errBrowserScriptThrew is a stub script that threw.
+var errBrowserScriptThrew = errors.New("the stub page threw")
+
 // browserStorageItem is one local storage entry.
 type browserStorageItem struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-// browserStorageRead answers the stub page's origin and its local storage.
-const browserStorageRead = `JSON.stringify((() => { const items = []; ` +
+// browserStorageRead, called with an origin, answers the stub page's local
+// storage when the page is on that origin, and only its origin otherwise.
+const browserStorageRead = `((origin) => { if (location.origin !== origin) return JSON.stringify({elsewhere: location.origin}); const items = []; ` +
 	`for (let i = 0; i < localStorage.length; i++) { const name = localStorage.key(i); items.push({name, value: localStorage.getItem(name)}); } ` +
-	`return {origin: location.origin, localStorage: items}; })())`
+	`return JSON.stringify({localStorage: items}); })`
 
-// browserStorageWrite, called with the items, sets them into the stub page's
-// local storage and answers its origin.
-const browserStorageWrite = `((items) => { for (const item of items) localStorage.setItem(item.name, item.value); return location.origin; })`
+// browserStorageWrite, called with an origin and the items, sets them into
+// the stub page's local storage when the page is on that origin — answering
+// "" — and answers the page's origin, writing nothing, otherwise.
+const browserStorageWrite = `((origin, items) => { if (location.origin !== origin) return location.origin; ` +
+	`for (const item of items) localStorage.setItem(item.name, item.value); return ""; })`
 
-// readStorage answers origin's local storage, read on the stub tab.
+// readStorage answers origin's local storage, read on the stub.
 func (s *browserStub) readStorage(ctx context.Context, origin string) ([]browserStorageItem, error) {
 	if err := s.visit(ctx, origin); err != nil {
 		return nil, err
 	}
-	raw, err := s.eval(ctx, browserStorageRead)
+	raw, err := s.eval(ctx, browserStorageRead, origin)
 	if err != nil {
 		return nil, err
 	}
 	var page struct {
-		Origin       string               `json:"origin"`
+		Elsewhere    *string              `json:"elsewhere"`
 		LocalStorage []browserStorageItem `json:"localStorage"`
 	}
 	if err := json.Unmarshal([]byte(raw), &page); err != nil {
 		return nil, fmt.Errorf("read the local storage of %s: %w", origin, err)
 	}
-	if page.Origin != origin {
-		return nil, fmt.Errorf("read the local storage of %s: the stub page is on %s", origin, page.Origin)
+	if page.Elsewhere != nil {
+		return nil, fmt.Errorf("%w: %s: the page is on %s", errBrowserStubElsewhere, origin, *page.Elsewhere)
 	}
 	return page.LocalStorage, nil
 }
 
-// writeStorage sets items into origin's local storage on the stub tab.
+// writeStorage sets items into origin's local storage on the stub: the page
+// refusing them is errBrowserStorageRefused, a stub that landed elsewhere
+// errBrowserStubElsewhere (nothing written); any other error is the
+// connection's or the tab's.
 func (s *browserStub) writeStorage(ctx context.Context, origin string, items []browserStorageItem) error {
 	if err := s.visit(ctx, origin); err != nil {
 		return err
 	}
-	// json.Marshal escapes U+2028 and U+2029, so its output is a JavaScript
-	// literal as it stands.
-	literal, err := json.Marshal(items)
-	if err != nil {
-		return fmt.Errorf("write the local storage of %s: %w", origin, err)
+	elsewhere, err := s.eval(ctx, browserStorageWrite, origin, items)
+	if errors.Is(err, errBrowserScriptThrew) {
+		return fmt.Errorf("%w: %w", errBrowserStorageRefused, err)
 	}
-	got, err := s.eval(ctx, browserStorageWrite+"("+string(literal)+")")
 	if err != nil {
 		return err
 	}
-	if got != origin {
-		return fmt.Errorf("write the local storage of %s: the stub page is on %s", origin, got)
+	if elsewhere != "" {
+		return fmt.Errorf("%w: %s: the page is on %s", errBrowserStubElsewhere, origin, elsewhere)
 	}
 	return nil
 }
