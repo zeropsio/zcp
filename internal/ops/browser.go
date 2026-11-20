@@ -922,8 +922,22 @@ func classifyStepErrors(steps []BrowserStepResult) {
 		if steps[i].Error != nil && steps[i].ErrorKind == "" {
 			steps[i].ErrorKind = classifyStepError(*steps[i].Error)
 		}
+		if steps[i].Error != nil && strings.HasPrefix(*steps[i].Error, browserReadLimitRaw) {
+			plain := browserReadLimitWords + strings.TrimPrefix(*steps[i].Error, browserReadLimitRaw)
+			steps[i].Error = &plain
+		}
 	}
 }
+
+// browserReadLimitRaw opens agent-browser's error for a step its daemon took
+// and did not answer before the client's read limit: EAGAIN off its own
+// socket, which reads as if the container ran out of something. Its own
+// words after it ("the command reached the daemon but no response came
+// back…") stay; browserReadLimitWords says the rest plainly.
+const (
+	browserReadLimitRaw   = "Failed to read: Resource temporarily unavailable (os error 11)"
+	browserReadLimitWords = "agent-browser got no answer within its client's read limit (30 s; a wait's --timeout + 10 s)"
+)
 
 // populateBrowserBatchOutputs fills ErrorsOutput/ConsoleOutput/
 // NetworkOutput/Screenshot from a successful run's Steps. Tail is

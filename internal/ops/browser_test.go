@@ -1871,3 +1871,28 @@ func TestBrowserBatch_WhatTheHandBackFoundReachesKeptSignIn(t *testing.T) {
 		t.Errorf("keptSignIn = %q, want the hand-back's word", result.KeptSignIn)
 	}
 }
+
+// TestClassifyStepErrors_ANoAnswerSaysAgentBrowsersReadLimitPassed: a step
+// agent-browser's daemon took and did not answer in time reads as its
+// client's read limit passing, never as "Resource temporarily unavailable
+// (os error 11)" — words an agent, and a person reading over its shoulder,
+// took for the container running out of processes (2026-11-20). Its kind
+// stays wedge, and agent-browser's own explanation stays.
+// witness: internal/ops/browser.go | plain := browserReadLimitWords + strings.TrimPrefix(*steps[i].Error, browserReadLimitRaw) → plain := *steps[i].Error
+func TestClassifyStepErrors_ANoAnswerSaysAgentBrowsersReadLimitPassed(t *testing.T) {
+	t.Parallel()
+	raw := "Failed to read: Resource temporarily unavailable (os error 11) (the command reached the daemon but no response came back; it may or may not have run, so it was not retried)"
+	fork := "pthread_create: Resource temporarily unavailable"
+	steps := []BrowserStepResult{{Command: []string{"eval", "1"}, Error: &raw}, {Command: []string{"eval", "2"}, Error: &fork}}
+	classifyStepErrors(steps)
+	got := *steps[0].Error
+	if strings.Contains(got, "Resource temporarily unavailable") || !strings.HasPrefix(got, "agent-browser got no answer within its client's read limit (30 s") {
+		t.Errorf("no-answer error = %q, want agent-browser's read limit in plain words", got)
+	}
+	if !strings.Contains(got, "no response came back; it may or may not have run") || steps[0].ErrorKind != ErrorKindWedge {
+		t.Errorf("no-answer step = %q kind %q, want agent-browser's own words kept and kind wedge", got, steps[0].ErrorKind)
+	}
+	if *steps[1].Error != fork {
+		t.Errorf("a process-limit error was rewritten: %q", *steps[1].Error)
+	}
+}
