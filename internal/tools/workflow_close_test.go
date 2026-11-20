@@ -318,7 +318,7 @@ func TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository
 			if len(branches) != 1 || branches[0].branch != "dev-pools" {
 				t.Fatalf("unproposed branches = %+v, want dev-pools alone", branches)
 			}
-			var got []int
+			got := make([]int, 0, len(branches[0].addTo))
 			for _, c := range branches[0].addTo {
 				got = append(got, c.Number)
 			}
