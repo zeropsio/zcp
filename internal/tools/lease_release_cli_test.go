@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -236,14 +237,14 @@ func TestReleaseLeaseID_Holder_ControlsRelease(t *testing.T) {
 			t.Parallel()
 			orch := &fakeOrchestrator{}
 			deps := acquireCLIDeps(t, orch)
-			got, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch)
+			got, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch, time.Time{})
 			if code != 0 {
 				t.Fatalf("acquire exit %d: %s", code, got.Error)
 			}
 			id := got.Lease.ID
 			if tt.lost {
 				orch.reserved = false
-				lost, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch)
+				lost, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", completionRepo, branch, time.Time{})
 				if code != 3 || lost.Refused == nil || !strings.Contains(lost.Refused.Suggestion, "--lease-id") {
 					t.Fatal("lost acquire did not name the id release")
 				}

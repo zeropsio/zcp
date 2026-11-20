@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -50,14 +51,15 @@ type acquireRefusal struct {
 
 // AcquireLeaseAnswer runs the single-pool acquire. Only an MCP call binds a
 // session to the answer. The CLI passes the lease identity to the Mate.
-func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, branch string) (LeaseAcquireAnswer, int) {
+// reserveBy is the latest start of its reservation (ops.LeaseAcquireForMate).
+func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, branch string, reserveBy time.Time) (LeaseAcquireAnswer, int) {
 	var reservation acquireReservation
 	swarm := deps.Swarm
 	deps.Swarm = func(url, bearer string) ops.SwarmAPI {
 		return acquireAttempt{SwarmAPI: swarm(url, bearer), reservation: &reservation}
 	}
 	deps.PublicAccess = leasePublicAccess(deps.Client, deps.ProjectID, deps.StateDir)
-	change, err := ops.LeaseAcquireForMate(ctx, deps, pool, repo, branch)
+	change, err := ops.LeaseAcquireForMate(ctx, deps, pool, repo, branch, reserveBy)
 	if err != nil {
 		if reservation.refused(err) {
 			return LeaseAcquireAnswer{Refused: personAcquireRefusal(err, pool, branch)}, LeaseAcquireExitRefused
@@ -80,10 +82,14 @@ func personAcquireRefusal(err error, pool, branch string) *acquireRefusal {
 	var full *ops.LeasePoolFullError
 	var held *ops.ConversationLeaseError
 	var prereq *ops.LeasePrerequisiteError
+	var busy *ops.LeaseKeyBusyError
 	var swarm *platform.SwarmError
 	switch {
 	case errors.As(err, &full):
 		r.Message, r.Suggestion = full.PersonWords()
+	case errors.As(err, &busy):
+		r.Message = fmt.Sprintf("Another Apply for this builder on pool %s is still running.", pool)
+		r.Suggestion = "Try Apply again in a minute."
 	case errors.As(err, &held):
 		r.Message = fmt.Sprintf("A conversation of this Mate holds branch %s on %s (%s).", branch, pool, held.Alias)
 		r.Suggestion = "Archive that conversation, or give the builder another name."

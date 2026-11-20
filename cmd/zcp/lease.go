@@ -40,6 +40,19 @@ var errLeaseOutsideContainer = errors.New("runs inside the project's zcp contain
 // sibling's release of the same branch (DP-4) before it refuses.
 const leaseCallBudget = 150 * time.Second
 
+// leaseReservationStart is how long after launch a `zcp lease acquire` may
+// still start its reservation; later it reserves nothing and refuses (DP-39).
+// With the reservation's own deadline (ops.LeaseCallTimeout) every
+// reservation it starts is answered and recorded within about 700 s.
+const leaseReservationStart = 60 * time.Second
+
+// leaseAcquireBudget bounds one `zcp lease acquire` from launch: the
+// reservation's latest start, its own deadline, and 240 s for the record, the
+// alias, the mount and the checkout, so a reservation answered late is still
+// checked out rather than handed back. A hand-back in progress runs to its
+// end. The Mate allows 960 s before it ends the process (DP-39).
+const leaseAcquireBudget = 900 * time.Second
+
 // leaseBackgroundWait bounds the wait, once the answer is written, for the
 // warm policy's background work the release started (a pool's top-up create,
 // a clone into the container kept warm, DP-27/DP-32); work cut short is the
@@ -49,6 +62,7 @@ const leaseBackgroundWait = 20 * time.Second
 // runLeaseCmd dispatches acquire and release. args is everything after
 // "lease"; resolve builds the lease operations' deps in this container.
 func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) (ops.LeaseDeps, error)) int {
+	launch := time.Now()
 	acquire := len(args) > 0 && args[0] == "acquire"
 	asJSON := acquire
 	for _, a := range args {
@@ -71,7 +85,7 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	budget := leaseCallBudget
 	if acquire {
 		usage = leaseAcquireUsage
-		budget = ops.LeaseCallTimeout
+		budget = leaseAcquireBudget
 	}
 	for _, a := range args[1:] {
 		if name := strings.TrimLeft(strings.SplitN(a, "=", 2)[0], "-"); strings.HasPrefix(a, "-") && name == "force" && !acquire {
@@ -113,7 +127,7 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, budget)
+	ctx, cancel := context.WithDeadline(ctx, launch.Add(budget))
 	defer cancel()
 	deps, err := resolve(ctx)
 	if errors.Is(err, errLeaseOutsideContainer) {
@@ -129,7 +143,7 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	var code int
 	if acquire {
 		var answer tools.LeaseAcquireAnswer
-		answer, code = tools.AcquireLeaseAnswer(ctx, deps, pool, *repo, *branch)
+		answer, code = tools.AcquireLeaseAnswer(ctx, deps, pool, *repo, *branch, launch.Add(leaseReservationStart))
 		printLeaseJSON(stdout, answer)
 	} else {
 		var answer tools.LeaseReleaseAnswer

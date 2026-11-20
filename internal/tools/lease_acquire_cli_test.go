@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -32,7 +35,7 @@ func TestAcquireLeaseAnswer_WriterCopy_ReportsIdentityAndReuse(t *testing.T) {
 	deps := acquireCLIDeps(t, &fakeOrchestrator{})
 	var id string
 	for _, reused := range []bool{false, true} {
-		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer")
+		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer", time.Time{})
 		raw, err := json.Marshal(answer)
 		if err != nil || code != 0 {
 			t.Fatalf("exit %d, answer %s, marshal %v", code, raw, err)
@@ -84,7 +87,7 @@ func TestAcquireLeaseAnswer_FailedAcquire_DistinguishesReservation(t *testing.T)
 			t.Parallel()
 			deps := acquireCLIDeps(t, tt.orch)
 			deps.SSH = tt.ssh
-			answer, exit := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer")
+			answer, exit := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer", time.Time{})
 			raw, err := json.Marshal(answer)
 			if exit != tt.wantExit || err != nil || strings.Contains(string(raw), leaseTestToken) || strings.Contains(string(raw), leaseTestLease) {
 				t.Fatalf("unexpected exit %d, marshal error %v, or secret in answer", exit, err)
@@ -112,7 +115,7 @@ func TestAcquireLeaseAnswer_AgentHeldKey_RefusesTakeover(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, branch)
+		answer, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, branch, time.Time{})
 		if code != 3 || answer.Refused == nil || answer.Refused.Code != platform.ErrPermissionDenied {
 			t.Fatalf("unexpected takeover answer, exit %d", code)
 		}
@@ -120,5 +123,64 @@ func TestAcquireLeaseAnswer_AgentHeldKey_RefusesTakeover(t *testing.T) {
 		if err != nil || len(change.Leases) != 1 {
 			t.Fatalf("agent lost its lease: %v", err)
 		}
+	}
+}
+
+// blockedAcquireOrchestrator holds its reservation answer until release
+// closes, so the acquire that called it keeps the key's lock meanwhile.
+type blockedAcquireOrchestrator struct {
+	*fakeOrchestrator
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (o blockedAcquireOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Path == "/container/acquire" {
+		close(o.entered)
+		<-o.release
+	}
+	o.fakeOrchestrator.ServeHTTP(w, r)
+}
+
+// countedAcquire counts the reservations asked of the orchestrator.
+type countedAcquire struct {
+	ops.SwarmAPI
+	calls *atomic.Int32
+}
+
+func (c countedAcquire) Acquire(ctx context.Context, req platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
+	c.calls.Add(1)
+	return c.SwarmAPI.Acquire(ctx, req)
+}
+
+// witness: internal/ops/lease_group.go | return LeaseChange{}, leaseKeyBusyRefusal(branch, poolNames) → return LeaseChange{}, err
+func TestAcquireLeaseAnswer_ReservationStartPassed_RefusesReservingNothing(t *testing.T) {
+	t.Parallel()
+	first := blockedAcquireOrchestrator{fakeOrchestrator: &fakeOrchestrator{}, entered: make(chan struct{}), release: make(chan struct{})}
+	deps := acquireCLIDeps(t, first)
+	firstDone := make(chan int, 1)
+	go func() {
+		_, code := AcquireLeaseAnswer(t.Context(), deps, "devpool", leaseTestRepo, "crew/writer", time.Time{})
+		firstDone <- code
+	}()
+	<-first.entered
+
+	// A second Apply of the same builder waits for the first's key lock
+	// until its latest reservation start passes, and asks for no container.
+	var calls atomic.Int32
+	second := deps
+	inner := ops.NewSwarmFactory(&http.Client{Transport: leaseHandlerTransport{handler: &fakeOrchestrator{}}})
+	second.Swarm = func(url, bearer string) ops.SwarmAPI {
+		return countedAcquire{SwarmAPI: inner(url, bearer), calls: &calls}
+	}
+	answer, code := AcquireLeaseAnswer(t.Context(), second, "devpool", leaseTestRepo, "crew/writer", time.Now().Add(200*time.Millisecond))
+	close(first.release)
+	want := acquireRefusal{Code: platform.ErrAPITimeout,
+		Message: "Another Apply for this builder on pool devpool is still running.", Suggestion: "Try Apply again in a minute."}
+	if code != LeaseAcquireExitRefused || answer.Refused == nil || *answer.Refused != want || answer.acquiredLease != nil || calls.Load() != 0 {
+		t.Fatalf("want exit 3 with %+v and no reservation asked, got exit %d, refusal %+v, error %q, %d reservations", want, code, answer.Refused, answer.Error, calls.Load())
+	}
+	if got := <-firstDone; got != LeaseAcquireExitHeld {
+		t.Fatalf("the first Apply ended with exit %d, want 0", got)
 	}
 }

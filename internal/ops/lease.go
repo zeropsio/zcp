@@ -50,10 +50,13 @@ var _ SwarmAPI = (*platform.SwarmClient)(nil)
 // LeaseDeps are what the lease operations need.
 type LeaseDeps struct {
 	mateAcquire bool
-	Client      platform.Client
-	ProjectID   string
-	StateDir    string
-	Swarm       SwarmFactory
+	// reserveBy is the latest start of a Mate acquire's reservation (DP-39);
+	// zero for no bound.
+	reserveBy time.Time
+	Client    platform.Client
+	ProjectID string
+	StateDir  string
+	Swarm     SwarmFactory
 	// Host is the ssh alias and mount side of a lease; the zero value does neither.
 	Host LeaseHost
 	// SSH runs git inside a leased container by its alias; nil means no

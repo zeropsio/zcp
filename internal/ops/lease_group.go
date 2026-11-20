@@ -94,9 +94,62 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 
 // LeaseAcquireForMate reserves one writer's copy, or returns the same holding
 // on repeat acquire. Only this entry point mints a holder id (DP-40).
-func LeaseAcquireForMate(ctx context.Context, d LeaseDeps, pool, repo, branch string) (LeaseChange, error) {
-	d.mateAcquire = true
+// reserveBy is the latest moment its reservation may start (zero: no bound):
+// the key lock, the pool and the bearer wait at most until then, and an
+// acquire still short of its reservation at that moment reserves nothing and
+// is refused as a timeout before reservation (DP-39). So every reservation it
+// starts is answered and recorded within reserveBy plus the reservation's own
+// deadline.
+func LeaseAcquireForMate(ctx context.Context, d LeaseDeps, pool, repo, branch string, reserveBy time.Time) (LeaseChange, error) {
+	d.mateAcquire, d.reserveBy = true, reserveBy
 	return LeaseAcquireGroupChangeFrom(ctx, d, []string{pool}, repo, branch, "")
+}
+
+// errReservationStartPassed is the cause of a step before the reservation
+// ended by LeaseDeps.reserveBy rather than by its caller.
+var errReservationStartPassed = errors.New("the latest reservation start passed")
+
+// reservationStartContext bounds the steps before the reservation by
+// d.reserveBy; ctx itself when it is zero.
+func (d LeaseDeps) reservationStartContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if d.reserveBy.IsZero() {
+		return ctx, func() {}
+	}
+	return context.WithDeadlineCause(ctx, d.reserveBy, errReservationStartPassed)
+}
+
+// reservationStartEnded reports whether startCtx ended at the latest
+// reservation start, not at its caller's end.
+func reservationStartEnded(startCtx context.Context) bool {
+	return errors.Is(context.Cause(startCtx), errReservationStartPassed)
+}
+
+// reservationStartPassed reports whether a reservation may no longer start.
+func (d LeaseDeps) reservationStartPassed() bool {
+	return !d.reserveBy.IsZero() && !time.Now().Before(d.reserveBy)
+}
+
+// LeaseKeyBusyError refuses an acquire whose key another acquire still held
+// at its latest reservation start (DP-39): it reserved nothing.
+type LeaseKeyBusyError struct {
+	*platform.PlatformError
+	Pool string
+}
+
+func (e *LeaseKeyBusyError) Unwrap() error { return e.PlatformError }
+
+func leaseKeyBusyRefusal(branch, pool string) error {
+	return &LeaseKeyBusyError{Pool: pool, PlatformError: platform.NewPlatformError(platform.ErrAPITimeout,
+		fmt.Sprintf("another acquire of branch %s on pool %s still held its key when this acquire had to start its reservation, so this one reserved nothing", branch, pool),
+		"Acquire again once the other acquire has answered")}
+}
+
+// reservationStartRefusal refuses an acquire that had not reached its
+// reservation by its latest start: it reserved nothing.
+func reservationStartRefusal(branch, pool string) error {
+	return platform.NewPlatformError(platform.ErrAPITimeout,
+		fmt.Sprintf("the acquire of branch %s on pool %s had not started its reservation by its latest start, so it reserved nothing", branch, pool),
+		"Acquire again")
 }
 
 // LeaseAcquireGroupChangeFrom is LeaseAcquireGroupChange with from, the branch
@@ -127,8 +180,15 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	if err != nil {
 		return LeaseChange{}, err
 	}
-	unlock, err := lockLeaseKeys(ctx, d.StateDir, repoURL, branch, pools)
+	// The steps before the reservation end by its latest start (DP-39).
+	startCtx, cancelStart := d.reservationStartContext(ctx)
+	defer cancelStart()
+	poolNames := strings.Join(pools, ", ")
+	unlock, err := lockLeaseKeys(startCtx, d.StateDir, repoURL, branch, pools)
 	if err != nil {
+		if reservationStartEnded(startCtx) {
+			return LeaseChange{}, leaseKeyBusyRefusal(branch, poolNames)
+		}
 		return LeaseChange{}, err
 	}
 	locked := true
@@ -141,11 +201,14 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	if err != nil {
 		return LeaseChange{}, err
 	}
-	members, err := resolveGroupPools(ctx, d, pools, group)
-	if err != nil {
-		return LeaseChange{}, err
+	members, err := resolveGroupPools(startCtx, d, pools, group)
+	if err == nil {
+		err = acquireBearers(startCtx, d, members)
 	}
-	if err := acquireBearers(ctx, d, members); err != nil {
+	if err != nil {
+		if reservationStartEnded(startCtx) {
+			return LeaseChange{}, reservationStartRefusal(branch, poolNames)
+		}
 		return LeaseChange{}, err
 	}
 	var fresh []*groupMember
@@ -184,7 +247,11 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	}
 	failed := func() bool { return slices.ContainsFunc(fresh, func(m *groupMember) bool { return m.err != nil }) }
 	runMembers(fresh, func(m *groupMember) {
-		if !m.reserved {
+		switch {
+		case m.reserved:
+		case d.reservationStartPassed():
+			m.err = reservationStartRefusal(branch, m.pool)
+		default:
 			reserveMember(ctx, d, m, repoURL, branch)
 		}
 	})
