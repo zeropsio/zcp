@@ -62,28 +62,23 @@ func browserInputSchema(inMate bool) *jsonschema.Schema {
 func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
-		Description: "Drive Chrome via agent-browser in ONE bounded batch, lifecycle included: [open url] + " +
-			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
+		Description: "Drive Chrome in ONE bounded batch, lifecycle included: [open url] + your commands + [screenshot] + errors, console and network requests. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
-			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"] up to 120000; text that has not come by then on a dev server: read zerops_dev_server action=logs, then wait again); click, fill, check, find, get and is look once " +
+			"Only wait polls (25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"] up to 120000; on a dev server, text that has not come by then: read zerops_dev_server action=logs hostname=\"<host>\", then wait again); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
-			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds); " +
-			"each call's tabs close when it ends. A call that times out, is cancelled " +
+			"One warm Chrome serves every call, one at a time (waiting within timeoutSeconds); a call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser. " +
-			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls, the sign-in also across browser restarts — " +
-			"right for re-checking a change after a deploy. " +
+			"isolation: \"tab\" (default) keeps cookies, storage, HTTP cache and service workers from earlier calls, and the sign-in across browser restarts. " +
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
 			"Every other call stays on \"tab\". \"new-browser\" restarts Chrome first, keeping the sign-in, for a page that misbehaves only in the warm browser. " +
 			"freshBrowser: true means Chrome was started for the call (always after new-browser); " +
 			"browserRecycled: true means the call ended unclean and the browser was stopped (not set by a fresh-context call's clean stop). " +
 			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
-			"(an unknown command, subcommand or find action: fix the command, not the page), " +
-			"stale-ref (an @eN ref, see below), " +
+			"(fix the command, not the page), stale-ref, " +
 			"script-timeout (your eval's promise never settled, e.g. awaiting a looping animation's finished; the page is alive), " +
-			"slow-page, server-error (the message says what to do) " +
-			"or other failures. " +
+			"slow-page, server-error (the message says what to do) or other. " +
 			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +
 			"[\"find\",\"label\",\"<text>\",\"fill\",\"<value>\"], [\"find\",\"text\",\"<text>\",\"click\"], " +
@@ -100,10 +95,8 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"or guess one; prefer find role|label|text or CSS. " +
 			"open, close, window and tab new/close never run (invalid-command steps); popups: see commands. " +
 			"{{env:KEY}} in an argument: see commands. " +
-			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image — returned as " +
-			"an image block beside the text result and kept as a picture the result names " +
-			"(screenshot.picture) for screenshot.keptFor: write ![what it shows](shot-3) in a " +
-			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
+			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image — an image block beside the result, " +
+			"kept as the picture screenshot.picture names: ![what it shows](shot-3) in a describe-change description shows it to the person. " +
 			"Returns: steps[], errorsOutput, consoleOutput (warnings and errors; [\"console\"] in commands gives every level), " +
 			"networkOutput (4xx/5xx; a request with no status — failed or in flight — is not listed), " +
 			"durationMs, freshBrowser, browserRecycled, failedSteps, message, keptSignIn; outputs past 20k chars are cut; fullResult names a file with all of it. " +

@@ -710,7 +710,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 // browserWaitCapNote is what a wait that ran out at browserWaitCapMs adds to
 // its error: where the text that did not come may be, and that waiting on
 // takes a call of its own. Its 120 s is browserWaitCapMs.
-const browserWaitCapNote = "; zcp ends a wait at 120 s; on a dev server read zerops_dev_server action=logs, then call again to wait on"
+const browserWaitCapNote = "; zcp ends a wait at 120 s; on a dev server read zerops_dev_server action=logs hostname=\"<host>\", then call again to wait on"
 
 // noteCappedWaits adds browserWaitCapNote to each wait that timed out at
 // browserWaitCapMs.
