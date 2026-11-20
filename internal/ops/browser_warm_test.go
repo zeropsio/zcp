@@ -367,7 +367,7 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 		"TMPDIR=" + browserTmpDir,
 		"AGENT_BROWSER_SOCKET_DIR=" + browserRuntimeDir,
 		"AGENT_BROWSER_SESSION=default",
-		"AGENT_BROWSER_IDLE_TIMEOUT_MS=300000",
+		"AGENT_BROWSER_IDLE_TIMEOUT_MS=1200000",
 	}
 	if !slices.Equal(env, want) {
 		t.Errorf("env = %v, want %v", env, want)

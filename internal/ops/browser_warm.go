@@ -32,7 +32,7 @@ const (
 	browserMarkerBusy = "busy"
 
 	// browserIdleTimeout is agent-browser's own idle exit for the daemon.
-	browserIdleTimeout = 5 * time.Minute
+	browserIdleTimeout = 20 * time.Minute
 	// browserMaxAge is the service's RuntimeMaxSec.
 	browserMaxAge = time.Hour
 	// browserBoundMargin keeps a call from starting on a browser about to

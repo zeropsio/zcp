@@ -879,7 +879,7 @@ can respawn a daemon outside it. systemd bounds it: `TasksMax=1000`, `CPUQuota` 
 with `SIGKILL`; `UMask=0077` makes every file it writes private to its user.
 Chrome's profile lives in `/tmp/zcp-browser`, which `ExecStopPost`
 removes on every stop; the sign-in outlives it apart (§2.6c). The daemon exits after
-5 idle minutes, and the service ends with it. The service and every step get one
+20 idle minutes, and the service ends with it. The service and every step get one
 environment built by one function, the same for every isolation, because agent-browser
 restarts a daemon whose settings differ from its client's; it names no agent-browser
 session, so agent-browser itself never restores or saves a sign-in
@@ -1046,7 +1046,7 @@ the call was refused; the cleanup left the base tab only; the next `tab` and
 
 ### 2.6c The kept sign-in
 
-The warm browser is replaced often — after 5 idle minutes, after any call that did not
+The warm browser is replaced often — after 20 idle minutes, after any call that did not
 end cleanly, at its max age, after a `fresh-context` or `new-browser` call, on a
 container restart — and its profile goes with it. What a sign-in leaves, the cookies and
 local storage of the default context, is kept apart in one file zcp owns, so the next
