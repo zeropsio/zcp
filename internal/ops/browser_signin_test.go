@@ -461,7 +461,7 @@ func TestRestoreBrowserSignIn_CookiesThatDoNotGetInStopTheSaves(t *testing.T) {
 // restored, and the browser agent-browser relaunched, empty, is not taken
 // for one holding the kept sign-in, so its save cannot replace the kept
 // cookies.
-// witness: internal/ops/browser_signin.go | 		if restoredInto != "" && base != restoredInto { → 		if false {
+// witness: internal/ops/browser_signin.go | 		case restoredInto != "" && base != restoredInto: → 		case false:
 func TestRestoreBrowserSignIn_AChromeThatDiesMidRestoreKeepsEverything(t *testing.T) {
 	chrome := newFakeChrome().dialedBy(t)
 	chrome.dies = true
@@ -508,6 +508,55 @@ func TestRestoreBrowserSignIn_ASiteChromeUpgradesToHTTPSIsKeptNotWrittenElsewher
 	}
 	if len(chrome.storageOf("https://legacy.example.test")) != 0 || !slices.Equal(keptOrigins(t, dir), []string{"http://legacy.example.test"}) {
 		t.Errorf("the site must stay kept and nothing go to its https twin: %v", chrome.storageOf("https://legacy.example.test"))
+	}
+}
+
+// A restore whose browser's base tab cannot be read afterwards says what is
+// true — the sign-in went in, but this browser cannot be confirmed as the
+// one it went into — and the browser is not taken for one holding it.
+// witness: internal/ops/browser_signin.go | 		case err != nil && restoredInto != "": → 		case false:
+func TestRestoreBrowserSignIn_ABrowserItCannotConfirmSaysSoAndHoldsNothing(t *testing.T) {
+	newFakeChrome().dialedBy(t)
+	dir := readyStateDir(t)
+	writeKept(t, dir)
+	presence := filepath.Join(t.TempDir(), "zcp-signin.json")
+	lists := 0
+	unread := func(ctx context.Context, args []string) (string, string, error) {
+		if slices.Equal(args, []string{"tab", "list"}) {
+			if lists++; lists > 1 {
+				return `{"success":false,"data":null,"error":"Browser not launched"}`, "", errors.New("exit status 1")
+			}
+		}
+		return browserOn(new([][]string))(ctx, args)
+	}
+	note, err := restoreBrowserSignIn(t.Context(), unread, dir, presence, time.Now())
+	if err != nil || note != browserSignInUnconfirmed {
+		t.Errorf("an unconfirmed browser: note=%q err=%v", note, err)
+	}
+	if presenceAfter(t, presence).CookiesHeld {
+		t.Error("a browser that cannot be confirmed must not be marked as holding the kept sign-in")
+	}
+}
+
+// A save and a restore leave no stub page in the base tab's history, so
+// none sits in Chrome's back/forward cache, a renderer apiece, while the
+// warm browser idles.
+// witness: internal/ops/browser_cdp.go | 	if err := s.cdp.call(cctx, s.session, "Page.resetNavigationHistory", nil, nil); err != nil { → 	if err := error(nil); err != nil {
+func TestSaveBrowserSignIn_LeavesNoStubPageInTheBaseTabsHistory(t *testing.T) {
+	restored := newFakeChrome().dialedBy(t)
+	dir := readyStateDir(t)
+	writeState(t, dir, threeSites)
+	if _, err := restoreBrowserSignIn(t.Context(), browserOn(new([][]string)), dir, filepath.Join(t.TempDir(), "p.json"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	saved := newFakeChrome().dialedBy(t)
+	saved.storage["http://127.0.0.1:18731"] = []browserStorageItem{{"token", "app"}}
+	if err := saveBrowserSignIn(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18731/"), dir,
+		presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if left := append(restored.leftBehind(), saved.leftBehind()...); len(left) != 0 {
+		t.Errorf("the base tab must keep no stub page: %v", left)
 	}
 }
 

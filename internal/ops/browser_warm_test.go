@@ -690,6 +690,22 @@ func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
 	}
 }
 
+// A save whose connection finds another Chrome than the one agent-browser
+// listed — relaunched empty between the two — tells the call its sign-in
+// was not kept.
+// witness: internal/ops/browser_signin.go | 		return fmt.Errorf("%w: %w", errBrowserRelaunched, err) → 		return err
+func TestHandBackBrowser_AnotherChromeThanTheListedOneSaysTheSignInWasNotKept(t *testing.T) {
+	chrome := newFakeChrome().dialedBy(t)
+	delete(chrome.pages, baseTarget)
+	dir := readyStateDir(t)
+	writeKept(t, dir)
+	note, err := handBackBrowser(t.Context(), browserOn(new([][]string), "t3 http://127.0.0.1:18731/"), dir,
+		presenceIn(t, browserPresence{CookiesHeld: true}), "t3", func(context.Context) error { return nil })
+	if err != nil || note != browserSignInLostInTheCall {
+		t.Errorf("another Chrome: note=%q err=%v", note, err)
+	}
+}
+
 // A browser zcp recycles — after a timeout, a wedge, a spent fork budget — is
 // stopped without the hand-back, so nothing of it is saved: the last good
 // save stands.

@@ -37,6 +37,7 @@ type fakeChrome struct {
 	refuseCookie string
 	created      []string
 	sessions     map[string]string
+	history      map[string][]string
 	pages        map[string]string
 	paused       map[string]pausedNavigation
 	visited      []string
@@ -59,6 +60,7 @@ func newFakeChrome() *fakeChrome {
 		fail:     map[string]bool{},
 		upgrade:  map[string]bool{},
 		sessions: map[string]string{},
+		history:  map[string][]string{},
 		pages:    map[string]string{baseTarget: "about:blank"},
 		paused:   map[string]pausedNavigation{},
 	}
@@ -95,6 +97,14 @@ func (f *fakeChrome) send(v any) {
 	f.out <- data
 }
 
+func (f *fakeChrome) reply(id json.RawMessage, result any) {
+	f.send(map[string]any{"id": id, "result": result})
+}
+
+func (f *fakeChrome) deny(id json.RawMessage, message string) {
+	f.send(map[string]any{"id": id, "error": map[string]any{"code": -32000, "message": message}})
+}
+
 func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 	select {
 	case <-f.closed:
@@ -112,10 +122,8 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	reply := func(result any) { f.send(map[string]any{"id": msg.ID, "result": result}) }
-	refuse := func(message string) {
-		f.send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32000, "message": message}})
-	}
+	reply := func(result any) { f.reply(msg.ID, result) }
+	refuse := func(message string) { f.deny(msg.ID, message) }
 	switch msg.Method {
 	case "Storage.getCookies":
 		cookies := f.cookies
@@ -165,6 +173,14 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 			return nil
 		}
 		reply(map[string]any{"targetInfo": map[string]any{"targetId": p.TargetID, "type": "page"}})
+	case "Page.resetNavigationHistory":
+		target, ok := f.sessions[msg.SessionID]
+		if !ok {
+			refuse("Session with given id not found.")
+			return nil
+		}
+		f.history[target] = nil
+		reply(map[string]any{})
 	case "Target.detachFromTarget":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -173,36 +189,7 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 		delete(f.sessions, p.SessionID)
 		reply(map[string]any{})
 	case "Page.navigate":
-		var p struct {
-			URL string `json:"url"`
-		}
-		_ = json.Unmarshal(msg.Params, &p)
-		if p.URL == "about:blank" {
-			f.pages[f.sessions[msg.SessionID]] = p.URL
-			reply(map[string]any{"frameId": "F1"})
-			return nil
-		}
-		if f.dies {
-			f.closeOnce.Do(func() { close(f.closed) })
-			return nil
-		}
-		u, _ := url.Parse(p.URL)
-		origin := u.Scheme + "://" + u.Host
-		f.visited = append(f.visited, origin)
-		if f.upgrade[origin] {
-			origin = "https://" + u.Host
-		}
-		if f.stall[origin] {
-			return nil
-		}
-		if f.fail[origin] {
-			reply(map[string]any{"frameId": "F1", "errorText": "net::ERR_BLOCKED_BY_CLIENT"})
-			return nil
-		}
-		f.nextRequest++
-		rid := "R" + string(rune('0'+f.nextRequest))
-		f.paused[rid] = pausedNavigation{id: msg.ID, session: msg.SessionID, origin: origin}
-		f.send(map[string]any{"method": "Fetch.requestPaused", "sessionId": msg.SessionID, "params": map[string]any{"requestId": rid, "request": map[string]any{"url": p.URL}}})
+		f.navigate(msg.ID, msg.SessionID, msg.Params)
 	case "Fetch.fulfillRequest":
 		var p struct {
 			RequestID string `json:"requestId"`
@@ -215,61 +202,105 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 		}
 		delete(f.paused, p.RequestID)
 		f.pages[f.sessions[nav.session]] = nav.origin
+		f.history[f.sessions[nav.session]] = append(f.history[f.sessions[nav.session]], nav.origin)
 		reply(map[string]any{})
 		f.send(map[string]any{"id": nav.id, "result": map[string]any{"frameId": "F1", "loaderId": "L1"}})
 	case "Runtime.evaluate":
-		var p struct {
-			Expression string `json:"expression"`
-		}
-		_ = json.Unmarshal(msg.Params, &p)
-		origin := f.pages[f.sessions[msg.SessionID]]
-		call := func(fn string, args any) bool {
-			if !strings.HasPrefix(p.Expression, fn+"(") {
-				return false
-			}
-			_ = json.Unmarshal([]byte("["+strings.TrimSuffix(strings.TrimPrefix(p.Expression, fn+"("), ")")+"]"), args)
-			return true
-		}
-		var asked string
-		var items []browserStorageItem
-		switch {
-		case call(browserStorageRead, &[]any{&asked}):
-			answer := map[string]any{"elsewhere": origin}
-			if origin == asked {
-				stored := f.storage[origin]
-				if stored == nil {
-					stored = []browserStorageItem{}
-				}
-				answer = map[string]any{"localStorage": stored}
-			}
-			page, err := json.Marshal(answer)
-			if err != nil {
-				return err
-			}
-			reply(map[string]any{"result": map[string]any{"type": "string", "value": string(page)}})
-		case call(browserStorageWrite, &[]any{&asked, &items}):
-			if origin != asked {
-				reply(map[string]any{"result": map[string]any{"type": "string", "value": origin}})
-				return nil
-			}
-			if f.refuse[origin] {
-				reply(map[string]any{"result": map[string]any{"type": "object"}, "exceptionDetails": map[string]any{"text": "Uncaught", "exception": map[string]any{"description": "QuotaExceededError"}}})
-				return nil
-			}
-			f.storage[origin] = append(f.storage[origin], items...)
-			reply(map[string]any{"result": map[string]any{"type": "string", "value": ""}})
-		default:
-			refuse("unknown expression")
-		}
+		return f.evaluate(msg.ID, msg.SessionID, msg.Params)
 	default:
 		reply(map[string]any{})
 	}
 	return nil
 }
 
+// navigate answers a Page.navigate of session; f.mu is held.
+func (f *fakeChrome) navigate(id json.RawMessage, session string, params json.RawMessage) {
+	var p struct {
+		URL string `json:"url"`
+	}
+	_ = json.Unmarshal(params, &p)
+	if p.URL == "about:blank" {
+		f.pages[f.sessions[session]] = p.URL
+		f.history[f.sessions[session]] = append(f.history[f.sessions[session]], p.URL)
+		f.reply(id, map[string]any{"frameId": "F1"})
+		f.send(map[string]any{"method": "Page.frameNavigated", "sessionId": session, "params": map[string]any{"frame": map[string]any{"id": "F1", "url": "about:blank"}}})
+		return
+	}
+	if f.dies {
+		f.closeOnce.Do(func() { close(f.closed) })
+		return
+	}
+	u, _ := url.Parse(p.URL)
+	origin := u.Scheme + "://" + u.Host
+	f.visited = append(f.visited, origin)
+	if f.upgrade[origin] {
+		origin = "https://" + u.Host
+	}
+	if f.stall[origin] {
+		return
+	}
+	if f.fail[origin] {
+		f.reply(id, map[string]any{"frameId": "F1", "errorText": "net::ERR_BLOCKED_BY_CLIENT"})
+		return
+	}
+	f.nextRequest++
+	rid := "R" + string(rune('0'+f.nextRequest))
+	f.paused[rid] = pausedNavigation{id: id, session: session, origin: origin}
+	f.send(map[string]any{"method": "Fetch.requestPaused", "sessionId": session, "params": map[string]any{"requestId": rid, "request": map[string]any{"url": p.URL}}})
+}
+
+// evaluate answers a Runtime.evaluate of session; f.mu is held.
+func (f *fakeChrome) evaluate(id json.RawMessage, session string, params json.RawMessage) error {
+	var p struct {
+		Expression string `json:"expression"`
+	}
+	_ = json.Unmarshal(params, &p)
+	origin := f.pages[f.sessions[session]]
+	call := func(fn string, args any) bool {
+		if !strings.HasPrefix(p.Expression, fn+"(") {
+			return false
+		}
+		_ = json.Unmarshal([]byte("["+strings.TrimSuffix(strings.TrimPrefix(p.Expression, fn+"("), ")")+"]"), args)
+		return true
+	}
+	var asked string
+	var items []browserStorageItem
+	switch {
+	case call(browserStorageRead, &[]any{&asked}):
+		answer := map[string]any{"elsewhere": origin}
+		if origin == asked {
+			stored := f.storage[origin]
+			if stored == nil {
+				stored = []browserStorageItem{}
+			}
+			answer = map[string]any{"localStorage": stored}
+		}
+		page, err := json.Marshal(answer)
+		if err != nil {
+			return err
+		}
+		f.reply(id, map[string]any{"result": map[string]any{"type": "string", "value": string(page)}})
+	case call(browserStorageWrite, &[]any{&asked, &items}):
+		if origin != asked {
+			f.reply(id, map[string]any{"result": map[string]any{"type": "string", "value": origin}})
+			return nil
+		}
+		if f.refuse[origin] {
+			f.reply(id, map[string]any{"result": map[string]any{"type": "object"}, "exceptionDetails": map[string]any{"text": "Uncaught", "exception": map[string]any{"description": "QuotaExceededError"}}})
+			return nil
+		}
+		f.storage[origin] = append(f.storage[origin], items...)
+		f.reply(id, map[string]any{"result": map[string]any{"type": "string", "value": ""}})
+	default:
+		f.deny(id, "unknown expression")
+	}
+	return nil
+}
+
 // leftBehind says what the kept sign-in left in the browser: tabs it
-// opened, DevTools sessions still attached, and the base tab's page when it
-// is anything but about:blank. Nothing, for one that leaves the browser as
+// opened, DevTools sessions still attached, the base tab's page when it is
+// anything but about:blank, and the pages in the base tab's history, each of
+// which Chrome's back/forward cache may keep alive. Nothing, for one that leaves the browser as
 // agent-browser had it.
 func (f *fakeChrome) leftBehind() []string {
 	f.mu.Lock()
@@ -283,6 +314,9 @@ func (f *fakeChrome) leftBehind() []string {
 	}
 	if page := f.pages[baseTarget]; page != "about:blank" {
 		left = append(left, "base tab on "+page)
+	}
+	for _, page := range f.history[baseTarget] {
+		left = append(left, "base tab history "+page)
 	}
 	return left
 }

@@ -123,8 +123,24 @@ type browserCDP struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[int64]chan browserCDPMessage
+	events  map[string]chan json.RawMessage
 	readErr error
 	done    chan struct{}
+}
+
+// subscribe hands the params of every event method of sessionID to the
+// channel until unsubscribe; one the channel has no room for is dropped.
+func (c *browserCDP) subscribe(sessionID, method string) (events <-chan json.RawMessage, unsubscribe func()) {
+	ch := make(chan json.RawMessage, 16)
+	key := sessionID + " " + method
+	c.mu.Lock()
+	c.events[key] = ch
+	c.mu.Unlock()
+	return ch, func() {
+		c.mu.Lock()
+		delete(c.events, key)
+		c.mu.Unlock()
+	}
 }
 
 type browserCDPMessage struct {
@@ -156,7 +172,7 @@ func connectBrowserCDP(ctx context.Context, run browserStepExec) (*browserCDP, e
 	if err != nil {
 		return nil, err
 	}
-	c := &browserCDP{conn: conn, pending: map[int64]chan browserCDPMessage{}, done: make(chan struct{})}
+	c := &browserCDP{conn: conn, pending: map[int64]chan browserCDPMessage{}, events: map[string]chan json.RawMessage{}, done: make(chan struct{})}
 	// The reader lives as long as the connection, not as ctx.
 	go c.read(context.WithoutCancel(ctx))
 	return c, nil
@@ -196,6 +212,15 @@ func (c *browserCDP) read(ctx context.Context) {
 			}
 			continue
 		}
+		c.mu.Lock()
+		subscribed, ok := c.events[msg.SessionID+" "+msg.Method]
+		c.mu.Unlock()
+		if ok {
+			select {
+			case subscribed <- msg.Params:
+			default:
+			}
+		}
 		if msg.Method == "Fetch.requestPaused" && msg.SessionID != "" {
 			var paused struct {
 				RequestID string `json:"requestId"`
@@ -205,7 +230,7 @@ func (c *browserCDP) read(ctx context.Context) {
 				go c.post(ctx, msg.SessionID, "Fetch.fulfillRequest", map[string]any{
 					"requestId":       paused.RequestID,
 					"responseCode":    200,
-					"responseHeaders": []map[string]string{{"name": "content-type", "value": "text/html"}},
+					"responseHeaders": []map[string]string{{"name": "content-type", "value": "text/html"}, {"name": "cache-control", "value": "no-store"}},
 					"body":            browserStubPage,
 				})
 			}
@@ -417,6 +442,8 @@ func (c *browserCDP) openStub(ctx context.Context, target string) (*browserStub,
 		method string
 		params any
 	}{
+		// Page events tell when the tab's way back to about:blank committed.
+		{"Page.enable", nil},
 		// Chrome takes the bypass only once the Network domain is on.
 		{"Network.enable", nil},
 		{"Network.setBypassServiceWorker", map[string]any{"bypass": true}},
@@ -430,13 +457,45 @@ func (c *browserCDP) openStub(ctx context.Context, target string) (*browserStub,
 	return s, nil
 }
 
-// close sends the base tab back to about:blank and detaches zcp's session,
-// under its own bound, ctx's end aside.
+// awaitBlank waits for the top frame's commit of about:blank.
+func awaitBlank(ctx context.Context, events <-chan json.RawMessage) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("await the commit of about:blank: %w", ctx.Err())
+		case raw := <-events:
+			var nav struct {
+				Frame struct {
+					ParentID string `json:"parentId"`
+					URL      string `json:"url"`
+				} `json:"frame"`
+			}
+			if json.Unmarshal(raw, &nav) == nil && nav.Frame.ParentID == "" && nav.Frame.URL == "about:blank" {
+				return nil
+			}
+		}
+	}
+}
+
+// close sends the base tab back to about:blank, clears its history of stub
+// pages and detaches zcp's session, under its own bound, ctx's end aside.
 func (s *browserStub) close(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), browserStubCloseTimeout)
 	defer cancel()
+	// Page.navigate answers before the tab's new document is the session's:
+	// until its commit, Chrome refuses the history reset ("Not attached to an
+	// active page", Chrome 157).
+	committed, unsubscribe := s.cdp.subscribe(s.session, "Page.frameNavigated")
+	defer unsubscribe()
 	if err := s.cdp.call(cctx, s.session, "Page.navigate", map[string]any{"url": "about:blank"}, nil); err != nil {
 		logBrowserSignIn(fmt.Errorf("send the base tab back to about:blank: %w", err))
+	} else if err := awaitBlank(cctx, committed); err != nil {
+		logBrowserSignIn(fmt.Errorf("send the base tab back to about:blank: %w", err))
+	}
+	// Each stub page the tab went through would sit in Chrome's back/forward
+	// cache, a renderer apiece, for minutes in the idle browser.
+	if err := s.cdp.call(cctx, s.session, "Page.resetNavigationHistory", nil, nil); err != nil {
+		logBrowserSignIn(fmt.Errorf("clear the base tab's history: %w", err))
 	}
 	if err := s.cdp.call(cctx, "", "Target.detachFromTarget", map[string]any{"sessionId": s.session}, nil); err != nil {
 		logBrowserSignIn(fmt.Errorf("detach from the base tab: %w", err))

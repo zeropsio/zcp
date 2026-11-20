@@ -410,9 +410,14 @@ func restoreBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, pr
 			p.CookiesHeld = false
 		}
 		p.BaseTarget = base
+		switch {
+		// The cookies went in, but this browser cannot be confirmed as the
+		// one they went into, so nothing is saved from it.
+		case err != nil && restoredInto != "":
+			p.CookiesHeld, note = false, browserSignInUnconfirmed
 		// Chrome died during the restore and agent-browser relaunched it,
 		// empty: it holds nothing of the kept sign-in.
-		if restoredInto != "" && base != restoredInto {
+		case restoredInto != "" && base != restoredInto:
 			logBrowserSignIn(fmt.Errorf("the browser was relaunched during the restore: base tab %s, the sign-in went into %s", base, restoredInto))
 			p.CookiesHeld, p.Unrestored, note = false, browserOriginNames(stored), browserSignInNotHeld
 		}
@@ -582,6 +587,8 @@ const (
 		"This call ran signed out; signing in again keeps the new sign-in."
 	browserSignInNotHeld = "The kept sign-in's cookies were not restored in this call. " +
 		"They are still kept for the next new browser; a sign-in made in this browser is not kept."
+	browserSignInUnconfirmed = "The kept sign-in was restored, but this browser could not be confirmed as the one it went into, " +
+		"so a sign-in made in this browser is not kept; the kept sign-in is still kept for the next new browser."
 	browserSignInLostInTheCall = "Chrome restarted empty during this call, so the kept sign-in was not in it: " +
 		"it is still kept for the next call, and a sign-in made in this call was not kept."
 )
@@ -672,7 +679,14 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 	// The Chrome agent-browser listed is the one this connection reached:
 	// one it relaunched between the tab list and now holds nothing kept.
 	if err := cdp.holds(ctx, base); err != nil {
-		return err
+		var refusal *browserCDPError
+		if !errors.As(err, &refusal) {
+			return err
+		}
+		if err := writeBrowserPresence(presencePath, browserPresence{}); err != nil {
+			logBrowserSignIn(err)
+		}
+		return fmt.Errorf("%w: %w", errBrowserRelaunched, err)
 	}
 	cookies, err := cdp.cookies(ctx)
 	if err != nil {
