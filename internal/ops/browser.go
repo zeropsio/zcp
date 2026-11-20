@@ -859,14 +859,18 @@ func classifyStepErrors(steps []BrowserStepResult) {
 // caller commands before it doesn't shift the offsets. Callers must
 // only invoke this when runErr == nil: on a non-zero exit these fields
 // must stay unpopulated so a partial walk never looks like a successful
-// one.
+// one. The errors and console tail steps give up their results, so each
+// output appears once, in its own field; the network requests step stays
+// whole, since networkOutput keeps only part of each request.
 func populateBrowserBatchOutputs(result *BrowserBatchResult, screenshotRequested bool, screenshotPath string) {
 	if n := len(result.Steps); n >= 3 {
 		if isCommand(result.Steps[n-3].Command, browserCmdErrors) {
 			result.ErrorsOutput = result.Steps[n-3].Result
+			result.Steps[n-3].Result = nil
 		}
 		if isCommand(result.Steps[n-2].Command, browserCmdConsole) {
-			result.ConsoleOutput = result.Steps[n-2].Result
+			result.ConsoleOutput = consoleAtWarningLevel(result.Steps[n-2].Result)
+			result.Steps[n-2].Result = nil
 		}
 		if isCommand(result.Steps[n-1].Command, browserCmdNetwork) {
 			result.NetworkOutput = parseNetworkRequests(result.Steps[n-1].Result)
@@ -899,6 +903,57 @@ func populateBrowserBatchOutputs(result *BrowserBatchResult, screenshotRequested
 		}
 	}
 	result.Screenshot = shot
+}
+
+// browserConsoleLevels are the console message types consoleOutput keeps:
+// the warning level and above among the CDP Runtime.consoleAPICalled types
+// agent-browser stores (agent-browser 0.39.1, cli/src/native/actions.rs).
+var browserConsoleLevels = []string{"warning", "error", "assert"}
+
+// browserConsoleMessage is one console message as consoleOutput keeps it,
+// without agent-browser's raw args.
+type browserConsoleMessage struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// consoleAtWarningLevel is the console tail's answer as consoleOutput holds
+// it: agent-browser's {"messages":[...]} with only the messages of
+// browserConsoleLevels, and belowWarning counting the ones of lower levels it
+// left out. An answer that is not that wrapper is kept whole. A caller who
+// wants every level sends its own ["console"], whose step keeps its result.
+func consoleAtWarningLevel(raw json.RawMessage) json.RawMessage {
+	var wrapper map[string]json.RawMessage
+	if json.Unmarshal(raw, &wrapper) != nil {
+		return raw
+	}
+	list, ok := wrapper["messages"]
+	if !ok {
+		return raw
+	}
+	var messages []browserConsoleMessage
+	if json.Unmarshal(list, &messages) != nil {
+		return raw
+	}
+	kept := struct {
+		Messages     []browserConsoleMessage `json:"messages"`
+		BelowWarning int                     `json:"belowWarning,omitempty"`
+	}{Messages: []browserConsoleMessage{}}
+	for _, m := range messages {
+		if slices.Contains(browserConsoleLevels, m.Type) {
+			kept.Messages = append(kept.Messages, m)
+		} else {
+			kept.BelowWarning++
+		}
+	}
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	// The page's text stays as agent-browser wrote it.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(kept); err != nil {
+		return raw
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n"))
 }
 
 // cutScreenshot keeps the top browserScreenshotMaxHeight px of a taller

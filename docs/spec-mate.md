@@ -925,7 +925,13 @@ put a message on the result: the time to first byte and that the walk went on wi
 Vite dev server's first request took 30 s and its open recycled Chrome as wedged twice, and a
 wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage`,
 `TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands`,
-`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). Only `wait` polls (agent-browser's
+`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). `errorsOutput` and
+`consoleOutput` are read from the canned tail's `errors` and `console` steps, whose own results
+are then dropped, so each appears once; the `network requests` step stays whole, since
+`networkOutput` keeps only each failed request's URL, method, resource type and status.
+`consoleOutput` keeps agent-browser's `{"messages":[...]}` with only its `warning`, `error` and
+`assert` messages, each as its `type` and `text`, and `belowWarning` counting the others it left
+out; a caller's own `["console"]` step keeps every level. Only `wait` polls (agent-browser's
 25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
