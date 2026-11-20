@@ -4916,6 +4916,7 @@ S3 tries to watch the mount for git state.
 | MG-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. `ZeropsGitSpawner.test.ts` — "names an ssh transport failure rather than letting it read as a git verdict", "caps concurrent sessions per host without capping across hosts". |
 | MG-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / `GitManager` — never left to a default a client or a `.t3/project` file could override. `ZeropsPolicy.test.ts` — "thread.create persists a null worktree path on Zerops", "project.meta.update forces the default thread env mode to local", "refuses the stacked commit/push/PR action server-side", "never lets a status read fetch from a remote". |
 | MG-6 | Diff reads what each repository has beyond `main` with the dev service's own git; nothing per turn is captured, reverted or kept as a ref. A start asynchronously attempts to remove the old `refs/t3/checkpoints/` refs from available non-lease service checkouts, or the configured folder if none are available. `ZeropsGitCommitDiff.test.ts` — "are read by the dev service's own git, over ssh, never by git here"; `checkpointRefsSweep.test.ts` — "a start deletes the snapshot refs the removed workspace capture left in a Mate's checkouts, and nothing else", "a start never sweeps the refs of a pool container a thread's agent leased". |
+| MG-7 | Every script zcp runs over ssh for the repository's own work — `zcp run`, `zcp git` plain and relayed, a lease's `prepare`, the supervisor zcp starts in a lease — first moves its own shell into a transient scope of its own (`zcp-run-`, `zcp-git-`, `zcp-prepare-`, `zcp-devsup-` and its pid), with `TasksMax=infinity` and `CollectMode=inactive-or-failed`, out of the platform agent's service and its task limit of 300 (§6.9 *Its own scope*); where none can be had the script runs as before, its output, exit code and environment unchanged and nothing of the attempt shown. zcp `TestBuildServiceRunCommand_MovesItsShellIntoAScopeOfItsOwn`, `TestBuildServiceRunCommand_NoScopeToBeHad_RunsAsBefore`, `TestOwnScope_EveryScriptForTheRepositorysWork_StartsInItsOwnScope`. |
 
 ### 6.6 A Mate's HQ access is its project key
 
@@ -5033,7 +5034,9 @@ its deploys run in, else `/var/www`; a lease's `/var/www`) or a cleaned `-C` pat
 `/tmp/` (a dev-side worktree) — never in the zcp container, never on its sshfs mount
 (`cmd/zcp/git.go`, `internal/ops/git_brokered.go`). The remote command is `/bin/sh -c '<script>'`
 whatever the login shell; the script unsets git's tracing, TLS, askpass and redirecting variables
-and runs git with `GIT_TERMINAL_PROMPT=0`, every argument ShellQuoted. stdout, stderr and the exit
+and runs git with `GIT_TERMINAL_PROMPT=0`, every argument ShellQuoted; before git, its shell moves
+into a scope of its own, `zcp-git-<pid>.scope`, as `zcp run`'s does (§6.9 *Its own scope*), since a
+hook runs the repository's checks. stdout, stderr and the exit
 code are git's (255 is ssh's own failure); `zcp git` prints nothing to stdout itself and runs before
 CLI telemetry. stdin is git's only when the argv makes git read it — a standalone `-`, `--stdin…`,
 `-F -`, a file option or operand naming `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0`, or a
@@ -5235,6 +5238,29 @@ the network and takes the cores and memory the Mate itself runs on; where the mo
   dev server is `zerops_dev_server`'s, never a `zcp run`.
 - **No credential.** The call is the plain passthrough in every container, relaying nothing: git
   against the Mate's HQ is `zcp git`'s (§6.8).
+- **Its own scope.** An ssh session into a Zerops container is served by the platform's agent, so
+  everything it runs lands in the agent's systemd service, `zerops-zembed.service`, whose task limit
+  is systemd's default, 15 % of the container's `pids.max`: 300 of 2000, while the service's own
+  processes run under the container's 2000 alone. A repository's checks run their stages at once,
+  each with thread pools sized to the cores, and pass 300: the kernel refuses their threads and
+  processes (EAGAIN), and stages fail at random and pass on a rerun. So the script's shell first
+  moves itself into a transient systemd scope of its own, `zcp-run-<pid>.scope`
+  (`ops.ownScopeStep`): `sudo -n busctl call` of systemd's `StartTransientUnit` with the shell's
+  own pid — the call `systemd-run --scope` makes for itself — `TasksMax=infinity`, since a scope
+  gets the default 300 too and the container's 2000 stays the only bound, and
+  `CollectMode=inactive-or-failed`, so the unit is gone once its last process ends. The shell itself
+  moves, so the command is the process it was: its user, environment, folder, descriptors, session
+  and signals (`sudo` resets the environment, so nothing of the command runs under it; only `sudo`
+  and `busctl` run as root, reading `/dev/null` and writing nothing). systemd moves the pid when it
+  runs the job, after it answered, so the shell waits until its own cgroup names the scope, at most
+  a second. Where `sudo -n` needs a password, `sudo`, `busctl` or the system bus is missing, or
+  systemd refuses, the command runs where it is, as before, with no word of it. The same step, each
+  with its own name, starts every script zcp runs over ssh for the repository's own work: `zcp
+  git`'s, plain and relayed (`zcp-git-`; a hook runs the checks), a lease's `prepare`
+  (`zcp-prepare-`) and the supervisor zcp starts in a lease with the dev servers under it
+  (`zcp-devsup-`; docs/spec-workflows.md §8 DP-13, DP-14). zcp's own reads and writes over ssh, a
+  deploy's `zcli push` and the relayed git zcp runs for itself stay where they are: a process or two
+  each.
 
 ### 6.10 A Mate messages its person's other Mates
 
