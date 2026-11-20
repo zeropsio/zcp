@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -58,12 +59,10 @@ func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, bra
 	deps.PublicAccess = leasePublicAccess(deps.Client, deps.ProjectID, deps.StateDir)
 	change, err := ops.LeaseAcquireForMate(ctx, deps, pool, repo, branch)
 	if err != nil {
-		message, failure := leaseReleaseFailure(err)
 		if reservation.refused(err) {
-			return LeaseAcquireAnswer{Refused: &acquireRefusal{
-				Code: failure.Code, Message: message, Suggestion: failure.Suggestion,
-			}}, LeaseAcquireExitRefused
+			return LeaseAcquireAnswer{Refused: personAcquireRefusal(err, pool, branch)}, LeaseAcquireExitRefused
 		}
+		message, failure := leaseReleaseFailure(err)
 		return LeaseAcquireAnswer{Error: message, LeaseReleaseFailure: failure}, LeaseAcquireExitFailed
 	}
 	v := change.Leases[0] // One view per requested pool.
@@ -72,6 +71,46 @@ func AcquireLeaseAnswer(ctx context.Context, deps ops.LeaseDeps, pool, repo, bra
 			AcquiredAt: v.AcquiredAt, ContainerHostname: v.ContainerHostname},
 		Reused: v.Reused,
 	}}, LeaseAcquireExitHeld
+}
+
+// personAcquireRefusal renders an already classified refusal for the person pressing Apply.
+func personAcquireRefusal(err error, pool, branch string) *acquireRefusal {
+	_, failure := leaseReleaseFailure(err)
+	r := &acquireRefusal{Code: failure.Code}
+	var full *ops.LeasePoolFullError
+	var held *ops.ConversationLeaseError
+	var swarm *platform.SwarmError
+	switch {
+	case errors.As(err, &full):
+		r.Message, r.Suggestion = full.PersonWords()
+	case errors.As(err, &held):
+		r.Message = fmt.Sprintf("A conversation of this Mate holds branch %s on %s (%s).", branch, pool, held.Alias)
+		r.Suggestion = "Archive that conversation, or give the builder another name."
+	case errors.As(err, &swarm):
+		if swarm.Reason == platform.SwarmReasonContainersPreparing {
+			r.Message = fmt.Sprintf("The pool %s is preparing a container.", pool)
+			r.Suggestion = "Try Apply again in a minute."
+		} else {
+			r.Message = fmt.Sprintf("This Mate cannot reach pool %s because its key is missing or was refused.", pool)
+			r.Suggestion = "Check the pool's key in Zerops, then try Apply again."
+		}
+	case r.Code == platform.ErrServiceNotFound:
+		r.Message = fmt.Sprintf("There is no pool named %s in this project.", pool)
+		r.Suggestion = "Choose an existing pool for the builder and try Apply again."
+	case r.Code == platform.ErrPrerequisiteMissing:
+		r.Message = fmt.Sprintf("This Mate cannot use pool %s for branch %s.", pool, branch)
+		r.Suggestion = "Check that the pool is deployed and running in Zerops and that this Mate has its key, then try Apply again."
+	case r.Code == platform.ErrInvalidParameter:
+		r.Message = fmt.Sprintf("The crew cannot use branch %s on pool %s.", branch, pool)
+		r.Suggestion = "Check the builder's name and pool, then try Apply again."
+	case r.Code == platform.ErrAPITimeout:
+		r.Message = fmt.Sprintf("Zerops did not answer in time for pool %s.", pool)
+		r.Suggestion = "Try Apply again."
+	default:
+		r.Message = fmt.Sprintf("This Mate does not have permission to use pool %s.", pool)
+		r.Suggestion = "Check this Mate's access to the pool in Zerops, then try Apply again."
+	}
+	return r
 }
 
 // Both preflight and a checkout after reservation can fail with the same

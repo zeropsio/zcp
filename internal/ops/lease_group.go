@@ -300,6 +300,14 @@ func validateAcquirePools(pools []string) error {
 	return nil
 }
 
+// ConversationLeaseError identifies the conversation holding a branch requested by the Mate.
+type ConversationLeaseError struct {
+	*platform.PlatformError
+	Alias string
+}
+
+func (e *ConversationLeaseError) Unwrap() error { return e.PlatformError }
+
 // heldLease selects the records of this key the caller may reuse. Every
 // requested pool is checked before any bearer write or resumed checkout.
 func heldLease(d LeaseDeps, pool string, group []leaseRecord) ([]leaseRecord, error) {
@@ -312,9 +320,10 @@ func heldLease(d LeaseDeps, pool string, group []leaseRecord) ([]leaseRecord, er
 		case r.HolderID != "" && !d.mateAcquire:
 			return nil, mateHeldRefusal(r.alias())
 		case r.HolderID == "" && d.mateAcquire:
-			return nil, platform.NewPlatformError(platform.ErrPermissionDenied,
+			pe := platform.NewPlatformError(platform.ErrPermissionDenied,
 				fmt.Sprintf("branch %s on pool %s is held by an agent's lease %s", r.Branch, pool, r.alias()),
 				"Choose another branch or wait for the agent to release its lease")
+			return nil, &ConversationLeaseError{PlatformError: pe, Alias: r.alias()}
 		}
 		records = append(records, r)
 	}

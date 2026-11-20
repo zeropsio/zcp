@@ -79,9 +79,10 @@ type poolUsage struct {
 	listed bool // the containers were listed
 	max    int  // the pool's maximum; 0 when the limits were not read
 	leased int  // containers reserved
-	// yours are zcp's own leases among them, oldest activity first when it
+	// yours are the agent-held leases among them, oldest activity first when it
 	// was read (byOldestActivity), by container number otherwise.
 	yours []LeaseView
+	crew  []LeaseView // Mate-held records, by container number; only the Mate releases them.
 	// stuck are the listed containers no lease holds that no acquire takes,
 	// each still a place of the pool (stuckContainer).
 	stuck []platform.SwarmContainer
@@ -148,9 +149,15 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 	for _, r := range mine {
 		v := r.view(LeaseStateHeld)
 		v.Unverified = unverified[r.alias()]
-		u.yours = append(u.yours, v)
+		if v.HolderID != "" {
+			u.crew = append(u.crew, v)
+		} else {
+			u.yours = append(u.yours, v)
+		}
 	}
-	slices.SortFunc(u.yours, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
+	byNumber := func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) }
+	slices.SortFunc(u.yours, byNumber)
+	slices.SortFunc(u.crew, byNumber)
 	if d.SSH != nil && u.listed && len(u.yours) > 0 {
 		readLeaseActivities(ctx, d, mine, u.yours)
 		u.read, u.now = true, d.now()
@@ -190,10 +197,13 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 	switch {
 	case len(u.yours) > 0:
 		release = fmt.Sprintf("Release a lease of yours you no longer need — ask the person first if this conversation did not take it (zerops_lease action=release lease=%s)", u.releaseCandidate())
+	case len(u.crew) > 0:
+		release = "None of these leases is yours to release: only the Mate releases its crew's leases"
 	case u.listed:
 		release = "None of these leases is yours: only their holders can release them"
 	}
-	if se.Cause != "" && !se.AtServiceMaximum() {
+	atMaximum := se.AtServiceMaximum()
+	if se.Cause != "" && !atMaximum {
 		msg = fmt.Sprintf("Pool '%s' has no free container and the platform would not create another: %s%s", pool, se.Cause, u.countNote())
 		advice = append(advice, "Raising maxContainers will not help: the platform refused for another reason than the pool's maximum")
 		if release != "" {
@@ -228,7 +238,7 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 	out := platform.NewPlatformError(platform.ErrAPIError, msg, strings.Join(advice, ". ")+".")
 	out.APICode = se.Reason
 	out.Cause = se
-	return out
+	return &LeasePoolFullError{PlatformError: out, pool: pool, usage: u, cause: se.Cause, atMaximum: atMaximum}
 }
 
 // leasedNote says how many containers are leased, out of the maximum when it
@@ -247,34 +257,67 @@ func (u poolUsage) leasedNote() string {
 // activity was read it lists them oldest activity first, each with how
 // recently it was active and what a release would lose (activitySummary).
 func (u poolUsage) holdersNote() string {
-	others := u.leased - len(u.yours)
+	others := u.otherHolders()
+	var notes []string
 	names := make([]string, 0, len(u.yours))
 	for _, v := range u.yours {
+		name := v.Alias
+		if u.read {
+			name = activitySummary(v, u.now)
+		}
+		names = append(names, name)
+	}
+	if len(names) > 0 {
+		label := "yours"
+		if u.listed && len(u.crew) == 0 && others == 0 {
+			label = "all yours"
+		}
+		switch {
+		case u.read:
+			notes = append(notes, label+", oldest activity first: "+strings.Join(names, "; "))
+		case !u.listed:
+			notes = append(notes, label+", by zcp's records: "+strings.Join(names, ", "))
+		default:
+			notes = append(notes, label+": "+strings.Join(names, ", "))
+		}
+	}
+	if u.listed && len(names) == 0 && len(u.crew) == 0 {
+		return fmt.Sprintf(" (none of them yours: %d held by other holders)", others)
+	}
+	if others > 0 {
+		note := fmt.Sprintf("%d held by other holders", others)
+		if u.read {
+			notes = append([]string{note}, notes...)
+		} else {
+			notes = append(notes, note)
+		}
+	}
+	if len(u.crew) > 0 {
+		who := "the Mate's crew holds "
+		if !u.listed {
+			who = "by zcp's records, " + who
+		}
+		notes = append(notes, who+joinAnd(u.crewAliases())+", which only the Mate releases")
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(notes, "; ") + ")"
+}
+
+func (u poolUsage) otherHolders() int {
+	if !u.listed {
+		return 0
+	}
+	return u.leased - len(u.yours) - len(u.crew)
+}
+
+func (u poolUsage) crewAliases() []string {
+	names := make([]string, 0, len(u.crew))
+	for _, v := range u.crew {
 		names = append(names, v.Alias)
 	}
-	yours := strings.Join(names, ", ")
-	if u.read {
-		summaries := make([]string, 0, len(u.yours))
-		for _, v := range u.yours {
-			summaries = append(summaries, activitySummary(v, u.now))
-		}
-		yours = strings.Join(summaries, "; ")
-		if others > 0 {
-			return fmt.Sprintf(" (%d held by other holders; yours, oldest activity first: %s)", others, yours)
-		}
-		return " (all yours, oldest activity first: " + yours + ")"
-	}
-	switch {
-	case !u.listed && len(u.yours) > 0:
-		return " (yours, by zcp's records: " + yours + ")"
-	case !u.listed:
-		return ""
-	case len(u.yours) == 0:
-		return fmt.Sprintf(" (none of them yours: %d held by other holders)", u.leased)
-	case others > 0:
-		return fmt.Sprintf(" (yours: %s; %d held by other holders)", yours, others)
-	}
-	return " (all yours: " + yours + ")"
+	return names
 }
 
 // countNote is the pool's fill as a sentence of its own, when it is known.
