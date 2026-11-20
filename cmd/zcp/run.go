@@ -25,7 +25,8 @@ import (
 // `sh -c '<line>'`. stdin, stdout and stderr are the command's, and so is the
 // exit code; zcp's own are `zcp git`'s (gitExitRefused and the others).
 // Ctrl-C or SIGTERM stop the call, not the command: a time limit belongs on
-// the command itself (`zcp run <host> timeout 600 …`). No credential is
+// the command itself, under the caller's own limit (`zcp run <host>
+// timeout 540 …` under a 600 s one). No credential is
 // relayed: git against the Mate's HQ stays `zcp git`'s. Like `zcp git` it
 // writes nothing to stdout itself and runs before CLI telemetry. A reader of
 // its output that goes away (`zcp run … | head -1`) ends the call quietly

@@ -5234,7 +5234,8 @@ the network and takes the cores and memory the Mate itself runs on; where the mo
   goes away (`zcp run <host> … | head -1`) ends the call with 141 and no line of zcp's, as it ends
   any command writing into a pipe.
 - **Stopping.** Ctrl-C or SIGTERM stops the ssh client with exit 130, saying the command may still
-  be running: a time limit belongs on the command (`zcp run <host> timeout 600 …`). A long-running
+  be running: a time limit belongs on the command, under the caller's own limit (`zcp run <host>
+  timeout 540 …` under a 600 s one). A long-running
   dev server is `zerops_dev_server`'s, never a `zcp run`.
 - **No credential.** The call is the plain passthrough in every container, relaying nothing: git
   against the Mate's HQ is `zcp git`'s (§6.8).
