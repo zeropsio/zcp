@@ -28,7 +28,7 @@ const (
 	hasProductionLead       = "this application has a production"
 	releasePublishes        = hasProductionLead + ", and a merge does not publish to it, a release does: say so when you report the work, and never call it live before a release"
 	productionRunsOutside   = "this application's production runs outside Mate, so Mate releases nothing to it and cannot tell what a merge publishes there — a merge may reach production by itself: never tell the person merged work is live, and never tell them it is not; say it is on main, and that whoever runs production knows when it goes out"
-	oneRunOfAsks          = "keep each change to one run of asks, anything beyond the interface in a change of its own"
+	oneRunOfAsks            = "keep each change to one run of asks, anything beyond the interface in a change of its own"
 	describeProductionRisks = "in its description, under a plain heading, call out what could hurt production: data changes, setup or environment changes, anything a rollback would not undo"
 	stageRunsMain           = "after a merge the application's Stage runs what is on main"
 	stageChecksFirst        = ": that is where it is checked before it goes live"
