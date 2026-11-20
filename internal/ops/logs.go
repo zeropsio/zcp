@@ -31,6 +31,10 @@ type LogsResult struct {
 	// when the read filled the backend's newest-lines window inside since:
 	// older lines, if any, were not searched, so HasMore is true.
 	WindowStart string `json:"windowStart,omitempty"`
+	// Cut says how many of the entries read were kept to stay under the
+	// tool's result cap and how to reach the dropped ones; set only at a cut,
+	// where HasMore is true.
+	Cut string `json:"cut,omitempty"`
 	// The three fields below are populated ONLY when Entries is empty, from
 	// state FetchLogs already holds — so a 0-entry result explains WHY it is
 	// empty and points at the surface that does carry the answer, instead of a
