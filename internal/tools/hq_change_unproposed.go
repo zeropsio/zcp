@@ -16,19 +16,26 @@ import (
 // until the agent opens its change, and a finished pool-migrate left Odin's
 // 206-commit `dev-pools` with none until the person asked (2026-10-27). So the
 // answers that close a stretch of work — the retire's, the develop close —
-// name each such branch with the open-change call.
+// name each such branch with the open-change call. Where the Mate holds open
+// changes of its own in that repository, they name those too: AGENTS.md's
+// "What one change holds" may put the work on one of them instead
+// (docs/spec-mate.md §10.10).
 
 // unproposedBranch is a branch a lease of this Mate's HQ repository holds that
-// no change proposes, by the lease holding it.
+// no change proposes, by the lease holding it, and the Mate's own open changes
+// in that repository the work may be added to instead.
 type unproposedBranch struct {
 	alias, branch string
+	addTo         []workflow.HQChange
 }
 
 // unproposedLeaseBranches names, inside a Mate, each branch zcp's leases of
 // this Mate's HQ repositories hold — never main, never a mate/ branch (an
 // open change's own) — that the change ledger keeps no change on: one per
 // repository and branch, by the first lease holding it. pools limits it to
-// leases of those pools (nil: every lease). It reads zcp's own records only.
+// leases of those pools (nil: every lease). Each names the ledger's open
+// changes of the Mate's own in its repository (ownOpenChanges). It reads
+// zcp's own records only.
 func unproposedLeaseBranches(stateDir string, rt runtime.Info, pools []string) []unproposedBranch {
 	if !rt.MateEnabled || stateDir == "" {
 		return nil
@@ -60,25 +67,68 @@ func unproposedLeaseBranches(stateDir string, rt runtime.Info, pools []string) [
 			continue
 		}
 		seen[key] = true
-		if slices.ContainsFunc(changesIn(changes, appID, repo), func(c workflow.HQChange) bool { return c.Branch == l.Branch }) {
+		inRepo := changesIn(changes, appID, repo)
+		if slices.ContainsFunc(inRepo, func(c workflow.HQChange) bool { return c.Branch == l.Branch }) {
 			continue
 		}
-		out = append(out, unproposedBranch{alias: l.Alias, branch: l.Branch})
+		out = append(out, unproposedBranch{alias: l.Alias, branch: l.Branch, addTo: ownOpenChanges(inRepo)})
 	}
 	slices.SortFunc(out, func(a, b unproposedBranch) int { return strings.Compare(a.branch+a.alias, b.branch+b.alias) })
 	return out
 }
 
+// ownOpenChanges is, of a repository's changes the ledger keeps, those the
+// work of another branch may be added to: the Mate's own — never one a person
+// handed it — on a branch HQ named, and not told settled.
+func ownOpenChanges(inRepo []workflow.HQChange) []workflow.HQChange {
+	var own []workflow.HQChange
+	for _, c := range inRepo {
+		if c.Source == workflow.HQChangeFromHanded || c.Branch == "" || (c.Told != nil && c.Told.State != "" && c.Told.State != hq.ChangeOpen) {
+			continue
+		}
+		own = append(own, c)
+	}
+	return own
+}
+
 // unproposedNote is the sentence naming each unproposed branch with the
-// open-change call that proposes it, "" for none.
+// open-change call that proposes it and, where the Mate holds open changes of
+// its own in the repository, adding the work to one of them instead; "" for
+// none.
 func unproposedNote(branches []unproposedBranch) string {
 	if len(branches) == 0 {
 		return ""
 	}
 	calls := make([]string, 0, len(branches))
+	adds := false
 	for _, b := range branches {
-		calls = append(calls, fmt.Sprintf("%q (lease %s): zerops_workflow action=\"open-change\" service=%q title=\"<what the work does>\"", b.branch, b.alias, b.alias))
+		call := fmt.Sprintf("%q (lease %s): zerops_workflow action=\"open-change\" service=%q title=\"<what the work does>\"", b.branch, b.alias, b.alias)
+		if len(b.addTo) > 0 {
+			adds = true
+			call += addToOpenChangeWords(b)
+		}
+		calls = append(calls, call)
 	}
-	return "No change in HQ proposes the work on " + strings.Join(calls, "; ") +
-		" — open it once the work is ready for the person to review; it is how the work reaches main."
+	end := " — open it once the work is ready for the person to review; it is how the work reaches main."
+	if adds {
+		end = " — do either once the work is ready for the person to review; it is how the work reaches main."
+	}
+	return "No change in HQ proposes the work on " + strings.Join(calls, "; ") + end
+}
+
+// addToOpenChangeWords offer b's work to the Mate's own open changes in its
+// repository, as AGENTS.md's "What one change holds" allows: merged into that
+// change's branch, pushed, the change described again, b's lease released so
+// its branch is no longer named as unproposed.
+func addToOpenChangeWords(b unproposedBranch) string {
+	named := make([]string, 0, len(b.addTo))
+	for _, c := range b.addTo {
+		named = append(named, fmt.Sprintf("#%d on %q", c.Number, c.Branch))
+	}
+	which := "your open change " + named[0]
+	if len(named) > 1 {
+		which = "one of your open changes (" + strings.Join(named, ", ") + ")"
+	}
+	return fmt.Sprintf(", or, if AGENTS.md's \"What one change holds\" says so, add it to %s: merge %q into that change's branch where it is checked out, push, describe that change again, and release lease %s",
+		which, b.branch, b.alias)
 }

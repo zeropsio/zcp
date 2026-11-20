@@ -17,11 +17,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -276,6 +278,52 @@ func TestHandleWorkSessionClose_InAMate_NamesALeaseBranchNoChangeProposes(t *tes
 			named := strings.Contains(text, `action="open-change"`) && strings.Contains(text, "dev-pools") && strings.Contains(text, "noolapool-1")
 			if named != tt.want {
 				t.Errorf("close names the open-change of dev-pools = %v, want %v: %s", named, tt.want, text)
+			}
+		})
+	}
+}
+
+// TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository:
+// the close-out note naming a lease branch no change proposes also offers
+// the Mate's own open changes in that repository to add the work to — never
+// one a person handed it, one in another repository or one told merged, which
+// AGENTS.md's "What one change holds" never adds to or which no longer takes
+// work (docs/spec-mate.md §10.10, docs/spec-workflows.md DP-37).
+// witness: internal/tools/hq_change_unproposed.go | c.Source == workflow.HQChangeFromHanded || c.Branch == "" → c.Branch == ""
+func TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository(t *testing.T) {
+	t.Parallel()
+	mate := runtime.Info{InContainer: true, MateEnabled: true, OrgID: "org-1", HQ: &runtime.HQLink{Origin: unproposedHQ}}
+	tests := []struct {
+		name   string
+		change *workflow.HQChange
+		want   []int
+	}{
+		{name: "its own open change in the repository", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 2, Branch: "polish", Source: workflow.HQChangeFromOpen}, want: []int{2}},
+		{name: "a change handed to it", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 3, Branch: "mate/gone/3", Source: workflow.HQChangeFromHanded}},
+		{name: "its open change in another repository", change: &workflow.HQChange{AppID: "app-1", Repo: "api", Number: 4, Branch: "polish", Source: workflow.HQChangeFromOpen}},
+		{name: "its change told merged", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 5, Branch: "polish", Source: workflow.HQChangeFromOpen, Told: &workflow.HQChangeTold{State: hq.ChangeMerged}}},
+		{name: "no change at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeUnproposedLeaseRecord(t, dir, "dev-pools")
+			if tt.change != nil {
+				if err := workflow.RecordHQChange(dir, *tt.change); err != nil {
+					t.Fatal(err)
+				}
+			}
+			branches := unproposedLeaseBranches(dir, mate, nil)
+			if len(branches) != 1 || branches[0].branch != "dev-pools" {
+				t.Fatalf("unproposed branches = %+v, want dev-pools alone", branches)
+			}
+			var got []int
+			for _, c := range branches[0].addTo {
+				got = append(got, c.Number)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("open changes offered = %v, want %v", got, tt.want)
 			}
 		})
 	}
