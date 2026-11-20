@@ -70,6 +70,9 @@ type DevServerResult struct {
 	// failed — the agent can dispatch on it. Known values:
 	//   crashed                   — the supervisor reports the server ended
 	//                               on its own; it stays down until started
+	//   heap_limit                — crashed, and its log ends with Node's
+	//                               heap-limit error: it ran out of its own
+	//                               heap, not of the container's RAM
 	//   port_in_use               — the supervisor could not start it: its
 	//                               port stayed busy
 	//   stopped                   — the server is stopped (status)
@@ -183,6 +186,7 @@ const (
 // DevServerResult.Reason values.
 const (
 	reasonCrashed      = "crashed"
+	reasonHeapLimit    = "heap_limit"
 	reasonPortInUse    = "port_in_use"
 	reasonStopped      = "stopped"
 	reasonNoSupervisor = "no_supervisor"
@@ -955,23 +959,66 @@ func JudgeServer(server devsup.ServerState, ok bool) ServerVerdict {
 
 // applyCrash reports a server the supervisor holds as crashed, with its exit
 // and log tail: down until started, or coming back when the supervisor's one
-// more start is pending.
+// more start is pending. A crash whose log holds Node's heap-limit error, with
+// no task limit or busy port reported, is reason heap_limit with its fix.
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
-	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines))
+	tail := currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, crashMatchLogLines))
+	result.LogTail = lastLogLines(tail, defaultLogTailLines)
 	label := serverLabel(result.Hostname, name)
 	verdict := JudgeServer(server, true)
+	portBusy := server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy
+	heapLimit := server.TaskLimit == nil && !portBusy && strings.Contains(tail, nodeHeapLimitError)
 	result.Reason = reasonCrashed
+	if heapLimit {
+		result.Reason = reasonHeapLimit
+	}
 	switch {
+	case heapLimit && verdict.Unsettled:
+		result.Message = fmt.Sprintf("Dev server %s crashed while starting (%s). %s %s",
+			label, exitText(server.Exit), heapLimitFix, RecheckSentence(result.Hostname, name, []string{name}))
+	case heapLimit:
+		result.Message = fmt.Sprintf("Dev server %s crashed (%s); the supervisor leaves it down. %s",
+			label, exitText(server.Exit), heapLimitFix)
 	case verdict.Unsettled:
 		result.Message = fmt.Sprintf("Dev server %s %s. %s", label, verdict.Phrase, RecheckSentence(result.Hostname, name, []string{name}))
 	case server.TaskLimit != nil:
 		result.Message = fmt.Sprintf("Dev server %s %s.", label, verdict.Phrase)
-	case server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy:
+	case portBusy:
 		result.Reason = reasonPortInUse
 		result.Message = fmt.Sprintf("Dev server %s %s — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label, verdict.Phrase)
 	default:
 		result.Message = fmt.Sprintf("Dev server %s %s; the supervisor leaves it down. Read logTail, fix the cause, then start it again.", label, verdict.Phrase)
 	}
+}
+
+// nodeHeapLimitError is the line Node prints when a process reaches its own
+// V8 heap limit. A wrapper (Nx, npm) exits 1 after it, so only the log names it.
+const nodeHeapLimitError = "JavaScript heap out of memory"
+
+// heapLimitFix completes a heap-limit crash's message: the fact read, why a
+// plain restart repeats it, and the fix.
+const heapLimitFix = "Its log ends with Node's heap-limit error: the process ran out of its own heap, not of the container's RAM. " +
+	"Started unchanged, it hits the same limit. Raise the heap in the server's declared command (NODE_OPTIONS=--max-old-space-size=N, N in MB below the service's RAM) or make it load less; " +
+	"when N would not fit, raise the service's RAM with zerops_scale. logTail shows whether the error is the server's or a child's."
+
+// crashMatchLogLines is how many log lines a crash reply reads to recognise
+// its cause: a FATAL line followed by a GC dump, a native stack and a
+// wrapper's output sits beyond the 40 lines the reply returns.
+const crashMatchLogLines = 80
+
+// lastLogLines is the last n lines of a log tail, tail itself when it holds
+// no more.
+func lastLogLines(tail string, n int) string {
+	body := strings.TrimSuffix(tail, "\n")
+	cut := len(body)
+	for range n {
+		i := strings.LastIndexByte(body[:cut], '\n')
+		if i < 0 {
+			return tail
+		}
+		cut = i
+	}
+	return tail[cut+1:]
 }
 
 // exitText is a server's last exit as messages say it.
