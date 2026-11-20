@@ -892,9 +892,9 @@ storm and Chrome can keep a hung renderer, so a browser that stayed busy while i
 recycled. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
 process, so a deadline or cancel keeps the finished steps. A call clears the
 daemon-wide logs, opens its own tab, and closes every tab but the base one when it
-ends; a caller's `window`, `tab new` and `tab close` are stripped, so the base tab is
-always the first, and a caller's tab list or switch reaches only the call's tabs (**A
-call's popups** below). A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
+ends; a caller's `window`, `tab new`, `tab close` and their aliases are stripped, so the
+base tab is always the first, and a caller's tab list or switch reaches only the call's
+tabs (**A call's popups** below). A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
 cleanup stops the service instead; the stop has its own bound, so a cleanup that hung
 on a spinning tab cannot spend it. A waiting call gives up while a sixth of its time
 is left and answers busy without touching the browser, so a late waiter is never cut
@@ -938,49 +938,82 @@ lifetimes are outside this service.
 
 **A call's popups.** A call's tabs are its own tab, which the setup opened, and every
 tab its pages open during the call — a sign-in provider's popup, a `target=_blank` link;
-the walk follows them as a person's eyes do. After each step but the screenshot and the
-canned tail it reads agent-browser's tab list: a tab opened since becomes the active one
-(the last, when several opened); when the active tab closed, the tab it was opened from —
-or that one's opener, up to the call's own tab — is active again; otherwise the walk's
+the walk follows them as a person's eyes do. agent-browser 0.39.1 launches Chrome with
+`--disable-popup-blocking`, so a page may open one at any time, its load included. While
+the call's own page loads — the viewport, the `open` and the first-paint wait the walk
+puts first — a tab it opens is recorded and the call's own tab is made active again, so
+the paint wait and the document's status are the page's own; that tab is followed once
+they ran, before the first caller step. After each caller step it reads agent-browser's
+tab list: a tab opened since becomes the active one (the last, when several opened); when
+the active tab closed, the tab that was active when it was seen is active again while it
+is open, and the call's own tab otherwise (the list names no opener); else the walk's
 active tab stays active, whatever agent-browser made active (it activates a discovered
 page only when its next command drains the event, so a `wait` that started before the
 popup existed polls the opener throughout, and after a close it falls back to a
-neighbour, the base tab among them). Each tab the walk or the caller makes active is
-brought to front and holds focus — `window.focus()`, then a wait until
-`document.hasFocus()` has held for 900 ms, at most 3 s — and a newly opened one first gets
-the first-paint wait: a provider that arms its Approve only after its page has had focus
-for about 600 ms is armed before the next step, and agent-browser's `click` does not wait
-for an enabled button (measured: it answered success on a just-opened popup's disabled
-Approve, which did nothing). A popup that closes itself once done can close under the
-step after the one that finished it, which then ran in no page ("Session with given id
-not found", measured): a step that failed in a tab the call opened that is gone after it
-runs once more in the tab the call is back in, and the result holds that run. The caller
-may also list and switch: `["tab"]` or `["tab","list"]` answers the call's tabs only, and
-`["tab","t<N>"]` with an id from that list switches; a switch to a tab open before the
-call — the base tab, another call's leftover — does not run and comes back as an
-`invalid-command` step, as do a label or target id, `tab new`, `tab close` and `window`;
-a command's name is read past agent-browser's global flags, so a flag before it lets
-none of them through. The walk's own steps are none of the result's, so each step's echo
-stays the command as written, and `{{env:KEY}}` substitution and redaction (§5.8a) apply
-to a popup's commands and answers as to any other step. A clean walk ends on the call's
-own tab, so the save of the kept sign-in (§2.6c) runs there and still records `open`
-origins only: the provider's cookies are the whole browser's and are kept, its site's
-storage is not read. The cleanup closes the popups with every other tab, and a
-`fresh-context` call's popups open in its own context and end with it. Each step costs
-one tab list more (about 10 ms) and each switch 0.9 s. Measured with agent-browser 0.39.1
-and Chrome against an opener whose "Sign in" opens a provider popup that arms "Approve"
-after 600 ms of focus and posts back and closes on approve: one call clicked Sign in,
-filled `{{env:KEY}}` into the popup (the result carried the placeholder only), clicked
-Approve, and the opener said signed in; a switch to the base tab or to a tab opened
-before the call was refused; the cleanup left the base tab only; the next `tab` and
+neighbour, the base tab among them). A list that fails while a tab the call opened is
+active is asked once more; one that fails again runs no caller step more — each comes
+back "not run", the screenshot too, while the canned tail runs — since the next step
+could run in the base tab. Each tab the walk or the caller makes active is brought to
+front and holds focus — `window.focus()`, then a wait until `document.hasFocus()` has
+held for 900 ms, at most 3 s — and a newly opened one first gets the first-paint wait; a
+hold cut by the page moving on by itself (its script redirected it) is held once more
+after the next page's first paint. A provider that arms its Approve only after its page
+has had focus for about 600 ms is so armed before the next step, and agent-browser's
+`click` does not wait for an enabled button (measured: it answered success on a
+just-opened popup's disabled Approve, which did nothing). This time is the call's own:
+every step the walk takes for a tab is bounded by the call's deadline, and with under
+10 s of it left the walk only switches, without the paint wait or the hold, and says so
+in the `note` of the step after which it did. A popup that closes itself once done can
+close under the step after the one that finished it ("Session with given id not found",
+measured), and the step that finished it can fail the same way when its own effect
+closed it. A failed step in a tab the call opened that is gone after it runs once more in
+the tab the call is back in only when it cannot act — agent-browser 0.39.1's `wait` for a
+time, a selector, text, a URL or a load state (not `--fn`, which runs the page's script,
+nor `--download`), `get` text, html, value, attr, url, title, count, box or styles, `is`
+visible, enabled or checked, and `snapshot` — and the result holds that run; any other
+step keeps its one answer, which adds that the popup closed under it and the step was not
+run again: a key, click, fill or script run twice would act on the opener's site. Such a
+step's "Target closed" is no CDP wedge, since the tab list after it answered. The
+caller may also list and switch: `["tab"]` or `["tab","list"]` answers the call's tabs
+only, and `["tab","t<N>"]` with an id from that list switches; a switch to a tab open
+before the call — the base tab, another call's leftover — does not run and comes back as
+an `invalid-command` step, as do a label or target id, `tab new` and `tab close`. Every
+name agent-browser 0.39.1 takes for a refused command is refused (it matches names
+exactly, case included): `open`, `goto`, `navigate`, `close`, `quit`, `exit`, `window`,
+and `batch`, whose commands of its own could be any of them; a command's name is read
+past agent-browser's global flags, so a flag before it lets none through. The walk's own
+steps are none of the result's, so each step's echo stays the command as written, and
+`{{env:KEY}}` substitution and redaction (§5.8a) apply to a popup's commands and answers
+as to any other step. The save of the kept sign-in (§2.6c) makes the call's own tab — the
+one the setup opened — active and reads the tab list again before it saves, whatever the
+walk last saw, since a popup that opened after the walk's last look is active at the next
+command; the cleanup closes the popups with every other tab, and a `fresh-context` call's
+popups open in its own context and end with it. Each caller step costs one tab list more
+(about 10 ms) and each switch 0.9 s. Measured with agent-browser 0.39.1 and Chrome against
+an opener whose "Sign in" opens a provider popup that arms "Approve" after 600 ms of focus
+and posts back and closes on approve: one call clicked Sign in, filled `{{env:KEY}}` into
+the popup (the result carried the placeholder only), clicked Approve, and the opener said
+signed in; a page that opened the provider while it loaded kept its own paint wait and
+status and its first caller step ran in the popup; a popup a timer opened as the call
+ended left the save on the call's tab; a switch to the base tab or to a tab opened before
+the call was refused; the cleanup left the base tab only; the next `tab` and
 `new-browser` calls were signed in to the provider and a `fresh-context` call was not
 (`TestRunCallSteps_APopupThePageOpensIsWhereTheNextStepRuns`,
+`TestRunCallSteps_APopupOpenedDuringLoadLeavesThePagesOwnLoad`,
 `TestRunCallSteps_AClosedPopupReturnsToTheTabItWasOpenedFrom`,
+`TestRunCallSteps_APopupWhoseOpenerClosedReturnsToTheCallsOwnTab`,
+`TestRunCallSteps_ATabListLostAfterAPopupRunsNoStepBlind`,
+`TestRunCallSteps_AFocusHoldCutByARedirectIsHeldOnTheNextPage`,
+`TestRunCallSteps_AFollowWithLittleTimeLeftOnlySwitchesAndSaysSo`,
 `TestRunCallSteps_AStepAClosingPopupRanInRunsAgainInTheTabBeforeIt`,
+`TestRunCallSteps_AStepThatMayActRunsOnceWhenItsPopupClosesUnderIt`,
+`TestRunCallSteps_APopupClosingUnderAStepIsNoWedge`,
+`TestBrowserReadOnly_OnlyCommandsThatCannotAct`,
 `TestRunCallSteps_ATabOpenBeforeTheCallIsNeverReached`,
 `TestRunCallSteps_TheTabListNamesOnlyTheCallsTabs`,
-`TestRunCallSteps_ACleanWalkEndsOnTheCallsOwnTab`,
-`TestBuildCanonicalBatch_ACommandIsReadPastItsGlobalFlags`).
+`TestBuildCanonicalBatch_ACommandIsReadPastItsGlobalFlags`,
+`TestBuildCanonicalBatch_EveryNameOfARefusedCommandIsRefused`,
+`TestHandBackBrowser_TheSaveReadsTheCallsOwnTabMadeActive`).
 
 ### 2.6c The kept sign-in
 
@@ -1068,8 +1101,18 @@ can hold up or fail a start.
   into a fresh one (`TestRecordBrowserOpened_TheOriginAnOpenEndedOnIsRead`,
   `TestKeptSignInLetsReuse_OnlyTheChromeTheSignInWasRestoredInto`).
 - **The save.** At the end of every call that hands the browser back warm, inside the
-  call's lock, while the call's own tab — a live page of the default context — is still
-  active, before its tabs close and the marker says `idle`. On the base tab's
+  call's lock, from the call's own tab — a live page of the default context — before its
+  tabs close and the marker says `idle`. It first makes that tab, the one the call's setup
+  opened, active and reads the tab list again: unless it is active, is not the base tab
+  and holds a page of a site (not `about:blank`), nothing is saved — logged — and the last
+  save stands; a popup that opened after the walk's last look is active at the next
+  command, and a save from it would record its site. Every save logs the active tab's id
+  and origin (`TestHandBackBrowser_NoSaveOffTheCallsOwnTab`). That does not end the
+  stall below: measured 2026-11-20 with agent-browser 0.39.1 on a Mac, calls alternating
+  between two sites, saves stalled in 8 and 6 of 32 calls before this and in 7 and 9 of 32
+  after, each logged from the call's own tab; a save given 12 s stalled as often (9 of 32).
+  agent-browser reads every opened origin other than the active tab's through a temporary
+  tab, and that read is what hangs. On the base tab's
   `about:blank` agent-browser reads every origin's storage through a temporary tab, and
   such a save now and then stalled past 30 s (measured 2026-11-19: 2 of 29 saves on the
   base tab, none of 40 on the call's tab). A browser that does not hold the kept cookies
