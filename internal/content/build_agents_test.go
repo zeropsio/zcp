@@ -1134,10 +1134,8 @@ func TestBuildAgentsMD_Container_ASignInIsCheckedWithAnAccountFromTheMatesOwnVau
 // production strict. The pane draws a service's page in a frame on Mate's
 // origins; on 2026-10-25 zeropsio/apps' hq and box stages, static services,
 // sent `x-frame-options: DENY` and a strict CSP, and the pane read "refused to
-// connect". The stage builds the setup production builds (in a Mate the
-// application's stage and production build the stage's setup), so the
-// allowance goes into a variant of it the stage deploys, never into that
-// setup itself.
+// connect". How the stage carries the allowance (a variant of production's
+// setup it deploys) is the preview-pane playbook's, which AGENTS.md points to.
 func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1157,12 +1155,9 @@ func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
 			for _, want := range []string{
-				"preview pane", "`https://mate.zerops.io`", "refused to connect",
-				"`X-Frame-Options`", "cannot name another origin", "`frame-ancestors`",
-				"`'self' https://mate.zerops.io`", "only narrows",
-				"The dev setup may carry it", "builds the setup production builds", "`extends`",
-				"`run.routing.headers`", "replaced whole", "`run.envVariables`",
-				`setup="<the variant>"`, "the setup the variant extends", "`curl -sI",
+				"preview pane", "`https://mate.zerops.io`", "refused to connect", "`frame-ancestors`",
+				"`'self' https://mate.zerops.io`", "Production keeps the app's strict framing",
+				`zerops_knowledge uri="zerops://playbooks/preview-pane"`,
 			} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
@@ -1179,7 +1174,8 @@ func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
 // an agent widened Zerops' own account apps, whose zerops.yml said they are
 // never framed, by `https://*.zerops.app` and told the person they were framed
 // by Mate's pane only. A page that forbids framing on purpose is the person's
-// to open up, never the agent's.
+// to open up, never the agent's: the preview-pane playbook says so, and
+// AGENTS.md sends the agent there before it changes an app's framing.
 func TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1198,9 +1194,7 @@ func TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins(t *testing.T)
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
 			for _, want := range []string{
-				"`'self' " + tc.sources + "`",
-				`frame-ancestors 'self' ` + tc.sources + `\" always`,
-				"never a wildcard", "`X-Frame-Options: DENY`", "`frame-ancestors 'none'`", "tell the person",
+				"`'self' " + tc.sources + "`", "never a wildcard",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("AGENTS.md does not say %q", want)
