@@ -143,7 +143,8 @@ func hqStateProblems(state hq.MateState) []hq.Problem {
 
 // hqChangesStatus is status's Changes section: per repository, each change
 // the ledger keeps — its standing as told, or as state (nil: unread) names it
-// now, the leases on its branch, and an old one's age — and each branch
+// now, the leases on its branch, an open one's last update, and an old one's
+// age — and each branch
 // leases hold with no change yet, `main` aside.
 func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateState) []workflow.HQRepoChanges {
 	changes := hqChanges(stateDir)
@@ -180,6 +181,9 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 		for _, c := range changesIn(changes, k.appID, k.repo) {
 			line, told := changeLineNow(c, state)
 			line.Leases = held(k, c.Branch)
+			if updated := changeUpdatedWords(told, now); updated != "" {
+				line.Labels = append(line.Labels, updated)
+			}
 			if age := changeAge(told, now); told != nil && len(line.Leases) == 0 && age >= changeOldAfter {
 				line.Labels = append(line.Labels, fmt.Sprintf("no lease holds it, untouched in HQ for %d days", int(age/(24*time.Hour))))
 			}
@@ -274,6 +278,55 @@ func changeAge(t *workflow.HQChangeTold, now time.Time) time.Duration {
 		return 0
 	}
 	return now.Sub(at)
+}
+
+// handedToYou labels an open change a person handed this Mate from a Mate
+// that is gone: AGENTS.md's "What one change holds" never adds work to it or
+// folds it.
+const handedToYou = "handed to you"
+
+// openChangeLabels is how develop's start and the refusal past five open
+// changes label an open change: handed to this Mate, its standing as told
+// (nil: none known), and when HQ last changed it.
+func openChangeLabels(handed bool, told *workflow.HQChangeTold, now time.Time) []string {
+	var labels []string
+	if handed {
+		labels = append(labels, handedToYou)
+	}
+	labels = append(labels, changeLabels(told)...)
+	if updated := changeUpdatedWords(told, now); updated != "" {
+		labels = append(labels, updated)
+	}
+	return labels
+}
+
+// openChangeLabelsOf labels c, an open change as the ledger or the Mate's
+// state names it (openChangesOf), handed by how it came to the Mate.
+func openChangeLabelsOf(c workflow.HQChange, now time.Time) []string {
+	return openChangeLabels(c.Source == workflow.HQChangeFromHanded, c.Told, now)
+}
+
+// changeUpdatedWords says how long ago HQ last changed a change as told — in
+// minutes under an hour, hours under two days, days after — so the agent can
+// apply AGENTS.md's "What one change holds", which joins unrelated interface
+// work only to a change updated within about the last two hours; "" when HQ
+// sent no time.
+func changeUpdatedWords(told *workflow.HQChangeTold, now time.Time) string {
+	if told == nil || told.UpdatedAt == "" {
+		return ""
+	}
+	at, err := time.Parse(time.RFC3339, told.UpdatedAt)
+	if err != nil {
+		return ""
+	}
+	age := now.Sub(at)
+	switch {
+	case age < time.Hour:
+		return fmt.Sprintf("updated %d min ago", max(int(age/time.Minute), 1))
+	case age < 48*time.Hour:
+		return fmt.Sprintf("updated %d h ago", int(age/time.Hour))
+	}
+	return fmt.Sprintf("updated %d d ago", int(age/(24*time.Hour)))
 }
 
 // leaseGroupChanges is what zerops_lease status says of each lease group's

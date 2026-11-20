@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -492,7 +493,7 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		switch {
 		case !atStart || len(handed) > 0:
 		case state.OpenPerBranch:
-			if open := openChangesWords(openChangesOf(state, app, repo, kept), route); open != "" {
+			if open := openChangesWords(openChangesOf(state, app, repo, kept), route, time.Now()); open != "" {
 				said = append(said, open)
 			}
 		case len(kept) == 1:
@@ -578,28 +579,25 @@ func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQCha
 }
 
 // openChangesWords lists a repository's open changes, by number and branch,
-// with each one's standing as told and a handed one labelled, and says where
+// labelled as openChangeLabelsOf labels it — handed, standing, last update —
+// and says where
 // work goes: work on a change stays on its own branch; new work goes onto an
 // open change only as AGENTS.md's "What one change holds" says, otherwise on
 // a branch of its own cut from an up-to-date main, opening its own change —
 // each taken where route runs the repository's git. "" for none.
-func openChangesWords(kept []workflow.HQChange, route repoRoute) string {
+func openChangesWords(kept []workflow.HQChange, route repoRoute, now time.Time) string {
 	if len(kept) == 0 {
 		return ""
 	}
 	named := make([]string, 0, len(kept))
 	for _, c := range kept {
 		name := fmt.Sprintf("#%d on %q", c.Number, c.Branch)
-		labels := changeLabels(c.Told)
-		if c.Source == workflow.HQChangeFromHanded {
-			labels = append([]string{"handed to you"}, labels...)
-		}
-		if len(labels) > 0 {
+		if labels := openChangeLabelsOf(c, now); len(labels) > 0 {
 			name += " (" + strings.Join(labels, " · ") + ")"
 		}
 		named = append(named, name)
 	}
-	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (%s); new work joins an open change of yours only as AGENTS.md's \"What one change holds\" says — pushed to its branch, the change described again — and otherwise goes on a branch of its own, cut from an up-to-date %q (%s), opening its own change",
+	return fmt.Sprintf("open changes %s — work on a change stays on its own branch (%s); new work joins an open change of yours only as AGENTS.md's \"What one change holds\" says — pushed to its branch — and otherwise goes on a branch of its own, cut from an up-to-date %q (%s), opening its own change",
 		strings.Join(named, ", "), route.take("<branch>"), hqBase, route.fromMain("<branch>"))
 }
 

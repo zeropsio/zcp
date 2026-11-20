@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/hq"
@@ -64,7 +65,7 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 		texts["hqOpenChangeWork, "+name] = hqOpenChangeWork(route, hqc, workflow.HQChange{Number: 1, Repo: "appdev", Branch: released})
 		texts["handedWork, pushed, "+name] = handedWork(route, hq.MateChange{Number: 2, Head: &head}, "appdev", "fix-login", true)
 		texts["handedWork, unpushed, "+name] = handedWork(route, hq.MateChange{Number: 2}, "appdev", "fix-login", true)
-		texts["openChangesWords, "+name] = openChangesWords([]workflow.HQChange{{Number: 1, Branch: "fix-login"}}, route)
+		texts["openChangesWords, "+name] = openChangesWords([]workflow.HQChange{{Number: 1, Branch: "fix-login"}}, route, time.Time{})
 		texts["standingWords behind, "+name] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, route, nil, false)
 		texts["standingWords conflict, "+name] = standingWords(6, "badge", conflict, workflow.HQChangeTold{}, route, nil, false)
 		texts["mainTakesTheMerge, "+name] = mainTakesTheMerge(route)

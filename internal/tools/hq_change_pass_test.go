@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -507,10 +508,10 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 }
 
 // TestOpenChangesOf_MarksAHandedChangeAsHanded: of the open changes the
-// Mate's state names, the one a person handed this Mate is marked handed and
-// no other is, so develop's start labels it and AGENTS.md's "What one change
-// holds" never sends new work onto it (docs/spec-mate.md §10.10, MB-53).
-// witness: internal/tools/hq_change.go | c.Source = workflow.HQChangeFromHanded →
+// Mate's state names, develop's start labels the one a person handed this
+// Mate "handed to you" and no other, so AGENTS.md's "What one change holds"
+// never sends new work onto it or folds it (docs/spec-mate.md §10.10, MB-53).
+// witness: internal/tools/hq_change_status.go | labels = append(labels, handedToYou) →
 func TestOpenChangesOf_MarksAHandedChangeAsHanded(t *testing.T) {
 	t.Parallel()
 	state := hq.MateState{Rev: 3, OpenPerBranch: true, Changes: []hq.MateChange{
@@ -519,10 +520,40 @@ func TestOpenChangesOf_MarksAHandedChangeAsHanded(t *testing.T) {
 	}}
 	handed := map[int]bool{}
 	for _, c := range openChangesOf(state, "app-1", "web", nil) {
-		handed[c.Number] = c.Source == workflow.HQChangeFromHanded
+		handed[c.Number] = slices.Contains(openChangeLabelsOf(c, time.Now()), handedToYou)
 	}
 	if want := map[int]bool{1: false, 2: true}; !maps.Equal(handed, want) {
-		t.Errorf("open changes marked handed = %v, want %v", handed, want)
+		t.Errorf("open changes labelled handed = %v, want %v", handed, want)
+	}
+}
+
+// TestChangeUpdatedWords_SaysHowLongAgoHQLastChangedIt: develop's start and
+// status say when HQ last changed each open change — minutes under an hour,
+// hours under two days, days after — so the agent can tell a change updated
+// within about two hours, which unrelated interface work may join, from one
+// that has waited longer; nothing when HQ sent no time (docs/spec-mate.md
+// §10.10, MB-53).
+// witness: internal/tools/hq_change_status.go | case age < 48*time.Hour: → case age < 2*time.Hour:
+func TestChangeUpdatedWords_SaysHowLongAgoHQLastChangedIt(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name, updatedAt, want string
+	}{
+		{name: "25 minutes ago", updatedAt: "2026-11-20T11:35:00Z", want: "25 min"},
+		{name: "two hours and ten minutes ago", updatedAt: "2026-11-20T09:50:00Z", want: "2 h"},
+		{name: "a day and a half ago", updatedAt: "2026-11-19T00:00:00Z", want: "36 h"},
+		{name: "three days ago", updatedAt: "2026-11-17T12:00:00Z", want: "3 d"},
+		{name: "HQ sent no time"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := changeUpdatedWords(&workflow.HQChangeTold{State: hq.ChangeOpen, UpdatedAt: tt.updatedAt}, now)
+			if (tt.want == "") != (got == "") || !strings.Contains(got, tt.want) {
+				t.Errorf("last update said as %q, want it to name %q", got, tt.want)
+			}
+		})
 	}
 }
 
