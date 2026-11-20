@@ -368,6 +368,7 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 		"AGENT_BROWSER_SOCKET_DIR=" + browserRuntimeDir,
 		"AGENT_BROWSER_SESSION=default",
 		"AGENT_BROWSER_IDLE_TIMEOUT_MS=1200000",
+		"AGENT_BROWSER_ARGS=--disable-back-forward-cache",
 	}
 	if !slices.Equal(env, want) {
 		t.Errorf("env = %v, want %v", env, want)
@@ -382,6 +383,25 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 		if strings.HasPrefix(a, "--setenv=") && !slices.Contains(env, strings.TrimPrefix(a, "--setenv=")) {
 			t.Errorf("the browser unit sets %q, which the steps do not", a)
 		}
+	}
+}
+
+// TestBrowserEnv_TheWarmBrowserKeepsNoPageInItsBackForwardCache: the warm
+// browser and every step run Chrome with its back/forward cache off, so the
+// stub pages the kept sign-in's restore and save walk the base tab through
+// pin no renderer while the browser idles. With the cache on, a Mate's idle
+// browser held up to 15 renderers against 11 before the stub pages (Chrome
+// 157, 2026-11-21), and resetting the base tab's history after them was
+// refused there ("Not attached to an active page").
+// witness: internal/ops/browser_warm.go | const browserChromeArgs = "--disable-back-forward-cache" → const browserChromeArgs = ""
+func TestBrowserEnv_TheWarmBrowserKeepsNoPageInItsBackForwardCache(t *testing.T) {
+	t.Parallel()
+	env := browserEnv("/home/zerops", "/usr/local/bin:/usr/bin")
+	if !slices.Contains(env, "AGENT_BROWSER_ARGS=--disable-back-forward-cache") {
+		t.Errorf("env = %v, want Chrome started with --disable-back-forward-cache", env)
+	}
+	if !slices.Contains(browserUnitArgs("/usr/bin/agent-browser", env, 1000, 2, 0), "--setenv=AGENT_BROWSER_ARGS=--disable-back-forward-cache") {
+		t.Error("the browser unit must start Chrome with the back/forward cache off too")
 	}
 }
 

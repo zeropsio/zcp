@@ -1116,12 +1116,15 @@ zcp's `zcpLastUsed`), so every kept sign-in carries over.
   out agent-browser's 30 s read limit. So zcp borrows the base tab, which agent-browser
   keeps on `about:blank` and never runs a call in, for one restore or save, and gives it
   back whatever happened, its bound run out included (2 s of its own): back on
-  `about:blank` with its history cleared (`Page.resetNavigationHistory`), so no stub page
-  sits in Chrome's back/forward cache, a renderer apiece, while the browser idles — the
-  stub pages are also answered `Cache-Control: no-store` — and its DevTools session
-  detached, which takes the request answering and the service-worker bypass with it. agent-browser's tab list is the same before and after
+  `about:blank` and its DevTools session detached, which takes the request answering and
+  the service-worker bypass with it. The warm browser runs Chrome with its back/forward
+  cache off (`AGENT_BROWSER_ARGS=--disable-back-forward-cache`, the same on every command
+  so agent-browser never relaunches for it), so no stub page sits there, a renderer apiece,
+  while the browser idles: with the cache on, a Mate's idle browser held 15 renderers
+  against 11, and Chrome 157 refused clearing the base tab's history there ("Not attached
+  to an active page"). A call's tabs close when it ends, so the cache held nothing else. agent-browser's tab list is the same before and after
   (`TestSaveBrowserSignIn_OpensNoTabAndGivesTheBaseTabBack`,
-  `TestSaveBrowserSignIn_LeavesNoStubPageInTheBaseTabsHistory`). Measured on a Mac with
+  `TestBrowserEnv_TheWarmBrowserKeepsNoPageInItsBackForwardCache`). Measured on a Mac with
   agent-browser 0.39.4 and Chrome 157 through zcp's own steps: a fresh browser's restore
   10 ms, each hand-back (save, tabs closed) 72–79 ms with no error, the next `tab` call
   reused the warm browser, and a `new-browser` call took the browser's start (1.1 s) +

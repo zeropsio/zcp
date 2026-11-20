@@ -538,28 +538,6 @@ func TestRestoreBrowserSignIn_ABrowserItCannotConfirmSaysSoAndHoldsNothing(t *te
 	}
 }
 
-// A save and a restore leave no stub page in the base tab's history, so
-// none sits in Chrome's back/forward cache, a renderer apiece, while the
-// warm browser idles.
-// witness: internal/ops/browser_cdp.go | 	if err := s.cdp.call(cctx, s.session, "Page.resetNavigationHistory", nil, nil); err != nil { → 	if err := error(nil); err != nil {
-func TestSaveBrowserSignIn_LeavesNoStubPageInTheBaseTabsHistory(t *testing.T) {
-	restored := newFakeChrome().dialedBy(t)
-	dir := readyStateDir(t)
-	writeState(t, dir, threeSites)
-	if _, err := restoreBrowserSignIn(t.Context(), browserOn(new([][]string)), dir, filepath.Join(t.TempDir(), "p.json"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	saved := newFakeChrome().dialedBy(t)
-	saved.storage["http://127.0.0.1:18731"] = []browserStorageItem{{"token", "app"}}
-	if err := saveBrowserSignIn(t.Context(), browserOn(new([][]string), "t2 http://127.0.0.1:18731/"), dir,
-		presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if left := append(restored.leftBehind(), saved.leftBehind()...); len(left) != 0 {
-		t.Errorf("the base tab must keep no stub page: %v", left)
-	}
-}
-
 // A kept cookie Chrome refuses costs only itself: the other cookies and
 // the sites are restored, the browser holds the kept sign-in, and the result
 // names the refused cookie, which the next save no longer keeps.

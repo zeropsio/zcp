@@ -37,7 +37,6 @@ type fakeChrome struct {
 	refuseCookie string
 	created      []string
 	sessions     map[string]string
-	history      map[string][]string
 	pages        map[string]string
 	paused       map[string]pausedNavigation
 	visited      []string
@@ -60,7 +59,6 @@ func newFakeChrome() *fakeChrome {
 		fail:     map[string]bool{},
 		upgrade:  map[string]bool{},
 		sessions: map[string]string{},
-		history:  map[string][]string{},
 		pages:    map[string]string{baseTarget: "about:blank"},
 		paused:   map[string]pausedNavigation{},
 	}
@@ -173,14 +171,6 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 			return nil
 		}
 		reply(map[string]any{"targetInfo": map[string]any{"targetId": p.TargetID, "type": "page"}})
-	case "Page.resetNavigationHistory":
-		target, ok := f.sessions[msg.SessionID]
-		if !ok {
-			refuse("Session with given id not found.")
-			return nil
-		}
-		f.history[target] = nil
-		reply(map[string]any{})
 	case "Target.detachFromTarget":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -202,7 +192,6 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 		}
 		delete(f.paused, p.RequestID)
 		f.pages[f.sessions[nav.session]] = nav.origin
-		f.history[f.sessions[nav.session]] = append(f.history[f.sessions[nav.session]], nav.origin)
 		reply(map[string]any{})
 		f.send(map[string]any{"id": nav.id, "result": map[string]any{"frameId": "F1", "loaderId": "L1"}})
 	case "Runtime.evaluate":
@@ -221,9 +210,7 @@ func (f *fakeChrome) navigate(id json.RawMessage, session string, params json.Ra
 	_ = json.Unmarshal(params, &p)
 	if p.URL == "about:blank" {
 		f.pages[f.sessions[session]] = p.URL
-		f.history[f.sessions[session]] = append(f.history[f.sessions[session]], p.URL)
 		f.reply(id, map[string]any{"frameId": "F1"})
-		f.send(map[string]any{"method": "Page.frameNavigated", "sessionId": session, "params": map[string]any{"frame": map[string]any{"id": "F1", "url": "about:blank"}}})
 		return
 	}
 	if f.dies {
@@ -299,8 +286,7 @@ func (f *fakeChrome) evaluate(id json.RawMessage, session string, params json.Ra
 
 // leftBehind says what the kept sign-in left in the browser: tabs it
 // opened, DevTools sessions still attached, the base tab's page when it is
-// anything but about:blank, and the pages in the base tab's history, each of
-// which Chrome's back/forward cache may keep alive. Nothing, for one that leaves the browser as
+// anything but about:blank. Nothing, for one that leaves the browser as
 // agent-browser had it.
 func (f *fakeChrome) leftBehind() []string {
 	f.mu.Lock()
@@ -314,9 +300,6 @@ func (f *fakeChrome) leftBehind() []string {
 	}
 	if page := f.pages[baseTarget]; page != "about:blank" {
 		left = append(left, "base tab on "+page)
-	}
-	for _, page := range f.history[baseTarget] {
-		left = append(left, "base tab history "+page)
 	}
 	return left
 }

@@ -74,8 +74,17 @@ func browserEnv(home, path string) []string {
 		"AGENT_BROWSER_SOCKET_DIR=" + browserRuntimeDir,
 		"AGENT_BROWSER_SESSION=default",
 		"AGENT_BROWSER_IDLE_TIMEOUT_MS=" + strconv.FormatInt(browserIdleTimeout.Milliseconds(), 10),
+		// No page sits in Chrome's back/forward cache, a renderer apiece: a
+		// call's tabs close when it ends, so the cache only ever held the
+		// kept sign-in's stub pages, for minutes, in the idle browser. The
+		// same args on every command keep agent-browser's launch hash, so
+		// it never relaunches Chrome for them.
+		"AGENT_BROWSER_ARGS=" + browserChromeArgs,
 	}
 }
+
+// browserChromeArgs are the Chrome flags the warm browser runs with.
+const browserChromeArgs = "--disable-back-forward-cache"
 
 // browserUnitArgs are the sudo arguments that start the warm browser: the
 // daemon forks out of `agent-browser open about:blank` and its pid file
