@@ -1,6 +1,7 @@
 version: "2"
 run:
-  concurrency: 16
+  # Many worktrees lint at once on one machine: four workers each, not one per core.
+  concurrency: 4
   # Parallel worktrees commit at once: wait for the lint lock instead of failing.
   allow-serial-runners: true
   issues-exit-code: 1

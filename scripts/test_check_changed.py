@@ -185,14 +185,14 @@ class CheckChangedTests(unittest.TestCase):
                                 cwd=self.root, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.read_text().splitlines(), [
-            "lint run ./internal/content ./internal/unrelated --timeout=120s"])
+            "lint run ./internal/unrelated"])
         calls.unlink()
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-commit")],
                                 cwd=self.root, env=dict(env, LINT_EXIT="7"),
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls.read_text().splitlines(), [
-            "lint run ./internal/content ./internal/unrelated --timeout=120s"])
+            "lint run ./internal/unrelated"])
 
     def test_prepush_does_not_repeat_checks(self):
         (self.root / "scripts").mkdir()

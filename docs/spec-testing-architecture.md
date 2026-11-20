@@ -331,6 +331,14 @@ Decision: module, build and global configuration changes widen selection to all
 packages; unresolved ownership is printed and also selects all packages, never an
 empty successful check. An incomplete Go graph widens selection as well.
 
+Decision: lint has its own, narrower selection (`--plan`'s `lint`). Lint of a package
+reads only its files and the types of what it imports, so filesystem readers never
+feed it, and under `tools/` only `tools/golangci-lint.sh` widens it. A staged check
+(pre-commit, `make check-changed`) lints the owner packages only; a range
+(`--base`, so `scripts/gate` and every landing) lints the owners and their reverse
+import closure and stays the judge of the landed commit. Lint runs without a
+timeout, so its verdict never depends on machine load.
+
 Selector contracts live in `scripts/test_check_changed.py`; complete all-package
 test and lint Makefile targets remain available for manual diagnostics.
 

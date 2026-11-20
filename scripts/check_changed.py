@@ -4,8 +4,10 @@ Go supplies production and test import edges. Filesystem test readers are leaves
 editing a file they inspect changes their assertions, not their compiled exports.
 Keeping those edges distinct avoids turning every edit into a topology-wide build.
 Unknown ownership and global configuration deliberately select every package.
-Native lint runs on the selection; its short tests run only with --tests, which
-nothing invokes automatically (tests run when the owner explicitly asks).
+Native lint runs on a narrower selection: the owners of a staged change, or the
+owners and their importers for a --base range. The selection's short tests run
+only with --tests, which nothing invokes automatically (tests run when the owner
+explicitly asks).
 """
 
 import argparse
@@ -71,7 +73,7 @@ def package_graph():
     return packages
 
 
-def select(root, files, packages):
+def select(root, files, packages, by_range):
     by_dir = {Path(p["Dir"]).relative_to(root).as_posix(): p for p in packages}
     by_import = {p["ImportPath"]: directory for directory, p in by_dir.items()}
     reverse = {directory: set() for directory in by_dir}
@@ -139,16 +141,25 @@ def select(root, files, packages):
         if not found and file not in wide:
             unresolved.append(file)
 
-    selected = set(owners)
+    closure = set(owners)
     pending = list(owners)
     while pending:
-        for consumer in reverse[pending.pop()] - selected:
-            selected.add(consumer)
+        for consumer in reverse[pending.pop()] - closure:
+            closure.add(consumer)
             pending.append(consumer)
-    selected.update(readers & by_dir.keys())
+    selected = closure | (readers & by_dir.keys())
+    # Lint of a package reads its own files and the types of what it imports:
+    # filesystem readers cannot change its verdict, and of tools/ only the lint
+    # wrapper is a lint input. A commit lints its owners; a range (the gate, so
+    # every landing) also lints their importers.
+    lint = closure if by_range else owners
+    if [reason for reason in wide if not reason.startswith("tools/")
+            or reason == "tools/golangci-lint.sh"] or unresolved:
+        lint = set(by_dir)
     if wide or unresolved:
         selected = set(by_dir)
     return {"files": sorted(files), "packages": ["./" + p for p in sorted(selected)],
+            "lint": ["./" + p for p in sorted(lint)],
             "unresolved": sorted(unresolved), "wide": sorted(wide)}
 
 
@@ -216,8 +227,8 @@ def main():
         revision = [args.base] if args.base else ["--cached"]
         files = output("git", "diff", *revision, "--name-only", "--no-renames", "-z").split("\0")
         files = [file for file in files if file]
-    plan = select(root, files, package_graph()) if files else {
-        "files": [], "packages": [], "unresolved": [], "wide": []}
+    plan = select(root, files, package_graph(), args.base is not None) if files else {
+        "files": [], "packages": [], "lint": [], "unresolved": [], "wide": []}
     if args.plan:
         print(json.dumps(plan, indent=2))
         return
@@ -225,8 +236,10 @@ def main():
         print(f"Unresolved ownership: {reason}; selecting all packages", flush=True)
     for reason in plan["wide"]:
         print(f"Global input: {reason}; selecting all packages", flush=True)
-    selected = plan["packages"]
-    print("Changed-check packages: " + (" ".join(selected) or "none"), flush=True)
+    selected, linted = plan["packages"], plan["lint"]
+    if args.tests:
+        print("Changed-test packages: " + (" ".join(selected) or "none"), flush=True)
+    print("Changed-lint packages: " + (" ".join(linted) or "none"), flush=True)
     # Honor the hook's index when selecting, then release its repository binding.
     # Tests create their own repositories; inheriting GIT_DIR/GIT_INDEX_FILE
     # would make their git commands mutate the caller's checkout instead.
@@ -235,12 +248,12 @@ def main():
     if args.tests and any(file in SELECTOR_FILES or file.startswith(".githooks/") for file in files):
         subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts",
                         "-p", "test_check_changed.py"], env=check_env, check=True)
-    if not selected:
-        return
-    lint = str(root / "tools/golangci-lint.sh")
-    if args.tests:
+    if args.tests and selected:
         run_tests(selected, check_env)
-    subprocess.run([lint, "run", *selected, "--timeout=120s"], env=check_env, check=True)
+    if linted:
+        # No --timeout: a verdict never depends on how loaded the machine is.
+        subprocess.run([str(root / "tools/golangci-lint.sh"), "run", *linted],
+                       env=check_env, check=True)
 
 
 if __name__ == "__main__":
