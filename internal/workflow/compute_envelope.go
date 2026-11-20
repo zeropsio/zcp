@@ -173,6 +173,7 @@ func ComputeEnvelope(
 	return StateEnvelope{
 		Phase:        phase,
 		Environment:  env,
+		Mate:         rt.MateEnabled,
 		IdleScenario: deriveIdleScenario(phase, snapshots),
 		SelfService:  self,
 		Project:      projectSummary,

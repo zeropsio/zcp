@@ -264,6 +264,7 @@ the full prescription.
 |---|---|
 | `Phase` | The phase enum from §1.2. Drives atom filtering and plan dispatch. |
 | `Environment` | `container` or `local`. Driven by `runtime.Info.InContainer`. |
+| `Mate` | `true` when this zcp serves a Mate (`runtime.Info.MateEnabled`), omitted otherwise, so atoms filter on the `mate` axis (`in` / `outside`). |
 | `IdleScenario` | Discriminates the `PhaseIdle` sub-cases (`empty` / `bootstrapped` / `adopt` / `incomplete` / `dev-pool` / `orphan`) so atoms filter on the `idleScenarios` axis; `dev-pool` is a project whose only runtimes are Swarm pools (§8 DP-29). |
 | `ExportStatus` | Discriminates the `PhaseExportActive` sub-states (`topology.ExportStatus`) so atoms filter on the `exportStatus` axis. |
 | `SelfService` | Hostname of the ZCP control-plane container (container env only). |

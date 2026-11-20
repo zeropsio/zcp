@@ -19,8 +19,13 @@ import (
 // alphabetically, so plain json.Marshal is deterministic once slice order
 // is controlled at construction.
 type StateEnvelope struct {
-	Phase        Phase        `json:"phase"`
-	Environment  Environment  `json:"environment"`
+	Phase       Phase       `json:"phase"`
+	Environment Environment `json:"environment"`
+	// Mate is this zcp serving a Mate (runtime.Info.MateEnabled), the fact
+	// launch-production refuses on. Serialized so the synthesis invariant
+	// holds: atoms filter on it via the `mate:` axis. Additive to the
+	// Mate's contract (docs/spec-mate.md §1.1).
+	Mate         bool         `json:"mate,omitempty"`
 	IdleScenario IdleScenario `json:"idleScenario,omitempty"`
 	// ExportStatus discriminates the sub-state of PhaseExportActive — see
 	// topology.ExportStatus. Set by BuildExportEnvelope when the export

@@ -166,6 +166,9 @@ Phase: develop-active
 - The producer is `workflow.AppendEnvelope`; the reference reducer is
   `workflow.ExtractEnvelope`. A mate client implements the same rule in TypeScript.
 
+A Mate's envelope carries `"mate": true` (`runtime.Info.MateEnabled`); only zcp's atom selection
+reads it, and the Mate server's decoder ignores it, so the key is additive and needs no Mate change.
+
 Appending over a text that already **ends** with an envelope block replaces that block rather
 than adding a second, so a producer chain cannot emit two trailing envelopes. A block embedded
 earlier in the text is content, not structure, and is left alone.

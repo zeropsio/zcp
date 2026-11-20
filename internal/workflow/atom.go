@@ -115,7 +115,11 @@ type AxisVector struct {
 	Routes        []BootstrapRoute
 	Steps         []string
 	IdleScenarios []IdleScenario
-	DeployStates  []DeployState
+	// Mate scopes the atom by whether this zcp serves a Mate (see
+	// MatePlacement). Envelope-scoped: matches StateEnvelope.Mate directly.
+	// Empty = no gate.
+	Mate         []MatePlacement
+	DeployStates []DeployState
 	// EnvelopeDeployStates is the envelope-scoped twin of DeployStates:
 	// the atom matches once if at least one bootstrapped service in the
 	// envelope satisfies any of the listed states, and renders 1× via the
@@ -216,6 +220,17 @@ const (
 	ZeropsYAMLPresent ZeropsYAMLState = "present"
 )
 
+// MatePlacement is whether this zcp serves a Mate — the value the `mate:`
+// axis matches, in the words of the AGENTS.md template markers.
+type MatePlacement string
+
+const (
+	// MateIn — the envelope is a Mate's (StateEnvelope.Mate).
+	MateIn MatePlacement = "in"
+	// MateOutside — any other container or a local zcp.
+	MateOutside MatePlacement = "outside"
+)
+
 // StageScope is where a service's paired stage half stands in the develop
 // session — the value the `stageScope:` axis matches.
 type StageScope string
@@ -274,6 +289,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"routes":               {},
 	"steps":                {},
 	"idleScenarios":        {},
+	"mate":                 {},
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
@@ -309,6 +325,7 @@ var listAxisKeys = map[string]struct{}{
 	"routes":               {},
 	"steps":                {},
 	"idleScenarios":        {},
+	"mate":                 {},
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
@@ -404,6 +421,10 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"orphan":       {},
 		"dev-pool":     {},
 	},
+	"mate": {
+		"in":      {},
+		"outside": {},
+	},
 	"deployStates": {
 		"never-deployed": {},
 		"deployed":       {},
@@ -478,7 +499,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, parts, zeropsYaml, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, mate, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, parts, zeropsYaml, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -616,6 +637,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			Routes:               parseRoutes(fields["routes"]),
 			Steps:                parseYAMLList(fields["steps"]),
 			IdleScenarios:        parseIdleScenarios(fields["idleScenarios"]),
+			Mate:                 parseMatePlacements(fields["mate"]),
 			DeployStates:         parseDeployStates(fields["deployStates"]),
 			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
 			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
@@ -818,6 +840,15 @@ func parseIdleScenarios(raw string) []IdleScenario {
 	out := make([]IdleScenario, 0, len(values))
 	for _, v := range values {
 		out = append(out, IdleScenario(v))
+	}
+	return out
+}
+
+func parseMatePlacements(raw string) []MatePlacement {
+	values := parseYAMLList(raw)
+	out := make([]MatePlacement, 0, len(values))
+	for _, v := range values {
+		out = append(out, MatePlacement(v))
 	}
 	return out
 }

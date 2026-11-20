@@ -213,7 +213,7 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 The eleven service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`, `parts`, `zeropsYaml`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
 
-Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
+Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `mate`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
 
 ### 3.11 `exportStatus` (envelope-scoped, optional)
 
@@ -322,6 +322,7 @@ this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
 | `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`dev-pool`/`orphan`). |
+| `mate` | no | Envelope-scoped: `in` matches an envelope with `mate: true` (this zcp serves a Mate), `outside` every other. Empty = either. |
 | `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. Mutually exclusive per atom with `envelopeDeployStates`. |
 | `envelopeDeployStates` | no | Envelope-scoped (§3.13). Mutually exclusive per atom with `deployStates`. |
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |

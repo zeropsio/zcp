@@ -405,7 +405,7 @@ func BodiesOf(matches []MatchedRender) []string {
 }
 
 // atomEnvelopeAxesMatch checks the envelope-wide axes (phase,
-// environment, route, step, idleScenario, envelopeDeployStates).
+// environment, route, step, idleScenario, mate, envelopeDeployStates).
 // Service-scoped axes are evaluated separately per Synthesize so the
 // matched service identity flows through.
 func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
@@ -430,6 +430,9 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 			return false
 		}
 	}
+	if len(atom.Axes.Mate) > 0 && !slices.Contains(atom.Axes.Mate, envelopeMatePlacement(env)) {
+		return false
+	}
 	if len(atom.Axes.EnvelopeDeployStates) > 0 && !envelopeDeployStateMatches(env.Services, env.WorkSession, atom.Axes.EnvelopeDeployStates) {
 		return false
 	}
@@ -440,6 +443,14 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 		return false
 	}
 	return true
+}
+
+// envelopeMatePlacement is the `mate:` axis value of the envelope.
+func envelopeMatePlacement(env StateEnvelope) MatePlacement {
+	if env.Mate {
+		return MateIn
+	}
+	return MateOutside
 }
 
 // envelopeHasManagedType reports whether the envelope contains a managed
