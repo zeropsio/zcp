@@ -352,8 +352,8 @@ async function containerProbe(page, cap) {
   if (!(await term.count())) return cap.note('containerProbe: no xterm');
   try {
     await term.click({ timeout: 5000 });
-    // `discover` is NOT a zcp CLI verb (cliDispatch in cmd/zcp/main.go) — it
-    // falls through to MCP serve mode, so probe the things that actually
+    // `discover` is NOT a zcp CLI verb (cliDispatch in cmd/zcp/main.go) — zcp
+    // refuses it as an unknown command, so probe the things that actually
     // answer the question. Env is printed as name=<n chars> only: never dump
     // a token into an evidence file.
     const cmds = process.env.PROBE_CMDS_FILE
