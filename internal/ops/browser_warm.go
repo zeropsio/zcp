@@ -289,11 +289,30 @@ type browserStepExec func(ctx context.Context, args []string) (stdout, stderr st
 // step with no answer, or the end of ctx, ends the walk with an error,
 // keeping the steps before it.
 func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
+	return walkBrowserSteps(ctx, steps, run, false)
+}
+
+// runCallSteps walks a call's batch as runBrowserSteps does, in the call's
+// tabs (browser_tabs.go): after each step but the reporting ones, a tab its
+// page opened becomes active and focused, and a closed popup hands back to
+// the tab before it; a step that failed in a popup that closed under it runs
+// once more in that tab; a caller's tab command lists or switches the call's
+// tabs only; and a walk that ends cleanly ends on the call's own tab. Those
+// steps of its own are none of the result's.
+func runCallSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
+	return walkBrowserSteps(ctx, steps, run, true)
+}
+
+func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec, followTabs bool) (string, string, bool, error) {
 	results := make([]BrowserStepResult, 0, len(steps))
 	stderr := &capBuffer{cap: browserOutputCap}
 	truncated := false
 	var walkErr error
 	var page browserPage
+	var tabs *browserCallTabs
+	if followTabs {
+		tabs = startBrowserCallTabs(ctx, run, stderr)
+	}
 walk:
 	for at, step := range steps {
 		if err := ctx.Err(); err != nil {
@@ -308,34 +327,56 @@ walk:
 			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError})
 			continue
 		}
+		if _, _, isTab := readBrowserTabCommand(step); isTab && followTabs {
+			if tabs == nil {
+				msg := "not run: the call's tabs could not be read, so no tab command runs in it"
+				results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindInvalidCommand})
+				continue
+			}
+			results = append(results, tabs.command(ctx, step, run))
+			continue
+		}
 		if isCommand(step, browserCmdOpen) && len(step) > 1 {
 			page.url = step[1]
-		}
-		out, serr, runErr := run(ctx, step)
-		_, _ = stderr.Write([]byte(serr))
-		// A step's own capture keeps browserOutputCap bytes of its stderr
-		// (browserHost.step): one that filled it may have been cut there.
-		if len(serr) >= browserOutputCap {
-			truncated = true
-		}
-		if len(out) > browserOutputCap {
-			truncated = true
-			msg := fmt.Sprintf("the answer exceeded %d bytes and was cut", browserOutputCap)
-			results = append(results, BrowserStepResult{Command: step, Error: &msg})
-			continue
 		}
 		var answer struct {
 			Success bool            `json:"success"`
 			Data    json.RawMessage `json:"data"`
 			Error   *string         `json:"error"`
 		}
-		if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				walkErr = ctxErr
-			} else {
-				walkErr = &browserStepUnansweredError{step: at, command: step, err: errors.Join(runErr, err)}
+		cut := false
+		for attempt := 0; ; attempt++ {
+			out, serr, runErr := run(ctx, step)
+			_, _ = stderr.Write([]byte(serr))
+			// A step's own capture keeps browserOutputCap bytes of its stderr
+			// (browserHost.step): one that filled it may have been cut there.
+			if len(serr) >= browserOutputCap {
+				truncated = true
 			}
-			break
+			if len(out) > browserOutputCap {
+				truncated, cut = true, true
+				break
+			}
+			answer.Success, answer.Data, answer.Error = false, nil, nil
+			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					walkErr = ctxErr
+				} else {
+					walkErr = &browserStepUnansweredError{step: at, command: step, err: errors.Join(runErr, err)}
+				}
+				break walk
+			}
+			// A popup that closes itself once it is done can close under the
+			// step after the one that finished it: that step ran in no page,
+			// so it runs once more in the tab the call is back in.
+			if answer.Success || attempt > 0 || tabs == nil || isReportingCommand(step) || !tabs.closedUnder(ctx, run) {
+				break
+			}
+		}
+		if cut {
+			msg := fmt.Sprintf("the answer exceeded %d bytes and was cut", browserOutputCap)
+			results = append(results, BrowserStepResult{Command: step, Error: &msg})
+			continue
 		}
 		if string(answer.Data) == "null" {
 			answer.Data = nil
@@ -360,6 +401,12 @@ walk:
 		if slices.Equal(step, browserPaintWait) && page.serverStatus == 0 {
 			page.serverStatus = documentStatus(ctx, run)
 		}
+		if tabs != nil && !isReportingCommand(step) {
+			tabs.sync(ctx, run)
+		}
+	}
+	if _, wedged := scanStepsForCDPWedge(results); tabs != nil && walkErr == nil && !wedged {
+		tabs.home(ctx, run)
 	}
 	out, err := json.Marshal(results)
 	if err != nil {

@@ -4,8 +4,9 @@
 //   - Tool auto-prepends ["open", url] and the first-paint wait, and
 //     auto-appends ["errors"], ["console"], ["network requests"] — the
 //     agent never manages lifecycle directly.
-//   - Any "open", "close", "tab" or "window" the agent passes in Commands
-//     does not run; eval runs and returns its value as text.
+//   - Any "open", "close", "window", "tab new" or "tab close" the agent
+//     passes in Commands does not run; eval runs and returns its value as
+//     text.
 //   - Fork exhaustion (stderr only), a deadline, a cancel, a crash or a CDP
 //     wedge release the browser for a recycle and say so in the result;
 //     a clean call hands it back warm.
@@ -384,8 +385,9 @@ func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 }
 
 // TestBrowserBatch_StripsTabAndWindowCommands pins that the tool owns the
-// call's tabs and contexts: a caller's tab or window command could close or
-// switch the warm browser's base tab, which would then survive every cleanup.
+// call's tabs and contexts: a caller's new or closed tab or window could
+// close the warm browser's base tab or leave one that survives every cleanup.
+// A tab list or switch goes to the walk, which reaches only the call's tabs.
 func TestBrowserBatch_StripsTabAndWindowCommands(t *testing.T) {
 	fake := &fakeBrowserRunner{runStdout: `[]`}
 	defer OverrideBrowserRunnerForTest(fake)()
@@ -395,7 +397,7 @@ func TestBrowserBatch_StripsTabAndWindowCommands(t *testing.T) {
 		Commands: [][]string{
 			{"tab", "close", "t1"},
 			{"snapshot"},
-			{"tab", "t1"},
+			{"tab", "new"},
 			{"window", "new"},
 		},
 	})

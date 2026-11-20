@@ -382,7 +382,7 @@ func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 		"script-timeout (your eval's promise never settled, e.g. awaiting a looping animation's finished; the page is alive)",
 		`--name matches a substring ("Sign in" hits "Sign in with passkey"); --exact matches the whole name.`,
 		`["eval","<js>"] (value as JSON text; only for what get/is/find cannot read, e.g. localStorage).`,
-		"open, close, tab and window never run; each returns a failed invalid-command step.",
+		"open, close, window and tab new/close never run (invalid-command steps); popups: see commands.",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description lacks %q", want)

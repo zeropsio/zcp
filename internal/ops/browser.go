@@ -34,8 +34,10 @@ type BrowserBatchInput struct {
 	// [network requests]. Each element is one agent-browser command as a
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
-	// "close", "tab" or "window" elements do not run; each comes back first
-	// in the result's steps as a failed invalid-command step. An "eval"
+	// "close", "window", "tab new" or "tab close" elements do not run; each
+	// comes back first in the result's steps as a failed invalid-command
+	// step. ["tab"] and ["tab", "t<N>"] list and switch the call's tabs —
+	// its own and those its pages opened (browser_tabs.go). An "eval"
 	// step's result is its value as JSON text (evalValuesAsText). A
 	// leading ["set", "viewport", w, h] runs before the open instead; without
 	// one the page loads at browserDefaultViewport, whatever an earlier call
@@ -362,8 +364,10 @@ const (
 	browserCmdSet         = "set"
 	browserSubcmdViewport = "viewport"
 	// browserCmdTab and browserCmdWindow open, switch and close tabs and
-	// contexts; refused in caller commands, since the tool keeps the warm
-	// browser's base tab and closes every other one when a call ends.
+	// contexts. The tool keeps the warm browser's base tab and closes every
+	// other one when a call ends, so a caller's window, new tab or closed
+	// tab is refused; a caller's tab list or switch reaches only the call's
+	// tabs (browser_tabs.go).
 	browserCmdTab    = "tab"
 	browserCmdWindow = "window"
 	// browserCmdEval runs a script in the page; its step's result is the
@@ -940,11 +944,13 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
 // the caller's other commands + an optional [screenshot [--full] screenshotPath] +
-// [errors] [console] [network requests]. Any open/close/tab/window in
-// the caller's commands does not run and comes back in refused instead, as a
-// failed invalid-command step naming why and what to use (refusedCommands) —
-// the canonical open is the only navigation the tool owns, a close would end
-// the warm browser, and tab and window could close or switch its base tab.
+// [errors] [console] [network requests]. Any open, close, window, new tab
+// or closed tab in the caller's commands does not run and comes back in
+// refused instead, as a failed invalid-command step naming why and what to
+// use (refusedCommand) — the canonical open is the only navigation the tool
+// owns, a close would end the warm browser, and a window or a new or closed
+// tab could close its base tab or leave one past the cleanup. A tab list or
+// switch stays, for the walk to answer in the call's tabs.
 // screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
@@ -958,7 +964,7 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		if len(cmd) == 0 {
 			continue
 		}
-		if why, ok := refusedCommands[cmd[0]]; ok {
+		if why, ok := refusedCommand(cmd); ok {
 			refused = append(refused, BrowserStepResult{Command: cmd, Error: &why, ErrorKind: ErrorKindInvalidCommand})
 			continue
 		}
@@ -988,12 +994,30 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 }
 
 // refusedCommands maps each caller command the tool does not run to the
-// error its refused step carries: why, and what to use instead.
+// error its refused step carries: why, and what to use instead. A tab command
+// runs only as the list or a switch (readBrowserTabCommand).
 var refusedCommands = map[string]string{
 	browserCmdOpen:   "not run: the call opens its url itself; follow a link with click or find, or pass another page as url in a new call",
 	browserCmdClose:  "not run: the tool closes the call's tabs itself and keeps the shared browser",
-	browserCmdTab:    "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
-	browserCmdWindow: "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
+	browserCmdWindow: "not run: the tool owns the call's tabs; for a clean context pass isolation \"fresh-context\"",
+}
+
+// refusedCommand answers why a caller's command does not run, if it does
+// not. The command is named as agent-browser reads it, past its global flags
+// (browserCommandArgs), so a flag before it does not let it through.
+func refusedCommand(cmd []string) (string, bool) {
+	own, _ := browserCommandArgs(cmd)
+	if len(own) == 0 {
+		return "", false
+	}
+	if form, _, isTab := readBrowserTabCommand(cmd); isTab {
+		if form == browserTabRefused {
+			return browserTabRefusal(cmd), true
+		}
+		return "", false
+	}
+	why, ok := refusedCommands[cmd[own[0]]]
+	return why, ok
 }
 
 // evalValuesAsText turns each answered eval step's result into its value as

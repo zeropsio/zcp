@@ -19,7 +19,7 @@ import (
 // an enum.
 type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
-	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array."`
+	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] + first-paint wait and the auto-appended [screenshot?]/[errors]/[console]/[network requests]. A leading [\"set\",\"viewport\",\"<w>\",\"<h>\"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set. Each element is one command as a string array. A popup or new tab the page opens becomes the active tab, focused, after the step that opened it; when it closes, the tab before it is active again. [\"tab\"] lists the call's tabs, [\"tab\",\"t2\"] switches to one; tabs open before the call are out of reach."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole call, including the wait for the browser and a slow page's load. Default 120, max 300."`
 	Isolation      string     `json:"isolation,omitempty"      jsonschema:"What the page remembers from earlier calls. tab (default): cookies, login, storage, HTTP cache and service workers carry over; cookies, login and storage also across browser restarts. fresh-context: none of them, for the first check after a deploy or a signed-out view; it starts and stays signed out, stops Chrome as the call ends, and leaves the kept sign-in alone. new-browser: a fresh Chrome that keeps the sign-in. To forget a sign-in, pass the signed-in page as url in a tab call and run [\"cookies\",\"clear\"] and [\"storage\",\"local\",\"clear\"] before the call leaves it; the next browser starts signed out there."`
 	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result. A screenshot is not redacted: a password field shows dots, so never screenshot a {{env:KEY}} value typed into a visible field."`
@@ -96,7 +96,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"--name matches a substring (\"Sign in\" hits \"Sign in with passkey\"); --exact matches the whole name. " +
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
-			"open, close, tab and window never run; each returns a failed invalid-command step. " +
+			"open, close, window and tab new/close never run (invalid-command steps); popups: see commands. " +
 			"{{env:KEY}} in an argument: see commands. " +
 			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +

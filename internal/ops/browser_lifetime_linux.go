@@ -294,7 +294,7 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	stdout, stderr, truncated, walkErr := runBrowserSteps(rctx, steps, h.step)
+	stdout, stderr, truncated, walkErr := runCallSteps(rctx, steps, h.step)
 	// Inside the call's lock: the origins its open steps ended on are now
 	// ones a save reads.
 	if err := recordBrowserOpened(browserPresencePath, stdout); err != nil {
