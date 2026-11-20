@@ -513,7 +513,7 @@ func TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage(t *testing.T
 		t.Fatalf("every step must answer, the walk going on after the slow open; got %s (%v)", stdout, jerr)
 	}
 	if got[0].ErrorKind != ErrorKindSlowPage || got[0].Error == nil ||
-		!strings.Contains(*got[0].Error, "first byte after 30.2s") || !strings.Contains(*got[0].Error, "HTTP 200") {
+		!strings.Contains(*got[0].Error, "first byte in 30.2s") || !strings.Contains(*got[0].Error, "HTTP 200") {
 		t.Errorf("open = %+v, want slow-page naming its time to first byte", got[0])
 	}
 	if len(*asked) != 1 || (*asked)[0] != steps[0][1] {

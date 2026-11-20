@@ -509,11 +509,12 @@ type browserPage struct {
 
 // answeredSlowly stamps a step the daemon did not answer, and reports whether
 // the walk goes on. The page's open is checked with one plain request to its
-// URL: a server that answers makes the open slow-page, naming its time to
-// first byte — the page is slow, not Chrome, and the walk goes on within the
-// call's own timeout, so the caller's waits give it its time — or
-// server-error when it answered 5xx. A later step the daemon does not answer
-// on a slow page is slow-page too. Anything else stays a wedge.
+// URL, sent after the open went unanswered: a server that answers makes the
+// open slow-page, noting that request's time to first byte and status — all
+// the walk measured; the open itself waited on the page's load, which may
+// never come however fast the server answers — or server-error when it
+// answered 5xx. A later step the daemon does not answer on a slow page is
+// slow-page too. Anything else stays a wedge.
 func (p *browserPage) answeredSlowly(ctx context.Context, step *BrowserStepResult) bool {
 	if step.Error == nil || !strings.Contains(*step.Error, browserNoAnswer) {
 		return false
@@ -532,7 +533,7 @@ func (p *browserPage) answeredSlowly(ctx context.Context, step *BrowserStepResul
 	if err != nil || status <= 0 {
 		return false
 	}
-	note := fmt.Sprintf("a plain request to it got its first byte after %s (HTTP %d)", firstByte.Round(100*time.Millisecond), status)
+	note := fmt.Sprintf("a plain request sent after the open got its first byte in %s (HTTP %d)", firstByte.Round(100*time.Millisecond), status)
 	if status >= 500 {
 		p.serverStatus = status
 		step.ErrorKind = ErrorKindServerError

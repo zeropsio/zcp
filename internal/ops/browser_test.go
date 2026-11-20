@@ -1780,7 +1780,7 @@ func TestBrowserBatch_TargetClosedAlsoTriggersRecovery(t *testing.T) {
 // wedge, the browser is handed back warm, and the message names the time to
 // first byte or the status and what to do.
 func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T) {
-	slow := `[{"command":["open","https://webdev.zerops.app/"],"success":false,"error":"the command reached the daemon but no response came back; slow page: a plain request to it got its first byte after 30.2s (HTTP 200)","errorKind":"slow-page"},` +
+	slow := `[{"command":["open","https://webdev.zerops.app/"],"success":false,"error":"the command reached the daemon but no response came back; slow page: a plain request sent after the open got its first byte in 30.2s (HTTP 200)","errorKind":"slow-page"},` +
 		`{"command":["errors"],"success":true,"result":{"errors":[]}},` +
 		`{"command":["console"],"success":true,"result":{"logs":[]}},` +
 		`{"command":["network","requests","--status","400-599"],"success":true,"result":{"requests":[]}}]`
@@ -1793,7 +1793,7 @@ func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T
 		name, stdout string
 		want         []string
 	}{
-		{name: "slow page", stdout: slow, want: []string{"slow", "30.2s", "timeoutSeconds"}},
+		{name: "slow page", stdout: slow, want: []string{"slow", "30.2s"}},
 		{name: "server error", stdout: serverError, want: []string{"HTTP 502", "did not run", "logs"}},
 	}
 	for _, tt := range tests {

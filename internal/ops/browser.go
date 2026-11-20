@@ -47,9 +47,9 @@ type BrowserBatchInput struct {
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
-	// included, and a slow page's load: an open agent-browser gave up on
-	// while the page's server answers goes on within it (slow-page). Default
-	// 120, max 300.
+	// included; a walk whose open agent-browser gave up on goes on within it
+	// (slow-page). It does not reach agent-browser's own wait for the open's
+	// load. Default 120, max 300.
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 
 	// Isolation is how much of earlier calls' history the page sees:
@@ -685,7 +685,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	if result.Message == "" {
-		result.Message = pageVerdict(result.Steps, timeout)
+		result.Message = pageVerdict(result.Steps)
 	}
 	if answer.withheld {
 		result.Message = browserWithheld
@@ -768,31 +768,42 @@ func omitScreenshotTempPath(result *BrowserBatchResult, path string) {
 // browserHTTPStatus finds the status a server-error step names.
 var browserHTTPStatus = regexp.MustCompile(`HTTP (\d{3})`)
 
-// pageVerdict says what a walk found of the page itself when it was no wedge:
-// a slow page (its time to first byte, and that the walk went on within
-// timeout) or a page whose server answered 5xx (what did not run, and where
-// to look). "" otherwise.
-func pageVerdict(steps []BrowserStepResult, timeout time.Duration) string {
+// pageVerdict says what a walk found of the page itself when it was no wedge,
+// only what the walk measured: a page whose server answered 5xx (what did not
+// run, and where to look), which wins wherever it stands, else an open that
+// got no answer while a plain request sent after it was answered (that
+// request's figures), or an open whose load wait ran out in agent-browser.
+// "" otherwise.
+func pageVerdict(steps []BrowserStepResult) string {
+	open := ""
 	for _, s := range steps {
 		if s.Error == nil {
 			continue
 		}
-		switch s.ErrorKind {
-		case ErrorKindServerError:
+		switch {
+		case s.ErrorKind == ErrorKindServerError:
 			status := "5xx"
 			if m := browserHTTPStatus.FindStringSubmatch(*s.Error); m != nil {
 				status = m[1]
 			}
 			return fmt.Sprintf("The page answered HTTP %s, a server error: the commands after it did not run; its screenshot, errors, console and network requests did. "+
 				"Read the server's logs (zerops_logs, or zerops_dev_server action=logs hostname=\"<service>\" for a dev server), fix it, then call again.", status)
-		case ErrorKindSlowPage:
+		case open != "" || !isCommand(s.Command, browserCmdOpen):
+		case s.ErrorKind == ErrorKindSlowPage:
 			_, note, _ := strings.Cut(*s.Error, browserSlowPageMarker)
-			return fmt.Sprintf("The page was slow, not Chrome: %s. The walk went on within timeoutSeconds (%d s); raise it for a page this slow, or call again once the server has warmed up.",
-				strings.TrimSpace(note), int(timeout.Seconds()))
+			open = "The open got no answer from agent-browser; " + strings.TrimSpace(note) + ". " + browserOpenUnloaded +
+				" When that first byte itself took long, the server is slow, and a call after it has warmed up will do better."
+		case s.ErrorKind == ErrorKindTimeout:
+			open = "agent-browser answered the open that its wait for the page to load ran out. " + browserOpenUnloaded
 		}
 	}
-	return ""
+	return open
 }
+
+// browserOpenUnloaded is what an open that did not end on its own says of the
+// page: what agent-browser's open waits for, and what the walk did then.
+const browserOpenUnloaded = "The page had not finished loading when agent-browser stopped waiting for it, for example a dev server's bundle still compiling or a request that never ends. " +
+	"The walk went on, so the steps after the open ran on the page as it was."
 
 // classifyRunResult inspects one walk's raw outcome and mutates result
 // accordingly: fork exhaustion, a deadline, and any other failed walk are

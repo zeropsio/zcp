@@ -912,16 +912,23 @@ subcommand or `find` action agent-browser does not know — the call was wrong, 
 trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
 alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
 `slow-page` (an `open` agent-browser's client gave up on — "no response came back" — while one
-plain request to the page, bounded at 30 s, got an answer: the step names its time to first byte
-and status, the page is slow and not Chrome, the walk goes on within `timeoutSeconds` so the
-caller's waits give the page its time, a later unanswered step on that page is `slow-page` too,
-and the service is kept; a request that gets no answer leaves the open `wedge`), `server-error`
+plain request to the page, sent after it and bounded at 30 s, got an answer: the step notes that
+request's time to first byte and status, the walk goes on, a later unanswered step on that page
+is `slow-page` too, and the service is kept; a request that gets no answer leaves the open
+`wedge`), `server-error`
 (the page answered 5xx — the document's status read once after the first-paint wait, never a
 step, or that plain request's — so each caller command after it comes back as a `server-error`
 step that did not run while the screenshot and the canned tail run, and the service is kept),
-`selector-not-found`, `not-editable`, `timeout` or `other`. A slow page and a server error each
-put a message on the result: the time to first byte and that the walk went on within
-`timeoutSeconds`, or the status and where to read the server's logs. Measured 2026-10-27: a
+`selector-not-found`, `not-editable`, `timeout` or `other`. A server error anywhere in the walk
+puts its message on the result: the status and where to read the server's logs. Otherwise an
+open that is `slow-page`, or `timeout` (agent-browser answered that its own wait for the page's
+load ran out), says only what the walk measured: the open got no answer (or that answer), the
+plain request's time to first byte and status when there was one, that the page had not finished
+loading when agent-browser stopped waiting for it (a dev server's bundle still compiling, a
+request that never ends), that the steps after the open ran on the page as it was, and that a
+long first byte itself means a slow server a later call will find warmed up. `timeoutSeconds`
+does not reach agent-browser's load wait, so the message never advises raising it, and it names
+none of agent-browser's own bounds, which change with it. Measured 2026-10-27: a
 Vite dev server's first request took 30 s and its open recycled Chrome as wedged twice, and a
 wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage`,
 `TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands`,
