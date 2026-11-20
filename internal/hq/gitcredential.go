@@ -208,6 +208,10 @@ func gitHubRefusal(err error, repo string) string {
 		return fmt.Sprintf("this Mate no longer has access to github.com/%s in HQ: its project's access is gone", repo)
 	case refused.Reason == "app_not_installed":
 		return fmt.Sprintf("the Zerops GitHub App no longer reaches github.com/%s; a person installs it on the repository again", repo)
+	case refused.Reason == "needs_owner_seal":
+		return fmt.Sprintf("HQ gives no token for github.com/%s: nobody is recorded as having set up this organisation's GitHub app, "+
+			"so HQ uses it for nothing until an Owner or Admin of the organisation sets the GitHub app up again in Mate; "+
+			"nothing in this container fixes it, so tell the person", repo)
 	}
 	return fmt.Sprintf("HQ refused a token for github.com/%s: %v", repo, err)
 }
