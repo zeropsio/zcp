@@ -925,7 +925,14 @@ put a message on the result: the time to first byte and that the walk went on wi
 Vite dev server's first request took 30 s and its open recycled Chrome as wedged twice, and a
 wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage`,
 `TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands`,
-`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). `errorsOutput` and
+`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). The first-paint wait after the
+open is zcp's own step: a page that did not paint within its 5 s comes back as a step that
+succeeded, its result saying so, and the walk goes on; any other failure of it stays as it is.
+`failedSteps` counts the steps that answered `success:false`, the refused ones included, and a
+result nothing else put a message on says "N of M steps failed; the first: COMMAND (ERRORKIND)",
+the command cut to 80 characters; a failed step never makes the call an error. `zerops_verify`'s
+render check reads no rendered text from a walk that recycled the browser, and reads it whatever
+the message says otherwise: the failed steps themselves are skipped. `errorsOutput` and
 `consoleOutput` are read from the canned tail's `errors` and `console` steps, whose own results
 are then dropped, so each appears once; the `network requests` step stays whole, since
 `networkOutput` keeps only each failed request's URL, method, resource type and status.

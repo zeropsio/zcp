@@ -68,11 +68,12 @@ func renderHTTPRoot(ctx context.Context, url string) (string, []string, string) 
 		// Best-effort path: silent no-op.
 		return "", nil, ""
 	}
-	// Fork exhaustion, CDP wedge, deadline timeout, or parse failure all
-	// leave Message set and the canonical [errors] step un-populated.
-	// Treat any of those as "no rendered text available" — never claim
-	// a partial walk produced data.
-	if result.BrowserRecycled || result.Message != "" {
+	// A partial walk never claims rendered text. Fork exhaustion, a deadline,
+	// an unanswered step and a CDP wedge all recycle the browser; a parse
+	// failure leaves no steps, and extractBodyText skips failed steps. The
+	// message is no such signal: a walk with a failed step or a slow open
+	// carries one and still read what rendered.
+	if result.BrowserRecycled {
 		return "", nil, result.KeptSignIn
 	}
 

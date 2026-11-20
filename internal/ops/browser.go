@@ -168,7 +168,10 @@ type BrowserBatchResult struct {
 	FreshBrowser    bool                     `json:"freshBrowser,omitempty"`
 	BrowserRecycled bool                     `json:"browserRecycled,omitempty"`
 	OutputTruncated bool                     `json:"outputTruncated,omitempty"`
-	Message         string                   `json:"message,omitempty"`
+	// FailedSteps is the number of steps with success:false, the refused
+	// ones included. It never marks the call itself failed.
+	FailedSteps int    `json:"failedSteps,omitempty"`
+	Message     string `json:"message,omitempty"`
 	// KeptSignIn is set only on the call whose browser was started for it
 	// and could not restore all of the kept sign-in: what was not restored
 	// and what to do. A later call on the same browser does not repeat it,
@@ -692,7 +695,41 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
 	result.Steps = append(refused, result.Steps...)
+	result.FailedSteps = countFailedSteps(result.Steps)
+	if result.Message == "" && result.FailedSteps > 0 {
+		result.Message = failedStepsMessage(result.Steps, result.FailedSteps)
+	}
 	return result, nil
+}
+
+// browserMessageCommandCap is how much of a failed step's command the
+// message about it names.
+const browserMessageCommandCap = 80
+
+// countFailedSteps is the number of steps that answered success:false.
+func countFailedSteps(steps []BrowserStepResult) int {
+	n := 0
+	for _, s := range steps {
+		if !s.Success {
+			n++
+		}
+	}
+	return n
+}
+
+// failedStepsMessage says how many of a walk's steps failed and which was the
+// first, for a walk nothing else put a message on.
+func failedStepsMessage(steps []BrowserStepResult, failed int) string {
+	i := slices.IndexFunc(steps, func(s BrowserStepResult) bool { return !s.Success })
+	if i < 0 {
+		return ""
+	}
+	first := steps[i]
+	msg := fmt.Sprintf("%d of %d steps failed; the first: %s", failed, len(steps), capUTF8(strings.Join(first.Command, " "), browserMessageCommandCap))
+	if first.ErrorKind != "" {
+		msg += " (" + first.ErrorKind + ")"
+	}
+	return msg
 }
 
 // browserKeptSignInNote is a call's keptSignIn: what its browser's restore

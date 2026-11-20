@@ -104,7 +104,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string, inMate bool) {
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[], errorsOutput, consoleOutput (warnings and errors; [\"console\"] in commands gives every level), " +
 			"networkOutput (4xx/5xx; a request with no status — failed or in flight — is not listed), " +
-			"durationMs, freshBrowser, browserRecycled, message, keptSignIn; outputs past 20k chars are cut; fullResult names a file with all of it. " +
+			"durationMs, freshBrowser, browserRecycled, failedSteps, message, keptSignIn; outputs past 20k chars are cut; fullResult names a file with all of it. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",

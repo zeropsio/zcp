@@ -48,9 +48,17 @@ const (
 )
 
 // browserPaintWait waits for the page's first contentful paint: it returns
-// at once on a page that has painted and fails as a timeout step after 5 s
-// on one that never does, while the walk goes on.
+// at once on a page that has painted and gives up after 5 s on one that never
+// does, while the walk goes on. It is zcp's own step, so giving up is no
+// failure: the step says so as its result (browserNoPaint).
 var browserPaintWait = []string{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"}
+
+// browserWaitTimedOut is agent-browser's error for a wait whose --timeout ran
+// out (agent-browser 0.39.1).
+const browserWaitTimedOut = "Wait timed out"
+
+// browserNoPaint is the result of a paint wait that saw no paint.
+var browserNoPaint = json.RawMessage(`"no first paint within 5 s; the walk went on"`)
 
 // browserEnv is the whole environment of the warm browser's service and of
 // every step sent to it. agent-browser restarts a daemon whose settings
@@ -405,6 +413,11 @@ walk:
 		}
 		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: withoutLifecycle(answer.Data), Error: answer.Error})
 		last := &results[len(results)-1]
+		// The paint wait is zcp's own: a page that did not paint within it is
+		// no failed step. Any other failure of it stays what it is.
+		if slices.Equal(step, browserPaintWait) && !last.Success && last.Error != nil && strings.Contains(*last.Error, browserWaitTimedOut) {
+			last.Success, last.Error, last.Result = true, nil, slices.Clone(browserNoPaint)
+		}
 		// A wedged page would make every later step wait out the same CDP
 		// timeout; the browser is recycled for it anyway. An eval whose
 		// script hung on a live page, or a step the daemon did not answer
