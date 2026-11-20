@@ -96,9 +96,10 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 		return "", err
 	}
 	if !ok {
-		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Cannot write the bearer reference of pool '%s': this zcp's env has no %s, so it runs outside a Zerops service", pool, selfServiceIDKey),
 			"Lease a pool from the zcp service of the pool's project")
+		return "", &LeasePrerequisiteError{PlatformError: pe, cause: prerequisitePoolKey, pool: pool}
 	}
 	selfName := "this zcp service"
 	for _, s := range services {
@@ -119,9 +120,10 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 		switch e.Key {
 		case aliasKey:
 			if !e.Masked && e.Content != reference {
-				return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 					fmt.Sprintf("This zcp service's %s holds something other than %s, and this container's env has no usable bearer for pool '%s'", aliasKey, reference, pool),
 					fmt.Sprintf("Delete %s on this zcp service; the next acquire writes it as %s", aliasKey, reference))
+				return "", &LeasePrerequisiteError{PlatformError: pe, cause: prerequisitePoolKey, pool: pool}
 			}
 			present = true
 		case apiKey:
@@ -134,9 +136,10 @@ func EnsureBearer(ctx context.Context, d LeaseDeps, pool string) (string, error)
 		}
 	}
 	if selfReference {
-		return "", platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("This zcp service has a variable %s=%s: a variable named like the reference it holds stays the literal text, and while it exists %s stays literal too", apiKey, reference, aliasKey),
 			fmt.Sprintf("Delete %s on this zcp service; %s=%s is in place and resolves once it is gone", apiKey, aliasKey, reference))
+		return "", &LeasePrerequisiteError{PlatformError: pe, cause: prerequisitePoolKey, pool: pool}
 	}
 	if poolUndeployed(svc.Status) {
 		return "", nil

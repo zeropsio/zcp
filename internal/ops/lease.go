@@ -501,7 +501,8 @@ func noBearerError(pool, reason string, unresolved []string, undeployed bool) er
 		fmt.Fprintf(&suggestion, "This zcp service has a variable %s holding ${%s}: a variable named like the reference it holds never resolves, and while it exists every other reference to that name on the service stays unresolved too — delete it. ", apiKey, apiKey)
 	}
 	fmt.Fprintf(&suggestion, "An acquire on the pool (zerops_lease action=acquire pool=%s branch=<your branch>) has zcp write %s=${%s} on this zcp service itself, the one writer of the pool's bearer", pool, aliasKey, apiKey)
-	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
+	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
+	return &LeasePrerequisiteError{PlatformError: pe, cause: prerequisitePoolKey, pool: pool}
 }
 
 // noImageYetError is the refusal of a pool whose bearer reference zcp wrote
@@ -510,9 +511,10 @@ func noBearerError(pool, reason string, unresolved []string, undeployed bool) er
 // is waited for and nothing is written again.
 func noImageYetError(pool string) error {
 	aliasKey, apiKey := pool+"_"+leaseTokenAliasKey, pool+"_"+leaseTokenKey
-	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Cannot reach pool '%s': this pool has no image yet — zcp's reference %s=${%s} is still its literal text in this container", pool, aliasKey, apiKey),
 		fmt.Sprintf("A pool's references resolve with its first successful deploy: deploy %s, then call again", pool))
+	return &LeasePrerequisiteError{PlatformError: pe, cause: prerequisitePoolUndeployed, pool: pool}
 }
 
 // LeaseList reports the leases of one pool, or of every pool the project

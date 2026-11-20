@@ -79,6 +79,7 @@ func personAcquireRefusal(err error, pool, branch string) *acquireRefusal {
 	r := &acquireRefusal{Code: failure.Code}
 	var full *ops.LeasePoolFullError
 	var held *ops.ConversationLeaseError
+	var prereq *ops.LeasePrerequisiteError
 	var swarm *platform.SwarmError
 	switch {
 	case errors.As(err, &full):
@@ -97,6 +98,8 @@ func personAcquireRefusal(err error, pool, branch string) *acquireRefusal {
 	case r.Code == platform.ErrServiceNotFound:
 		r.Message = fmt.Sprintf("There is no pool named %s in this project.", pool)
 		r.Suggestion = "Choose an existing pool for the builder and try Apply again."
+	case errors.As(err, &prereq):
+		r.Message, r.Suggestion = prereq.PersonWords()
 	case r.Code == platform.ErrPrerequisiteMissing:
 		r.Message = fmt.Sprintf("This Mate cannot use pool %s for branch %s.", pool, branch)
 		r.Suggestion = "Check that the pool is deployed and running in Zerops and that this Mate has its key, then try Apply again."

@@ -684,9 +684,10 @@ func reuseHeldLease(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, b
 		return *heldView, true, nil, nil
 	case unverified != nil:
 		// Maybe another holder's container: never handed back reused.
-		return LeaseView{}, false, nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, cannot be verified as still zcp's (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, unverified.Alias, unverified.Note),
 			fmt.Sprintf("Acquire again once the pool's orchestrator answers: zerops_lease action=status pool=%s asks it again — a lease that is still zcp's is reused, one that is not is reported lost", pool))
+		return LeaseView{}, false, nil, &LeasePrerequisiteError{PlatformError: pe, cause: prerequisiteHoldingUnverified, pool: pool, branch: branch, alias: unverified.Alias}
 	case lost != nil:
 		return LeaseView{}, false, nil, lostAcquireRefusal(own[lost.Alias], lost.Note)
 	}
@@ -694,9 +695,10 @@ func reuseHeldLease(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, b
 }
 
 func lostAcquireRefusal(r leaseRecord, why string) error {
-	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is lost (%s), and zcp keeps one lease per repository, branch and pool", recordBranch(r), r.PoolHostname, r.alias(), why),
 		"Drop its record, then acquire again: "+r.releaseCall())
+	return &LeasePrerequisiteError{PlatformError: pe, cause: prerequisiteHoldingLost, pool: r.PoolHostname, branch: recordBranch(r), alias: r.alias()}
 }
 
 // resumeHeldCheckout runs the checkout of rec, a lease of branch zcp holds,
