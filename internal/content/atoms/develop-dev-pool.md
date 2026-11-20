@@ -57,10 +57,10 @@ its containers away from the app.
    (below), then describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
    naming the branch's lease preview URLs as where to try it and saying it
-   built and verified on the stage. One branch, one
-   change: pushing to the branch again moves the change, and it asks for
-   review again once described again. To add work to it, lease its branch
-   again if it was released.
+   built and verified on the stage (in a run of asks, once, before your
+   end-of-turn describe). Pushing to the branch again moves its change,
+   a draft until described again; to add work to it, lease the branch again
+   if it was released.
 5. `zerops_lease action=release lease="<alias>"` hands the leased container
    back: reset, as the pool's warm container, or removed when the pool
    already has one, it runs an outdated version, or the pool is full (its
@@ -156,15 +156,15 @@ stays unleased.
 5. `zerops_lease action=release branch="<branch>"` releases every lease of
    the branch, or none: unsaved work in one refuses them all.
 
-**Parallel work.** Independent pieces of work at once — subagents, or
-several conversations — each go on a branch of its own with leases of its
-own; the leases are keyed by branch, so they never meet. Parallel work on
-one piece is folded before review (AGENTS.md's "What one change holds").
+**Parallel work.** Several pieces of work at once — subagents, or several
+conversations — each go on a branch of its own with leases of its own; the
+leases are keyed by branch, so they never meet.
 
 - Name each subagent's branch in its brief: unique, short, saying what the
   work is, never `main` and never under `mate/`.
-- Each one acquires its own group on its branch, pushes there, opens its own
-  change with `service="<its alias>"` and describes it the same way.
+- Each acquires its own group on its branch and pushes there. An
+  independent piece opens and describes its own change (step 4); subagents
+  on one piece open none: merge their branches into one and open its change.
 - Report each branch's change and its lease preview URLs to the person.
 - Once one change merges, the others are behind `main`. Bring one up to date
   only when the person asks or it no longer merges cleanly: in a lease of
