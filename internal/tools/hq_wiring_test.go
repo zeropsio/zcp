@@ -5,8 +5,11 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -218,6 +221,109 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 	lab.wire()
 	if got := lab.meta().TrackedRef; got != "main" {
 		t.Errorf("tracked ref = %q, want main", got)
+	}
+}
+
+// TestReconcileHQRepositories_AShallowCloneIsCompletedFromWhereItCame: a dev
+// service that deploys `./` from a recipe holds the build's depth-1 clone, and
+// HQ refuses a shallow push. The pass completes the clone from the remote it
+// came from — kept as zerops-original-origin once origin points at HQ, which
+// holds none of its history — before it puts the checkout on `main`, so the
+// Mate's first push of a branch lands in HQ. A clone whose source is gone is
+// refused by name with the step that completes it, never wired.
+//
+// witness: internal/tools/hq_wiring.go | ops.BuildGitShallowFixCommand(hqPairWorkingDir(m), ops.KeptOriginRemote) → ops.BuildGitShallowFixCommand(hqPairWorkingDir(m), "origin")
+func TestReconcileHQRepositories_AShallowCloneIsCompletedFromWhereItCame(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		sourceGone bool
+	}{
+		{name: "the recipe it came from is reachable"},
+		{name: "the recipe it came from is gone", sourceGone: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newHQLab(t)
+			recipe := t.TempDir()
+			if out, err := exec.CommandContext(t.Context(), "git", "-C", recipe, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
+				t.Fatalf("recipe git init: %v\n%s", err, out)
+			}
+			for i, body := range []string{"one\n", "two\n"} {
+				if err := os.WriteFile(filepath.Join(recipe, "app.js"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				for _, args := range [][]string{
+					{"add", "-A"},
+					{"-c", "user.name=recipe", "-c", "user.email=recipe@example.invalid", "commit", "-qm", fmt.Sprintf("recipe %d", i)},
+				} {
+					if out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", recipe}, args...)...).CombinedOutput(); err != nil { //nolint:gosec // G204: a test's own git
+						t.Fatalf("recipe git %v: %v\n%s", args, err, out)
+					}
+				}
+			}
+			if err := os.RemoveAll(lab.pair); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.CommandContext(t.Context(), "git", "clone", "-q", "--depth", "1", "file://"+recipe, lab.pair).CombinedOutput(); err != nil { //nolint:gosec // G204: a test's own git
+				t.Fatalf("shallow clone: %v\n%s", err, out)
+			}
+			if lab.git("rev-parse", "--is-shallow-repository") != "true" {
+				t.Fatal("the pair's checkout is not a shallow clone")
+			}
+			if tt.sourceGone {
+				if err := os.RemoveAll(recipe); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			report := lab.wire()
+
+			if tt.sourceGone {
+				want := "`zcp git appdev fetch --unshallow zerops-original-origin`"
+				if len(report) != 1 || !strings.Contains(report[0], "shallow clone") || !strings.Contains(report[0], want) {
+					t.Fatalf("report = %q, want the shallow clone refused with %s", report, want)
+				}
+				if lab.meta().HQ != nil {
+					t.Error("a shallow pair must not be recorded as wired")
+				}
+				for _, command := range lab.ssh.commands {
+					if strings.Contains(command, "ZCP_BRANCH_REFUSED:") {
+						t.Error("the checkout was put on main while its clone stayed shallow")
+					}
+				}
+				return
+			}
+			if lab.meta().HQ == nil {
+				t.Fatalf("the pair was not wired: %q", report)
+			}
+			if _, err := os.Stat(filepath.Join(lab.pair, ".git", "shallow")); !os.IsNotExist(err) {
+				t.Errorf(".git/shallow after wiring: %v, want the clone complete", err)
+			}
+			unshallow, base := -1, -1
+			for i, command := range lab.ssh.commands {
+				if unshallow < 0 && strings.Contains(command, "fetch --unshallow zerops-original-origin") {
+					unshallow = i
+				}
+				if base < 0 && strings.Contains(command, "ZCP_BRANCH_REFUSED:") {
+					base = i
+				}
+			}
+			if unshallow < 0 || base < 0 || unshallow > base {
+				t.Errorf("the unshallow from zerops-original-origin ran at %d and main was taken at %d, want the clone completed first", unshallow, base)
+			}
+			lab.git("checkout", "-q", "-b", "feat-todo")
+			lab.write(map[string]string{"todo.js": "todo\n"})
+			lab.git("add", "-A")
+			lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "todo api")
+			if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && git push -q -u origin feat-todo"); err != nil {
+				t.Fatalf("the first push to HQ: %v\n%s", err, out)
+			}
+			if got, want := lab.remoteHead("feat-todo"), lab.git("rev-parse", "HEAD"); got != want {
+				t.Errorf("HQ's feat-todo = %q, want the pushed %s", got, want)
+			}
+		})
 	}
 }
 

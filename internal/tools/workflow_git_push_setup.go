@@ -106,7 +106,7 @@ func withSSHStderr(prefix string, err error) string {
 // manual recovery. Returns nil otherwise (not shallow, auto-unshallowed, or a
 // non-fatal probe transport error — origin sync + push surface those).
 func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir, gitToken string) *mcp.CallToolResult {
-	shallowOut, shallowErr := sshDeployer.ExecSSHStdin(ctx, pushHost, ops.BuildGitShallowFixCommand(workDir), ops.GitTokenInput(gitToken))
+	shallowOut, shallowErr := sshDeployer.ExecSSHStdin(ctx, pushHost, ops.BuildGitShallowFixCommand(workDir, "origin"), ops.GitTokenInput(gitToken))
 	if shallowErr != nil {
 		return nil
 	}

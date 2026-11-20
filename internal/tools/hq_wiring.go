@@ -647,6 +647,9 @@ func wireHQPair(
 	if line := wireHQOrigin(ctx, sshDeployer, stateDir, hqc.Address(), m, remote); line != "" {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but %s — retrying on the next pass.", repo.Name, line)}
 	}
+	if line, remedy := completeShallowCheckout(ctx, sshDeployer, m); line != "" {
+		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but %s", repo.Name, line), remedy: remedy}
+	}
 
 	// The push source's checkout has to DESCEND from the repository's `main`:
 	// the pair was git-initialised with a history of its own, and a branch
@@ -776,6 +779,35 @@ func wireHQOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir, hq
 	}
 	m.GitPushState, m.RemoteURL, m.TrackedRef = topology.GitPushConfigured, remote, hqBase
 	return ""
+}
+
+// completeShallowCheckout completes a shallow checkout before its history goes
+// to HQ, whose receive-pack refuses a shallow push, so every repository in HQ
+// stays complete. A dev service that deploys `./` from a recipe holds the
+// Zerops build's depth-1 clone; the history it lacks is only where it was
+// cloned from, the origin wireHQOrigin kept as ops.KeptOriginRemote — HQ, its
+// origin now, has none of it. "" once the checkout is complete; else what
+// failed, and the remedy when no retry changes it.
+func completeShallowCheckout(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) (line, remedy string) {
+	out, err := sshDeployer.ExecSSHStdin(ctx, m.Hostname,
+		ops.BuildGitShallowFixCommand(hqPairWorkingDir(m), ops.KeptOriginRemote), ops.GitTokenInput(""))
+	if err != nil {
+		return withSSHStderr(fmt.Sprintf("whether %s's checkout is a complete clone could not be read", m.Hostname), err) + " — retrying on the next pass.", ""
+	}
+	rest, failed := strings.CutPrefix(strings.TrimSpace(string(out)), "ZCP_UNSHALLOW_FAIL")
+	if !failed {
+		return "", ""
+	}
+	source := topology.RedactRepoURLCredentials(strings.TrimSpace(rest))
+	var step string
+	if source == "" {
+		step = fmt.Sprintf("name the repository it was cloned from: `zcp git %s remote add %s <its URL>`, and the next pass completes the clone from it", m.Hostname, ops.KeptOriginRemote)
+	} else {
+		step = fmt.Sprintf("complete the clone from where it came: `zcp git %s fetch --unshallow %s` (%s)", m.Hostname, ops.KeptOriginRemote, source)
+	}
+	return fmt.Sprintf("%s's checkout is a shallow clone whose history could not be completed from %s, and HQ refuses a shallow push: in %s's dev service, %s",
+			m.Hostname, ops.KeptOriginRemote, m.Hostname, step),
+		fmt.Sprintf("In %s's dev service, %s.", m.Hostname, step)
 }
 
 // hqRefusalWords is HQ's refusal as a line names it: its reason, or its code.

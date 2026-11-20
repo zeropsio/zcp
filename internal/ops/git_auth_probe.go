@@ -122,28 +122,31 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL, hqURL string) string {
 }
 
 // BuildGitShallowFixCommand detects a shallow clone at workingDir and, if
-// present, attempts to complete it with `git fetch --unshallow` from the
-// CURRENT origin. It MUST run BEFORE origin is rewritten to the user's repo —
-// a recipe-bootstrapped service's shallow clone can only be `--unshallow`-ed
-// from its original (recipe) origin, and BuildGitOriginSyncCommand would
-// otherwise overwrite that URL. The token authenticates the fetch (public
-// recipe remotes ignore it). Echoes ONE dispatch token on stdout:
+// present, attempts to complete it with `git fetch --unshallow` from remote —
+// the remote the clone came from. A recipe-bootstrapped service's shallow
+// clone can only be `--unshallow`-ed from its original (recipe) remote:
+// git-push-setup runs it on `origin` BEFORE BuildGitOriginSyncCommand
+// rewrites that URL; HQ's wiring runs it on KeptOriginRemote, where that sync
+// kept it. The token authenticates the fetch (public recipe remotes ignore
+// it). Echoes ONE dispatch token on stdout:
 //
 //	ZCP_NOT_SHALLOW            — no .git/shallow; nothing to do
 //	ZCP_UNSHALLOW_OK           — was shallow, fetch --unshallow succeeded (now complete)
 //	ZCP_UNSHALLOW_FAIL <orig>  — was shallow, fetch failed (corrupt/missing object/auth);
-//	                             <orig> = the original origin URL (still intact)
+//	                             <orig> = remote's URL, "" when there is no such remote
 //
-// On ZCP_UNSHALLOW_FAIL the caller must return a blocker BEFORE the origin
-// sync, so the original remote stays available for manual recovery. The
-// token comes over stdin (GitTokenInput), never in the command.
-func BuildGitShallowFixCommand(workingDir string) string {
+// On ZCP_UNSHALLOW_FAIL the caller must stop before anything that needs the
+// complete history, so the remote stays available for manual recovery. The
+// token comes over stdin (GitTokenInput), never in the command. remote is a
+// remote name the caller fixes (`origin`, KeptOriginRemote), written as is
+// like KeptOriginRemote in BuildGitOriginSyncCommand, never input.
+func BuildGitShallowFixCommand(workingDir, remote string) string {
 	qwd := shellQuote(workingDir)
 	return fmt.Sprintf(
-		`%s && cd %s && if [ -f .git/shallow ]; then orig=$(git remote get-url origin 2>/dev/null || true); `+
-			`if GIT_TOKEN="$%s" GIT_TERMINAL_PROMPT=0 git %s fetch --unshallow origin >/dev/null 2>&1; then echo ZCP_UNSHALLOW_OK; `+
+		`%s && cd %s && if [ -f .git/shallow ]; then orig=$(git remote get-url %s 2>/dev/null || true); `+
+			`if GIT_TOKEN="$%s" GIT_TERMINAL_PROMPT=0 git %s fetch --unshallow %s >/dev/null 2>&1; then echo ZCP_UNSHALLOW_OK; `+
 			`else echo "ZCP_UNSHALLOW_FAIL $orig"; fi; else echo ZCP_NOT_SHALLOW; fi`,
-		gitTokenRead, qwd, gitTokenName, gitCredentialHelperArgs(),
+		gitTokenRead, qwd, remote, gitTokenName, gitCredentialHelperArgs(), remote,
 	)
 }
 

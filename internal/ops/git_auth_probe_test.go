@@ -105,7 +105,7 @@ func TestGitAuthProbeCommands_TokenFromStdinOnly(t *testing.T) {
 	}
 	for name, cmd := range map[string]string{
 		"write probe":       BuildGitWritePushProbeCommand(filepath.Join(dir, "work"), "https://github.com/example/app.git", ""),
-		"shallow-clone fix": BuildGitShallowFixCommand(filepath.Join(dir, "work")),
+		"shallow-clone fix": BuildGitShallowFixCommand(filepath.Join(dir, "work"), "origin"),
 	} {
 		if strings.Contains(cmd, "tok'") || strings.Contains(cmd, "pwned") {
 			t.Errorf("%s carries the token:\n%s", name, cmd)
@@ -207,7 +207,7 @@ func TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent(t *testing.T) {
 // rewritten (the unshallow source is the original origin).
 func TestBuildGitShallowFixCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitShallowFixCommand("/var/www")
+	cmd := BuildGitShallowFixCommand("/var/www", "origin")
 
 	for _, want := range []string{
 		"cd '/var/www'",

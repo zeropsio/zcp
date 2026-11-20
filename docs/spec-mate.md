@@ -6697,7 +6697,13 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **The repository** is `<appId>/<name>` in the application HQ holds the Mate in, the name the dev
   hostname (or the one a recipe names). zcp asks for it — `POST /api/mate/repos {name}`, idempotent,
   `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
-  `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
+  `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, a shallow checkout
+  completed (a dev service that deploys `./` from a recipe holds the build's depth-1 clone, and
+  HQ's receive-pack refuses a shallow push, so every repository in HQ stays complete: the
+  history is fetched with `--unshallow` from `zerops-original-origin`, the origin the sync kept,
+  never from HQ, which holds none of it; a failure is refused by name with that fetch as its
+  remedy, the pair not wired —
+  `TestReconcileHQRepositories_AShallowCloneIsCompletedFromWhereItCame`), the checkout put on a `main` that
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
   tree; a pair with history of its own against HQ's unwritten root — `main` one parentless commit
   of the empty tree, as HQ makes it — keeps that history as its `main` exactly as it is, no commit
@@ -6715,8 +6721,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   Decision: A Mate's first checkout of an HQ repository fetches commits and trees with full
   ancestry and downloads file contents only as they are needed. The wiring's initial fetch uses
   `--filter=blob:none`; checkout and later historical reads use Git's promisor remote through the
-  existing HQ credential helper. Recipe clones are still unshallowed before replacing their
-  origin. A lease checkout of an HQ repository fetches the same way, `blob:none` with full ancestry,
+  existing HQ credential helper. Recipe clones are still unshallowed, from the origin they came
+  from (above). A lease checkout of an HQ repository fetches the same way, `blob:none` with full ancestry,
   and keeps a credential hint for HQ's host that tells a plain git needing old contents to run it
   as `zcp git <alias> …`. Pool warm clones and missing-`.git` reconstruction keep their existing
   fetch policy until separately qualified (`TestBuildBaseBranchCommand_FirstFetch_DefersBlobsWithFullAncestry`).
