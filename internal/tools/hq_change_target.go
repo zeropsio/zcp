@@ -109,7 +109,7 @@ func changeTargetOfService(stateDir, address, service, named, verb string, lease
 		case named != "" && named != lease.Branch:
 			return changeTarget{}, platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("The lease %s holds the branch %q, not %q.", service, lease.Branch, named),
-				fmt.Sprintf("Name the lease alone (service=%q), or the branch alone.", service))
+				fmt.Sprintf("Name the branch alone (branch=%q), or the lease alone (service=%q) for its branch %q.", named, service, lease.Branch))
 		}
 		return changeTarget{AppID: appID, Repo: repo, Branch: lease.Branch, Lease: service, Pair: firstPairOf(stateDir, appID, repo)}, nil
 	}
