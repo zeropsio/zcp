@@ -6844,7 +6844,12 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   the refusal past five open changes and the close-out note repeat only the fold or add steps their
   own answer needs, and never the conditions. A change is what a person reviews, merges and would
   revert as one: work is split by blast radius, never by topic — three unrelated small fixes on
-  three screens belong together. A run of asks is the person's stream of asks — bigger, move this,
+  three screens belong together. Opening a change is the default (owner, 2026-11-20 evening, after a
+  Mate left the server half of a batch the person asked for undone because it "would be its own
+  change"): work no open change of the Mate's takes opens its own, work the agent tells the person
+  is done is in a change by then, and needing a change of its own never by itself stops, defers or
+  drops work — work asked for together that needs two changes gets both, with one sentence saying
+  why there are two. A run of asks is the person's stream of asks — bigger, move this,
   no, put it back, sort these by date, add a toast — and not a develop work session; its work goes
   into one change: each ask pushed to that change's branch, the change described once at the end of
   the agent's turn, as a list, one item per ask. The next ask joins the Mate's open change when all

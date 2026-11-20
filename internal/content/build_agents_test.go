@@ -748,6 +748,38 @@ func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_OpeningAChangeIsTheDefault: a Mate's AGENTS.md
+// makes opening a change the default — work no open change of the Mate's
+// takes goes on a new branch and opens its change, work the agent tells the
+// person is done is in a change by then, and work that needs a change of its
+// own never stops, defers or drops the rest of what was asked. After the
+// grouping rule shipped, a Mate told a new branch was only for work that
+// "needs a change of its own" asked instead of opening one, and left the
+// server half of a batch undone because it "would be its own change"
+// (docs/spec-mate.md §10.10, 2026-11-20 evening).
+// witness: internal/content/templates/agents_git_host.md | work no open change of yours takes → work that needs a change of its own
+func TestBuildAgentsMD_Container_OpeningAChangeIsTheDefault(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"work no open change of yours takes (**What one change holds**, below) goes on a new branch",
+		"Work you tell the person is done is in a change by then",
+		"never something to ask about, offer or put off",
+		"never by itself a reason to stop, ask or leave work out",
+		"open both and say in one sentence why there are two",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("AGENTS.md lacks %q", want)
+		}
+	}
+	if strings.Contains(out, "work that needs a change of its own") {
+		t.Error("AGENTS.md still sends only work that needs a change of its own to a new branch")
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {

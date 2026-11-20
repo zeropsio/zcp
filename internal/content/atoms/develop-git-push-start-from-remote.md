@@ -29,7 +29,7 @@ Wired to this Mate's HQ — take `main` in and start the work on a branch of you
 zcp git <push-source-host> fetch origin && zcp git <push-source-host> checkout main && zcp git <push-source-host> merge --ff-only origin/main && zcp git <push-source-host> checkout -b <your-branch>
 ```
 
-One change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch). Whether new work goes onto an open change of yours or starts on a new branch cut as above is AGENTS.md's "What one change holds". Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
+One change per branch: carrying on an open change means its own branch (status lists each repository's open changes by number and branch). New work starts on a new branch cut as above and opens its change, unless AGENTS.md's "What one change holds" adds it to an open change of yours. Where an HQ keeps one open change per repository, develop's start names the open one and says how to take its branch.
 
 On the dev service, work that rule adds to your open change also spares a branch switch: its `/var/www` is what its dev server runs and what deploys read, so checking out another branch there changes what runs, and files that branch lacks disappear. To update another open change's branch — merge `main` in, fold a change into it, a fix that needs no run — use a worktree the dev service holds below `/tmp/wt-`:
 
