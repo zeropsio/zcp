@@ -478,7 +478,9 @@ The same status says whether a container restart would change anything. **`zcp: 
 behind}`**, always present, is this binary against the zcp release `install.sh` installs (GitHub's
 `releases/latest` for `zeropsio/zcp`), read from that redirect on every status: one `HEAD` of
 `https://github.com/zeropsio/zcp/releases/latest`, bounded by 5 s, not the REST API and its
-per-address quota. The self-update (`zcp update`, and `zcp serve` at its start) reads it the same way.
+per-address quota. The self-update (`zcp update`, and `zcp serve` at its start outside a Mate
+container) reads it the same way; in a Mate container the container restart is zcp's only update
+(MU-4).
 `latest` is `""` while that release is unknown, never guessed; a build no release names (a dev or
 git-describe build) reads it the same way. `behind: true` is a release older than a known `latest`,
 or a dev build with no active dev pin whose base is older than a known `latest` (§2.1a).

@@ -480,7 +480,9 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	// Silent background update — completely invisible to LLM.
 	// Checks GitHub, downloads if newer. Binary is replaced on disk
 	// but the running server is NOT restarted — new version activates on next start.
-	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
+	// In a Mate container the container restart is zcp's only update
+	// (docs/spec-mate.md MU-4), so serve makes no check of its own there.
+	if !rtInfo.MateEnabled && os.Getenv("ZCP_AUTO_UPDATE") != "0" {
 		go update.Once(ctx, server.Version, os.Stderr)
 	}
 
@@ -535,9 +537,6 @@ func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, id hq.Identity, rt
 	fmt.Fprintln(os.Stderr, "zcp: org mode: this project is the Chief")
 
 	srv := server.NewOrg(ctx, org, store, rtInfo, tel)
-	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
-		go update.Once(ctx, server.Version, os.Stderr)
-	}
 	err = srv.Run(ctx, mcpStdout)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return srv, fmt.Errorf("server: %w", err)
