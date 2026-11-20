@@ -315,78 +315,37 @@ func runCallSteps(ctx context.Context, steps [][]string, run browserStepExec) (s
 }
 
 func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec, followTabs bool) (string, string, bool, error) {
-	results := make([]BrowserStepResult, 0, len(steps))
-	stderr := &capBuffer{cap: browserOutputCap}
-	truncated := false
-	var walkErr error
-	var page browserPage
-	var tabs *browserCallTabs
+	w := browserWalk{run: run, stderr: &capBuffer{cap: browserOutputCap}, followTabs: followTabs}
 	if followTabs {
-		tabs = startBrowserCallTabs(ctx, run, stderr)
+		w.tabs = startBrowserCallTabs(ctx, run, w.stderr)
 	}
+	tabs := w.tabs
+	results := make([]BrowserStepResult, 0, len(steps))
+	var walkErr error
 	// loading lasts until the first-paint wait has run and the document's
 	// status is read: the call's own page's load.
 	loading := followTabs
 walk:
 	for at, step := range steps {
-		if err := ctx.Err(); err != nil {
-			walkErr = err
+		if walkErr = ctx.Err(); walkErr != nil {
 			break
 		}
-		// A page whose server answered 5xx runs none of the caller's
-		// commands: each would wait or fail on the error page. The
-		// screenshot and the canned tail still run, to show it.
-		if page.serverStatus >= 500 && !isReportingCommand(step) {
-			msg := page.notRun()
-			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError})
-			continue
-		}
-		// A walk that lost track of its tabs runs no step that acts on a
-		// page: it could run in the base tab. The canned tail still runs;
-		// the screenshot would show an unknown tab.
-		if tabs != nil && tabs.lost && (!isReportingCommand(step) || isCommand(step, browserCmdScreenshot)) {
-			msg := browserTabsLost
-			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindOther})
-			continue
-		}
-		if _, _, isTab := readBrowserTabCommand(step); isTab && followTabs {
-			if tabs == nil {
-				msg := "not run: the call's tabs could not be read, so no tab command runs in it"
-				results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindInvalidCommand})
-				continue
-			}
-			results = append(results, tabs.command(ctx, step, run))
+		if own, ok := w.ownStep(ctx, step); ok {
+			results = append(results, own)
 			continue
 		}
 		if isCommand(step, browserCmdOpen) && len(step) > 1 {
-			page.url = step[1]
+			w.page.url = step[1]
 		}
-		var answer struct {
-			Success bool            `json:"success"`
-			Data    json.RawMessage `json:"data"`
-			Error   *string         `json:"error"`
-		}
-		cut, closedUnder := false, false
+		var answer browserAnswer
+		var cut bool
+		closedUnder := false
 		for attempt := 0; ; attempt++ {
-			out, serr, runErr := run(ctx, step)
-			_, _ = stderr.Write([]byte(serr))
-			// A step's own capture keeps browserOutputCap bytes of its stderr
-			// (browserHost.step): one that filled it may have been cut there.
-			if len(serr) >= browserOutputCap {
-				truncated = true
-			}
-			if len(out) > browserOutputCap {
-				truncated, cut = true, true
-				break
-			}
-			answer.Success, answer.Data, answer.Error = false, nil, nil
-			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					walkErr = ctxErr
-				} else {
-					walkErr = &browserStepUnansweredError{step: at, command: step, err: errors.Join(runErr, err)}
-				}
+			if answer, cut, walkErr = w.ask(ctx, at, step); walkErr != nil {
 				break walk
+			}
+			if cut {
+				break
 			}
 			// A popup that closes itself once it is done can close under the
 			// step after the one that finished it. A step that only reads runs
@@ -404,64 +363,154 @@ walk:
 			results = append(results, BrowserStepResult{Command: step, Error: &msg})
 			continue
 		}
-		if string(answer.Data) == "null" {
-			answer.Data = nil
-		}
-		if closedUnder && !answer.Success && answer.Error != nil && !browserReadOnly(step) {
-			text := *answer.Error + "; " + browserClosedUnderNote
-			answer.Error = &text
-		}
-		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: withoutLifecycle(answer.Data), Error: answer.Error})
+		results = append(results, answer.stepResult(step, closedUnder))
 		last := &results[len(results)-1]
-		// The paint wait is zcp's own: a page that did not paint within it is
-		// no failed step. Any other failure of it stays what it is.
-		if slices.Equal(step, browserPaintWait) && !last.Success && last.Error != nil && strings.Contains(*last.Error, browserWaitTimedOut) {
-			last.Success, last.Error, last.Result = true, nil, slices.Clone(browserNoPaint)
-		}
 		// A wedged page would make every later step wait out the same CDP
-		// timeout; the browser is recycled for it anyway. An eval whose
-		// script hung on a live page, or a step the daemon did not answer
-		// while the page's server does, is no wedge: the walk goes on.
-		// A step whose popup closed under it got the closed page's answer
-		// ("Target closed"); the tab list after it answered, so Chrome is
-		// no wedge.
+		// timeout; the browser is recycled for it anyway. A step whose popup
+		// closed under it got the closed page's answer ("Target closed"); the
+		// tab list after it answered, so Chrome is no wedge.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged && !closedUnder {
-			switch {
-			case evalOnLivePage(ctx, *last, run):
-				last.ErrorKind = ErrorKindScriptTimeout
-			case page.answeredSlowly(ctx, last):
-			default:
-				break walk
+			if !w.outlivesWedge(ctx, last) {
+				break
 			}
 		}
-		// The document's own status, read once the page painted (or gave up
-		// painting): a 5xx page ends the caller's commands here.
-		paintWait := slices.Equal(step, browserPaintWait)
 		// While the call's own page loads — the viewport, the open and the
 		// paint wait the walk itself puts first — a tab the page opens is
 		// held back, so the paint wait and the status are the page's own.
-		loading = loading && (isSetViewport(step) || isCommand(step, browserCmdOpen) || paintWait)
+		loading = loading && (isSetViewport(step) || isCommand(step, browserCmdOpen) || slices.Equal(step, browserPaintWait))
 		if tabs != nil && loading {
 			tabs.hold(ctx, run)
 		}
-		if paintWait && page.serverStatus == 0 {
-			page.serverStatus = documentStatus(ctx, run)
-		}
-		if paintWait {
-			loading = false
-		}
-		if tabs != nil && !loading && !isReportingCommand(step) {
-			tabs.sync(ctx, run)
-			if tabs.note != "" {
-				last.Note = tabs.note
-			}
-		}
+		loading = w.settle(ctx, step, last, loading)
 	}
 	out, err := json.Marshal(results)
 	if err != nil {
-		return "", stderr.String(), truncated, fmt.Errorf("marshal steps: %w", err)
+		return "", w.stderr.String(), w.truncated, fmt.Errorf("marshal steps: %w", err)
 	}
-	return string(out), stderr.String(), truncated || stderr.truncated, walkErr
+	return string(out), w.stderr.String(), w.truncated || w.stderr.truncated, walkErr
+}
+
+// browserWalk is what one walk of steps keeps between them: how it runs a
+// step, the stderr it gathered and whether any was cut, the page it opened,
+// and the call's tabs when it follows them (nil otherwise, or when they could
+// not be read).
+type browserWalk struct {
+	run        browserStepExec
+	stderr     *capBuffer
+	truncated  bool
+	page       browserPage
+	tabs       *browserCallTabs
+	followTabs bool
+}
+
+// browserAnswer is agent-browser's --json answer to one step.
+type browserAnswer struct {
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data"`
+	Error   *string         `json:"error"`
+}
+
+// ownStep answers a step the walk does not hand agent-browser as written,
+// and reports whether it did. A page whose server answered 5xx runs none of
+// the caller's commands: each would wait or fail on the error page; the
+// screenshot and the canned tail still run, to show it. A walk that lost
+// track of its tabs runs no step that acts on a page: it could run in the
+// base tab; the canned tail still runs, the screenshot would show an unknown
+// tab. A caller's tab command lists or switches the call's tabs only.
+func (w *browserWalk) ownStep(ctx context.Context, step []string) (BrowserStepResult, bool) {
+	switch {
+	case w.page.serverStatus >= 500 && !isReportingCommand(step):
+		msg := w.page.notRun()
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError}, true
+	case w.tabs != nil && w.tabs.lost && (!isReportingCommand(step) || isCommand(step, browserCmdScreenshot)):
+		msg := browserTabsLost
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindOther}, true
+	}
+	if _, _, isTab := readBrowserTabCommand(step); !isTab || !w.followTabs {
+		return BrowserStepResult{}, false
+	}
+	if w.tabs == nil {
+		msg := "not run: the call's tabs could not be read, so no tab command runs in it"
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindInvalidCommand}, true
+	}
+	return w.tabs.command(ctx, step, w.run), true
+}
+
+// ask runs step once, step number at of the batch, and reads its answer. cut
+// reports an answer longer than browserOutputCap, which is not read; an
+// answer that is no JSON ends the walk with the step unanswered, or with
+// ctx's end when that came first.
+func (w *browserWalk) ask(ctx context.Context, at int, step []string) (answer browserAnswer, cut bool, err error) {
+	out, serr, runErr := w.run(ctx, step)
+	_, _ = w.stderr.Write([]byte(serr))
+	// A step's own capture keeps browserOutputCap bytes of its stderr
+	// (browserHost.step): one that filled it may have been cut there.
+	if len(serr) >= browserOutputCap {
+		w.truncated = true
+	}
+	if len(out) > browserOutputCap {
+		w.truncated = true
+		return answer, true, nil
+	}
+	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); jsonErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return answer, false, ctxErr
+		}
+		return answer, false, &browserStepUnansweredError{step: at, command: step, err: errors.Join(runErr, jsonErr)}
+	}
+	return answer, false, nil
+}
+
+// stepResult is the result the answer gives step. A step that may have acted
+// and failed in a popup that closed under it says it is not run again. The
+// paint wait is zcp's own: a page that did not paint within it is no failed
+// step; any other failure of it stays what it is.
+func (a browserAnswer) stepResult(step []string, closedUnder bool) BrowserStepResult {
+	data := a.Data
+	if string(data) == "null" {
+		data = nil
+	}
+	errText := a.Error
+	if closedUnder && !a.Success && errText != nil && !browserReadOnly(step) {
+		text := *errText + "; " + browserClosedUnderNote
+		errText = &text
+	}
+	result := BrowserStepResult{Command: step, Success: a.Success, Result: withoutLifecycle(data), Error: errText}
+	if slices.Equal(step, browserPaintWait) && !result.Success && result.Error != nil && strings.Contains(*result.Error, browserWaitTimedOut) {
+		result.Success, result.Error, result.Result = true, nil, slices.Clone(browserNoPaint)
+	}
+	return result
+}
+
+// outlivesWedge reports whether the walk goes on after last named a CDP
+// wedge. An eval whose script hung on a live page, or a step the daemon did
+// not answer while the page's server does, is no wedge.
+func (w *browserWalk) outlivesWedge(ctx context.Context, last *BrowserStepResult) bool {
+	if evalOnLivePage(ctx, *last, w.run) {
+		last.ErrorKind = ErrorKindScriptTimeout
+		return true
+	}
+	return w.page.answeredSlowly(ctx, last)
+}
+
+// settle ends a step and answers whether the call's own page still loads.
+// The document's own status is read once the page painted (or gave up
+// painting): a 5xx page ends the caller's commands. Once the page has loaded,
+// a tab a caller's step opened becomes the call's, and last carries what the
+// tabs noted.
+func (w *browserWalk) settle(ctx context.Context, step []string, last *BrowserStepResult, loading bool) bool {
+	paintWait := slices.Equal(step, browserPaintWait)
+	if paintWait && w.page.serverStatus == 0 {
+		w.page.serverStatus = documentStatus(ctx, w.run)
+	}
+	loading = loading && !paintWait
+	if w.tabs != nil && !loading && !isReportingCommand(step) {
+		w.tabs.sync(ctx, w.run)
+		if w.tabs.note != "" {
+			last.Note = w.tabs.note
+		}
+	}
+	return loading
 }
 
 // browserClosedUnderNote ends the error of a step that may have acted and
