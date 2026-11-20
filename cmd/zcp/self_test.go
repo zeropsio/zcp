@@ -248,6 +248,36 @@ func TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite(t *testing.T) {
 	}
 }
 
+// TestKeepsAttempt_FailedServiceRefusal_KeepsTheRecord: the keep job keeps
+// its record of a zcp restart when the platform accepted it or refused it
+// because the service is FAILED — only a stop and start from outside the
+// container ends that, so asking again would drain a working Mate for the
+// same release every 5 to 7 minutes. Any other refusal or an unconfirmed
+// answer forgets the record and the next run asks again.
+//
+// witness: cmd/zcp/mate_fuse.go | return answer.Error == "" || answer.ServiceFailed → return answer.Error == "" || false
+func TestKeepsAttempt_FailedServiceRefusal_KeepsTheRecord(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		answer selfRestartAnswer
+		want   bool
+	}{
+		{"accepted", selfRestartAnswer{ProcessID: "proc-1"}, true},
+		{"refused: the service is FAILED", selfRestartAnswer{Error: serviceFailedReason, Refused: true, ServiceFailed: true}, true},
+		{"refused: permission denied (403)", selfRestartAnswer{Error: "the platform refused the restart: forbidden", Refused: true}, false},
+		{"unconfirmed: timeout", selfRestartAnswer{Error: "could not confirm the restart: API request timed out"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := keepsAttempt(tt.answer); got != tt.want {
+				t.Errorf("keepsAttempt(%+v) = %v, want %v", tt.answer, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRunSelfCmd_BadArguments_NothingRestarted: a call the verb cannot run
 // answers exit 1 with the usage before any client is built.
 func TestRunSelfCmd_BadArguments_NothingRestarted(t *testing.T) {

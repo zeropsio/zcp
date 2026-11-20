@@ -339,14 +339,18 @@ func restartForZCP(unlock func(), rec mate.KeepRecord, zcp zcpReleaseStatus, run
 	unlock()
 	before := rec
 	rec.ZCPRestartedFor, rec.ZCPRestartedFrom, rec.ZCPRestartedFromBuilt = zcp.Latest, zcp.Installed, server.Built
-	code := 1
-	if writeMateFuseRecord(rec) == nil {
-		code = runSelfCmd([]string{"restart"}, os.Stderr, lookup, newSelfRestartClient)
-		if code != 0 {
-			_ = writeMateFuseRecord(before)
-		}
+	if writeMateFuseRecord(rec) != nil {
+		_ = mate.PostUpdate("cancel")
+		return 1
 	}
-	if code == 0 {
+	answer, serviceID := selfRestart(lookup, newSelfRestartClient)
+	printSelfRestart(os.Stderr, answer, serviceID, false)
+	if !keepsAttempt(answer) {
+		_ = writeMateFuseRecord(before)
+	}
+	code := 1
+	if answer.Error == "" {
+		code = 0
 		// An accepted request is not a restart that happened: the container's
 		// restart kills this process within the grace; still alive after it, the
 		// restart never came and the Mate admits work again. The record keeps
@@ -356,6 +360,15 @@ func restartForZCP(unlock func(), rec mate.KeepRecord, zcp zcpReleaseStatus, run
 	}
 	_ = mate.PostUpdate("cancel")
 	return code
+}
+
+// keepsAttempt reports whether the keep job keeps the record of a zcp
+// restart it asked for: an accepted restart, or a refusal for a FAILED
+// service, which only a stop and start from outside the container ends, so
+// asking again would only drain the Mate for the same release. Any other
+// refusal or an unconfirmed answer forgets it, and the next run asks again.
+func keepsAttempt(answer selfRestartAnswer) bool {
+	return answer.Error == "" || answer.ServiceFailed
 }
 
 func readMateFuseRecord() mate.KeepRecord {

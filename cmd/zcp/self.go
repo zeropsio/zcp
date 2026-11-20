@@ -28,7 +28,11 @@ import (
 // writes its one answer to stdout: under --json `{"processId":"…"}` with exit
 // 0, else `{"error":"…"}` with exit 1 — one line the Mate shows a person as
 // the reason — plus `"refused":true` when the restart certainly did not
-// happen (definiteRefusal), so the Mate need not wait out its grace.
+// happen (definiteRefusal), so the Mate need not wait out its grace. A service
+// Zerops marked FAILED refuses a restart (serviceStackIsFailed) and comes back
+// only by a stop and then a start, which this container cannot send itself:
+// the stop ends it before the start. That refusal says so, and zcp never
+// stops its own service.
 
 const selfUsage = "usage: zcp self restart [--json] | zcp self launch-token"
 
@@ -48,14 +52,25 @@ type serviceRestarter interface {
 	RestartService(ctx context.Context, serviceID string) (*platform.Process, error)
 }
 
+// apiCodeServiceStackIsFailed is the API code Zerops refuses a restart of a
+// service it marked FAILED with (HTTP 400).
+const apiCodeServiceStackIsFailed = "serviceStackIsFailed"
+
+// serviceFailedReason is the refusal a person reads for a FAILED service.
+const serviceFailedReason = "Zerops marked this service FAILED, which refuses a restart; " +
+	"it updates once it is stopped and started again (the Mate's Restart in the web, or Zerops)"
+
 // selfRestartAnswer is `zcp self restart`'s answer: the process of the
 // restart the platform accepted, or, when Error is set, why there is none —
-// Refused when it certainly did not happen. Exactly one of ProcessID and
-// Error is written (printSelfRestart).
+// Refused when it certainly did not happen, ServiceFailed when the refusal
+// is a FAILED service's, which no repeat of the request changes. Exactly one
+// of ProcessID and Error is written (printSelfRestart); ServiceFailed never
+// is.
 type selfRestartAnswer struct {
-	ProcessID string
-	Error     string
-	Refused   bool
+	ProcessID     string
+	Error         string
+	Refused       bool
+	ServiceFailed bool
 }
 
 // runSelfCmd implements `zcp self restart`. args is everything after "self".
@@ -68,48 +83,72 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 		return runSelfLaunchToken(args[1:], stdout, lookup)
 	}
 	asJSON := slices.Contains(args, "--json")
-	fail := func(msg string, refused bool) int {
-		printSelfRestart(stdout, selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " "), Refused: refused}, "", asJSON)
-		return 1
-	}
 	if len(args) == 0 || args[0] != "restart" {
 		if slices.ContainsFunc(args, isHelpArg) {
 			_, _ = fmt.Fprintln(stdout, selfUsage)
 			return 0
 		}
-		return fail(selfUsage, true)
+		printSelfRestart(stdout, selfRefused(selfUsage), "", asJSON)
+		return 1
 	}
 	if _, code, done := commandFlags(selfUsage, args[1:], "--json"); done {
 		return code
 	}
+	answer, serviceID := selfRestart(lookup, newClient)
+	printSelfRestart(stdout, answer, serviceID, asJSON)
+	if answer.Error != "" {
+		return 1
+	}
+	return 0
+}
 
+// selfRestart asks the platform to restart this container's service and
+// returns its answer and the service asked for ("" outside a container).
+func selfRestart(lookup func(string) string, newClient func(token, apiHost string) (serviceRestarter, error)) (selfRestartAnswer, string) {
 	rt := runtime.DetectFrom(lookup)
 	if !rt.InContainer || rt.ServiceID == "" {
-		return fail("not running in a Zerops container, so there is no service to restart", true)
+		return selfRefused("not running in a Zerops container, so there is no service to restart"), ""
 	}
 	key := lookup(hq.EnvKey)
 	if key == "" {
-		return fail(fmt.Sprintf("this container has no %s, which the platform needs to restart it", hq.EnvKey), true)
+		return selfRefused(fmt.Sprintf("this container has no %s, which the platform needs to restart it", hq.EnvKey)), rt.ServiceID
 	}
 	client, err := newClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
 	if err != nil {
-		return fail(fmt.Sprintf("could not reach the platform: %v", err), true)
+		return selfRefused(fmt.Sprintf("could not reach the platform: %v", err)), rt.ServiceID
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), selfRestartTimeout)
 	defer cancel()
 	proc, err := client.RestartService(ctx, rt.ServiceID)
 	if err != nil {
-		if definiteRefusal(err) {
-			return fail(fmt.Sprintf("the platform refused the restart: %v", err), true)
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && pe.APICode == apiCodeServiceStackIsFailed {
+			answer := selfRefused(serviceFailedReason)
+			answer.ServiceFailed = true
+			return answer, rt.ServiceID
 		}
-		return fail(fmt.Sprintf("could not confirm the restart: %v", err), false)
+		if definiteRefusal(err) {
+			return selfRefused(fmt.Sprintf("the platform refused the restart: %v", err)), rt.ServiceID
+		}
+		return selfUnconfirmed(fmt.Sprintf("could not confirm the restart: %v", err)), rt.ServiceID
 	}
 	var answer selfRestartAnswer
 	if proc != nil {
 		answer.ProcessID = proc.ID
 	}
-	printSelfRestart(stdout, answer, rt.ServiceID, asJSON)
-	return 0
+	return answer, rt.ServiceID
+}
+
+// selfRefused is a restart that certainly did not happen, for msg's reason.
+func selfRefused(msg string) selfRestartAnswer {
+	answer := selfUnconfirmed(msg)
+	answer.Refused = true
+	return answer
+}
+
+// selfUnconfirmed is no confirmed restart, for msg's reason, on one line.
+func selfUnconfirmed(msg string) selfRestartAnswer {
+	return selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " ")}
 }
 
 // runSelfLaunchToken implements `zcp self launch-token`: the staged token
