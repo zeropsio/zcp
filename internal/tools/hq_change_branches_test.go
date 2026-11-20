@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -219,6 +220,25 @@ func TestOpenChange_TooManyOpen_NamesThem(t *testing.T) {
 	}
 	if n := len(lab.ledger()); n != labOpenCap {
 		t.Errorf("the ledger keeps %d changes, want %d", n, labOpenCap)
+	}
+}
+
+// TestTooManyOpen_OffersFoldingFirstWhetherOrNotMergingIsLimited: past as
+// many open changes as HQ keeps a Mate in a repository, the refusal's first
+// way out is folding the Mate's own changes AGENTS.md's "What one change
+// holds" would have made one — also where the application limits who merges,
+// where the person may be unable to merge any of them and folding is the one
+// way out that waits on nobody (docs/spec-mate.md §10.10, MB-53).
+// witness: internal/tools/hq_change_open.go | suggestion = foldOwnChanges + ` Otherwise close one → suggestion = ` Otherwise close one
+func TestTooManyOpen_OffersFoldingFirstWhetherOrNotMergingIsLimited(t *testing.T) {
+	t.Parallel()
+	app := "app-1"
+	target := changeTarget{AppID: app, Repo: "web"}
+	for _, limited := range []bool{false, true} {
+		refusal := tooManyOpen(target, "work-6", hq.MateState{AppID: &app, OpenPerBranch: true, MergeLimited: limited}, nil)
+		if !strings.HasPrefix(refusal.Suggestion, foldOwnChanges) {
+			t.Errorf("merging limited %v: the refusal's first way out is not folding: %s", limited, refusal.Suggestion)
+		}
 	}
 }
 
