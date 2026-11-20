@@ -3,6 +3,7 @@ package mate_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +136,99 @@ func TestKeepRecordWithoutAttempt_KDReset_KeepsDeferral(t *testing.T) {
 	got := r.WithoutAttempt()
 	if got.Attempted() || got.Deferred == nil || got.Deferred.Since != "2026-11-16T08:00:00Z" {
 		t.Fatalf("record = %+v, want no attempt and the deferral since 2026-11-16T08:00:00Z", got)
+	}
+}
+
+// forceLog is a KeepQuestion for an operator's forced update on literals: each
+// readiness read answers the next of reads, and every effect appends to
+// events.
+type forceLog struct {
+	reads  [][]string
+	events []string
+	saved  []*mate.Deferral
+}
+
+func (l *forceLog) question() mate.KeepQuestion {
+	return mate.KeepQuestion{
+		Drain: func(string, bool) (mate.UpdateReadiness, error) {
+			l.events = append(l.events, "drain")
+			return mate.UpdateReadiness{Protocol: 1, Drained: true, BootID: "b1"}, nil
+		},
+		Readiness: func() (mate.UpdateReadiness, error) {
+			l.events = append(l.events, "readiness")
+			blockers := l.reads[0]
+			l.reads = l.reads[1:]
+			return mate.UpdateReadiness{Protocol: 1, BootID: "b1", Blockers: blockers}, nil
+		},
+		Close: func(string) (<-chan struct{}, error) {
+			l.events = append(l.events, "close")
+			return make(chan struct{}), nil
+		},
+		Save: func(d *mate.Deferral) error {
+			l.events = append(l.events, "save")
+			l.saved = append(l.saved, d)
+			return nil
+		},
+		Cancel: func() { l.events = append(l.events, "cancel") },
+		Now:    func() time.Time { return time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC) },
+	}
+}
+
+const resumeBlocker = "c1: native resume cursor is missing or disagrees"
+
+// KD-FORCE-WORK — A forced update whose readiness names any blocker other
+// than `native resume …`, an unknown one included, neither closes intake nor
+// restarts, and names that blocker.
+// witness: internal/mate/deferral.go | if !Overridable(b) { → if strings.Contains(b, "active run") {
+func TestKeepForce_KDForceWork_UnknownBlocker_NeitherClosesNorRestarts(t *testing.T) {
+	t.Parallel()
+	l := forceLog{reads: [][]string{{resumeBlocker, "terminal:t1/term-1"}}}
+	d := &mate.Deferral{Since: "2026-11-20T06:26:57Z", From: "0.16.269", For: "0.16.279"}
+	f := l.question().Force(d, "0.16.279", "0.16.269", "0.16.279")
+	if f.Yes {
+		t.Fatal("a forced update restarted past a terminal")
+	}
+	if got := fmt.Sprint(l.events); got != "[readiness]" {
+		t.Fatalf("effects = %s, want one readiness read and nothing closed, cancelled or recorded", got)
+	}
+	if f.NotNow == nil || !strings.Contains(f.NotNow.Error(), "terminal:t1/term-1") {
+		t.Fatalf("not now = %v, want it to name terminal:t1/term-1", f.NotNow)
+	}
+}
+
+// KD-FORCE-RESUME — A forced update whose readiness names only
+// `native resume …` blockers, with or without a leading `<id>: `, closes
+// intake, reads readiness again and says yes, clearing the deferral.
+// witness: internal/mate/deferral.go | _, rest, found := strings.Cut(blocker, ": ") → _, rest, found := strings.Cut(blocker, ":")
+func TestKeepForce_KDForceResume_OnlyResumeBlockers_ClosesAndSaysYes(t *testing.T) {
+	t.Parallel()
+	resume := []string{resumeBlocker, "native resume is unsupported"}
+	l := forceLog{reads: [][]string{resume, resume}}
+	d := &mate.Deferral{Since: "2026-11-20T06:26:57Z", From: "0.16.269", For: "0.16.279", Why: resumeBlocker}
+	f := l.question().Force(d, "0.16.279", "0.16.269", "0.16.279")
+	if !f.Yes || f.Ended == nil {
+		t.Fatalf("answer = %+v, want yes holding the drain request open", f)
+	}
+	if got := fmt.Sprint(l.events); got != "[readiness close readiness save]" {
+		t.Fatalf("effects = %s, want read, close, read again, clear the deferral", got)
+	}
+	if len(l.saved) != 1 || l.saved[0] != nil {
+		t.Fatalf("saved = %v, want the deferral cleared", l.saved)
+	}
+}
+
+// KD-FORCE-REREAD — A forced update that finds live work on the readiness
+// read after its close cancels and says not now.
+// witness: internal/mate/deferral.go | if work := workBlockers(second.Blockers); len(work) > 0 { → if work := workBlockers(first.Blockers); len(work) > 0 {
+func TestKeepForce_KDForceReread_WorkAfterClose_CancelsNotNow(t *testing.T) {
+	t.Parallel()
+	l := forceLog{reads: [][]string{{resumeBlocker}, {resumeBlocker, "c2: active run"}}}
+	f := l.question().Force(nil, "0.16.279", "0.16.269", "0.16.279")
+	if f.Yes {
+		t.Fatal("a forced update restarted past a run accepted while intake closed")
+	}
+	if got := fmt.Sprint(l.events); got != "[readiness close readiness cancel]" {
+		t.Fatalf("effects = %s, want the close cancelled after the second read", got)
 	}
 }
 

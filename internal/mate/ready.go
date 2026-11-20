@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -18,7 +20,8 @@ const updateLoopback = "http://127.0.0.1:3773/api/mate/update/"
 
 // UpdateReadiness is the loopback updater API payload. Blockers (readiness)
 // and Why (a drain answered drained: false) are the Mate's own words on what
-// it waits on, opaque to zcp; an older Mate sends no Why.
+// it waits on, opaque to zcp but for the one prefix an operator's forced update
+// reads (Overridable); an older Mate sends no Why.
 type UpdateReadiness struct {
 	Protocol int      `json:"protocol"`
 	Version  string   `json:"version"`
@@ -83,15 +86,11 @@ var ErrNotAnswering = errors.New("mate does not answer")
 // The caller cancels on failure and switches only after this proof succeeds; a
 // failure wrapping ErrNotAnswering has no barrier to cancel.
 func DrainUpdate(version string, automatic bool) (UpdateReadiness, error) {
-	body, err := json.Marshal(struct {
-		Version    string `json:"version"`
-		DeadlineMS int    `json:"deadlineMs"`
-		Automatic  bool   `json:"automatic"`
-	}{version, 600000, automatic})
+	body, err := drainBody(version, automatic)
 	if err != nil {
-		return UpdateReadiness{}, fmt.Errorf("encode drain request: %w", err)
+		return UpdateReadiness{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute+time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), drainBound)
 	defer cancel()
 	var drain UpdateReadiness
 	if err := UpdateRequest(ctx, "drain", body, &drain); err != nil {
@@ -107,6 +106,67 @@ func DrainUpdate(version string, automatic bool) (UpdateReadiness, error) {
 		return drain, fmt.Errorf("mate did not prove idle before drain deadline")
 	}
 	return drain, nil
+}
+
+// drainBound is a drain request's own bound: the Mate's deadline and a second.
+const drainBound = 10*time.Minute + time.Second
+
+// drainBody is a drain request's body for version.
+func drainBody(version string, automatic bool) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		Version    string `json:"version"`
+		DeadlineMS int    `json:"deadlineMs"`
+		Automatic  bool   `json:"automatic"`
+	}{version, 600000, automatic})
+	if err != nil {
+		return nil, fmt.Errorf("encode drain request: %w", err)
+	}
+	return body, nil
+}
+
+// CloseForUpdate closes the running Mate's intake for an operator's forced
+// update (docs/spec-mate.md §2.1d): it posts the attended drain for version
+// and returns once that request is written, without waiting for its answer.
+// The Mate closes intake as it reads the request and reopens it when the
+// request ends unanswered, so intake stays closed only while the request is
+// open. ended is closed when the request ends any way: answered, dropped by a
+// stopping Mate, or its own bound. A request that could not be written is the
+// error, and ended is nil.
+func CloseForUpdate(version string) (ended <-chan struct{}, err error) {
+	body, err := drainBody(version, false)
+	if err != nil {
+		return nil, err
+	}
+	written := make(chan struct{})
+	var once sync.Once
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			once.Do(func() { close(written) })
+		}
+	}}
+	ctx, cancel := context.WithTimeout(httptrace.WithClientTrace(context.Background(), trace), drainBound)
+	done := make(chan struct{})
+	failed := make(chan error, 1)
+	go func() {
+		defer close(done)
+		defer cancel()
+		failed <- UpdateRequest(ctx, "drain", body, nil)
+	}()
+	select {
+	case <-written:
+		return done, nil
+	case err := <-failed:
+		// A request that ended at once was still written when the trace says so.
+		select {
+		case <-written:
+			return done, nil
+		default:
+		}
+		if err == nil {
+			err = errors.New("drain request ended unwritten")
+		}
+		return nil, fmt.Errorf("close Mate intake: %w", err)
+	}
 }
 
 // UpdateHTTPError is a non-200 answer from the loopback updater API.

@@ -570,7 +570,7 @@ The keep job decides when the Mate restarts, nothing else. It runs outside the M
 systemd template service `zcp-mate-fuse@<way>.service` (`cmd/zcp/mate_fuse.go`): its timer
 `zcp-mate-fuse.timer` runs `zcp-mate-fuse@automatic` 10 minutes after boot, then 5 minutes after each
 run, each with up to 2 minutes of jitter; `zcp mate update` starts `zcp-mate-fuse@attended` (or
-`@automatic` with `--automatic`) at once. Prepare writes both under `/etc/systemd/system`, reloads
+`@automatic` with `--automatic`, `@forced` with `--force`) at once. Prepare writes both under `/etc/systemd/system`, reloads
 systemd when either changed, and enables and starts the timer, so it runs while the Mate's unit is
 down or crash-looping and starts at boot even when `zcp init` fails before its Mate step. Disabling
 Mate (§2.1b) removes them. The names stay "fuse": a renamed timer would leave the old one enabled on
@@ -627,7 +627,32 @@ comes records nothing. `zcp mate status` reads it (§2.1a). The record is writte
 written never holds up a question or a restart: the run says so and goes on, and only a not now it
 could not record ends the run with 1. No timer, retry or forced
 restart rides on it: a Mate that never says yes keeps its version until it, its person or an
-operator says yes.
+operator says yes, an operator's yes being an operator's forced update (below).
+
+**An operator's forced update** (`zcp mate update --force`, which runs `zcp mate fuse --forced`)
+asks in place of the Mate's own drain wherever a run asks (steps 2 and 3), so a Mate whose outgoing
+version's drain refuses on a blocker that is no live work can still be replaced without
+interrupting live work. It runs, in order:
+
+1. One `GET readiness` (bounded to 5 s). No answer → not now: nothing is closed and nothing
+   recorded.
+2. `ready`, or no `blockers` → the attended question (without the policy), unchanged.
+3. Any blocker that is not overridable → not now, naming those blockers. Nothing is closed and the
+   deferral on record stays as it is: the Mate answered no drain.
+4. Only overridable blockers → zcp closes intake by posting the attended drain and, once that
+   request is written, reads readiness once more. A blocker that is not overridable, or no answer →
+   `POST cancel`, not now, nothing restarts. Only overridable blockers, or ready → yes, and a
+   deferral on record is cleared as on any yes; the run's journal line names the blockers it forced
+   past. For a Mate restart the run keeps the drain request open after the unit restart until the
+   stopping Mate drops it (at most the request's own 10 minutes and 1 s): the Mate reopens intake
+   when its drain is interrupted, so a run that ended first would reopen it before systemd stops
+   it. For a zcp release the container restart's existing grace holds the request open.
+
+Its cost: a conversation whose native session cannot resume starts a fresh provider session on its
+next turn. Its known residue: the Mate gives no receipt that intake closed, so a turn accepted
+between the second readiness read and the drain's close is interrupted, as `systemctl restart`
+interrupts it. The forced update is an operator's verb only: the Mate server never passes `--force`
+(MA-6). Steps 1 and "not there" of the keep job are unchanged.
 
 **The question** is the server's loopback updater (`http://127.0.0.1:3773/api/mate/update/`,
 protocol 1): `GET readiness` answers `{protocol: 1, version, bootId, ready, blockers}` once the
@@ -636,7 +661,12 @@ server reached command readiness, `blockers` being the Mate's own words on what 
 why?}`, `drained` once it stopped taking work; `why`, sent with `drained: false`, is the Mate's one
 line on what it waits on or why it refuses, optional (zcp never requires it), at most 300 bytes on
 the wire: zcp decodes at most 4096 bytes of either answer; a drain answer it cannot decode is no
-answer and records nothing, a readiness answer it cannot decode leaves `why` empty. Both are opaque to zcp.
+answer and records nothing, a readiness answer it cannot decode leaves `why` empty. zcp reads one
+word of them: a blocker whose text, after an optional leading `<id>: `, starts with `native resume `
+is overridable, the Mate's words for "a restart would not resume this conversation's native
+session", and the Mate keeps that prefix for such blockers only. Every other blocker, an unknown
+one included, is live work. Only an operator's forced update reads the word; every other question
+leaves both answers opaque.
 An automatic question leaves the server open and waits up to 10 minutes for it to be idle and quiet,
 under the organization's policy; a person's question stops intake at once. Not now (a refusal, the
 deadline, no answer) is followed by `POST cancel`, which reopens what the question closed and makes
@@ -647,11 +677,12 @@ is waiting, so a busy Mate is never closed by being asked.
 **Without HQ.** The organization's policy holds whether or not the Mate has a link to HQ; a start of
 the Mate starts the version to run (§2.1a).
 
-**`zcp mate update [--automatic] [--json]`** runs the keep job now and answers at once
+**`zcp mate update [--automatic | --force] [--json]`** runs the keep job now and answers at once
 `{action: "none", from: <installed>, restarted: false, started: true}`, outside the Mate server that
 may be calling it: the question can take the drain's 10 minutes. Without `--automatic` it asks
-without the policy (a person's or an operator's update); with it, with the policy. A held install
-lock is reported (`error`, exit 1), never waited for.
+without the policy (a person's or an operator's update); with it, with the policy; with `--force`
+it is an operator's forced update (above). `--force` with `--automatic` is a usage error (exit 1)
+before any other check. A held install lock is reported (`error`, exit 1), never waited for.
 
 ### 2.2 The supervised process
 

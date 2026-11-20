@@ -22,11 +22,11 @@ import (
 const statusManifestTimeout = 5 * time.Second
 
 // runMateCmd implements `zcp mate status [--json] [--local]`,
-// `zcp mate update [--json] [--automatic]`, `zcp mate pin`, the dev pin's one
+// `zcp mate update [--json] [--automatic|--force]`, `zcp mate pin`, the dev pin's one
 // writer, and `zcp mate fuse`, the keep job its systemd units run
 // (mate_fuse.go). args is everything after "mate".
 func runMateCmd(args []string) int {
-	const usage = "usage: zcp mate <status|update> [--json] [--local] [--automatic] | zcp mate pin [--for <duration> --reason <text> | --end]"
+	const usage = "usage: zcp mate <status|update> [--json] [--local] [--automatic|--force] | zcp mate pin [--for <duration> --reason <text> | --end]"
 	if len(args) == 0 {
 		log.Print(usage)
 		return 1
@@ -289,13 +289,21 @@ type mateUpdateResult struct {
 // that may be calling it: the server's call returns at once while the keep job
 // asks it whether it may restart, which can take the drain's ten minutes.
 // Without --automatic the keep job asks without the organization's policy (a
-// person's or an operator's update); with it, with the policy. A start or
+// person's or an operator's update); with it, with the policy. `zcp mate
+// update --force` is an operator's forced update: it runs `zcp mate fuse
+// --forced`, which restarts past blockers that are no live work
+// (docs/spec-mate.md §2.1d); with --automatic it is a usage error. A start or
 // another keep run holding the install lock is reported, not waited for.
 // Container-only, with ZCP_MATE_ENABLED on.
 func runMateUpdate(args []string) int {
-	flags, code, done := commandFlags("usage: zcp mate update [--json] [--automatic]", args, "--json", "--automatic")
+	const usage = "usage: zcp mate update [--json] [--automatic|--force]"
+	flags, code, done := commandFlags(usage, args, "--json", "--automatic", "--force")
 	if done {
 		return code
+	}
+	if flags["--force"] && flags["--automatic"] {
+		fmt.Fprintf(os.Stderr, "--force takes no --automatic: a forced update is an operator's, never the policy's\n%s\n", usage)
+		return 1
 	}
 	asJSON := flags["--json"]
 
@@ -312,11 +320,14 @@ func runMateUpdate(args []string) int {
 	}
 	unlock()
 
-	way := "attended"
-	if flags["--automatic"] {
-		way = "automatic"
+	way := wayAttended
+	switch {
+	case flags["--automatic"]:
+		way = wayAutomatic
+	case flags["--force"]:
+		way = wayForced
 	}
-	unit := mate.KeepUnitName + "@" + way + ".service"
+	unit := mate.KeepUnitName + "@" + string(way) + ".service"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sudo", "systemctl", "start", "--no-block", unit)

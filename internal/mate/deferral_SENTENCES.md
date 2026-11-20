@@ -8,3 +8,6 @@
 - KD-UNWRITABLE — A yes whose record cannot be written still restarts. Breaks: a full or read-only disk keeps every Mate on its old version for good.
 - KD-RESET — Forgetting a zcp restart attempt keeps the deferral. Breaks: a new zcp build silently erases a Mate's postponement and its since.
 - KD-POSTPONED — While the deferral speaks for the installed Mate, the status's updater is "postponed" with since, for and why. Breaks: the person and HQ see "idle" while a newer version waits.
+- KD-FORCE-WORK — An operator's forced update whose readiness names any blocker other than `native resume …`, an unknown one included, neither closes intake nor restarts, and names that blocker. Breaks: a forced update restarts a Mate in the middle of a person's turn because zcp did not know the word for its work.
+- KD-FORCE-RESUME — A forced update whose readiness names only `native resume …` blockers, with or without a leading `<id>: `, closes intake, reads readiness again and says yes, clearing the deferral. Breaks: the Mate whose old drain refuses on a conversation it merely cannot resume is never replaced, not even by an operator.
+- KD-FORCE-REREAD — A forced update that finds live work on the readiness read after its close cancels and says not now. Breaks: a turn accepted while intake was closing is interrupted by the restart.

@@ -1,6 +1,7 @@
 package mate
 
 import (
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -99,13 +100,94 @@ func (r KeepRecord) WithoutAttempt() KeepRecord {
 
 // KeepQuestion is the keep job's "may I restart you now?" to the running
 // Mate and what it keeps of the answer. The keep job wires the loopback
-// updater and its record; each field is one effect.
+// updater and its record; each field is one effect. Close is an operator's
+// forced update's own close of intake (CloseForUpdate).
 type KeepQuestion struct {
 	Drain     func(version string, automatic bool) (UpdateReadiness, error)
 	Readiness func() (UpdateReadiness, error)
+	Close     func(version string) (ended <-chan struct{}, err error)
 	Save      func(*Deferral) error
 	Cancel    func()
 	Now       func() time.Time
+}
+
+// overridablePrefix starts the Mate's words for a blocker that is no live
+// work: a restart would not resume this conversation's native session
+// (docs/spec-mate.md §2.1d, "The question").
+const overridablePrefix = "native resume "
+
+// Overridable says an operator's forced update may restart past blocker:
+// after an optional leading "<id>: ", it starts with "native resume ". Every
+// other blocker, an unknown one included, is live work.
+func Overridable(blocker string) bool {
+	if strings.HasPrefix(blocker, overridablePrefix) {
+		return true
+	}
+	_, rest, found := strings.Cut(blocker, ": ")
+	return found && strings.HasPrefix(rest, overridablePrefix)
+}
+
+// workBlockers is the blockers that are live work.
+func workBlockers(blockers []string) []string {
+	var work []string
+	for _, b := range blockers {
+		if !Overridable(b) {
+			work = append(work, b)
+		}
+	}
+	return work
+}
+
+// Forced is an operator's forced update's answer: yes, the blockers it forced
+// past (none when the ordinary question said yes), Ended when it holds the
+// Mate's intake closed by a drain request still open (nil otherwise), the not
+// now's reason, and a record that could not be written.
+type Forced struct {
+	Yes        bool
+	Overridden []string
+	Ended      <-chan struct{}
+	NotNow     error
+	SaveErr    error
+}
+
+// Force is an operator's forced update of the Mate running running, naming
+// version, for asked (docs/spec-mate.md §2.1d). A Mate that is ready or
+// names no blocker gets the attended Ask. One blocker that is live work, or
+// no readiness answer, is not now with nothing closed and nothing recorded.
+// Only overridable blockers: intake is closed, readiness read once more after
+// the close is written, and live work or no answer then cancels as a not now;
+// otherwise yes, clearing a deferral on record as Ask's yes does.
+func (q KeepQuestion) Force(prev *Deferral, version, running, asked string) Forced {
+	first, err := q.Readiness()
+	if err != nil {
+		return Forced{NotNow: fmt.Errorf("readiness not read: %w", err)}
+	}
+	if first.Ready || len(first.Blockers) == 0 {
+		yes, notNow, saveErr := q.Ask(prev, version, running, asked, false)
+		return Forced{Yes: yes, NotNow: notNow, SaveErr: saveErr}
+	}
+	if work := workBlockers(first.Blockers); len(work) > 0 {
+		return Forced{NotNow: fmt.Errorf("live work: %s", strings.Join(work, "; "))}
+	}
+	ended, err := q.Close(version)
+	if err != nil {
+		q.Cancel()
+		return Forced{NotNow: err}
+	}
+	second, err := q.Readiness()
+	if err != nil {
+		q.Cancel()
+		return Forced{NotNow: fmt.Errorf("readiness not read after the close: %w", err)}
+	}
+	if work := workBlockers(second.Blockers); len(work) > 0 {
+		q.Cancel()
+		return Forced{NotNow: fmt.Errorf("live work after the close: %s", strings.Join(work, "; "))}
+	}
+	f := Forced{Yes: true, Overridden: second.Blockers, Ended: ended}
+	if prev != nil {
+		f.SaveErr = q.Save(nil)
+	}
+	return f
 }
 
 // Ask asks the Mate running running, naming version, for a restart that is
