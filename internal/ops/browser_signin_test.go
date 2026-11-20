@@ -455,7 +455,7 @@ func TestRestoreBrowserSignIn_CookiesThatDoNotComeBackStopTheSaves(t *testing.T)
 		t.Error("a browser without the kept cookies must not be marked as holding them")
 	}
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, time.Now()); err == nil || keptState(t, dir) == `{"cookies":[],"origins":[]}` {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", time.Now()); err == nil || keptState(t, dir) == `{"cookies":[],"origins":[]}` {
 		t.Errorf("its save must be refused and the kept sign-in stay: err=%v kept %q", err, keptState(t, dir))
 	}
 }
@@ -613,7 +613,7 @@ func TestSaveBrowserSignIn_KeepsTheSitesTheBrowserDidNotRead(t *testing.T) {
 	writeState(t, dir, threeSites)
 	saved := `{"cookies":[{"name":"sid","value":"new","domain":"127.0.0.1","path":"/"}],"origins":[{"origin":"http://127.0.0.1:18731","localStorage":[{"name":"token","value":"a2"}]}]}`
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	kept := keptState(t, dir)
@@ -633,7 +633,7 @@ func TestSaveBrowserSignIn_TheWayOutEmptiesWhatItClears(t *testing.T) {
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	if kept := keptState(t, dir); kept != `{"cookies":[],"origins":[]}` {
@@ -650,7 +650,7 @@ func TestSaveBrowserSignIn_AClearSticksWhereverThePageWent(t *testing.T) {
 	writeKept(t, dir)
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}})
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("https://login.example.test/authorize", `{"cookies":[],"origins":[]}`, &seen), dir, presence, time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("https://login.example.test/authorize", `{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	if kept := keptState(t, dir); strings.Contains(kept, "18731") {
@@ -665,7 +665,7 @@ func TestSaveBrowserSignIn_ABrowserWithoutTheKeptCookiesSavesNothing(t *testing.
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{}), time.Now()); err == nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presenceIn(t, browserPresence{}), "t2", time.Now()); err == nil {
 		t.Error("a save from a browser without the kept cookies must be refused")
 	}
 	if keptState(t, dir) != signedInState {
@@ -684,7 +684,7 @@ func TestSaveBrowserSignIn_OnlyUseRenewsAKeptSite(t *testing.T) {
 	saved := `{"cookies":[],"origins":[{"origin":"http://127.0.0.1:18741","localStorage":[{"name":"token","value":"v"}]}]}`
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18741"}})
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18741/", saved, &seen), dir, presence, now); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18741/", saved, &seen), dir, presence, "t2", now); err != nil {
 		t.Fatal(err)
 	}
 	_, origins, _ := parseBrowserState([]byte(keptState(t, dir)))
@@ -703,7 +703,7 @@ func TestSaveBrowserSignIn_ACandidateAgentBrowserCannotLoad_NeverReplacesTheSave
 	dir := readyStateDir(t)
 	writeKept(t, dir)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), time.Now()); err == nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(`{"cookies":[]}`, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err == nil {
 		t.Error("a save agent-browser cannot load must be reported")
 	}
 	if got := keptState(t, dir); got != signedInState {
@@ -719,7 +719,7 @@ func TestSaveBrowserSignIn_SessionStorageNeverReachesTheKeptFile(t *testing.T) {
 	dir := readyStateDir(t)
 	saved := strings.Replace(signedInState, `"sessionStorage":[]`, `"sessionStorage":[{"name":"stok","value":"SESSIONSECRET"}]`, 1)
 	var seen [][]string
-	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowser(saved, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", time.Now()); err != nil {
 		t.Fatalf("saveBrowserSignIn: %v", err)
 	}
 	kept := keptState(t, dir)
@@ -741,7 +741,7 @@ func TestSaveBrowserSignIn_ASiteNotRestoredIsNotErasedByOpeningIt(t *testing.T) 
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18735"}, Unrestored: []string{"http://127.0.0.1:18735"}})
 	var seen [][]string
 	saved := `{"cookies":[{"name":"sid","value":"abc123","domain":"127.0.0.1","path":"/"}],"origins":[]}`
-	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18735/", saved, &seen), dir, presence, time.Now()); err != nil {
+	if err := saveBrowserSignIn(t.Context(), savingBrowserOn("http://127.0.0.1:18735/", saved, &seen), dir, presence, "t2", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if got := keptOrigins(t, dir); !slices.Contains(got, "http://127.0.0.1:18735") {

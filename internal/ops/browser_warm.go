@@ -238,10 +238,10 @@ func closeCallTabs(ctx context.Context, run browserStepExec) error {
 // save that fails is logged and hands the browser back all the same: the
 // last good save stands. note is what the call's result says when the save
 // found Chrome relaunched empty during the call.
-func handBackBrowser(ctx context.Context, run browserStepExec, stateDir, presencePath string, markIdle func(context.Context) error) (note string, err error) {
+func handBackBrowser(ctx context.Context, run browserStepExec, stateDir, presencePath, ownTab string, markIdle func(context.Context) error) (note string, err error) {
 	if stateDir != "" {
 		sctx, cancel := context.WithTimeout(ctx, browserSignInSaveTimeout)
-		err := saveBrowserSignIn(sctx, run, stateDir, presencePath, time.Now())
+		err := saveBrowserSignIn(sctx, run, stateDir, presencePath, ownTab, time.Now())
 		cancel()
 		if err != nil {
 			logBrowserSignIn(err)
@@ -293,12 +293,15 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 }
 
 // runCallSteps walks a call's batch as runBrowserSteps does, in the call's
-// tabs (browser_tabs.go): after each step but the reporting ones, a tab its
-// page opened becomes active and focused, and a closed popup hands back to
-// the tab before it; a step that failed in a popup that closed under it runs
-// once more in that tab; a caller's tab command lists or switches the call's
-// tabs only; and a walk that ends cleanly ends on the call's own tab. Those
-// steps of its own are none of the result's.
+// tabs (browser_tabs.go): while the call's own page loads, a tab it opens is
+// recorded and the call's tab kept active for the first-paint wait and the
+// document's status; after them and after each caller step, a tab its page
+// opened becomes active and focused, and a closed popup hands back to the tab
+// before it; a read-only step that failed in a popup that closed under it
+// runs once more in that tab, any other keeps its one answer and says so; a
+// tab list that fails twice after a popup was active runs no caller step
+// more; and a caller's tab command lists or switches the call's tabs only.
+// Those steps of its own are none of the result's.
 func runCallSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
 	return walkBrowserSteps(ctx, steps, run, true)
 }
@@ -313,6 +316,9 @@ func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec
 	if followTabs {
 		tabs = startBrowserCallTabs(ctx, run, stderr)
 	}
+	// loading lasts until the first-paint wait has run and the document's
+	// status is read: the call's own page's load.
+	loading := followTabs
 walk:
 	for at, step := range steps {
 		if err := ctx.Err(); err != nil {
@@ -325,6 +331,14 @@ walk:
 		if page.serverStatus >= 500 && !isReportingCommand(step) {
 			msg := page.notRun()
 			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError})
+			continue
+		}
+		// A walk that lost track of its tabs runs no step that acts on a
+		// page: it could run in the base tab. The canned tail still runs;
+		// the screenshot would show an unknown tab.
+		if tabs != nil && tabs.lost && (!isReportingCommand(step) || isCommand(step, browserCmdScreenshot)) {
+			msg := browserTabsLost
+			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindOther})
 			continue
 		}
 		if _, _, isTab := readBrowserTabCommand(step); isTab && followTabs {
@@ -344,7 +358,7 @@ walk:
 			Data    json.RawMessage `json:"data"`
 			Error   *string         `json:"error"`
 		}
-		cut := false
+		cut, closedUnder := false, false
 		for attempt := 0; ; attempt++ {
 			out, serr, runErr := run(ctx, step)
 			_, _ = stderr.Write([]byte(serr))
@@ -367,9 +381,13 @@ walk:
 				break walk
 			}
 			// A popup that closes itself once it is done can close under the
-			// step after the one that finished it: that step ran in no page,
-			// so it runs once more in the tab the call is back in.
-			if answer.Success || attempt > 0 || tabs == nil || isReportingCommand(step) || !tabs.closedUnder(ctx, run) {
+			// step after the one that finished it. A step that only reads runs
+			// once more in the tab the call is back in; one that may have acted
+			// — its own effect may be what closed the popup — keeps its answer.
+			if answer.Success || attempt > 0 || tabs == nil || isReportingCommand(step) {
+				break
+			}
+			if closedUnder = tabs.closedUnder(ctx, run); !closedUnder || !browserReadOnly(step) {
 				break
 			}
 		}
@@ -381,13 +399,20 @@ walk:
 		if string(answer.Data) == "null" {
 			answer.Data = nil
 		}
+		if closedUnder && !answer.Success && answer.Error != nil && !browserReadOnly(step) {
+			text := *answer.Error + "; " + browserClosedUnderNote
+			answer.Error = &text
+		}
 		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: withoutLifecycle(answer.Data), Error: answer.Error})
 		last := &results[len(results)-1]
 		// A wedged page would make every later step wait out the same CDP
 		// timeout; the browser is recycled for it anyway. An eval whose
 		// script hung on a live page, or a step the daemon did not answer
 		// while the page's server does, is no wedge: the walk goes on.
-		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged {
+		// A step whose popup closed under it got the closed page's answer
+		// ("Target closed"); the tab list after it answered, so Chrome is
+		// no wedge.
+		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged && !closedUnder {
 			switch {
 			case evalOnLivePage(ctx, *last, run):
 				last.ErrorKind = ErrorKindScriptTimeout
@@ -398,15 +423,26 @@ walk:
 		}
 		// The document's own status, read once the page painted (or gave up
 		// painting): a 5xx page ends the caller's commands here.
-		if slices.Equal(step, browserPaintWait) && page.serverStatus == 0 {
+		paintWait := slices.Equal(step, browserPaintWait)
+		// While the call's own page loads — the viewport, the open and the
+		// paint wait the walk itself puts first — a tab the page opens is
+		// held back, so the paint wait and the status are the page's own.
+		loading = loading && (isSetViewport(step) || isCommand(step, browserCmdOpen) || paintWait)
+		if tabs != nil && loading {
+			tabs.hold(ctx, run)
+		}
+		if paintWait && page.serverStatus == 0 {
 			page.serverStatus = documentStatus(ctx, run)
 		}
-		if tabs != nil && !isReportingCommand(step) {
-			tabs.sync(ctx, run)
+		if paintWait {
+			loading = false
 		}
-	}
-	if _, wedged := scanStepsForCDPWedge(results); tabs != nil && walkErr == nil && !wedged {
-		tabs.home(ctx, run)
+		if tabs != nil && !loading && !isReportingCommand(step) {
+			tabs.sync(ctx, run)
+			if tabs.note != "" {
+				last.Note = tabs.note
+			}
+		}
 	}
 	out, err := json.Marshal(results)
 	if err != nil {
@@ -414,6 +450,10 @@ walk:
 	}
 	return string(out), stderr.String(), truncated || stderr.truncated, walkErr
 }
+
+// browserClosedUnderNote ends the error of a step that may have acted and
+// failed in a popup that closed under it: it is not run again.
+const browserClosedUnderNote = "the popup it ran in closed under it, so the call is back in the tab before it; a step that may have acted is not run again"
 
 // browserStepUnansweredError is the error of a walk that ended on a step with no
 // answer: the step's place in the batch and its command. A caller that ran

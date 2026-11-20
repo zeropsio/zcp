@@ -284,16 +284,16 @@ type browserPresence struct {
 }
 
 // browserTabs is what a save needs of agent-browser's tab list: the base
-// tab's CDP target and the active tab's origin ("" for about:blank and the
-// like).
-func browserTabs(ctx context.Context, run browserStepExec) (baseTarget, activeOrigin string, err error) {
+// tab's CDP target and the active tab (none when no tab is active).
+func browserTabs(ctx context.Context, run browserStepExec) (baseTarget string, active browserActiveTab, err error) {
 	out, _, err := run(ctx, []string{"tab", "list"})
 	if err != nil {
-		return "", "", fmt.Errorf("tab list: %w", err)
+		return "", browserActiveTab{}, fmt.Errorf("tab list: %w", err)
 	}
 	var answer struct {
 		Data struct {
 			Tabs []struct {
+				TabID    string `json:"tabId"`
 				TargetID string `json:"targetId"`
 				Active   bool   `json:"active"`
 				URL      string `json:"url"`
@@ -301,17 +301,25 @@ func browserTabs(ctx context.Context, run browserStepExec) (baseTarget, activeOr
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); err != nil {
-		return "", "", fmt.Errorf("tab list: %w", err)
+		return "", browserActiveTab{}, fmt.Errorf("tab list: %w", err)
 	}
 	if len(answer.Data.Tabs) == 0 {
-		return "", "", errors.New("tab list: no tabs")
+		return "", browserActiveTab{}, errors.New("tab list: no tabs")
 	}
-	for _, tab := range answer.Data.Tabs {
+	for i, tab := range answer.Data.Tabs {
 		if tab.Active {
-			activeOrigin = browserOrigin(tab.URL)
+			active = browserActiveTab{ID: tab.TabID, Origin: browserOrigin(tab.URL), Base: i == 0}
 		}
 	}
-	return answer.Data.Tabs[0].TargetID, activeOrigin, nil
+	return answer.Data.Tabs[0].TargetID, active, nil
+}
+
+// browserActiveTab is the tab agent-browser runs its next command in: its
+// id, its page's origin ("" for about:blank and the like), and whether it is
+// the base tab, the first one listed.
+type browserActiveTab struct {
+	ID, Origin string
+	Base       bool
 }
 
 // keptSignInLetsReuse reports whether a call that keeps the sign-in may run
@@ -668,14 +676,23 @@ func browserSites(sites []string) string {
 // the kept cookies: its cookies would replace them.
 var errBrowserSignInNotHeld = errors.New("the browser does not hold the kept cookies, so nothing was saved; they stay kept")
 
+// errBrowserSaveOffTheCallsTab refuses a save that could not make the call's
+// own tab active and see it so: the active page is then another — a popup, or
+// the base tab's about:blank, where agent-browser reads every origin through
+// a temporary tab and the save stalled.
+var errBrowserSaveOffTheCallsTab = errors.New("the call's own tab could not be made the active one, so nothing was saved; the last save stands")
+
 // errBrowserRelaunched refuses a save from a browser whose Chrome agent-
 // browser relaunched, empty, since the kept sign-in was restored into it.
 var errBrowserRelaunched = errors.New("the browser's Chrome was relaunched with an empty profile since the kept sign-in was restored, so nothing was saved; it stays kept")
 
-// saveBrowserSignIn merges the active tab's context — the call's own tab,
-// the default context's — into the kept sign-in, when the browser holds the
-// kept cookies (browserPresence; errBrowserSignInNotHeld otherwise) in the
-// Chrome they were restored into. A browser whose base tab is another one
+// saveBrowserSignIn merges the context of ownTab — the call's own tab, the
+// default context's — into the kept sign-in, when the browser holds the kept
+// cookies (browserPresence; errBrowserSignInNotHeld otherwise) in the Chrome
+// they were restored into. It makes ownTab active and reads the tab list
+// again: unless ownTab is active, is not the base tab and holds a page of a
+// site, nothing is saved (errBrowserSaveOffTheCallsTab); the active tab's id
+// and origin are logged either way. A browser whose base tab is another one
 // was relaunched empty: nothing is saved (errBrowserRelaunched), and its
 // presence then says it holds nothing, so no later call reuses it.
 // agent-browser's state save writes a candidate in the folder's temporary
@@ -683,7 +700,7 @@ var errBrowserRelaunched = errors.New("the browser's Chrome was relaunched with 
 // storage, which a load never usefully restores and the way out does not
 // clear, merges it with the kept file (mergeBrowserState) and renames the
 // result over the kept file once it is a state agent-browser can load.
-func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, presencePath string, now time.Time) error {
+func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, presencePath, ownTab string, now time.Time) error {
 	presence, ok := readBrowserPresence(presencePath)
 	if !ok || !presence.CookiesHeld {
 		return errBrowserSignInNotHeld
@@ -692,15 +709,23 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 	if err := os.Remove(candidate); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear the candidate %s: %w", candidate, err)
 	}
+	// Whatever the walk last made active, the save reads the call's own tab:
+	// a popup opened after the walk's last look is active at the next
+	// command.
+	switched := walkBrowser(ctx, [][]string{{browserCmdTab, ownTab}}, run)
 	base, active, err := browserTabs(ctx, run)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "zerops_browser: kept sign-in: the save reads tab %q (%q)\n", active.ID, active.Origin)
 	if base != presence.BaseTarget {
 		if err := writeBrowserPresence(presencePath, browserPresence{}); err != nil {
 			logBrowserSignIn(err)
 		}
 		return errBrowserRelaunched
+	}
+	if switched != nil || active.ID != ownTab || active.Base || active.Origin == "" {
+		return fmt.Errorf("%w: tab %q (%q) is active", errBrowserSaveOffTheCallsTab, active.ID, active.Origin)
 	}
 	if err := walkBrowser(ctx, [][]string{{"state", "save", candidate}}, run); err != nil {
 		return err
@@ -714,7 +739,7 @@ func saveBrowserSignIn(ctx context.Context, run browserStepExec, stateDir, prese
 		_ = os.Remove(candidate)
 		return fmt.Errorf("the saved state %s is not one agent-browser can load", candidate)
 	}
-	read := browserSaveRead(presence, active)
+	read := browserSaveRead(presence, active.Origin)
 	old, _ := readBrowserFile(filepath.Join(stateDir, browserSignInFile))
 	if err := writeBrowserFile(candidate, mergeBrowserState(old, saved, read, now)); err != nil {
 		return fmt.Errorf("write the saved state %s: %w", candidate, err)

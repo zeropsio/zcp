@@ -650,7 +650,7 @@ func TestHandBackBrowser_SavesTheSignInBeforeTheBrowserGoesIdle(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	keptWhenIdle := ""
-	_, err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), savingBrowser(signedInState, &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
 		keptWhenIdle = keptState(t, dir)
 		return nil
 	})
@@ -674,7 +674,7 @@ func TestHandBackBrowser_AFailedSaveStillHandsTheBrowserBack(t *testing.T) {
 	dir := readyStateDir(t)
 	var seen [][]string
 	idle := false
-	_, err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), func(context.Context) error {
+	_, err := handBackBrowser(t.Context(), savingBrowser("", &seen), dir, presenceIn(t, browserPresence{CookiesHeld: true}), "t2", func(context.Context) error {
 		idle = true
 		return nil
 	})
@@ -706,7 +706,7 @@ func TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing(t *testing.T
 	writeKept(t, dir)
 	presence := presenceIn(t, browserPresence{CookiesHeld: true, Opened: []string{"http://127.0.0.1:18731"}, BaseTarget: "A7E47918804A4FDA"})
 	var seen [][]string
-	note, err := handBackBrowser(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, func(context.Context) error { return nil })
+	note, err := handBackBrowser(t.Context(), savingBrowser(`{"cookies":[],"origins":[]}`, &seen), dir, presence, "t2", func(context.Context) error { return nil })
 	if err != nil || note == "" {
 		t.Errorf("a relaunched Chrome: note=%q err=%v", note, err)
 	}

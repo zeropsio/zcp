@@ -82,6 +82,10 @@ type BrowserStepResult struct {
 	Result    json.RawMessage `json:"result,omitempty"`
 	Error     *string         `json:"error,omitempty"`
 	ErrorKind string          `json:"errorKind,omitempty"`
+	// Note is what the walk says of a step that it did not get from
+	// agent-browser: a tab it followed after the step without waiting for
+	// its first paint, for lack of the call's time.
+	Note string `json:"note,omitempty"`
 }
 
 // ErrorKind values classify a step's Error text into a coarse category so
@@ -994,13 +998,26 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 }
 
 // refusedCommands maps each caller command the tool does not run to the
-// error its refused step carries: why, and what to use instead. A tab command
-// runs only as the list or a switch (readBrowserTabCommand).
+// error its refused step carries: why, and what to use instead. Every name
+// agent-browser 0.39.1 takes for one is here (cli/src/commands.rs matches
+// them exactly, case included): goto and navigate are open, quit and exit
+// are close, and batch runs commands of its own, any of these among them. A
+// tab command runs only as the list or a switch (readBrowserTabCommand).
 var refusedCommands = map[string]string{
-	browserCmdOpen:   "not run: the call opens its url itself; follow a link with click or find, or pass another page as url in a new call",
-	browserCmdClose:  "not run: the tool closes the call's tabs itself and keeps the shared browser",
+	browserCmdOpen:   browserRefusedOpen,
+	"goto":           browserRefusedOpen,
+	"navigate":       browserRefusedOpen,
+	browserCmdClose:  browserRefusedClose,
+	"quit":           browserRefusedClose,
+	"exit":           browserRefusedClose,
 	browserCmdWindow: "not run: the tool owns the call's tabs; for a clean context pass isolation \"fresh-context\"",
+	"batch":          "not run: the call is already one batch; pass each command as its own element of commands",
 }
+
+const (
+	browserRefusedOpen  = "not run: the call opens its url itself; follow a link with click or find, or pass another page as url in a new call"
+	browserRefusedClose = "not run: the tool closes the call's tabs itself and keeps the shared browser"
+)
 
 // refusedCommand answers why a caller's command does not run, if it does
 // not. The command is named as agent-browser reads it, past its global flags

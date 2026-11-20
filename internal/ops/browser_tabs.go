@@ -75,10 +75,18 @@ func browserTabRefusal(cmd []string) string {
 }
 
 const (
+	browserCmdGet        = "get"
+	browserCmdSnapshot   = "snapshot"
 	browserSubcmdTabList = "list"
 	// browserTabStepTimeout bounds each step the walk takes to follow a tab:
 	// the switch, the paint wait (5 s of its own) and the focus hold (3 s).
+	// Each is bounded by the call's own deadline as well.
 	browserTabStepTimeout = 8 * time.Second
+	// browserTabSettleLeast is the least time the call must have left for the
+	// walk to wait for a followed tab's first paint and hold focus on it (5 s
+	// and 3 s at most); with less, it switches only, so the call does not run
+	// past its deadline, lose its browser and skip the sign-in's save.
+	browserTabSettleLeast = 10 * time.Second
 )
 
 // browserFocusHold focuses the active tab's window and answers once the page
@@ -93,6 +101,7 @@ var browserFocusHold = []string{browserCmdEval, "new Promise(r=>{window.focus();
 type browserTabEntry struct {
 	TabID  string `json:"tabId"`
 	Active bool   `json:"active"`
+	URL    string `json:"url"`
 }
 
 // browserCallTabs is what a walk knows of the call's tabs.
@@ -101,13 +110,23 @@ type browserCallTabs struct {
 	own string
 	// before are the tabs open when the walk began, own among them.
 	before []string
-	// opened are the tabs opened during the call, in the order seen.
-	opened []string
-	// active is the tab the walk keeps active; returns is the tab each
-	// opened tab was opened from, active again when it closes.
+	// opened are the tabs opened during the call and still open, in the
+	// order seen; pending are those seen while the call's own page loaded,
+	// followed once its load is checked.
+	opened, pending []string
+	// active is the tab the walk keeps active; returns is the tab that was
+	// active when each opened tab was seen — the one it returns to when it
+	// closes, while that one is open.
 	active  string
 	returns map[string]string
-	stderr  *capBuffer
+	// lost says a tab list failed twice while a tab the call opened was
+	// active: where the next step would run is unknown, so no caller step
+	// runs any more.
+	lost bool
+	// note is what the walk says of its last follow, for the step after
+	// which it ran: a follow cut short for the call's deadline.
+	note   string
+	stderr *capBuffer
 }
 
 // startBrowserCallTabs reads the tabs as a call's walk begins; the active one
@@ -158,8 +177,8 @@ func (t *browserCallTabs) list(ctx context.Context, run browserStepExec) ([]json
 }
 
 // housekeep runs one step the walk takes for itself, bounded by
-// browserTabStepTimeout; it is no step of the result. ok says it answered
-// success.
+// browserTabStepTimeout and the call's deadline; it is no step of the result.
+// ok says it answered success.
 func (t *browserCallTabs) housekeep(ctx context.Context, run browserStepExec, step []string) (string, bool) {
 	sctx, cancel := context.WithTimeout(ctx, browserTabStepTimeout)
 	defer cancel()
@@ -183,14 +202,40 @@ func (t *browserCallTabs) isCalls(tab string) bool {
 	return tab == t.own || slices.Contains(t.opened, tab)
 }
 
+// listAfterStep reads the tabs after a step. A list that fails while a tab
+// the call opened is active is asked once more — agent-browser may have
+// fallen back to the base tab when that tab closed — and one that fails
+// again marks the walk lost (browserCallTabs.lost).
+func (t *browserCallTabs) listAfterStep(ctx context.Context, run browserStepExec) ([]browserTabEntry, bool) {
+	_, tabs, ok := t.list(ctx, run)
+	if !ok && t.active != t.own {
+		_, tabs, ok = t.list(ctx, run)
+		t.lost = !ok
+	}
+	return tabs, ok
+}
+
 // sync reads the tabs after a step and keeps the walk on what a person would
 // look at: a tab opened since becomes active, focused, after its first paint
-// (the last one when several opened); when the active tab closed, the tab it
-// was opened from — or, if that closed too, the call's own — is active again;
-// otherwise the walk's active tab stays active, whatever agent-browser made
-// active. closed says the active tab was gone.
+// (the last one when several opened); when the active tab closed, the tab
+// that was active when it was seen is active again while it is open, and the
+// call's own tab otherwise; else the walk's active tab stays active, whatever
+// agent-browser made active. closed says the active tab was gone.
 func (t *browserCallTabs) sync(ctx context.Context, run browserStepExec) (closed bool) {
-	_, tabs, ok := t.list(ctx, run)
+	return t.read(ctx, run, false)
+}
+
+// hold reads the tabs while the call's own page loads: a tab its page opened
+// is recorded and followed only once the load is checked (sync), and the
+// call's own tab is kept active, so the first-paint wait and the document's
+// status are the page's own.
+func (t *browserCallTabs) hold(ctx context.Context, run browserStepExec) {
+	t.read(ctx, run, true)
+}
+
+func (t *browserCallTabs) read(ctx context.Context, run browserStepExec, loading bool) (closed bool) {
+	t.note = ""
+	tabs, ok := t.listAfterStep(ctx, run)
 	if !ok {
 		return false
 	}
@@ -209,53 +254,65 @@ func (t *browserCallTabs) sync(ctx context.Context, run browserStepExec) (closed
 	closed = !slices.Contains(listed, t.active)
 	from := t.active
 	if closed {
-		from = t.returnTo(listed)
+		from = t.own
+		if opener := t.returns[t.active]; slices.Contains(listed, opener) {
+			from = opener
+		}
 	}
 	for _, tab := range fresh {
 		t.opened = append(t.opened, tab)
 		t.returns[tab] = from
 	}
 	t.opened = slices.DeleteFunc(t.opened, func(tab string) bool { return !slices.Contains(listed, tab) })
+	if loading {
+		t.pending = append(t.pending, fresh...)
+		if nowActive != t.own {
+			t.switchTo(ctx, run, t.own, false, false)
+		}
+		return closed
+	}
+	follow := append(slices.Clone(t.pending), fresh...)
+	t.pending = nil
+	follow = slices.DeleteFunc(follow, func(tab string) bool { return !slices.Contains(listed, tab) })
 	switch {
-	case len(fresh) > 0:
-		t.switchTo(ctx, run, fresh[len(fresh)-1], true)
+	case len(follow) > 0:
+		t.switchTo(ctx, run, follow[len(follow)-1], true, true)
 	case closed:
-		t.switchTo(ctx, run, from, false)
+		t.switchTo(ctx, run, from, false, true)
 	case nowActive != t.active:
-		t.switchTo(ctx, run, t.active, false)
+		t.switchTo(ctx, run, t.active, false, true)
 	}
 	return closed
 }
 
-// returnTo is the tab active again when the active one closed: the tab it was
-// opened from, or that one's own opener, up to the call's own tab.
-func (t *browserCallTabs) returnTo(listed []string) string {
-	tab := t.active
-	for tab != t.own {
-		next, ok := t.returns[tab]
-		if !ok {
-			return t.own
-		}
-		tab = next
-		if slices.Contains(listed, tab) {
-			return tab
-		}
-	}
-	return t.own
-}
-
-// switchTo makes tab active, which brings it to front, then — for a tab just
-// opened — waits for its first paint, and holds focus on it
-// (browserFocusHold). A switch that fails leaves the active tab as it was.
-func (t *browserCallTabs) switchTo(ctx context.Context, run browserStepExec, tab string, fresh bool) {
+// switchTo makes tab active, which brings it to front; settle then — for a
+// tab just opened — waits for its first paint and holds focus on it
+// (browserFocusHold). A hold that fails on a page that moved on by itself
+// (its script redirected it) is tried once more after that page's first
+// paint. With under browserTabSettleLeast of the call left, the walk only
+// switches and says so in note. A switch that fails leaves the active tab as
+// it was.
+func (t *browserCallTabs) switchTo(ctx context.Context, run browserStepExec, tab string, fresh, settle bool) {
 	if _, ok := t.housekeep(ctx, run, []string{browserCmdTab, tab}); !ok {
 		return
 	}
 	t.active = tab
+	if !settle {
+		return
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < browserTabSettleLeast {
+		t.note = fmt.Sprintf("the call's tab %s became active without waiting for its first paint or holding focus on it: under %s of the call's time was left", tab, browserTabSettleLeast)
+		return
+	}
 	if fresh {
 		t.housekeep(ctx, run, browserPaintWait)
 	}
-	t.housekeep(ctx, run, browserFocusHold)
+	for attempt := range 2 {
+		if _, held := t.housekeep(ctx, run, browserFocusHold); held || attempt == 1 {
+			break
+		}
+		t.housekeep(ctx, run, browserPaintWait)
+	}
 }
 
 // closedUnder reports, for a step that failed, whether it ran in a tab the
@@ -321,13 +378,42 @@ func (t *browserCallTabs) command(ctx context.Context, step []string, run browse
 	return refuse(browserTabRefusal(step))
 }
 
-// home makes the call's own tab active again as a clean walk ends, so the
-// hand-back saves the sign-in from it (§2.6c) and never from a popup still
-// open.
-func (t *browserCallTabs) home(ctx context.Context, run browserStepExec) {
-	if t.active != t.own {
-		if _, ok := t.housekeep(ctx, run, []string{browserCmdTab, t.own}); ok {
-			t.active = t.own
-		}
+// browserTabsLost is the error of each caller step a lost walk did not run
+// (browserCallTabs.lost).
+const browserTabsLost = "not run: the tab list did not answer after a tab the call opened was active, so where this step would run is unknown"
+
+// browserReadOnly reports whether a command only reads the page, so that one
+// that failed in a popup closing under it may run again in the tab the call
+// is back in: agent-browser 0.39.1's (cli/src/commands.rs) wait for a time, a
+// selector, text, a URL or a load state — not --fn, which runs the page's
+// script, nor --download, which writes a file; get text, html, value, attr,
+// url, title, count, box or styles; is visible, enabled or checked; and
+// snapshot. Every other command may act — a click, a key, a fill, a script
+// — and runs once.
+func browserReadOnly(cmd []string) bool {
+	own, _ := browserCommandArgs(cmd)
+	if len(own) == 0 {
+		return false
 	}
+	args := make([]string, 0, len(own))
+	for _, at := range own {
+		args = append(args, cmd[at])
+	}
+	sub := ""
+	if len(args) > 1 {
+		sub = args[1]
+	}
+	switch args[0] {
+	case browserCmdWait:
+		return !slices.ContainsFunc(args, func(a string) bool {
+			return slices.Contains([]string{"--fn", "-f", "--download", "-d"}, a)
+		})
+	case browserCmdGet:
+		return slices.Contains([]string{"text", "html", "value", "attr", "url", "title", "count", "box", "styles"}, sub)
+	case "is":
+		return slices.Contains([]string{"visible", "enabled", "checked"}, sub)
+	case browserCmdSnapshot:
+		return true
+	}
+	return false
 }

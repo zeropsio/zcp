@@ -98,6 +98,13 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	}
 	fresh := false
 	note := ""
+	// ownTab is the call's own tab, the one its setup opened: the hand-back
+	// saves the sign-in from it.
+	ownTab := ""
+	setup := func() (err error) {
+		ownTab, err = h.setup(ctx, isolation)
+		return err
+	}
 	ready := func(running bool) error {
 		fresh = true
 		if running {
@@ -122,10 +129,10 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 				return err
 			}
 		}
-		return h.setup(ctx, isolation)
+		return setup()
 	}
 	if reused {
-		err = h.setup(ctx, isolation)
+		err = setup()
 		if err != nil {
 			// The warm browser did not answer; one fresh start is the retry.
 			err = ready(true)
@@ -143,7 +150,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	saveNote := ""
 	handBack := func(rctx context.Context) error {
 		var err error
-		saveNote, err = handBackBrowser(rctx, h.step, stateDir, browserPresencePath, func(mctx context.Context) error {
+		saveNote, err = handBackBrowser(rctx, h.step, stateDir, browserPresencePath, ownTab, func(mctx context.Context) error {
 			w, _, err := readWarmBrowser(mctx)
 			if err != nil {
 				return err
@@ -162,15 +169,15 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 
 // setup marks the browser busy (a caller that dies mid-call leaves it so,
 // and the next call recycles), links the Mate's stream endpoint, and opens
-// the call's tab.
-func (h browserHost) setup(ctx context.Context, isolation string) error {
+// the call's tab, which it answers.
+func (h browserHost) setup(ctx context.Context, isolation string) (string, error) {
 	if err := writeBrowserMarker(browserMarkerBusy); err != nil {
-		return err
+		return "", err
 	}
 	if err := linkBrowserStream(h.home); err != nil {
-		return err
+		return "", err
 	}
-	return walkBrowser(ctx, browserSetupSteps(isolation), h.step)
+	return readyCallTab(ctx, isolation, h.step)
 }
 
 // start launches the warm browser's service, the kept sign-in's folder in
@@ -301,4 +308,30 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 		logBrowserSignIn(err)
 	}
 	return stdout, stderr, truncated, walkErr
+}
+
+// readyCallTab runs a call's setup steps (browserSetupSteps) and answers the
+// call's own tab: the one its last step opened.
+func readyCallTab(ctx context.Context, isolation string, run browserStepExec) (string, error) {
+	steps := browserSetupSteps(isolation)
+	if err := walkBrowser(ctx, steps[:len(steps)-1], run); err != nil {
+		return "", err
+	}
+	opened := steps[len(steps)-1]
+	out, _, err := run(ctx, opened)
+	var answer struct {
+		Success bool `json:"success"`
+		Data    struct {
+			TabID string `json:"tabId"`
+		} `json:"data"`
+		Error *string `json:"error"`
+	}
+	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(out)), &answer); jsonErr != nil || !answer.Success || answer.Data.TabID == "" {
+		reason := "no tab id in its answer"
+		if answer.Error != nil {
+			reason = *answer.Error
+		}
+		return "", fmt.Errorf("browser step %q: %s: %w", strings.Join(opened, " "), reason, errors.Join(err, jsonErr))
+	}
+	return answer.Data.TabID, nil
 }
