@@ -33,10 +33,12 @@ type unproposedBranch struct {
 // this Mate's HQ repositories hold — never main, never a mate/ branch (an
 // open change's own) — that the change ledger keeps no change on: one per
 // repository and branch, by the first lease holding it. pools limits it to
-// leases of those pools (nil: every lease). Each names the ledger's open
-// changes of the Mate's own in its repository (ownOpenChanges). It reads
-// zcp's own records only.
-func unproposedLeaseBranches(stateDir string, rt runtime.Info, pools []string) []unproposedBranch {
+// leases of those pools (nil: every lease). With offer, each names the
+// ledger's open changes of the Mate's own in its repository (ownOpenChanges)
+// — the develop close's note; pool-migrate's retire offers none, since a
+// migration branch carries the pool's setup, deploy configuration, which
+// always gets a change of its own. It reads zcp's own records only.
+func unproposedLeaseBranches(stateDir string, rt runtime.Info, pools []string, offer bool) []unproposedBranch {
 	if !rt.MateEnabled || stateDir == "" {
 		return nil
 	}
@@ -71,7 +73,11 @@ func unproposedLeaseBranches(stateDir string, rt runtime.Info, pools []string) [
 		if slices.ContainsFunc(inRepo, func(c workflow.HQChange) bool { return c.Branch == l.Branch }) {
 			continue
 		}
-		out = append(out, unproposedBranch{alias: l.Alias, branch: l.Branch, addTo: ownOpenChanges(inRepo)})
+		b := unproposedBranch{alias: l.Alias, branch: l.Branch}
+		if offer {
+			b.addTo = ownOpenChanges(inRepo)
+		}
+		out = append(out, b)
 	}
 	slices.SortFunc(out, func(a, b unproposedBranch) int { return strings.Compare(a.branch+a.alias, b.branch+b.alias) })
 	return out
@@ -117,9 +123,12 @@ func unproposedNote(branches []unproposedBranch) string {
 }
 
 // addToOpenChangeWords offer b's work to the Mate's own open changes in its
-// repository, as AGENTS.md's "What one change holds" allows: merged into that
-// change's branch, pushed, the change described again, b's lease released so
-// its branch is no longer named as unproposed.
+// repository, as AGENTS.md's "What one change holds" allows. A lease checkout
+// holds only its own branch, so the branch is pushed from its lease and
+// merged as origin/<branch> where the open change's branch is checked out;
+// then that change is described again and b's branch released — every lease
+// of its group, and only once pushed, which a release otherwise refuses — so
+// it is no longer named as unproposed.
 func addToOpenChangeWords(b unproposedBranch) string {
 	named := make([]string, 0, len(b.addTo))
 	for _, c := range b.addTo {
@@ -129,6 +138,6 @@ func addToOpenChangeWords(b unproposedBranch) string {
 	if len(named) > 1 {
 		which = "one of your open changes (" + strings.Join(named, ", ") + ")"
 	}
-	return fmt.Sprintf(", or, if AGENTS.md's \"What one change holds\" says so, add it to %s: merge %q into that change's branch where it is checked out, push, describe that change again, and release lease %s",
-		which, b.branch, b.alias)
+	return fmt.Sprintf(", or, if AGENTS.md's \"What one change holds\" says so, add it to %s: push it from its lease (zcp git %s push origin %s); where that change's branch is checked out, zcp git <host> fetch origin && zcp git <host> merge origin/%s, then push; describe that change again; then release the branch (%s)",
+		which, b.alias, b.branch, b.branch, ops.LeaseReleaseBranchCall(b.branch, "", false))
 }

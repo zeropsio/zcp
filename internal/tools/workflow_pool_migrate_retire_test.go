@@ -1030,6 +1030,46 @@ func TestPoolMigrateRetire_InAMate_NamesTheWorkBranchNoChangeProposes(t *testing
 	}
 }
 
+// TestPoolMigrateRetire_InAMate_OffersNoOpenChangeForTheMigrationBranch: the
+// retired answer names the migration branch's open-change call and never
+// offers the Mate's own open change in that repository for it, as the develop
+// close does: the branch carries the pool's setup, deploy configuration,
+// which always gets a change of its own (docs/spec-workflows.md DP-37).
+// witness: internal/tools/workflow_pool_migrate_retire.go | unproposedLeaseBranches(r.d.stateDir, r.d.rt, r.rec.pools(), false) → unproposedLeaseBranches(r.d.stateDir, r.d.rt, r.rec.pools(), true)
+func TestPoolMigrateRetire_InAMate_OffersNoOpenChangeForTheMigrationBranch(t *testing.T) {
+	t.Parallel()
+	const repo = "https://hq.example.com/git/org-1/app-1/appdev.git"
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.rt.MateEnabled = true
+		f.rt.OrgID = "org-1"
+		f.hqAddress = func() string { return "https://hq.example.com" }
+		f.meta.GitPushState, f.meta.RemoteURL = "", repo
+		f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+		f.ssh.output = poolMigrateCensusFor("dev-pools", "origin", "dev-pools", "")
+	})
+	r.f.rt.HQ = &runtime.HQLink{Origin: "https://hq.example.com"}
+	record := `{"poolHostname":"apppool","poolServiceId":"svc-pool","containerId":"c-1","containerNumber":1,` +
+		`"containerHostname":"node-id-1.runtime.apppool.zerops","lease":"secret-lease-value","branch":"dev-pools",` +
+		`"repo":"` + repo + `","acquiredAt":"2026-10-24T09:30:00Z"}`
+	if err := os.WriteFile(filepath.Join(r.f.stateDir, "leases", retireLeaseAlias+".json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Two open changes, so neither is taken as the migration's work branch.
+	for number, branch := range map[int]string{7: "sort-orders", 8: "toast"} {
+		if err := workflow.RecordHQChange(r.f.stateDir, workflow.HQChange{AppID: "app-1", Repo: "appdev", Number: number, Branch: branch, Source: workflow.HQChangeFromOpen}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, isErr := r.retire(t, retireInput(true, true))
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want retired", out)
+	}
+	said, _ := out["nextUnavailable"].(string)
+	if !strings.Contains(said, `action="open-change"`) || strings.Contains(said, "#7") || strings.Contains(said, "#8") {
+		t.Errorf("the retired answer must name the open-change call and offer no open change: %s", said)
+	}
+}
+
 // TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
 // does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
 // DP-2): the container may be another holder's by now, so the retire refuses

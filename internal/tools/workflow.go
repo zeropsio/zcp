@@ -1320,7 +1320,7 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// In a Mate, a lease branch no change proposes yet is work no person
 	// was asked to review: name it with the call that proposes it.
 	closed := "Work session closed."
-	if note := unproposedNote(unproposedLeaseBranches(stateDir, rt, nil)); note != "" {
+	if note := unproposedNote(unproposedLeaseBranches(stateDir, rt, nil, true)); note != "" {
 		closed += " " + note
 	}
 	return withFreshEnvelope(ctx, textResult(closed),

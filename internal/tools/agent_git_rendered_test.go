@@ -71,6 +71,7 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 		texts["mainTakesTheMerge, "+name] = mainTakesTheMerge(route)
 		texts["answeredOpenChange, "+name] = answeredOpenChange(route, hqc, "appdev", "add-signup", "fix-login", 1)
 	}
+	texts["unproposedNote, offering an open change"] = unproposedNote([]unproposedBranch{{alias: "webpool-3", branch: "fix-copy", addTo: []workflow.HQChange{{Number: 4, Branch: "sort-orders"}}}})
 	texts["corePushWords, its leases"] = corePushWords(6, 5, "badge", plain, []string{"webpool-3", "boxpool-6"}, false)
 	texts["standingWords behind, its leases"] = standingWords(6, "badge", behind, workflow.HQChangeTold{}, plain, []string{"webpool-3"}, false)
 	for _, refusal := range []string{"ZCP_BASE_NOT_SEED 0123456789ab", "ZCP_BASE_NOT_SEED", "ZCP_BRANCH_ELSEWHERE", "ZCP_STAGED_CHANGES", "ZCP_UNTRACKED_COLLISION app.js"} {

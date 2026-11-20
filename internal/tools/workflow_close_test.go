@@ -314,7 +314,7 @@ func TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository
 					t.Fatal(err)
 				}
 			}
-			branches := unproposedLeaseBranches(dir, mate, nil)
+			branches := unproposedLeaseBranches(dir, mate, nil, true)
 			if len(branches) != 1 || branches[0].branch != "dev-pools" {
 				t.Fatalf("unproposed branches = %+v, want dev-pools alone", branches)
 			}
