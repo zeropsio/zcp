@@ -113,7 +113,11 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 			return withAPICode(NewPlatformError(ErrServiceNotFound, msg, "Check service hostname"), errCode, meta)
 		}
 	case http.StatusTooManyRequests:
-		return withAPICode(NewPlatformError(ErrAPIRateLimited, msg, "Wait and retry"), errCode, meta)
+		if msg == "" {
+			msg = "the Zerops API refused the call as too many requests (429)"
+		}
+		return withAPICode(NewPlatformError(ErrAPIRateLimited, msg,
+			"Wait a few seconds before one more call; calls sent at once are refused the same way"), errCode, meta)
 	}
 
 	if code >= 500 {
