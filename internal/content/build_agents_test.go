@@ -42,7 +42,7 @@ func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 
 // TestBuildAgentsMD_Container_RunOnServiceRule pins the always-on
 // edit-vs-run topology rule in the container shim: build/test/framework
-// commands run INSIDE the service over SSH at the container-internal
+// commands run INSIDE the service with `zcp run` at the container-internal
 // `/var/www`, distinct from EDITING via the host-view mount
 // `/var/www/{hostname}/`. Before this, the rule lived only in
 // first-deploy-gated develop atoms (develop-first-deploy-write-app,
@@ -55,10 +55,9 @@ func TestBuildAgentsMD_Container_RunOnServiceRule(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	for _, want := range []string{
-		"ssh {hostname}",    // the run handle (literal placeholder, not substituted)
-		"cd /var/www && ",   // container-internal run path, distinct from the mount
-		"npm run build",     // the canonical forgotten command
-		"zerops_dev_server", // long-running dev servers are the one exception
+		"zcp run {hostname}", // the run handle (literal placeholder, not substituted)
+		"npm run build",      // the canonical forgotten command
+		"zerops_dev_server",  // long-running dev servers are the one exception
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("container AGENTS.md missing run-on-service rule fragment %q", want)
@@ -67,6 +66,35 @@ func TestBuildAgentsMD_Container_RunOnServiceRule(t *testing.T) {
 	// Must state WHY commands run on the service, not in the agent's shell.
 	if !strings.Contains(out, "not on this host") {
 		t.Error("container AGENTS.md must explain WHY: the runtime + deps live in the service container, not on this host")
+	}
+}
+
+// TestBuildAgentsMD_Container_RunsCommandsInTheServiceOnlyThroughZcpRun: the
+// container AGENTS.md runs commands in a service with `zcp run`, tool
+// installs included, and never offers plain ssh as another way in — a plain
+// ssh session runs under the container's limit on SSH sessions' processes,
+// outside the process scope `zcp run` gives a command. A Mate on the free
+// agent took the offered ssh path (2026-11-20).
+// witness: internal/content/templates/agents_container.md | (`zcp run {hostname} sudo apk add <pkg>` on Alpine → (`ssh {hostname} "sudo apk add <pkg>"` on Alpine
+func TestBuildAgentsMD_Container_RunsCommandsInTheServiceOnlyThroughZcpRun(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"`zcp run {hostname} <cmd> [args]`",
+		"`zcp run {hostname} sudo apk add <pkg>`",
+		"Never run a command there with plain `ssh {hostname}`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md lacks %q", want)
+		}
+	}
+	for _, retired := range []string{"reaches it too", `ssh {hostname} "sudo apk add`} {
+		if strings.Contains(out, retired) {
+			t.Errorf("container AGENTS.md still offers plain ssh: %q", retired)
+		}
 	}
 }
 

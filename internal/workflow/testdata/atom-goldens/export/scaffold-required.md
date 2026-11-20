@@ -76,7 +76,8 @@ The `ports` entry is required for runtimes that serve HTTP — match the value f
 ## Commit the scaffolded yaml
 
 ```
-ssh {targetHostname} "cd /var/www && git add zerops.yaml && git commit -m 'chore: scaffold zerops.yaml for export bundle'"
+zcp git {targetHostname} add zerops.yaml
+zcp git {targetHostname} commit -m 'chore: scaffold zerops.yaml for export bundle'
 ```
 
 This commit lands inside the bundle when the export publishes — the destination project sees the same `zerops.yaml` you scaffolded.

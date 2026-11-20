@@ -37,7 +37,8 @@ Probe-first: the handler runs a write-auth probe (`git push --dry-run` to a thro
 ## 2. Commit + first push
 
 ```
-ssh {hostname} "cd /var/www && git add -A && git commit -m 'initial commit'"
+zcp git {hostname} add -A
+zcp git {hostname} commit -m 'initial commit'
 
 zerops_deploy targetService="{hostname}" strategy="git-push" \
   branch="main"
@@ -45,7 +46,7 @@ zerops_deploy targetService="{hostname}" strategy="git-push" \
 
 `git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call authenticates via the push source's `GIT_TOKEN` (service-scope secret, read live by the credential helper) and the stamped `origin` — no extra plumbing needed.
 
-**Push via `zerops_deploy strategy="git-push"`** — it watches the integration build to completion (build logs + classification on failure) instead of stopping at the push receipt. A manual `git push` run ON the runtime container (`ssh {hostname} "cd /var/www && git push"`) also authenticates — the setup writes a url-scoped credential helper into the repo config reading the live `$GIT_TOKEN` — but skips the build watch, so prefer the deploy call. Shells OUTSIDE the container (the ZCP host, the SSHFS mount) hold no credential and still fail with "could not read Username".
+**Push via `zerops_deploy strategy="git-push"`** — it watches the integration build to completion (build logs + classification on failure) instead of stopping at the push receipt. A manual `git push` run ON the runtime container (`zcp git {hostname} push`) also authenticates — the setup writes a url-scoped credential helper into the repo config reading the live `$GIT_TOKEN` — but skips the build watch, so prefer the deploy call. Shells OUTSIDE the container (the ZCP host, the SSHFS mount) hold no credential and still fail with "could not read Username".
 
 The `remoteUrl` arg is optional on the deploy call (the stamped meta carries it). On failure, read `failureClassification.category` — `credential` means the token was rejected by the remote (re-call git-push-setup with a fresh PAT), `config` with a committed-code cause means there is no commit on HEAD yet.
 

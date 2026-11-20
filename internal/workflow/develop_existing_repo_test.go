@@ -78,7 +78,7 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 			"`run.prepareCommands`",
 			"no dependency install in `buildCommands`",
 			"the first deploy puts its `run.start` under the dev-server supervisor",
-			`ssh appdev "cd <repo dir> && <the repo's install command>"`, "(`/var/www`, or the code volume's `mountPath`)",
+			`zcp run appdev sh -c 'cd <repo dir> && <the repo's install command>'`, "(`/var/www` or the code volume's `mountPath`)",
 			"A restart keeps the installed dependencies",
 			"a redeploy replaces the dev container with what git carries",
 			"`notCarried`",
@@ -96,7 +96,7 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 		t.Parallel()
 		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "run this repo here")
 		requireAll(t, body,
-			"Nothing answers a prompt over SSH: prefix the command with `CI=true` and end it with `</dev/null`",
+			"Nothing answers a prompt: prefix the command with `CI=true` and end it with `</dev/null`",
 			"A package manager the run image already ships is used as it stands",
 			"`EEXIST`",
 		)

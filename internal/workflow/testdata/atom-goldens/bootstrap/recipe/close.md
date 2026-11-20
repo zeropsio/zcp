@@ -86,11 +86,12 @@ the session as finished, check every dev runtime that has files on disk
 
 1. Write a `.gitignore` for the stack: dependency directories, build
    output, local caches, and `.env`/`.env.*` files all belong in it.
-2. Commit everything else as the baseline, on the service itself over
-   SSH — for example:
+2. Commit everything else as the baseline, in the service itself with
+   `zcp git`, which runs each git command in that service's checkout:
 
 ```
-ssh appdev "cd /var/www && git add -A && git commit -m 'baseline commit' -m 'Zcp-Commit: baseline'"
+zcp git appdev add -A
+zcp git appdev commit -m 'baseline commit' -m 'Zcp-Commit: baseline'
 ```
 
 Keep the `Zcp-Commit: baseline` line: it marks the commit as the

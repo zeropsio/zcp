@@ -33,15 +33,17 @@ adopted service's repository. Check each adopted dev runtime once that
 call returns, before reporting adopt as done — a runtime whose tree came
 back uncommitted (`repo.provenance: initialized` in this response's
 envelope — `services[].repo`, the same block `zerops_workflow
-action="status"` carries — or `git status` over SSH shows
+action="status"` carries — or `zcp git appdev status --short` shows
 untracked/staged content) still needs:
 
 1. A `.gitignore` for the stack: dependency directories, build output,
    local caches, and `.env`/`.env.*` files all belong in it.
-2. The baseline commit, on the service itself over SSH — for example:
+2. The baseline commit, in the service itself with `zcp git`, which runs
+   each git command in that service's checkout:
 
 ```
-ssh appdev "cd /var/www && git add -A && git commit -m 'baseline commit' -m 'Zcp-Commit: baseline'"
+zcp git appdev add -A
+zcp git appdev commit -m 'baseline commit' -m 'Zcp-Commit: baseline'
 ```
 
 Keep the `Zcp-Commit: baseline` line: it marks the commit as the

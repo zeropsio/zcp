@@ -47,7 +47,8 @@ The second write is a pass-through when `bundle.zeropsYamlSource="live"` and the
 ## 2. Commit
 
 ```
-ssh {targetHostname} "cd /var/www && git add -A && git commit -m 'export: zerops-project-import.yaml + zerops.yaml for buildFromGit re-import'"
+zcp git {targetHostname} add -A
+zcp git {targetHostname} commit -m 'export: zerops-project-import.yaml + zerops.yaml for buildFromGit re-import'
 ```
 
 "Nothing to commit" → the yamls already match what's in the repo from a prior export. Continue to step 3 — there's still nothing to push if the working tree is clean and HEAD is already at the remote.

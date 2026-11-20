@@ -348,3 +348,43 @@ func TestDevelopGitPushStartFromRemoteAtom_NamesNoChangeOnThePair(t *testing.T) 
 		}
 	}
 }
+
+// TestCommitAtoms_CommitThroughZcpGit: the guidance that has the agent commit
+// in a service — bootstrap's and adopt's baseline, git-push setup's first
+// commit, export's commits — runs git there with `zcp git <host>`, never a
+// plain `ssh <host> "cd /var/www && git …"`, as AGENTS.md says for every git
+// command. A Mate on the free agent followed bootstrap close's ssh example
+// to the letter, outside its git relay and process scope (2026-11-20).
+// witness: internal/content/atoms/bootstrap-close-baseline-commit.md | zcp git {hostname} add -A → ssh {hostname} "cd /var/www && git add -A"
+func TestCommitAtoms_CommitThroughZcpGit(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	want := map[string]string{
+		"bootstrap-close-baseline-commit.md": "zcp git {hostname} commit -m 'baseline commit' -m 'Zcp-Commit: baseline'",
+		"bootstrap-adopt-baseline-commit.md": "zcp git {hostname} commit -m 'baseline commit' -m 'Zcp-Commit: baseline'",
+		"setup-git-push-container.md":        "zcp git {hostname} commit -m 'initial commit'",
+		"export-publish.md":                  "zcp git {targetHostname} add -A",
+		"scaffold-zerops-yaml.md":            "zcp git {targetHostname} add zerops.yaml",
+	}
+	sshGit := regexp.MustCompile(`ssh \S+ +"cd /var/www && git `)
+	seen := 0
+	for _, a := range atoms {
+		line, ok := want[a.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		if !strings.Contains(a.Content, line) {
+			t.Errorf("%s lacks %q", a.Name, line)
+		}
+		if m := sshGit.FindString(a.Content); m != "" {
+			t.Errorf("%s still commits over plain ssh: %q", a.Name, m)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("found %d of the %d commit atoms", seen, len(want))
+	}
+}
