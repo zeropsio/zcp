@@ -20,7 +20,7 @@ type ProcessInput struct {
 func RegisterProcess(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_process",
-		Description: "Check status, wait for, or cancel async work. Mutating tools poll automatically, so use this to: WAIT for in-flight work to finish (action=\"wait\" — pass service=<hostname> to wait that service's in-flight processes (build+deploy+queued ops like subdomain-enable), or processId/processIds to wait specific process(es)); CANCEL a pending process or a build that is uploading, waiting to build or building (action=\"cancel\"); or CHECK a historical one (action=\"status\", default).",
+		Description: "Check status, wait for, or cancel async work. Mutating tools poll automatically, so use this to: WAIT for in-flight work (action=\"wait\" — service=<hostname> waits that service's in-flight processes, build+deploy+queued ops like subdomain-enable; processId/processIds waits specific ones); CANCEL a pending, uploading, waiting or building process (action=\"cancel\"); or CHECK a historical one (action=\"status\", default).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Wait for, check, or cancel async process",
 			IdempotentHint:  true,
