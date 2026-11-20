@@ -28,6 +28,10 @@ const (
 	// browserPresencePath is the running browser's presence of the kept
 	// sign-in (browserPresence); it dies with the service.
 	browserPresencePath = browserRuntimeDir + "/zcp-signin.json"
+	// browserCallPath names the call that holds the browser
+	// (publishBrowserCall); beside the stream's port, it dies with the
+	// service.
+	browserCallPath = browserRuntimeDir + "/default.call"
 )
 
 // browserHost is how this process reaches the warm browser (browser_warm.go).
@@ -69,6 +73,10 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	if err != nil {
 		return nil, false, "", err
 	}
+	// The call's turn starts here; a call that died in its own leaves its
+	// file behind, which names nobody now.
+	since := time.Now()
+	withdrawBrowserCall(browserCallPath)
 	h, err := newBrowserHost()
 	if err != nil {
 		unlock()
@@ -99,10 +107,10 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	fresh := false
 	note := ""
 	// ownTab is the call's own tab, the one its setup opened: the hand-back
-	// saves the sign-in from it.
-	ownTab := ""
+	// saves the sign-in from it. ownTarget is its CDP target.
+	ownTab, ownTarget := "", ""
 	setup := func() (err error) {
-		ownTab, err = h.setup(ctx, isolation)
+		ownTab, ownTarget, err = h.setup(ctx, isolation)
 		return err
 	}
 	ready := func(running bool) error {
@@ -147,6 +155,12 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		unlock()
 		return nil, false, "", err
 	}
+	// Published only now the call has its tab; withdrawn once its tabs
+	// closed or the browser stopped, before the next call can take the lock.
+	withdraw, err := publishBrowserCall(browserCallPath, browserCallOf(ctx), ownTarget, since)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zerops_browser: %v\n", err)
+	}
 	saveNote := ""
 	handBack := func(rctx context.Context) error {
 		var err error
@@ -161,6 +175,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	}
 	release := func(reuse bool) (string, error) {
 		defer unlock()
+		defer withdraw()
 		err := releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
 		return saveNote, err
 	}
@@ -169,13 +184,13 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 
 // setup marks the browser busy (a caller that dies mid-call leaves it so,
 // and the next call recycles), links the Mate's stream endpoint, and opens
-// the call's tab, which it answers.
-func (h browserHost) setup(ctx context.Context, isolation string) (string, error) {
+// the call's tab, which it answers with its CDP target.
+func (h browserHost) setup(ctx context.Context, isolation string) (string, string, error) {
 	if err := writeBrowserMarker(browserMarkerBusy); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := linkBrowserStream(h.home); err != nil {
-		return "", err
+		return "", "", err
 	}
 	return readyCallTab(ctx, isolation, h.step)
 }
@@ -311,18 +326,20 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 }
 
 // readyCallTab runs a call's setup steps (browserSetupSteps) and answers the
-// call's own tab: the one its last step opened.
-func readyCallTab(ctx context.Context, isolation string, run browserStepExec) (string, error) {
+// call's own tab, the one its last step opened, and its CDP target, "" when
+// the answer names none (agent-browser 0.39.1's window new).
+func readyCallTab(ctx context.Context, isolation string, run browserStepExec) (string, string, error) {
 	steps := browserSetupSteps(isolation)
 	if err := walkBrowser(ctx, steps[:len(steps)-1], run); err != nil {
-		return "", err
+		return "", "", err
 	}
 	opened := steps[len(steps)-1]
 	out, _, err := run(ctx, opened)
 	var answer struct {
 		Success bool `json:"success"`
 		Data    struct {
-			TabID string `json:"tabId"`
+			TabID    string `json:"tabId"`
+			TargetID string `json:"targetId"`
 		} `json:"data"`
 		Error *string `json:"error"`
 	}
@@ -331,7 +348,7 @@ func readyCallTab(ctx context.Context, isolation string, run browserStepExec) (s
 		if answer.Error != nil {
 			reason = *answer.Error
 		}
-		return "", fmt.Errorf("browser step %q: %s: %w", strings.Join(opened, " "), reason, errors.Join(err, jsonErr))
+		return "", "", fmt.Errorf("browser step %q: %s: %w", strings.Join(opened, " "), reason, errors.Join(err, jsonErr))
 	}
-	return answer.Data.TabID, nil
+	return answer.Data.TabID, answer.Data.TargetID, nil
 }

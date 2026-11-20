@@ -73,6 +73,10 @@ type BrowserBatchInput struct {
 	// placeholder is worded by it.
 	EnvStorePath string `json:"-"`
 	InMate       bool   `json:"-"`
+
+	// Call is the agent's tool call this batch runs for, published as the
+	// browser's holder while it holds the browser (browser_call.go).
+	Call BrowserCall `json:"-"`
 }
 
 // BrowserStepResult is one step from agent-browser's --json output.
@@ -641,7 +645,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		)
 	}
 
-	release, fresh, note, err := browserRun.Acquire(ctx, isolation)
+	release, fresh, note, err := browserRun.Acquire(withBrowserCall(ctx, input.Call), isolation)
 	if err != nil {
 		return nil, fmt.Errorf("acquire browser: %w", err)
 	}
