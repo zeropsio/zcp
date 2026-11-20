@@ -6722,7 +6722,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (below), and tells the person in one sentence which changes it folded into which — never a
   change someone commented on or asked to merge as far as it knows, another Mate's, a handed one
   or a task's. When the person says to keep pieces of work apart, or to put them together, that
-  wins. Each push leaves a described change a draft until it is described again, and a person's
+  wins. Each push that changes a described change's diff leaves it a draft until it is described
+  again, and a person's
   Merge refuses a head that moved since they looked (`head_moved`), so nobody merges what they did
   not see; HQ squashes a change into one commit on `main`, which is why work beyond the interface
   stays apart. The develop start of a plain dev service adds that work added to the open change
@@ -7263,6 +7264,14 @@ writes onto it (`TestDescribeChange_WaitsWhileItsChangeIsHeld`). Words never rea
 written for: a change on record that merged or closed before they reached it is named to the Mate
 and nothing is kept, and words kept for a change that is gone are dropped rather than inherited by
 the next one. Describing never opens a change, and with none open there is nothing to describe yet.
+A describe that lands answers the change's `labels` — ready or draft, its mergeability and whether
+it is behind `main`, as status labels them (`changeLabels`) — from HQ's answer to the write itself,
+which carries the whole change; an answer without `ready` comes from an older HQ and is read as
+ready. Being the write's own answer, it needs no second read, and the agent reports the change it
+described this turn from it (the agent guidance's *Reporting a change's status*) unless it pushed
+to that change since. Its message says a push that changes the change's diff makes it a draft again,
+and that HQ keeps it ready when it can tell the diff is unchanged. Refused, kept and not-landed
+answers carry no labels.
 A describe waits out an HQ that is away for a moment (2026-10-06): HQ's Core rolls for about 20 s,
 and a describe that met the roll once left the change a draft. Its calls are tried again, a growing
 wait apart for about a minute in all, while HQ is not reached (refused, reset, no connection within
