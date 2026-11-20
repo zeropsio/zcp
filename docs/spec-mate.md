@@ -5638,8 +5638,8 @@ the record, and a rewrite under a running server changes nothing. A Mate migrate
 signer facts have been ported to HQ, takes its signers from HQ's link frame: HQ sends the ported
 signer map on the Mate's link and the server applies it to its own store; zcp reads no signers. An API key login has no sign-in
 to walk: the connection that stores its key signs it in, and its stored key is its credential. That
-record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
-`orchestration.dispatchCommand`'s turn-starting commands from any connection but the signer's, holds
+record is the gate's (`ZeropsProjectSigners.ts`): the server refuses to start a turn on that login
+from any connection but the signer's (mate `ZeropsTurnAdmission.ts`), holds
 a turn while a code being checked would change the answer (up to 30 s). Whether a signer may still
 run turns on a login is HQ's answer as that person, and offboarding signs out every login of a person
 HQ says lost the project (mate `ZeropsSignerStanding.ts`, `ZeropsOffboarding.ts`); a turn on a login
