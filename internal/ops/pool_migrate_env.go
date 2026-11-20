@@ -460,8 +460,8 @@ func gitTokenState(state string, in PoolMigrateEnvInput) PoolMigrateGitToken {
 // poolEnvRequest words the ask for one secret.
 func poolEnvRequest(key string, in PoolMigrateEnvInput) PoolMigrateEnvRequest {
 	label := LabelOfKey(key)
-	if utf8.RuneCountInString(label) > requestLabelMax {
-		label = string([]rune(label)[:requestLabelMax])
+	if utf8.RuneCountInString(label) > RequestLabelMax {
+		label = string([]rune(label)[:RequestLabelMax])
 	}
 	return PoolMigrateEnvRequest{
 		Key:   key,

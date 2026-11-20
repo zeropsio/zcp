@@ -193,7 +193,7 @@ func proposalReason(text string) (string, error) {
 	if reason == "" {
 		return "", invalid("a proposal needs a reason", "Say in one sentence why, for the person deciding")
 	}
-	if err := validateRequestLine("reason", reason, requestWhyMax, "reason: one line the card shows whole."); err != nil {
+	if err := validateRequestLine("reason", reason, RequestWhyMax, "reason: one line the card shows whole."); err != nil {
 		return "", err
 	}
 	return reason, nil

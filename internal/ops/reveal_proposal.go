@@ -41,7 +41,7 @@ type RevealParams struct {
 }
 
 // revealWhyMax bounds the reason to the one line the card shows whole.
-const revealWhyMax = requestWhyMax
+const revealWhyMax = RequestWhyMax
 
 // valueLike is a run that reads as a secret rather than words: twenty or more
 // characters a token is made of, with letters and digits both.

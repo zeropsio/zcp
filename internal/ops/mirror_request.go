@@ -42,7 +42,7 @@ func NewMirrorRequest(repo, why string) (MirrorRequest, error) {
 		return MirrorRequest{}, err
 	}
 	if strings.TrimSpace(why) != "" {
-		if err := validateRequestLine("why", why, requestWhyMax,
+		if err := validateRequestLine("why", why, RequestWhyMax,
 			"why: why the code should be on GitHub, one line Mate shows whole; or leave it out."); err != nil {
 			return MirrorRequest{}, err
 		}

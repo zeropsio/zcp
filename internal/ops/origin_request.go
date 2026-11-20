@@ -31,7 +31,7 @@ func NewOriginRequest(rawURL, repo, why string) (OriginRequest, error) {
 		perr.Suggestion = "repo is the repository in HQ the pair will wire: the dev service's hostname, as you will bootstrap it (appdev)."
 		return OriginRequest{}, perr
 	}
-	if err := validateRequestLine("why", why, requestWhyMax,
+	if err := validateRequestLine("why", why, RequestWhyMax,
 		"why: why finished work would go back there, one line Mate shows whole."); err != nil {
 		return OriginRequest{}, err
 	}

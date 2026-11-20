@@ -96,17 +96,17 @@ func envInputSchema(orgAIKey, asks bool) *jsonschema.Schema {
 		},
 		"label": {
 			Type:        "string",
-			Description: "request: its name for people (Stripe key).",
+			Description: fmt.Sprintf("request: its name for people (Stripe key), at most %d characters.", ops.RequestLabelMax),
 		},
 		"reason": {Type: "string"},
 		"why": {
 			Type:        "string",
-			Description: "request: what for, where to find it. Never a value.",
+			Description: fmt.Sprintf("request: what for, where to find it, at most %d characters. Never a value.", ops.RequestWhyMax),
 		},
 		"replace": flexBoolSchema("request: ask for a held key whose saved value is wrong; needs replaceWhy."),
 		"replaceWhy": {
 			Type:        "string",
-			Description: "replace: what is wrong with the saved value; the person reads it.",
+			Description: fmt.Sprintf("replace: what is wrong with the saved value; the person reads it. At most %d characters together with why.", ops.RequestWhyMax),
 		},
 		"again": flexBoolSchema("request: ask anew after a message said declined."),
 		"setup": {

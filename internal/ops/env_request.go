@@ -103,14 +103,14 @@ func LabelOfKey(key string) string {
 	return strings.Join(parts, " ")
 }
 
-// requestLabelMax bounds the label to a name. requestWhyMax bounds the why
+// RequestLabelMax bounds the label to a name. RequestWhyMax bounds the why
 // to what Mate's engine keeps of it (REASON_MAX in mate's
 // apps/server/src/engine/pump/vaultAsk.ts and originAsk.ts), so every
 // character zcp lets through is one the person reads: what the value is for
 // and where they find it. Steps belong in the chat.
 const (
-	requestLabelMax = 60
-	requestWhyMax   = 280
+	RequestLabelMax = 60
+	RequestWhyMax   = 280
 )
 
 // replacingWords joins a replace request's why and its replaceWhy into the
@@ -194,11 +194,11 @@ func validateRequestKey(key string) error {
 // one line: none, more than one line, or longer than a name or a short line.
 // A second line is where a value pasted by mistake would hide.
 func ValidateRequestWords(label, why string) error {
-	if err := validateRequestLine("label", label, requestLabelMax,
+	if err := validateRequestLine("label", label, RequestLabelMax,
 		"label: what the value is, in people's words (Stripe secret key)."); err != nil {
 		return err
 	}
-	return validateRequestLine("why", why, requestWhyMax,
+	return validateRequestLine("why", why, RequestWhyMax,
 		"why: what it is for and where the person finds it, one line Mate shows whole (for checkout, from the Stripe dashboard's API keys). Steps go in the chat; never a value.")
 }
 
@@ -214,7 +214,7 @@ func validateReplace(replace bool, replaceWhy string) error {
 			"replaceWhy goes with replace=true",
 			"Pass replace=true to ask the person to replace the saved value, or leave replaceWhy out.")
 	case replace:
-		return validateRequestLine("replaceWhy", replaceWhy, requestWhyMax, replaceWhyHint)
+		return validateRequestLine("replaceWhy", replaceWhy, RequestWhyMax, replaceWhyHint)
 	}
 	return nil
 }
@@ -317,9 +317,9 @@ func EnvRequest(ctx context.Context, client platform.Client, projectID string, i
 // and a held secret stays secret.
 func replacing(result *EnvRequestResult, replaceWhy string, asked bool) (*EnvRequestResult, error) {
 	why := replacingWhy(result.Why, replaceWhy)
-	if utf8.RuneCountInString(why) > requestWhyMax {
+	if utf8.RuneCountInString(why) > RequestWhyMax {
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The why and the replaceWhy together are longer than %d characters", requestWhyMax),
+			fmt.Sprintf("The why and the replaceWhy together are longer than %d characters", RequestWhyMax),
 			"Mate shows them as one line: the why says what the value is for, the replaceWhy what is wrong with the saved one. Shorten either.")
 	}
 	result.AlreadySet = false

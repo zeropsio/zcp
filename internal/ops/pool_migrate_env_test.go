@@ -457,7 +457,7 @@ func TestPoolMigrateEnv_MaskedBecomesRequest(t *testing.T) {
 				t.Fatalf("requests = %+v, want STRIPE_SECRET", out.Requests)
 			}
 			req := out.Requests[0]
-			if req.Label != "Stripe secret" || !strings.Contains(req.Why, "appdev") || len(req.Why) > requestWhyMax {
+			if req.Label != "Stripe secret" || !strings.Contains(req.Why, "appdev") || len(req.Why) > RequestWhyMax {
 				t.Errorf("request words = %+v", req)
 			}
 			if err := validateRequestKey(req.Key); err != nil {
