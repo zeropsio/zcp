@@ -13,7 +13,7 @@ import (
 // 2.1.326: {"claudecode/toolUseId":"toolu_…","progressToken":2}), with the
 // client's name from initialize; a progress token, a value that is no
 // string or an id past the bound is no id, so none is published.
-// witness: internal/tools/browser.go | if id, ok := meta[key].(string); ok && id != "" && len(id) <= browserCallIDMax { → if id, ok := meta["progressToken"].(string); ok {
+// witness: internal/tools/browser.go | if id, ok := meta[key].(string); ok && id != "" && len(id) <= browserCallIDMax { → if id, ok := meta[key].(string); ok && id != "" {
 func TestBrowserCall_ClientsOwnToolCallID_IsTheCallVerbatim(t *testing.T) {
 	t.Parallel()
 	claudeCode := &mcp.InitializeParams{ClientInfo: &mcp.Implementation{Name: "claude-code", Version: "2.1.326"}}
