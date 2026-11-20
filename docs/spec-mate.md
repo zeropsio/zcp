@@ -960,7 +960,8 @@ browser context, which starts signed out; agent-browser cannot dispose one, so t
 service stops when that call ends; `new-browser` recycles the service before the call
 (`TestWarmBrowser_ReusableOnlyInsideItsBounds`). The Mate's stream endpoint
 `~/.agent-browser/default.stream` is a symlink
-into the runtime directory, and dangles (no stream) while no browser runs. No
+into the runtime directory, and dangles (no stream) while no browser runs; beside the
+stream zcp names the tool call that holds the browser (§5.6, C-16). No
 process-name sweep or PID has kill authority. Raw browser tools and provider
 lifetimes are outside this service.
 
@@ -1270,6 +1271,7 @@ setting older releases may lack rides the environment instead, never a probed fl
 | C-13 | **A Mate's project admits its container over SSH.** From the moment the `zcp` container is imported, the project's `sshIsolation` is `vpn service@<container>`: people on the VPN and the container may SSH into every service of the project, app code into none. The hosted client's container import (a birth and Finish setup) updates the platform's own entry just before it imports the container; zcp never writes the project's value and relies on it for SSH into every service without a value of its own (a dev half, a stage, a mount, a deploy's readiness check). A service's own value holds for that service alone | mate `packages/client-runtime/src/zerops/api.ts` (`importDevelopmentContainer`) |
 | C-14 | **A Mate's project shares its services' variables with its container.** Before the import the press sets the project's `envIsolation` to `service service@<container>` (the platform's own entry, updated, never added; equal already → nothing written). Every service that states no isolation of its own inherits it, also one added later, and the platform writes its variables into the container's live env store as `<hostname>_<key>` (`docs/spec-zerops-env-lifecycle.md` §5); a service that states its own keeps it. The data console reads a value the API withholds from the Mate's key there (§5.7). A project the press did not set (one born before it, or changed since) is brought over by the container itself: at every start, a start after a zcp update included, `zcp init` in a Mate's container reads the project's `envIsolation` once and, when it does not admit the container (`service@<container>` or `none`), updates the entry with the Mate's own key, adding `service@<container>` and keeping every other rule, and prints the one change; a `-service@<container>` rule is someone's choice and stays, as does every service's own value. A refusal is printed once by that start, the start completes and nothing retries; the data console then answers `no_credentials`. A container that is no Mate never asks. A Mate's container reads every service's variables of its project: a `service@<container>` removed by hand returns at the next start, and only `-service@<container>` keeps the container out | mate `packages/client-runtime/src/zerops/api.ts` (the press); zcp `ops.AdmitContainerToProjectEnv` (the start); `TestAdmitContainerToProjectEnv_ProjectNotAdmittingTheContainer_GainsItKeepingEveryOtherRule`, `TestRun_MateContainer_AdmissionRefused_InitCompletes`, `TestRun_MateDisabled_NoAdmission` |
 | C-15 | **Every variable Mate or zcp writes on a Mate's container for itself is named under a hidden rule.** The Mate's own vault is the container service's user variables minus two rules of names (§5.8a): in every vault `ZCP_*`, `MATE_*`, `GITEA_*` and `GIT_TOKEN`; in the Mate's own vault also `T3CODE_*`, `VSCODE_PASSWORD` and `*_LEASE_TOKEN`. zcp and the client each carry both rules and they agree, name for name, case-sensitive. A variable either side starts writing on the container for itself is named under one of the rules, or both lists gain its name in the same change: otherwise the person sees it in the Mate's vault as a value to change or remove, and the agent may list it and hand it to a command. Adding this fact changes no release's contract number: every release at or above `MinimumMateVersion` already writes only such names | zcp `ops.IsVaultHidden`, `ops.IsOwnVaultHidden`; mate `packages/client-runtime/src/data/projections/vault.ts`; `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault` |
+| C-16 | **zcp names the tool call that holds the browser.** `/run/zcp-browser/default.call` holds `{"callId","client","since","targetId"}` while a call holds the browser: the calling client's own tool-call id from the `tools/call` request's `_meta`, verbatim (Claude Code's `claudecode/toolUseId`, its `toolu_…` id), the client's `initialize` name, when the call took the browser (ms since the epoch) and the CDP target of its own tab. zcp writes it in one rename once the call holds the browser lock and has its tab, removes it when the call lets go however it ended, and the next call to take the lock removes a file a dead zcp left. No file is nobody Mate can name driving; zcp never writes a guessed or generated id (§5.6). Adding this fact changes no release's contract number: a release without a reader ignores the file, and a zcp without a writer leaves none, which reads as the card's placeholder | zcp `ops.publishBrowserCall` (`internal/ops/browser_call.go`), `tools.browserCall`; mate `apps/server/src/zerops/ZeropsBrowserStream.ts`; `TestPublishBrowserCall_ACallWithAnID_NamesItsIDClientAndTab`, `TestPublishBrowserCall_ACallWithoutAnID_PublishesNoneAndClearsAStaleOne`, `TestBrowserCall_ClientsOwnToolCallID_IsTheCallVerbatim` |
 
 - **Registration and access.** HQ resolves a presented project key and checks whether that same key
   can read its own value in clear among the project's and non-system services' variables, refusing
@@ -4098,6 +4100,31 @@ bounded batch; §0 rule 3); the user sees the same browser two ways, both throug
   map canvas → viewport CSS px through the frame's device size and `pageScaleFactor` (no scroll
   term: CDP input is viewport-relative); drags carry `button: left`, hovers are not forwarded;
   the last frame stays on screen when the page is quiet.
+- **Whose call it is.** The daemon's frames carry no call (`{type, seq, data, metadata}`) and
+  `default.target` is agent-browser's own, so zcp names the tool call that holds the browser in
+  `/run/zcp-browser/default.call`, beside the stream's port, and Mate puts the live frames on that
+  call's card only. The file is `{"callId","client","since","targetId"}`: `callId` is the calling
+  client's own tool-call id from the `tools/call` request's `_meta`, verbatim — Claude Code sends
+  its `tool_use` id (`toolu_…`) as `claudecode/toolUseId` (recorded from Claude Code 2.1.326);
+  `client` is the `clientInfo.name` of the client's `initialize` (`claude-code`); `since` is when
+  the call took the browser, in ms since the epoch; `targetId` is the CDP target of the call's own
+  tab, the one its setup opened, absent when agent-browser's answer names none (0.39.1's `window
+  new`, a `fresh-context` call). A call holds the browser from the moment it holds the
+  container-wide browser lock and has its tab until its tabs are closed or, on a recycle, the
+  browser stopped. zcp writes the file once the call has its tab, as a private file (`0600`)
+  beside it renamed over it, so a reader sees one whole file, and removes it as the call's release
+  ends, however the call ended — clean, a deadline, a cancel, a wedge or a recycle — before the
+  next call can take the lock: two calls never share it. A call that takes the lock first removes
+  whatever is there, so a file left by a zcp that died mid-call lasts until the next call takes
+  the lock or the service ends (`/run/zcp-browser` is its `RuntimeDirectory`; the daemon's idle
+  exit, the hour's age). No file means nobody is driving or the client sent no id: zcp never
+  publishes a guessed or generated id, a client whose `_meta` names its call under no key zcp
+  knows publishes none (zcp logs the keys it sent), and `zerops_verify`'s render check publishes
+  none. Only Claude Code is known to send one (2026-11-20: Codex, Cursor and OpenCode could not
+  be run signed in, Grok and Antigravity were not at hand); every other agent's card keeps its
+  placeholder until its key is recorded. `targetId` stays on the call's own tab while the walk
+  follows the call's popups (§2.6b): every tab active in the call's turn is the call's, so every
+  frame streamed while the file names the call is that call's, whichever of its tabs it shows.
 
 ### 5.7 Data surface
 
