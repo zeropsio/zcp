@@ -194,7 +194,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), s.followRepos(), receive)
+	srv.AddReceivingMiddleware(s.observe(), s.followRecipe(), s.followRepos(), receive, decodeStringifiedArguments())
 	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 
@@ -355,7 +355,7 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 		telemetry: tel,
 	}
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
-	srv.AddReceivingMiddleware(s.observe(), receive)
+	srv.AddReceivingMiddleware(s.observe(), receive, decodeStringifiedArguments())
 	srv.AddSendingMiddleware(send)
 
 	tools.RegisterOrg(srv, org, uuid.NewString)
