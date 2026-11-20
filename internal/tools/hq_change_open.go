@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -369,11 +370,11 @@ func handedElsewhere(handed []hq.MateChange, repo string) string {
 // application limits who merges: the Mate's own open changes AGENTS.md's
 // "What one change holds" would have made one are folded into one, freeing
 // the others without waiting on anyone (docs/spec-mate.md §10.10).
-const foldOwnChanges = `First fold open changes of yours that AGENTS.md's "What one change holds" would have made one: merge their branches into one of them, push, describe it again in parts naming the changes it folds, and close each folded one (zerops_workflow action="close-change" branch="<its branch>"); or, where that rule says so, put this work on one of them instead of opening it.`
+const foldOwnChanges = `First fold open changes of yours that AGENTS.md's "What one change holds" would have made one: merge their branches into one of them, push, describe it again as a list, one item per ask, naming the changes it folds, and close each folded one (zerops_workflow action="close-change" branch="<its branch>"); or, where that rule says so, put this work on one of them instead of opening it.`
 
 // tooManyOpen refuses an open past as many open changes as HQ keeps the Mate
-// in the repository, naming them from the Mate's state when it was read, with
-// folding the Mate's own first.
+// in the repository, naming them from the Mate's state when it was read — a
+// handed one labelled, never to fold — with folding the Mate's own first.
 func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateErr error) *platform.PlatformError {
 	var named []string
 	if stateErr == nil {
@@ -381,6 +382,9 @@ func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateEr
 		open.Branch = ""
 		for _, c := range open.openCandidates(&state, nil) {
 			name := fmt.Sprintf("#%d on %q", c.Number, c.Branch)
+			if labels := openChangeLabels(c.Handed, nil, time.Time{}); len(labels) > 0 {
+				name += " (" + strings.Join(labels, " · ") + ")"
+			}
 			if c.Title != "" {
 				name += fmt.Sprintf(" (%q)", c.Title)
 			}

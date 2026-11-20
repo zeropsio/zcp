@@ -282,6 +282,8 @@ type changePick struct {
 	// InState: the Mate's own state names it open; else only the ledger
 	// does (the state was not read).
 	InState bool
+	// Handed: a person handed it to this Mate from a Mate that is gone.
+	Handed bool
 }
 
 // pick is the open change the call means in t's repository: the one on t's
@@ -337,7 +339,7 @@ func (t changeTarget) openCandidates(state *hq.MateState, ledger []workflow.HQCh
 			continue
 		}
 		if c.Told == nil || c.Told.State != hq.ChangeClosed {
-			out = append(out, changePick{Number: c.Number, Branch: c.Branch, Title: c.Title})
+			out = append(out, changePick{Number: c.Number, Branch: c.Branch, Title: c.Title, Handed: c.Source == workflow.HQChangeFromHanded})
 		}
 	}
 	if state != nil {
@@ -351,7 +353,7 @@ func (t changeTarget) openCandidates(state *hq.MateState, ledger []workflow.HQCh
 			if k := kept(c.Number); k != nil && state.Rev < k.StateRev {
 				continue
 			}
-			pick := changePick{Number: c.Number, Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), InState: true}
+			pick := changePick{Number: c.Number, Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), InState: true, Handed: c.Handed}
 			if c.Title != nil {
 				pick.Title = *c.Title
 			}

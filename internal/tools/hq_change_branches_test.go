@@ -242,6 +242,24 @@ func TestTooManyOpen_OffersFoldingFirstWhetherOrNotMergingIsLimited(t *testing.T
 	}
 }
 
+// TestTooManyOpen_LabelsAHandedChange: the refusal past five open changes
+// labels a change a person handed this Mate "handed to you", and no other, so
+// its advice to fold the Mate's own changes never offers a handed one
+// (docs/spec-mate.md §10.10, MB-53).
+// witness: internal/tools/hq_change_target.go | InState: true, Handed: c.Handed} → InState: true}
+func TestTooManyOpen_LabelsAHandedChange(t *testing.T) {
+	t.Parallel()
+	app := "app-1"
+	state := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
+		{Repo: "web", Number: 1, State: hq.ChangeOpen, Branch: "sort-orders"},
+		{Repo: "web", Number: 2, State: hq.ChangeOpen, Branch: "mate/gone/2", Handed: true},
+	}}
+	refusal := tooManyOpen(changeTarget{AppID: app, Repo: "web"}, "work-6", state, nil)
+	if !strings.Contains(refusal.Message, `#2 on "mate/gone/2" (`+handedToYou+`)`) || strings.Contains(refusal.Message, `#1 on "sort-orders" (`+handedToYou) {
+		t.Errorf("the refusal does not label the handed change alone: %s", refusal.Message)
+	}
+}
+
 // TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch: the Kara case —
 // four pairs wired to one repository are one repository, so open-change names
 // none of them; a second branch then opens its own change on an HQ that keeps
