@@ -15,10 +15,9 @@ import (
 )
 
 // launchSSHStub is a minimal SSH stub returning canned responses for
-// the substring patterns the launch source-state reader uses. Mirrors
-// integration/export_test.go::exportSSHStub but lives inline here so
-// the test stays in the tools package (white-box access to handler
-// factory + state file helpers).
+// the substring patterns the launch source-state reader uses. It lives
+// in the tools package for white-box access to the handler factory and
+// the state file helpers.
 type launchSSHStub struct {
 	responses map[string]string
 }

@@ -42,9 +42,6 @@ CLAUDE.local.md
 # ...except a fixture repo's committed dev-server declaration (spec-mate §2.8a.1)
 !eval/behavioral/scenarios/fixtures/repos/*/.zcp/
 
-# Test-generated reflog (workflow engine appends to {cwd}/CLAUDE.md on bootstrap close)
-integration/CLAUDE.md
-
 # OS
 .DS_Store
 Thumbs.db

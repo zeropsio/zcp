@@ -17,8 +17,7 @@ import (
 
 // seedBootstrapPlanAtClose drives a fresh engine through start → plan
 // submission (standard mode dev/stage pair) → provision completion
-// (checker=nil bypasses live-service validation, same precedent as
-// integration/bootstrap_conductor_test.go) so the session lands with
+// (checker=nil bypasses live-service validation) so the session lands with
 // "close" as the current, in_progress step — the shape RCO-7 names for
 // post-provision / status-during-close.
 func seedBootstrapPlanAtClose(t *testing.T, eng *workflow.Engine, targets []workflow.BootstrapTarget) {

@@ -1,9 +1,9 @@
 //go:build e2e
 
 // Tests for: e2e — the Zerops API recorder. TestRecord is the one producer of
-// the Zerops response shapes in e2e/recordings/: zcp's mock platform
-// (integration/) and z3's pinned copy load them instead of hand-written
-// responses. A new endpoint is one entry in recordedEndpoints (z3 adds one by
+// the Zerops response shapes in e2e/recordings/: internal/platform's
+// RC-DECODE unit decodes them through ZeropsClient, and z3's pinned copy
+// loads them instead of hand-written responses. A new endpoint is one entry in recordedEndpoints (z3 adds one by
 // a two-repo change).
 //
 // Run against the e2e project (a project-scoped ZCP_API_KEY):
@@ -35,7 +35,8 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// recordingsDir is where TestRecord writes and integration/ reads.
+// recordingsDir is where TestRecord writes and internal/platform's RC-DECODE
+// unit reads.
 const recordingsDir = "recordings"
 
 // recordScope is what an endpoint's path and body are filled from: the

@@ -1,0 +1,203 @@
+package ops
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// LP-RETAKEN — A lease the orchestrator answers unknown-lease for while it
+// lists the container reserved is another holder's, lost, never ours.
+// witness: internal/ops/lease_ownership.go | return leaseOther, otherWhy → return leaseOurs, ""
+func TestLease_LPRetaken_UnknownLeaseListedReserved_OtherHolders(t *testing.T) {
+	t.Parallel()
+	own, _ := renewedOwnership(platform.SwarmContainer{},
+		&platform.SwarmError{Reason: platform.SwarmReasonUnknownLease}, reservedByOther)
+	if own != leaseOther {
+		t.Fatalf("ownership = %d, want leaseOther (%d)", own, leaseOther)
+	}
+	if !own.lost() {
+		t.Fatalf("ownership %d is not lost", own)
+	}
+}
+
+// LP-STOPPED — A lease whose container the orchestrator renews while stopping
+// or starting it (a park, an unpark) stays ours.
+// witness: internal/ops/lease_ownership.go | case c.LockState == leaseLockReserved || powerTransition(c): → case c.LockState == leaseLockReserved:
+func TestLease_LPStopped_RenewedDuringPowerTransition_StaysOurs(t *testing.T) {
+	t.Parallel()
+	for _, lock := range []string{leaseLockStopping, leaseLockStarting} {
+		own, _ := renewedOwnership(platform.SwarmContainer{LockState: lock}, nil, reservedUnread)
+		if own != leaseOurs {
+			t.Errorf("lockState %q: ownership = %d, want leaseOurs (%d)", lock, own, leaseOurs)
+		}
+	}
+}
+
+// LP-UNVERIFIED — A renew the orchestrator did not answer (any error that is
+// not unknown-lease or container-not-found) is unverified: neither ours nor
+// lost, so nothing reaches the container and its record stays.
+// witness: internal/ops/lease_ownership.go | return o == leaseGone || o == leaseFree || o == leaseOther → return o == leaseGone || o == leaseFree || o == leaseOther || o == leaseUnverified
+func TestLease_LPUnverified_RenewUnanswered_NeitherOursNorLost(t *testing.T) {
+	t.Parallel()
+	errs := []error{
+		errors.New("orchestrator read timed out"),
+		&platform.SwarmError{Reason: platform.SwarmReasonAllReserved},
+	}
+	for _, err := range errs {
+		own, _ := renewedOwnership(platform.SwarmContainer{}, err, reservedByOther)
+		if own != leaseUnverified {
+			t.Errorf("renew error %v: ownership = %d, want leaseUnverified (%d)", err, own, leaseUnverified)
+		}
+		if own.lost() {
+			t.Errorf("renew error %v: ownership %d reads lost", err, own)
+		}
+	}
+}
+
+// LP-DIRTY-BRANCH — Releasing a branch whose one lease holds uncommitted
+// files or unpushed commits refuses the whole branch and releases none.
+// witness: internal/ops/lease_group.go | return m.err != nil || m.work.any() → return m.err != nil
+func TestLease_LPDirtyBranch_OneLeaseUnsaved_RefusesBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		work unsavedWork
+	}{
+		{name: "uncommitted files", work: unsavedWork{files: []string{" M main.go"}}},
+		{name: "unpushed commits", work: unsavedWork{unpushed: 2}},
+	} {
+		members := []*releaseMember{
+			{rec: leaseRecord{PoolHostname: "devpool", ContainerNumber: 1, Branch: "feature"}},
+			{rec: leaseRecord{PoolHostname: "webpool", ContainerNumber: 2, Branch: "feature"}, work: tc.work},
+		}
+		assertBranchRefused(t, tc.name, branchReleaseRefusal(LeaseDeps{}, members, "", "feature"))
+	}
+}
+
+// LP-UNCHECKED-BRANCH — Releasing a branch where one lease could not be
+// checked for unsaved work refuses the whole branch.
+// witness: internal/ops/lease_group.go | return m.err != nil || m.work.any() → return m.work.any()
+func TestLease_LPUncheckedBranch_OneLeaseUnread_RefusesBranch(t *testing.T) {
+	t.Parallel()
+	members := []*releaseMember{
+		{rec: leaseRecord{PoolHostname: "devpool", ContainerNumber: 1, Branch: "feature"}},
+		{rec: leaseRecord{PoolHostname: "webpool", ContainerNumber: 2, Branch: "feature"}, err: errors.New("git status could not be read")},
+	}
+	assertBranchRefused(t, "unchecked lease", branchReleaseRefusal(LeaseDeps{}, members, "", "feature"))
+}
+
+func assertBranchRefused(t *testing.T, name string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: branch release refusal = nil, want a refusal of the whole branch", name)
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+		t.Fatalf("%s: branch release refusal = %v, want a *platform.PlatformError with %s", name, err, platform.ErrPrerequisiteMissing)
+	}
+}
+
+// LP-MAIN — No lease is ever acquired on the repository's default branch; any
+// other branch is accepted.
+// witness: internal/ops/lease_group.go | if branch != leaseDefaultBranch { → if branch == leaseDefaultBranch {
+func TestLease_LPMain_DefaultBranch_Refused(t *testing.T) {
+	t.Parallel()
+	if err := refuseMainLease("main"); err == nil {
+		t.Errorf("refuseMainLease(main) = nil, want a refusal")
+	}
+	if err := refuseMainLease("feature"); err != nil {
+		t.Errorf("refuseMainLease(feature) = %v, want nil", err)
+	}
+}
+
+// LP-DUP-POOL — A group acquire that names one pool twice is refused before
+// any lock: a group holds one lease per pool.
+// witness: internal/ops/lease_group.go | seen[p] = true →
+func TestLease_LPDupPool_PoolNamedTwice_Refused(t *testing.T) {
+	t.Parallel()
+	err := validateAcquirePools([]string{"devpool", "webpool", "devpool"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+		t.Fatalf("validateAcquirePools(devpool twice) = %v, want a *platform.PlatformError with %s", err, platform.ErrInvalidParameter)
+	}
+	if err := validateAcquirePools([]string{"devpool", "webpool"}); err != nil {
+		t.Fatalf("validateAcquirePools(two pools) = %v, want nil", err)
+	}
+}
+
+// previewPool is a dev pool opening the HTTP preview block 4001-4003 and
+// running with maxContainers maxCount.
+func previewPool(maxCount int32) *platform.ServiceStack {
+	return &platform.ServiceStack{
+		Name: "devpool",
+		Ports: []platform.Port{
+			platform.NewPort(4001, "tcp", "http", false, true),
+			platform.NewPort(4002, "tcp", "http", false, true),
+			platform.NewPort(4003, "tcp", "http", false, true),
+		},
+		CustomAutoscaling: &platform.CustomAutoscaling{HorizontalMaxCount: maxCount},
+	}
+}
+
+// LP-PREVIEW-RAISE — A dev pool asked for more containers than its preview
+// ports cover gets a shortfall naming each container past the block and its
+// port; asked for exactly the block's count, none.
+// witness: internal/ops/pool_preview_ports.go | if !ok || maxContainers <= opens { → if !ok || maxContainers <= opens+1 {
+func TestLease_LPPreviewRaise_PastTheBlock_NamesContainerAndPort(t *testing.T) {
+	t.Parallel()
+	s, ok := readPoolPreviewShortfall(previewPool(3), 4)
+	if !ok {
+		t.Fatalf("maxContainers 4 over block 4001-4003: no shortfall, want container 4 on port 4004")
+	}
+	if len(s.containers) != 1 || s.containers[0] != "4" || len(s.ports) != 1 || s.ports[0] != "4004" {
+		t.Fatalf("shortfall containers %v ports %v, want [4] [4004]", s.containers, s.ports)
+	}
+	if s.first != 4001 || s.last != 4003 {
+		t.Fatalf("shortfall block %d-%d, want 4001-4003", s.first, s.last)
+	}
+	if _, ok := readPoolPreviewShortfall(previewPool(3), 3); ok {
+		t.Fatalf("maxContainers 3 over block 4001-4003: a shortfall, want none")
+	}
+}
+
+// LP-NO-RAISE — The same maxContainers again, or a lower one, is no raise; a
+// higher one is.
+// witness: internal/ops/pool_preview_ports.go | *params.MaxContainers > int(eff.HorizontalMaxCount) → *params.MaxContainers >= int(eff.HorizontalMaxCount)
+func TestLease_LPNoRaise_SameOrLowerMax_NoRaise(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		max   int
+		raise bool
+	}{
+		{max: 3, raise: false},
+		{max: 2, raise: false},
+		{max: 4, raise: true},
+	} {
+		got := poolRaises(previewPool(3), ScaleParams{MaxContainers: &tc.max})
+		if got != tc.raise {
+			t.Errorf("maxContainers %d over a pool at 3: raises = %v, want %v", tc.max, got, tc.raise)
+		}
+	}
+}
+
+// LP-PARKED — A reserved container that is stopped reads parked (as does one
+// being stopped or started); a reserved running one does not.
+// witness: internal/ops/lease_park.go | (c.LockState == leaseLockReserved && c.Status == platform.SwarmContainerStopped) → (c.LockState == leaseLockReserved && c.Status != platform.SwarmContainerStopped)
+func TestLease_LPParked_ReservedStopped_ReadsParked(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		c      platform.SwarmContainer
+		parked bool
+	}{
+		{c: platform.SwarmContainer{LockState: leaseLockReserved, Status: platform.SwarmContainerStopped}, parked: true},
+		{c: platform.SwarmContainer{LockState: leaseLockStopping, Status: platform.SwarmContainerActive}, parked: true},
+		{c: platform.SwarmContainer{LockState: leaseLockStarting, Status: platform.SwarmContainerStopped}, parked: true},
+		{c: platform.SwarmContainer{LockState: leaseLockReserved, Status: platform.SwarmContainerActive}, parked: false},
+	} {
+		if got := parkedContainer(tc.c); got != tc.parked {
+			t.Errorf("lockState %q status %q: parked = %v, want %v", tc.c.LockState, tc.c.Status, got, tc.parked)
+		}
+	}
+}

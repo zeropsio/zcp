@@ -224,9 +224,9 @@ linters:
           # the maintainer-only authoring domain. The single composition
           # root is internal/server (gated registration + probe wiring);
           # cmd/ and tools/lint/ sit outside the rule and carry the
-          # CLI/repo-tooling wiring. The repo-root test harnesses
-          # (integration/, e2e/) are covered: they exercise authoring
-          # only through the composed server, never by import.
+          # CLI/repo-tooling wiring. The repo-root test harness
+          # (e2e/) is covered: it exercises authoring only through
+          # the composed server, never by import.
           list-mode: lax
           files:
             - "**/internal/**/*.go"
@@ -234,8 +234,6 @@ linters:
             - "!**/internal/authoring/**/*.go"
             - "!**/internal/server/*.go"
             - "!**/internal/server/**/*.go"
-            - "**/integration/*.go"
-            - "**/integration/**/*.go"
             - "**/e2e/*.go"
             - "**/e2e/**/*.go"
           deny:
@@ -276,8 +274,6 @@ linters:
             - "!**/internal/captureinspector/**/*.go"
             - "**/cmd/**/*.go"
             - "!**/cmd/zcp/capture_ui.go"
-            - "**/integration/*.go"
-            - "**/integration/**/*.go"
             - "**/e2e/*.go"
             - "**/e2e/**/*.go"
           deny:
@@ -312,8 +308,6 @@ linters:
             - "!**/internal/eval/**/*.go"
             - "**/cmd/**/*.go"
             - "!**/cmd/zcp/eval*.go"
-            - "**/integration/*.go"
-            - "**/integration/**/*.go"
             - "**/e2e/*.go"
             - "**/e2e/**/*.go"
             - "!$test"
@@ -405,8 +399,6 @@ linters:
             - "!**/cmd/dcseed/**/*.go"
             - "!**/cmd/dclive/*.go"
             - "!**/cmd/dclive/**/*.go"
-            - "**/integration/*.go"
-            - "**/integration/**/*.go"
             - "**/e2e/*.go"
             - "**/e2e/**/*.go"
           deny:
