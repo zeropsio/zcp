@@ -19,7 +19,7 @@ Route is chosen at bootstrap start and persists for the session. The 3 steps are
 === bootstrap-adopt-discover ===
 ### Adopting existing services
 
-Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true` and an empty close-mode / git-push capability — populated later when the develop session needs them.
+Adoption attaches ZCP tracking to an existing runtime service without touching its code or configuration; a dev service is set to one container (zcp's rule for dev services). After adopt close, the envelope reports each adopted hostname with `bootstrapped: true` and an empty close-mode / git-push capability — populated later when the develop session needs them.
 
 Adoption deploys nothing. A service discover reports `deployed: false` was imported without code: it is ACTIVE, and its working directory may already hold source, but nothing was ever built or started in it. It stays `deployed: false` after adopt, and the develop workflow opens with its first deploy.
 

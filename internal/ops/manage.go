@@ -277,7 +277,7 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 // clean checkout of the deployed version without the work in progress — and
 // scale-in deletes the newer container with every file written to it
 // (reproduced live 2026-11-20).
-const devOneContainerWhy = "a dev service runs one container: a second one is reached by ssh with a clean checkout of the deployed version, without the uncommitted work, and scale-in deletes the newer container with its files"
+const devOneContainerWhy = "zcp's rule for dev services: a dev service runs one container: a second one is reached by ssh with a clean checkout of the deployed version, without the uncommitted work, and scale-in deletes the newer container with its files"
 
 // validateDevContainerCounts refuses a container count above 1 for a dev
 // service, naming why and what to do instead.
