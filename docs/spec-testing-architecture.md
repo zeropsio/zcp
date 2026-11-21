@@ -49,7 +49,10 @@ Tiers in increasing cost/coupling:
 - **default (untagged)** — anything provable without the live platform: units,
   schema/content lint, parser/render, safety guards (e.g. `hasTestPrefix`), the
   subprocess `update` binary-swap test. If it needs no `ZCP_API_KEY` and no
-  eval-zcp, it belongs here — and ONLY here.
+  eval-zcp, it belongs here — and ONLY here. Its unit cases (ids in `*_SENTENCES.md`;
+  the case is the one untagged `Test*` whose second `_` segment is the id without
+  hyphens) run as T1 (`scripts/t1`) in `scripts/gate` on every landing and block;
+  every other test runs only when the owner asks.
 - **`api`** — read-mostly REAL platform: the SDK-decode / status / error-code
   CONTRACT (what the wire actually decodes to, which no mock can pin honestly),
   the live catalog + recipe audits, the export-composer audit against live

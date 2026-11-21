@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # zcp's gate, the one place that says what green means for a change to land on main: the static
 # witness check of origin/main..HEAD, native lint of the packages that range affects, go vet
-# (default and build-tagged) and go build. No test runs; the three-platform build and the
-# two-platform lint stay CI's. Run it from anywhere in a worktree:
+# (default and build-tagged), go build and T1 (scripts/t1: every unit case and no other test, within
+# its budget). The three-platform build and the two-platform lint stay CI's. Run it from anywhere in
+# a worktree:
 #
 #   scripts/gate
 #
 # Every check runs, so one red run names every red one. Green exits 0 with nothing on stdout; red
-# exits 1 with the red checks on one stdout line (` witness lint vet vet-tags build`, each with a
+# exits 1 with the red checks on one stdout line (` witness lint vet vet-tags build t1`, each with a
 # leading space; scripts/land puts it into its `gate` refusal). Everything else goes to stderr.
 # go vet and go build compile every non-ignored file on disk, so the gate judges the tree as it is;
 # scripts/land refuses untracked files before calling it. The gate holds every check itself: a
@@ -27,4 +28,5 @@ scripts/check-changed.sh --base origin/main >&2 || red+=" lint"
 go vet ./... >&2 || red+=" vet"
 make --no-print-directory vet-tags >&2 || red+=" vet-tags"
 go build ./... >&2 || red+=" build"
+go run ./scripts/t1 >&2 || red+=" t1"
 [ -z "$red" ] || { echo "$red"; exit 1; }
