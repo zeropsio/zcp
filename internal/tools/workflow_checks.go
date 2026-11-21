@@ -46,7 +46,14 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 			if err != nil {
 				return result, err
 			}
-			repoChecks := checkRepoInitAt(ctx, ssh, rt, plan, projectRootFromState(stateDir))
+			if plan == nil || len(plan.Targets) == 0 {
+				return result, nil
+			}
+			services, err := ops.ListProjectServicesDirect(ctx, client, projectID)
+			if err != nil {
+				return result, fmt.Errorf("list services: %w", err)
+			}
+			repoChecks := checkRepoInitAt(ctx, ssh, rt, plan, services, projectRootFromState(stateDir))
 			if len(repoChecks) == 0 {
 				return result, nil
 			}
@@ -72,23 +79,32 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 // /var/www, so it may act); local mode only reads — dir is the user's own
 // checkout, so a missing repo is reported, not created. Kept separate
 // from checkProvision's SSH-independent checks so this function alone
-// carries the ssh/rt dependency.
-func checkRepoInit(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan) []workflow.StepCheck {
-	return checkRepoInitAt(ctx, ssh, rt, plan, "")
+// carries the ssh/rt dependency. A target whose dev half is a pool (by
+// its live type in services) is skipped and adds no row: a pool has no
+// working copy and no ssh, its leases hold the copies, and a lease's repo
+// is the lease path's own concern.
+func checkRepoInit(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan, services []platform.ServiceStack) []workflow.StepCheck {
+	return checkRepoInitAt(ctx, ssh, rt, plan, services, "")
 }
 
 // checkRepoInitAt is checkRepoInit with an explicit local root (used by
 // buildStepChecker, which already has stateDir resolved to a project
 // root; the local-only path in checkRepoInit's doc-comment needs
 // localRoot to probe CWD-equivalent state without live SSH).
-func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan, localRoot string) []workflow.StepCheck {
+func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan, services []platform.ServiceStack, localRoot string) []workflow.StepCheck {
 	if plan == nil {
 		return nil
+	}
+	pools := make(map[string]bool)
+	for _, svc := range services {
+		if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+			pools[svc.Name] = true
+		}
 	}
 	var checks []workflow.StepCheck
 	for _, target := range plan.Targets {
 		hostname := target.Runtime.DevHostname
-		if hostname == "" {
+		if hostname == "" || pools[hostname] {
 			continue
 		}
 		name := hostname + "_repo"

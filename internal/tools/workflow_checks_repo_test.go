@@ -27,7 +27,7 @@ func TestCheckRepoInit_Container_SSHFails_ReportsFail(t *testing.T) {
 	t.Parallel()
 	ssh := &stubSSH{err: errWorkflowChecksRepo}
 	rt := runtime.Info{InContainer: true}
-	checks := checkRepoInit(context.Background(), ssh, rt, repoInitPlan())
+	checks := checkRepoInit(context.Background(), ssh, rt, repoInitPlan(), nil)
 	if len(checks) != 1 {
 		t.Fatalf("checks = %+v, want 1", checks)
 	}
@@ -40,7 +40,7 @@ func TestCheckRepoInit_Container_SSHSucceeds_ReportsPass(t *testing.T) {
 	t.Parallel()
 	ssh := &stubSSH{output: []byte("")}
 	rt := runtime.Info{InContainer: true}
-	checks := checkRepoInit(context.Background(), ssh, rt, repoInitPlan())
+	checks := checkRepoInit(context.Background(), ssh, rt, repoInitPlan(), nil)
 	if len(checks) != 1 {
 		t.Fatalf("checks = %+v, want 1", checks)
 	}
@@ -53,7 +53,7 @@ func TestCheckRepoInit_Local_NotARepo_ReportsFailWithGitInitGuidance(t *testing.
 	t.Parallel()
 	rt := runtime.Info{InContainer: false}
 	dir := t.TempDir()
-	checks := checkRepoInitAt(context.Background(), nil, rt, repoInitPlan(), dir)
+	checks := checkRepoInitAt(context.Background(), nil, rt, repoInitPlan(), nil, dir)
 	if len(checks) != 1 {
 		t.Fatalf("checks = %+v, want 1", checks)
 	}
@@ -80,7 +80,7 @@ func TestCheckRepoInit_Local_IsARepo_ReportsPass(t *testing.T) {
 	runGit("init", "-q", "-b", "main")
 	runGit("commit", "-q", "--allow-empty", "-m", "init")
 
-	checks := checkRepoInitAt(context.Background(), nil, rt, repoInitPlan(), dir)
+	checks := checkRepoInitAt(context.Background(), nil, rt, repoInitPlan(), nil, dir)
 	if len(checks) != 1 {
 		t.Fatalf("checks = %+v, want 1", checks)
 	}
