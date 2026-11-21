@@ -8,8 +8,8 @@ The spec is the ground truth that the content-authoring sub-agents read as part 
 
 The empirical floor for every contract below is anchored on the human-authored reference recipe:
 
-- [`/Users/fxck/www/recipes/laravel-jetstream/`](../../../recipes/laravel-jetstream/) + [`/Users/fxck/www/laravel-jetstream-app/`](../../../laravel-jetstream-app/) — human-authored, the readability + voice floor and the canonical calibration target.
-- [`/Users/fxck/www/recipes/laravel-showcase/`](../../../recipes/laravel-showcase/) + [`/Users/fxck/www/laravel-showcase-app/`](../../../laravel-showcase-app/) — prior engine output, retained as data only, not as a target. (laravel-showcase is engine output — referenced for historical density data only; do NOT calibrate new rules against it.)
+- `<recipes checkout>/laravel-jetstream/` + `<laravel-jetstream-app checkout>/` — human-authored, the readability + voice floor and the canonical calibration target.
+- `<recipes checkout>/laravel-showcase/` + `<laravel-showcase-app checkout>/` — prior engine output, retained as data only, not as a target. (laravel-showcase is engine output — referenced for historical density data only; do NOT calibrate new rules against it.)
 
 Where the contracts below name caps, those caps trace to the human-authored anchor — not invented. When the contracts and a run's deliverable disagree, the deliverable is wrong.
 

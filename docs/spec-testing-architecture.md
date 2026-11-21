@@ -190,7 +190,7 @@ manual dispatch. Ordinary worktree pushes do not start CI. CI builds every targe
 platform, vets the default and build-tagged packages, lints and checks witness
 lines; it runs no test. Test suites run only in the dispatch-only `Tests`
 workflow (`.github/workflows/tests.yml`).
-Decision: No test suite runs automatically — not on push, pull request, schedule, pre-commit, pre-push or release; tests run only when the owner explicitly asks (Karel, 2026-11-07).
+Decision: No test suite runs automatically — not on push, pull request, schedule, pre-commit, pre-push or release; tests run only when the owner explicitly asks (the owner, 2026-11-07).
 
 Preparation hydrates knowledge once, restores tracked overrides, and publishes the
 six embedded knowledge trees as one immutable archive identified by source commit,

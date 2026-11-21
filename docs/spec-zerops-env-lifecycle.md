@@ -260,7 +260,7 @@ unreferenced injection.
 **`none`-dependency — RESOLVED (2026-05-28):** ZCP has NO hard code dependency on
 `none` (all sibling/managed env reads go through the API, never container env —
 verified across discover/auth/init/runtime). Decision: **zerops app will be updated
-platform-side to create ZCP container projects with `envIsolation: service`** (Karel)
+platform-side to create ZCP container projects with `envIsolation: service`** (the owner)
 so they match what users + production run, giving full parity (and making flow-eval
 on eval-zcp representative of `service` behavior). No ZCP code change needed; until
 that platform change ships, eval-zcp remains `none`.

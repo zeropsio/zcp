@@ -1,10 +1,10 @@
 # SPEC (DRAFT) — Git & Delivery: the target model (2026-06-10)
 
-**Status:** intent specification for Karel's approval. On approval this becomes
+**Status:** intent specification for the owner's approval. On approval this becomes
 `docs/spec-git-delivery.md` and the affected sections of `docs/spec-workflows.md` (§4.3 close-mode,
 §GLC, §10) are rewritten against it. Until then it binds nothing.
 
-**Provenance:** Karel's fundament statement (this session, 2026-06-10 evening) + intent archaeology
+**Provenance:** the owner's fundament statement (this session, 2026-06-10 evening) + intent archaeology
 over the full design corpus (workflow `wf_bcfb4d57-191`: git-flow history, production lifecycle,
 close semantics, credential feasibility — every claim file:line-cited) + the ground-up behavior
 maps (workflow `wf_0dcb4135-15f`) + live
@@ -20,7 +20,7 @@ Six intent statements. Everything else in this spec derives from them.
 
 1. **Once git-push is configured, the REPO is the single source of truth and PUSH is the terminal
    act of development.** ZCP never self-redeploys a git-configured service as the close act; the
-   develop loop ends with commit + push. The repo never trails the container. *Karel's rationale
+   develop loop ends with commit + push. The repo never trails the container. *The owner's rationale
    (2026-06-10, confirms the rule):* the dev self-redeploy existed PRIMARILY for persistence —
    baking the code into the artifact so it survives container replacement; once all code persists
    in git, the baking is unnecessary. Self-redeploy of a git-configured service is reserved for an
@@ -167,7 +167,7 @@ The guidance TEACHES the chain (push → watch events → verify) instead of let
 teach it. Auto-close fires only on a complete chain; incomplete L1 (integration=none) surfaces the
 §2 choice.
 
-**§6.1 The build watch — L1's monitoring primitive (Karel's "domyslet monitoring" item).**
+**§6.1 The build watch — L1's monitoring primitive (the owner's "domyslet monitoring" item).**
 The asymmetry to fix: ZCP's own self-deploy is SYNCHRONOUS (pollBuild watches the build to
 terminal, fetches build logs on failure, classifies via ops.ClassifyDeployFailure); the git-push
 path returns `PUSHED` immediately and leaves watching to agent memory (zerops_events polling + a
@@ -237,17 +237,17 @@ every other push. Shape (action name vs `strategy` extension) = open decision #3
 | FP-5 tag→prod Actions | SURVIVES + gains the §7 release act as its UX head |
 | FP-6 eval round-trip | EXTENDED: + L1 close journey, + rotation, + release act scenarios |
 
-## §11 Open decisions (Karel)
+## §11 Open decisions (the owner)
 
 1. **Approve the S5-cell supersession + close-mode value fold** (§2/§3) — CONFIRMED IN SUBSTANCE
-   by Karel 2026-06-10 ("když mám jenom dev a nastavím git push, tak už se pak nedělá redeploy…
+   by the owner 2026-06-10 ("když mám jenom dev a nastavím git push, tak už se pak nedělá redeploy…
    jakmile se zaručí, že veškerý kód je v gitu, není potřeba dělat redeploy té dev služby sama do
    sebe" + the pair variant). Formal promotion of this spec to docs/ is the remaining ack.
 2. **L1 with integration=none** (§2): surface the 3-way choice (recommended) vs treat push-capable
    no-integration as L0 until an integration exists (simpler, but contradicts "push ends it").
 3. **Release act shape** (§7): `zerops_workflow action="release"` (discoverable, atom-guided —
    recommended) vs `zerops_deploy strategy=git-push tag=…` (no new verb).
-4. **Mid-iteration deploys to the push source in L1** — RESOLVED by Karel 2026-06-10: break-glass
+4. **Mid-iteration deploys to the push source in L1** — RESOLVED by the owner 2026-06-10: break-glass
    only ("pouze v případě, že je k tomu nějaký jiný fundamentální důvod"), always with full
    preservation ("zůstane v té dev službě všechno zachované") — §1.1 carries the rule.
 5. Inherited, still open from the foundations doc: private-repo recommendation order; stage-first

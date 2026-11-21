@@ -12,7 +12,7 @@ Eight sub-tasks (A.1–A.8). Findings inform contracts for `ProjectAdminClient` 
 
 | # | Topic | Status | Key finding |
 |---|---|---|---|
-| A.0 | Token shape + clientID discovery | ✓ verified | `ZCP_API_KEY` is project-scoped (`canCreateProjects: false`); clientID `BkC8AGjFQMyFrLbzjHoE9g` for "KRLS" org accessible. |
+| A.0 | Token shape + clientID discovery | ✓ verified | `ZCP_API_KEY` is project-scoped (`canCreateProjects: false`); clientID `<clientId>` for the test organisation accessible. |
 | A.1 | `PostClientProjectImport` shape + behavior | ◐ partial | 403 `insufficientPermissions` with project-scoped token (as expected). SDK shape locked. Needs admin token for live behavior verification — Phase B e2e test gating. |
 | A.2 | `DeleteProject` cleanup behavior | ✓ SDK + ◐ live | Returns `output.Process` — async. Needs admin token for live. |
 | A.3 | `GetProjectL7httpbalancerConfig` shape | ✓ verified | **Critical**: L7 config is nginx tuning (`client_body_buffer_size`, `worker_processes`, etc.), NOT route-level. Custom domain is separate first-class resource via `PostProjectPublicHttpRouting`. Plan-agent + Codex "clobber risk" concern referenced wrong endpoint. |
@@ -33,7 +33,7 @@ Eight sub-tasks (A.1–A.8). Findings inform contracts for `ProjectAdminClient` 
 **Findings:**
 - userID: `1eViBseAR1aXRlBwnEjTrg`.
 - Token-email pattern: `token-<userID>@zerops.io` — confirms machine token, not human.
-- `clientUserList[0]`: `{clientId: "BkC8AGjFQMyFrLbzjHoE9g", clientName: "KRLS", roleCode: "NO_ACCESS", canCreateProjects: false, canViewFinances: false, canEditFinances: false}`.
+- `clientUserList[0]`: `{clientId: "<clientId>", clientName: "<test organisation>", roleCode: "NO_ACCESS", canCreateProjects: false, canViewFinances: false, canEditFinances: false}`.
 
 **Implications:**
 - The standard `ZCP_API_KEY` is **architecturally incapable** of creating projects. Validates one-shot key model.
@@ -89,7 +89,7 @@ Eight sub-tasks (A.1–A.8). Findings inform contracts for `ProjectAdminClient` 
 **Live verification:** project-scoped token returns 403 `insufficientPermissions`:
 
 ```bash
-$ curl -X POST .../client/BkC8AGjFQMyFrLbzjHoE9g/project/import -d '{"yaml":"project: {name: throwaway} ..."}'
+$ curl -X POST .../client/<clientId>/project/import -d '{"yaml":"project: {name: throwaway} ..."}'
 {"error":{"code":"insufficientPermissions","message":"Insufficient permissions",...}}
 HTTP 403
 ```
@@ -302,7 +302,7 @@ ProjectModeEnumSerious = "SERIOUS"
 ## A.9 — Live e2e verification (admin token supplied 2026-05-11)
 
 Six e2e tests passed against real Zerops platform with admin token
-(`canCreateProjects: true`, account-wide, KRLS client):
+(`canCreateProjects: true`, account-wide, the test organisation's client):
 
 | Test | Result | Observation |
 |---|---|---|
@@ -498,9 +498,9 @@ separate `clientUser` with their own GitHub OAuth grant linked.
 
 | Probe | Result |
 |---|---|
-| `GET /github/repository?clientId=<KRLS>` (machine token) | HTTP 400 `githubAuthorizationRequired` |
+| `GET /github/repository?clientId=<clientId>` (machine token) | HTTP 400 `githubAuthorizationRequired` |
 | `GET /github/auth-url?action=REPOSITORY&redirectUrl=https://app.zerops.io/github-auth` | HTTP 200, returns fresh OAuth handshake URL with scope=repo |
-| Karel-human's clientUser, by contrast | already linked (org-level dashboard grant from earlier) |
+| The owner's human clientUser, by contrast | already linked (org-level dashboard grant from earlier) |
 
 **Implication for Part 2 design:** PUT integration requires the calling
 clientUser to have GitHub OAuth grant. Pure close-loop with launch-window
@@ -510,7 +510,7 @@ machine token is BLOCKED.
 
 Setup: created throwaway `zcp-part2-spike-probe` project (id
 `uLEASWAJRYADHMsBEDKkYw`), one nodejs@22 service `app` (id
-`VW0QnAX4S2OzuDp9vYoN7g`) with `buildFromGit: https://github.com/krls2020/
+`<serviceId>`) with `buildFromGit: https://github.com/<test account>/
 zcp-pipeline-probe` + `zeropsSetup: prod`. Project auto-grants OWNER role
 to creating clientUser (verified — same Part 1 A.10 behavior).
 
@@ -533,7 +533,7 @@ SDK source (`dto/input/body/externalRepositoryIntegration.go` +
 ```json
 {
   "githubIntegration": {
-    "repositoryFullName": "krls2020/zcp-pipeline-probe",
+    "repositoryFullName": "<test account>/zcp-pipeline-probe",
     "eventType": "TAG",
     "branchName": null,
     "tagRegex": "^v\\d+\\.\\d+\\.\\d+$",
@@ -583,7 +583,7 @@ done this (it's a fresh machine identity).
    atomically (calls `POST /github/user-repository-access` with browser
    session cookie, NOT with the machine token's Authorization header).
 4. Server-side attribution: grant attached to whichever clientUser the
-   browser session corresponds to (Karel-human's session), NOT to the
+   browser session corresponds to (the owner's human session), NOT to the
    machine token's clientUser as state-key would suggest.
 5. Subsequent `POST /github/user-repository-access` with machine token's
    Bearer fails: code already consumed → HTTP 400

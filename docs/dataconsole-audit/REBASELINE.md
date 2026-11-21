@@ -1,6 +1,6 @@
 # S11 rebaseline — Data Console live audit synthesis
 
-Date: 2026-07-16 · Gate: **Karel approves before P2 scope fixes**
+Date: 2026-07-16 · Gate: **the owner approves before P2 scope fixes**
 
 Synthesis of four live family audits driven against the real console over VPN
 (`zcp-eval-clean`, writes armed): `tabular.md` (db/mariadb/ch), `kv.md` (valkey),
@@ -117,7 +117,7 @@ existing shapes but cannot honestly *create* or *re-identify* them.
 
 **Confirmed-healthy (no churn):** read-only enforcement all engines; write-auth matrix (20/20 stream refusals, token/confirm/origin/bearer); pagination cursors; object image preview + size chips; tabular grid + PK marker; clickhouse/qdrant view-only gates; blob download-hardening headers uniform across families.
 
-## 5. Rewritten wave plan (supersedes program §6-§9 pending Karel's approval)
+## 5. Rewritten wave plan (supersedes program §6-§9 pending the owner's approval)
 
 The audit inserts a **P0.5 safety + honesty wave before P2/P3**, and sharpens DD-9. Rationale:
 T-1/T-2 defects are correctness/data-loss, cheap to fix at the seam, and must not wait behind
@@ -165,7 +165,7 @@ server behavior.
   slice, not their own work.
 - rabbitmq/shared-storage stay not-yet (offline pins); mysql not a Zerops type (DD-8 resolved).
 
-## 6. Gate decisions (Karel, 2026-07-16)
+## 6. Gate decisions (the owner, 2026-07-16)
 
 1. **Wave order → FOLD INTO P4.** No separate front-loaded P0.5 wave. The safety + honesty
    fixes (S26/S27/S28) become P4 convergence slices, run alongside the presentation work, in
@@ -188,7 +188,7 @@ server behavior.
    both decisions + the RESOLVED widened DD-9.
 3. Proceed to **P2 — draft the six family excellence contracts** from this audit's evidence
    (the `accepted`/`applied`/`visible` visibility table, the honest-error taxonomy, the value-
-   fidelity rules), for Karel's next owner gate. These + the P3 decision records are the "how"
+   fidelity rules), for the owner's next gate. These + the P3 decision records are the "how"
    that shapes the P4 combined wave.
 
 Fixtures restored (final dcseed pass, all 11 seeded ✓, leaderboard back to a zset); console

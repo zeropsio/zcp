@@ -594,7 +594,7 @@ As of this plan's last ground-truth check, the only occurrence is inside `<secti
 ### 3.3 Update `docs/sync-recipe.md` if it exists
 
 ```
-ls /Users/fxck/www/zcp/docs/sync-recipe.md
+ls docs/sync-recipe.md
 ```
 
 If the file exists, update its `create-repo` / `push-app` sections to match the new flag. If it doesn't, skip.

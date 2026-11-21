@@ -11,7 +11,7 @@
 4. git-push stays strict (committed HEAD only) — unchanged.
 5. Launch/release/export stay read-only gates — unchanged.
 
-**Out of scope (explicitly):** P3 delivery-ladder change (Karel's separate
+**Out of scope (explicitly):** P3 delivery-ladder change (the owner's separate
 product decision); the two latent CI/credential bugs (backlogged in F4); the
 L0→L1 clean-history offering (backlogged in F4).
 
@@ -295,6 +295,6 @@ On eval-zcp (services provisioned ad-hoc, deleted after):
 - `TestE2E_InitServiceGit` PASS against the live container (new semantics).
 - Item 6 (P4 GitHub round-trip: real PAT → GET /user → seeded identity →
   push attribution visible on GitHub) NOT live-verified — requires a PAT +
-  test repo only Karel can provide; covered by unit + integration tests
+  test repo only the owner can provide; covered by unit + integration tests
   (mocked HTTPDoer at the production seam, real-shell round-trips for the
   seed/read commands). Open item for the first real git-push-setup run.
