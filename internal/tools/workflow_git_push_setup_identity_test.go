@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -361,7 +360,6 @@ func TestGitPushSetupContainer_HQRemote_PersistsTheHelperTheMatesShellAnswers(t 
 			t.Setenv("HOME", t.TempDir())
 			if tt.enrolled {
 				hqtest.Link(t, hqURL, "p1", "the-project-key")
-				hqtest.GitCredential(t, hq.GitCredentialPath(), "the-mate-credential")
 			}
 			stateDir := t.TempDir()
 			writeFirstTimeConfigMeta(t, stateDir)

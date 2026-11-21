@@ -97,8 +97,8 @@ func TestServeArgv_FlagsAreContract1(t *testing.T) {
 
 // TestLaunchEnvLines: the server's public prefix rides its environment on
 // every launch — an older bundle ignores the variable, a newer one reads it
-// whatever the --base-path probe answered — and so do the status file the
-// server reads the setup from and the file it keeps its Git credential in.
+// whatever the --base-path probe answered — and so does the status file the
+// server reads the setup from.
 func TestLaunchEnvLines(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
 	got := mate.LaunchEnvLines()
@@ -106,7 +106,6 @@ func TestLaunchEnvLines(t *testing.T) {
 		"T3CODE_BASE_PATH=/mate",
 		"ZCP_MATE_BOOT_FILE=/home/zerops/.zcp/mate/boot.json",
 		"ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json",
-		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=/home/zerops/.zcp/hq/git-credential",
 		"ZCP_MATE_STATE_FILE=/home/zerops/.zcp/hq/state.json",
 	}
 	if !slices.Equal(got, want) {

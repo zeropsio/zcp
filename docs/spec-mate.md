@@ -106,7 +106,7 @@ Touchpoints between mate and zcp, closed list:
   values, and the presence of `MATE_SETUP`, in the platform env store (§8.1, §3.5, C-7; the marker
   checks variable names only: mate `apps/server/src/zerops/zeropsSetupMarker.ts`), and the
   `/var/www/<host>` sshfs layout (§6.1);
-- files the Mate writes and zcp reads: its Git credential file (§3.3, §10.10);
+- files the Mate writes and zcp reads:
   `~/.zcp/hq/observe-credential` for Observe (§2.8; mate `ZeropsObserveCredentialFile.ts`, zcp
   `internal/hq/observe_credential.go`); `~/.zcp/hq/state.json`, its state as its link last heard it
   and whether the link is up (§2.8; mate `ZeropsMateStateFile.ts`, zcp `internal/hq/mate_state.go`);
@@ -748,7 +748,6 @@ Every launch adds six more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_MATE_BOOT_FILE` | the file a booting server reports its progress in until it accepts commands (`mate.BootFilePath`, §2.1d) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
-| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link (§3.3); zcp reads it nowhere: a dev service and a pool reach HQ's git through the relay with the project key (§6.8). It names a path, never the credential |
 | `ZCP_MATE_STATE_FILE` | the file the server keeps the Mate's state in (`hq.MateStatePath`) |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
@@ -1300,11 +1299,11 @@ setting older releases may lack rides the environment instead, never a probed fl
 |---|---|---|
 | C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-path --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so zcp passes only flags every release it drives accepts; it sets the prefix through `T3CODE_BASE_PATH`, not `--base-path` (§2.2) | fork's `cli/config.ts` |
-| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names the Mate's Git credential file and nothing else; the server links to HQ with the project key it reads from the env store (§3.5). The installed package declares the shared HQ origin as `mate.hqOrigin` in `package.json`; zcp reads it when `T3CODE_ZEROPS_HQ_ORIGIN` is unset | fork's `ZeropsEnvironment` |
+| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). The server links to HQ with the project key it reads from the env store (§3.5). The installed package declares the shared HQ origin as `mate.hqOrigin` in `package.json`; zcp reads it when `T3CODE_ZEROPS_HQ_ORIGIN` is unset | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
-| C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. The new-Mate import writes `MATE_SETUP` beside the project key; the server checks for that name once in its environment or live env store, and without it settles server-initiated stand-up as not due. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | mate `apps/server/src/zerops/ZeropsGitCredentialFile.ts`, `apps/server/src/zerops/zeropsSetupMarker.ts`, `apps/server/src/zerops/ZeropsSetup.ts`, `packages/client-runtime/src/zerops/newProject.ts`; zcp `internal/tools/hq_wiring.go`, `internal/tools/hq_dev_git.go` |
+| C-7 | The Mate's server keeps the Git credential HQ sends it in its memory only, for the `gitFingerprint` its hello reports (§3.3); it writes no file, and after a restart it holds none until HQ sends one on the next link. zcp neither reads nor names it: what Git presents to HQ is the project key (§2.8). The new-Mate import writes `MATE_SETUP` beside the project key; the server checks for that name once in its environment or live env store, and without it settles server-initiated stand-up as not due. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | mate `apps/server/src/zerops/ZeropsGitCredentialFile.ts`, `apps/server/src/zerops/zeropsSetupMarker.ts`, `apps/server/src/zerops/ZeropsSetup.ts`, `packages/client-runtime/src/zerops/newProject.ts` |
 | C-13 | **A Mate's project admits its container over SSH.** From the moment the `zcp` container is imported, the project's `sshIsolation` is `vpn service@<container>`: people on the VPN and the container may SSH into every service of the project, app code into none. The hosted client's container import (a birth and Finish setup) updates the platform's own entry just before it imports the container; zcp never writes the project's value and relies on it for SSH into every service without a value of its own (a dev half, a stage, a mount, a deploy's readiness check). A service's own value holds for that service alone | mate `packages/client-runtime/src/zerops/api.ts` (`importDevelopmentContainer`) |
 | C-14 | **A Mate's project shares its services' variables with its container.** Before the import the press sets the project's `envIsolation` to `service service@<container>` (the platform's own entry, updated, never added; equal already → nothing written). Every service that states no isolation of its own inherits it, also one added later, and the platform writes its variables into the container's live env store as `<hostname>_<key>` (`docs/spec-zerops-env-lifecycle.md` §5); a service that states its own keeps it. The data console reads a value the API withholds from the Mate's key there (§5.7). A project the press did not set (one born before it, or changed since) is brought over by the container itself: at every start, a start after a zcp update included, `zcp init` in a Mate's container reads the project's `envIsolation` once and, when it does not admit the container (`service@<container>` or `none`), updates the entry with the Mate's own key, adding `service@<container>` and keeping every other rule, and prints the one change; a `-service@<container>` rule is someone's choice and stays, as does every service's own value. A refusal is printed once by that start, the start completes and nothing retries; the data console then answers `no_credentials`. A container that is no Mate never asks. A Mate's container reads every service's variables of its project: a `service@<container>` removed by hand returns at the next start, and only `-service@<container>` keeps the container out | mate `packages/client-runtime/src/zerops/api.ts` (the press); zcp `ops.AdmitContainerToProjectEnv` (the start); `TestAdmitContainerToProjectEnv_ProjectNotAdmittingTheContainer_GainsItKeepingEveryOtherRule`, `TestRun_MateContainer_AdmissionRefused_InitCompletes`, `TestRun_MateDisabled_NoAdmission` |
 | C-15 | **Every variable Mate or zcp writes on a Mate's container for itself is named under a hidden rule.** The Mate's own vault is the container service's user variables minus two rules of names (§5.8a): in every vault `ZCP_*`, `MATE_*`, `GITEA_*` and `GIT_TOKEN`; in the Mate's own vault also `T3CODE_*`, `VSCODE_PASSWORD` and `*_LEASE_TOKEN`. zcp and the client each carry both rules and they agree, name for name, case-sensitive. A variable either side starts writing on the container for itself is named under one of the rules, or both lists gain its name in the same change: otherwise the person sees it in the Mate's vault as a value to change or remove, and the agent may list it and hand it to a command. Adding this fact changes no release's contract number: every release at or above `MinimumMateVersion` already writes only such names | zcp `ops.IsVaultHidden`, `ops.IsOwnVaultHidden`; mate `packages/client-runtime/src/data/projections/vault.ts`; `TestEnvTool_OwnVault_HidesTheContainersOwnMachinery`, `TestEnvTool_TheContainersMachineryNames_StayOrdinaryInSharedAndAnAppsVault` |
@@ -1391,8 +1390,8 @@ _Release on archive and on completion_ (mate `apps/server/src/zerops/ZeropsHqLin
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
-A project without a Mate uses the plain-project door (§6.7); it does not read the C-7
-credential file or change this Mate contract. Once the project has a Mate, zcp uses the
+A project without a Mate uses the plain-project door (§6.7); it does not change this Mate
+contract. Once the project has a Mate, zcp uses the
 existing Mate routes and credential flow at the same repository addresses.
 
 The Mate's hello carries `{type: "hello", key, serviceId, origin, gitFingerprint?}`.
@@ -2890,8 +2889,12 @@ a span attribute.
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
   of a high-entropy platform token is not invertible.
 - **The Mate's Git credential** — HQ-issued. HQ sends it down the Mate's link; the Mate's server
-  keeps it in the file `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names (mode 0600). zcp reads it nowhere:
-  neither a dev service nor a pool holds a credential, since their git reaches HQ only through the
+  keeps it in its memory only, for the `gitFingerprint` its hello reports, and writes no file: the
+  agent's shell runs as the same Unix user, so a file of that user's would put it in the agent's
+  reach. After a server restart it holds none until HQ sends one on the next link (HQ sends one to
+  a link reporting no fingerprint). zcp neither reads nor names it, and what Git presents to HQ
+  stays the project key through `zcp hq git-credential` (§2.8): neither a dev service nor a pool
+  holds a credential, since their git reaches HQ only through the
   relay, which presents the project key over the session (§2.8, §6.8). It opens HQ's git for the applications that hold the Mate's project, fetch,
   and push only to the project's own change branches (the rules of §10.10, *A Mate's git*); no HQ
   API, no Zerops. HQ sends one on every link where none is live for the project, and whenever the
@@ -3302,7 +3305,7 @@ sequenceDiagram
 - **What the server holds.** No session store, no HMAC key, no Zerops person token, no member list:
   its own project as last read with the project key (§3.9), the open connections with their role and
   grant, the tickets acknowledged and not yet used (60 s), the project key read from the env store at
-  each connect and each read, and the Git credential file.
+  each connect and each read, and the Git credential HQ sent its link, in memory only.
 
 ### 3.14 Accepted residual risks
 
@@ -3443,7 +3446,7 @@ To verify live before building on them:
 
 Mate 0.16.0 declares contract 2 and the shared HQ origin in its installed package. zcp's
 `SupportedContract` remains 2; `MinimumMateVersion` is 0.16.195, the first Mate that keeps no member list (§3.9). The server links with its
-project key and writes HQ's Git credential to the file zcp reads (§3.3); zcp presents the
+project key and keeps HQ's Git credential in its memory only (§3.3); zcp presents the
 project key in its HQ request headers (§3.6). The hosted client is `https://mate.zerops.io`.
 
 A project key is a sensitive service variable (§3.2); HQ refuses an unsuitable key with the

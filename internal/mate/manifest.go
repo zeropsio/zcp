@@ -19,8 +19,7 @@ const (
 	// (spec-mate.md §2.8, C-1...C-6). A manifest declaring a different
 	// number is refused before any download — the one case where an old zcp
 	// deliberately stays on the mate it has. Contract 2 is the project key:
-	// the Mate links to HQ with it and keeps its Git credential in a file
-	// (hq.EnvGitCredential) instead of an enrollment.
+	// the Mate links to HQ with it instead of an enrollment.
 	SupportedContract = 2
 
 	// MinimumMateVersion is the oldest mate release this zcp still drives.

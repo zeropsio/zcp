@@ -316,7 +316,6 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
 		"ZCP_MATE_BOOT_FILE=" + mate.BootFilePath(),
 		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
-		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential"),
 		"ZCP_MATE_STATE_FILE=" + filepath.Join(home, ".zcp", "hq", "state.json")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
@@ -373,9 +372,6 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 	}
 	if statusErr != nil || atLaunch.Standup.State != mate.StandupIdle {
 		t.Errorf("status at launch = %+v (%v), want the stand-up idle", atLaunch.Standup, statusErr)
-	}
-	if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
-		t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
 	}
 }
 

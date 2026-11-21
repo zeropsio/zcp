@@ -184,8 +184,7 @@ func reconcileMateRepositories(
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
 // repository in HQ with a checkout on its `main`, and keeps every wired pair
-// current: a dev pool keying one holds the Git credential as the Mate's file has it now, the change
-// on record is asked what became of it, and a pair whose Mate HQ now holds in
+// current: the change on record is asked what became of it, and a pair whose Mate HQ now holds in
 // another application is wired there. It pushes nothing: what goes to HQ is
 // the agent's git. It is a RECONCILE, not a one-shot step: it runs on every
 // bootstrap, adopt and develop start, does nothing for a pair with nothing

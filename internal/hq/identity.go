@@ -1,5 +1,5 @@
-// Package hq is zcp's side of HQ: the project's Mate API and git, the Git
-// credential Mate holds for its dev services, and the profile's Observe reads
+// Package hq is zcp's side of HQ: the project's Mate API and git, and the
+// profile's Observe reads
 // (docs/spec-mate.md §3.3, §3.6). Observe presents its narrow child credential
 // alongside the current native project key as parent proof.
 package hq
@@ -9,10 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
-
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
@@ -79,17 +76,4 @@ func (id Identity) check() error {
 func (id Identity) Fingerprint() string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{id.Origin, id.ProjectID, id.Key}, "\x00")))
 	return hex.EncodeToString(sum[:])
-}
-
-// EnvGitCredential names, to the Mate's server, the file it keeps the Mate's
-// Git credential in (spec-mate C-3, C-7).
-const EnvGitCredential = "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL"
-
-// GitCredentialPath is where the server keeps the Git credential HQ sends it:
-// beside mate.env under the service user's home, which a container restart
-// keeps. The server writes it, mode 0600, in one rename and removes it when
-// HQ revokes; zcp names it to the server and reads it nowhere: its git
-// reaches HQ through the relay with the project key.
-func GitCredentialPath() string {
-	return filepath.Join(runtime.HomeDir(), ".zcp", "hq", "git-credential")
 }
