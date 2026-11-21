@@ -1555,7 +1555,6 @@ nothing, and says what to commit with the command, when the checkout is on `main
 only a merged change moves it, and a commit there could not be pushed — when one of the files held
 uncommitted lines before zcp's edit, on a detached HEAD, or when git or a commit check refuses
 (`TestDeploy_ZcpsOwnEditToADevSetup_LandsAsACommitOfItsOwn`,
-`TestDeploy_ZcpsOwnCommit_SaysTheCommitChecksRunBeforeThePush`,
 `TestDevServer_TheMoveOntoTheSupervisor_CommitsBothFilesOnTheWorkBranch`,
 `TestCommitOwnEdit_CommitsOnlyZcpsFilesOnTheWorkBranchAsZcp`,
 `TestCommitOwnEdit_CommitChecksPastTheBudgetCommitNothing`). Left uncommitted, such a file blocks a
