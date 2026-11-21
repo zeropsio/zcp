@@ -10,7 +10,7 @@
 
 1. §1 — the shift in three sentences.
 2. §2 — the corrections that anchor the design (each was a distinct error in the run-15 walk).
-3. §3 — the empirically-derived IG taxonomy (read [/Users/fxck/www/recipes/laravel-jetstream/](../../../../recipes/laravel-jetstream/) and [/Users/fxck/www/recipes/laravel-showcase/](../../../../recipes/laravel-showcase/) READMEs alongside this section to verify).
+3. §3 — the empirically-derived IG taxonomy (read `<recipes checkout>/laravel-jetstream/` and `<recipes checkout>/laravel-showcase/` READMEs alongside this section to verify).
 4. §4 — the phase shape.
 5. §5-§9 — engine implementation by file.
 6. §10-§11 — sequencing + risks.
@@ -71,9 +71,9 @@ Four classes emerged from reading both reference recipes' IG content + run-15's 
 
 Derived from three recipes:
 
-- [/Users/fxck/www/laravel-jetstream-app/README.md](../../../../laravel-jetstream-app/README.md) — 4 IG items (human-authored)
-- [/Users/fxck/www/laravel-showcase-app/README.md](../../../../laravel-showcase-app/README.md) — 5 IG items (early recipe-flow)
-- [/Users/fxck/www/zcp/docs/zcprecipator3/runs/15/apidev/README.md](../runs/15/apidev/README.md) — 5 numbered items + 1 unnumbered (run-15 dogfood)
+- `<apps checkout>/laravel-jetstream-app/README.md` — 4 IG items (human-authored)
+- `<apps checkout>/laravel-showcase-app/README.md` — 5 IG items (early recipe-flow)
+- [`docs/zcprecipator3/runs/15/apidev/README.md`](../runs/15/apidev/README.md) — 5 numbered items + 1 unnumbered (run-15 dogfood)
 
 ### §3.1 Class A — Engine-emittable structural item
 
@@ -910,8 +910,8 @@ For the fresh Opus instance reading this guide to verify its accuracy. Each item
 
 **§13.2 IG taxonomy derivation (§3)**
 
-- [ ] Read [/Users/fxck/www/laravel-jetstream-app/README.md](../../../../laravel-jetstream-app/README.md) — count IG items (expect 4).
-- [ ] Read [/Users/fxck/www/laravel-showcase-app/README.md](../../../../laravel-showcase-app/README.md) — count IG items (expect 5), count KB bullets (expect 7).
+- [ ] Read `<apps checkout>/laravel-jetstream-app/README.md` — count IG items (expect 4).
+- [ ] Read `<apps checkout>/laravel-showcase-app/README.md` — count IG items (expect 5), count KB bullets (expect 7).
 - [ ] Read [docs/zcprecipator3/runs/15/apidev/README.md](../runs/15/apidev/README.md) — count `### N.` numbered IG items (expect 5), count unnumbered `### ` items inside IG markers (expect 1).
 - [ ] Cross-check §3.5 summary table — confirm class assignments match the actual reference content.
 

@@ -72,11 +72,11 @@ This implementation guide further inserts Tranche -1 (pre-flight) and Tranche 0.
 
 Prep §6.2 "Brief content (~200 KB)" bullet: "**Reference recipes verbatim** — laravel-jetstream + laravel-showcase, both apps repos + recipe trees. Every README, every import.yaml, every codebase zerops.yaml. ~80 KB."
 
-This is wrong as written. The ZCP binary ships only the `embed.FS` corpus under `internal/content/...` and `internal/recipe/content/...`. `/Users/fxck/www/laravel-*` and `/Users/fxck/www/recipes/...` exist on the prep author's machine but NOT on production user machines. Any composer that Reads those paths at runtime fails for every user except the doc author.
+This is wrong as written. The ZCP binary ships only the `embed.FS` corpus under `internal/content/...` and `internal/recipe/content/...`. `<apps checkout>/laravel-*` and `<recipes checkout>/...` exist on the prep author's machine but NOT on production user machines. Any composer that Reads those paths at runtime fails for every user except the doc author.
 
 Replace with:
 
-> **Distilled reference shape atoms** — hand-extracted at design-time from laravel-jetstream + laravel-showcase, embedded under `internal/recipe/content/briefs/refinement/reference_*.md` (see §5 of run-17-implementation.md for atom inventory). ~25 KB after distillation. The composer reads only embedded atoms; no `/Users/fxck/www/...` paths at runtime.
+> **Distilled reference shape atoms** — hand-extracted at design-time from laravel-jetstream + laravel-showcase, embedded under `internal/recipe/content/briefs/refinement/reference_*.md` (see §5 of run-17-implementation.md for atom inventory). ~25 KB after distillation. The composer reads only embedded atoms; no `<local checkout>/...` paths at runtime.
 
 Also add an explicit invariant to §7 ("What stays unchanged"):
 
@@ -352,7 +352,7 @@ This is the load-bearing prep work. The implementer must NOT skip it under time 
 
 Path: `internal/recipe/content/briefs/refinement/`
 
-Each atom is hand-distilled from `/Users/fxck/www/laravel-jetstream-app/`, `/Users/fxck/www/laravel-showcase-app/`, `/Users/fxck/www/recipes/laravel-jetstream/`, `/Users/fxck/www/recipes/laravel-showcase/` AT DESIGN TIME. The atom carries verbatim excerpts + author annotations; the source paths NEVER appear in atom bodies.
+Each atom is hand-distilled from `<apps checkout>/laravel-jetstream-app/`, `<apps checkout>/laravel-showcase-app/`, `<recipes checkout>/laravel-jetstream/`, `<recipes checkout>/laravel-showcase/` AT DESIGN TIME. The atom carries verbatim excerpts + author annotations; the source paths NEVER appear in atom bodies.
 
 ```
 internal/recipe/content/briefs/refinement/
@@ -1327,7 +1327,7 @@ LoC delta: +30 (split + new gates + atom clarification + tests).
 // the brief from embedded atoms ONLY; runDir is read for
 // (a) stitched-output paths the sub-agent will Read at dispatch time
 // (the brief lists them) and (b) facts.jsonl path. No
-// /Users/fxck/www/... paths leak into the brief — pinned by
+// <local checkout>/... paths leak into the brief — pinned by
 // TestNoFilesystemReferenceLeak_RefinementBrief.
 //
 // Signature mirrors BuildCodebaseContentBrief — parent threaded so
@@ -1551,7 +1551,7 @@ TestNoFilesystemReferenceLeak_RefinementBrief(t *testing.T)
   // Build the brief for any plan + runDir.
   brief, _ := BuildRefinementBrief(plan, "/some/path", facts)
   forbiddenPrefixes := []string{
-      "/Users/",
+      "<macOS home prefix>",
       "/home/",
       "/var/www/laravel-",
       "/var/www/recipes/",

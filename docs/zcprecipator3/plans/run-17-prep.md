@@ -84,7 +84,7 @@ Verified by walking the artifacts, not by reading the readiness doc's promises.
 
 ### §3.3 Content-quality misses
 
-Honest content read against [/Users/fxck/www/laravel-jetstream-app/](../../../../laravel-jetstream-app/) and [/Users/fxck/www/laravel-showcase-app/](../../../../laravel-showcase-app/). Full per-surface walk in [runs/16/CONTENT_COMPARISON.md](../runs/16/CONTENT_COMPARISON.md). The non-misses (previous-pass complaints that didn't survive reference grounding) are documented in CONTENT_COMPARISON §9; this section names only verified misses.
+Honest content read against `<apps checkout>/laravel-jetstream-app/` and `<apps checkout>/laravel-showcase-app/`. Full per-surface walk in [runs/16/CONTENT_COMPARISON.md](../runs/16/CONTENT_COMPARISON.md). The non-misses (previous-pass complaints that didn't survive reference grounding) are documented in CONTENT_COMPARISON §9; this section names only verified misses.
 
 - **R-17-C1** — KB stems are author-claims, not symptom-first. Run-16: `**TypeORM synchronize: false everywhere**` ([apidev/README.md:252](../runs/16/apidev/README.md)). The reference shape from showcase + jetstream is observable-state-first or directive-tightly-mapped-to-symptom. A porter searching "schema corruption on deploy" or "ALTER TABLE deadlock" cannot find run-16's bullet.
 - **R-17-C2** — IG #2 fuses three platform-forced changes. apidev IG #2: `### 2. Bind 0.0.0.0, trust the proxy, drain on SIGTERM`. Reference recipes give each its own H3 — three independent mechanisms, three failure modes. Caused by engine-emit cap pressure (§4.1).
@@ -140,7 +140,7 @@ The codebase-content brief delivers contracts via Read-pointers, not embedded te
 - [`internal/recipe/briefs_content_phase.go::BuildCodebaseContentBrief`](../../../internal/recipe/briefs_content_phase.go) (line 28-131): atoms include `phase_entry/codebase-content.md`, `briefs/codebase-content/synthesis_workflow.md`, `briefs/scaffold/platform_principles.md`. Per-codebase facts threaded via `FilterByCodebase`. Engine-emitted shells via `EmittedFactsForCodebase`.
 - **NO reference excerpts.** No verbatim KB/IG/yaml-comment samples from laravel-jetstream / laravel-showcase.
 - **NO worked examples.** No fail-vs-pass example pairs anywhere.
-- **NO spec verbatim.** The pointer block (line 106-117) tells the agent to `Read /Users/fxck/www/zcp/docs/spec-content-surfaces.md` on demand.
+- **NO spec verbatim.** The pointer block (line 106-117) tells the agent to `Read docs/spec-content-surfaces.md` on demand.
 
 Spec sections that DICTATE shape (voice patterns, citation requirement, classification × surface table, showcase-tier supplements) sit behind a Read instead of being embedded verbatim. Sub-agents under context pressure don't re-read 490-line specs at every authoring decision. **Rules without examples don't transfer.**
 
@@ -168,8 +168,8 @@ Writer-spec teaches symptom-first stems but the validator stack only refuses the
 
 Two atom trees coexist:
 
-- **v2 tree**: [`/Users/fxck/www/zcp/internal/content/workflows/recipe/`](../../../internal/content/workflows/recipe/) — feeds the older workflow engine via `internal/workflow/atom_manifest*.go`, `atom_stitcher.go`, `internal/analyze/runner.go`, `tools/lint/atom_template_vars`, `tools/lint/recipe_atom_lint.go`, `internal/content/content.go` embed.FS. **13 Go references, multi-package surgery to delete.**
-- **v3 tree**: [`/Users/fxck/www/zcp/internal/recipe/content/`](../../../internal/recipe/content/) — feeds the recipe engine (the run-16 architecture pivot). Confirmed via diagnostic that `synthesis_workflow.md` lands in the run-16 brief.
+- **v2 tree**: [`internal/content/workflows/recipe/`](../../../internal/content/workflows/recipe/) — feeds the older workflow engine via `internal/workflow/atom_manifest*.go`, `atom_stitcher.go`, `internal/analyze/runner.go`, `tools/lint/atom_template_vars`, `tools/lint/recipe_atom_lint.go`, `internal/content/content.go` embed.FS. **13 Go references, multi-package surgery to delete.**
+- **v3 tree**: [`internal/recipe/content/`](../../../internal/recipe/content/) — feeds the recipe engine (the run-16 architecture pivot). Confirmed via diagnostic that `synthesis_workflow.md` lands in the run-16 brief.
 
 Zero v3-side references to v2. Recipe engine work belongs entirely in v3. v2 deletion is its own tranche on its own dependency chain.
 
@@ -205,7 +205,7 @@ After phase 7 (finalize stitch + validate), the run is done. Slot-shape refusal 
 4. KB symptom-first fail-vs-pass example pair — one annotated reference KB bullet from jetstream (symptom-first), one from showcase (directive-tightly-mapped), one annotated FAIL bullet (`**TypeORM synchronize: false everywhere**` labeled "author-claim — porter searches for symptom").
 5. IG one-mechanism-per-H3 worked example — three reference H3s in sequence showing one platform-forced change per H3.
 
-**Add new atom**: `internal/recipe/content/briefs/codebase-content/showcase_tier_supplements.md` — port the queue-group + SIGTERM gotcha mandate from v2 tree (the existing `/Users/fxck/www/zcp/internal/content/workflows/recipe/briefs/writer/content-surface-contracts.md:102-109`). Conditionally include in `BuildCodebaseContentBrief` when `plan.Tier == tierShowcase && cb.IsWorker`.
+**Add new atom**: `internal/recipe/content/briefs/codebase-content/showcase_tier_supplements.md` — port the queue-group + SIGTERM gotcha mandate from v2 tree (the existing `internal/content/workflows/recipe/briefs/writer/content-surface-contracts.md:102-109`). Conditionally include in `BuildCodebaseContentBrief` when `plan.Tier == tierShowcase && cb.IsWorker`.
 
 **Composer hook**: thread `citationGuides()` (already computed at [briefs.go:580-598](../../../internal/recipe/briefs.go)) into [`briefs_content_phase.go:48-52`](../../../internal/recipe/briefs_content_phase.go).
 
@@ -505,7 +505,7 @@ For the fresh Opus instance reading this doc to verify accuracy. Each item names
 
 ### §12.1 What run-16 dogfood actually shipped (§3)
 
-- [ ] `ls /Users/fxck/www/zcp/docs/zcprecipator3/runs/16/` — confirm `apidev/`, `appdev/`, `workerdev/`, `environments/`, `SESSION_LOGS/`, `ANALYSIS.md`, `CONTENT_COMPARISON.md`, `TIMELINE.md`, `README.md`.
+- [ ] `ls docs/zcprecipator3/runs/16/` — confirm `apidev/`, `appdev/`, `workerdev/`, `environments/`, `SESSION_LOGS/`, `ANALYSIS.md`, `CONTENT_COMPARISON.md`, `TIMELINE.md`, `README.md`.
 - [ ] `wc -l docs/zcprecipator3/runs/16/environments/facts.jsonl` — confirm 67 facts (or close — count varies slightly by what gets recorded mid-run).
 - [ ] `grep -c '"kind":"porter_change"' docs/zcprecipator3/runs/16/environments/facts.jsonl` — confirm 36 porter_change facts.
 - [ ] `grep -c '"why":""' docs/zcprecipator3/runs/16/environments/facts.jsonl` — confirm 0 (every porter_change has rich Why content).
@@ -522,7 +522,7 @@ For the fresh Opus instance reading this doc to verify accuracy. Each item names
 
 - [ ] Read [internal/recipe/briefs_content_phase.go::BuildCodebaseContentBrief](../../../internal/recipe/briefs_content_phase.go) — confirm composer atom inclusion list. Look for any `embedSpec()` or `referenceExcerpts()` call. Expected: none.
 - [ ] Read [internal/recipe/content/briefs/codebase-content/synthesis_workflow.md](../../../internal/recipe/content/briefs/codebase-content/synthesis_workflow.md) — confirm zero verbatim KB/IG excerpts from laravel-jetstream / laravel-showcase.
-- [ ] `grep -rn "Read /Users/fxck/www/zcp/docs/spec-content-surfaces.md\|spec-content-surfaces.md" internal/recipe/content/briefs/codebase-content/` — expected: presence (the pointer pattern).
+- [ ] `grep -rn "Read docs/spec-content-surfaces.md\|spec-content-surfaces.md" internal/recipe/content/briefs/codebase-content/` — expected: presence (the pointer pattern).
 
 ### §12.4 Validator stack (§4.3)
 
@@ -548,9 +548,9 @@ For the fresh Opus instance reading this doc to verify accuracy. Each item names
 
 ### §12.8 Reference recipes (§3.3)
 
-- [ ] `ls /Users/fxck/www/laravel-jetstream-app/ /Users/fxck/www/laravel-showcase-app/` — confirm both apps repos exist.
-- [ ] `ls /Users/fxck/www/recipes/laravel-jetstream/ /Users/fxck/www/recipes/laravel-showcase/` — confirm both recipe trees exist.
-- [ ] Read [/Users/fxck/www/laravel-showcase-app/README.md:347](../../../../laravel-showcase-app/README.md) — sample 7 KB bullets in `### Gotchas` section.
+- [ ] `ls <apps checkout>/laravel-jetstream-app/ <apps checkout>/laravel-showcase-app/` — confirm both apps repos exist.
+- [ ] `ls <recipes checkout>/laravel-jetstream/ <recipes checkout>/laravel-showcase/` — confirm both recipe trees exist.
+- [ ] Read `<apps checkout>/laravel-showcase-app/README.md:347` — sample 7 KB bullets in `### Gotchas` section.
 
 ### §12.9 Retired noise verification (§11)
 

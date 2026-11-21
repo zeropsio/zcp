@@ -378,7 +378,7 @@ additional thoughts to feed in.
 - Next step: fresh-instance content exploration walks
   [docs/spec-content-surfaces.md](../../spec-content-surfaces.md) +
   [run-14 deliverables](../runs/14/) +
-  [/Users/fxck/www/recipes/laravel-showcase/](../../../../recipes/laravel-showcase/)
+  `<recipes checkout>/laravel-showcase/`
   + this prep doc, produces a content-routing redesign proposal
 - After that: run-15-readiness.md authored from the redesign proposal +
   R-14-1 + R-14-P-1 + R-14-4 (§B3) carryforwards from

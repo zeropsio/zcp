@@ -49,7 +49,7 @@ Reference material:
 - [docs/zcprecipator3/runs/13/ANALYSIS.md](../runs/13/ANALYSIS.md) —
   run-13 forensic, R-13-1..R-13-21 with root-cause synthesis at §6.
 - [docs/zcprecipator3/runs/13/CONTENT_COMPARISON.md](../runs/13/CONTENT_COMPARISON.md) —
-  surface-by-surface vs `/Users/fxck/www/laravel-showcase-app/`.
+  surface-by-surface vs `<apps checkout>/laravel-showcase-app/`.
   Honest aggregate **6.5/10**.
 - [docs/zcprecipator3/runs/13/PROMPT_ANALYSIS.md](../runs/13/PROMPT_ANALYSIS.md) —
   turn-by-turn timeline, dispatch sizing, R-13-P-1..R-13-P-22 evidence.

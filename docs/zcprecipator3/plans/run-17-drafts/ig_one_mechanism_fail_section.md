@@ -192,7 +192,7 @@ to the same call site / mechanism class? If yes, HOLD. If no, ACT
 
 4. PASS examples come from laravel-showcase apps repo IG (sequential
    H3s each one platform mechanism: see
-   `/Users/fxck/www/laravel-showcase-app/README.md` IG section). Cross-
+   `<apps checkout>/laravel-showcase-app/README.md` IG section). Cross-
    check verbatim during integration.
 
 5. After integrating, verify the FAIL quotes match

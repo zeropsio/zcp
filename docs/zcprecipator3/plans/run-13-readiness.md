@@ -74,11 +74,11 @@ dedupe (§Y2D), and the long-deferred R-18 wrapper-elimination via
 Reference material:
 
 - [docs/zcprecipator3/runs/12/ANALYSIS.md](../runs/12/ANALYSIS.md) — run-12 verdict, R-12-1..R-12-12 defects, evidence trails.
-- [docs/zcprecipator3/runs/12/CONTENT_COMPARISON.md](../runs/12/CONTENT_COMPARISON.md) — surface-by-surface vs `/Users/fxck/www/laravel-showcase-app/`. Honest aggregate **7/10**.
+- [docs/zcprecipator3/runs/12/CONTENT_COMPARISON.md](../runs/12/CONTENT_COMPARISON.md) — surface-by-surface vs `<apps checkout>/laravel-showcase-app/`. Honest aggregate **7/10**.
 - [docs/zcprecipator3/runs/12/PROMPT_ANALYSIS.md](../runs/12/PROMPT_ANALYSIS.md) — timeline, dispatch sizing (28-38% wrapper share, criterion-15 missed), 12 named smell items.
 - [docs/zcprecipator3/system.md](../system.md) §1 (audience model) + §4 (TEACH/DISCOVER line + verdict table).
 - [docs/spec-content-surfaces.md](../../spec-content-surfaces.md) — surface contracts, per-surface tests, citation map. Authoritative for what content belongs on which surface.
-- [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — apps-repo reference. **Floor, not ceiling**: laravel CLAUDE.md still mentions zcp MCP for platform operations; we want CLAUDE.md zero-zcp. Laravel IG mixes platform mechanics with framework-config; we want IG = platform-mechanics-only.
+- `<apps checkout>/laravel-showcase-app/` — apps-repo reference. **Floor, not ceiling**: laravel CLAUDE.md still mentions zcp MCP for platform operations; we want CLAUDE.md zero-zcp. Laravel IG mixes platform mechanics with framework-config; we want IG = platform-mechanics-only.
 - [docs/zcprecipator3/plans/run-12-readiness.md](run-12-readiness.md) — prior plan; E / A / C / I / M / G / R / B / D / Y1 / Y2 / Y3 all shipped + run-13 §1-§4 cleanup.
 - [docs/zcprecipator3/CHANGELOG.md](../CHANGELOG.md) — top entries: "run-13 readiness: root-cause cleanup of run-12 catalog residue + plumbing fix" + "run-12 readiness: foundation + flow + cosmetic".
 

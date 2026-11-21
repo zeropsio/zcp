@@ -200,9 +200,9 @@ system.md §4 frames the question (TEACH = same for every recipe + positive shap
 
 Derived from three recipes:
 
-- [/Users/fxck/www/laravel-jetstream-app/README.md](../../../../laravel-jetstream-app/README.md) — 4 IG items (human-authored)
-- [/Users/fxck/www/laravel-showcase-app/README.md](../../../../laravel-showcase-app/README.md) — 5 IG items, 7 KB bullets (early recipe-flow)
-- [/Users/fxck/www/zcp/docs/zcprecipator3/runs/15/apidev/README.md](../runs/15/apidev/README.md) — 5 numbered IG items + 1 unnumbered, 8 KB bullets (run-15 dogfood)
+- `<apps checkout>/laravel-jetstream-app/README.md` — 4 IG items (human-authored)
+- `<apps checkout>/laravel-showcase-app/README.md` — 5 IG items, 7 KB bullets (early recipe-flow)
+- [`docs/zcprecipator3/runs/15/apidev/README.md`](../runs/15/apidev/README.md) — 5 numbered IG items + 1 unnumbered, 8 KB bullets (run-15 dogfood)
 
 ### §3.1 Class A — Engine-emittable structural item
 
@@ -636,8 +636,8 @@ Adjacent-forward order updates: research → provision → scaffold → feature 
    - Parent recipe pointer block (when `parent != nil`) — slug + paths to parent's published surfaces — ~1 KB
 
    **Pointed at (subagent Reads on demand)**:
-   - `/Users/fxck/www/zcp/docs/spec-content-surfaces.md` (~38 KB, NOT embedded)
-   - `/Users/fxck/www/zcp/docs/zcprecipator3/content-research.md` Part 5 + Part 6 (~11 KB worth, NOT embedded; subagent Reads relevant parts)
+   - `docs/spec-content-surfaces.md` (~38 KB, NOT embedded)
+   - `docs/zcprecipator3/content-research.md` Part 5 + Part 6 (~11 KB worth, NOT embedded; subagent Reads relevant parts)
    - `<SourceRoot>/zerops.yaml`
    - `<SourceRoot>/src/**` (Glob + Read on demand)
    - `<MountRoot>/<parent-slug>/...` (when parent != nil)
@@ -660,7 +660,7 @@ Adjacent-forward order updates: research → provision → scaffold → feature 
    - Parent recipe pointer block (when `parent != nil`) — ~1 KB
 
    **Pointed at**:
-   - `/Users/fxck/www/zcp/docs/spec-content-surfaces.md` (NOT embedded)
+   - `docs/spec-content-surfaces.md` (NOT embedded)
    - `<MountRoot>/<parent-slug>/...` (when parent != nil)
 
 5. **Reduce `BuildFinalizeBrief`** to stitch + validate only. ~3 KB brief.
@@ -1619,8 +1619,8 @@ Replaces prep §13. Each item names the verification command + the expected matc
 
 ### §14.2 IG taxonomy derivation (§3)
 
-- [ ] Read [/Users/fxck/www/laravel-jetstream-app/README.md](../../../../laravel-jetstream-app/README.md). Count IG items: `grep -nE "^### [0-9]" /Users/fxck/www/laravel-jetstream-app/README.md` (no head limit). Expect 4.
-- [ ] Read [/Users/fxck/www/laravel-showcase-app/README.md](../../../../laravel-showcase-app/README.md). Count IG items (expect 5) and KB bullets after `## Integration Guide`'s closing `## Gotchas`: `awk '/^## Gotchas/,EOF' | grep -c "^- \*\*"`. Expect 7.
+- [ ] Read `<apps checkout>/laravel-jetstream-app/README.md`. Count IG items: `grep -nE "^### [0-9]" <apps checkout>/laravel-jetstream-app/README.md` (no head limit). Expect 4.
+- [ ] Read `<apps checkout>/laravel-showcase-app/README.md`. Count IG items (expect 5) and KB bullets after `## Integration Guide`'s closing `## Gotchas`: `awk '/^## Gotchas/,EOF' | grep -c "^- \*\*"`. Expect 7.
 - [ ] Read [docs/zcprecipator3/runs/15/apidev/README.md](../runs/15/apidev/README.md). Count `### N.` numbered IG items (expect 5) + unnumbered `### ` headings inside IG (expect 1) + KB bullets (expect 8).
 - [ ] Cross-check §3.2 Class B examples against jetstream / showcase / run-15 — confirm Object Storage is NOT listed in Class B (it belongs in Class C). Confirm bundled-class caveat is present.
 
@@ -1679,7 +1679,7 @@ For ANALYSIS.md / CONTENT_COMPARISON.md cites, verify each with `grep -nE "^## �
   # Replace the path if a fresher run exists; this scopes to run-15 forensic.
   python3 - <<'PY'
   import json, glob
-  for path in sorted(glob.glob('/Users/fxck/www/zcp/docs/zcprecipator3/runs/15/SESSSION_LOGS/subagents/*.jsonl')):
+  for path in sorted(glob.glob('docs/zcprecipator3/runs/15/SESSSION_LOGS/subagents/*.jsonl')):
       with open(path) as f:
           for line in f:
               try: entry = json.loads(line)

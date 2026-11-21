@@ -1,7 +1,7 @@
 # Handoff prompt for fresh instance — run-17 full implementation
 
 Copy the section below verbatim into a fresh Opus 4.7 (1M context)
-session running in `/Users/fxck/www/zcp`. It is self-contained — the
+session running in `<zcp checkout>`. It is self-contained — the
 fresh instance has no prior conversation context and only the
 referenced files to work from.
 

@@ -1,7 +1,7 @@
 # Handoff prompt for fresh instance — run-17 Tranche 0.5 distillation work
 
 Copy the section below verbatim into a fresh Opus 4.7 (1M context)
-session running in `/Users/fxck/www/zcp`. It is self-contained — the
+session running in `<zcp checkout>`. It is self-contained — the
 fresh instance has no prior conversation context and only the
 referenced files to work from.
 
@@ -34,10 +34,10 @@ Three drafts to integrate:
 
 **Reference recipe roots** (read-only; verbatim source for your distillation):
 
-- [/Users/fxck/www/laravel-jetstream-app/](/Users/fxck/www/laravel-jetstream-app/) — apps repo (CLAUDE.md, README.md, zerops.yaml)
-- [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — apps repo (CLAUDE.md, README.md, zerops.yaml)
-- [/Users/fxck/www/recipes/laravel-jetstream/](/Users/fxck/www/recipes/laravel-jetstream/) — recipe tree (README.md + 6 tier import.yaml + tier README extracts)
-- [/Users/fxck/www/recipes/laravel-showcase/](/Users/fxck/www/recipes/laravel-showcase/) — recipe tree, same shape
+- `<apps checkout>/laravel-jetstream-app/` — apps repo (CLAUDE.md, README.md, zerops.yaml)
+- `<apps checkout>/laravel-showcase-app/` — apps repo (CLAUDE.md, README.md, zerops.yaml)
+- `<recipes checkout>/laravel-jetstream/` — recipe tree (README.md + 6 tier import.yaml + tier README extracts)
+- `<recipes checkout>/laravel-showcase/` — recipe tree, same shape
 - [docs/zcprecipator3/runs/16/](docs/zcprecipator3/runs/16/) — the prior dogfood run (apidev/, appdev/, workerdev/ READMEs + environments/) — used for FAIL examples; my drafts already cite verbatim.
 
 ---
@@ -54,10 +54,10 @@ Land each at `internal/recipe/content/briefs/refinement/`:
 
    Verified-real reference quotes you must cross-check verbatim and use as PASS examples (run `grep -n` on the named files; if any quote has drifted, update to actual file content):
 
-   - `/Users/fxck/www/laravel-jetstream-app/zerops.yaml:28` — `# Feel free to change this value to your own custom domain,`
-   - `/Users/fxck/www/laravel-jetstream-app/zerops.yaml:61` — `# Configure this to use real SMTP sinks`
-   - `/Users/fxck/www/recipes/laravel-jetstream/3 — Stage/import.yaml:49` — `# Feel free to remove this service, if you wish to stage-test`
-   - `/Users/fxck/www/recipes/laravel-jetstream/4 — Small Production/import.yaml` — search for `# Disabling the subdomain access is recommended,`
+   - `<apps checkout>/laravel-jetstream-app/zerops.yaml:28` — `# Feel free to change this value to your own custom domain,`
+   - `<apps checkout>/laravel-jetstream-app/zerops.yaml:61` — `# Configure this to use real SMTP sinks`
+   - `<recipes checkout>/laravel-jetstream/3 — Stage/import.yaml:49` — `# Feel free to remove this service, if you wish to stage-test`
+   - `<recipes checkout>/laravel-jetstream/4 — Small Production/import.yaml` — search for `# Disabling the subdomain access is recommended,`
 
    FAIL examples: pull from `docs/zcprecipator3/runs/16/environments/4 — Small Production/import.yaml` (run-16 tier-4 import.yaml) where field-restatement preambles are common. The CONTENT_COMPARISON.md §3 names the specific lines.
 
@@ -68,14 +68,14 @@ Land each at `internal/recipe/content/briefs/refinement/`:
    Side-by-side comparison: jetstream tier-4 service blocks (mechanism-first, tight) vs showcase tier-4 service blocks (field-restatement preamble, looser). Both are reference-acceptable; the atom teaches when each shape lands at 8.5 anchor and what would push them to 9.0.
 
    Source files (cross-check verbatim before quoting):
-   - `/Users/fxck/www/recipes/laravel-jetstream/4 — Small Production/import.yaml`
-   - `/Users/fxck/www/recipes/laravel-showcase/4 — Small Production/import.yaml`
+   - `<recipes checkout>/laravel-jetstream/4 — Small Production/import.yaml`
+   - `<recipes checkout>/laravel-showcase/4 — Small Production/import.yaml`
 
    FAIL example: run-16 tier-4 `# api in zeropsSetup: prod, 0.5 GB shared CPU, minContainers: 2` (already cited verbatim in run-17-prep.md §3.3 R-17-C11; cross-check current run-16 artifact).
 
 3. **`reference_trade_offs.md`** (~120 lines)
 
-   Two-sided trade-off examples from KB bullets across both reference apps repos. Search for bullets that name a rejected alternative; verified-existing example: `/Users/fxck/www/laravel-showcase-app/README.md` KB section names `predis over phpredis` (chosen + rejected). Find 3-5 such bullets across the two apps repos.
+   Two-sided trade-off examples from KB bullets across both reference apps repos. Search for bullets that name a rejected alternative; verified-existing example: `<apps checkout>/laravel-showcase-app/README.md` KB section names `predis over phpredis` (chosen + rejected). Find 3-5 such bullets across the two apps repos.
 
    FAIL example: pull from run-16 KB bullets where only the chosen path is named (most run-16 KB bullets — the dominant miss).
 
@@ -90,7 +90,7 @@ Land each at `internal/recipe/content/briefs/refinement/`:
    Use [`docs/zcprecipator3/plans/run-17-drafts/kb_shapes_fail_section.md`](docs/zcprecipator3/plans/run-17-drafts/kb_shapes_fail_section.md) as the FAIL examples section verbatim (it's already cross-checked).
 
    Add a PASS examples section drawing from:
-   - `/Users/fxck/www/laravel-showcase-app/README.md` KB section — `**No .env file**` (8.5 symptom-first anchor) and `**Cache commands in initCommands, not buildCommands**` (8.5 directive-tightly-mapped anchor) — both already named in `kb_shapes_fail_section.md` Fail 3 framing.
+   - `<apps checkout>/laravel-showcase-app/README.md` KB section — `**No .env file**` (8.5 symptom-first anchor) and `**Cache commands in initCommands, not buildCommands**` (8.5 directive-tightly-mapped anchor) — both already named in `kb_shapes_fail_section.md` Fail 3 framing.
 
    Add a 9.0 anchor — adapt the Refined-to suggestions from the FAIL section (e.g. `**ALTER TABLE deadlock under multi-container boot**`) and label as the 9.0 reshape target.
 
@@ -100,7 +100,7 @@ Land each at `internal/recipe/content/briefs/refinement/`:
 
    Use [`docs/zcprecipator3/plans/run-17-drafts/ig_one_mechanism_fail_section.md`](docs/zcprecipator3/plans/run-17-drafts/ig_one_mechanism_fail_section.md) as the FAIL examples section verbatim.
 
-   Add a PASS examples section: laravel-showcase apps repo IG sequential H3s. Verify by reading `/Users/fxck/www/laravel-showcase-app/README.md` IG section — there should be ~5 H3s each one platform-forced change. Quote 3 in sequence verbatim.
+   Add a PASS examples section: laravel-showcase apps repo IG sequential H3s. Verify by reading `<apps checkout>/laravel-showcase-app/README.md` IG section — there should be ~5 H3s each one platform-forced change. Quote 3 in sequence verbatim.
 
 ### Group C — appendable section in two atoms
 
