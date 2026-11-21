@@ -398,14 +398,14 @@ At this point: the "50 frameworks" concern is solved. Each framework costs one h
 
 ## 10. Analysis harness (shrinks the post-run loop)
 
-Commissioning remains manual: build zcp, authorize on Zerops, start a Claude Code session, paste the recipe prompt, let it run, export artifacts, drop them at `/Users/fxck/www/zcprecipator/{name}/`. That loop has irreducible human gates (authorization, platform deploy time).
+Commissioning remains manual: build zcp, authorize on Zerops, start a Claude Code session, paste the recipe prompt, let it run, export artifacts, drop them at `<run output dir>/{name}/`. That loop has irreducible human gates (authorization, platform deploy time).
 
 The **post-run analysis** is what's tedious. Every question an analyst asks ("what did the writer actually produce?", "did the main agent rewrite sub-agent output?", "what's in each dispatch vs the engine's built brief?", "what changed since the previous run?") is currently a grep+jq expedition through 600-1500-line jsonl files. v2's `extract_flow.py` grabs dispatch prompts + selective tool calls but is lossy (thinking blocks, some tool results, assistant text) and every analyst re-does the same reconstruction cold.
 
 v3's harness moves this work to one CLI invocation:
 
 ```
-zcp analyze recipe-run /Users/fxck/www/zcprecipator/{name}/ [--baseline=/path/to/prev-run/]
+zcp analyze recipe-run <run output dir>/{name}/ [--baseline=/path/to/prev-run/]
 ```
 
 ### What gets produced

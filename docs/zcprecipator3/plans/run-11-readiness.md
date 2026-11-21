@@ -6,13 +6,13 @@ Run 11 ships the foundation bugs (gap U → V → M) plus the content-discipline
 
 Reference material (all already written):
 - [docs/zcprecipator3/runs/10/ANALYSIS.md](../runs/10/ANALYSIS.md) — run 10 verdict (PAUSE), 26-criterion scorecard, §3 gaps M, N, O, P, Q, R, S, U, V (no T — TIMELINE export-gating is by design). Every gap carries a "Fix direction" subsection naming files + LoC estimates — authoritative spec for what run 11 must ship.
-- [docs/zcprecipator3/runs/10/CONTENT_COMPARISON.md](../runs/10/CONTENT_COMPARISON.md) — content-quality grade vs `/Users/fxck/www/laravel-showcase-app/`. §6.5 carries the bullet-by-bullet audit; honest aggregate **2-3/10**.
+- [docs/zcprecipator3/runs/10/CONTENT_COMPARISON.md](../runs/10/CONTENT_COMPARISON.md) — content-quality grade vs `<laravel-showcase-app checkout>/`. §6.5 carries the bullet-by-bullet audit; honest aggregate **2-3/10**.
 - [docs/zcprecipator3/runs/10/PROMPT_ANALYSIS.md](../runs/10/PROMPT_ANALYSIS.md) — timeline / sub-agent / smell catalog. §4 fix-stack ranking-by-cost-vs-value is the tranche structure's source.
 - [docs/zcprecipator3/runs/10/TIMELINE.md](../runs/10/TIMELINE.md) — main-agent-authored run 10 build log. §6 catalogs five concrete engine-behavior surprises (record-fragment append vs overwrite, runtime-vs-managed import-comments, IG list-vs-headers contradiction, IG-first-item-mention rule, meta-agent-voice false-positive on "AI Agent").
 - [docs/zcprecipator3/plans/run-10-readiness.md](run-10-readiness.md) — prior run's plan. §2 workstreams L–Q shipped in v9.10.0 and stay in force; criteria 1–26 carry over.
 - [docs/zcprecipator3/CHANGELOG.md](../CHANGELOG.md) — top entry (2026-04-24, "run-10-readiness") describes v9.10.0 and what L / M / N / O / P / Q1..Q4 actually delivered.
 - [docs/spec-content-surfaces.md](../../spec-content-surfaces.md) — load-bearing for run 11. Carries the classification taxonomy (Platform-invariant / Platform×framework intersection / Framework-quirk DISCARD / Library-metadata DISCARD / Scaffold-decision / Operational / Self-inflicted DISCARD), the four classification rules, and the seven surface contracts. Run 11's gap V depends on this spec being engine-enforced rather than agent-self-graded.
-- [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — apps-repo shape + style + KB-discipline reference. Reference KB has 7 bullets, zero citation-boilerplate, every bullet hard-won from running that exact stack on Zerops. Run 11's KB-discipline target.
+- `<laravel-showcase-app checkout>/` — apps-repo shape + style + KB-discipline reference. Reference KB has 7 bullets, zero citation-boilerplate, every bullet hard-won from running that exact stack on Zerops. Run 11's KB-discipline target.
 
 Run-10 artifacts: [docs/zcprecipator3/runs/10/](../runs/10/)
 
@@ -28,8 +28,8 @@ zcprecipator3 (v3) is the Go recipe-authoring engine at [internal/recipe/](../..
 
 v3 produces two published artifacts from a single run, intended for two different GitHub repositories:
 
-- **recipes-repo shape** — published to `zeropsio/recipes/<slug>/`. Shape: root `README.md` + 6 tier folders (`0 — AI Agent/` … `5 — Highly-available Production/`), each with `README.md` + `import.yaml`. Verified canonical across ~20 existing published recipes at [/Users/fxck/www/recipes/](/Users/fxck/www/recipes/). Does NOT contain a `codebases/` subdirectory.
-- **apps-repo shape** — published to `zerops-recipe-apps/<slug>-<codebase>/` (one repo per codebase). Shape: `README.md` + `CLAUDE.md` + `zerops.yaml` + full source tree, ALL at repo root. Reference: [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — a single-codebase Laravel monolith with source (`app/`, `bootstrap/`, `config/`, `database/`, `public/`, etc.) at root alongside the three metadata files. **The reference is authoritative for shape AND voice AND KB-discipline** — when a check or validator disagrees with the reference, the check is wrong.
+- **recipes-repo shape** — published to `zeropsio/recipes/<slug>/`. Shape: root `README.md` + 6 tier folders (`0 — AI Agent/` … `5 — Highly-available Production/`), each with `README.md` + `import.yaml`. Verified canonical across ~20 existing published recipes at `<recipes checkout>/`. Does NOT contain a `codebases/` subdirectory.
+- **apps-repo shape** — published to `zerops-recipe-apps/<slug>-<codebase>/` (one repo per codebase). Shape: `README.md` + `CLAUDE.md` + `zerops.yaml` + full source tree, ALL at repo root. Reference: `<laravel-showcase-app checkout>/` — a single-codebase Laravel monolith with source (`app/`, `bootstrap/`, `config/`, `database/`, `public/`, etc.) at root alongside the three metadata files. **The reference is authoritative for shape AND voice AND KB-discipline** — when a check or validator disagrees with the reference, the check is wrong.
 
 **Critical constraint for run 11**: the apps-repo shape's source lives at `cb.SourceRoot = /var/www/<hostname>dev/`. Run 10 closed with the engine writing per-codebase README + CLAUDE to `/var/www/<hostname>/` (no `dev` suffix) — an undocumented synthetic location nothing reads. The empirical signature (validator violation paths report relative form `"path":"api/README.md"`; `wc -l /var/www/api/README.md` succeeds for the finalize sub-agent) requires `cb.SourceRoot` to have carried the bare hostname (`"api"`/`"app"`/`"worker"`) at finalize stitch time. Run 11 fixes the silent-failure paths so the same regression cannot recur invisibly.
 
@@ -76,7 +76,7 @@ Tranches run by dependency: Tranche 1 unblocks the foundation (V depends on U-2'
 
 ## 1. Goals for run 11
 
-A recipe run of `nestjs-showcase` (or fresh slug — see §6 risks) that, compared directly to `/Users/fxck/www/laravel-showcase-app/`:
+A recipe run of `nestjs-showcase` (or fresh slug — see §6 risks) that, compared directly to `<laravel-showcase-app checkout>/`:
 
 1. **Every fact recorded during scaffold + feature lands in `facts.jsonl`**, not `legacy-facts.jsonl`. v2 `zerops_record_fact` refuses with a redirect when a v3 recipe session is open. The hard-won learnings (`npx ts-node` trap, `.deployignore`-bricks-`dist` trap, NATS contract, etc.) reach the stitch pipeline.
 2. **Codebase KB contains zero bullets that fail the spec's DISCARD classes** (Self-inflicted, Framework-quirk, Library-metadata). Engine-side validators enforce the spec; the classifier auto-overrides agent `surfaceHint` when fact shape is unambiguous; the brief teaches the litmus with run-10 anti-patterns.
@@ -100,7 +100,7 @@ Stretch: criterion 10 from run-10-readiness (click-deployable end-to-end) become
 Four invariants the implementation session must hold:
 
 1. **No architectural work.** Every gap below is a small patch (~5–150 LoC per workstream, matching ANALYSIS.md §3 estimates). None justifies redesigning state, renaming types, splitting packages, or reshaping the classification taxonomy in the spec.
-2. **Reference is authority.** [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) is the shape + style + KB-discipline target. Reference KB has 7 bullets, zero citation-boilerplate, every bullet hard-won from running that exact stack. When a check, validator, or rule disagrees with the reference, the check is wrong and gets updated.
+2. **Reference is authority.** `<laravel-showcase-app checkout>/` is the shape + style + KB-discipline target. Reference KB has 7 bullets, zero citation-boilerplate, every bullet hard-won from running that exact stack. When a check, validator, or rule disagrees with the reference, the check is wrong and gets updated.
 3. **Spec is enforced, not redefined.** [docs/spec-content-surfaces.md](../../spec-content-surfaces.md) carries the classification taxonomy and the seven surface contracts. Run 11's gap V makes the spec's invariants programmatic — it does NOT alter the taxonomy. If a class boundary feels wrong during implementation, that's a separate spec PR, not a run 11 change.
 4. **Fail loud at engine boundaries.** Run 10's silent failures (M's `injectIGItem1` no-op on missing yaml; v2 fact tool's "Recorded gotcha_candidate fact" success message that routes to a file v3 can't read; `codebaseKnown`'s slot-hostname acceptance) are the structural cause of every gap. Validators that should reject MUST reject; reads that should error MUST error; tools that should refuse MUST refuse with an actionable message.
 
@@ -305,7 +305,7 @@ The mid-flight engine swap that broke gap M ([ANALYSIS.md §3 gap M](../runs/10/
 
 > - **Trust proxy is per-framework, not per-platform** — Express (under NestJS) parses `X-Forwarded-For` only when `trust proxy` is enabled. The L7 balancer always sets the header, but Express defaults to ignoring it because most local environments do not have a proxy. Enable it explicitly via `app.set('trust proxy', true)` or `req.ip` keeps reporting the VXLAN peer. **Cited guide: `http-support`.**
 
-The reference at [/Users/fxck/www/laravel-showcase-app/README.md:347-355](/Users/fxck/www/laravel-showcase-app/README.md) does NOT have a `Cited guide:` boilerplate at the end of each bullet — citations attach in prose ("Per the http-support guide…") or are simply omitted when the rule is platform-evident.
+The reference at `<laravel-showcase-app checkout>/README.md:347-355` does NOT have a `Cited guide:` boilerplate at the end of each bullet — citations attach in prose ("Per the http-support guide…") or are simply omitted when the rule is platform-evident.
 
 **Worse**: citation discipline propagates into env import.yaml comments. [environments/0 — AI Agent/import.yaml:72](../runs/10/environments/0%20—%20AI%20Agent/import.yaml): `# # (cite \`init-commands\` via the nodejs@22 hello-world guide).` — meta-talk about citations inside a yaml comment whose audience is the click-deploying porter.
 
@@ -397,7 +397,7 @@ Sub-agents that consult `zerops_knowledge` for runtime guides hit this paragraph
 
 1. **R-1 — port `### N.` to validator**. [internal/recipe/validators_codebase.go](../../../internal/recipe/validators_codebase.go). Update the IG-item regex to accept `^### \d+\.\s` headers as the canonical shape. Keep ordered-list `^\d+\.\s` as a deprecation-acceptable fallback for one release with a violation message: *"prefer `### N. <title>` headers over plain ordered-list — see scaffold brief"*. Or, more cleanly, require `### N.` and reject plain ordered-list (since the engine generates IG item #1 with the heading shape per §M, sub-agents' items must match). Pick the strict variant. ~15 LoC.
 
-2. **R-2 — scaffold brief mandates `### N. <title>`**. Reword IG guidance to remove ambiguity: *"Each IG item is a `### N. <title>` heading followed by porter-facing prose. Item #1 is engine-generated (yaml block, see §M); your fragment authors items starting at `### 2. <title>`. Do NOT use plain ordered-list bullets — the validator rejects them. The reference at `/Users/fxck/www/laravel-showcase-app/README.md` uses this exact shape."* ~5 lines change.
+2. **R-2 — scaffold brief mandates `### N. <title>`**. Reword IG guidance to remove ambiguity: *"Each IG item is a `### N. <title>` heading followed by porter-facing prose. Item #1 is engine-generated (yaml block, see §M); your fragment authors items starting at `### 2. <title>`. Do NOT use plain ordered-list bullets — the validator rejects them. The reference at `<laravel-showcase-app checkout>/README.md` uses this exact shape."* ~5 lines change.
 
 **Changes**:
 - [internal/recipe/validators_codebase.go](../../../internal/recipe/validators_codebase.go) — IG-item regex update. ~15 LoC.

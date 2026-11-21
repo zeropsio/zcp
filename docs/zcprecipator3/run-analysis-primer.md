@@ -106,13 +106,13 @@ for the shape after a one-shot backfill).
 
 Two reference recipes set the floors:
 
-- **`/Users/fxck/www/laravel-showcase-app/`** + 
-  **`/Users/fxck/www/recipes/laravel-showcase/`** — early-flow output.
+- **`<laravel-showcase-app checkout>/`** + 
+  **`<recipes checkout>/laravel-showcase/`** — early-flow output.
   The **density floor**: every comment carries mechanism + reason, KB
   stems are symptom-first, IG one-mechanism-per-item.
 
-- **`/Users/fxck/www/laravel-jetstream-app/`** + 
-  **`/Users/fxck/www/recipes/laravel-jetstream/`** — human-authored.
+- **`<laravel-jetstream-app checkout>/`** + 
+  **`<recipes checkout>/laravel-jetstream/`** — human-authored.
   The **voice floor**: friendly authority, inline doc URLs (not slug
   citations), `> [!CAUTION]` callouts, honest `# FIXME` comments.
 

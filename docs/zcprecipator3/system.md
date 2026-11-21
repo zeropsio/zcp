@@ -52,10 +52,10 @@ audience.
 ## 2. The output shape
 
 Fixed. Engine job is to produce exactly this shape, byte-correct. The
-**reference** is `zeropsio/recipes` (`/Users/fxck/www/recipes/`),
+**reference** is `zeropsio/recipes` (`<recipes checkout>/`),
 authoritatively `_template/` for the recipe-repo shape and any
 published recipe (e.g. `laravel-minimal/`) for an instantiated example.
-The apps-repo reference is `/Users/fxck/www/laravel-showcase-app/`.
+The apps-repo reference is `<laravel-showcase-app checkout>/`.
 
 ### Recipe repo — the click-deploy template
 

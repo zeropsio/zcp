@@ -4,8 +4,8 @@ Run 7 closed 5 phases because the gates were trivial, not because the recipe wor
 
 Reference material (all already written):
 - [spec-content-surfaces.md](../../spec-content-surfaces.md) — the 7 surface contracts + classification taxonomy + citation map + anti-patterns
-- `/Users/fxck/www/laravel-showcase-app/` — reference per-codebase deliverable (README + CLAUDE.md + commented `zerops.yaml`)
-- `/Users/fxck/www/recipes/laravel-showcase/` — reference recipe-root deliverable (root README + 6 env folders)
+- `<laravel-showcase-app checkout>/` — reference per-codebase deliverable (README + CLAUDE.md + commented `zerops.yaml`)
+- `<recipes checkout>/laravel-showcase/` — reference recipe-root deliverable (root README + 6 env folders)
 - [CHANGELOG.md](../CHANGELOG.md) — everything shipped v9.5.1 → v9.5.6
 
 Run-7 artifacts: [docs/zcprecipator3/runs/7/](../runs/7/)

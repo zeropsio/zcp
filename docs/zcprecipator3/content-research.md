@@ -10,8 +10,8 @@ When the spec and this doc disagree, the spec wins. This doc is preserved separa
 
 The two reference recipes:
 
-- [`/Users/fxck/www/recipes/laravel-jetstream/`](../../../../recipes/laravel-jetstream/) + [`/Users/fxck/www/laravel-jetstream-app/`](../../../../laravel-jetstream-app/) — **human-authored**, the readability + voice floor.
-- [`/Users/fxck/www/recipes/laravel-showcase/`](../../../../recipes/laravel-showcase/) + [`/Users/fxck/www/laravel-showcase-app/`](../../../../laravel-showcase-app/) — **early recipe-flow output**, the mechanism-density floor.
+- `<recipes checkout>/laravel-jetstream/` + `<laravel-jetstream-app checkout>/` — **human-authored**, the readability + voice floor.
+- `<recipes checkout>/laravel-showcase/` + `<laravel-showcase-app checkout>/` — **early recipe-flow output**, the mechanism-density floor.
 
 The current dogfood baseline being measured against:
 

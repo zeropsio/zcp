@@ -7,8 +7,8 @@ Reference material (all already written):
 - [spec-content-surfaces.md](../../spec-content-surfaces.md) — 7 surface contracts + classification taxonomy + citation map + anti-patterns.
 - [run-8-readiness.md](run-8-readiness.md) — prior run's implementation plan; §2 workstreams A–F shipped in v9.5.7 and stay in force. Every run-9 workstream layers on top, never replacing.
 - [CHANGELOG.md](../CHANGELOG.md) — 2026-04-24 entry describes v9.5.7.
-- `/Users/fxck/www/laravel-showcase-app/` — apps-repo-shape reference (per-codebase `README.md` + `CLAUDE.md` + commented `zerops.yaml`). Run 9's output should match this shape + voice.
-- `/Users/fxck/www/recipes/laravel-showcase/` — recipes-repo-shape reference (root README + 6 tier folders).
+- `<laravel-showcase-app checkout>/` — apps-repo-shape reference (per-codebase `README.md` + `CLAUDE.md` + commented `zerops.yaml`). Run 9's output should match this shape + voice.
+- `<recipes checkout>/laravel-showcase/` — recipes-repo-shape reference (root README + 6 tier folders).
 
 Run-8 artifacts: [docs/zcprecipator3/runs/8/](../runs/8/)
 
@@ -329,7 +329,7 @@ v3 has no such atom.
 
 ### 2.H — YAML comment-style principle atom + divider-banner validator
 
-**What run 8 showed** ([ANALYSIS §3 gap H](../runs/8/ANALYSIS.md)): scaffold-api's [zerops.yaml](../runs/8/apizerops.yml) opens with a 61-character `# -------------------------------------------------------------` ASCII divider banner, with both dev AND prod `setup` blocks framed by matching dividers. Reference [laravel-showcase-app/zerops.yaml](/Users/fxck/www/laravel-showcase-app/zerops.yaml) has zero such dividers. v2 prohibits decoration at five places — notably [workflows/recipe/principles/comment-style.md](../../../internal/content/workflows/recipe/principles/comment-style.md) and [workflows/recipe/phases/finalize/env-comment-rules.md:71](../../../internal/content/workflows/recipe/phases/finalize/env-comment-rules.md#L71) which says verbatim:
+**What run 8 showed** ([ANALYSIS §3 gap H](../runs/8/ANALYSIS.md)): scaffold-api's [zerops.yaml](../runs/8/apizerops.yml) opens with a 61-character `# -------------------------------------------------------------` ASCII divider banner, with both dev AND prod `setup` blocks framed by matching dividers. Reference laravel-showcase-app/zerops.yaml has zero such dividers. v2 prohibits decoration at five places — notably [workflows/recipe/principles/comment-style.md](../../../internal/content/workflows/recipe/principles/comment-style.md) and [workflows/recipe/phases/finalize/env-comment-rules.md:71](../../../internal/content/workflows/recipe/phases/finalize/env-comment-rules.md#L71) which says verbatim:
 
 > Comments are ASCII `#` prefixed, one line, natural prose. Section transitions use a single blank-comment line (`#`) followed by the first comment of the next section. That is the full vocabulary — no dividers, no banners, no decoration.
 

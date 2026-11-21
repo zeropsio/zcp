@@ -1,19 +1,19 @@
 # Run 10 readiness — implementation plan
 
-Run 9 (`nestjs-showcase`, 2026-04-24) was the first v3 dogfood to reach `complete-phase finalize` green. All 11 run-9-readiness workstreams (A1/A2/B/E/G1/G2/H/I/K/J/R) shipped cleanly and every §4 acceptance criterion passed against its own plan (15 PASS, 1 partial PASS). But when the rendered deliverable was compared to the reference apps-repo at `/Users/fxck/www/laravel-showcase-app/`, two structural problems surfaced that the run-9 criteria didn't measure: the apps-repo content was written to an invented directory (`<outputRoot>/codebases/<h>/`) that no published recipe carries and no consumer reads, and the content style diverged materially from the reference (yaml comments compressed to single-line run-ons, README 3× shorter, CLAUDE.md 3× longer, KB format stylistically bimodal within one file, IG missing the reference's center-of-gravity "yaml verbatim" item #1).
+Run 9 (`nestjs-showcase`, 2026-04-24) was the first v3 dogfood to reach `complete-phase finalize` green. All 11 run-9-readiness workstreams (A1/A2/B/E/G1/G2/H/I/K/J/R) shipped cleanly and every §4 acceptance criterion passed against its own plan (15 PASS, 1 partial PASS). But when the rendered deliverable was compared to the reference apps-repo at `<laravel-showcase-app checkout>/`, two structural problems surfaced that the run-9 criteria didn't measure: the apps-repo content was written to an invented directory (`<outputRoot>/codebases/<h>/`) that no published recipe carries and no consumer reads, and the content style diverged materially from the reference (yaml comments compressed to single-line run-ons, README 3× shorter, CLAUDE.md 3× longer, KB format stylistically bimodal within one file, IG missing the reference's center-of-gravity "yaml verbatim" item #1).
 
 Run 10 ships the structural + stylistic fixes that bring the rendered deliverable into parity with the reference, on the same target (`nestjs-showcase`). This plan enumerates what a fresh implementation session ships before run 10 so the next dogfood produces a deliverable whose per-codebase trees at `<SourceRoot>/` are directly comparable — length, structure, voice — to `laravel-showcase-app/`.
 
 Reference material (all already written):
 - [docs/zcprecipator3/runs/9/ANALYSIS.md](../runs/9/ANALYSIS.md) — run 9 verdict (PAUSE), 16-criterion scorecard, gap L write-up, wall-time breakdown.
-- [docs/zcprecipator3/runs/9/CONTENT_COMPARISON.md](../runs/9/CONTENT_COMPARISON.md) — systematic diff of run-9 output vs `/Users/fxck/www/laravel-showcase-app/` reference: length table, yaml-comment style contrast, README-IG structure contrast, KB format bimodal evidence, CLAUDE.md length inversion.
+- [docs/zcprecipator3/runs/9/CONTENT_COMPARISON.md](../runs/9/CONTENT_COMPARISON.md) — systematic diff of run-9 output vs `<laravel-showcase-app checkout>/` reference: length table, yaml-comment style contrast, README-IG structure contrast, KB format bimodal evidence, CLAUDE.md length inversion.
 - [docs/zcprecipator3/runs/9/PROMPT_ANALYSIS.md](../runs/9/PROMPT_ANALYSIS.md) — timeline narrative, four sub-agent prompts extracted + graded, 11 smells with fix directions.
 - [docs/zcprecipator3/runs/9/TIMELINE.md](../runs/9/TIMELINE.md) — main-agent-authored run 9 build log.
 - [docs/zcprecipator3/plans/run-9-readiness.md](run-9-readiness.md) — prior run's plan. §2 workstreams A1–R shipped in v9.5.8 and stay in force.
 - [docs/zcprecipator3/CHANGELOG.md](../CHANGELOG.md) — 2026-04-24 entry describes v9.5.8.
 - [docs/spec-content-surfaces.md](../../spec-content-surfaces.md) — seven surface contracts + classification taxonomy + anti-patterns.
-- [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — apps-repo-shape reference (single-codebase Laravel monolith with `README.md` + `CLAUDE.md` + `zerops.yaml` + source all at repo root). Run 10's per-codebase output at `<SourceRoot>/` must match this shape + voice.
-- [/Users/fxck/www/recipes/](/Users/fxck/www/recipes/) — ~20 published recipes (laravel-minimal, laravel-showcase, nestjs-hello-world, php-hello-world, etc.). Every single one is: root `README.md` + 6 tier folders, each with `README.md` + `import.yaml`. **Zero have a `codebases/` subdirectory.** This is the recipes-repo canonical shape and the authoritative evidence for why workstream L exists.
+- `<laravel-showcase-app checkout>/` — apps-repo-shape reference (single-codebase Laravel monolith with `README.md` + `CLAUDE.md` + `zerops.yaml` + source all at repo root). Run 10's per-codebase output at `<SourceRoot>/` must match this shape + voice.
+- `<recipes checkout>/` — ~20 published recipes (laravel-minimal, laravel-showcase, nestjs-hello-world, php-hello-world, etc.). Every single one is: root `README.md` + 6 tier folders, each with `README.md` + `import.yaml`. **Zero have a `codebases/` subdirectory.** This is the recipes-repo canonical shape and the authoritative evidence for why workstream L exists.
 
 Run-9 artifacts: [docs/zcprecipator3/runs/9/](../runs/9/)
 
@@ -29,14 +29,14 @@ zcprecipator3 (v3) is the Go recipe-authoring engine at [internal/recipe/](../..
 
 v3 produces two published artifacts from a single run, intended for two different GitHub repositories:
 
-- **recipes-repo shape** — published to `zeropsio/recipes/<slug>/`. Shape: root `README.md` + 6 tier folders (`0 — AI Agent/` … `5 — Highly-available Production/`), each with `README.md` + `import.yaml`. Verified canonical across ~20 existing published recipes at [/Users/fxck/www/recipes/](/Users/fxck/www/recipes/). Does NOT contain a `codebases/` subdirectory.
-- **apps-repo shape** — published to `zerops-recipe-apps/<slug>-<codebase>/` (one repo per codebase). Shape: `README.md` + `CLAUDE.md` + `zerops.yaml` + full source tree, ALL at repo root. Reference: [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — a single-codebase monolith with Laravel source (`app/`, `bootstrap/`, `config/`, `database/`, `public/`, etc.) at root alongside the three metadata files.
+- **recipes-repo shape** — published to `zeropsio/recipes/<slug>/`. Shape: root `README.md` + 6 tier folders (`0 — AI Agent/` … `5 — Highly-available Production/`), each with `README.md` + `import.yaml`. Verified canonical across ~20 existing published recipes at `<recipes checkout>/`. Does NOT contain a `codebases/` subdirectory.
+- **apps-repo shape** — published to `zerops-recipe-apps/<slug>-<codebase>/` (one repo per codebase). Shape: `README.md` + `CLAUDE.md` + `zerops.yaml` + full source tree, ALL at repo root. Reference: `<laravel-showcase-app checkout>/` — a single-codebase monolith with Laravel source (`app/`, `bootstrap/`, `config/`, `database/`, `public/`, etc.) at root alongside the three metadata files.
 
 **Critical constraint for run 10**: the apps-repo shape's source lives at the SSHFS-mounted dev slot path, `/var/www/<hostname>dev/`. In v3 terms this is `cb.SourceRoot`. The engine must write README + CLAUDE to this path directly — NOT to a separate `<outputRoot>/codebases/<hostname>/` subdirectory. Run 9 wrote them to the separate subdirectory; run 10 corrects this.
 
 ### 0.3 Where run 9 stopped + classes of defect
 
-Run 9 closed all five phases GREEN on the fourth `complete-phase` finalize call. Every run-9-readiness criterion passed against its own plan. But post-hoc comparison to `/Users/fxck/www/laravel-showcase-app/` surfaced:
+Run 9 closed all five phases GREEN on the fourth `complete-phase` finalize call. Every run-9-readiness criterion passed against its own plan. But post-hoc comparison to `<laravel-showcase-app checkout>/` surfaced:
 
 **Structural defects** (shape of the deliverable tree is wrong):
 - **L** — engine writes apps-repo content to `<outputRoot>/codebases/<h>/` (a directory invented for v3-to-v3 chain resolution that has never fired against real input — no published recipe has the directory). The reference shape wants README + CLAUDE + yaml at the same tree as source, which is `<SourceRoot>/`. See [runs/9/ANALYSIS.md §3 gap L](../runs/9/ANALYSIS.md).
@@ -69,7 +69,7 @@ Tranches run serially: Tier 1 unblocks the shape (without L+M, run 10's output i
 
 ## 1. Goals for run 10
 
-A recipe run of `nestjs-showcase` that, compared directly to `/Users/fxck/www/laravel-showcase-app/`:
+A recipe run of `nestjs-showcase` that, compared directly to `<laravel-showcase-app checkout>/`:
 
 1. **Writes per-codebase `README.md` + `CLAUDE.md` + `zerops.yaml` into `<cb.SourceRoot>/`**. A porter running `git init && git add -A && git commit && git push` from `/var/www/apidev/` gets a shape-equivalent repo to `laravel-showcase-app/` (modulo framework-specific source).
 2. **Does not write `<outputRoot>/codebases/<h>/` at all.** The invented directory disappears from the output tree.
@@ -109,9 +109,9 @@ Three invariants the implementation session must hold:
 ```
 
 Gap evidence:
-- **`find /Users/fxck/www/recipes -name codebases -type d`** returns zero matches across ~20 published recipes.
+- **`find <recipes checkout> -name codebases -type d`** returns zero matches across ~20 published recipes.
 - **[chain.go:73](../../../internal/recipe/chain.go#L73)** `loadParent` reads `<parentDir>/codebases/<h>/` — the only consumer. The `if entries, err := os.ReadDir(codebasesDir); err == nil` guard falls through silently on every real parent (no published v2 parent has the directory). The feature has never fired against real input.
-- **Reference `/Users/fxck/www/laravel-showcase-app/`** has `README.md` + `CLAUDE.md` + `zerops.yaml` + source all at repo root. No `codebases/` subdirectory anywhere.
+- **Reference `<laravel-showcase-app checkout>/`** has `README.md` + `CLAUDE.md` + `zerops.yaml` + source all at repo root. No `codebases/` subdirectory anywhere.
 
 **Root cause (named files)**:
 - [handlers.go:447](../../../internal/recipe/handlers.go#L447) — `cbRoot := filepath.Join(outputRoot, "codebases", cb.Hostname)` in `stitchContent`.
@@ -148,7 +148,7 @@ Gap evidence:
 
 > 1. **`zerops.yaml` layout** — The committed `zerops.yaml` declares two setups: `dev` (deploys the full source tree with `start: zsc noop --silent` ...) and `prod` (compiles TypeScript, ships `dist/` + production `node_modules` + `package.json`, runs the compiled entry under Node with `readinessCheck` + `healthCheck` gated on `/health`). ...
 
-The reference at [/Users/fxck/www/laravel-showcase-app/README.md:16–308](/Users/fxck/www/laravel-showcase-app/README.md) uses a completely different pattern:
+The reference at `<laravel-showcase-app checkout>/README.md:16–308` uses a completely different pattern:
 
 ```markdown
 ## Integration Guide
@@ -223,7 +223,7 @@ Item #1 is a fenced yaml code block containing the FULL `zerops.yaml` verbatim (
   - setup: dev
 ```
 
-One line, ~280 characters, 3 `so that`/`otherwise` clauses stacked. Contrast with [/Users/fxck/www/laravel-showcase-app/zerops.yaml:56–68](/Users/fxck/www/laravel-showcase-app/zerops.yaml):
+One line, ~280 characters, 3 `so that`/`otherwise` clauses stacked. Contrast with `<laravel-showcase-app checkout>/zerops.yaml:56–68`:
 
 ```yaml
       # Config, route, and view caches MUST be built at runtime.
@@ -281,7 +281,7 @@ Feature-authored entries (last 6 bullets):
 - **Expose X-Cache via CORS** — a cross-origin `fetch` against the api only sees headers listed under `Access-Control-Expose-Headers`. The cache-demo tab needs the `X-Cache` value, so `app.enableCors()` passes `exposedHeaders: ['X-Cache']` in `main.ts`. Without it, `res.headers.get('X-Cache')` returns `null` in the browser even though curl sees the header.
 ```
 
-Reference style at [laravel-showcase-app/README.md:349–355](/Users/fxck/www/laravel-showcase-app/README.md) matches the feature entries:
+Reference style at laravel-showcase-app/README.md:349–355 matches the feature entries:
 
 ```markdown
 - **No `.env` file** — Zerops injects environment variables as OS env vars. Creating a `.env` file with empty values shadows the OS vars, causing `env()` to return `null` for every key that appears in `.env` even if the platform has a value set.
@@ -319,7 +319,7 @@ Root cause: the scaffold brief's preship-contract section implicitly teaches the
 |---|---|---|---|
 | CLAUDE.md | 33 lines | 99 lines | **3.0× LONGER** |
 
-Reference [laravel-showcase-app/CLAUDE.md](/Users/fxck/www/laravel-showcase-app/CLAUDE.md) is one-fact-per-line operator cheat sheet:
+Reference laravel-showcase-app/CLAUDE.md is one-fact-per-line operator cheat sheet:
 - 3-line intro paragraph.
 - `## Zerops service facts` — 4 bullets.
 - `## Zerops dev (hybrid)` — one paragraph + HMR fork + "Do NOT" rule.
@@ -497,7 +497,7 @@ Run 10 is "reference parity" when, against a fresh `nestjs-showcase` dogfood:
 
 ### New for run 10
 
-17. **Apps-repo shape at `<SourceRoot>/` matches reference.** After run, `/var/www/apidev/`, `/var/www/appdev/`, `/var/www/workerdev/` each contain `README.md` + `CLAUDE.md` + `zerops.yaml` at tree root alongside source. Shape-equivalent to `/Users/fxck/www/laravel-showcase-app/`.
+17. **Apps-repo shape at `<SourceRoot>/` matches reference.** After run, `/var/www/apidev/`, `/var/www/appdev/`, `/var/www/workerdev/` each contain `README.md` + `CLAUDE.md` + `zerops.yaml` at tree root alongside source. Shape-equivalent to `<laravel-showcase-app checkout>/`.
 18. **`<outputRoot>/codebases/` does not exist.** The invented subdirectory is gone from the rendered tree.
 19. **README Integration Guide item #1 is a fenced yaml code block.** The code block's content is byte-identical to `<SourceRoot>/zerops.yaml`. Subsequent items #2+ are fragment-authored porter-facing app-side changes.
 20. **YAML inline comments read as multi-line natural prose.** At least one comment block in each codebase's zerops.yaml spans 3+ lines with one causal word per block. No validator rejection on block-level check.

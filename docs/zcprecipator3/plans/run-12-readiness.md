@@ -31,10 +31,10 @@ documented APIs without hand-edits. Then the engine cosmetic cluster
 Reference material:
 
 - [docs/zcprecipator3/runs/11/ANALYSIS.md](../runs/11/ANALYSIS.md) — run 11 verdict, completes-phase trace, three engine bugs (B5-a..f) recorded as facts #7/#8/#9.
-- [docs/zcprecipator3/runs/11/CONTENT_COMPARISON.md](../runs/11/CONTENT_COMPARISON.md) — surface-by-surface vs `/Users/fxck/www/laravel-showcase-app/`. Honest aggregate **6/10**. Top single-fix levers: env-var-model rewrite + CLAUDE.md MCP-tool removal.
+- [docs/zcprecipator3/runs/11/CONTENT_COMPARISON.md](../runs/11/CONTENT_COMPARISON.md) — surface-by-surface vs `<laravel-showcase-app checkout>/`. Honest aggregate **6/10**. Top single-fix levers: env-var-model rewrite + CLAUDE.md MCP-tool removal.
 - [docs/zcprecipator3/runs/11/PROMPT_ANALYSIS.md](../runs/11/PROMPT_ANALYSIS.md) — 5 dispatch prompts extracted, brief-vs-engine sizing, 18 named smell items (R-1..R-18), fix-stack ordered by leverage.
 - [docs/zcprecipator3/system.md](../system.md) §4 — TEACH/DISCOVER line. Audience model in §1: every published surface reader is a **porter**, not a recipe author, not the recipe-authoring agent.
-- [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) — apps-repo reference. **Important caveat**: laravel-showcase itself is imperfect in what we strive for. Reference is a floor, not a ceiling. Specifically: laravel CLAUDE.md still mentions zcp MCP for platform operations; we want apps-repo CLAUDE.md to be completely non-zcp (the porter has their own Zerops project + their own editor, no zcp control plane). Reference IG mixes generic "deploy on Zerops" content with framework-specific (Laravel) integration — we want the IG to focus on platform mechanics that change for Zerops, not framework configuration.
+- `<laravel-showcase-app checkout>/` — apps-repo reference. **Important caveat**: laravel-showcase itself is imperfect in what we strive for. Reference is a floor, not a ceiling. Specifically: laravel CLAUDE.md still mentions zcp MCP for platform operations; we want apps-repo CLAUDE.md to be completely non-zcp (the porter has their own Zerops project + their own editor, no zcp control plane). Reference IG mixes generic "deploy on Zerops" content with framework-specific (Laravel) integration — we want the IG to focus on platform mechanics that change for Zerops, not framework configuration.
 - [docs/zcprecipator3/plans/run-11-readiness.md](run-11-readiness.md) — prior run's plan. U / V / M / N / O / P / R / Q / S all shipped.
 - [docs/zcprecipator3/CHANGELOG.md](../CHANGELOG.md) — top entries: "2026-04-25 — cleanup: gates → notices per system.md §4" + "architectural reframe".
 
@@ -156,7 +156,7 @@ Five invariants the implementation session must hold:
 
 1. **No architectural work.** Each workstream is small (~5-150 LoC). None justifies redesigning state, renaming types, splitting packages, or reshaping the spec.
 
-2. **Reference is a floor, not a ceiling.** [/Users/fxck/www/laravel-showcase-app/](/Users/fxck/www/laravel-showcase-app/) is the comparison baseline but not the target. Specifically: laravel CLAUDE.md still mentions zcp MCP for "platform operations" — run 12 targets a stricter rule (zero zcp refs in apps-repo CLAUDE.md, period). Laravel IG mixes platform mechanics with framework-specific configuration — run 12 targets IG = platform-mechanics-only.
+2. **Reference is a floor, not a ceiling.** `<laravel-showcase-app checkout>/` is the comparison baseline but not the target. Specifically: laravel CLAUDE.md still mentions zcp MCP for "platform operations" — run 12 targets a stricter rule (zero zcp refs in apps-repo CLAUDE.md, period). Laravel IG mixes platform mechanics with framework-specific configuration — run 12 targets IG = platform-mechanics-only.
 
 3. **System.md §1 audience model is authoritative.** "Every published surface's reader is a porter." When a brief, atom, or template tells the agent something the porter cannot use (an MCP invocation, an authoring-time tool name), that content is mis-targeted. Run 12 tightens the audience boundary.
 
