@@ -210,7 +210,7 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Service %q is in mode %q which cannot push (only Standard/Simple/LocalStage/LocalOnly can act as push source)", hostname, meta.Mode),
-				"Either pick closeMode=auto/manual, or expand the service to standard mode first (re-run bootstrap with route=adopt + isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname). See develop-mode-expansion atom for the plan shape."), WithRecoveryStatus()), nil, nil
+				"Either pick closeMode=auto/manual, or expand the service first. "+modeExpansionAdvice), WithRecoveryStatus()), nil, nil
 		}
 
 		if cm == topology.CloseModeGitPush {

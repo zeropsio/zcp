@@ -957,6 +957,13 @@ func runPublishSideSourceControlGate(
 	return publishSidePublishGateResult{Checks: checks}
 }
 
+// modeExpansionAdvice is the one recovery for a runtime whose mode cannot
+// act as a push source. The classic route, unlike adopt, validates the plan
+// without the live service list, so the plan may name a stage half that does
+// not exist yet and bootstrap creates it; adopt refuses an isExisting target
+// whose stage is not live.
+const modeExpansionAdvice = "Expand to a standard pair through bootstrap on the classic route: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"classic\", with a plan target carrying isExisting=true + bootstrapMode=\"standard\" + the new stageHostname, which bootstrap creates. See the develop-mode-expansion atom for the plan shape."
+
 // modeUnsupportedBlocker is the LP-5 gate head: non-push-source modes
 // (legacy ModeDev, standalone ModeStage) return the honest expansion
 // blocker instead of an unsatisfiable git-push-setup chain.
@@ -969,13 +976,13 @@ func modeUnsupportedBlocker(meta *workflow.ServiceMeta) []topology.Blocker {
 		Severity: topology.BlockerSeverityBlock,
 		Category: topology.BlockerCategorySourceControl,
 		Message: fmt.Sprintf(
-			"Service %q is in mode %q, which cannot act as a push source — production promotion needs a repo-backed pair. Expand to a standard pair first (the stage half becomes the verified promotion basis): re-run bootstrap with route=adopt and a plan target carrying isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname. See the develop-mode-expansion atom for the plan shape.",
+			"Service %q is in mode %q, which cannot act as a push source — production promotion needs a repo-backed pair. The stage half becomes the verified promotion basis. "+modeExpansionAdvice,
 			meta.Hostname, meta.Mode,
 		),
 		Recovery: &topology.Recovery{
 			Tool:   "zerops_workflow",
 			Action: "start",
-			Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
+			Args:   map[string]string{"workflow": "bootstrap", "route": "classic"},
 		},
 	}}
 }
