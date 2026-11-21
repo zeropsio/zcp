@@ -277,8 +277,8 @@ func (z *ZeropsClient) CreateAppVersion(ctx context.Context, serviceID, name str
 // UploadAppVersion is PUT /app-version/{id}/upload, the archive streamed
 // chunked as application/octet-stream (Client). The SDK's own upload call
 // sends application/json and runs under the whole-request timeout, so it is
-// hand-rolled on the SDK's authorized request with a client of its own: the
-// same base transport and key-refusal watch as the API client
+// hand-rolled on the SDK's request with a client of its own: the same base
+// transport, key and key-refusal watch as the API client
 // (newZeropsClientOn), no whole-request timeout, UploadStall instead.
 func (z *ZeropsClient) UploadAppVersion(ctx context.Context, appVersionID string, archive io.Reader) error {
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -291,7 +291,7 @@ func (z *ZeropsClient) UploadAppVersion(ctx context.Context, appVersionID string
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = -1 // chunked (ZEROPS-004)
-	client := &http.Client{Transport: keyRefusalTransport{base: http.DefaultTransport, hook: &z.keyRefused}}
+	client := &http.Client{Transport: keyTransport{base: http.DefaultTransport, key: z.key, hook: &z.keyRefused}}
 	resp, err := client.Do(req)
 	if readErr := body.failure(); readErr != nil {
 		if resp != nil {

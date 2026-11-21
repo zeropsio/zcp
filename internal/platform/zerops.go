@@ -27,14 +27,16 @@ const defaultAPIHost = "api.app-prg1.zerops.io"
 // ZeropsClient implements the Client interface using the zerops-go SDK.
 type ZeropsClient struct {
 	handler sdk.Handler
-	// env is an authorized sdkBase.Environment mirroring what the SDK
-	// builds internally (sdk.New + sdk.AuthorizeSdk), kept alongside the
-	// handler for hand-rolled calls the SDK doesn't cover yet (the
-	// delegation list — see zerops_delegation.go). handler.environment is
-	// unexported, so this is the only way to reuse the same host
-	// normalization + bearer auth without opening a parallel raw
-	// net/http path.
+	// env is the sdkBase.Environment the SDK builds internally (sdk.New),
+	// kept alongside the handler for hand-rolled calls the SDK doesn't
+	// cover yet (the delegation list — see zerops_delegation.go — and the
+	// upload). handler.environment is unexported, so this is the only way
+	// to reuse the same host normalization without opening a parallel raw
+	// net/http path. Neither carries the key: keyTransport sets it on each
+	// request.
 	env sdkBase.Environment
+	// key is the key's source, asked on every request (keyTransport).
+	key func() string
 
 	mu            sync.Mutex // guards cachedID/cachedTokenID lazy init with retry on error
 	cachedID      string
@@ -44,12 +46,20 @@ type ZeropsClient struct {
 	keyRefused keyRefusalHook
 }
 
-// NewZeropsClient creates a new ZeropsClient authenticated with the given token.
-// Empty apiHost falls back to defaultAPIHost — without this the SDK endpoint
-// becomes the literal "https://" (no host), and every subsequent request fails
-// with `http: no Host in request URL`.
+// NewKeyedZeropsClient creates a ZeropsClient that asks key for the key on
+// every request, so a key the owner regenerates and writes is the one the
+// next request presents (docs/spec-mate.md §6.6). Empty apiHost falls back to
+// defaultAPIHost — without this the SDK endpoint becomes the literal
+// "https://" (no host), and every subsequent request fails with
+// `http: no Host in request URL`.
+func NewKeyedZeropsClient(key func() string, apiHost string) (*ZeropsClient, error) {
+	return newZeropsClientOn(key, resolveEndpoint(apiHost), &http.Client{Timeout: DefaultAPITimeout}), nil
+}
+
+// NewZeropsClient is NewKeyedZeropsClient for a caller that holds its own
+// token: every request presents that token.
 func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
-	return newZeropsClientOn(token, resolveEndpoint(apiHost), &http.Client{Timeout: DefaultAPITimeout}), nil
+	return NewKeyedZeropsClient(func() string { return token }, apiHost)
 }
 
 // NewProjectClient is NewZeropsClient for a known project (a container's
@@ -69,21 +79,19 @@ func NewProjectClient(ctx context.Context, token, apiHost, projectID string) (*Z
 	return z, nil
 }
 
-// newZeropsClientOn builds the client on a given HTTP client.
-func newZeropsClientOn(token, endpoint string, httpClient *http.Client) *ZeropsClient {
-	z := &ZeropsClient{}
+// newZeropsClientOn builds the client on a given HTTP client, presenting the
+// key that key gives on each request.
+func newZeropsClientOn(key func() string, endpoint string, httpClient *http.Client) *ZeropsClient {
+	z := &ZeropsClient{key: key}
 	base := httpClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	watched := *httpClient
-	watched.Transport = keyRefusalTransport{base: base, hook: &z.keyRefused}
-	httpClient = &watched
+	keyed := *httpClient
+	keyed.Transport = keyTransport{base: base, key: key, hook: &z.keyRefused}
+	httpClient = &keyed
 	config := sdkBase.DefaultConfig(sdkBase.WithCustomEndpoint(endpoint))
-	handler := sdk.New(config, httpClient)
-	handler = sdk.AuthorizeSdk(handler, token)
-	env := sdkBase.NewEnvironment(config, httpClient).Authorize(token)
-	z.handler, z.env = handler, env
+	z.handler, z.env = sdk.New(config, httpClient), sdkBase.NewEnvironment(config, httpClient)
 	return z
 }
 

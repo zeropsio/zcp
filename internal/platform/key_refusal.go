@@ -17,13 +17,17 @@ func (z *ZeropsClient) OnKeyRefused(fn func()) {
 	z.keyRefused.Store(&fn)
 }
 
-// keyRefusalTransport tells the hook of each 401 answer base gives.
-type keyRefusalTransport struct {
+// keyTransport presents the key its source gives now on each request base
+// carries, and tells the hook of each 401 answer base gives.
+type keyTransport struct {
 	base http.RoundTripper
+	key  func() string
 	hook *keyRefusalHook
 }
 
-func (t keyRefusalTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t keyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.key())
 	resp, err := t.base.RoundTrip(req)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
 		if fn := t.hook.Load(); fn != nil {

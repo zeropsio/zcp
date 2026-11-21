@@ -221,7 +221,7 @@ func TestRecorded_RCDecode_EveryRecordingDecodesAsRecorded(t *testing.T) {
 	var service rawService
 	decodeRaw(t, raw, serviceSchema, &service)
 
-	client := newZeropsClientOn("recorded", "https://zerops.recorded.invalid/",
+	client := newZeropsClientOn(func() string { return "recorded" }, "https://zerops.recorded.invalid/",
 		&http.Client{Transport: &recordedTransport{t: t, routes: routes}})
 	ctx := context.Background()
 
