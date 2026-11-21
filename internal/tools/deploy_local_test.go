@@ -22,7 +22,7 @@ func TestDeployLocalTool_Schema_NoSourceService(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
@@ -86,7 +86,7 @@ func TestDeployLocalTool_Description_MentionsZcli(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
@@ -133,7 +133,7 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
@@ -349,7 +349,7 @@ func TestDeployLocalTool_ToPool_SaysOnlyNewContainers(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-pool", ProjectID: "proj-1", ServiceStackID: "svc-pool", Status: statusActive, Sequence: 1},
 		})
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	restore := ops.OverrideRunnerForTest(localZcliMock{})
 	defer restore()
 

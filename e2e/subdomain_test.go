@@ -76,7 +76,7 @@ func TestE2E_Subdomain(t *testing.T) {
 	appHostname := "zcpsub" + suffix
 
 	// Login zcli with the same token.
-	zcliLogin(t, h.authInfo.Token)
+	zcliLogin(t, h.authInfo.Key())
 
 	// Create minimal app in temp directory.
 	appDir := createMinimalApp(t, appHostname)

@@ -274,7 +274,7 @@ func serveDevServer(t *testing.T, ssh ops.SSHDeployer, interval, gap time.Durati
 	serveKeepAlive(srv, interval, gap)
 	tools.RegisterDevServer(srv, tools.DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: ssh, StateDir: dir,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		Devsup: tools.DevsupSource{Latest: func(context.Context) (string, error) {
 			return "https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64", nil
 		}},

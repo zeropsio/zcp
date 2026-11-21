@@ -84,7 +84,7 @@ func TestDeployLocalTool_WithSHA_PreservesExistingTags(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	restore := ops.OverrideRunnerForTest(localZcliMock{})
 	defer restore()

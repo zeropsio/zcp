@@ -929,7 +929,7 @@ const pushKeyName = "zcp_key"
 
 // pushKeyInput is the stdin a push call writes for pushKeyRead.
 func pushKeyInput(authInfo auth.Info) []byte {
-	return []byte(authInfo.Token + "\n")
+	return []byte(authInfo.Key() + "\n")
 }
 
 // buildWaitCommand awaits the push buildSSHCommand started in pushDir: it

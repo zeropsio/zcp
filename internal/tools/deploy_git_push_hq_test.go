@@ -19,7 +19,7 @@ func (l *hqLab) gitPushTool() *mcp.Server {
 	l.t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, l.mock, l.hq.srv.Client(), labMate, l.ssh,
-		&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, nil,
+		&auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, nil,
 		l.rt, l.stateDir, testDeployEngine(l.t), nil, DevsupSource{})
 	return srv
 }

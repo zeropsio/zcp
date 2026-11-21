@@ -35,7 +35,7 @@ func schemaTestSession(t *testing.T) (*mcp.Tool, *mcp.ClientSession) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)

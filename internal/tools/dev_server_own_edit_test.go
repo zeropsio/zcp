@@ -45,7 +45,7 @@ func ownEditDeployServer(t *testing.T, c ops.SSHDeployer, deployed bool) *mcp.Se
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
 		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
 	return srv
 }

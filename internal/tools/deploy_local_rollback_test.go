@@ -35,7 +35,7 @@ func TestDeployLocal_AppVersionID_ReactivatesBackup(t *testing.T) {
 		WithRedeployAppVersionProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusPending, ActionName: "stack.deploy.backup"}).
 		WithProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusFinished, ActionName: "stack.deploy.backup"})
 
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, t.TempDir(), testDeployEngine(t), nil)
@@ -84,7 +84,7 @@ func TestDeployLocal_AppVersionLatest_Unchanged(t *testing.T) {
 		WithRedeployAppVersionProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusPending, ActionName: "stack.deploy"}).
 		WithProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusFinished, ActionName: "stack.deploy"})
 
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, t.TempDir(), testDeployEngine(t), nil)
@@ -127,7 +127,7 @@ func TestDeployLocal_AppVersionID_ActiveRefuses(t *testing.T) {
 			{ID: "av-old", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 1},
 		})
 
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, t.TempDir(), testDeployEngine(t), nil)
@@ -160,7 +160,7 @@ func TestDeploy_AnAlreadyActiveNewestVersionAnswersTheSameCodeAsLatestOrByID(t *
 				{ID: "av-new", ServiceStackID: "s1", Status: platform.ServiceStatusActive, Sequence: 2},
 				{ID: "av-old", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 1},
 			})
-		authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+		authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 		RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, t.TempDir(), testDeployEngine(t), nil)
 

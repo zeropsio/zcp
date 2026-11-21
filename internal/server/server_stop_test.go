@@ -77,7 +77,7 @@ func TestServerStop_StartPassRunning_WaitsForIt(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			srv := New(ctx, platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil),
-				&auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil,
+				&auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil,
 				runtime.Info{InContainer: true, ServiceID: "s1", ProjectID: "p1", MateEnabled: true,
 					HQ: &runtime.HQLink{Origin: "https://hq.invalid", ProjectID: "p1", Key: "the-project-key"}}, nil)
 			select {

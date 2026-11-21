@@ -200,7 +200,7 @@ func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 		},
 		{
 			name:      "token with a shell metacharacter stays quoted",
-			authInfo:  auth.Info{Token: "tok'en; rm -rf /"},
+			authInfo:  auth.Info{Key: func() string { return "tok'en; rm -rf /" }},
 			wantParts: []string{" && " + pushKeyRead + " && ", "zcli push --service-id svc-1"},
 		},
 	}
@@ -214,11 +214,11 @@ func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 			if contains(cmd, "zcli login") {
 				t.Errorf("command must NOT log zcli in on the remote host (the token would persist)\ngot: %s", cmd)
 			}
-			if contains(cmd, tt.authInfo.Token) {
-				t.Errorf("command carries the token %q\ngot: %s", tt.authInfo.Token, cmd)
+			if contains(cmd, tt.authInfo.Key()) {
+				t.Errorf("command carries the token %q\ngot: %s", tt.authInfo.Key(), cmd)
 			}
-			if got := string(pushKeyInput(tt.authInfo)); got != tt.authInfo.Token+"\n" {
-				t.Errorf("push stdin = %q, want the token %q as one line", got, tt.authInfo.Token)
+			if got := string(pushKeyInput(tt.authInfo)); got != tt.authInfo.Key()+"\n" {
+				t.Errorf("push stdin = %q, want the token %q as one line", got, tt.authInfo.Key())
 			}
 			for _, want := range tt.wantParts {
 				if !contains(cmd, want) {

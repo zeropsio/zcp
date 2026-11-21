@@ -172,7 +172,7 @@ func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConf
 			})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
-				&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, logFetcher, runtime.Info{InContainer: true}, stateDir, engine, nil, DevsupSource{})
+				&auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, logFetcher, runtime.Info{InContainer: true}, stateDir, engine, nil, DevsupSource{})
 			RegisterDiscover(srv, mock, "proj-1", "", engine)
 
 			var deployed ops.DeployResult
@@ -215,7 +215,7 @@ func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConf
 // zcp writes itself names the repo's file.
 func TestRepoConfigFile_ADeployReplyKeepsBuildLogsAndErrorsAsWritten(t *testing.T) {
 	t.Parallel()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	t.Run("build log line", func(t *testing.T) {
 		t.Parallel()
@@ -313,7 +313,7 @@ func TestRepoConfigFile_ADeployNamesTheConfigFileItDeploysFrom(t *testing.T) {
 				logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 					{Facility: "local0", Tag: "zbuilder@av-1", Message: "something unusual went wrong"},
 				})
-				authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+				authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 				rt := runtime.Info{InContainer: true}
 				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 				var deployed *ops.DeployResult

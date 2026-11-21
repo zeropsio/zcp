@@ -26,6 +26,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/platform"
 	zruntime "github.com/zeropsio/zcp/internal/runtime"
 )
@@ -38,7 +40,9 @@ const (
 
 // Info holds resolved authentication and project context.
 type Info struct {
-	Token       string
+	// Key gives the key as its owner holds it now: asked at each use, so a
+	// regenerated key is the one presented (resolveCredentials).
+	Key         func() string
 	APIHost     string
 	Region      string
 	ClientID    string
@@ -69,7 +73,7 @@ type cliRegion struct {
 //
 // Both paths validate via client.GetUserInfo and discover the project.
 func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
-	token, apiHost, region, scopeProjectID, err := resolveCredentials()
+	key, apiHost, region, scopeProjectID, err := resolveCredentials()
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +94,7 @@ func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
 	client.BindOrg(project.ClientID)
 
 	return &Info{
-		Token:       token,
+		Key:         key,
 		APIHost:     apiHost,
 		Region:      region,
 		ClientID:    project.ClientID,
@@ -103,7 +107,11 @@ func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
 
 // Credentials holds raw connection info needed to create a platform client.
 type Credentials struct {
-	Token   string
+	// Token is the key as it was when resolved, for a one-shot command.
+	Token string
+	// Key gives the key as its owner holds it now, for a long-lived client
+	// (platform.NewKeyedZeropsClient).
+	Key     func() string
 	APIHost string
 	Region  string
 }
@@ -112,28 +120,38 @@ type Credentials struct {
 // without contacting the API. Use this to bootstrap a platform.Client before
 // calling Resolve for full validation.
 func ResolveCredentials() (*Credentials, error) {
-	token, apiHost, region, _, err := resolveCredentials()
+	key, apiHost, region, _, err := resolveCredentials()
 	if err != nil {
 		return nil, err
 	}
-	return &Credentials{Token: token, APIHost: apiHost, Region: region}, nil
+	return &Credentials{Token: key(), Key: key, APIHost: apiHost, Region: region}, nil
 }
 
-// resolveCredentials reads token and connection info from env vars or cli.data.
-func resolveCredentials() (token, apiHost, region string, scopeProjectID *string, err error) {
-	// Primary path: ZCP_API_KEY env var.
-	token = os.Getenv("ZCP_API_KEY")
-	if token != "" {
+// liveKey reads ZCP_API_KEY from the container's live env store as it is now,
+// falling back to the process environment off a container or when the store
+// cannot be read: the platform rewrites the store a few seconds after the
+// owner writes a regenerated key, and this process's environment never
+// changes (docs/spec-mate.md §6.6). The store is read at each call.
+func liveKey() string {
+	return strings.TrimSpace(mate.LiveLookup(mate.LiveEnvStorePath)(hq.EnvKey))
+}
+
+// resolveCredentials reads the key's source and connection info from the
+// ZCP_API_KEY variable (its live value at each call) or cli.data (a fixed
+// token).
+func resolveCredentials() (key func() string, apiHost, region string, scopeProjectID *string, err error) {
+	// Primary path: ZCP_API_KEY.
+	if liveKey() != "" {
 		detHost, detRegion := containerAPIDefaults()
 		apiHost = envOrDefault("ZCP_API_HOST", detHost)
 		region = envOrDefault("ZCP_REGION", detRegion)
-		return token, apiHost, region, nil, nil
+		return liveKey, apiHost, region, nil, nil
 	}
 
 	// Fallback: read zcli's cli.data.
 	data, readErr := readCliData()
 	if readErr != nil {
-		return "", "", "", nil, platform.NewPlatformError(
+		return nil, "", "", nil, platform.NewPlatformError(
 			platform.ErrAuthRequired,
 			"No authentication found: set ZCP_API_KEY or log in with zcli",
 			"Export ZCP_API_KEY=<your-token> or run: zcli login <token>",
@@ -141,7 +159,7 @@ func resolveCredentials() (token, apiHost, region string, scopeProjectID *string
 	}
 
 	if data.Token == "" {
-		return "", "", "", nil, platform.NewPlatformError(
+		return nil, "", "", nil, platform.NewPlatformError(
 			platform.ErrAuthRequired,
 			"cli.data found but token is empty",
 			"Run: zcli login <token>",
@@ -158,7 +176,8 @@ func resolveCredentials() (token, apiHost, region string, scopeProjectID *string
 		region = defaultRegion
 	}
 
-	return data.Token, apiHost, region, data.ScopeProjectID, nil
+	token := data.Token
+	return func() string { return token }, apiHost, region, data.ScopeProjectID, nil
 }
 
 // discoverProject finds the active project for the authenticated user.

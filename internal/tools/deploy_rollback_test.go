@@ -34,7 +34,7 @@ func TestDeploySSH_AppVersionID_ReactivatesBackup(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusFinished, ActionName: "stack.deploy.backup"})
 
 	ssh := &countingSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
@@ -87,7 +87,7 @@ func TestDeploySSH_AppVersionID_ActiveRefuses(t *testing.T) {
 		})
 
 	ssh := &countingSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
@@ -116,7 +116,7 @@ func TestDeploySSH_AppVersionID_UnknownRefuses(t *testing.T) {
 		})
 
 	ssh := &countingSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})

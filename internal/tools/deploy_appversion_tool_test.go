@@ -54,7 +54,7 @@ func TestDeploySSH_AppVersionLatest_SkipsSourceAndRedeploys(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusFinished, ActionName: "stack.deploy"})
 
 	ssh := &countingSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	// No ServiceMeta written for "api" — the appVersion path must not need

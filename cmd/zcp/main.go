@@ -423,7 +423,7 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
+	client, err := platform.NewKeyedZeropsClient(creds.Key, creds.APIHost)
 	if err != nil {
 		return nil, fmt.Errorf("create platform client: %w", err)
 	}

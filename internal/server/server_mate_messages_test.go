@@ -61,7 +61,7 @@ func listProjectServerTools(t *testing.T, rt runtime.Info) []string {
 		t.Fatalf("knowledge store: %v", err)
 	}
 	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
-	srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+	srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 		store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, rt, nil)
 	t.Cleanup(srv.Stop)
 	ctx := context.Background()

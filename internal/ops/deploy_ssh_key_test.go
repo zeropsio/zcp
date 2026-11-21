@@ -56,7 +56,7 @@ func TestDeploySSH_EveryPush_KeyOnStdinNeverOnACommandLine(t *testing.T) {
 				{ID: "svc-1", Name: "builder"},
 				{ID: "svc-2", Name: "app"},
 			})
-			if _, err := DeploySSH(context.Background(), mock, "proj-1", tt.ssh, auth.Info{Token: pushKey},
+			if _, err := DeploySSH(context.Background(), mock, "proj-1", tt.ssh, auth.Info{Key: func() string { return pushKey }},
 				"builder", "app", "", "", tt.sha); err != nil {
 				t.Fatalf("deploy: %v", err)
 			}

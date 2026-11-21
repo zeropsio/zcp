@@ -35,7 +35,7 @@ func TestDeployBatch_ThreeTargetsAllSucceed(t *testing.T) {
 			{ID: "av-worker", ServiceStackID: "svc-worker-tgt", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -84,7 +84,7 @@ func TestDeployBatch_EmptyTargetsFails(t *testing.T) {
 
 	mock := platform.NewMock()
 	ssh := &stubSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -179,7 +179,7 @@ func TestDeployBatch_CrossDeploy_PreflightReadsSourceMounts(t *testing.T) {
 			{ID: "av-worker", ServiceStackID: "svc-worker-tgt", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
@@ -250,7 +250,7 @@ func TestDeployBatch_Deployed_NoTagOperations(t *testing.T) {
 			{ID: "av-app", ServiceStackID: "svc-app-tgt", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSHSHA{headSHA: "f00dbeef1234567"}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -305,7 +305,7 @@ func TestDeployBatch_TargetSHA_DeploysThatCommit(t *testing.T) {
 			{ID: "av-app", ServiceStackID: "svc-app-tgt", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSHSHA{sha: mainSHA, tmp: "/tmp/zcp-extract-7", headSHA: "f00dbeef1234567"}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})

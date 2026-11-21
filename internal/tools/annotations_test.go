@@ -289,7 +289,7 @@ func listAllTools(t *testing.T, rt runtime.Info) map[string]*mcp.Tool {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -341,7 +341,7 @@ func TestAnnotations_BrowserTool(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -486,7 +486,7 @@ func TestAnnotations_DeployLocalTool(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -565,7 +565,7 @@ func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -622,7 +622,7 @@ func TestAnnotations_StandupTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
 	}
-	srv := server.New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+	srv := server.New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 		store, platform.NewMockLogFetcher(), &nopSSH{}, &nopMounter{},
 		runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, nil)
 	t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir

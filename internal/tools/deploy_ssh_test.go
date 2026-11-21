@@ -73,7 +73,7 @@ func TestDeployTool_SSHMode(t *testing.T) {
 			},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -174,7 +174,7 @@ func TestDeployIntoDerivedClosedSession_SucceedsAndRecords(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -265,7 +265,7 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 			Status: statusFinished,
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -354,7 +354,7 @@ func TestDeployResult_CarriesPublicAccessSummary(t *testing.T) {
 			Status: statusFinished,
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -402,7 +402,7 @@ func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 			},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -461,7 +461,7 @@ func TestDeployTool_ActiveDeploy_WithBuildWarnings(t *testing.T) {
 		{Severity: "Warning", Facility: "local0", Tag: "zbuilder@av-1", Message: "WARN: deployFiles paths not found: dist"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -519,7 +519,7 @@ func TestDeployTool_ActiveDeploy_NoBuildWarnings(t *testing.T) {
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -561,7 +561,7 @@ func TestDeployTool_BuildFailed(t *testing.T) {
 			},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -620,7 +620,7 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 		{Facility: "local0", Tag: "zbuilder@av-1", Message: "Build command failed with exit code 1"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -677,7 +677,7 @@ func TestAFailedBuildStoppedForMemorySaysSoInTheDeployReply(t *testing.T) {
 		{Timestamp: "2026-10-16T03:59:59.1957Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: "┃   ZEROPS BUILD CONTAINER STARTED   ┃"},
 	})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "webstage"})
@@ -739,7 +739,7 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 		deployOutput: []byte("ok"),
 		readyErr:     fmt.Errorf("connection refused"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -803,7 +803,7 @@ func TestDeployTool_SelfDeploy_NeutralMessage(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -861,7 +861,7 @@ func TestDeployTool_CrossDeploy_StandardResponse(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -900,7 +900,7 @@ func TestDeployTool_NoParams(t *testing.T) {
 
 	mock := platform.NewMock()
 	ssh := &stubSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -935,7 +935,7 @@ func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
 		output: []byte("BUILD ARTEFACTS READY TO DEPLOY\nConnection closed.\n"),
 		err:    fmt.Errorf("ssh builder: process exited with status 255"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -970,7 +970,7 @@ func TestDeployTool_Error(t *testing.T) {
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &stubSSH{err: fmt.Errorf("ssh failed")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1006,7 +1006,7 @@ func TestDeployTool_SelfDeploySSHFailed_NoContainerArtifactBuilt_SuggestsAppVers
 			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Sequence: 2},
 		})
 	ssh := &stubSSH{err: fmt.Errorf("ssh failed: no route to host")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1053,7 +1053,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 		{Facility: "local0", Tag: "zbuilder@av-1", Message: "prepare command failed"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1114,7 +1114,7 @@ func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
 		{Facility: "local0", Tag: "sudo", Timestamp: "2026-10-15T01:00:06Z", Message: "pam_unix(sudo:session): session opened for user root"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1150,7 +1150,7 @@ func TestDeployTool_UnknownBuildStatus_TreatedAsFailure(t *testing.T) {
 			},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1203,7 +1203,7 @@ func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock()
 			ssh := &stubSSH{}
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, tt.rtInfo, "", testDeployEngine(t), nil, DevsupSource{})
@@ -1328,7 +1328,7 @@ func TestDeployTool_AdoptionGate_BlocksUnadoptedService(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "docs"}})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	// SSH handler is container-only; pass InContainer=true so the
@@ -1363,7 +1363,7 @@ func TestDeployTool_AdoptionGate_AllowsAdoptedService(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1396,7 +1396,7 @@ func TestDeployTool_AdoptionGate_AllowsStageHostname(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1424,7 +1424,7 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 
 	mock := platform.NewMock()
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1536,7 +1536,7 @@ func TestDeployTool_GitPush_TokenMissing_PointsAtSetupRerun(t *testing.T) {
 		tokenOutput: []byte("0"),
 		pushOutput:  []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1583,7 +1583,7 @@ func TestDeployTool_GitPush_CredentialFailure_DegradesMetaToBroken(t *testing.T)
 		committedOutput: []byte("1"),
 		pushErr:         &platform.SSHExecError{Output: "fatal: Authentication failed for 'https://github.com/example/repo'", Err: fmt.Errorf("exit status 128")},
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1628,7 +1628,7 @@ func TestDeployTool_GitPush_NonFastForward_SurfacesStderrAndClassifiesConfig(t *
 			Err:    fmt.Errorf("exit status 1"),
 		},
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1667,7 +1667,7 @@ func TestDeployTool_GitPush_TokenNeverSetInProject_PointsAtSetup(t *testing.T) {
 		tokenOutput: []byte("0"),
 		pushOutput:  []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1704,7 +1704,7 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 		tokenOutput: []byte("1"),
 		pushOutput:  []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1745,7 +1745,7 @@ func TestDeployTool_GitPush_DirtyTree_WarnsAndDoesNotClaimPushLanded(t *testing.
 		statusOutput:    []byte("?? .github/workflows/zerops-prod.yml\n"),
 		pushOutput:      []byte("Everything up-to-date"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, platform.NewMock(), okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1798,7 +1798,7 @@ func TestDeployTool_GitPush_RecordsServesHTTPFromSetup(t *testing.T) {
 `),
 		pushOutput: []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, platform.NewMock(), okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1860,7 +1860,7 @@ func TestDeployTool_GitPush_DoesNotStampDeployed(t *testing.T) {
 		tokenOutput:     []byte("1"),
 		pushOutput:      []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -1952,7 +1952,7 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 				tokenOutput:     []byte("1"),
 				pushOutput:      []byte("ok"),
 			}
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
 
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2015,7 +2015,7 @@ func TestDeployTool_GitPush_UntrackableDestination_FailureRecordsNoDanglingAttem
 			// No committed code — a genuine pre-flight failure, never reaches
 			// the push itself.
 			ssh := &stubSSHWithCommands{committedOutput: []byte("0")}
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2064,7 +2064,7 @@ func TestDeployTool_GitPush_TrackableDestination_FailureStillRecordsAttempt(t *t
 
 	mock := platform.NewMock()
 	ssh := &stubSSHWithCommands{committedOutput: []byte("0")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2122,7 +2122,7 @@ func TestDeployTool_GitPush_WebhookIntegration_StillRecordsInFlightAttempt(t *te
 		tokenOutput:     []byte("1"),
 		pushOutput:      []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2167,7 +2167,7 @@ func TestDeployTool_GitPush_NoCommittedCode_Refuses(t *testing.T) {
 	mock := platform.NewMock()
 	// Committed-code pre-flight returns "0" — no commits on container.
 	ssh := &stubSSHWithCommands{committedOutput: []byte("0"), tokenOutput: []byte("1"), pushOutput: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2220,7 +2220,7 @@ func TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds(t *testing.T) {
 		tokenOutput:     []byte("1"), // GIT_TOKEN present
 		pushOutput:      []byte("ok"),
 	}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "Test"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "Test"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2254,7 +2254,7 @@ func TestDeployTool_AdoptionGate_EmptyStateDir_Skips(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
@@ -2281,7 +2281,7 @@ func TestDeployTool_AdoptionGate_NoServicesDir_Skips(t *testing.T) {
 			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
@@ -2304,7 +2304,7 @@ func TestDeployTool_PreFlight_BlocksWithoutZeropsYaml(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "app"}})
 	ssh := &stubSSH{output: []byte("ok")}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	// Write ServiceMeta so pre-flight activates, but no zerops.yaml.
 	meta := &workflow.ServiceMeta{

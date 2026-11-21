@@ -303,7 +303,7 @@ func newRecipeRouteHarness(t *testing.T, projectID string) *e2eHarness {
 		t.Fatalf("create client: %v", err)
 	}
 	authInfo := &auth.Info{
-		Token:     creds.Token,
+		Key:       func() string { return creds.Token },
 		APIHost:   creds.APIHost,
 		Region:    creds.Region,
 		ProjectID: projectID,

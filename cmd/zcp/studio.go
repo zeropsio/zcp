@@ -92,7 +92,7 @@ func studioInit() (platform.Client, *auth.Info, context.Context) {
 		fmt.Fprintf(os.Stderr, "auth: %v\n", err)
 		os.Exit(1)
 	}
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
+	client, err := platform.NewKeyedZeropsClient(creds.Key, creds.APIHost)
 	if err != nil {
 		stop()
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
@@ -318,7 +318,7 @@ func runStudioWatch(_ []string) {
 
 	err := watch.Watch(ctx, watch.Config{
 		APIHost:  authInfo.APIHost,
-		Token:    func() string { return authInfo.Token },
+		Token:    authInfo.Key,
 		ClientID: authInfo.ClientID,
 		Streams:  []watch.Stream{watch.ServiceList},
 	}, emit)

@@ -133,7 +133,7 @@ func NewStandup(
 		mounter:     mounter,
 		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
 		runtimeWait: standupRuntimeWait,
-		pushes:      watch.ProjectPushes(authInfo.APIHost, func() string { return authInfo.Token }, authInfo.ClientID),
+		pushes:      watch.ProjectPushes(authInfo.APIHost, authInfo.Key, authInfo.ClientID),
 		statusPath:  mate.StatusFilePath(),
 		source:      ops.NewHQDeploySource(httpClient, hqIdentity(rtInfo)),
 	}

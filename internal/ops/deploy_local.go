@@ -240,7 +240,7 @@ func DeployLocalFromListing(
 	}
 
 	// 5. Login.
-	stdout, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Token)
+	stdout, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Key())
 	if err != nil {
 		return nil, zcliFailure("zcli login", stdout, stderr, err)
 	}

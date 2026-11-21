@@ -35,7 +35,7 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 	suffix := randomSuffix()
-	zcliLogin(t, h.authInfo.Token)
+	zcliLogin(t, h.authInfo.Key())
 
 	phpHost := "zcpslph" + suffix // port 80
 	goHost := "zcpslgo" + suffix  // port 8080

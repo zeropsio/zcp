@@ -58,7 +58,7 @@ func listServerTools(t *testing.T, rt runtime.Info) map[string]bool {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -216,7 +216,7 @@ func TestServer_BrowserToolGating(t *testing.T) {
 			mock := platform.NewMock().
 				WithProject(&platform.Project{ID: "p1", Name: "test"}).
 				WithServices(nil)
-			authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+			authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
@@ -288,7 +288,7 @@ func TestServer_Connect(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -337,7 +337,7 @@ func TestServer_DoesNotAdvertiseResourcesCapability(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -458,7 +458,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 			mock := platform.NewMock().
 				WithProject(&platform.Project{ID: "p1", Name: "demo"}).
 				WithServices(tt.services)
-			authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+			authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "t" }, APIHost: "localhost"}
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
@@ -521,7 +521,7 @@ func TestServerNew_LocalEnv_RefreshesAgentContext(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "t" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -557,7 +557,7 @@ func TestServerNew_ContainerEnv_StillRefreshesAgentContext(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "t" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -592,7 +592,7 @@ func TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched(t *testing.T)
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
 		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+	authInfo := &auth.Info{ProjectID: "p1", Key: func() string { return "t" }, APIHost: "localhost"}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -726,7 +726,7 @@ func TestServer_StandupToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
 			}
-			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), tt.ssh, nil, tt.rt, nil)
 			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
@@ -775,7 +775,7 @@ func TestServer_ObserveToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
 			}
-			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), tt.ssh, nil, tt.rt, nil)
 			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
@@ -826,7 +826,7 @@ func TestServer_PublishPageToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
 			}
-			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
 			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
@@ -879,7 +879,7 @@ func TestServer_AppProposeToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("knowledge store: %v", err)
 			}
-			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"},
 				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
 			t.Cleanup(srv.Stop) // what New starts in a Mate writes the state dir
 			ctx := context.Background()
@@ -930,7 +930,7 @@ func TestServer_ObserveStandalone_ConfiguredProfileStillRequiresCredential(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "native-project-key", APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{}, nil)
+	srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Key: func() string { return "native-project-key" }, APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{}, nil)
 	t.Cleanup(srv.Stop)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

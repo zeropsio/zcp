@@ -69,7 +69,7 @@ func newBoxHarness(t *testing.T) *e2eHarness {
 	if region == "" {
 		region = "prg1"
 	}
-	authInfo := &auth.Info{Token: token, APIHost: defaultAPIHost(), Region: region, ClientID: project.ClientID, ProjectID: project.ID, ProjectName: project.Name}
+	authInfo := &auth.Info{Key: func() string { return token }, APIHost: defaultAPIHost(), Region: region, ClientID: project.ClientID, ProjectID: project.ID, ProjectName: project.Name}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)

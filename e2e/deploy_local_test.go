@@ -73,7 +73,7 @@ func newLocalHarness(t *testing.T) *e2eHarness {
 			t.Fatalf("read the pinned project: %v", err)
 		}
 		client.BindOrg(project.ClientID)
-		authInfo = &auth.Info{Token: token, APIHost: apiHost, ClientID: project.ClientID, ProjectID: project.ID, ProjectName: project.Name}
+		authInfo = &auth.Info{Key: func() string { return token }, APIHost: apiHost, ClientID: project.ClientID, ProjectID: project.ID, ProjectName: project.Name}
 	} else {
 		authInfo, err = auth.Resolve(ctx, client)
 		if err != nil {

@@ -38,7 +38,7 @@ func poolBatchMock() *platform.Mock {
 // The tool result is returned whole, and the batch parsed when it is no error.
 func runPoolBatch(t *testing.T, mock *platform.Mock, ssh ops.SSHDeployer, stateDir string, targets []map[string]any, opts ...DeployOption) (*mcp.CallToolResult, ops.DeployBatchResult, string) {
 	t.Helper()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{}, append([]DeployOption{withVouchHeld()}, opts...)...)
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{"targets": targets})
@@ -214,7 +214,7 @@ func TestDeployBatch_LeaseSourceNoOrchestratorVouchesFor_Refused(t *testing.T) {
 	t.Parallel()
 	rig := newLeaseDeployRig(t)
 	ssh := &leaseSSH{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, rig.mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, rig.stateDir, testDeployEngine(t), nil, DevsupSource{})
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{"targets": []map[string]any{{"sourceService": rig.alias, "targetService": "appstage"}}})

@@ -126,7 +126,7 @@ func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	// closes as the deploy starts. Like ops.DeploySSH (isSSHBuildTriggered),
 	// a push whose output says its artefacts are ready has started the build;
 	// anything else failed.
-	if out, sshErr := sshExecStdin(t, hostname, pushCmd, h.authInfo.Token+"\n", 10*time.Minute); sshErr != nil {
+	if out, sshErr := sshExecStdin(t, hostname, pushCmd, h.authInfo.Key()+"\n", 10*time.Minute); sshErr != nil {
 		if !strings.Contains(out, "BUILD ARTEFACTS READY TO DEPLOY") && !strings.Contains(out, "Deploying service") {
 			t.Fatalf("zcli push (second build): %s (%v)", out, sshErr)
 		}

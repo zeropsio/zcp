@@ -114,7 +114,7 @@ func TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume(t *test
 			mock := platform.NewMock().WithServices(services).WithAppVersionEvents(events)
 			ssh := &recordingSSH{}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 			result := callTool(t, srv, "zerops_deploy", tt.args)
@@ -138,7 +138,7 @@ func TestDeployTool_FromPairWithoutCodeVolume_RunsInVarWww(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
 	ssh := &recordingSSH{}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 	callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"})
@@ -220,7 +220,7 @@ func TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSuperv
 			mock := platform.NewMock().WithServices(services).WithAppVersionEvents(events)
 			ssh := &fillingSSH{}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 			result := callTool(t, srv, "zerops_deploy", tt.args)
@@ -306,7 +306,7 @@ func TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt(t *testing.T) {
 			}
 			mock := platform.NewMock().WithServices(services).WithAppVersionEvents(events)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 			result := callTool(t, srv, "zerops_deploy", tt.args)
@@ -326,7 +326,7 @@ func TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt(t *testing.T) {
 		mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev"}, {ID: "svc-2", Name: "appstage"}}).
 			WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-		RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &recordingSSH{}, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 			nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 		result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"})

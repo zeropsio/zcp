@@ -81,8 +81,8 @@ func TestResolve_EnvVar_SingleProject(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if info.Token != tt.token {
-				t.Errorf("Token = %q, want %q", info.Token, tt.token)
+			if info.Key() != tt.token {
+				t.Errorf("Token = %q, want %q", info.Key(), tt.token)
 			}
 			if info.ProjectID != tt.wantProject {
 				t.Errorf("ProjectID = %q, want %q", info.ProjectID, tt.wantProject)

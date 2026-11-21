@@ -122,7 +122,7 @@ func TestNew_RecipeFollower_OnlyInAMate(t *testing.T) {
 				t.Fatalf("knowledge store: %v", err)
 			}
 			srv := New(t.Context(), platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil),
-				&auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil, tt.rt, nil)
+				&auth.Info{ProjectID: "p1", Key: func() string { return "test" }, APIHost: "localhost"}, store, platform.NewMockLogFetcher(), nil, nil, tt.rt, nil)
 			t.Cleanup(srv.Stop)
 
 			if got := srv.recipeFollower != nil; got != tt.want {

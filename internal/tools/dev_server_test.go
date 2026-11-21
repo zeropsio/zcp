@@ -203,7 +203,7 @@ func migrationToolServer(t *testing.T, c ops.SSHDeployer, buildStatus string) (*
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
 	})
 	return srv, dir
@@ -488,7 +488,7 @@ func TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVol
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
 	})
 
@@ -536,7 +536,7 @@ func TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair(t *testin
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
 	})
 
@@ -568,7 +568,7 @@ func TestDevServer_DeclarationOfAVariantBDevService_LivesOnTheCodeVolume(t *test
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
 	})
 
@@ -735,7 +735,7 @@ func TestDeploy_KeptDevServer_ComesBackUnderTheSupervisor(t *testing.T) {
 				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: build, Sequence: 2}})
 			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 			src := DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }}
 			args := map[string]any{"targetService": "appdev", "setup": "dev"}
 			if tc.tool == "zerops_deploy" {
@@ -865,7 +865,7 @@ func TestDeploy_NewVariantBDevSetup_RunsTheSupervisorOnTheCodeVolume(t *testing.
 		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-api", Status: statusActive, Sequence: 1}})
 	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: variantBDevSetup}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "apidev", "setup": "dev-api"})
@@ -936,7 +936,7 @@ func TestDeploy_NewDevSetup_GetsTheSupervisorLines(t *testing.T) {
 				})
 			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 				nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{
 					Latest:   func(context.Context) (string, error) { return tt.latest, nil },
 					Override: tt.override,
@@ -964,7 +964,7 @@ func TestDeploy_NewDevSetup_GetsTheSupervisorLines(t *testing.T) {
 				t.Errorf("the deploy does not say what changed: %s", text)
 			}
 			RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-				AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
+				AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
 			a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000})
 			if !a.Running || c.Deploys != 1 || strings.Contains(a.Message, "zcp moved") {
 				t.Errorf("first start after the first deploy: %+v, deploys = %d; want it running with no redeploy", a, c.Deploys)
@@ -1012,7 +1012,7 @@ func TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChang
 	// one reason zcp moves a pin.
 	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup), Installed: true, Running: true, SupervisorVersion: "v9.200.0"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", pushFails{c}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", pushFails{c}, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"})
@@ -1051,7 +1051,7 @@ func TestDeploy_ABuildThatFailsAfterTheSupervisorRePinSaysTheNextSuccessfulDeplo
 	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup), Installed: true, Running: true, SupervisorVersion: "v9.200.0",
 		Git: &devservertest.Repo{Branch: "feat-x"}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
 
 	text := getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"}))

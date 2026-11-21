@@ -80,7 +80,7 @@ func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command
 
 func testAuthInfo() auth.Info {
 	return auth.Info{
-		Token:    "test-token",
+		Key:      func() string { return "test-token" },
 		APIHost:  "api.app-prg1.zerops.io",
 		Region:   "prg1",
 		Email:    "test@example.com",
@@ -382,7 +382,7 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 		})
 	ssh := &mockSSHDeployer{output: []byte("ok")}
 	authInfo := auth.Info{
-		Token:   "test-token",
+		Key:     func() string { return "test-token" },
 		APIHost: "api.app-fra1.zerops.io",
 		Region:  "fra1",
 	}
@@ -409,7 +409,7 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)
 	}
 	for i, call := range ssh.calls {
-		if containsSubstring(call.command, authInfo.Token) {
+		if containsSubstring(call.command, authInfo.Key()) {
 			t.Errorf("SSH call %d carries the key on its command line: %s", i, call.command)
 		}
 	}

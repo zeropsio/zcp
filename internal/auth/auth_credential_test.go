@@ -53,8 +53,8 @@ func TestResolve_ZcliFallback_Success(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if info.Token != tt.cliToken {
-				t.Errorf("Token = %q, want %q", info.Token, tt.cliToken)
+			if info.Key() != tt.cliToken {
+				t.Errorf("Token = %q, want %q", info.Key(), tt.cliToken)
 			}
 			if info.Region != tt.wantRegion {
 				t.Errorf("Region = %q, want %q", info.Region, tt.wantRegion)

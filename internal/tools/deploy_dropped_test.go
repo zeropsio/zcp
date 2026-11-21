@@ -107,7 +107,7 @@ func TestDeployTool_CallerDropsMidBuild_StillEnablesPublicAccess(t *testing.T) {
 	dropped, returned := watchToolCall(srv)
 	client := &dropClient{Mock: mock, drop: drop, dropped: dropped, enabled: make(chan struct{})}
 	RegisterDeploySSH(srv, client, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
-		&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+		&auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(context.Background(), st, nil)

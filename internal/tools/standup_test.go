@@ -587,7 +587,7 @@ func (f *standupFixture) deps(t *testing.T) standupDeps {
 			httpClient:  standupHTTP{hq: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
 			projectID:   "p1",
 			sshDeployer: f.ssh,
-			authInfo:    &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+			authInfo:    &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 			rtInfo:      runtime.Info{InContainer: true, MateEnabled: true, ProjectID: "p1", ServiceName: "zcp"},
 			stateDir:    f.stateDir,
 			devsup:      f.devsup,
@@ -863,7 +863,7 @@ func TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{Client: f.mock, ProjectID: "p1", SSH: f.ssh, StateDir: f.stateDir, Devsup: f.devsup,
-		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
+		AuthInfo: &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
 	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "medusadev", "command": "npm run dev", "port": 9000})
 	if !a.Running || a.MigratedToSupervisor != nil || medusa.Deploys != 1 {
 		t.Errorf("first start after the stand-up: %+v, deploys = %d; want it running with no second build", a, medusa.Deploys)

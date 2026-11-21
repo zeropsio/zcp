@@ -2840,7 +2840,7 @@ a span attribute.
   the same `/user/info`. HQ keeps nothing of the read.
 - **The project key, `ZCP_API_KEY`** — Zerops' own integration token on the project's `zcp` service,
   a sensitive service variable (`envIsolation: service`, §10.7). Held by Zerops and the `zcp`
-  container; zcp and the Mate's server read it there. Lives as the platform keeps it; a regenerate
+  container; zcp and the Mate's server read it there, zcp at each call. Lives as the platform keeps it; a regenerate
   changes its value. Opens the Zerops API for its project (zcp's work, §8.1's flag write, the
   Mate's own project read, §3.13) and, presented to HQ, proves "the Mate of project P in organisation
   O". HQ links only a key scoped to exactly one project: its Zerops record names exactly one
@@ -5117,7 +5117,8 @@ server's link presents it in its first frame, and zcp presents it in a header on
 wired to its repository (§10.10, *A Mate's git*), a change described, a GitHub read token minted
 for git (§5.10), the recipe proposed and its AI Agent tier read for the stand-up, a repository the tier
 names checked before HQ is asked for it, whether this project is the Chief (§2.11). zcp reads the key from the
-live env store at each call, so a regenerated key is the one it presents. A refusal is HQ's word on
+live env store at each call, its Zerops calls included, so a regenerated key is the one it presents,
+without a restart of zcp or of the agent that started it. A refusal is HQ's word on
 the key (`key_refused`, `key_too_wide`, `key_not_sensitive`, `not_a_mate`), said once and asked again
 on the bounded backoff of §0 rule 4; a call HQ or Zerops does not answer is retried the same way.
 A dev service stores no Git credential: a relayed call — `zcp git` or zcp's own wiring — presents

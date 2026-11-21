@@ -58,7 +58,7 @@ func (m *mockRunner) Run(_ context.Context, name string, args ...string) (string
 
 func localTestAuth() auth.Info {
 	return auth.Info{
-		Token:   "test-token",
+		Key:     func() string { return "test-token" },
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}

@@ -59,7 +59,7 @@ func TestDeployTool_NoPoolProject_ListsAsBeforePools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := listingCountMock()
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
 
@@ -77,7 +77,7 @@ func TestDeployTool_NoPoolProject_ListsAsBeforePools(t *testing.T) {
 func TestDeployBatchTool_NoPoolProject_ListsAsBeforePools(t *testing.T) {
 	t.Parallel()
 	mock := listingCountMock()
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})
 
@@ -133,7 +133,7 @@ func TestDeployTool_RedirectedDeploy_ListsNothing(t *testing.T) {
 			stateDir := t.TempDir()
 			seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", topology.BuildIntegrationWebhook)
 			mock := listingCountMock()
-			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			authInfo := &auth.Info{Key: func() string { return "t" }, APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			if local {
 				RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, stateDir, testDeployEngine(t), nil)
