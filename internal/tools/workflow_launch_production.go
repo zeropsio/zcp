@@ -1673,14 +1673,20 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 	})
 }
 
-// stageRecommendationBlock surfaces the no-stage consent question
-// (spec-git-delivery-target / gap plan P1.2, Karel's area 1): when the
-// chosen (or only) runtime has no stage half, recommend creating one —
+// stageRecommendationBlock surfaces the no-stage consent question: when
+// the chosen (or only) runtime has no stage half, recommend creating one —
 // the stage half is the structurally safe topology (its push source is
-// never CI-replaced, and its verified setup becomes the promotion
-// basis). Dismissible per the no-new-gates ledger: choices carry the
-// prefilled expansion call AND the proceed-with-ack re-call; the ack
-// (skipStageRecommendation) self-extinguishes the block.
+// never CI-replaced, and its verified setup becomes the promotion basis).
+// Dismissible: choices carry the stage-first call AND the proceed-with-ack
+// re-call; the ack (skipStageRecommendation) self-extinguishes the block.
+//
+// The stage-first call differs per mode. A simple runtime is expanded on
+// the classic bootstrap route, which validates the plan without the live
+// service list and so may name a stage half that does not exist yet —
+// bootstrap creates it (the adopt route refuses an isExisting target whose
+// stage is not live). A local-only runtime is no Zerops service (its
+// hostname is the project name), so its stage is linked through
+// adopt-local, never created by bootstrap.
 func stageRecommendationBlock(input WorkflowInput, sourceCtx *launchSourceContext) map[string]any {
 	if input.SkipStageRecommendation.Bool() || sourceCtx == nil {
 		return nil
@@ -1703,7 +1709,16 @@ func stageRecommendationBlock(input WorkflowInput, sourceCtx *launchSourceContex
 	}
 	// Pairs already have the verified-stage basis; only no-stage
 	// push-capable shapes get the recommendation.
-	if choice.Mode != string(topology.PlanModeSimple) && choice.Mode != string(topology.PlanModeLocalOnly) {
+	var stageFirstArgs map[string]string
+	var stageFirstNote string
+	switch choice.Mode {
+	case string(topology.PlanModeSimple):
+		stageFirstArgs = map[string]string{"action": "start", "workflow": "bootstrap", "route": "classic"}
+		stageFirstNote = fmt.Sprintf("Plan target: devHostname %q, isExisting=true, bootstrapMode=\"standard\" and a new stageHostname, which bootstrap creates (see the develop-mode-expansion atom). Then develop → push → verify on stage, and re-enter launch.", choice.Hostname)
+	case string(topology.PlanModeLocalOnly):
+		stageFirstArgs = map[string]string{"action": "adopt-local", "targetService": "<runtime-hostname>"}
+		stageFirstNote = fmt.Sprintf("Link a Zerops runtime of this project as the stage of %q (a live runtime service; when the project has none, create one through bootstrap first). Then deploy to it, verify there, and re-enter launch.", choice.Hostname)
+	default:
 		return nil
 	}
 	return map[string]any{
@@ -1714,9 +1729,9 @@ func stageRecommendationBlock(input WorkflowInput, sourceCtx *launchSourceContex
 				"label": "create stage first (recommended)",
 				"call": map[string]any{
 					"tool": "zerops_workflow",
-					"args": map[string]string{"action": "start", "workflow": "bootstrap", "route": "adopt"},
+					"args": stageFirstArgs,
 				},
-				"note": fmt.Sprintf("Plan target: isExisting=true + bootstrapMode=\"standard\" + hostname %q + an explicit stageHostname (see the develop-mode-expansion atom). Then develop → push → verify on stage, and re-enter launch.", choice.Hostname),
+				"note": stageFirstNote,
 			},
 			{
 				"label": "proceed with direct promotion",
