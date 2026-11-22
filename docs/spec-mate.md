@@ -20,7 +20,7 @@ when that document is available.
 - What zcp gives a Mate's surfaces — the browser and the call that holds it, the data console,
   vault asks and the Mate's own vault, pages, the origin and mirror asks — §5.
 - Git — each mounted dev service is its own repository, reached over a multiplexed SSH
-  connection rather than the sshfs mount; multi-repo diff, the checkpoint refs a start sweeps — §6.
+  connection rather than the sshfs mount — §6.
 - Agent authorization — the agent CLI signs in from inside mate: a self-verified agent-auth feed,
   the platform flag written by the mate server through the Zerops API, server-driven login sessions
   whose parsed prompts (URL, device code) reach the client as actions, and sign-out — §8.
@@ -3603,221 +3603,96 @@ The first Mate that draws the mirror card is 0.16.114; `MinimumMateVersion` is a
 
 ---
 
-## 6. Git (S3)
+## 6. Git
 
 On Zerops the thread's cwd (`/var/www`) is not itself a repository: each repository is a mounted
-**dev service**, with its own `.git` living on that service's own disk, reachable only over SSH. A
-turn that edits `kanbandev` and `apidev` shows in Diff as `kanbandev/src/x.ts` / `apidev/main.go` —
-grouped by service, each read by that service's own git. The
-absolute invariant is that **no git process ever runs against the sshfs mount** (measured, see the
-mate ledger: a full turn costs 12.7 s over the mount against 1.37 s over a multiplexed SSH connection,
-and a first checkpoint on a repository without a `.gitignore` costs 245 s).
+**dev service**, with its own `.git` living on that service's own disk, reachable only over SSH. The
+absolute invariant is that **no git process ever runs against the sshfs mount** (measured: a full
+turn costs 12.7 s over the mount against 1.37 s over a multiplexed SSH connection).
 
 ### 6.1 The repository set
 
-The repository source answers "which repositories exist" from the container's own **mount
-table** (`/proc/mounts` by default, injected for tests) — never a platform call, never a scan of
-`/var/www` for `.git`, and never `zcp` (§0 rule 3: the mate server spawns `zcp` only for the closed
-list of §0). A repository is a `fuse.sshfs` mount whose mountpoint is a direct child of
+A repository is a `fuse.sshfs` mount whose mountpoint is a direct child of
 `/var/www` (`<host>:/var/www /var/www/<host> fuse.sshfs …`, one line per mounted dev service,
 measured 2026-09-04) and whose bounded probe succeeds: `stat` with a 2 s timeout, the same check
-zcp runs before it reports a service mounted. A mount whose probe times out is dropped from the set
-and the others are kept; the `/var/www/<host>` layout is one of the two conventions mate reads
-from the container (§0 touchpoints).
-
-Three outcomes, deliberately distinct — a caller must never read one as another:
-
-| Outcome | Means | A caller does |
-|---|---|---|
-| `disabled` | not a Zerops environment | nothing — the mount table is never read |
-| `unavailable` | Zerops, but the mount table could not be read at all | degrades, names the reason, warns once (cleared by the next successful read); never empties the set on this path |
-| `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
+zcp runs before it reports a service mounted. The `/var/www/<host>` layout is one of the two
+conventions mate reads from the container (§0 touchpoints).
 
 A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount source `<alias>:/var/www`,
 `<alias>` the lease alias of §2.8a.3 `leases[]`) is a direct child of `/var/www` like any dev mount, so it
 is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
-released and the mount goes. **The name alone says it is a lease's** (`kind: "lease"`): a Zerops service
+released and the mount goes. **The name alone says it is a lease's**: a Zerops service
 hostname is lowercase alphanumeric with no dash, and zcp names a lease `<pool>-<number>`
-(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so the startup checkpoint sweep can exclude it even before the
-envelope's `leases[]` has been read. The leases an envelope reported stay a second signal, never the
-only one.
-
-The set is cached for 30 s and unconditionally re-read by `refresh`, which
-a turn start calls explicitly. Its consumers include the git spawner (§6.2) and the
-diff query.
-
-The environment descriptor (`/.well-known/t3/environment`, contract C-5) states the container's
-Zerops project as an optional `zerops.projectId` (from `T3CODE_ZEROPS_PROJECT_ID`, Zerops mode
-only): a fact the env contract already owns, stated non-secretly, and the third source of the
-client's environment→project ref. Additive only; a server too old to have the field is a
-server without it, never an error.
+(`^[a-z][a-z0-9]{0,39}-[0-9]+$`).
 
 zcp guarantees every mounted dev service's `/var/www/<host>` is already a git repository by the
 time mate would look — bootstrap runs the HEAD guarantee (GLC-1), adopt preserves existing history or creates a snapshot (GLC-7)
-(`docs/spec-workflows.md`'s Git Lifecycle section) — so mate never scans for one or falls back to
-initializing it itself; the repository source still reads the mount table, not `.git`, to
-answer "which repositories exist" (§6.1 above).
+(`docs/spec-workflows.md`'s Git Lifecycle section).
 
-### 6.2 The SSH executor
+### 6.2 The SSH master connection
 
-Upstream has three git process paths, not one — the vcs driver's raw execution (cwd form), its git
-command (`-C` form), and the repository identity resolver talking to the process runner
-directly — and all three bottom out in one child-process spawner. The git spawner decorates that one
-seam, so all three are covered with no edit to a single vcs file. Everything that is not `git`, and
-every `git` call outside a mounted repository, is handed to the platform spawner byte-identically —
-`claude`, `codex`, `gh`, shells, node-pty and the `zcp` call from §6.1 keep upstream behaviour.
+zcp's managed `~/.ssh/config` block sets the connection options for `Host *` and the `ControlPath`
+template. The Mate server pins the same options and the same `ControlPath`, so its git reuses the
+master connection zcp holds, and a change to zcp's template changes that.
 
-For a git call inside a mount: the host resolves from `-C <path>` (which wins — the vcs driver spawns
-from the server's own cwd and carries the repository in `-C`) or else from `options.cwd`. The
-rewrite emits `ssh -l zerops <pinned options…> <host> env <K=V…> git -C /var/www <args…>`, every
-remote token POSIX single-quoted (ssh has no argv past the host, so a commit message
-with a space or a `$(...)` is an injection unless quoted here). *Pinned, not inherited*: zcp's own
-managed `~/.ssh/config` block already sets the same options for `Host *`, but the spawner pins them
-itself so it does not depend on a file another program owns — the `ControlPath` deliberately matches
-zcp's template so mate reuses the master zcp already holds (8 ms vs 59 ms per round trip).
-
-*The path map, one rule both directions*: everything T3 hands the spawner is mount-side, everything
-it hands git is host-side, everything git hands back becomes mount-side again — `/var/www/<host>` ⇄
-`/var/www`. Mapped inbound: `options.cwd`, the value after `-C`/`--git-dir`/`--work-tree`, and
-path-valued env keys (`GIT_INDEX_FILE`, `GIT_DIR`, `GIT_WORK_TREE`, and the object-directory keys).
-Mapped outbound: stdout of exactly the two argv shapes that return an absolute path —
-`rev-parse --show-toplevel` and `worktree list --porcelain` — replaced at a path position only (a
-commit message that happens to contain `/var/www` is data, not a location). `--git-common-dir` is
-deliberately left alone: git answers it *relatively* (`.git`), which both consumers already resolve
-against the mount-side cwd correctly.
-
-*Environment* crossing the wire is an allowlist, not the whole `process.env` T3 spreads upstream:
-`GIT_*` and `LC_ALL` only; `GIT_TRACE2*` is dropped (its trace file is written locally and watched
-with `fs.watch`, which never fires for host-side changes anyway). *Concurrency* is a semaphore per
-host, 4 in flight (comfortably under sshd's default `MaxSessions` — 16 concurrent sessions measured
-ok, see the mate ledger), unbounded across hosts, so three repositories in one turn cost close to what
-one does. *Transport failures*: ssh's own exit code 255 is reported as a distinct warning naming the
-host and the remote command — never conflated with a git failure (exit 1).
-
-### 6.3 Policy — enforced, not defaulted
-
-Three of T3's own behaviours are wrong on Zerops, decided in one place and enforced
-at the single chokepoint each rides through, because a `.t3/project` file in a repository or a
-hand-written RPC can set anything a mere default would allow:
-
-| Rule | Why | Enforced at |
-|---|---|---|
-| No worktrees (`worktreesAllowed:false`) | the isolation unit on Zerops is a service, not a directory — a dev service has one `/var/www`, one process, one subdomain; a second checkout is a checkout nobody serves | the decider (`thread.create`, `thread.meta.update` persist `worktreePath:null`; `project.meta.update` forces `defaultThreadEnvMode:"local"`) — the sole write chokepoint every command funnels through |
-| No second commit pipeline (`stackedVcsActionsAllowed:false`) | zcp owns init, identity, the PAT, commit and push; mate owns turn-level history only | the git manager's stacked action refuses server-side; the client offers no stacked git action |
-| No background fetch (`upstreamRefreshAllowed:false`) | a status poll's `fetch` against a PAT-backed origin mate does not own is unwanted network from every mounted service at once | the git manager's remote status forces `refreshUpstream:false` |
+### 6.3 The isolation unit and leases
 
 **The isolation unit is a service or a leased container.** A part's dev pool (`docs/spec-workflows.md`
 §8 "Dev pools (DP)") gives each branch a pool container of its own, leased through `zerops_lease`: one
 `/var/www`, one checkout, its own processes and preview port — the same unit a dev service is, so
-`worktreesAllowed:false` stands. A conversation whose agent acquired a lease is bound to it — `lease:
-{alias, pool, branch, repo} | null`, taken from that conversation's own `zerops_lease` acquire; a lease's group is its repository and its branch (`docs/spec-workflows.md` §8 DP-17), both on every lease zcp reports (§2.8a.3 `repo`). The binding
-decides what a person sees for the conversation — the Git tab, Diff and the terminal's checkout open on
-`/var/www/<alias>`, a repository by §6.1's rule — and **not where its sessions run**: the agent's
-session keeps opening in the Mate workspace, because zcp keeps its state in the session's working
-directory (`.zcp/state`: the lease records, the work session, the ssh aliases it rewrites from them). A
-session opened in the lease mount would lose every lease record ("No lease record" on release), write
-`.zcp/state` into the leased checkout, and rewrite the ssh aliases from an empty set. The agent reaches
-the lease the way it reaches a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
-The media root stays with the session too, since the paths an agent writes are relative to it.
+the Mate allows no worktree. Which conversation a lease is bound to is the Mate's own record, never a
+field of zcp's.
+
+zcp holds one set of leases for every conversation in the container, and gives the Mate these inputs.
+Each `zerops_lease` result and each envelope's `leases[]` (§2.8a.3) name a lease's alias, pool, branch,
+`repo` and `acquiredAt`. A lease's group is its repository and its branch, never the branch alone
+(`docs/spec-workflows.md` §8 DP-17): two apps of one Mate both on `main` hold leases of one branch name.
+One `zerops_lease action=acquire pools=[…]` leases a container per pool for the same branch
+(`docs/spec-workflows.md` §8 DP-17, DP-23) and lists them in `pools` order, and `action=release
+branch=…` releases them together. A lease that comes back `reused: true` — the conversation's branch
+already held on that pool — is a lease held already, which binds nothing. A pool hands a released
+container out again under the same alias, with a new `acquiredAt`.
+
+A lease never decides where a conversation's sessions run: the agent's session keeps opening in the
+Mate workspace, because zcp keeps its state in the session's working directory (`.zcp/state`: the
+lease records, the work session, the ssh aliases it rewrites from them). A session opened in the lease
+mount would lose every lease record ("No lease record" on release), write `.zcp/state` into the leased
+checkout, and rewrite the ssh aliases from an empty set. The agent reaches the lease the way it reaches
+a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
 Because every session opens in the workspace, the workspace `CLAUDE.md` zcp writes imports each pair's
 repository `CLAUDE.md` (`@<host>/CLAUDE.md`), so a repository's own instructions load at session start;
 a lease's do not — they load once the agent reads a file in its lease (`docs/spec-workflows.md` §5.1).
 
-zcp holds one set of leases for every conversation in the container, and a pool hands a released
-container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
-and unbinding fans out: when a `zerops_lease` result or an envelope's `leases[]` says a lease was
-released, is no longer held (gone, lost, or reserved with no zcp record), or was acquired again by
-another conversation — or is held under the same alias with another `acquiredAt`, a container handed
-out again by a holder Mate did not see — every conversation bound to it is unbound before the acquiring
-one is bound; a conversation whose record could not be read at that read is unbound at the next one. The
-binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
-`worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
-thread owns — nothing removes or releases it with the thread itself; it is released by the agent's
-`zerops_lease action=release`, by zcp's HQ pass once its branch's change is merged or closed
-(`docs/spec-workflows.md` §8 DP-34), or by Mate on the conversation's archive (below).
-
-**Release on archive and on completion.** The person never manages a lease by hand: Mate shows no
-release control. When the person archives a conversation bound to a lease, Mate runs `zcp lease release
---branch <branch> --repo <repo> --json` (MA-6, `docs/spec-workflows.md` §8 DP-35) for the bound
-lease's repository and branch — never `--force`, within 3 minutes, only on a zcp whose `zcp version` is
-9.223.0 or later — and never holds the archive for it. Exit 0 unbinds every conversation bound to a
-lease the answer lists in `released[]` (a branch release takes every lease of the branch); exit 3 — a
-lease holds unsaved work, or another live zcp session shares it — keeps the binding, silently; anything
-else is a failure the conversation's chip shows. zcp itself releases a branch's leases once its change
-in HQ is merged or closed (DP-34), on its HQ pass and its service's look; the unbind fan-out above
-follows from the envelope. The service's look asks HQ nothing: it reads the Mate's changes from
-the file the Mate's server keeps from its link's `state` frames (`~/.zcp/hq/state.json`, §2.8),
-at its service's start and each time the file is replaced, never on a timer. Idleness never
-releases (§0 rule 4).
-
-**A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
-pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
-them together. A group acquire binds the conversation to the **first newly acquired** lease of the
-result (zcp lists them in `pools` order); a lease that comes back `reused: true` — the conversation's
-branch already held on that pool — binds nothing and unbinds nothing, so a repeat acquire never steals
-a binding. When the bound lease ends, the conversation is unbound and then bound to the **earliest
-acquired** (`acquiredAt`) lease of its repository and branch — `repo` and `branch` both equal to the
-bound lease's, never the branch alone: two apps of one Mate both on `main` hold leases of one branch name
-— that the same call read as still held; with none left it stays unbound. A branch release names no single lease, so every lease it lists as released unbinds
-whoever is bound to it. The Git tab, Diff, the terminal's checkouts and the addresses show **every held
-lease of the bound repository and branch** (bound lease first, each named `<pool> · <branch>`), taken from the Mate's
-one set of leases: the latest any conversation's Zerops call read, kept across a restart of the Mate
-server and pushed to every open conversation when it changes — so a member another conversation ended
-leaves every view at that read, never at a conversation's own older envelope. No new event or command
-carries any of this; the one envelope key it reads beyond the branch is each lease's `repo` (§2.8a.3).
-
-The policy reads the server config **optionally**: no config in context (most existing tests) reads
-as upstream's policy, the same set every one of upstream's own behaviours already has — the policy
-fails toward doing nothing rather than toward silently changing behaviour a test never asked for.
-
-### 6.4 Checkpoints — removed; what a turn changed is in git (2026-10-19)
-
-Git is the record of what a turn changed: nothing per turn is captured, no checkpoint ref is
-written, nothing is reverted. Diff shows what each of the
-conversation's repositories has that `main` does not — files not committed (tracked and untracked,
-not ignored) and commits not on `main`, or not pushed when the checkout is on `main` — read by the
-dev service's own git over SSH, never by git on the mount.
-
-The refs the removed capture left under `refs/t3/checkpoints/` would hold their objects for good, so
-each Mate start attempts to delete them asynchronously in the available non-lease service checkouts,
-or in the server's configured folder when none are available. Lease repositories are excluded; a
-repository the sweep cannot reach keeps its refs until a later successful attempt, without stopping
-the other checkouts. The sweep removes no other refs.
+**Release on archive and on completion.** When the person archives a conversation bound to a lease,
+Mate runs `zcp lease release --branch <branch> --repo <repo> --json` (MA-6, `docs/spec-workflows.md` §8
+DP-35) for the bound lease's repository and branch. Its answer is DP-35's: exit 0 lists in `released[]`
+every lease it released (a branch release takes every lease of the branch); exit 3 — a lease holds
+unsaved work, or another live zcp session shares it — is a refusal that keeps the leases; anything
+else is a failure. zcp itself releases a branch's leases once its change in HQ is merged or closed
+(DP-34), on its HQ pass and its service's look. The service's look asks HQ nothing: it reads the
+Mate's changes from the file the Mate's server keeps from its link's `state` frames
+(`~/.zcp/hq/state.json`, §2.8), at its service's start and each time the file is replaced, never on a
+timer. Idleness never releases (§0 rule 4).
 
 ### 6.5 What stays on the mount, and why
 
 The sshfs mount is still where the agent, the editor and every non-git tool read and write files —
 writes through it are write-through (a create/edit/delete made on zcp is visible to a host-side
-`git status`/`git diff` immediately, measured, see the mate ledger) and a host-side change reaches the
+`git status`/`git diff` immediately, measured) and a host-side change reaches the
 mount's file **content** and **path lookups** just as fast. What lags is **directory listings and
 stale entries** specifically — a fixed 20 s `dcache_timeout` sshfs default the product mount does not
 override, because weakening it costs 3–27× on `git status`. No watcher works over the mount either:
 `inotify` never fires for a host-side change (only for a write made *through* the mount itself), so
-anything that needs to know about host-side change must poll over SSH rather than watch; nothing in
-S3 tries to watch the mount for git state.
+anything that needs to know about host-side change must poll over SSH rather than watch.
 
-### What S3 does not do
-
-- **No workspace-index reimplementation.** A planned slice (S3.5) would have moved file search off
-  the mount, on the premise that T3's native `FileFinder` (a closed-source Rust index) could not skip
-  `node_modules` and would time out scanning every mount at once. Live-verified the opposite: rooted
-  at `/var/www` with a 19,308-file `node_modules` present, the index answers in 2–4 s, results are
-  mount-relative, and no `node_modules` path is ever returned — the premise was wrong, so S3.5 is
-  dropped rather than built.
-- **Identity, remotes and push stay zcp's.** mate never runs `git init`, never touches a remote, never
-  commits or pushes — those are zcp's workflow, reached from mate only by the
-  agent going through MCP, the same as any other zcp mutation.
+**Identity, remotes and push stay zcp's.** mate never runs `git init`, never touches a remote, never
+commits or pushes — those are zcp's workflow, reached from mate only through the agent's
+zcp tools and `zcp git` (§6.8), the same as any other zcp mutation.
 
 ### Invariants
 
 | ID | Invariant |
 |---|---|
-| MG-1 | The repository set is the `fuse.sshfs` mount table under `/var/www`, probed with a bounded `stat`; three distinct outcomes; never a `/var/www` scan for `.git`, never a platform call, never `zcp`. |
-| MG-2 | No git process ever runs against the sshfs mount: every `git` spawn located under a mount is rewritten to `ssh … git -C /var/www …`; every non-git command and every `git` call outside a mount passes through byte-identical. mate GT2, GT5, GT10. |
-| MG-3 | Only `GIT_*` and `LC_ALL` cross the wire, `GIT_TRACE2*` is stripped, path-valued flags/env are mapped mount→host, and the two absolute-path-returning argv shapes are mapped host→mount (`--git-common-dir` left alone). mate GT3, GT4, GT7. |
-| MG-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. mate GT14, GT15. |
-| MG-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / the git manager — never left to a default a client or a `.t3/project` file could override. mate EV4. |
-| MG-6 | Diff reads what each repository has beyond `main` with the dev service's own git; nothing per turn is captured, reverted or kept as a ref. A start asynchronously attempts to remove the old `refs/t3/checkpoints/` refs from available non-lease service checkouts, or the configured folder if none are available. |
 | MG-7 | Every script zcp runs over ssh for the repository's own work — `zcp run`, `zcp git` plain and relayed, a lease's `prepare`, the supervisor zcp starts in a lease — first moves its own shell into a transient scope of its own (`zcp-run-`, `zcp-git-`, `zcp-prepare-`, `zcp-devsup-` and its pid), with `TasksMax=infinity` and `CollectMode=inactive-or-failed`, out of the platform agent's service and its task limit of 300 (§6.9 *Its own scope*); where none can be had the script runs as before, its output, exit code and environment unchanged and nothing of the attempt shown. zcp `TestBuildServiceRunCommand_MovesItsShellIntoAScopeOfItsOwn`, `TestBuildServiceRunCommand_NoScopeToBeHad_RunsAsBefore`, `TestOwnScope_EveryScriptForTheRepositorysWork_StartsInItsOwnScope`. |
 
 ### 6.6 A Mate's HQ access is its project key
