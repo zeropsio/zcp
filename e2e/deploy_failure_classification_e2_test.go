@@ -16,8 +16,8 @@
 // transport-error classification): this file pins the post-trigger
 // classifier path through pollDeployBuild → ops.ClassifyDeployFailure.
 //
-// Uses `zcp` as the SSH source — the live container running ZCP on
-// eval-zcp (project ID `i6HLVWoiQeeLv8tV0ZZ0EQ`, see CLAUDE.local.md).
+// Uses `zcp` as the SSH source — the live container running ZCP in
+// the eval project.
 // `zcp` is the default ZCP_HOST in the Makefile and the SSH source for
 // every e2e test in this package; override via `ZCP_HOST=<hostname>
 // make e2e-zcp` when targeting a different runtime.

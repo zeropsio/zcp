@@ -28,7 +28,7 @@ plan, not a merge-blocker.
 ## The 5 spot-check scenarios
 
 Per plan §5.5: pick scenarios spanning the 5 phase categories. The
-eval-zcp project (`i6HLVWoiQeeLv8tV0ZZ0EQ`, org `Muad`) is the
+eval project (`<eval project id>`, the test organisation) is the
 authorized playground.
 
 | # | Scenario id | Phase | What to provision |
