@@ -122,6 +122,14 @@ func hqAddress(rt runtime.Info) string {
 // pair's repository, its credential or what builds from it.
 var hqRepositoryActions = map[string]bool{"git-push-setup": true, "build-integration": true}
 
+// hqRepositoryActionsRefused says whether this runtime refuses
+// hqRepositoryActions: a Mate does, wherever it runs. The refusal and
+// zerops_workflow's description both read it, so the description offers
+// those actions exactly where they run.
+func hqRepositoryActionsRefused(rt runtime.Info) bool {
+	return rt.MateEnabled
+}
+
 // hqRepositoryActionRefusal is a Mate's answer to hqRepositoryActions: in a
 // Mate all three are HQ's. zcp
 // wires each pair to its repository in HQ itself (wireHQPair), git reaches it

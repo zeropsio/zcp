@@ -443,6 +443,22 @@ func workflowLaunchClause(rt runtime.Info) string {
 	return "launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\")"
 }
 
+// workflowDescription is zerops_workflow's description. It offers
+// git-push-setup and build-integration for CI/CD exactly where the handler
+// accepts them (hqRepositoryActionsRefused); where a Mate refuses them it says
+// CI/CD is HQ's and names neither as a step.
+func workflowDescription(rt runtime.Info) string {
+	first := "Orchestrate Zerops operations, including CI/CD setup (GitHub Actions or webhook deploys on git push: action=\"git-push-setup\", then action=\"build-integration\")."
+	config := "Deploy and CI/CD configuration is three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration."
+	afterStart := "|close-mode|git-push-setup|build-integration|group-recipe"
+	if hqRepositoryActionsRefused(rt) {
+		first = `Orchestrate Zerops operations. In a Mate, CI/CD is HQ's: HQ deploys the application's environments from its repository's commits, production gets a release the person approves in Mate (action="release" hands off), and a GitHub copy is zerops_mirror's ask; git-push-setup and build-integration do not run here.`
+		config = `Deploy configuration is action="close-mode" closeMode={hostname:value}, which sets the per-pair CloseDeployMode (auto/manual).`
+		afterStart = "|close-mode|group-recipe"
+	}
+	return first + " Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), " + workflowLaunchClause(rt) + ", pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). " + config + " Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as the Mate's recipe change; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as the Mate's recipe change; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route" + afterStart + "\"."
+}
+
 // RegisterWorkflow registers the zerops_workflow tool.
 // rt carries the runtime detection (container vs local, self hostname, project
 // ID from container env). selfHostname duplicates rt.ServiceName for handlers
@@ -461,7 +477,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	cfg.poolGuidance = newPoolMigrateGuidanceSent()
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations, including CI/CD setup (GitHub Actions or webhook deploys on git push: action=\"git-push-setup\", then action=\"build-integration\"). Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), " + workflowLaunchClause(rt) + ", pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). Deploy and CI/CD configuration is three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as the Mate's recipe change; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as the Mate's recipe change; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
+		Description: workflowDescription(rt),
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -585,7 +601,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	if result, _, err := handleEngineFreeAction(ctx, projectID, client, httpClient, input, stateDir, sshDeployer, rt); result != nil || err != nil {
 		return result, nil, err
 	}
-	if rt.MateEnabled && hqRepositoryActions[input.Action] {
+	if hqRepositoryActionsRefused(rt) && hqRepositoryActions[input.Action] {
 		return hqRepositoryActionRefusal(input.Action), nil, nil
 	}
 	if engine == nil {

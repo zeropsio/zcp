@@ -84,7 +84,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) topology.Mo
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, schemaCache *schema.Cache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Read-only Zerops knowledge. Consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code; in recipe-authoring runs only AFTER the research phase. Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search. CI/CD setup is not here: zerops_workflow action=\"build-integration\" generates the workflow.",
+		Description: "Read-only Zerops knowledge. Consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code; in recipe-authoring runs only AFTER the research phase. Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search. CI/CD setup is not here: zerops_workflow says where it lives.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,
