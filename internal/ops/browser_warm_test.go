@@ -776,7 +776,7 @@ func cpuReadings(list ...time.Duration) func(context.Context) (time.Duration, er
 // after a three.js example on a Mate, then nothing — is waited out and kept,
 // so a call that follows within seconds pays no launch and no restore; one
 // still busy when the bound runs out runs a page of its own and is recycled
-// (2026-11-22, Hana and Fia relaunching Chrome on back-to-back calls).
+// (2026-11-22, two Mates relaunching Chrome on back-to-back calls).
 // witness: internal/ops/browser_warm.go | if now-before <= window/10 { → if false {
 func TestSettleWhileIdle_AHeavyPageClosingIsWaitedOutAndTheBrowserKept(t *testing.T) {
 	t.Parallel()
