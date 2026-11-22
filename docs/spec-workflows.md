@@ -1856,7 +1856,6 @@ adding code.
 ### 12.7 Open items and owners
 
 - GF-10 platform-side source evidence — the `--version-name` breadcrumb is built for SSH/local deploys and the `BuildIntegration=actions` template; the §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`) still doesn't pass one, and reading the breadcrumb back via `SearchAppVersions` to correlate a push with its resulting appVersion is not built at all — needs a caller that reads it and treats the mapping as evidence, never proof (GF-5).
-- Mate commit/push through zcp (`spec-mate.md §6.3`) — the fork's side of GF-2.
 - Platform asks (§12.5) — owner sends; each granted ask removes code.
 
 ---
