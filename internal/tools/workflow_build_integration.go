@@ -361,7 +361,7 @@ func actionsConfirmResponse(
 			"failureSymptom": ghTokenFailureSymptom(rt, tokenHost),
 		},
 		"ghPatRecommendation": "Default to " + ghPATScopeRecommendation(ownerRepo, true) + " Set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
-		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above — each conveys GH_TOKEN per invocation (no login step, no stored gh credential; a stale gh session can never act in place of the current PAT). 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
+		"nextStep":            fmt.Sprintf("1) Fetch the remote and read its copy (`git fetch origin && git show origin/%s:.github/workflows/zerops.yml` in the push source's checkout). If it is identical to workflowFile.content, it is already in place: skip writing and pushing it. If it is absent or differs, write workflowFile.content at .github/workflows/zerops.yml (it replaces the remote's copy) and commit. 2) Run the two `gh secret set` commands above — each conveys GH_TOKEN per invocation (no login step, no stored gh credential; a stale gh session can never act in place of the current PAT). 3) Push the workflow file (when step 1 wrote it). From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.", trackedRef),
 	}
 	secrets, _ := body["secrets"].([]map[string]any)
 	for _, push := range further {
