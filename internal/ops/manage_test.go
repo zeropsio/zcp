@@ -213,90 +213,6 @@ func TestScale_MinGtMax(t *testing.T) {
 	}
 }
 
-func TestConnectStorage_Success(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
-			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	proc, err := ConnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if proc == nil {
-		t.Fatal("expected non-nil process")
-	}
-	if proc.ID == "" {
-		t.Error("expected non-empty process ID")
-	}
-}
-
-func TestConnectStorage_ServiceNotFound(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	_, err := ConnectStorage(context.Background(), mock, "proj-1", "missing", "storage")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	pe, ok := err.(*platform.PlatformError)
-	if !ok {
-		t.Fatalf("expected *PlatformError, got %T: %v", err, err)
-	}
-	if pe.Code != platform.ErrServiceNotFound {
-		t.Errorf("expected code %s, got %s", platform.ErrServiceNotFound, pe.Code)
-	}
-}
-
-func TestConnectStorage_StorageNotFound(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	_, err := ConnectStorage(context.Background(), mock, "proj-1", "appdev", "missing")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	pe, ok := err.(*platform.PlatformError)
-	if !ok {
-		t.Fatalf("expected *PlatformError, got %T: %v", err, err)
-	}
-	if pe.Code != platform.ErrServiceNotFound {
-		t.Errorf("expected code %s, got %s", platform.ErrServiceNotFound, pe.Code)
-	}
-}
-
-func TestDisconnectStorage_Success(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
-			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	proc, err := DisconnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if proc == nil {
-		t.Fatal("expected non-nil process")
-	}
-	if proc.ID == "" {
-		t.Error("expected non-empty process ID")
-	}
-}
-
 func TestScale_StartCPU(t *testing.T) {
 	t.Parallel()
 
@@ -334,46 +250,6 @@ func TestBuildAutoscalingParams_StartCPU(t *testing.T) {
 	}
 	if *params.VerticalStartCPU != 2 {
 		t.Errorf("VerticalStartCPU = %d, want 2", *params.VerticalStartCPU)
-	}
-}
-
-func TestConnectStorage_SingleListServicesCall(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
-			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	_, err := ConnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	calls := mock.CallCounts["ListServices"]
-	if calls != 1 {
-		t.Errorf("ListServices called %d times, want 1", calls)
-	}
-}
-
-func TestDisconnectStorage_SingleListServicesCall(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
-			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
-		})
-
-	_, err := DisconnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	calls := mock.CallCounts["ListServices"]
-	if calls != 1 {
-		t.Errorf("ListServices called %d times, want 1", calls)
 	}
 }
 

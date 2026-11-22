@@ -93,44 +93,6 @@ func Reload(ctx context.Context, client platform.Client, projectID, hostname str
 	return client.ReloadService(ctx, svc.ID)
 }
 
-// ConnectStorage connects a seaweedfs service to a runtime service through the
-// platform-managed mount. That mount is the deprecated Shared Storage mechanism,
-// kept best-effort by the platform for already-connected services; new work
-// mounts the filer from run.startCommands instead.
-func ConnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	svc, err := FindUserVisibleService(services, hostname)
-	if err != nil {
-		return nil, err
-	}
-	storage, err := FindService(services, storageHostname)
-	if err != nil {
-		return nil, err
-	}
-	return client.ConnectSharedStorage(ctx, svc.ID, storage.ID)
-}
-
-// DisconnectStorage detaches a platform-managed seaweedfs mount from a runtime
-// service — the unwind half of ConnectStorage's deprecated mechanism.
-func DisconnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	svc, err := FindUserVisibleService(services, hostname)
-	if err != nil {
-		return nil, err
-	}
-	storage, err := FindService(services, storageHostname)
-	if err != nil {
-		return nil, err
-	}
-	return client.DisconnectSharedStorage(ctx, svc.ID, storage.ID)
-}
-
 // apiCodeInvalidAutoscaling is the platform's code for autoscaling values it
 // refuses, e.g. a minRam above maxRam (seen live 2026-10-16).
 const apiCodeInvalidAutoscaling = "invalidCustomAutoscalingValue"

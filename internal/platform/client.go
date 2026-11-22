@@ -41,9 +41,6 @@ type Client interface {
 	StopService(ctx context.Context, serviceID string) (*Process, error)
 	RestartService(ctx context.Context, serviceID string) (*Process, error)
 	ReloadService(ctx context.Context, serviceID string) (*Process, error)
-	// Shared storage connection (async -- return process)
-	ConnectSharedStorage(ctx context.Context, serviceID, storageID string) (*Process, error)
-	DisconnectSharedStorage(ctx context.Context, serviceID, storageID string) (*Process, error)
 
 	// SetAutoscaling returns *Process which MAY be nil (API: ResponseProcessNil).
 	// When process == nil -> treat as sync (scaling applied immediately).

@@ -78,8 +78,6 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		{"manage_stop_manage", nextActionManageStop, "zerops_manage"},
 		{"manage_restart_logs", nextActionManageRestart, "zerops_logs"},
 		{"manage_reload_logs", nextActionManageReload, "zerops_logs"},
-		{"manage_connect_discover", nextActionManageConnect, "zerops_discover"},
-		{"manage_disconnect_discover", nextActionManageDisconnect, "zerops_discover"},
 		{"scale_discover", nextActionScaleSuccess, "zerops_discover"},
 		{"subdomain_enable_verify", nextActionSubdomainEnable, "zerops_verify"},
 	}

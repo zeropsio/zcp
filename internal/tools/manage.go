@@ -17,16 +17,15 @@ type manageResponse struct {
 
 // ManageInput is the input type for zerops_manage.
 type ManageInput struct {
-	Action          string `json:"action"                    jsonschema:"Lifecycle action: start, stop, restart, reload, connect-storage, disconnect-storage."`
-	ServiceHostname string `json:"serviceHostname"           jsonschema:"Hostname of the service to manage."`
-	StorageHostname string `json:"storageHostname,omitempty" jsonschema:"Hostname of the seaweedfs service. Required for connect-storage/disconnect-storage."`
+	Action          string `json:"action"          jsonschema:"Lifecycle action: start, stop, restart, reload."`
+	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to manage."`
 }
 
 // RegisterManage registers the zerops_manage tool.
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload. After an env change restart, NOT reload — a runtime keeps its boot env; PHP-FPM keeps its boot config. reload (~4s) is for graceful config/code reloads. A Zerops Box is the opposite: reload applies an API key change, keeping sandboxes running; restart/stop kill them. connect-storage/disconnect-storage: DEPRECATED seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
+		Description: "Manage service lifecycle: start, stop, restart, reload. After an env change restart, NOT reload — a runtime keeps its boot env; PHP-FPM keeps its boot config. reload (~4s) is for graceful config/code reloads. A Zerops Box is the opposite: reload applies an API key change, keeping sandboxes running; restart/stop kill them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
@@ -36,7 +35,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use start, stop, restart, reload, connect-storage, or disconnect-storage")), nil, nil
+				"Use start, stop, restart, or reload")), nil, nil
 		}
 		if input.ServiceHostname == "" {
 			return convertError(platform.NewPlatformError(
@@ -77,34 +76,10 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageReload)}, finalProc), nil, nil
-		case "connect-storage":
-			if input.StorageHostname == "" {
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidParameter, "storageHostname is required for connect-storage",
-					"Provide storageHostname parameter with the shared-storage service hostname")), nil, nil
-			}
-			proc, err := ops.ConnectStorage(ctx, client, projectID, input.ServiceHostname, input.StorageHostname)
-			if err != nil {
-				return convertError(err), nil, nil
-			}
-			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageConnect)}, finalProc), nil, nil
-		case "disconnect-storage":
-			if input.StorageHostname == "" {
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidParameter, "storageHostname is required for disconnect-storage",
-					"Provide storageHostname parameter with the shared-storage service hostname")), nil, nil
-			}
-			proc, err := ops.DisconnectStorage(ctx, client, projectID, input.ServiceHostname, input.StorageHostname)
-			if err != nil {
-				return convertError(err), nil, nil
-			}
-			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			return processResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: processNext(finalProc, nextActionManageDisconnect)}, finalProc), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Use start, stop, restart, reload, connect-storage, or disconnect-storage")), nil, nil
+				"Use start, stop, restart, or reload")), nil, nil
 		}
 	})
 }

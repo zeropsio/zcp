@@ -23,14 +23,12 @@ const (
 	// nextActionEnvSetSuccess + nextActionEnvDeleteSuccess removed — zerops_env
 	// now auto-restarts affected services and crafts its own per-call message
 	// listing what was restarted (see envChangeResult.NextActions).
-	nextActionManageStart      = "Verify service is running: zerops_discover."
-	nextActionManageStop       = "Service stopped. Start with: zerops_manage action=start."
-	nextActionManageRestart    = "Verify health: zerops_logs severity=ERROR since=1m."
-	nextActionManageReload     = "Verify health: zerops_logs severity=ERROR since=1m."
-	nextActionManageConnect    = "Verify storage mount: zerops_discover."
-	nextActionManageDisconnect = "Storage disconnected. Verify: zerops_discover."
-	nextActionScaleSuccess     = "Verify scaling: zerops_discover."
-	nextActionSubdomainEnable  = "Subdomain active. Verify: zerops_verify."
+	nextActionManageStart     = "Verify service is running: zerops_discover."
+	nextActionManageStop      = "Service stopped. Start with: zerops_manage action=start."
+	nextActionManageRestart   = "Verify health: zerops_logs severity=ERROR since=1m."
+	nextActionManageReload    = "Verify health: zerops_logs severity=ERROR since=1m."
+	nextActionScaleSuccess    = "Verify scaling: zerops_discover."
+	nextActionSubdomainEnable = "Subdomain active. Verify: zerops_verify."
 )
 
 // deploySuccessNextActions returns the post-deploy next-tool pointer.
