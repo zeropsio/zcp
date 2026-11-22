@@ -10,3 +10,4 @@
 - LP-PREVIEW-RAISE — A dev pool asked for more containers than its preview ports cover gets a shortfall naming each container past the block and its port; asked for exactly the block's count, none.
 - LP-NO-RAISE — The same maxContainers again, or a lower one, is no raise; a higher one is.
 - LP-PARKED — A reserved container that is stopped reads parked (as does one being stopped or started); a reserved running one does not.
+- LP-UNKNOWN-POOL — An acquire naming a service that is not in the project, or not a Swarm pool, is refused naming that service, also when it passes no repo and none is recorded: it is never asked for a repo first.

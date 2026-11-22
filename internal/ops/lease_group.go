@@ -179,7 +179,12 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	}
 	repoURL, err := resolveGroupRepo(d, pools, repo)
 	if err != nil {
-		return LeaseChange{}, err
+		services, listErr := ListProjectServices(ctx, d.Client, d.ProjectID)
+		if listErr != nil {
+			// The repo refusal still holds; a listing error must not hide it.
+			return LeaseChange{}, err
+		}
+		return LeaseChange{}, unresolvedRepoRefusal(services, pools, err)
 	}
 	// The steps before the reservation end by its latest start (DP-39).
 	startCtx, cancelStart := d.reservationStartContext(ctx)
@@ -381,6 +386,32 @@ func validateAcquirePools(pools []string) error {
 	return nil
 }
 
+// acquirePools returns each named pool's service in pools order, or the
+// refusal of the first that is not in services or is not a Swarm pool.
+func acquirePools(services []platform.ServiceStack, pools []string) ([]*platform.ServiceStack, error) {
+	out := make([]*platform.ServiceStack, 0, len(pools))
+	for _, pool := range pools {
+		svc, err := FindService(services, pool)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkPoolType(svc); err != nil {
+			return nil, err
+		}
+		out = append(out, svc)
+	}
+	return out, nil
+}
+
+// unresolvedRepoRefusal refuses a pool that is no pool service before the
+// repository, because the repository is only asked of a pool that exists.
+func unresolvedRepoRefusal(services []platform.ServiceStack, pools []string, repoErr error) error {
+	if _, poolErr := acquirePools(services, pools); poolErr != nil {
+		return poolErr
+	}
+	return repoErr
+}
+
 // ConversationLeaseError identifies the conversation holding a branch requested by the Mate.
 type ConversationLeaseError struct {
 	*platform.PlatformError
@@ -438,14 +469,12 @@ func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string, group [
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	for _, m := range members {
-		svc, err := FindService(services, m.pool)
-		if err != nil {
-			return nil, err
-		}
-		if err := checkPoolType(svc); err != nil {
-			return nil, err
-		}
+	svcs, err := acquirePools(services, pools)
+	if err != nil {
+		return nil, err
+	}
+	for i, m := range members {
+		svc := svcs[i]
 		token, missing, err := readPoolBearer(ctx, d, svc)
 		if err != nil {
 			return nil, err

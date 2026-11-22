@@ -2,6 +2,7 @@ package ops
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -198,6 +199,45 @@ func TestLease_LPParked_ReservedStopped_ReadsParked(t *testing.T) {
 	} {
 		if got := parkedContainer(tc.c); got != tc.parked {
 			t.Errorf("lockState %q status %q: parked = %v, want %v", tc.c.LockState, tc.c.Status, got, tc.parked)
+		}
+	}
+}
+
+// LP-UNKNOWN-POOL — An acquire naming a service that is not in the project, or
+// not a Swarm pool, is refused naming that service, also when it passes no repo
+// and none is recorded: it is never asked for a repo first.
+// witness: internal/ops/lease_group.go | return poolErr → return repoErr
+func TestLease_LPUnknownPool_NoRepoForANonPool_RefusedNamingIt(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{ID: "svc-pool", Name: "devpool", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-app", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+	}
+	repoErr := platform.NewPlatformError(platform.ErrInvalidParameter, "acquire needs repo: pool 'devpool' has no repository recorded", "")
+	for _, tc := range []struct {
+		pools     []string
+		code      string
+		names     string
+		isRepoErr bool
+	}{
+		{pools: []string{"nosuch"}, code: platform.ErrServiceNotFound, names: "nosuch"},
+		{pools: []string{"devpool", "nosuch"}, code: platform.ErrServiceNotFound, names: "nosuch"},
+		{pools: []string{"devpool", "appdev"}, code: platform.ErrInvalidParameter, names: "appdev"},
+		{pools: []string{"devpool"}, isRepoErr: true},
+	} {
+		err := unresolvedRepoRefusal(services, tc.pools, repoErr)
+		if tc.isRepoErr {
+			if !errors.Is(err, repoErr) {
+				t.Errorf("pools %v: err = %v, want the repo refusal", tc.pools, err)
+			}
+			continue
+		}
+		var pe *platform.PlatformError
+		if !errors.As(err, &pe) {
+			t.Fatalf("pools %v: err = %v, want a PlatformError", tc.pools, err)
+		}
+		if pe.Code != tc.code || !strings.Contains(pe.Message, tc.names) || strings.Contains(pe.Message, "needs repo") {
+			t.Errorf("pools %v: refusal = %s %q, want %s naming %q and not asking for a repo", tc.pools, pe.Code, pe.Message, tc.code, tc.names)
 		}
 	}
 }
