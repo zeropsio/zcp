@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/syslog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,11 +99,22 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		return nil, false, "", err
 	}
 	reused := warm.reusable(isolation, budget)
+	// A browser busy since the last call is waited out a few seconds: closing
+	// a heavy page settles, a page of its own does not.
+	settled := false
+	if !reused && warm.reusableButBusy(isolation, budget) {
+		settled = settleWhileIdle(ctx, browserServiceCPU, browserSettleWindow, browserSettleBound)
+		reused = settled
+	}
 	// A call that keeps the sign-in reuses only a browser holding it in the
 	// Chrome it was restored into; any other gets a fresh browser and a
 	// restore.
+	signInHeld := true
 	if reused && stateDir != "" && !keptSignInLetsReuse(ctx, h.step, browserPresencePath) {
-		reused = false
+		reused, signInHeld = false, false
+	}
+	if !reused {
+		logBrowserFresh(browserFreshReason(warm, isolation, budget, settled, signInHeld))
 	}
 	fresh := false
 	note := ""
@@ -270,6 +282,27 @@ func readWarmBrowser(ctx context.Context) (warmBrowser, string, error) {
 		}
 	}
 	return w, state, nil
+}
+
+// browserServiceCPU is the warm browser's service CPU time so far.
+func browserServiceCPU(ctx context.Context) (time.Duration, error) {
+	w, _, err := readWarmBrowser(ctx)
+	return w.CPU, err
+}
+
+// logBrowserFresh says why a call starts a fresh browser, on the call's
+// stderr and in the container's system log, where it can be read from
+// outside the agent's session.
+func logBrowserFresh(reason string) {
+	if reason == "" {
+		return
+	}
+	line := "zerops_browser: a fresh browser for this call: " + reason
+	fmt.Fprintln(os.Stderr, line)
+	if w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "zcp-browser"); err == nil {
+		_ = w.Info(line)
+		_ = w.Close()
+	}
 }
 
 func writeBrowserMarker(value string) error {

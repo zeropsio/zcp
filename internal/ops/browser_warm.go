@@ -144,11 +144,84 @@ func (w warmBrowser) reusable(isolation string, budget time.Duration) bool {
 }
 
 // quietWhileIdle reports whether the browser used at most a tenth of a CPU
-// while no call was in it. One that used more still runs a page: a popup
+// while no call was in it. One that used more may still run a page: a popup
 // agent-browser never tracked, or a hung renderer Chrome kept after its tab
-// closed. A gap under a second is too short to judge.
+// closed — or it was only closing a heavy page, which settleWhileIdle tells
+// apart. A gap under a second is too short to judge.
 func (w warmBrowser) quietWhileIdle() bool {
 	return w.IdleCPU < 0 || w.IdleFor < time.Second || w.IdleCPU <= w.IdleFor/10
+}
+
+// reusableButBusy reports whether the warm browser would be reusable but for
+// the CPU it used since the last call ended.
+func (w warmBrowser) reusableButBusy(isolation string, budget time.Duration) bool {
+	busy := w
+	busy.IdleCPU = -1
+	return busy.reusable(isolation, budget) && !w.quietWhileIdle()
+}
+
+// Closing a heavy page — a WebGL game, a large app — keeps Chrome busy for
+// seconds after a call's tabs close (4.7 s of CPU in the 6 s after a three.js
+// example on a Mate, then nothing), so a call that follows within that time
+// would see a browser that used more than a tenth of a CPU and recycle it,
+// paying a launch and a restore. settleWhileIdle watches the service's CPU in
+// windows of browserSettleWindow, up to browserSettleBound: a browser whose
+// use in one window falls to a tenth of a CPU has settled and is kept; one
+// still above it at the bound runs a page of its own and is recycled.
+const (
+	browserSettleWindow = 250 * time.Millisecond
+	browserSettleBound  = 4 * time.Second
+)
+
+// settleWhileIdle reports whether the browser's CPU use fell to a tenth of a
+// CPU within bound, read through cpuOf in windows of window; false when a
+// read fails or ctx ends.
+func settleWhileIdle(ctx context.Context, cpuOf func(context.Context) (time.Duration, error), window, bound time.Duration) bool {
+	before, err := cpuOf(ctx)
+	if err != nil || before < 0 {
+		return false
+	}
+	deadline := time.Now().Add(bound)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(window):
+		}
+		now, err := cpuOf(ctx)
+		if err != nil || now < 0 {
+			return false
+		}
+		if now-before <= window/10 {
+			return true
+		}
+		before = now
+	}
+	return false
+}
+
+// browserFreshReason says why a call does not run on the warm browser; ""
+// when it does. settled is settleWhileIdle's verdict for a browser that was
+// reusable but busy, and signInHeld whether the warm browser holds the kept
+// sign-in the call needs.
+func browserFreshReason(w warmBrowser, isolation string, budget time.Duration, settled, signInHeld bool) string {
+	switch {
+	case isolation == BrowserIsolationNewBrowser:
+		return "the call asked for a new browser"
+	case !w.Active:
+		return "no browser was running"
+	case w.Marker != browserMarkerIdle:
+		return fmt.Sprintf("the last call did not end cleanly (marker %q)", w.Marker)
+	case w.IdleFor >= browserIdleTimeout-browserBoundMargin:
+		return fmt.Sprintf("it idled %s, past its idle exit", w.IdleFor.Round(time.Second))
+	case w.Age+budget >= browserMaxAge:
+		return fmt.Sprintf("it is %s old, too old for the call's %s", w.Age.Round(time.Second), budget.Round(time.Second))
+	case !w.quietWhileIdle() && !settled:
+		return fmt.Sprintf("it used %s of CPU in %s idle and was still busy after %s", w.IdleCPU.Round(time.Millisecond), w.IdleFor.Round(100*time.Millisecond), browserSettleBound)
+	case !signInHeld:
+		return "it does not hold the kept sign-in"
+	}
+	return ""
 }
 
 // browserIdleMarker is the marker a clean call leaves: idle, with the

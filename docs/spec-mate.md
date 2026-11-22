@@ -884,8 +884,15 @@ it ended cleanly (a marker in the runtime directory says `idle`; a caller that d
 mid-call leaves it `busy`), neither the idle exit nor the max age can cut the
 call, and the service used at most a tenth of a CPU since that call ended (systemd's
 `CPUUsageNSec`, recorded in the marker): agent-browser's tab list can miss popups of a
-storm and Chrome can keep a hung renderer, so a browser that stayed busy while idle is
-recycled. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
+storm and Chrome can keep a hung renderer, so a browser that stays busy while idle is
+recycled. One that used more is first waited out, up to 4 s in windows of 250 ms: closing
+a heavy page keeps Chrome busy for seconds after a call (4.7 s of CPU in the 6 s after a
+three.js example on a Mate, 2026-11-22, then nothing), and without the wait every call
+that followed within that time relaunched Chrome and restored the sign-in; a browser
+whose use in one window falls to a tenth of a CPU is kept, one still above it at 4 s is
+recycled. Otherwise it starts a fresh one, and names why — on the call's stderr and in
+the container's system log as `zcp-browser` — so a relaunch is readable from outside the
+agent's session. Each step is its own `agent-browser --json`
 process, so a deadline or cancel keeps the finished steps. A call clears the
 daemon-wide logs, opens its own tab, and closes every tab but the base one when it
 ends; a caller's `window`, `tab new`, `tab close` and their aliases are stripped, so the

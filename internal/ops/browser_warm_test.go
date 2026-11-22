@@ -760,3 +760,100 @@ func TestHandBackBrowser_AChromeRelaunchedDuringTheCallSavesNothing(t *testing.T
 		t.Errorf("the browser must be left holding nothing: %+v", p)
 	}
 }
+
+// cpuReadings answers a CPU time per read from list, the last one ever after.
+func cpuReadings(list ...time.Duration) func(context.Context) (time.Duration, error) {
+	i := 0
+	return func(context.Context) (time.Duration, error) {
+		v := list[min(i, len(list)-1)]
+		i++
+		return v, nil
+	}
+}
+
+// TestSettleWhileIdle_AHeavyPageClosingIsWaitedOutAndTheBrowserKept: a browser
+// that is only closing a heavy page — Chrome burned 4.7 s of CPU in the 6 s
+// after a three.js example on a Mate, then nothing — is waited out and kept,
+// so a call that follows within seconds pays no launch and no restore; one
+// still busy when the bound runs out runs a page of its own and is recycled
+// (2026-11-22, Hana and Fia relaunching Chrome on back-to-back calls).
+// witness: internal/ops/browser_warm.go | if now-before <= window/10 { → if false {
+func TestSettleWhileIdle_AHeavyPageClosingIsWaitedOutAndTheBrowserKept(t *testing.T) {
+	t.Parallel()
+	settling := cpuReadings(0, 500*time.Millisecond, time.Second, 1300*time.Millisecond, 1300*time.Millisecond)
+	if !settleWhileIdle(t.Context(), settling, 5*time.Millisecond, time.Second) {
+		t.Error("a browser whose CPU use fell to nothing must be kept")
+	}
+}
+
+// TestSettleWhileIdle_ABrowserStillBusyAtTheBoundIsRecycled: a browser whose
+// CPU use stays above a tenth of a CPU until the bound — a popup agent-browser
+// never tracked, a renderer left spinning — is not handed on.
+// witness: internal/ops/browser_warm.go | if now-before <= window/10 { → if true {
+func TestSettleWhileIdle_ABrowserStillBusyAtTheBoundIsRecycled(t *testing.T) {
+	t.Parallel()
+	spent := time.Duration(0)
+	spinning := func(context.Context) (time.Duration, error) {
+		spent += 100 * time.Millisecond
+		return spent, nil
+	}
+	if settleWhileIdle(t.Context(), spinning, 5*time.Millisecond, 50*time.Millisecond) {
+		t.Error("a browser still busy at the bound must be recycled")
+	}
+	if settleWhileIdle(t.Context(), func(context.Context) (time.Duration, error) { return 0, errors.New("no systemd") }, 5*time.Millisecond, 50*time.Millisecond) {
+		t.Error("a browser whose CPU cannot be read must not count as settled")
+	}
+}
+
+// TestWarmBrowser_ReusableButBusyOnlyForTheIdleCPU: only a browser that is
+// reusable in every other way but used CPU since the last call is waited out;
+// one a call cannot reuse for any other reason is not.
+// witness: internal/ops/browser_warm.go | busy.IdleCPU = -1 → busy.IdleCPU = w.IdleCPU
+func TestWarmBrowser_ReusableButBusyOnlyForTheIdleCPU(t *testing.T) {
+	t.Parallel()
+	budget := 2 * time.Minute
+	busy := warmBrowser{Active: true, Age: 10 * time.Minute, Marker: browserMarkerIdle, IdleFor: 8 * time.Second, IdleCPU: 5 * time.Second}
+	if !busy.reusableButBusy(BrowserIsolationTab, budget) {
+		t.Error("a clean, young browser that only used CPU since the last call must be waited out")
+	}
+	quiet := busy
+	quiet.IdleCPU = 100 * time.Millisecond
+	if quiet.reusableButBusy(BrowserIsolationTab, budget) {
+		t.Error("a quiet browser is reused at once, not waited out")
+	}
+	died := busy
+	died.Marker = browserMarkerBusy
+	if died.reusableButBusy(BrowserIsolationTab, budget) || busy.reusableButBusy(BrowserIsolationNewBrowser, 30*time.Second) {
+		t.Error("a browser a call died in, or a new-browser call, is never waited out")
+	}
+}
+
+// TestBrowserFreshReason_SaysWhyACallStartsAFreshBrowser: each reason a call
+// does not run on the warm browser is named, so a relaunch can be read from
+// the container's system log; a reused browser names none.
+// witness: internal/ops/browser_warm.go | return "it does not hold the kept sign-in" → return ""
+func TestBrowserFreshReason_SaysWhyACallStartsAFreshBrowser(t *testing.T) {
+	t.Parallel()
+	budget := 2 * time.Minute
+	w := warmBrowser{Active: true, Age: 10 * time.Minute, Marker: browserMarkerIdle, IdleFor: 8 * time.Second, IdleCPU: 100 * time.Millisecond}
+	busy := w
+	busy.IdleCPU = 5 * time.Second
+	dead := w
+	dead.Active = false
+	for _, tt := range []struct {
+		name, want string
+		got        string
+	}{
+		{"reused", "", browserFreshReason(w, BrowserIsolationTab, budget, false, true)},
+		{"new browser", "asked for a new browser", browserFreshReason(w, BrowserIsolationNewBrowser, budget, false, true)},
+		{"none running", "no browser was running", browserFreshReason(dead, BrowserIsolationTab, budget, false, true)},
+		{"still busy", "still busy after", browserFreshReason(busy, BrowserIsolationTab, budget, false, true)},
+		{"busy but settled", "", browserFreshReason(busy, BrowserIsolationTab, budget, true, true)},
+		{"no sign-in", "does not hold the kept sign-in", browserFreshReason(w, BrowserIsolationTab, budget, false, false)},
+		{"too old for the call", "too old for the call's", browserFreshReason(w, BrowserIsolationTab, browserMaxAge, false, true)},
+	} {
+		if (tt.want == "") != (tt.got == "") || !strings.Contains(tt.got, tt.want) {
+			t.Errorf("%s: reason %q, want one naming %q", tt.name, tt.got, tt.want)
+		}
+	}
+}
