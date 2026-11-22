@@ -5484,7 +5484,12 @@ which carries the whole change; an answer without `ready` comes from an older HQ
 ready. Being the write's own answer, it needs no second read, and the agent reports the change it
 described this turn from it (the agent guidance's *Reporting a change's status*) unless it pushed
 to that change since. Its message says a push that changes the change's diff makes it a draft again,
-and that HQ keeps it ready when it can tell the diff is unchanged. Refused, kept and not-landed
+and that HQ keeps it ready when it can tell the diff is unchanged, and it ends saying the
+description is for the review, not the agent's reply: the agent still answers the person in a few
+lines of its own — what it did, where to see it, what waits on them. An agent that read "they
+review it by these words" as its reply ended its turn on the describe and said nothing, twice in a
+row, so a twelve-minute run showed nothing done (2026-11-22,
+`TestDescribeChange_TheAnswerSaysTheDescriptionIsNotTheReply`). Refused, kept and not-landed
 answers carry no labels.
 A describe waits out an HQ that is away for a moment: HQ's Core rolls for about 20 s,
 and a describe that met the roll once left the change a draft. Its calls are tried again, a growing

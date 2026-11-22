@@ -191,6 +191,26 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
+// TestDescribeChange_TheAnswerSaysTheDescriptionIsNotTheReply: a described
+// change's answer tells the agent the description is what the person reviews
+// by and that it still answers the person in its own words. An agent that read
+// "they review it by these words" as its reply ended its turn on the describe,
+// twice, so a twelve-minute run showed nothing done (2026-11-22).
+// witness: internal/tools/hq_change_description.go | mergeLimitedNote(state.MergeLimited) + " " + describedIsNotTheReply, → mergeLimitedNote(state.MergeLimited),
+func TestDescribeChange_TheAnswerSaysTheDescriptionIsNotTheReply(t *testing.T) {
+	t.Parallel()
+	lab := openedLab(t)
+	text, isError := lab.describeTitled("", "", "\n"+describedWords+"\n\n")
+	if isError {
+		t.Fatalf("want an answer, got an error:\n%s", text)
+	}
+	for _, want := range []string{"not your reply", "answer the person now", "what you did, where they can see it, and what waits on them"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the described change's answer misses %q:\n%s", want, text)
+		}
+	}
+}
+
 // TestDescribeChange_Refusals: every refusal is said before HQ is asked
 // anything, and keeps nothing.
 func TestDescribeChange_Refusals(t *testing.T) {

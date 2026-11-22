@@ -250,9 +250,16 @@ func handleDescribeChange(
 		Described:      true,
 		Labels:         describedLabels(answered),
 		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that changes its diff makes it a draft again, until you describe it again; HQ keeps it ready when it can tell the diff is unchanged.",
-			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited),
+			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited) + " " + describedIsNotTheReply,
 	}), nil, nil
 }
+
+// describedIsNotTheReply ends a described change's answer. The description
+// is what the person reviews the change by, not the agent's answer to them: an
+// agent that took "they review it by these words" as its reply ended its turn
+// on the describe and said nothing, so a twelve-minute run read as nothing
+// done (2026-11-22, the free Gemini agent, twice in a row).
+const describedIsNotTheReply = "The description is for the review, not your reply: answer the person now, in a few lines of your own — what you did, where they can see it, and what waits on them."
 
 // describedLabels labels the change HQ answered the describe with, as status
 // labels a change (changeLabels): the write's own answer, so no state read
