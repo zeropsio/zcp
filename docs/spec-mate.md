@@ -3074,8 +3074,8 @@ there with _Try again_, on the same project; one that stopped at its project or 
 resumed — a second import is refused for the hostnames the first made — and offers _Remove_ instead.
 
 **After the press the container does the rest**, with a browser open or none: the Mate's server
-links to HQ with the project key from its boot on, which brings the dev service its Git credential
-(§3.5), and starts the stand-up once HQ's record names who asked, or settles it as none at once
+links to HQ with the project key from its boot on,
+and starts the stand-up once HQ's record names who asked, or settles it as none at once
 where it names nobody. The container imports nothing, so it verifies nothing.
 Any browser reads where that stands off `GET /mate/setup.json` and an older Mate's off
 `/mate/healthz`; zcp's status file (`ZCP_STATUS_FILE`) carries the stand-up's
@@ -4582,8 +4582,8 @@ redirects or retry `503` responses. Native Git cannot expose HQ's JSON refusal;
 after an authentication failure naming this exact HQ origin, `zcp hq git` reads
 project self once to obtain that verdict and apply the same recheck rule. It
 preserves Git's exit code and never repeats the Git command. That verdict read and
-its recheck share a 15-second deadline. The wrapper refuses in Mate mode, which
-uses the Mate's own Git credential, and forwards cancellation as SIGTERM with a
+its recheck share a 15-second deadline. The wrapper refuses in Mate mode, whose
+git reaches HQ through `zcp git` with the project key (§6.8, §2.8), and forwards cancellation as SIGTERM with a
 five-second cleanup window. Output retains only a suffix that could begin the
 key; ordinary lines pass through immediately, while an ambiguous partial key
 waits for more output or exit.
@@ -5898,8 +5898,8 @@ person who reads and edits it in the recipe repository: two-space YAML, each ser
 group's to edit. The project block carries the recipe's name (the AI Agent tier keeps the Mate's
 own), the live `corePackage`, and the project's user-set variables in its `vault:` — and each
 runtime its own in its `vault:`; a secret-shaped name and a generated secret written
-`{value, sensitive: true}`; the platform's own and the control plane's (zcp's key and agents, the git token — on
-a dev half, the Mate's Git credential — the launch token and a Gitea token) are never written. The composer decides each variable
+`{value, sensitive: true}`; the platform's own and the control plane's (zcp's key and agents, the git token,
+the launch token and a Gitea token) are never written. The composer decides each variable
 unattended and fails closed: a value of `${name}` references alone is wiring, kept as written, and
 any other value is kept only when no signal marks it secret — the platform's flag, a masked read, a
 credential's name (a PIN, a seed, a passphrase and a webhook's address included, since no shape
@@ -6101,8 +6101,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 
 - **The repository** is `<appId>/<name>` in the application HQ holds the Mate in, the name the dev
   hostname (or the one a recipe names). zcp asks for it — `POST /api/mate/repos {name}`, idempotent,
-  `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
-  `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, a shallow checkout
+  `main` born with one commit of the empty tree — and wires the pair: its origin points at
+  `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with no credential in the dev service (*The credential* below), a shallow checkout
   completed (a dev service that deploys `./` from a recipe holds the build's depth-1 clone, and
   HQ's receive-pack refuses a shallow push, so every repository in HQ stays complete: the
   history is fetched with `--unshallow` from `zerops-original-origin`, the origin the sync kept,
