@@ -4,8 +4,6 @@
 // materialized fragments. Refusals surface as sim failures, mirroring
 // `zerops_recipe action=complete-phase` behavior on the real engine.
 //
-// Spec: docs/zcprecipator3/plans/run-20-prep.md §S6.
-//
 // Today only `codebase-content` is wired — the spec target for B1's
 // slot-floor verification. Other phases (`scaffold`, `feature`,
 // `env-content`, `finalize`) are easy follow-ons; the dispatch table

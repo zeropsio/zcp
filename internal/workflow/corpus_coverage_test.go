@@ -891,7 +891,7 @@ var knownOverflowFixtures = map[string]string{}
 //     fetches when needed.
 //
 // Raising the ceiling without first attempting the trim is an anti-
-// pattern (T2 in audit-workflow-llm-information-flow.md).
+// pattern.
 func TestCorpusCoverage_OutputUnderMCPCap(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()

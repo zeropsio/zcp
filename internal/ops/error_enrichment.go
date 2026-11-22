@@ -11,8 +11,7 @@ import (
 // zerops.yaml so the agent reads "available setups: dev, prod" without
 // the platform's bare error message hiding the choices.
 //
-// F3 closure (audit-prerelease-internal-testing-2026-04-29): pre-fix the
-// platform reclassifier echoed only the server message — the submitter
+// Pre-fix the platform reclassifier echoed only the server message — the submitter
 // HAS the parsed YAML at hand and knows which setups are declared, but
 // that locally-known context was being discarded. The new central
 // helper appends an APIMeta `availableSetups` entry so every error site

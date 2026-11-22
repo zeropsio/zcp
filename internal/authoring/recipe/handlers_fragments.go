@@ -105,7 +105,7 @@ func ApplyEnvComment(plan *Plan, id, body string) error {
 }
 
 // isAppendFragmentID reports whether an id uses append-on-extend
-// semantics. Per plan §2.A.4: feature sub-agent extends IG, KB, and
+// semantics: feature sub-agent extends IG, KB, and
 // CLAUDE.md sections; root and env overwrite (main agent authors once).
 //
 // Run-16 §6.5 — slotted ids (`integration-guide/<n>`, single-slot

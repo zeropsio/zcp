@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// slot_shape_run18_preflight_test.go — Run-18 §5.4 validator calibration.
+// slot_shape_run18_preflight_test.go — validator calibration.
 //
 // Two-axis calibration following docs/zcprecipator3/content-research.md:
 //
@@ -18,7 +18,7 @@ import (
 //
 //  2. The run-17 corpus is the known-leaky bed — bullets that survived
 //     to publication despite brief teaching. The validator must fire
-//     refusals across the §3.1 check categories (self-inflicted, slug
+//     refusals across the check categories (self-inflicted, slug
 //     citation, UI noun, scaffold path) above calibrated minimums.
 //
 // The test does NOT hardcode per-bullet outcomes — that's framework-
@@ -75,9 +75,8 @@ func TestRun18Validator_ReferenceRecipes_ZeroFalsePositives(t *testing.T) {
 }
 
 // TestRun18Validator_Run17Corpus_FiresOnLeaks — the run-17 corpus has
-// known anti-pattern leaks per docs/zcprecipator3/plans/run-18-prep.md
-// §1.2. The validator must fire across the §3.1 check categories
-// above calibrated minimums.
+// known anti-pattern leaks. The validator must fire across the check
+// categories above calibrated minimums.
 //
 // Minimums are read from the published READMEs; tightening them is a
 // signal that the validator broadened or the corpus changed. Loosening

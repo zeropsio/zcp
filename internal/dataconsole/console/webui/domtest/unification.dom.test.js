@@ -2,7 +2,7 @@
 // S15 SPA-unification invariants, driven through the REAL render path (fetch /
 // postMessage -> app.js -> DOM), never a direct call into app.js internals. These
 // pin the canon the unification delivers (plans/dataconsole-contracts-draft-
-// 2026-07-16.md §P.4/§P.5, ui-walk.md U-01/U-02/U-03/U-06/U-09/U-10, UI-AUD-03/04):
+// 2026-07-16.md §P.4/§P.5, U-01/U-02/U-03/U-06/U-09/U-10, UI-AUD-03/04):
 //   1. ONE grid renderer — a SQL query result reuses the SAME grid as ReadTable
 //      (same `.gridwrap table.grid` markup) and renders explicitly read-only.
 //   2. Editability is SERVER truth — a Column.editable=false cell (PK) renders

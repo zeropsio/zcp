@@ -18,12 +18,9 @@ import (
 // extends the atom-only lint (TestAtomAuthoringLint) to EVERY tracked
 // text file in the repo. Without it, vocab sweeps after a refactor stay
 // scoped to atoms and quietly leave stale instructions in specs, README,
-// eval scenarios, preseed scripts, error messages, and tool docstrings —
-// the C1-class bug pattern documented in
-// docs/audit-prerelease-internal-testing-2026-04-30-roundtwo.md (Codex
-// finding F1+F2: spec-work-session.md, spec-scenarios.md, and 4 preseed
-// scripts kept retired `action="strategy"` / `deployStrategy` after the
-// 40-file C1 sweep landed).
+// eval scenarios, preseed scripts, error messages, and tool docstrings
+// (specs and preseed scripts kept retired `action="strategy"` /
+// `deployStrategy` after a 40-file atom sweep landed).
 //
 // What it catches
 //
@@ -56,7 +53,6 @@ import (
 // would be noise):
 //
 //   - plans/archive/**     historical plans
-//   - docs/archive/**      historical docs
 //   - docs/audit-*.md      audit reports legitimately quote the old vocab
 //     as evidence of what was wrong
 //   - internal/content/atoms_lint*.go         lint rules + allowlist define the patterns
@@ -290,11 +286,10 @@ var retiredVocabAllowlist = map[string]string{
 // legitimately reference retired vocab as design history; they archive
 // when the work ships. Recipe-flow docs (`docs/zcprecipator*/`) are
 // recipe-AUTHORING workflow content, out of scope for the lifecycle
-// vocabulary sweep. Historical archives never participate.
+// vocabulary sweep.
 func skipForDriftScan(rel string) bool {
 	switch {
 	case strings.HasPrefix(rel, "plans/"),
-		strings.HasPrefix(rel, "docs/archive/"),
 		strings.HasPrefix(rel, "docs/audit-"),
 		strings.HasPrefix(rel, "docs/zcprecipator"),
 		strings.HasPrefix(rel, "docs/recipes/"),

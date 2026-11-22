@@ -5,8 +5,7 @@ package platform
 // HTTP-400-as-state behavior onto a state enum so callers branch on a
 // value, not on error-code string-matching.
 //
-// Phase A spike finding (docs/spec-launch-production-platform-spike.md §B.1):
-// the platform expresses "no integration configured yet" as HTTP 400 with
+// The platform expresses "no integration configured yet" as HTTP 400 with
 // `code: noExternalRepositoryIntegration`, NOT a 200 with state field.
 // ZCP treats this code as a state read, not as a failure.
 type IntegrationState string

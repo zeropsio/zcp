@@ -41,13 +41,7 @@ Read in this order:
    why laravel-jetstream is the voice floor. Skim §1 (length budgets),
    §3 (universals), §6 (worked routing examples).
 
-4. **`docs/zcprecipator3/plans/run-18-prep.md`** — most recent
-   readiness plan. §1.2 lists the run-17 leak classes; §3 lists the
-   engine fixes; §5 describes the simulation loop. Reading this tells
-   you exactly what to look for in the current run — these are the
-   classes the run was supposed to close.
-
-5. **`CHANGELOG.md`** — read only the most recent entry. Don't
+4. **`CHANGELOG.md`** — read only the most recent entry. Don't
    internalize older history; it's run-archive.
 
 After reading, you should be able to answer (without re-grepping):

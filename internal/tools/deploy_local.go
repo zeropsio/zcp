@@ -303,8 +303,7 @@ type deployLocalResponse struct {
 }
 
 // WorkSessionState is the lifecycle signal returned alongside every
-// deploy/verify response. F5 closure (audit-prerelease-internal-testing-
-// 2026-04-29): pre-fix sessionAnnotations collapsed every non-open state
+// deploy/verify response. Pre-fix sessionAnnotations collapsed every non-open state
 // onto one constant warning, so the agent could not distinguish "session
 // never opened" from "session auto-closed seconds ago" — the auto-close
 // timestamp + reason were on disk but discarded at the tool boundary.

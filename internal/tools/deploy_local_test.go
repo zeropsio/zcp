@@ -169,7 +169,6 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	}
 }
 
-// F5 closure (audit-prerelease-internal-testing-2026-04-29):
 // sessionAnnotations returns a structured WorkSessionState mirroring the
 // envelope's `develop-closed-auto` lifecycle vocabulary. The three
 // status values (none / open / auto-closed) carry distinct field shapes

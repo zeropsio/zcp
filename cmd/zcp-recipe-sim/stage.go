@@ -3,8 +3,6 @@
 // the simulation dir so the replayed codebase-content +
 // claudemd-author sub-agents can read what they reference.
 //
-// Spec: docs/zcprecipator3/plans/run-20-prep.md §S3.
-//
 // Codebase-content brief reads `<SourceRoot>/zerops.yaml` (already
 // staged) plus `Glob <SourceRoot>/src/**`
 // (briefs_content_phase.go:124-128). Claudemd-author brief explicitly
@@ -12,7 +10,7 @@
 // (briefs_content_phase.go:304). We stage the union; the replayed
 // agent runs against the same file shape it would in production.
 //
-// loadEmitParent (S4) loads a *ParentRecipe via the recipe chain
+// loadEmitParent loads a *ParentRecipe via the recipe chain
 // resolver so the codebase-content brief composer's
 // parent_recipe_dedup logic is exercised in sim.
 package main
@@ -46,8 +44,7 @@ var stagedTopLevelDirs = []string{
 
 // skipDirNames are the directory bases that are skipped at every
 // depth — bulk artifact dirs nobody references and that bloat the
-// staged tree. node_modules + vendor + .git are the canonical set
-// per S3.
+// staged tree. node_modules + vendor + .git are the canonical set.
 var skipDirNames = map[string]bool{
 	"node_modules": true,
 	"vendor":       true,

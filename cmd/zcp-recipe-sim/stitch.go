@@ -24,8 +24,8 @@ import (
 func runStitch(args []string) error {
 	fs := flag.NewFlagSet("stitch", flag.ContinueOnError)
 	dir := fs.String("dir", "", "simulation directory previously populated by `emit` and per-codebase Agent dispatches")
-	rounds := fs.Int("rounds", 2, "number of stitch rounds to run; rounds>=2 enable the multi-stitch idempotence assertion (run-20 prep S1)")
-	gateSet := fs.String("gates", "", "gate set to run after stitch (run-20 prep S6); 'codebase-content' invokes CodebaseContentGates+DefaultGates against the staged plan + facts + materialized fragments. Empty = skip gate-running.")
+	rounds := fs.Int("rounds", 2, "number of stitch rounds to run; rounds>=2 enable the multi-stitch idempotence assertion")
+	gateSet := fs.String("gates", "", "gate set to run after stitch; 'codebase-content' invokes CodebaseContentGates+DefaultGates against the staged plan + facts + materialized fragments. Empty = skip gate-running.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func runStitch(args []string) error {
 		return fmt.Errorf("abs(%s): %w", *dir, err)
 	}
 
-	// Multi-stitch idempotence (run-20 prep S1) — production runs
+	// Multi-stitch idempotence — production runs
 	// `stitchCodebases` at every phase boundary (scaffold, feature,
 	// finalize). The run-19 inline-yaml block-doubling regression only
 	// surfaces on round ≥2, so a single linear pass misses it. This

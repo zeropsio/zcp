@@ -288,10 +288,9 @@ view-only or not-yet family is read-only regardless of posture.
 
 ## 7. Excellence contracts
 
-A live audit of every family against real engines (2026-07-16, distilled findings
-in `docs/dataconsole-audit/`) found the dominant defect class was not UX
-unevenness but **operations that reported success while destroying, losing, or
-never applying data**. The excellence contracts fix what "excellent" means per
+A live audit of every family against real engines (2026-07-16) found the
+dominant defect class was not UX unevenness but **operations that reported
+success while destroying, losing, or never applying data**. The excellence contracts fix what "excellent" means per
 family, as four cross-family invariants + a shared error/state vocabulary; each
 family states only its deltas. Every normative rule here is an acceptance
 criterion the per-engine conformance suite

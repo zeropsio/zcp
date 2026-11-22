@@ -921,7 +921,7 @@ func developMultiServiceScenarios() []matrixScenario {
 			},
 		},
 		{
-			// F9 Lever B (audit-prerelease-internal-testing-2026-04-29):
+			// Work-session scope filter:
 			// scope=[1 host] in a 4-service project. Pre-fix synthesizer
 			// matched per-service atoms against ALL 4 services (3 dev
 			// runtimes + 1 managed) regardless of work-session scope.

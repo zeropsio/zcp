@@ -16,8 +16,7 @@ import (
 // OBJ-AUD-01 (content-type carried on write + upload), KV-AUD-05 (truncated
 // blob's true size), and the decode()-side half of T-AUD-02 (a bare JSON
 // integer in a mutating body must reach the provider as json.Number, never a
-// rounded float64). Evidence: plans/dataconsole-audit/{object-stream,kv,
-// tabular}.md.
+// rounded float64).
 
 // pngMagic is the PNG file signature — http.DetectContentType recognizes it
 // deterministically as "image/png", making it a reliable sniff-fallback probe

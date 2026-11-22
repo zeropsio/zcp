@@ -105,8 +105,8 @@ func TestPutDoc_TaskEventuallySucceeds_PollsUntilTerminal(t *testing.T) {
 // TestPutDoc_TaskFails_ReturnsTypedErrorWithSanitizedReason pins DOC-AUD-01's
 // core reproduction: a document that fails Meilisearch's async per-document
 // validation (e.g. missing primary key) used to report {"ok":true} because
-// putDoc only checked the enqueue response, never the task's real outcome
-// (plans/dataconsole-audit/document.md DOC-AUD-01). The fix must surface a
+// putDoc only checked the enqueue response, never the task's real outcome.
+// The fix must surface a
 // typed, non-nil error whose text carries the sanitized failure reason (for
 // the stderr diagnostic sink — the client-facing envelope stays the generic
 // per-sentinel message, unaffected by this slice).

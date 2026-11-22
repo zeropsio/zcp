@@ -181,7 +181,7 @@ func prodOpsResolveService(ctx context.Context, admin platform.ProjectAdminClien
 	), WithRecoveryStatus())
 }
 
-// prodOpsTranslateErr converts the A.10 projectNotFound shape into the
+// prodOpsTranslateErr converts the role-less projectNotFound shape into the
 // honest diagnosis: the project exists; the launching user's ADMIN role
 // grant is missing (GrantSelfRole failed at launch), so reads 404.
 func prodOpsTranslateErr(err error, state *launchState) error {

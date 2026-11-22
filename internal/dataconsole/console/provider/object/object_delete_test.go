@@ -144,8 +144,7 @@ func newFakeS3Provider(t *testing.T, srv *httptest.Server, bucket string) *Provi
 // spec-idempotent (204 whether or not the key ever existed), so the provider
 // used to report {"ok":true} for a key that was never there — indistinguishable
 // from a real deletion, and inconsistent with Rename's existing 404-on-missing
-// behavior on the identical condition (plans/dataconsole-audit/object-stream.md
-// OBJ-AUD-02). The fix Stat-checks first and must report ErrNotFound instead.
+// behavior on the identical condition. The fix Stat-checks first and must report ErrNotFound instead.
 func TestDelete_NonexistentKey_ReturnsNotFound(t *testing.T) {
 	t.Parallel()
 	srv := newFakeS3Server(t, "obj-test-bucket", map[string]bool{})

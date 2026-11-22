@@ -1163,7 +1163,7 @@ func executeLaunchMutation(
 	state.TargetProjectID = result.ProjectID
 	_ = writeLaunchState(stateDir, state)
 
-	// A.10: grant launching clientUser ADMIN on the new project. For the
+	// Grant launching clientUser ADMIN on the new project. For the
 	// canonical INTEGRATION token this ALWAYS fails ("Insufficient
 	// permissions" — integration tokens cannot manage roles,
 	// live-verified 2026-06-11) and that is FINE: the token holds
@@ -1633,9 +1633,8 @@ func missingScopeFields(input WorkflowInput, _ *launchSourceContext) []string {
 	if input.TargetService == "" && len(input.Promotables) == 0 {
 		missing = append(missing, "targetService")
 	}
-	// Region defaults to eu-central at compose-time if empty (per spec-
-	// launch-production-platform-spike A.4) — don't require it from
-	// the agent.
+	// Region defaults to eu-central at compose-time if empty — don't
+	// require it from the agent.
 	return missing
 }
 

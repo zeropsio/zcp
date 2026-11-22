@@ -31,7 +31,7 @@ func LaunchMarker(launchID string) string {
 
 // productionDefaultCorePackage is the corePackage the composer emits when
 // the caller does not override: SERIOUS (dedicated core) is the production
-// default per the platform spike A.7 — the schema default is LIGHT, which
+// default — the schema default is LIGHT, which
 // every launched project silently got while the composer emitted no
 // corePackage at all. LIGHT stays a legitimate explicit override.
 const productionDefaultCorePackage = "SERIOUS"

@@ -22,7 +22,7 @@ import (
 // unconditionally in ErrUpstream (502 "the platform broke"), even a SQL
 // typo, a wrong-type literal, or a NOT NULL violation — an I-2 honesty
 // violation (spec-dataconsole.md §7.1: "a validation rejection is not an
-// outage"). Evidence: plans/dataconsole-audit/ (UX interaction critic).
+// outage").
 
 // ---- pgErr / mysqlErr: typed driver errors matching real server responses ----
 //

@@ -1,7 +1,7 @@
-// Tests for S4 — Parent + MountRoot threading through emit. Without
+// Tests for Parent + MountRoot threading through emit. Without
 // these, the codebase-content brief's parent_recipe_dedup logic is
 // unverified in sim because the brief composer never sees a populated
-// `*ParentRecipe`. Spec: docs/zcprecipator3/plans/run-20-prep.md §S4.
+// `*ParentRecipe`.
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 // the parent recipe's tree, the emitted codebase-content prompt
 // references the parent recipe surfaces. The codebase-content brief
 // emits a "## Parent recipe `<slug>`" pointer at briefs_content_phase.go:130
-// when parent != nil. Pinned by run-20 prep S4.
+// when parent != nil.
 func TestRunEmit_PassesParentToBriefComposer(t *testing.T) {
 	runDir := t.TempDir()
 	simDir := t.TempDir()
@@ -62,7 +62,7 @@ func TestRunEmit_PassesParentToBriefComposer(t *testing.T) {
 
 // TestRunEmit_NoParentFlag_OmitsParentPointer asserts the legacy
 // behavior remains: without -parent, no parent recipe pointer in the
-// emitted prompt. Pinned by run-20 prep S4 (negative case).
+// emitted prompt.
 func TestRunEmit_NoParentFlag_OmitsParentPointer(t *testing.T) {
 	runDir := t.TempDir()
 	simDir := t.TempDir()
@@ -86,7 +86,6 @@ func TestRunEmit_NoParentFlag_OmitsParentPointer(t *testing.T) {
 
 // TestRunEmit_ParentFlagWithoutMountRoot_Errors asserts the CLI
 // rejects `-parent` without `-mount-root` (parent can't be loaded).
-// Pinned by run-20 prep S4.
 func TestRunEmit_ParentFlagWithoutMountRoot_Errors(t *testing.T) {
 	runDir := t.TempDir()
 	simDir := t.TempDir()

@@ -670,8 +670,7 @@ func TestParseAtom_DeployStatesAndEnvelopeDeployStatesMutuallyExclusive(t *testi
 // references a service the atom isn't semantically about — e.g. strategy-
 // review surfacing because service A is deployed and (different) service B
 // has unset strategy.
-// TestSynthesize_WorkSessionScopeFilter pins Lever B of audit F9
-// (audit-prerelease-internal-testing-2026-04-29). When envelope.WorkSession
+// TestSynthesize_WorkSessionScopeFilter: when envelope.WorkSession
 // has a non-empty Services list, per-service axis matching narrows to
 // in-scope hostnames only — atoms with per-service axes only fire for
 // scope services, not the project's full service list. Without the

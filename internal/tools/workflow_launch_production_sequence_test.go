@@ -211,7 +211,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 		t.Errorf("import yaml missing target name: %s", mockAdmin.CapturedImportYAML)
 	}
 
-	// Admin mock granted self ADMIN role (A.10).
+	// Admin mock granted self ADMIN role.
 	if mockAdmin.CapturedGrantSelfRoleProject != "new-prod-id" {
 		t.Errorf("GrantSelfRole not called with target project; got %q", mockAdmin.CapturedGrantSelfRoleProject)
 	}

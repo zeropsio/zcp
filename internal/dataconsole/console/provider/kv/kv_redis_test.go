@@ -454,7 +454,7 @@ func TestSetEntry_MissingKey_StaysUnsupported(t *testing.T) {
 // confirmed): WriteBlob (the string-value write path, PUT /api/blob) used to
 // issue an unconditional SET with no type check, so writing a string over an
 // existing collection key silently destroyed it — reproduced live against a
-// zset named "leaderboard" (plans/dataconsole-audit/kv.md KV-AUD-01). The fix
+// zset named "leaderboard". The fix
 // must refuse before the SET reaches Redis, and the zset must survive intact.
 func TestWriteBlob_RefusesCrossTypeClobber(t *testing.T) {
 	t.Parallel()
@@ -507,7 +507,7 @@ func TestWriteBlob_ProceedsOnNonexistentOrStringKey(t *testing.T) {
 // TestSetEntry_Zset_MissingScore_Refused pins KV-AUD-10 (HIGH, same class as
 // KV-AUD-01): SetEntry against a zset with a value but no score used to
 // silently ZADD the member at score 0, discarding the member's real score
-// with no error and no signal (plans/dataconsole-audit/kv.md KV-AUD-10). The
+// with no error and no signal. The
 // fix refuses instead of defaulting; the member's existing score must be
 // unchanged. SetEntry with an explicit score (the SPA's only shape, fixed by
 // D-01) keeps working — see TestSetEntry_ZsetMemberScore.
@@ -531,8 +531,7 @@ func TestSetEntry_Zset_MissingScore_Refused(t *testing.T) {
 // TestStat_NoTTL_ReportsNilSentinel pins KV-AUD-02 (HIGH, live-audit +
 // screenshot confirmed): a key with no expiry used to report ttlSeconds:0
 // from Stat, which the SPA renders as "TTL: 0s" instead of "no expiry" —
-// independently confirmed live on user:2 in ui-walk.md
-// (plans/dataconsole-audit/kv.md KV-AUD-02). Redis TTL replies -1 for
+// independently confirmed live on user:2. Redis TTL replies -1 for
 // "exists, no expiry"; the fix must surface that as a nil sentinel in
 // Node.Meta.TTLSeconds, never the literal 0.
 func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
@@ -620,7 +619,7 @@ func TestStat_ReportsEntryType(t *testing.T) {
 // TestList_LeafNode_CarriesEntryType is List's half of the same contract —
 // today all four collection types (hash/list/set/zset) collapse to the same
 // KindTabular glyph in the tree and are indistinguishable until opened
-// (UI-AUD-04, ui-walk.md); Meta.EntryType is the per-key signal a future SPA
+// (UI-AUD-04); Meta.EntryType is the per-key signal a future SPA
 // keys on to fix that, without needing a Stat round trip per node.
 func TestList_LeafNode_CarriesEntryType(t *testing.T) {
 	t.Parallel()
@@ -661,8 +660,7 @@ func TestList_LeafNode_CarriesEntryType(t *testing.T) {
 // TestDeleteEntry_Affected_ReflectsRealCount pins KV-AUD-06 (LOW, live-audit
 // confirmed): DeleteEntry used to hardcode Applied{Affected:1} regardless of
 // whether Redis actually removed anything — live-confirmed on a hash field
-// that didn't exist, which still reported affected:1
-// (plans/dataconsole-audit/kv.md KV-AUD-06). The fix must return the real
+// that didn't exist, which still reported affected:1. The fix must return the real
 // HDEL/SREM/ZREM reply count: 1 when the entry existed and was removed, 0
 // when it did not.
 func TestDeleteEntry_Affected_ReflectsRealCount(t *testing.T) {

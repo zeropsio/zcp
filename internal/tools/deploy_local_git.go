@@ -255,8 +255,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		Message:   message,
 	}
 
-	// C2 closure (audit-prerelease-internal-testing-2026-04-29): see the
-	// extended rationale comment at the matching site in
+	// See the extended rationale comment at the matching site in
 	// internal/tools/deploy_git_push.go. Local git-push has the same
 	// async-build-vs-stamp gap as the container path; auto-stamping
 	// FirstDeployedAt on push success made Deployed=true race ahead of the

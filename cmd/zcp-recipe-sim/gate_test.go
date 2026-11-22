@@ -1,11 +1,9 @@
-// Tests for S6 — complete-phase analog for codebase-content. After
+// Tests for the complete-phase analog for codebase-content. After
 // the replayed sub-agent writes fragments and `stitch` assembles the
 // corpus, the sim driver invokes the codebase-content gate set
 // against the staged plan + facts + materialized fragments. Refusals
 // surface as sim failures, mirroring what the production engine does
 // at `complete-phase=codebase-content`.
-//
-// Spec: docs/zcprecipator3/plans/run-20-prep.md §S6.
 package main
 
 import (
@@ -15,7 +13,7 @@ import (
 
 // TestRunStitch_GatesCodebaseContent_PassesOnCleanCorpus asserts the
 // gate-running invocation does not fire spurious refusals against a
-// minimal but well-formed corpus. Pinned by run-20 prep S6.
+// minimal but well-formed corpus.
 func TestRunStitch_GatesCodebaseContent_PassesOnCleanCorpus(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeMinimalSimulationOpts(t, dir, false); err != nil {
@@ -31,8 +29,7 @@ func TestRunStitch_GatesCodebaseContent_PassesOnCleanCorpus(t *testing.T) {
 }
 
 // TestRunStitch_GatesUnknown_Errors asserts an unknown gate-set name
-// returns a clear error rather than silently no-op'ing. Pinned by
-// run-20 prep S6.
+// returns a clear error rather than silently no-op'ing.
 func TestRunStitch_GatesUnknown_Errors(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeMinimalSimulationOpts(t, dir, false); err != nil {
@@ -54,7 +51,7 @@ func TestRunStitch_GatesUnknown_Errors(t *testing.T) {
 // TestRunStitch_GatesCodebaseContent_FiresRefusalOnBadFact asserts a
 // fact missing required fields trips the default gateFactsValid rail
 // (part of the codebase-content gate union) and runStitch returns a
-// non-nil error naming the violation. Pinned by run-20 prep S6.
+// non-nil error naming the violation.
 func TestRunStitch_GatesCodebaseContent_FiresRefusalOnBadFact(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeMinimalSimulationOpts(t, dir, false); err != nil {

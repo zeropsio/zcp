@@ -1,5 +1,4 @@
-// Tests for S5 — refinement prompt emit. Spec:
-// docs/zcprecipator3/plans/run-20-prep.md §S5.
+// Tests for the refinement prompt emit.
 package main
 
 import (
@@ -13,9 +12,8 @@ import (
 // that the refinement multi-file brief composed against the simulation
 // directory carries the "## Stitched output to refine" pointer block
 // (rendered into the references part by renderRefinementStitchedPointer
-// Block when runDir != "") that names the simulation root path. Pinned
-// by run-20 prep S5; updated for the multi-file shape (run-31 Fix #1
-// closure) — production refinement persists index.md + N part-*.md to
+// Block when runDir != "") that names the simulation root path. For
+// the multi-file shape, production refinement persists index.md + N part-*.md to
 // `<outputRoot>/.briefs/refinement-phase/` and the stitched-output
 // pointer lives in part-4-references.md.
 func TestRunEmitRefinement_ProducesPromptReferencingStitchedDir(t *testing.T) {
@@ -101,7 +99,7 @@ func TestRunEmitRefinement_ProducesPromptReferencingStitchedDir(t *testing.T) {
 }
 
 // TestRunEmitRefinement_RequiresDirFlag asserts the CLI rejects an
-// invocation without `-dir`. Pinned by run-20 prep S5.
+// invocation without `-dir`.
 func TestRunEmitRefinement_RequiresDirFlag(t *testing.T) {
 	err := runEmitRefinement([]string{})
 	if err == nil {
@@ -115,7 +113,7 @@ func TestRunEmitRefinement_RequiresDirFlag(t *testing.T) {
 // TestRunEmitRefinement_ReadsFactsLog asserts the refinement prompt
 // composes against the run's facts log when present (matches
 // production: the refinement composer reads facts to surface
-// recorded contracts). Pinned by run-20 prep S5.
+// recorded contracts).
 func TestRunEmitRefinement_ReadsFactsLog(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeMinimalSimulationOpts(t, dir, false); err != nil {

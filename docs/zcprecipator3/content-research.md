@@ -311,7 +311,7 @@ How the engine reads from the spec at compose-time + record-time + commit-time. 
 | Commit-time (frontend integration validator) | `gateFrontendIntegration` checks every backend route in fact stream has matching `[data-test=*]` selector + fetch via `${VITE_API_URL}` | `internal/recipe/validators_*.go` (run-23 F-23) |
 | Emit-time (single-slot URL rewrite) | `writeProject` extends with `rewriteURLsForSingleSlot` for tiers 2-5: drops DEV_*-prefixed keys, collapses slot-named hostnames, preserves `${zeropsSubdomainHost}` literal | `internal/recipe/yaml_emitter.go` (run-22 R3-RC-3) |
 
-The full implementation plan is in [docs/zcprecipator3/plans/run-15-readiness.md](plans/run-15-readiness.md) (base architecture); subsequent run-N readiness plans archive the incremental extensions. The spec ([docs/spec-content-surfaces.md](../spec-content-surfaces.md)) is the single source of truth that every stage reads from.
+The spec ([docs/spec-content-surfaces.md](../spec-content-surfaces.md)) is the single source of truth that every stage reads from.
 
 ---
 

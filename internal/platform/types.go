@@ -28,7 +28,7 @@ type UserInfo struct {
 // ClientMembership is one entry of the token's clientUserList: an org
 // (client) id plus the clientUserId — the user↔org link that
 // project.userRoles[].id names when a role is granted on a project of
-// that org (A.10 spike finding).
+// that org.
 type ClientMembership struct {
 	ClientID     string `json:"clientId"`
 	ClientUserID string `json:"clientUserId"`
@@ -49,7 +49,7 @@ type Project struct {
 	// Mode is the project core tier the platform reports: LIGHT | SERIOUS
 	// (| LEGACY). The launch read-back verifies the emitted
 	// project.corePackage was honored (the platform has silently dropped
-	// import-yaml fields before — userRoles, spike A.10).
+	// import-yaml fields before — userRoles).
 	Mode string `json:"mode,omitempty"`
 	// LocationID is the region code of the primary instance location
 	// (e.g. "eu-central") — read-back counterpart of project.location.

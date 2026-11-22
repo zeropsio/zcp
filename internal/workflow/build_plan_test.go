@@ -231,8 +231,7 @@ func TestBuildPlan_DevelopActiveDeployPending(t *testing.T) {
 	}
 }
 
-// TestBuildPlan_DevelopActiveDeployPending_StageHalf_CrossDeploy pins H1
-// (audit-prerelease-internal-testing-2026-04-29). Iterating
+// TestBuildPlan_DevelopActiveDeployPending_StageHalf_CrossDeploy: iterating
 // WorkSession.Services with a stage half pending used to emit
 // `zerops_deploy targetService=<stagehost>` — a self-deploy of stage,
 // which DM-2 then rejects because stage's deployFiles is post-build-tree

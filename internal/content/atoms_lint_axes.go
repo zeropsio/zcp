@@ -279,9 +279,8 @@ func axisNViolations(ctx atomLintCtx) []AtomLintViolation {
 
 // axisHotShellViolations flags raw shell-backgrounding patterns
 // (`nohup ...`, `disown`, trailing ` &` on a command line) that should
-// route through the dev-server canonical primitive instead. C5 closure
-// (audit-prerelease-internal-testing-2026-04-29): the asset-pipeline
-// atom used to instruct `ssh ... 'nohup npm run dev > ... &'`, which
+// route through the dev-server canonical primitive instead. The
+// asset-pipeline atom used to instruct `ssh ... 'nohup npm run dev > ... &'`, which
 // the dev-server-canonical-primitive plan (archived 2026-04-24)
 // explicitly forbade for container-env dev-server lifecycle. Sibling
 // atoms that legitimately call out the anti-pattern (anti-pattern
@@ -499,8 +498,8 @@ var axisRBacktickedIDPattern = regexp.MustCompile("`([a-z][a-z0-9]*(?:-[a-z0-9]+
 // (k / m / n / o / r / hot-shell) tells the caller which axis a marker
 // applies to; the trailing free-form text (signal annotation,
 // rationale) is captured but ignored by lint. axis-hot-shell is the
-// C5 closure axis flagging raw `nohup`/`disown`/`& *$` SSH
-// backgrounding patterns (audit-prerelease-internal-testing-2026-04-29).
+// axis flagging raw `nohup`/`disown`/`& *$` SSH
+// backgrounding patterns.
 // axis-o (added 2026-05-02 per atom-corpus-verification Phase 4) is
 // the state-declarative-leak guard; sibling atoms that LEGITIMATELY
 // name a state assertion (forbidden-list tables, anti-pattern

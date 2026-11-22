@@ -1,6 +1,5 @@
 "use strict";
-// Durable invariant (pins plans/dataconsole-audit/ui-walk.md "Posture
-// presentation — correct [VERIFIED]"): the STANDALONE session (its own
+// Durable invariant: the STANDALONE session (its own
 // browser tab, bearer-only, never a write token — view-only by
 // construction; see app.js `editing()`) always shows the read-only badge
 // and always hides the write-mode toggle, so the UI never offers a false

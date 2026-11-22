@@ -25,8 +25,8 @@ func runEmit(args []string) error {
 	fs := flag.NewFlagSet("emit", flag.ContinueOnError)
 	runDir := fs.String("run", "", "frozen run directory containing environments/{plan.json,facts.jsonl} and <host>dev/zerops.yaml")
 	outDir := fs.String("out", "", "simulation output directory (typically docs/zcprecipator3/simulations/<N>)")
-	mountRoot := fs.String("mount-root", "", "recipes mount root for parent chain resolution (run-20 prep S4); when set, the emit step loads parent via ResolveChain(plan.Slug) and threads it through the brief composers")
-	parentSlugOverride := fs.String("parent", "", "parent recipe slug override (run-20 prep S4); when set, plan.Slug is rewritten in-memory to <parent>-showcase before chain resolution; requires -mount-root")
+	mountRoot := fs.String("mount-root", "", "recipes mount root for parent chain resolution; when set, the emit step loads parent via ResolveChain(plan.Slug) and threads it through the brief composers")
+	parentSlugOverride := fs.String("parent", "", "parent recipe slug override; when set, plan.Slug is rewritten in-memory to <parent>-showcase before chain resolution; requires -mount-root")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func runEmit(args []string) error {
 		if err := os.WriteFile(filepath.Join(simSrcRoot, "zerops.yaml"), []byte(bare), 0o600); err != nil {
 			return fmt.Errorf("write bare yaml: %w", err)
 		}
-		// Run-20 prep S3 — codebase-content + claudemd-author briefs
+		// Codebase-content + claudemd-author briefs
 		// reference src/**, package.json, composer.json, app/**. Stage
 		// the union from the frozen run dir so each replayed sub-agent
 		// runs against the same file shape it would in production.
@@ -130,7 +130,7 @@ func runEmit(args []string) error {
 		return err
 	}
 
-	// Run-20 prep S4 — load parent recipe via chain resolver when
+	// Load parent recipe via chain resolver when
 	// `-mount-root` is set. Production sessions populate Session.Parent
 	// from ResolveChain at session bootstrap; the codebase-content
 	// brief composer's parent_recipe_dedup pointer block depends on a

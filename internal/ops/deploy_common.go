@@ -128,8 +128,7 @@ type DeployResult struct {
 // Agent must watch the async build via zerops_events and explicitly
 // call zerops_workflow action="record-deploy" once Status=ACTIVE so
 // FirstDeployedAt stamps. Without that bridge, ServiceSnapshot.Deployed
-// stays false and verify/close gates won't progress. C2 audit closure
-// (audit-prerelease-internal-testing-2026-04-29) — pre-fix the handler
+// stays false and verify/close gates won't progress. Pre-fix the handler
 // auto-stamped on push, racing the async build.
 type GitPushResult struct {
 	Status      string   `json:"status"`                // "DELIVERED" (build watched to ACTIVE) | "PUSHED" | "NOTHING_TO_PUSH"

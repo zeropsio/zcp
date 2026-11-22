@@ -1021,8 +1021,7 @@ fetchable catalog with one-line descriptions.
 
 - `record-fragment mode=replace` on quality-gap surfaces (no append;
   the rubric flips fragments when the agent can cite the violated
-  rubric criterion + exact fragment + preserving edit per the
-  threshold language at `docs/spec-content-quality-rubric.md` —
+  rubric criterion + exact fragment + preserving edit —
   run-23 F-27).
 
 ### Approximate brief size

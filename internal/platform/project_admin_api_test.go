@@ -24,10 +24,6 @@ import (
 // These tests provision throwaway projects in the authenticated org,
 // observe real API behavior, and tear down. Each test is responsible for
 // its own cleanup via t.Cleanup.
-//
-// Phase A spike findings are the predicted contracts these tests verify.
-// See docs/spec-launch-production-platform-spike.md §"What still needs
-// admin-token verification".
 
 const (
 	throwawayProjectPrefix = "zcp-launch-spike-"
@@ -214,7 +210,7 @@ func TestProjectAdminClient_LaunchKeyRejectedAtConstruction(t *testing.T) {
 // test additionally pins that GetProjectEnvKeys against a freshly
 // created project returns a usable response shape.
 //
-// A.10 fix: project.userRoles in import yaml is silently dropped by
+// project.userRoles in import yaml is silently dropped by
 // PostClientProjectImport. Role assignment happens via GrantSelfRole
 // AFTER create — separate PutClientUserRoles API call. This test
 // exercises that path end-to-end.
@@ -224,7 +220,7 @@ func TestProjectAdminClient_GetServiceEnvKeys_OmitsValues(t *testing.T) {
 	defer cancel()
 
 	// Create throwaway with project-level user envs. Role assignment
-	// for env-read happens via GrantSelfRole AFTER create (A.10).
+	// for env-read happens via GrantSelfRole AFTER create.
 	name := throwawayName(t)
 	yaml := fmt.Sprintf(`project:
   name: %s
@@ -243,7 +239,7 @@ services:
 		t.Fatalf("create throwaway: %v", err)
 	}
 
-	// A.10: grant self ADMIN on the new project.
+	// Grant self ADMIN on the new project.
 	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
 		t.Fatalf("GrantSelfRole: %v", err)
 	}
@@ -253,7 +249,7 @@ services:
 		_, _ = admin.DeleteProject(ctx, result.ProjectID)
 	})
 
-	// A.10: grant launching clientUser ADMIN on the new project. Note:
+	// Grant launching clientUser ADMIN on the new project. Note:
 	// the platform auto-assigns OWNER to the creating clientUser, so
 	// this is informational/audit for the launch workflow; the API call
 	// still succeeds.
@@ -379,7 +375,7 @@ services:
 // TestProjectAdminClient_CorePackage_ReadBackMatrix is the F3 live proof
 // that the platform HONORS project.corePackage + project.location from
 // import yaml — mandatory because the platform silently dropped
-// project.userRoles[] from import yaml before (spike A.10); a read-back
+// project.userRoles[] from import yaml before; a read-back
 // is the only evidence the emitted fields are not decorative.
 //
 // Matrix (Karel-authorized billable creates, all torn down):
@@ -423,7 +419,7 @@ func TestProjectAdminClient_CorePackage_ReadBackMatrix(t *testing.T) {
 				}
 			})
 
-			// Read-back needs a role on the fresh project (A.10) and a
+			// Read-back needs a role on the fresh project and a
 			// standing read client; GrantSelfRole + a direct ZeropsClient
 			// under the same admin key.
 			if err := admin.GrantSelfRole(ctx20(t), result.ProjectID, "ADMIN"); err != nil {
@@ -438,7 +434,7 @@ func TestProjectAdminClient_CorePackage_ReadBackMatrix(t *testing.T) {
 				t.Fatalf("GetProject read-back: %v", err)
 			}
 			if proj.Mode != tc.corePackage {
-				t.Errorf("corePackage NOT honored: emitted %q, platform reports mode %q — the silent-drop class (A.10) applies to corePackage too; the composer emit alone is NOT enough", tc.corePackage, proj.Mode)
+				t.Errorf("corePackage NOT honored: emitted %q, platform reports mode %q — the userRoles silent-drop class applies to corePackage too; the composer emit alone is NOT enough", tc.corePackage, proj.Mode)
 			}
 			if proj.LocationID != tc.location {
 				t.Errorf("location NOT honored: emitted %q, platform reports %q", tc.location, proj.LocationID)

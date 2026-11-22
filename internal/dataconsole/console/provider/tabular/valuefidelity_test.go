@@ -18,8 +18,7 @@ import (
 // This file pins DD-9's value-fidelity contract as applied to the tabular
 // provider (S28): T-AUD-01 (timestamp sub-second precision), T-AUD-02
 // (bigint string transport end-to-end, incl. PK/rowKey/expectedOld), and
-// T-AUD-03 (insertRow echoes the new row's key). Evidence:
-// plans/dataconsole-audit/tabular.md.
+// T-AUD-03 (insertRow echoes the new row's key).
 
 // ---- T-AUD-01: timestamp full precision ----
 

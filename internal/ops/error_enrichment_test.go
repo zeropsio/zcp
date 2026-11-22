@@ -7,8 +7,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// TestEnrichSetupNotFound_AppendsAvailableSetupsAPIMeta pins F3 closure
-// (audit-prerelease-internal-testing-2026-04-29). When the platform's
+// TestEnrichSetupNotFound_AppendsAvailableSetupsAPIMeta: when the platform's
 // `zeropsYamlSetupNotFound` 4xx surfaces, the helper appends a fresh
 // APIMeta entry naming the available-setups list so the agent doesn't
 // have to fetch or guess.

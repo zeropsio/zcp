@@ -24,7 +24,7 @@ import (
 // fragment — required for triggering the run-19 inline-yaml block-
 // doubling regression in tests that assert the regression-detection
 // mechanism fires. Default false keeps the basic-idempotence tests
-// independent of the engine E1 fix landing.
+// independent of the engine strip-then-inject.
 func writeMinimalSimulationOpts(t *testing.T, root string, withYamlComments bool) error {
 	t.Helper()
 	apiSrc := filepath.Join(root, "apidev")

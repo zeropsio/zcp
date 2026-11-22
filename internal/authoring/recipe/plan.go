@@ -36,8 +36,8 @@ type Plan struct {
 	// Sub-agents record fragments via zerops_recipe action=record-fragment
 	// at the moment they hold the densest context; the assembler reads
 	// them out at finalize and splices them into the surface templates.
-	// See docs/zcprecipator3/plans/run-8-readiness.md §2.A.4 for the id
-	// taxonomy and append-vs-overwrite semantics.
+	// The id taxonomy is validateFragmentID; append-vs-overwrite is
+	// isAppendFragmentID.
 	Fragments map[string]string `json:"fragments,omitempty"`
 	// FeatureKinds records the showcase features the main agent plans
 	// to implement at the feature phase (crud, cache-demo, queue-demo,

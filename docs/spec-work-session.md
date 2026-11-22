@@ -174,8 +174,7 @@ binary, still honored on read.
 
 **Explicitly NOT stored** (read fresh from ServiceMeta/API when needed):
 strategy per service, mode per service, runtime type, port configuration,
-env vars, service status. This prevents the stale-snapshot class of bugs
-documented in `archive/audit-session-design.md`.
+env vars, service status. This prevents the stale-snapshot class of bugs.
 
 ---
 

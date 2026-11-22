@@ -1,7 +1,7 @@
-// Tests for the `emit` subcommand. S3 covers staging code artifacts
+// Tests for the `emit` subcommand: staging code artifacts
 // (src/**, package.json, composer.json, app/**) so the replayed
 // codebase-content + claudemd-author sub-agents can read what they
-// reference. S4 covers Parent + MountRoot threading. S5 covers the
+// reference, Parent + MountRoot threading, and the
 // refinement-prompt emit branch.
 package main
 
@@ -15,7 +15,7 @@ import (
 // TestStageCodebaseArtifacts_CopiesSrcAndManifests asserts the union
 // of files the codebase-content + claudemd-author briefs reference
 // land in the simulation dir: `src/**`, `package.json`, `composer.json`,
-// `app/**` (Laravel). Pinned by run-20 prep S3.
+// `app/**` (Laravel).
 func TestStageCodebaseArtifacts_CopiesSrcAndManifests(t *testing.T) {
 	runDir, simDir := t.TempDir(), t.TempDir()
 	host := "api"
@@ -50,7 +50,7 @@ func TestStageCodebaseArtifacts_CopiesSrcAndManifests(t *testing.T) {
 }
 
 // TestStageCodebaseArtifacts_SkipsBulkDirs asserts node_modules/,
-// vendor/, .git/ are NOT copied. Pinned by run-20 prep S3.
+// vendor/, .git/ are NOT copied.
 func TestStageCodebaseArtifacts_SkipsBulkDirs(t *testing.T) {
 	runDir, simDir := t.TempDir(), t.TempDir()
 	host := "api"
@@ -89,7 +89,6 @@ func TestStageCodebaseArtifacts_SkipsBulkDirs(t *testing.T) {
 // the documented union (e.g. dist/, build/, random top-level files
 // not mentioned by either brief) are NOT staged — match what's
 // referenced rather than over-staging "framework manifests" broadly.
-// Pinned by run-20 prep S3.
 func TestStageCodebaseArtifacts_SkipsUnknownFiles(t *testing.T) {
 	runDir, simDir := t.TempDir(), t.TempDir()
 	host := "api"
@@ -126,7 +125,7 @@ func TestStageCodebaseArtifacts_SkipsUnknownFiles(t *testing.T) {
 
 // TestRunEmit_StagesCodebaseArtifacts_EndToEnd exercises the full emit
 // path with a fixture run dir; asserts src/** + manifests reach the
-// simulation per-codebase dir. Pinned by run-20 prep S3.
+// simulation per-codebase dir.
 func TestRunEmit_StagesCodebaseArtifacts_EndToEnd(t *testing.T) {
 	runDir := t.TempDir()
 	simDir := t.TempDir()

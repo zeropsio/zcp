@@ -329,9 +329,8 @@ const (
 	// produce blocker[pipeline-not-configured] with a dashboard deep-link
 	// and recommendation payload; user configures via Zerops UI then
 	// re-runs the workflow to recheck (the staged token is read
-	// server-side — no value is re-sent). Path B
-	// design per docs/spec-launch-production-platform-spike.md §B and
-	// plans/archive/production-lifecycle-part2-2026-05-12.md.
+	// server-side — no value is re-sent). ZCP only reads integration
+	// status, never writes it (Path B, P-LP-7).
 	LaunchStatusConfiguringPipeline LaunchProductionStatus = "configuring-pipeline"
 	// LaunchStatusFailed indicates a mutation step failed. Structured
 	// blockers[] describes recovery; the agent reads them and either

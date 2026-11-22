@@ -694,8 +694,7 @@ func handleGitPush(
 		result.Message = fmt.Sprintf("Nothing to push from %s — remote is up to date", hostname)
 	}
 
-	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
-	// pre-fix path stamped attempt.SucceededAt = time.Now() right here,
+	// The pre-fix path stamped attempt.SucceededAt = time.Now() right here,
 	// which RecordDeployAttempt then propagated to FirstDeployedAt via
 	// stampFirstDeployedAt (work_session.go:220). For
 	// BuildIntegration ∈ {webhook, actions} the build was still async at

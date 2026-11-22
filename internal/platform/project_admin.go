@@ -84,14 +84,13 @@ type ProjectAdminClient interface {
 	// at construction via the same GetUserInfo call that validates the
 	// launch key. Empty if the underlying token's clientUserList is
 	// empty (a shape ZCP refuses at startup, but the field is opt-in
-	// defensive against future SDK shape changes). A.10 spike finding.
+	// defensive against future SDK shape changes).
 	ClientUserID() string
 
 	// GrantSelfRole assigns the launching user's clientUserId the
 	// given role on the target project. Required after
 	// CreateAndImportProject because `project.userRoles[]` in the
-	// import yaml is silently dropped by the platform — A.10 finding
-	// empirically verified 2026-05-11.
+	// import yaml is silently dropped by the platform.
 	//
 	// Reads existing roles, appends the new entry, writes back the
 	// merged list — PutClientUserRoles is a full replace, so a naive

@@ -3,8 +3,6 @@
 // codebase-content + env-content sub-agents have authored fragments
 // AND `stitch` has assembled the full corpus.
 //
-// Spec: docs/zcprecipator3/plans/run-20-prep.md §S5.
-//
 // Aligned with production multi-file shape (run-31 Fix #1 closure):
 // production refinement routes through buildRefinementBriefMultiFile
 // WithFraming via buildSubagentDispatchForPhase (handlers.go:477) and

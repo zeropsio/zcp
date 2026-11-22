@@ -53,8 +53,7 @@ var refinementReferenceCatalog = []struct {
 //
 // Signature mirrors BuildCodebaseContentBrief — parent threaded so
 // the sub-agent can read parent's published surfaces and skip
-// refinements that would re-author parent material (Q5 resolution
-// from run-17-implementation.md §15).
+// refinements that would re-author parent material.
 func BuildRefinementBrief(plan *Plan, parent *ParentRecipe, runDir string, facts []FactRecord) (Brief, error) {
 	if plan == nil {
 		return Brief{}, errors.New("nil plan")
