@@ -72,7 +72,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		// §10.8), so its block names that tool instead.
 		//
 		// The stand-up and git-host blocks are a Mate's too: only there is
-		// zerops_standup a tool (docs/spec-mate.md D32), and only a Mate
+		// zerops_standup a tool (docs/spec-mate.md §10.10), and only a Mate
 		// delivers its code to HQ. Only a Mate's conversation draws a page
 		// its agent publishes (zerops_publish_page, docs/spec-mate.md §5.9),
 		// and only a Mate ships the `mac` command for the person's paired Mac

@@ -18,7 +18,7 @@ import (
 // composed carries a mark that lets zcp tell, later, a tier it wrote and
 // nobody changed from one a person or another Mate wrote, so it can follow
 // the project when its shape changes without ever writing over a person's
-// edit (spec-mate §2.8a.5, D30).
+// edit (spec-mate §2.8a.5).
 
 // groupPoolEntry writes a part's dev pool on the AI Agent tier as zcp imports
 // one (PoolStanza; knowledge theme pools-and-box, "A part's dev pool"): its

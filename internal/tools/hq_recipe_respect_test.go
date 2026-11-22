@@ -1,7 +1,7 @@
 // Tests for: tools/hq_recipe.go — the branch of the Mate's recipe change is
 // zcp's only while it holds what zcp last pushed there: a commit the Mate's
 // agent or a person adds makes the change theirs, and zcp pushes nothing over
-// it (docs/spec-mate.md §10.10, D36, D37).
+// it (docs/spec-mate.md §10.10).
 package tools
 
 import (

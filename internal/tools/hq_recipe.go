@@ -30,7 +30,7 @@ import (
 const recipePairMountRoot = "/var/www"
 
 // recipeLanding says how a Mate's change in the recipe repository reaches
-// main (HQ's landing rule, mate-hq spec/protocol.md S16b; spec-mate D37):
+// main (HQ's landing rule, mate-hq spec/protocol.md S16b):
 // Core lands it by itself, adds or edits alike, unless its merge would
 // import, stop or start a service in an environment made from a tier — that
 // one waits for a person with recipe_changes_environments. Said after a

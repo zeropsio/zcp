@@ -38,7 +38,7 @@ Read the home before changes:
 - `docs/spec-env-handling.md` — local `.env` rendering: channels, precedence, render policy.
 - `docs/spec-zerops-env-lifecycle.md` — platform env: scopes, precedence, isolation, propagation, secrets.
 - `docs/telemetry-runbook.md` — operating telemetry: deploy order, migrations, outages, erasure.
-- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; `zcp git` in the dev service, relayed credentials (§6.8); `zcp run`, a command in its service (§6.9); the Mate's own vault, `zcp with` and `{{env:KEY}}`, a command or a page with its values (§5.8a); a Mate messages its person's other Mates (§6.10); trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `zeropsio/mate:docs/internals/zerops/`; private HQ architecture → `zeropsio/mate-hq:docs/architecture/README.md` when available.
+- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git; `zcp git` in the dev service, relayed credentials (§6.8); `zcp run`, a command in its service (§6.9); the Mate's own vault, `zcp with` and `{{env:KEY}}`, a command or a page with its values (§5.8a); a Mate messages its person's other Mates (§6.10); trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `zeropsio/mate:docs/internals/zerops/`; private HQ architecture → `zeropsio/mate-hq:docs/architecture/README.md` when available.
 - `docs/spec-telemetry.md` — ingest/trusted IP.
 - `schema.URLs` — ZCP_API_HOST-derived live schemas (`schema.CanonicalAPIHost` for dev); `internal/platform/errors.go` — error catalog.
 

@@ -1,7 +1,7 @@
 // Tests for: tools/hq_recipe_edit.go — the Mate's agent corrects a tier on
 // main of the recipe repository with a change of its own: zcp opens it on the
 // agent's branch and leaves it, and the files it lands, as the group's
-// (docs/spec-mate.md §10.10, D37).
+// (docs/spec-mate.md §10.10).
 package tools
 
 import (
