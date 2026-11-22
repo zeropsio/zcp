@@ -74,8 +74,7 @@ independently. The cost is exactly the fallback this section already
 prescribes: skills under that root are not discovered, and an installed skill
 needs a new agent session once the path resolves. What must never happen is the
 inverse trade — failing `zcp init`, and with it a container start, over a
-directory that only serves discovery. Failure posture for all init steps:
-`spec-headless.md`, "Failure posture". Pinned by
+directory that only serves discovery. Pinned by
 `TestRun_SkillRoots_UnusableRoot_DegradesNotFatal`.
 
 ## 3. Catalog and selection rules
@@ -301,7 +300,7 @@ update action.
 
 ## 7. Required behavioral proofs
 
-The implementation and task breakdown are incomplete until tests prove:
+Tests prove:
 
 1. Plain `zcp init` and `zcp init --guided` both leave `.agents/skills/` and
    `.claude/skills/` present before an agent can be launched.

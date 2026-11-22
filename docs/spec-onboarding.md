@@ -73,24 +73,7 @@ elements, pinned by tests:
 
 - The opening is the SAME for every project state, and its menu block is rendered
   **VERBATIM** — the playbook's adaptation license covers transitions and explanations,
-  never the greeting/menu block itself. The authored copy:
-
-  > Welcome to Zerops! Zerops builds and runs apps and their supporting services,
-  > connects them on a private project network, and can expose web services at a public
-  > URL. I'm an agent that drives it through ZCP.
-  >
-  > What would you like to do?
-  >
-  > - **Build something** — describe an idea in one line, with a technology if you care
-  >   ("create a weather dashboard in Bun" — or Node.js, Python, PHP, and many more;
-  >   Zerops covers a wide range of stacks, so just ask); I set up the environment from
-  >   a ready-made recipe and build it with you to a live URL.
-  > - **Try a ready-made recipe** — a complete working app (Node, Python, PHP, Laravel,
-  >   Go, Rust, …) running in minutes — and it becomes yours to develop further.
-  > - **What are Zerops & ZCP?** — a short explanation of how it all works.
-  >
-  > Or just tell me what you want, in plain words — that works for everything here:
-  > "scale the cpu to 4 cores", "show me the logs", "add a Postgres database".
+  never the greeting/menu block itself.
 
   **Continue this project** joins the options only once state is known through an
   on-demand read or prior conversation knowledge.
@@ -112,9 +95,8 @@ elements, pinned by tests:
   first (§2), and in a POPULATED project no bootstrap starts, not the route menu nor the
   route commit, until the person says a plain yes; the found-services line and
   **Continue this project** come with the ask. Only in a FRESH project are the route
-  menu and the route commit plain bookkeeping before the import's yes. Eval E2
-  (`onboard-populated`) failed on main for this gap: the playbook sent the branch
-  straight to the recipe route (`TestPlaybookOnboarding_ContentPins_CoreContract`).
+  menu and the route commit plain bookkeeping before the import's yes
+  (`TestPlaybookOnboarding_ContentPins_CoreContract`).
 - The playbook never re-styles next-step suggestions that the typed Plan already owns
   (`planIdle` primary/alternatives); it funnels into them.
 
@@ -122,12 +104,8 @@ elements, pinned by tests:
 
 Both recipe branches resolve the scaffold through the **authored language→slug mapping**
 in the playbook (post-remap corpus slugs; the matcher is never the resolver here; a raw
-language is never passed as bootstrap intent): Node.js→`nodejs-hello-world`,
-Python→`python-hello-world`, PHP→`php-hello-world`, Laravel→`laravel-minimal`,
-Go→`go-hello-world`, Rust→`rust-hello-world`, Bun→`bun-hello-world`,
-Deno→`deno-hello-world`, Ruby→`ruby-hello-world`, Java→`java-hello-world`,
-.NET→`dotnet-hello-world`, Gleam→`gleam-hello-world`, NestJS→`nestjs-minimal`; no
-preference→`nodejs-hello-world`. Every mapped slug must resolve in the embedded corpus
+language is never passed as bootstrap intent).
+Every mapped slug must resolve in the embedded corpus
 with a non-empty import YAML (guard test).
 
 After the route commit the playbook DEFERS: every step's response carries the guidance

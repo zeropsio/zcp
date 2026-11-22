@@ -2,25 +2,18 @@
 
 Design contract: `docs/spec-telemetry.md` (this runbook does not repeat
 behavior the spec already pins — it's the *operator* view: what to do, in
-what order, and what to expect when something goes wrong). Infra bundle:
-`../zcp-telemetry/` (project import config + deploy config copy).
-
-Every claim below cites the file it was verified against. If code and this
-doc ever disagree, the code wins — file an update here.
+what order, and what to expect when something goes wrong).
 
 ## 1. Deploy order — ingest BEFORE client, always
 
 **Rule: redeploy `cmd/zcp-ingest` first, release the `zcp` client second.
 Never the other way round.**
 
-Why: the wire schema is versioned (`wire.SchemaVersion`,
-<!-- verified: internal/telemetry/wire/wire.go:22, const SchemaVersion = 1 --> currently
-`1`) and ingest's `POST /v1/events` 202 response carries
-`max_schema_version` — the version *this* ingest currently understands
-<!-- verified: internal/ingest/handler.go:198-201, resp.MaxSchemaVersion = wire.SchemaVersion -->.
+Why: the wire schema is versioned (`wire.SchemaVersion`) and ingest's
+`POST /v1/events` 202 response carries `max_schema_version` — the version
+*this* ingest currently understands.
 A client whose own `wire.SchemaVersion` is newer than the server's
-advertised value stderr-warns **once per process**
-<!-- verified: internal/telemetry/client.go:498-519, checkSchemaWarning + schemaWarnOnce -->:
+advertised value stderr-warns **once per process**:
 
 ```
 telemetry: ingest supports schema_version up to N, this client sends M —
@@ -38,20 +31,16 @@ Deploy mechanics (from the zcp repo root, where `zerops.yml` for the
 --setup ingest -w all`. First start after a schema-affecting change
 bootstraps/migrates automatically (§2) — watch `zcli service log ingest`
 for `"ingest: schema bootstrap applied"` and any `"ingest: migration
-applied"` lines
-<!-- verified: internal/ingest/bootstrap.go:122, migrate.go:153 -->.
+applied"` lines.
 
 ## 2. Migration flow
 
 `internal/ingest/migrations/*.sql` holds ordered, embedded, idempotent
-ClickHouse DDL steps, named `NNNN_description.sql` (4-digit id)
-<!-- verified: internal/ingest/migrate.go:17-34 -->. `telemetry.schema_migrations
+ClickHouse DDL steps, named `NNNN_description.sql` (4-digit id). `telemetry.schema_migrations
 (id UInt32, applied_at DateTime64(3))` ships as part of the *base* schema
-itself (it must exist before the migration runner can query it)
-<!-- verified: internal/ingest/schema.sql -->.
+itself (it must exist before the migration runner can query it).
 
-Startup sequence, every ingest boot with `CH_SUPER_PASSWORD` set
-<!-- verified: internal/ingest/server.go:29-36, bootstrap.go:111-127 -->:
+Startup sequence, every ingest boot with `CH_SUPER_PASSWORD` set:
 
 1. `bootstrapSchema` applies the base `schema.sql` (`CREATE ... IF NOT
    EXISTS` — safe on every restart, never alters an existing object).
@@ -60,8 +49,7 @@ Startup sequence, every ingest boot with `CH_SUPER_PASSWORD` set
    executes only the pending ones **in id order** — each migration's DDL
    runs, THEN its id is recorded. A failed DDL statement is never recorded,
    so a retry (next restart, redeploy, or an HA replica) picks it up from
-   scratch instead of skipping it as done
-   <!-- verified: internal/ingest/migrate.go:123-156 -->.
+   scratch instead of skipping it as done.
 
 **Restart-race is dead**: because migrations are id-tracked, a re-run after
 a restart is a no-op — there is no more "deploy the new binary before
@@ -75,29 +63,25 @@ against ClickHouse, ever.
 
 Every migration statement is written against the `__DB__` token (same
 convention `schema.sql` uses) — `renderMigrationDB` substitutes it before
-exec, because the admin connection carries no default database
-<!-- verified: internal/ingest/migrate.go:88-106 -->.
+exec, because the admin connection carries no default database.
 
 **New dims vs. new columns** — most schema growth does NOT need a
 migration at all: a new `dims` key/value is a `wire` allowlist edit +
 ingest redeploy (dims is `Map(LowCardinality, LowCardinality)` — no DDL).
 Only a genuinely new top-level column (like `error_subcode`,
-`migrations/0002_add_error_subcode.sql`) needs a migration file
-<!-- verified: internal/ingest/migrations/0002_add_error_subcode.sql, docs/spec-telemetry.md §8 -->.
+`migrations/0002_add_error_subcode.sql`) needs a migration file.
 
 ## 3. Blocklist use (R5 ops lever)
 
 `INGEST_BLOCK_IPS` / `INGEST_BLOCK_INSTALLS` — comma-separated, trimmed,
-blank entries dropped — env vars on the `ingest` service
-<!-- verified: internal/ingest/config.go:86-87, blocklist.go -->.
+blank entries dropped — env vars on the `ingest` service.
 
 - A blocked IP 403s the request **before the body is even read** (blocklist
   check is the handler's very first step).
 - A blocked `install_id` 403s as soon as it's seen inside a batch — any
   rows the request already legitimately validated/accepted before that
   point are still queued to the batcher (same discipline as the abuse
-  circuit breaker below), only the rest of that request is refused
-  <!-- verified: internal/ingest/handler.go:116-159 -->.
+  circuit breaker below), only the rest of that request is refused.
 - Matched values are **never logged** (same discipline as client IP — B6).
 - **No dynamic reload.** Editing the env var requires a redeploy/restart of
   `ingest` to take effect — there is no admin API or file watch.
@@ -116,8 +100,7 @@ blank entries dropped — env vars on the `ingest` service
   timer. A failed `Insert()` call requeues its **entire attempted batch**
   for the next flush (prepended ahead of freshly buffered rows), bounded to
   a 50,000-row retry buffer — beyond that, **oldest rows are dropped** to
-  make room, counted (never silent)
-  <!-- verified: internal/ingest/batcher.go:116-158 -->.
+  make room, counted (never silent).
 - **What's lost**: nothing, as long as CH recovers before the retry buffer
   fills. At sustained full ingest volume this buffer is a matter of
   minutes, not hours — an extended CH outage WILL drop rows past that
@@ -131,16 +114,13 @@ blank entries dropped — env vars on the `ingest` service
   `4xx (400/413)` → **drop the batch permanently, never retry** (structural
   garbage — retrying would just repeat the rejection);
   `429/5xx/timeout/network error` → **spool + exponential backoff** (5s →
-  5min, full jitter)
-  <!-- verified: internal/telemetry/client.go:432-496, jitteredBackoff:529-550 -->.
+  5min, full jitter).
 - Spooled batches live at `~/.zcp/telemetry/spool-v1/` (gzip JSONL
   segments), bounded to **10 MiB total or 7 days**, oldest dropped first;
-  a corrupt segment is renamed `*.bad` and deleted at next startup
-  <!-- verified: internal/telemetry/spool.go, docs/spec-telemetry.md §5.4 -->.
+  a corrupt segment is renamed `*.bad` and deleted at next startup.
 - Draining is bounded — one oldest segment per periodic tick (every 5s,
   once the worker is past startup jitter) plus one best-effort attempt at
-  process Shutdown, so it never starves the live queue
-  <!-- verified: internal/telemetry/client.go:383-410, 326-334 -->.
+  process Shutdown, so it never starves the live queue.
 - **What's lost**: nothing for a transient outage (spool absorbs it, drains
   automatically once ingest recovers). For an outage longer than 7 days
   (or on a machine emitting fast enough to exceed 10 MiB of spool), the
@@ -155,14 +135,12 @@ blank entries dropped — env vars on the `ingest` service
 
 No durability promise — anything still in the in-memory queue or the
 current in-flight batch at the moment of a SIGKILL is lost; only a graceful
-shutdown (SIGINT/SIGTERM/normal exit) gets the 750ms flush window
-<!-- verified: cmd/zcp/main.go:34 telemetryShutdownTimeout, docs/spec-telemetry.md §5.5 -->.
+shutdown (SIGINT/SIGTERM/normal exit) gets the 750ms flush window.
 
 ## 5. Reading `/statsz`
 
 `GET /statsz` on the ingest service returns the ops-counters payload the
-pipeline-health dashboard reads — **counts only, never row/event content**
-<!-- verified: internal/ingest/handler.go:35-43, 95-106 -->:
+pipeline-health dashboard reads — **counts only, never row/event content**:
 
 ```json
 {
@@ -195,12 +173,10 @@ so platform health probes always get a fast answer.
 ## 6. The binary-wipe-on-restart caveat for the `zcp` test container
 
 The `zcp-telemetry` project carries a `zcp` service used to exercise a
-locally-built ZCP binary against the live pipeline
-<!-- verified: ../zcp-telemetry/README.md "zcp test service" note -->.
+locally-built ZCP binary against the live pipeline.
 That binary is **not** deployed through Zerops' normal build pipeline — it
 is pushed by `eval/scripts/build-deploy.sh`: `scp` to a tmp path, then
-`sudo install` into `/usr/local/bin/zcp` over SSH
-<!-- verified: eval/scripts/build-deploy.sh:27-30 -->. This is a manual,
+`sudo install` into `/usr/local/bin/zcp` over SSH. This is a manual,
 out-of-band filesystem write, not a `zerops_deploy`/`buildFromGit` artifact.
 
 Because the service was provisioned `startWithoutCode: true` and has never
@@ -221,8 +197,7 @@ binary.
 ## 7. Erasure requests
 
 A user can request deletion via `zcp telemetry id` (prints the install
-UUID, the erasure key)
-<!-- verified: internal/telemetry/cli.go:123-133, docs/spec-telemetry.md §3.5 -->:
+UUID, the erasure key):
 
 ```sql
 ALTER TABLE telemetry.events DELETE WHERE install_id = '<uuid>';
@@ -235,7 +210,5 @@ individually erasable this way — they are retained indefinitely by design
 
 The operator process must respond to an erasure or access request within
 the statutory ~1-month window (GDPR Art 12(3)). v1 advertises no shorter
-voluntary SLA in product copy (`zcp telemetry disclosure`,
-`docs/telemetry-disclosure.md`) — but the internal handling process above
-is time-bounded to that statutory month; see `docs/telemetry-lia.md` for
-the accountability record this commitment is drawn from.
+voluntary SLA in product copy (`zcp telemetry disclosure`) — but the
+internal handling process above is time-bounded to that statutory month.
