@@ -40,7 +40,7 @@ const (
 	// every ticket by rev 7 HQ. 0.16.154 keeps the link's Mate state in the
 	// file zcp reads (§2.8). 0.16.195 is the first release that keeps no
 	// member list: it makes no member search at Zerops and sends HQ no
-	// person hint (docs/spec-mate.md §3.9), and no longer passes --refresh.
+	// person hint (docs/spec-mate.md §3.13), and no longer passes --refresh.
 	MinimumMateVersion = "0.16.195"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
