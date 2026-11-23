@@ -207,7 +207,11 @@
     "ubuntu@26.04",
     "ubuntu@latest",
     "valkey:ha@7.2",
+    "valkey:ha@8.1",
+    "valkey:ha@9.0",
     "valkey:single@7.2",
+    "valkey:single@8.1",
+    "valkey:single@9.0",
     "zcp@1",
     "zcp@latest"
   ]
