@@ -1,12 +1,12 @@
 //go:build e2e
 
-// Tests for: e2e — orphan-meta auto-cleanup primitive against eval-zcp (E3).
+// Tests for: e2e — orphan-meta auto-cleanup primitive against the E2E project (E3).
 //
 // Engine plan 2026-04-27 ticket E3 made orphan ServiceMeta cleanup a
 // transparent side-effect of bootstrap-start. The cleanup primitive is
 // `workflow.PruneServiceMetas(stateDir, liveHostnames)`, fed by
 // `ops.ListProjectServices`. This test exercises that path against the
-// real Zerops API: live services from eval-zcp are converted to a
+// real Zerops API: live services from the E2E project are converted to a
 // liveHostnames map; orphan metas seeded in a temp state dir whose
 // hostnames don't match any live service are pruned, while one seeded
 // against a real hostname survives.
@@ -56,7 +56,7 @@ func TestE2E_PruneServiceMetas_DeletesOrphansAgainstLiveEvalZcp(t *testing.T) {
 		t.Fatalf("ListProjectServices: %v", err)
 	}
 	if len(live) == 0 {
-		t.Fatal("eval-zcp returned zero live services — cannot anchor the survivor case")
+		t.Fatal("the E2E project returned zero live services — cannot anchor the survivor case")
 	}
 
 	stateDir := t.TempDir()
@@ -72,7 +72,7 @@ func TestE2E_PruneServiceMetas_DeletesOrphansAgainstLiveEvalZcp(t *testing.T) {
 		t.Fatalf("seed survivor meta: %v", err)
 	}
 
-	// Seed two metas whose hostnames cannot exist on eval-zcp. They must
+	// Seed two metas whose hostnames cannot exist in the E2E project. They must
 	// be pruned. The "zcpe3" prefix is well outside any production naming
 	// scheme and the e2e cleanup allowlist.
 	orphans := []string{"zcpe3orphan1", "zcpe3orphan2"}

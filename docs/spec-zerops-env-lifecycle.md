@@ -6,7 +6,7 @@
 ## Evidence tiers
 | Tag | Source | Authority |
 |---|---|---|
-| `[LIVE]` | Direct REST + in-container SSH on eval-zcp, 2026-05-27/28 (+ REST 2026-05-14) | **Highest** — observed |
+| `[LIVE]` | Direct REST + in-container SSH on a ZCP container project, 2026-05-27/28 (+ REST 2026-05-14) | **Highest** — observed |
 | `[LIVE 05-28]` | Fresh throwaway `service`-mode projects via admin REST (`zcp-isotest`/`zcp-prectest`/`zcp-avtest`, all deleted) | **Highest** — observed on default-mode projects |
 | `[SDK]` | `zerops-go@v1.0.20` env DTOs/enums | High — API shape |
 | `[GUI]` | `zeropsio/frontend-legacy` (platform's own GUI) | High — platform model |
@@ -64,7 +64,7 @@ system/platform  >  yaml-baked run.envVariables (ENV)  >  service userData (user
 
 ## 3. Bare-vs-aliased model + cross-service injection
 
-Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE E3, E4]`:
+Prefixed aliases observed **under `envIsolation=none`** (a ZCP container project's mode) `[LIVE E3, E4]`:
 
 | Alias | Meaning | Present when |
 |---|---|---|
@@ -115,7 +115,7 @@ A service's process reads exactly the entries of its zerops.yaml `run.envVariabl
 
 - **`envIsolation` is SOURCE-side and directional** `[LIVE PENDING-2✓]`: flipping service Y to `none` exposes Y's vars to siblings; it does NOT make Y receive others'. (Confirmed: `bbb`→`none` left bbb blind to `aaa`, but `aaa` gained all `bbb_*` keys.) Receipt is governed by the SOURCE's mode or the project mode — not the receiver's.
 - **Default on a brand-new project is `service`** `[LIVE 05-28]`: a project imported with NO `envIsolation` field reads back `envIsolation="service"` (env-file render). So every fresh user project (GUI- or import-created) is isolated.
-- **⚠ ZCP-managed *container* projects are `none` by ZCP's own choice** `[LIVE][GUI]`: the project where a ZCP agent container runs (`eval-zcp`; any project carrying `ZCP_API_KEY` + `sshIsolation: vpn service@zcp`) is set to `none` so the ZCP container can read sibling env for discovery/management. This is a **ZCP deployment choice, NOT the platform default**. Consequence: **eval-zcp (and every flow-eval run on it) is `none`, so it does NOT represent the `service`-isolated reality of user projects + production.** Anything ZCP/atoms/evals do that depends on auto-injection passes on eval-zcp and breaks for a real user. (The fix: ZCP corpus already teaches explicit `${host_var}` refs — see §recipe-readiness — which work in both modes.)
+- **⚠ ZCP-managed *container* projects are `none` by ZCP's own choice** `[LIVE][GUI]`: the project where a ZCP agent container runs (any project carrying `ZCP_API_KEY` + `sshIsolation: vpn service@zcp`) is set to `none` so the ZCP container can read sibling env for discovery/management. This is a **ZCP deployment choice, NOT the platform default**. Consequence: **such a project (and every flow-eval run on it) is `none`, so it does NOT represent the `service`-isolated reality of user projects + production.** Anything ZCP/atoms/evals do that depends on auto-injection passes there and breaks for a real user. (The fix: ZCP corpus already teaches explicit `${host_var}` refs — see §recipe-readiness — which work in both modes.)
 
 ---
 

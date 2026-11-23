@@ -334,7 +334,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		}
 
 		// Ports and EnvVars: check against claims for running managed services.
-		// Tracking counters surface coverage at end of Phase 2 — a fresh eval-zcp
+		// Tracking counters surface coverage at end of Phase 2 — a fresh E2E project
 		// project with zero managed services would otherwise pass silently
 		// despite validating zero claims.
 		var validatedTypes int
@@ -408,7 +408,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 			// Visible warning in the run log without failing — operators see
 			// "0 of N validated" in CI summary and can choose to provision
 			// services. Strict fail-on-empty is opt-in via ZCP_E2E_REQUIRE_MANAGED.
-			msg := fmt.Sprintf("Phase 2 validated 0 of %d claim types — eval-zcp has no managed services running. "+
+			msg := fmt.Sprintf("Phase 2 validated 0 of %d claim types — the E2E project has no managed services running. "+
 				"Provision at least postgresql or valkey to exercise this contract.", expectedTypes)
 			if os.Getenv("ZCP_E2E_REQUIRE_MANAGED") != "" {
 				t.Error(msg)

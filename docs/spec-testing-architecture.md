@@ -40,7 +40,7 @@ Tiers in increasing cost/coupling:
 |---|---|---|---|
 | **default** | *(untagged)* | everything provable OFFLINE | `go test ./...` |
 | **`api`** | `//go:build api` | read-mostly REAL-platform CONTRACT | `ZCP_API_KEY`, read |
-| **`e2e`** | `//go:build e2e` | MUTATING real-platform lifecycle | eval-zcp, mutates |
+| **`e2e`** | `//go:build e2e` | MUTATING real-platform lifecycle | the E2E project, mutates |
 | **UI-drive** | *(not a build tag — Node)* | the ASSEMBLED embedded UI against a live container | puppeteer-core, mutates |
 | **behavioral eval** | *(NOT a build tag)* | non-deterministic AGENT-decision quality | full agent run |
 
@@ -49,7 +49,7 @@ Tiers in increasing cost/coupling:
 - **default (untagged)** — anything provable without the live platform: units,
   schema/content lint, parser/render, safety guards (e.g. `hasTestPrefix`), the
   subprocess `update` binary-swap test. If it needs no `ZCP_API_KEY` and no
-  eval-zcp, it belongs here — and ONLY here. Its unit cases (ids in `*_SENTENCES.md`;
+  the E2E project, it belongs here — and ONLY here. Its unit cases (ids in `*_SENTENCES.md`;
   the case is the one untagged `Test*` whose second `_` segment is the id without
   hyphens) run as T1 (`scripts/t1`) in `scripts/gate` on every landing and block;
   every other test runs only when the owner asks.
@@ -60,7 +60,7 @@ Tiers in increasing cost/coupling:
   (spent investigation scaffolding) was deleted. `api` asserts the SDK PROTOCOL,
   not tool behavior — which is why it is NOT foldable into `e2e`.
 - **`e2e`** — MUTATING real-platform lifecycle: full ZCP handler / MCP-tool runs
-  vs eval-zcp (deploy ssh+local, failure classification, bootstrap, export,
+  vs the E2E project (deploy ssh+local, failure classification, bootstrap, export,
   launch single-token lifecycle, verify, subdomain, git-delivery, env-generate).
   The everything-net for deterministic platform truth. The tag also covers a
   second, independent suite on a different PLANE: the Data Console's live
