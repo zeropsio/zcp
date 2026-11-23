@@ -1170,8 +1170,8 @@ func executeLaunchMutation(
 	// creator access to projects it creates, which carries every
 	// launch-window read/mutation (prod-ops listed the new project's
 	// services through the same token in the live lifecycle e2e). The
-	// grant stays as belt-and-braces for personal-token launches;
-	// failure is non-fatal and the warning names the expected shape.
+	// grant serves a token that may manage roles; failure is
+	// non-fatal and the warning names the expected shape.
 	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
 		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("grant self ADMIN role on %s: %v (expected for integration tokens — role management is forbidden there; creator access carries the launch-window operations, prod-ops verifies)", result.ProjectID, err))

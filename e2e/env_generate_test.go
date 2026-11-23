@@ -455,7 +455,7 @@ func assertMaskedPasswordRefusal(t *testing.T, err error, dbHost string, keys ..
 			t.Errorf("refusal %q does not name %q", pe.Message, want)
 		}
 	}
-	if !strings.Contains(pe.Suggestion, "personal access token") {
+	if !strings.Contains(pe.Suggestion, "a token that can read them") {
 		t.Errorf("refusal suggestion %q gives no way out", pe.Suggestion)
 	}
 	if strings.Contains(pe.Message+pe.Suggestion, platform.MaskedEnvValue) {

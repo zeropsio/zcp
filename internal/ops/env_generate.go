@@ -404,7 +404,7 @@ func EnvGenerateDotenv(
 				// (spec-zerops-env-lifecycle.md §7), so no expansion can reach it.
 				return nil, platform.NewPlatformError(platform.ErrPermissionDenied,
 					fmt.Sprintf("could not resolve env vars: %s — the platform withholds %s from the token zcp runs with", keys, strings.Join(unresolved.Masked, ", ")),
-					"A project-scoped or read-only Zerops token reads sensitive values masked; run zcp with a token that can read them, such as an organization member's personal access token (the one zcli login uses)")
+					"A project-scoped or read-only Zerops token reads sensitive values masked; run zcp with a token that can read them")
 			}
 			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("could not resolve env vars: %s", keys),

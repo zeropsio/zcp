@@ -811,7 +811,7 @@ func transportZCLIAuth(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassCredential,
 		LikelyCause:     "zcli login token rejected.",
-		SuggestedAction: "Regenerate ZCP_API_KEY in the Zerops GUI (Settings → Personal Tokens) and update the project env / .env file. Then restart ZCP.",
+		SuggestedAction: "Generate a new access token in the Zerops GUI (Settings → Access Tokens Management) with Custom access per project, this one project at Full access. Replace ZCP_API_KEY where it is set, then restart ZCP.",
 		Signals:         []string{"transport:zcli-auth-failed"},
 	}
 }

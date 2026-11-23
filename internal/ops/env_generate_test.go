@@ -578,7 +578,7 @@ func TestEnvGenerateDotenv_MaskedSource_RefusalNamesItAndTheWayOut(t *testing.T)
 					t.Errorf("message %q does not name %q", pe.Message, want)
 				}
 			}
-			if !strings.Contains(pe.Suggestion, "personal access token") {
+			if !strings.Contains(pe.Suggestion, "a token that can read them") {
 				t.Errorf("suggestion %q does not give the way out (a token that can read sensitive values)", pe.Suggestion)
 			}
 			if strings.Contains(pe.Message+pe.Suggestion, platform.MaskedEnvValue) {

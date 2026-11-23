@@ -201,7 +201,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		}
 		reason := ""
 		switch refusal.Reason {
-		case "forbidden", "no_target_access", "personal_token_missing", "personal_token_refused", "held", "unauthorized", "not_found", "invalid":
+		case "forbidden", "no_target_access", "held", "unauthorized", "not_found", "invalid":
 			reason = refusal.Reason
 		}
 		return nil, &RefusedError{Status: resp.StatusCode, Code: code, Reason: reason}
