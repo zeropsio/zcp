@@ -231,7 +231,7 @@ go vet ./...                     # Vet
 make lint-fast                   # Lint (~3s)
 ```
 
-Tests run only on explicit request (`make test-short`, `make test-race`, or the manually dispatched `Tests` workflow). E2E tests need a real Zerops project: `go test ./e2e/ -tags e2e` (requires `ZCP_API_KEY` or zcli login).
+Tests run only on explicit request (`make test-short`, `make test-race`, or the manually dispatched `Tests` workflow). E2E tests need a real Zerops project: `go test ./e2e/ -tags e2e` (requires `ZCP_API_KEY`: an integration token with no organisation access and ADMIN on one dedicated project, sudo).
 
 ## Release
 

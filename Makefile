@@ -152,7 +152,9 @@ _release:
 ########
 # E2E  #
 ########
-# E2E target host inside the eval-zcp project. Default is the `zcp`
+# E2E target host inside the project of the E2E token (ZCP_API_KEY: an
+# integration token, org NO_ACCESS, ADMIN on that one project, sudo; never a
+# personal token). Default is the `zcp`
 # service-stack (the ZCP runtime container itself). Override via
 # `ZCP_HOST=<hostname> make e2e-zcp` to point at a different service.
 ZCP_HOST ?= zcp
