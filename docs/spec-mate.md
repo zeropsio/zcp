@@ -2740,7 +2740,7 @@ neither its project nor `zerops_observe` shows included. The shared section tell
 | OM-1 | Org mode makes no write call to the Zerops API: it builds no Zerops client, and its one door, HQ's Chief read, only reads. `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops' private API under its own identity, not a kept token of the registered person, and no person token enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | zcp org mode reads the allowlist of §3.11 through HQ's `POST /api/mate/chief/read` with the Chief's project key; HQ reads Zerops' private API under its own identity and keeps no person's token, and no person token enters the container; an HQ refusal is shown once, in HQ's words. `TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate asks its person's Chief only by message: `zerops_list_mates` names the peer the Mate's state names as its person's Chief, and no tool proposes asking it. `TestListMates_PersonsChiefAmongThem_IsNamedTheChief`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
@@ -2946,7 +2946,7 @@ a span attribute.
 | MS1-8 | Outside a Zerops project every seam above is inert. |
 | TC-3  | The key travels only in the link's first frame or zcp's header, never in a URL, and no log line carries it. Test to be written (HQ link, zcp client). |
 | TC-10 | The dev service stores no git credential; its git reaches HQ only through the relay, which carries the project key over its ssh session only and is never written into the dev service (§2.8). `TestRelayOnly_ADevServicesPushToHQIsAnsweredThroughTheRelayWithTheProjectKey`. |
-| TC-11 | zcp's Chief reads its organisation through HQ with its project key, and HQ reads Zerops' private API for it under its own identity, not the registered person's kept token; the client reads Zerops with the person's token (§2.11, §3.11). `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `spec/protocol.md`, Chief (S19c). |
+| TC-11 | zcp's Chief reads its organisation through HQ with its project key, and HQ reads Zerops' private API for it under its own identity, keeping no person's token; the client reads Zerops with the person's token (§2.11, §3.11). `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`; mate-hq `spec/protocol.md`, Chief (S19c). |
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp with the background-work loss of §3.11. Test to be written (Mate server). |
 | TC-21 | When the Mate sends `key-refused`, HQ drops the key and closes the link. When zcp asks `POST /api/mate/key-recheck`, HQ verifies the key itself, at most once per key per minute, and cuts it off on a definite refusal. zcp `internal/hq/keyrecheck.go`. Test to be written (Mate server, zcp client, HQ link). |
 
@@ -4198,8 +4198,8 @@ field and unchanged content, including sensitive source data; zcp does not scan,
 redact or slice it. zcp never adds either credential to output, errors or header traces, and failed
 or invalid responses do not expose raw bodies. A refusal keeps only a code this route answers
 (`observation_refused`, `too_many_requests`, `observation_unavailable`, `observation_output_too_large`,
-`too_large`, `invalid`, `credential_required`, `escalation_unavailable`, `zerops_refused`,
-`zerops_unexpected_answer`, `zerops_unanswered`, `zerops_unavailable`, `unavailable`) and its fixed
+`too_large`, `invalid`, `zerops_refused`, `zerops_unexpected_answer`, `zerops_unanswered`,
+`zerops_unavailable`, `unavailable`) and its fixed
 reason; any other code reads `observation_refused`. Responses are at most 512 KiB and
 lists at most 100 records; resource limits fail explicitly rather than edit records.
 An HQ `413 observation_output_too_large` asks for a lower `limit` or narrower

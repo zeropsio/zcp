@@ -193,7 +193,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		code := "observation_refused"
 		switch refusal.Code {
 		case "observation_refused", "too_many_requests", "observation_unavailable", "observation_output_too_large", "too_large", "invalid",
-			"credential_required", "escalation_unavailable", "zerops_refused", "zerops_unexpected_answer", "zerops_unanswered", "zerops_unavailable", "unavailable":
+			"zerops_refused", "zerops_unexpected_answer", "zerops_unanswered", "zerops_unavailable", "unavailable":
 			code = refusal.Code
 		}
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
@@ -201,7 +201,7 @@ func (c ObservationClient) Observe(ctx context.Context, in ObservationRequest) (
 		}
 		reason := ""
 		switch refusal.Reason {
-		case "forbidden", "no_target_access", "personal_token_missing", "personal_token_refused", "held", "unauthorized", "not_found", "invalid":
+		case "forbidden", "no_target_access", "unauthorized", "not_found", "invalid":
 			reason = refusal.Reason
 		}
 		return nil, &RefusedError{Status: resp.StatusCode, Code: code, Reason: reason}

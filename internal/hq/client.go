@@ -45,8 +45,8 @@ func (r *RefusedError) Class() platform.ErrorClass {
 // UnavailableError is HQ not serving now — never a refusal, always "try
 // again": an HQ that does not answer, or one that answers 503 (one draining
 // or failing, unavailable; Zerops not answering it, zerops_unavailable) past
-// the wait the client gives it. Code and Reason are HQ's (escalation_unavailable
-// with key_secret), "" when it did not answer.
+// the wait the client gives it. Code and Reason are HQ's (zerops_unavailable
+// with no_credential), "" when it did not answer.
 type UnavailableError struct {
 	Code   string
 	Reason string
