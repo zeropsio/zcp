@@ -1,11 +1,13 @@
 // Command release-on-green names zcp's next release for a commit whose main CI is green, unless
 // the commits since the last release change what zcp shows agents: those wait for a live check of
-// a Mate and of a standalone zcp, and their release stays `make release`. The Release on green
-// workflow runs it on the green commit, in a clone holding the history and the tags:
+// a Mate and of a standalone zcp, and their release stays a person's `make release`. It only
+// decides and never tags: the maintainers' release tooling runs it on the green commit, in a clone
+// holding the history and the tags, and cuts the release with `make release` once Zerops starts
+// containers (no zcp release while it cannot: each Mate's `zcp self restart` would not come back):
 //
 //	go run ./cmd/release-on-green <sha>
 //
-// stdout is the tag to cut (a minor bump, as `make release`) or nothing; the reason goes to stderr.
+// stdout is the tag `make release` cuts (a minor bump) or nothing; the reason goes to stderr.
 package main
 
 import (
