@@ -5120,7 +5120,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `ready` label means its head is described, not permission to merge: while HQ has not judged
   mergeability (including an older HQ omitting it), a ready change also says `checking mergeability`.
   HQ's conflict, empty, already-merged and unrelated verdicts say `not mergeable` with the reason;
-  a clean verdict keeps the ready label (`TestStatus_ReadyChangeNamesHQMergeability`). Each change's
+  a clean verdict keeps the ready label (`TestStatus_ReadyChangeNamesHQMergeability`). Failing or
+  pending checks for the head add `GitHub's checks failed` or `GitHub's checks running`. Each change's
   standing is the Mate's state as its link last heard it (§2.8): status asks HQ nothing, and says
   so when the link is down or nothing was heard, even when no change or leased branch is recorded,
   so app-level HQ problems remain readable after changes settle. A merge since the last pass reads merged while the pair backoff holds

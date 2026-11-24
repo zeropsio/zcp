@@ -139,6 +139,9 @@ type MateChange struct {
 	// Behind is whether `main` moved past the change's merge base, judged
 	// with Mergeability; nil from an HQ older than it.
 	Behind *bool `json:"behind,omitempty"`
+	// Checks is the head's GitHub checks verdict (passing, pending, failing);
+	// "" while none are known or from an HQ older than it.
+	Checks string `json:"checks,omitempty"`
 	// UpdatedAt is when HQ last changed its record of the change, RFC 3339;
 	// "" from an HQ older than it.
 	UpdatedAt string `json:"updatedAt,omitempty"`

@@ -334,7 +334,7 @@ func standingLabel(t workflow.HQChangeTold) string {
 // standingOf is an open change's standing as the Mate's state names it now
 // (s), in the ledger's terms (workflow.HQChangeTold).
 func standingOf(s hq.MateChange) workflow.HQChangeTold {
-	now := workflow.HQChangeTold{State: s.State, Ready: s.Ready, Mergeability: s.Mergeability, UpdatedAt: s.UpdatedAt}
+	now := workflow.HQChangeTold{State: s.State, Ready: s.Ready, Mergeability: s.Mergeability, Checks: s.Checks, UpdatedAt: s.UpdatedAt}
 	if s.Behind != nil {
 		now.Behind = *s.Behind
 	}

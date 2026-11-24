@@ -57,6 +57,13 @@ func changeLabels(t *workflow.HQChangeTold) []string {
 	if t.Behind && t.Mergeability != hq.MergeConflict {
 		labels = append(labels, "behind main")
 	}
+	const checksPending = "pending"
+	switch t.Checks {
+	case "failing":
+		labels = append(labels, "GitHub's checks failed")
+	case checksPending:
+		labels = append(labels, "GitHub's checks running")
+	}
 	return labels
 }
 

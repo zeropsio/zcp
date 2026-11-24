@@ -79,13 +79,14 @@ type HQChange struct {
 // HQChangeTold is a change's standing in HQ as last read from the Mate's own
 // state, and so as last told: open, whether it is described at its head
 // (Ready, nil from an HQ older than it), how it merges into `main` and whether
-// `main` moved past it, when HQ last changed it, and whether its head is a
-// merge commit of HQ's own that brought `main` in.
+// `main` moved past it, its head's checks, when HQ last changed it, and whether
+// its head is a merge commit of HQ's own that brought `main` in.
 type HQChangeTold struct {
 	State        string `json:"state,omitempty"`
 	Ready        *bool  `json:"ready,omitempty"`
 	Mergeability string `json:"mergeability,omitempty"`
 	Behind       bool   `json:"behind,omitempty"`
+	Checks       string `json:"checks,omitempty"`
 	UpdatedAt    string `json:"updatedAt,omitempty"`
 	// CoreHead is HQ's merge commit on the change's branch while it is the
 	// change's head — HQ brought `main` in after change CoreLanded merged
