@@ -131,6 +131,17 @@ func TestExtractConsoleErrors_LastN(t *testing.T) {
 	}
 }
 
+// agent-browser 0.39 names a page error's message text, with its stack: a
+// Mate's ZCP container runs 0.39.4, whose errors step this is verbatim.
+// witness: internal/ops/verify_render.go | 		msg := strings.TrimSpace(cmp.Or(e.Text, e.Message)) → 		msg := strings.TrimSpace(e.Message)
+func TestExtractConsoleErrors_TextField_IsTheMessage(t *testing.T) {
+	raw := json.RawMessage(`{"errors":[{"column":45,"line":0,"text":"Error: boom from probe\n    at http://127.0.0.1:8799/pp-probe.html:1:46","url":null}]}`)
+	got := extractConsoleErrors(raw)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "Error: boom from probe") {
+		t.Errorf("extractConsoleErrors(0.39 shape) = %q, want the page error", got)
+	}
+}
+
 func TestExtractConsoleErrors_TruncatesEntry(t *testing.T) {
 	huge := strings.Repeat("z", browserConsoleEntryCap+200)
 	raw := mustMarshalErrors(t, []errorEntry{{Message: huge, Timestamp: 1}})

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -755,6 +756,12 @@ func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool stri
 	return checks
 }
 
+// firstLine is an error's message without the stack agent-browser appends.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
 // leasePreviewCheck asks the preview URL of server s from outside — the
 // pool's subdomain on its preview port, at its health path — patiently, as a
 // dev server's first compile is given — then opens it in the browser, failing
@@ -782,7 +789,7 @@ func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, alias, po
 		if check.Status == CheckPass && check.BodyText == "" && len(check.ConsoleErrors) > 0 {
 			check.Status = CheckFail
 			check.Detail = fmt.Sprintf("the page arrived but rendered nothing and threw: %s — restart its dev server (zerops_dev_server action=restart hostname=%q name=%q); when a fresh one renders the same, the branch's code breaks it",
-				check.ConsoleErrors[0], alias, s.Name)
+				firstLine(check.ConsoleErrors[0]), alias, s.Name)
 		}
 	}
 	return check, true

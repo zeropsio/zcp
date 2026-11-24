@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"strings"
@@ -122,6 +123,9 @@ func extractConsoleErrors(raw json.RawMessage) []string {
 	}
 	var payload struct {
 		Errors []struct {
+			// Text is agent-browser 0.39's word for a page error, Message an
+			// earlier one's: the ZCP container's image decides which runs.
+			Text    string `json:"text"`
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
@@ -136,7 +140,7 @@ func extractConsoleErrors(raw json.RawMessage) []string {
 	start := max(0, len(payload.Errors)-browserConsoleMax)
 	out := make([]string, 0, len(payload.Errors)-start)
 	for _, e := range payload.Errors[start:] {
-		msg := strings.TrimSpace(e.Message)
+		msg := strings.TrimSpace(cmp.Or(e.Text, e.Message))
 		if msg == "" {
 			continue
 		}
