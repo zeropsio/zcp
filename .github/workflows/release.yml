@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Release on green dispatches it on the tag it cut: that tag's push starts no workflow.
+  workflow_dispatch:
 
 permissions:
   contents: write

@@ -235,6 +235,8 @@ Tests run only on explicit request (`make test-short`, `make test-race`, or the 
 
 ## Release
 
+A green CI run on `main` cuts the next minor release of its commit by itself, unless the commits since the last release change what zcp shows agents (the paths in `cmd/release-on-green`). Such a release waits for a live check of a Mate and of a standalone zcp, then a maintainer cuts it:
+
 ```bash
 make release        # Minor bump (e.g. v8.104.0 → v8.105.0)
 make release-patch  # Patch bump (e.g. v8.104.0 → v8.104.1)
