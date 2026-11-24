@@ -350,8 +350,11 @@ func poolStageDeployNext(host string, env StateEnvelope) string {
 	case intent.PushSource == "":
 		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\" (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
 	}
-	return fmt.Sprintf("Next: zerops_deploy sourceService=%q targetService=%q setup=%q (un-deployed edits revert on a container cycle — deploy makes the change durable)",
-		intent.PushSource, host, intent.BuildSetup)
+	// A lease keeps its work by the push, never by this deploy: the line says
+	// what the deploy is for — the change's one production-way build — so it is
+	// not read as the way to see each edit, which the lease's preview shows.
+	return fmt.Sprintf("Next: zerops_deploy sourceService=%q targetService=%q setup=%q, then zerops_verify serviceHostname=%q — the change's stage check, its build the production way (minutes): run it once per change, after its edits work on the lease's preview, never per edit",
+		intent.PushSource, host, intent.BuildSetup, host)
 }
 
 // renderPhase is one line: the phase identifier plus the work session intent

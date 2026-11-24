@@ -748,7 +748,7 @@ func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool stri
 			// starting one is not yet a verdict.
 		}
 		checks = append(checks, check)
-		if c, ok := leasePreviewCheck(ctx, preview, pool, s, ds.State.Servers[s.Name]); ok {
+		if c, ok := leasePreviewCheck(ctx, preview, alias, pool, s, ds.State.Servers[s.Name]); ok {
 			checks = append(checks, c)
 		}
 	}
@@ -757,10 +757,11 @@ func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool stri
 
 // leasePreviewCheck asks the preview URL of server s from outside — the
 // pool's subdomain on its preview port, at its health path — patiently, as a
-// dev server's first compile is given; ok is false when there is nothing to
+// dev server's first compile is given — then opens it in the browser, failing
+// a page that renders nothing and throws; ok is false when there is nothing to
 // ask: no probe, no preview port, a server not running or starting, or no
 // preview URL (the pool's subdomain off).
-func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, pool string, s devsup.Server, st devsup.ServerState) (CheckResult, bool) {
+func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, alias, pool string, s devsup.Server, st devsup.ServerState) (CheckResult, bool) {
 	if preview.Client == nil || preview.HTTP == nil || st.PreviewPort <= 0 {
 		return CheckResult{}, false
 	}
@@ -774,5 +775,15 @@ func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, pool stri
 	probeURL := url + probePath(s.HealthPath)
 	check := newHTTPProbe(preview.HTTP, true).probe(ctx, probeURL, checkNameLeasePreview)
 	check.URL, check.Server, check.Port = probeURL, s.Name, st.PreviewPort
+	if check.HTTPStatus > 0 {
+		// An answer proves the page arrived, not that it runs: the browser walk
+		// reads what it rendered, as the stage's http_root does.
+		check.BodyText, check.ConsoleErrors, check.KeptSignIn = renderHTTPRoot(ctx, probeURL)
+		if check.Status == CheckPass && check.BodyText == "" && len(check.ConsoleErrors) > 0 {
+			check.Status = CheckFail
+			check.Detail = fmt.Sprintf("the page arrived but rendered nothing and threw: %s — restart its dev server (zerops_dev_server action=restart hostname=%q name=%q); when a fresh one renders the same, the branch's code breaks it",
+				check.ConsoleErrors[0], alias, s.Name)
+		}
+	}
 	return check, true
 }

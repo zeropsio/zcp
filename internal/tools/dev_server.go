@@ -132,7 +132,8 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			"Each server is its own process group with its own log; stop ends the whole group and frees the port, and the other servers keep running. " +
 			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes while starting is started once more after its siblings settle (status says so); any other crash stays down (status says crashed, with its exit) until you start it again. " +
 			"On a dev service whose dev setup does not run the supervisor yet, the first start moves it there: zcp adds two lines to the dev setup in zerops.yaml, declares the server, and redeploys the dev service once (uncommitted work stays); on a work branch zcp commits both files as a commit of its own first, else the result says what to commit. " +
-			"Results are structured {running, startMillis, healthStatus, url, logTail, reason} with a reason code on failure (crashed, port_in_use, supervisor_unresponsive, health_probe_*) so the agent can diagnose without a follow-up call. " +
+			"Results are structured {running, startMillis, healthStatus, url, previewUrl, logTail, reason} with a reason code on failure (crashed, port_in_use, supervisor_unresponsive, health_probe_*) so the agent can diagnose without a follow-up call; a lease's previewUrl is the address to open in a browser, its url answers only inside the project. " +
+			"The health probe asks one HTTP request from inside the container: a page that arrives but renders nothing passes it, so look at the page itself (zerops_verify on a lease opens its preview in the browser). " +
 			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true. " +
 			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
 		InputSchema: devServerInputSchema(),
@@ -205,6 +206,11 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			result.PreviewURL = resp.SubdomainURL
 			if result.PreviewURL == "" {
 				result.PreviewURL = ops.LeasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort)
+			}
+			// The message's address is the container's own, which answers only
+			// inside the project: a browser opens the preview.
+			if result.Running && result.PreviewURL != "" {
+				result.Message += " Open it in a browser at its preview, " + result.PreviewURL + ": the container's address answers only inside the project, and a dev server that checks its Host refuses it there too."
 			}
 		}
 		var states []topology.DevServerState

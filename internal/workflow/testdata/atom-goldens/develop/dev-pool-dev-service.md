@@ -55,12 +55,11 @@ its containers away from the app.
    from this container: no credential reaches the mount, so a fetch or push
    there fails asking for one. A release never commits for you.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
-   — the repository and the branch come from the lease. Run its stage check
-   (below), then describe it with
+   — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
-   naming the branch's lease preview URLs as where to try it and saying it
-   built and verified on the stage (in a run of asks, once, before your
-   end-of-turn describe). Pushing to the branch again moves its change,
+   naming the branch's lease preview URLs as where to try it and saying
+   which push last built and verified on the stage (**Stage check**, below,
+   runs once per change, not per ask). Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
 5. `zerops_lease action=release lease="<alias>"` hands the leased container
@@ -84,17 +83,39 @@ container.
 
 **Preview.** With `previewPortBase` in `.zcp/dev-servers.json`, a lease
 answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
-result's `previewUrl` is the pool's subdomain on that port. With several
-servers that listen, mark the one the preview reaches with `"preview": true`
-— one per pool.
+result's `previewUrl` is the pool's subdomain on that port
+(`zerops_dev_server action=status hostname="<alias>"` names it on any turn).
+With several servers that listen, mark the one the preview reaches with
+`"preview": true` — one per pool.
 
-**Stage.** The part's stage is your test bench: it runs `main` from its
-birth, then the last work deployed to it for a check, and nothing puts
-`main` back on it. A branch is tried on its lease's preview URL. The preview
-runs the dev servers, never the production build, so check the branch on the
-stage before its change is described.
+**Try each edit on the preview.** It is where you look at your work, in
+seconds: the dev server picks a saved file up, and a reload shows it.
 
-**Stage check.** Deploy the pushed branch from its lease,
+- Open the `previewUrl`, never the lease's `node-id-…` address: that
+  answers only inside the project, and a dev server that checks its Host
+  refuses it there too.
+- The first page after a dev server starts compiles, for up to a minute or
+  two; a slow or 502 answer then is that compile, not a broken preview.
+- The preview is an origin of its own: a sign-in on the stage does not carry
+  over. Sign in on the preview once, and the browser keeps it.
+- A 200 proves only that the page arrived.
+  `zerops_verify serviceHostname="<alias>"` opens the preview in the browser
+  and fails a page that renders nothing and throws, naming the error: restart
+  that dev server; when a fresh one renders the same, the branch's code
+  breaks it.
+  Re-check a preview you once found broken before working around it.
+
+**Stage.** The part's stage is your test bench, not where you look at each
+edit: it runs `main` from its birth, then the last work deployed to it for a
+check, and nothing puts `main` back on it. The preview runs the dev servers,
+never the production build; the stage check builds the branch the production
+way and takes minutes.
+
+**Stage check.** Run it once per change, before its first describe, and
+again only when a push changes what the build reads beyond the source —
+dependencies or the lockfile, build or deploy config, env — or the person
+asks for it; a later ask's describe says which push the stage last built.
+Deploy the pushed branch from its lease,
 `zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
 with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
 check. A build that fails leaves the stage on what it ran; fix the branch,

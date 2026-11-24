@@ -295,7 +295,7 @@ func RegisterDeploySSH(
 	desc += "Requires zerops.yaml. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. " +
 		"Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed. " +
 		"strategy=git-push: pushes committed code to an external git remote. " +
-		"Blocks 60–120s; for two or more deploys make one zerops_deploy_batch call."
+		"Blocks through the build (minutes); for two or more deploys make one zerops_deploy_batch call."
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
