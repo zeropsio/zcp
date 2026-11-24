@@ -1,0 +1,3 @@
+- KL-1 — Without a check the tool asks HQ for the change's failing checks and with one for that check's log, sending only the range and pattern the agent gave, under the Mate's key. Breaks: the agent reads another change's or no check's log.
+- KL-2 — What the agent reads is HQ's answer as lines: each failing check by name, conclusion, id and page, or the log's counts and each line under its number, a cut line and a log read in part said so. Breaks: an agent takes a cut answer for the whole log.
+- KL-3 — Each refusal of HQ is said in words that tell the agent what it is and whether asking again helps; a missing Actions grant is said as a person's to give. Breaks: an agent retries a refused read or hunts for another way to the log.

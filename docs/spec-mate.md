@@ -4160,7 +4160,10 @@ read; production setup belongs to the project's card, whose available actions Ma
 its application, made or joined (`POST /api/mate/repos`); its changes in a repository, one open per
 branch it names beside its one change opened naming none — an HQ that keeps them so says
 `openPerBranch: true` in the Mate's state and lists every open change there — or, from an older HQ,
-one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
+one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); its failing
+checks (`GET /api/mate/changes/:repo/:n/checks`) and a check's log (`GET
+/api/mate/changes/:repo/:n/checks/:check/log`), shown by `zerops_check_log` as HQ answers, without
+zcp's judgement; a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a Chief's
 reads of its organisation as its registered person (`POST /api/mate/chief/read`, §3.11); a read
 token for a GitHub repository at that call (`GET

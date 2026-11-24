@@ -538,6 +538,7 @@ func (s *Server) registerTools() {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
 	tools.RegisterObserve(s.server, httpClient, projectID, stateDir, s.rtInfo)
+	tools.RegisterCheckLog(s.server, httpClient, s.rtInfo)
 	s.registerMateCards(httpClient, projectID, stateDir)
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
