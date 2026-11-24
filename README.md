@@ -235,8 +235,6 @@ Tests run only on explicit request (`make test-short`, `make test-race`, or the 
 
 ## Release
 
-After a green CI run on `main`, the maintainers' release tooling cuts the next minor release once Zerops starts containers, unless the commits since the last release change what zcp shows agents (the paths in `cmd/release-on-green`, which only decides and never tags). Such a release waits for a live check of a Mate and of a standalone zcp, then a maintainer cuts it:
-
 ```bash
 make release        # Minor bump (e.g. v8.104.0 → v8.105.0)
 make release-patch  # Patch bump (e.g. v8.104.0 → v8.104.1)
