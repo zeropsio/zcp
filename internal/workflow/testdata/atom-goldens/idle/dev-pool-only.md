@@ -25,6 +25,12 @@ one of two things — tell which before you touch it:
     a pool a stage is paired with, it opens the session on that stage, which
     deploys from your lease; for any other pool it opens none: nothing
     deploys or verifies a pool itself.
+  - Look at each edit on the lease's preview, in seconds:
+    `zerops_dev_server action=status hostname="<alias>" name="<server>"`
+    names its `previewUrl`, and `zerops_verify serviceHostname="<alias>"`
+    opens it in the browser. A deploy of the branch to its stage builds it the
+    production way, in minutes: that stage check runs once per change, never
+    per edit or ask.
 - **Infrastructure an app uses.** The app calls its orchestrator with
   `${<pool>_API_TOKEN}`. Leave it to the app: a lease takes one of its
   containers away from it.

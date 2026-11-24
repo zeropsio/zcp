@@ -209,7 +209,8 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			}
 			// The message's address is the container's own, which answers only
 			// inside the project: a browser opens the preview.
-			if result.Running && result.PreviewURL != "" {
+			if result.Running && result.PreviewURL != "" && result.Reason != ops.ReasonLoopbackOnly &&
+				(isDevServerStartAction(input.Action) || input.Action == actionStatus) {
 				result.Message += " Open it in a browser at its preview, " + result.PreviewURL + ": the container's address answers only inside the project, and a dev server that checks its Host refuses it there too."
 			}
 		}

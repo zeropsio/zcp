@@ -782,14 +782,17 @@ func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, alias, po
 	probeURL := url + probePath(s.HealthPath)
 	check := newHTTPProbe(preview.HTTP, true).probe(ctx, probeURL, checkNameLeasePreview)
 	check.URL, check.Server, check.Port = probeURL, s.Name, st.PreviewPort
-	if check.HTTPStatus > 0 {
-		// An answer proves the page arrived, not that it runs: the browser walk
-		// reads what it rendered, as the stage's http_root does.
-		check.BodyText, check.ConsoleErrors, check.KeptSignIn = renderHTTPRoot(ctx, probeURL)
-		if check.Status == CheckPass && check.BodyText == "" && len(check.ConsoleErrors) > 0 {
+	if check.Status == CheckPass {
+		// A 2xx proves the page arrived, not that it runs: the browser walk
+		// reads what the page itself (the root, never a health endpoint)
+		// rendered, as the stage's http_root does. An empty page with an
+		// uncaught error is an app that did not start — or one that renders
+		// late, which a look in the browser tells apart.
+		check.BodyText, check.ConsoleErrors, check.KeptSignIn = renderHTTPRoot(ctx, url+"/")
+		if check.BodyText == "" && len(check.ConsoleErrors) > 0 {
 			check.Status = CheckFail
-			check.Detail = fmt.Sprintf("the page arrived but rendered nothing and threw: %s — restart its dev server (zerops_dev_server action=restart hostname=%q name=%q); when a fresh one renders the same, the branch's code breaks it",
-				firstLine(check.ConsoleErrors[0]), alias, s.Name)
+			check.Detail = fmt.Sprintf("the page arrived, but the browser found it empty with an uncaught error: %s. Look at %s/ with zerops_browser; a page that stays blank needs its dev server restarted (zerops_dev_server action=restart hostname=%q name=%q), and when a fresh one stays blank too, the branch's code breaks it",
+				firstLine(check.ConsoleErrors[0]), url, alias, s.Name)
 		}
 	}
 	return check, true
