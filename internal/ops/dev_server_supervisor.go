@@ -256,8 +256,9 @@ func (ds *DevServers) starting() bool {
 	return false
 }
 
-// RetryPendingNote is how a reply says a server crashed while starting and
-// the supervisor's one more start is still to come (ServerState.RetryPending).
+// RetryPendingNote is how a reply says a server crashed — while starting, or
+// the preview server after it ran — and the supervisor's one more start is
+// still to come (ServerState.RetryPending).
 const RetryPendingNote = "the supervisor starts it once more after its siblings settle"
 
 // OutOfMemoryHint follows the restart reason of a server systemd restarted,

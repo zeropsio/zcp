@@ -1,0 +1,7 @@
+# Preview port decisions (`supervisor_unix.go`, `preview.go`, `state.go`)
+
+- PV-FORWARD — The preview server's preview port is forwarded whatever the server's status — before its first start, while it starts, after an exit, while stopped — so its own page answers there and never the platform's error page; a supervisor that shut down, or a container without a preview port, forwards nothing.
+- PV-ANSWERED — A live server whose port accepts is starting until its healthPath first answered, so the preview port holds its page instead of forwarding to a dev server that holds the first request while it compiles; once answered it runs while its port accepts, and a server with no live group runs never.
+- PV-PAGE — The preview port forwards to a running server, says a starting server or a crashed one whose one more start is coming is coming, and says a crashed server nothing will start, or a stopped one, is down.
+- PV-HOLD — The holding page's held request returns once the port would answer anything but that page — the server runs, or its page now says something else — and holds while the page would be the same, so a page that says the server stopped opens it once someone starts it and no page reloads into itself.
+- PV-ONCE-MORE — The preview server that exits on its own after it answered is started once more and the exit of that start stays down; any other server that exits after it answered stays down.

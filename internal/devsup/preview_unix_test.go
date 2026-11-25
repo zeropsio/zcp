@@ -57,55 +57,6 @@ func TestSupervisor_PreviewForward_SlotPort(t *testing.T) {
 	if got := mustServer(t, st, "web").PreviewPort; got != 0 {
 		t.Fatalf("web previewPort = %d, want none", got)
 	}
-
-	// The forward stops with its server.
-	if err := s.Stop("api"); err != nil {
-		t.Fatal(err)
-	}
-	released(t, preview)
-	released(t, api)
-
-	// And comes back with it.
-	if err := s.Start("api"); err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, "the preview port to carry api's traffic again", func() bool { return echoOver(preview, "again") })
-}
-
-func TestSupervisor_PreviewForward_EndsWithTheServer(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		end  func(t *testing.T, s *Supervisor)
-	}{
-		{name: "the server crashes", end: func(t *testing.T, s *Supervisor) {
-			t.Helper()
-			time.Sleep(400 * time.Millisecond) // past the start window: no second start
-			if err := syscall.Kill(mustServer(t, s.State(), "web").Pgid, syscall.SIGKILL); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "the supervisor shuts down", end: func(_ *testing.T, s *Supervisor) { s.Shutdown() }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			r := newRig(t)
-			r.env = []string{"ZEROPS_StableNumber=1"}
-			r.window = 200 * time.Millisecond
-			web := freePort(t)
-			preview := freePort(t)
-			r.writeDeclaration(`{"version":1,"previewPortBase":` + strconv.Itoa(preview-1) + `,"servers":[` +
-				`{"name":"web","port":` + strconv.Itoa(web) + `,"command":` + strconv.Quote(r.echoer("web", web).Command) + `}]}`)
-			s := r.supervisor()
-			s.Boot()
-			eventually(t, "the preview port to listen", func() bool { return echoOver(preview, "x") })
-
-			tt.end(t, s)
-
-			released(t, preview)
-		})
-	}
 }
 
 func TestSupervisor_PreviewForward_AbsentBase_NoForward(t *testing.T) {
@@ -136,12 +87,6 @@ func TestSupervisor_PreviewForward_AbsentBase_NoForward(t *testing.T) {
 				`{"name":"web","port":` + strconv.Itoa(web) + `,"command":` + strconv.Quote("exec sleep 300") + `}]}`)
 			s := r.supervisor()
 			s.Boot()
-			// Drive the port-accepted receipt directly: forwarding eligibility does
-			// not depend on how long a child takes to listen.
-			s.mu.Lock()
-			s.servers["web"].listened = true
-			s.mu.Unlock()
-			s.syncPreview()
 
 			if listening(probe) {
 				t.Fatalf("something listens on %d with no preview forward configured", probe)
@@ -203,6 +148,12 @@ func heldConn(t *testing.T, port int) net.Conn {
 	return c
 }
 
+// forwardAll is the view of a server that runs: every connection is
+// forwarded.
+func forwardAll() (previewView, <-chan struct{}) {
+	return previewView{kind: previewForward}, nil
+}
+
 // previewOpen is the open-connection count seen holds now.
 func previewOpen(seen *previewSeen) int {
 	_, open := seen.read()
@@ -219,7 +170,7 @@ func TestForward_RecordsLastConnectionAndOpenCount(t *testing.T) {
 	t.Parallel()
 	target, listen := echoTarget(t), freePort(t)
 	seen := &previewSeen{}
-	f, err := openForward(listen, target, seen)
+	f, err := openForward("web", listen, target, seen, forwardAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +207,7 @@ func TestForward_RecordsLastConnectionAndOpenCount(t *testing.T) {
 	// The server's next forward (a restart opens a new one) records into the
 	// same record. Another port: the closed one may linger in TIME_WAIT.
 	next := freePort(t)
-	f2, err := openForward(next, target, seen)
+	f2, err := openForward("web", next, target, seen, forwardAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +248,7 @@ func TestForward_AnAcceptErrorNeverEndsTheForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	f := &forward{listenPort: listen, targetPort: target, ln: &acceptFailsOnce{Listener: ln}, seen: &previewSeen{}, cancel: cancel, conns: map[net.Conn]struct{}{}}
+	f := &forward{name: "web", view: forwardAll, listenPort: listen, targetPort: target, ln: &acceptFailsOnce{Listener: ln}, seen: &previewSeen{}, cancel: cancel, conns: map[net.Conn]bool{}}
 	f.wg.Go(func() { f.accept(ctx) })
 	t.Cleanup(f.close)
 
@@ -313,8 +264,8 @@ func TestForward_AnAcceptErrorNeverEndsTheForward(t *testing.T) {
 // TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile:
 // the preview server's state reports when its forward last took a connection
 // and how many it holds open; a server without a preview port reports
-// neither. A restart of the server cuts its connections and opens a new
-// forward, and the time stays. Both live in memory only: state.json never
+// neither. A restart of the server cuts its connections, its forward stays,
+// and the time stays. Both live in memory only: state.json never
 // holds them.
 func TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile(t *testing.T) {
 	t.Parallel()
@@ -329,8 +280,7 @@ func TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile(t *
 	forwarded := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		sv := s.servers["web"]
-		return sv != nil && sv.fwd != nil
+		return s.fwd != nil && s.fwd.name == "web"
 	}
 	eventually(t, "web's preview forward to open", forwarded)
 
@@ -366,7 +316,10 @@ func TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile(t *
 	if n, err := held.Read(make([]byte, 1)); err == nil {
 		t.Fatalf("the held connection still reads (%d bytes) after its server restarted", n)
 	}
-	eventually(t, "web's new preview forward to open", forwarded)
+	eventually(t, "the cut connection to leave the count", func() bool {
+		w := mustServer(t, s.State(), "web")
+		return w.PreviewOpenConns != nil && *w.PreviewOpenConns == 0
+	})
 	w = mustServer(t, s.State(), "web")
 	if w.PreviewOpenConns == nil || *w.PreviewOpenConns != 0 || w.PreviewLastConnAt == nil || !w.PreviewLastConnAt.Equal(last) {
 		t.Fatalf("web after its restart: open %v, last %v; want 0 and %s kept", w.PreviewOpenConns, w.PreviewLastConnAt, last)
@@ -410,7 +363,7 @@ func stalledTarget(t *testing.T) (port int, accepted <-chan struct{}) {
 // TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync: a forward that ends
 // is closed without holding the lock that orders preview syncs while it
 // waits — its copies, and a dial to the server that has not finished, may
-// take up to the dial timeout — so another sync (an awaitListen's, or a
+// take up to the dial timeout — so another sync (a Shutdown's, or a
 // reconcile's under op) goes on at once, and the port is free by the time
 // the closing sync returns.
 func TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync(t *testing.T) {
@@ -418,7 +371,7 @@ func TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync(t *testing.T) {
 	target, accepted := stalledTarget(t)
 	listen := freePort(t)
 	seen := &previewSeen{}
-	f, err := openForward(listen, target, seen)
+	f, err := openForward("web", listen, target, seen, forwardAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,17 +390,17 @@ func TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync(t *testing.T) {
 		t.Fatal("the target never accepted the forward's connection")
 	}
 
-	// web has no live group: its forward is stale.
-	s := &Supervisor{cfg: Config{Log: io.Discard}, servers: map[string]*server{"web": {name: "web", fwd: f, preview: seen}}}
+	// web is not the declaration's preview server: its forward is stale.
+	s := &Supervisor{cfg: Config{Log: io.Discard}, servers: map[string]*server{"web": {name: "web", preview: seen}}, fwd: f}
 	first := make(chan struct{})
 	go func() {
 		s.syncPreview()
 		close(first)
 	}()
-	eventually(t, "the first sync to take the stale forward off web", func() bool {
+	eventually(t, "the first sync to take the stale forward off", func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.servers["web"].fwd == nil
+		return s.fwd == nil
 	})
 
 	start := time.Now()
@@ -496,7 +449,7 @@ func TestForward_ClientHalfCloses_GetsTheWholeReply(t *testing.T) {
 		t.Fatalf("listener address %v is not TCP", ln.Addr())
 	}
 	listen := freePort(t)
-	f, err := openForward(listen, addr.Port, &previewSeen{})
+	f, err := openForward("web", listen, addr.Port, &previewSeen{}, forwardAll)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,9 +62,11 @@ The supervisor ignores keys it does not know.
 
 ## Statuses and crashes
 
-- `running`; `starting` — its port does not accept connections yet; `stopped`; `crashed` — with its exit.
-- A server that crashes while starting (within 10 s of its start, or before its port first accepts) is started once more after its siblings settle; status says it comes back. Check `zerops_dev_server action=status hostname=... name=...` again before fixing anything.
-- A second crash, or a crash after the server listened, stays down until you start it again or a watched change restarts it.
+- `running`; `starting` — its port does not accept connections yet, or its `healthPath` has not answered yet (a dev server compiling its first page); `stopped`; `crashed` — with its exit.
+- A server that crashes while starting (within 10 s of its start, or before its `healthPath` first answers) is started once more after its siblings settle; status says it comes back. Check `zerops_dev_server action=status hostname=... name=...` again before fixing anything.
+- A second crash, or a crash after the server answered, stays down until you start it again or a watched change restarts it. A dev pool's preview server is the exception: it is started once more after such a crash too, and its preview URL shows a page saying it is starting, restarting or stopped whenever it is not running.
+- A server with a `port` is `starting` until a GET of its `healthPath` (default `/`) answers. Declare a `healthPath` that answers once the app is ready (a Vite app's entry module, if `/` answers before its first compile ends); a server that speaks no HTTP stays `starting` for up to 10 min — declare no `port` for it.
+- `zerops_verify` of a lease does not ask a starting server's preview URL: it shows the page that waits for the server. Verify again once status says `running`.
 - A redeploy starts every `autostart` server; a container restart starts every server that was meant to run.
 - Each server has its own log: `zerops_dev_server action=logs hostname=... name=...`.
 - A server that listens on 127.0.0.1 only is reachable only inside its container: start and status say it listens on loopback only and give no address. Bind it to 0.0.0.0 (`--host 0.0.0.0` for Vite and similar), unless a web server in front of it proxies to it.

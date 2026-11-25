@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -82,29 +83,19 @@ const (
 // server's own output and restarts nothing.
 const watchLoopLimit = 10
 
-// Restart reasons that name no path.
-const (
-	reasonRetry   = "it crashed within its start window"
-	reasonAsked   = "a restart was asked for"
-	reasonStart   = "a start was asked for"
-	reasonDecl    = "its declaration changed"
-	reasonBoot    = "the supervisor started again"
-	reasonRunSpec = "its run entry changed"
-	// reasonEnv: `ctl env` changed the overlay the server's group started
-	// under (docs/spec-mate.md §2.8a.2).
-	reasonEnv = "env changed"
-	// reasonLimit marks a start after the task limit was met; the recorded
-	// reason is limitReason.
-	reasonLimit = "task limit"
-)
-
 // logRotateSize is the size above which a server's log moves to .log.1 when
 // the server starts.
 const logRotateSize = 10 << 20
 
-// listenWait bounds how long the supervisor looks for a started server's port
-// to accept, to record starting → running.
+// listenWait bounds how long the supervisor waits for a started server's
+// healthPath to answer, to record starting → running; past it, the status
+// follows the port alone.
 const listenWait = 10 * time.Minute
+
+// answerProbeWait bounds one probe's wait for the server's first reaction to
+// its GET: a dev server compiling its first page holds the request, and one
+// that holds it past this is asked again.
+const answerProbeWait = 30 * time.Second
 
 type server struct {
 	name     string
@@ -121,13 +112,13 @@ type server struct {
 	leftPgid        int
 	leftLeaderStart int64
 	watch           *watcher
-	// retry: this start is the one more start after a start crash;
-	// retryPending: that start is scheduled and has not run yet.
+	// retry: this start is the one more start after a start crash, or after
+	// the preview server's exit (onceMore); retryPending: that start is
+	// scheduled and has not run yet.
 	retry, retryPending bool
-	// listened: this start's port has accepted once.
-	listened bool
-	// fwd is the preview forward of the live group, nil when it has none.
-	fwd *forward
+	// answered: this start's healthPath answered once, or the listen wait
+	// passed without an answer; from then on its status follows the port.
+	answered bool
 	// preview is what its preview forwards saw, kept across them; nil until
 	// the first opens.
 	preview *previewSeen
@@ -187,6 +178,14 @@ type Supervisor struct {
 	// fwdMu serialises syncPreview's decisions, shuts and listens; it is
 	// never held while taking op, nor while an ended forward is waited for.
 	fwdMu sync.Mutex
+	// fwd is the preview forward, nil when there is none: it lives with the
+	// supervisor, whatever its server's status. Written only by
+	// syncPreviewLocked; guarded by mu.
+	fwd *forward
+	// changed is closed at the next change of the servers' state (persist)
+	// and then replaced: what a held preview request waits on. Nil until a
+	// reader asks for it (changedLocked); guarded by mu.
+	changed chan struct{}
 	// env is the overlay every start adds to cfg.Env (SetEnv); it is
 	// replaced, never changed in place, so a start may keep the map it read.
 	// envRestarting: restartForEnv runs. Both guarded by mu.
@@ -420,6 +419,15 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 		case actNone:
 		}
 	}
+	// A server about to start again is starting from now on: through its
+	// stop's grace the preview port holds its page and reloads.
+	s.mu.Lock()
+	for _, name := range start {
+		if sv := s.servers[name]; sv != nil {
+			sv.starting = true
+		}
+	}
+	s.mu.Unlock()
 	s.stopAll(stop)
 	s.mu.Lock()
 	for name, a := range acts {
@@ -442,27 +450,27 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 	case boot:
 		reason = reasonBoot
 	}
+	s.syncPreview()
 	s.startAll(start, reason)
 	s.syncWatches()
-	s.syncPreview()
 	s.persist()
 	return acts
 }
 
-// stopAll ends the named servers' groups in parallel and waits for them.
+// stopAll ends the named servers' groups in parallel and waits for them; the
+// preview forward of one of them cuts its connections and keeps listening.
 func (s *Supervisor) stopAll(names []string) {
 	var wg sync.WaitGroup
 	for _, name := range names {
 		s.mu.Lock()
 		var g *group
-		var fwd *forward
 		if sv := s.servers[name]; sv != nil {
 			g, sv.g = sv.g, nil
-			fwd, sv.fwd = sv.fwd, nil
 		}
+		fwd := s.fwd
 		s.mu.Unlock()
-		if fwd != nil {
-			fwd.close()
+		if fwd != nil && fwd.name == name {
+			fwd.cut()
 		}
 		if g == nil {
 			continue
@@ -519,11 +527,11 @@ func (s *Supervisor) start(name, reason string) {
 	}
 	spec, env := sv.spec, s.env
 	sv.starting, sv.startBegun = true, time.Now()
-	sv.retryPending, sv.windowChanged, sv.listened = false, false, false
+	sv.retryPending, sv.windowChanged, sv.answered = false, false, false
 	if reason == reasonLimit {
 		sv.limitStarts++
 	} else {
-		sv.retry, sv.limitStarts = reason == reasonRetry, 0
+		sv.retry, sv.limitStarts = reason == reasonRetry || reason == reasonExited, 0
 	}
 	sv.outOfMemory = false
 	if sv.starts > 0 {
@@ -561,7 +569,7 @@ func (s *Supervisor) start(name, reason string) {
 	s.mu.Unlock()
 	go s.watchExit(sv, g)
 	if spec.Port > 0 {
-		go s.awaitListen(sv, g, spec.Port)
+		go s.awaitAnswer(sv, g, spec.Port, spec.HealthPath)
 	}
 }
 
@@ -604,10 +612,11 @@ func (s *Supervisor) preflight(spec Server) (string, error) {
 }
 
 // watchExit records a server whose leader exited while the supervisor held it
-// as crashed, and ends what is left of its group. A start crash, unless that
-// start was already the retry, is started once more when the window has
-// passed again and no sibling is still starting: servers that crashed racing
-// each other at start come back one at a time.
+// as crashed, and ends what is left of its group. A start crash, or an exit of
+// the preview server, unless that start was already the one more start
+// (onceMore), is started once more when the window has passed again and no
+// sibling is still starting: servers that crashed racing each other at start
+// come back one at a time.
 func (s *Supervisor) watchExit(sv *server, g *group) {
 	<-g.done
 	s.mu.Lock()
@@ -616,30 +625,31 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 		return
 	}
 	sv.g = nil
-	fwd := sv.fwd
-	sv.fwd = nil
+	fwd := s.fwd
 	sv.exit = exitOf(g.state)
 	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
 	after, ok := s.cfg.Tasks()
 	sv.taskLimit = nil
-	retry := false
+	again := ""
 	if metTaskLimit(nil, sv.tasks, after, ok && sv.tasksOK) {
 		s.limitStart(sv, after, starts)
 	} else {
-		retry = !sv.retry && sv.startCrash(s.cfg.StartWindow)
-		sv.retryPending = retry
+		again = onceMore(sv.retry, sv.startCrash(s.cfg.StartWindow), s.previewPortLocked(sv.name) != 0)
+		sv.retryPending = again != ""
 	}
 	s.mu.Unlock()
-	if fwd != nil {
-		fwd.close()
+	if fwd != nil && fwd.name == sv.name {
+		fwd.cut()
 	}
-	_ = stopGroup(g.pgid, s.cfg.Grace)
+	// The exit is recorded before what is left of the group ends: a held
+	// preview request moves on now, never a stop's grace later.
 	s.persist()
-	if retry {
-		s.logf("retry %s in %s: it crashed while starting", sv.name, s.cfg.StartWindow)
+	_ = stopGroup(g.pgid, s.cfg.Grace)
+	if again != "" {
+		s.logf("start %s once more in %s: %s", sv.name, s.cfg.StartWindow, again)
 		deadline := time.Now().Add(listenWait)
-		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline, reasonRetry) })
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline, again) })
 	}
 }
 
@@ -661,12 +671,13 @@ func (s *Supervisor) limitStart(sv *server, t Tasks, starts int) {
 }
 
 // startCrash: the server's exit came within its start window, or before its
-// port first accepted (a Maven or Gradle start can outlast any fixed window).
+// healthPath first answered (a Maven or Gradle start can outlast any fixed
+// window).
 func (sv *server) startCrash(window time.Duration) bool {
 	if sv.startedAt == nil {
 		return false
 	}
-	return sv.exit.At.Sub(*sv.startedAt) < window || (sv.spec.Port > 0 && !sv.listened)
+	return sv.exit.At.Sub(*sv.startedAt) < window || (sv.spec.Port > 0 && !sv.answered)
 }
 
 // retryStart starts a server that crashed while starting once more, or one
@@ -695,7 +706,7 @@ func (s *Supervisor) retryStart(sv *server, starts int, deadline time.Time, reas
 }
 
 // siblingStarting reports whether another server is still starting: its start
-// is under way, or its group lives and has not yet listened (one with a port)
+// is under way, or its group lives and has not yet answered (one with a port)
 // or passed its start window (one without). Callers hold mu.
 func (s *Supervisor) siblingStarting(sv *server) bool {
 	for _, o := range s.servers {
@@ -708,34 +719,73 @@ func (s *Supervisor) siblingStarting(sv *server) bool {
 		if o.g == nil || o.startedAt == nil {
 			continue
 		}
-		if (o.spec.Port > 0 && !o.listened) || (o.spec.Port == 0 && time.Since(*o.startedAt) < s.cfg.StartWindow) {
+		if (o.spec.Port > 0 && !o.answered) || (o.spec.Port == 0 && time.Since(*o.startedAt) < s.cfg.StartWindow) {
 			return true
 		}
 	}
 	return false
 }
 
-// awaitListen records starting → running once the port accepts.
-func (s *Supervisor) awaitListen(sv *server, g *group, port int) {
+// awaitAnswer records starting → running once the server's healthPath
+// answers (answers), or once the listen wait has passed without an answer:
+// from then on its status follows the port alone.
+func (s *Supervisor) awaitAnswer(sv *server, g *group, port int, path string) {
 	deadline := time.Now().Add(listenWait)
-	for time.Now().Before(deadline) {
+	for {
 		select {
 		case <-g.done:
 			return
 		default:
 		}
-		if portAccepts(port) {
-			s.mu.Lock()
-			if sv.g == g {
-				sv.listened = true
-			}
-			s.mu.Unlock()
-			s.syncPreview()
-			s.persist()
-			return
+		left := time.Until(deadline)
+		if left <= 0 {
+			s.logf("%s: %s did not answer within %s; its status follows its port from now on", sv.name, healthPathOf(path), listenWait)
+			break
 		}
-		time.Sleep(250 * time.Millisecond)
+		if answers(port, healthPathOf(path), min(answerProbeWait, left)) {
+			break
+		}
+		// A refused dial returns at once: the port has no listener yet.
+		select {
+		case <-g.done:
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
+	s.mu.Lock()
+	if sv.g == g {
+		sv.answered = true
+	}
+	s.mu.Unlock()
+	s.persist()
+}
+
+// healthPathOf is the path a health probe reads: the declared one, else /.
+func healthPathOf(path string) string {
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+// answers reports whether the server on the loopback port reacted within wait
+// to a GET of path: with the first byte of a reply, or by ending the
+// connection. A refused dial, or a wait that passed with the request held, is
+// no answer — a dev server that accepts at once and holds its first page
+// while it compiles has not answered.
+func answers(port int, path string, wait time.Duration) bool {
+	d := net.Dialer{Timeout: forwardDialTimeout}
+	c, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(wait))
+	// A write the server refused is read below as the end it is.
+	_, _ = fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUser-Agent: zcp-devsup\r\nConnection: close\r\n\r\n", path, port)
+	_, err = c.Read(make([]byte, 1))
+	var ne net.Error
+	return !errors.As(err, &ne) || !ne.Timeout()
 }
 
 func exitOf(ps *os.ProcessState) *Exit {
@@ -922,6 +972,9 @@ func (s *Supervisor) Stop(name string) error {
 	if err := s.setDesired(name, DesiredStopped); err != nil {
 		return err
 	}
+	// Stopped from now on: a held preview request moves on now, never a
+	// stop's grace later.
+	s.persist()
 	s.stopAll([]string{name})
 	s.syncWatches()
 	s.persist()
@@ -1165,6 +1218,9 @@ func (s *Supervisor) Shutdown() {
 		}
 	}
 	s.mu.Unlock()
+	// The preview port goes first (closed): a held page request ends now, and
+	// no connection reaches a server while it stops.
+	s.syncPreview()
 	s.logf("shutdown: stopping %d server(s)", len(names))
 	s.stopAll(names)
 	s.persist()
@@ -1221,15 +1277,8 @@ func (s *Supervisor) serverState(name string, sv *server, preview int) ServerSta
 		ss.Pid, ss.Pgid, ss.LeaderStart = sv.g.pgid, sv.g.pgid, sv.g.leaderStart
 		ss.RssKB = groupRSSKB(sv.g.pgid)
 	}
-	switch {
-	case sv.desired == DesiredStopped:
-		ss.Status = StatusStopped
-	case sv.starting:
-		ss.Status = StatusStarting
-	case sv.g != nil && sv.spec.Port > 0 && !portAccepts(sv.spec.Port):
-		ss.Status = StatusStarting
-	case sv.g == nil && sv.exit != nil:
-		ss.Status = StatusCrashed
+	ss.Status = sv.status()
+	if ss.Status == StatusCrashed {
 		ss.RetryPending = sv.retryPending
 		if sv.taskLimit != nil {
 			now, ok := s.cfg.Tasks()
@@ -1238,15 +1287,33 @@ func (s *Supervisor) serverState(name string, sv *server, preview int) ServerSta
 			}
 			ss.TaskLimit = &TaskLimit{Max: sv.taskLimit.Max, Current: now.Current}
 		}
-	default:
-		ss.Status = StatusRunning
 	}
 	return ss
 }
 
+// facts are the server's status facts but whether its port accepts now,
+// which only a probe answers (status).
+func (sv *server) facts() statusFacts {
+	return statusFacts{
+		desired: sv.desired, starting: sv.starting, live: sv.g != nil, port: sv.spec.Port,
+		answered: sv.answered, exited: sv.exit != nil,
+	}
+}
+
+// status derives the server's status now; it probes the port of a live group
+// whose healthPath answered, so it runs outside mu, on a copy.
+func (sv *server) status() Status {
+	f := sv.facts()
+	if f.live && f.port > 0 && f.answered {
+		f.accepts = portAccepts(f.port)
+	}
+	return deriveStatus(f)
+}
+
 // persist writes the state to state.json, all but the preview activity,
 // which lives in memory only: a file a new supervisor finds never claims
-// connections it does not hold.
+// connections it does not hold. Every change of the servers' state ends in
+// it, so it also wakes the held preview requests (changed).
 func (s *Supervisor) persist() {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -1258,6 +1325,41 @@ func (s *Supervisor) persist() {
 	if err := writeState(s.cfg.StateDir, st); err != nil {
 		s.logf("%v", err)
 	}
+	s.mu.Lock()
+	close(s.changedLocked())
+	s.changed = nil
+	s.mu.Unlock()
+}
+
+// changedLocked is the channel the next change of the servers' state closes.
+// Callers hold mu.
+func (s *Supervisor) changedLocked() chan struct{} {
+	if s.changed == nil {
+		s.changed = make(chan struct{})
+	}
+	return s.changed
+}
+
+// previewView is what the preview port answers for server name now, and the
+// channel closed at the next change of the servers' state. It never probes:
+// for a live server that answered, the forward's own dial is the probe, and
+// a refused one answers the page (forward.serve, forward.now).
+func (s *Supervisor) previewView(name string) (previewView, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := s.changedLocked()
+	sv, ok := s.servers[name]
+	if !ok {
+		return previewView{kind: previewFinal, name: name, status: StatusStopped}, changed
+	}
+	f := sv.facts()
+	f.accepts = true
+	v := previewView{name: name, status: deriveStatus(f), exit: sv.exit}
+	if sv.starts > 1 {
+		v.reason = sv.restartReason
+	}
+	v.kind = previewAnswer(v.status, sv.retryPending)
+	return v, changed
 }
 
 // stableNumber is the container's ZEROPS_StableNumber in env (the last entry
@@ -1292,74 +1394,75 @@ func (s *Supervisor) previewPortLocked(name string) int {
 }
 
 // syncPreview brings the preview forward to what the declaration says: the
-// preview server's live group, once its port has accepted, is forwarded from
-// its preview port; any other forward ends. A forward that cannot listen
-// (its port is busy) is logged and the server runs on without one. The
-// forwards it ended are waited for — their copies, a dial to the server not
-// yet finished — once fwdMu is let go, so another sync never waits on them.
+// preview server's preview port is forwarded to its port while the
+// supervisor runs, whatever the server's status — the forward answers the
+// holding page while it is not running (forward_unix.go) — and any other
+// forward ends. A forward that cannot listen (its port is busy) is logged and
+// the server runs on without one. The forward it ended is waited for — its
+// copies, a dial to the server not yet finished — once fwdMu is let go, so
+// another sync never waits on it.
 func (s *Supervisor) syncPreview() {
 	for _, f := range s.syncPreviewLocked() {
 		f.wait()
 	}
 }
 
+// previewWantLocked is the server the preview forward reaches and the port it
+// listens on, nil and 0 for none: the declaration's preview server while
+// previewForwarded. Callers hold mu.
+func (s *Supervisor) previewWantLocked() (*server, int) {
+	sv := s.servers[s.previewName]
+	if sv == nil {
+		return nil, 0
+	}
+	listen := s.previewPortLocked(s.previewName)
+	if !previewForwarded(s.closed, listen, sv.facts()) {
+		return nil, 0
+	}
+	return sv, listen
+}
+
 // syncPreviewLocked is syncPreview's work under fwdMu, answering the forwards
-// it shut. The listens stay under the lock with the shuts: every forward
-// takes the one preview port, so two syncs must never both open a server's
-// forward, nor open one while an ended one still listens there — a shut and
-// a listen return at once, unlike the wait that follows a shut.
+// it shut. The listen stays under the lock with the shut: a forward takes the
+// one preview port, so two syncs must never both open one, nor open one while
+// an ended one still listens there — a shut and a listen return at once,
+// unlike the wait that follows a shut.
 func (s *Supervisor) syncPreviewLocked() []*forward {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
-	type open struct {
-		sv           *server
-		g            *group
-		listen, port int
-		seen         *previewSeen
-	}
-	var stale []*forward
-	var opens []open
 	s.mu.Lock()
-	for name, sv := range s.servers {
-		want := 0
-		if sv.g != nil && sv.listened && sv.spec.Port > 0 {
-			want = s.previewPortLocked(name)
+	sv, listen := s.previewWantLocked()
+	var stale *forward
+	if f := s.fwd; f != nil && (sv == nil || f.name != sv.name || f.listenPort != listen || f.targetPort != sv.spec.Port) {
+		stale, s.fwd = f, nil
+	}
+	open := sv != nil && s.fwd == nil
+	var name string
+	var target int
+	var seen *previewSeen
+	if open {
+		if sv.preview == nil {
+			sv.preview = &previewSeen{}
 		}
-		if sv.fwd != nil && (want == 0 || sv.fwd.listenPort != want || sv.fwd.targetPort != sv.spec.Port) {
-			stale = append(stale, sv.fwd)
-			sv.fwd = nil
-		}
-		if want > 0 && sv.fwd == nil {
-			if sv.preview == nil {
-				sv.preview = &previewSeen{}
-			}
-			opens = append(opens, open{sv, sv.g, want, sv.spec.Port, sv.preview})
-		}
+		name, target, seen = sv.name, sv.spec.Port, sv.preview
 	}
 	s.mu.Unlock()
-	for _, f := range stale {
-		f.shut()
+	var ended []*forward
+	if stale != nil {
+		stale.shut()
+		ended = append(ended, stale)
 	}
-	ended := stale
-	for _, o := range opens {
-		f, err := openForward(o.listen, o.port, o.seen)
-		if err != nil {
-			s.logf("preview %s: cannot listen on :%d: %v", o.sv.name, o.listen, err)
-			continue
-		}
-		s.mu.Lock()
-		// The group may have ended, or been replaced, while the port opened.
-		keep := o.sv.g == o.g && o.sv.fwd == nil
-		if keep {
-			o.sv.fwd = f
-		}
-		s.mu.Unlock()
-		if !keep {
-			f.shut()
-			ended = append(ended, f)
-			continue
-		}
-		s.logf("preview %s: :%d -> 127.0.0.1:%d", o.sv.name, o.listen, o.port)
+	if !open {
+		return ended
 	}
+	f, err := openForward(name, listen, target, seen, func() (previewView, <-chan struct{}) { return s.previewView(name) })
+	if err != nil {
+		s.logf("preview %s: cannot listen on :%d: %v", name, listen, err)
+		return ended
+	}
+	s.mu.Lock()
+	s.fwd = f
+	s.mu.Unlock()
+	s.logf("preview %s: :%d -> 127.0.0.1:%d", name, listen, target)
 	return ended
 }

@@ -765,9 +765,11 @@ func firstLine(s string) string {
 // leasePreviewCheck asks the preview URL of server s from outside — the
 // pool's subdomain on its preview port, at its health path — patiently, as a
 // dev server's first compile is given — then opens it in the browser, failing
-// a page that renders nothing and throws; ok is false when there is nothing to
-// ask: no probe, no preview port, a server not running or starting, or no
-// preview URL (the pool's subdomain off).
+// a page that renders nothing and throws. A starting server is not asked: its
+// healthPath has not answered, so the preview port answers its holding page
+// (503), which says nothing of the code; the check says so, advisory. ok is
+// false when there is nothing to ask: no probe, no preview port, a server not
+// running or starting, or no preview URL (the pool's subdomain off).
 func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, alias, pool string, s devsup.Server, st devsup.ServerState) (CheckResult, bool) {
 	if preview.Client == nil || preview.HTTP == nil || st.PreviewPort <= 0 {
 		return CheckResult{}, false
@@ -780,6 +782,13 @@ func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, alias, po
 		return CheckResult{}, false
 	}
 	probeURL := url + probePath(s.HealthPath)
+	if st.Status == devsup.StatusStarting {
+		return CheckResult{
+			Name: checkNameLeasePreview, Status: CheckInfo, URL: probeURL, Server: s.Name, Port: st.PreviewPort,
+			Detail: fmt.Sprintf("not asked: %s is still starting (its %s has not answered yet), so its preview URL shows the page that waits for it — no verdict on the code. Verify again once zerops_dev_server action=status hostname=%q name=%q says running",
+				s.Name, probePath(s.HealthPath), alias, s.Name),
+		}, true
+	}
 	check := newHTTPProbe(preview.HTTP, true).probe(ctx, probeURL, checkNameLeasePreview)
 	check.URL, check.Server, check.Port = probeURL, s.Name, st.PreviewPort
 	if check.Status == CheckPass {

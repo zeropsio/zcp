@@ -948,7 +948,7 @@ func JudgeServer(server devsup.ServerState, ok bool) ServerVerdict {
 	case server.TaskLimit != nil:
 		verdict.Phrase = fmt.Sprintf("crashed (%s): %s", exitText(server.Exit), TaskLimitNote(*server.TaskLimit, server.RetryPending))
 	case server.RetryPending:
-		verdict.Phrase = fmt.Sprintf("crashed while starting (%s); %s", exitText(server.Exit), RetryPendingNote)
+		verdict.Phrase = fmt.Sprintf("crashed (%s); %s", exitText(server.Exit), RetryPendingNote)
 	case server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy:
 		verdict.Phrase = "could not start: its port stayed busy"
 	default:
@@ -974,8 +974,8 @@ func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, n
 	}
 	switch {
 	case heapLimit && verdict.Unsettled:
-		result.Message = fmt.Sprintf("Dev server %s crashed while starting (%s). %s %s",
-			label, exitText(server.Exit), heapLimitFix, RecheckSentence(result.Hostname, name, []string{name}))
+		result.Message = fmt.Sprintf("Dev server %s crashed (%s); %s. %s %s",
+			label, exitText(server.Exit), RetryPendingNote, heapLimitFix, RecheckSentence(result.Hostname, name, []string{name}))
 	case heapLimit:
 		result.Message = fmt.Sprintf("Dev server %s crashed (%s); the supervisor leaves it down. %s",
 			label, exitText(server.Exit), heapLimitFix)

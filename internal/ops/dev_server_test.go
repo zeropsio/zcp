@@ -483,7 +483,7 @@ func TestDevServer_ARestartThatCrashedWithItsOneMoreStartPendingSaysItComesBack(
 
 	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
 
-	want := `Dev server api on appdev crashed while starting (exit 1); the supervisor starts it once more after its siblings settle. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+	want := `Dev server api on appdev crashed (exit 1); the supervisor starts it once more after its siblings settle. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
 	if result.Reason != reasonCrashed || !strings.Contains(result.Message, want) {
 		t.Errorf("result = %+v, want reason crashed and message containing %q", result, want)
 	}

@@ -29,10 +29,11 @@ const (
 	// StatusCrashed: desired running, no live group, an exit recorded. It
 	// stays down for the rest of this container's life unless started.
 	StatusCrashed Status = "crashed"
-	// StatusStarting: a start is under way, or the group lives and its port
-	// does not accept TCP yet.
+	// StatusStarting: a start is under way; the group lives and its port
+	// does not accept TCP or its healthPath has not answered yet; or no group
+	// lives and no exit is recorded — a start about to begin, a stop under way.
 	StatusStarting Status = "starting"
-	// StatusRunning: everything else.
+	// StatusRunning: a live group, answered and accepting when it has a port.
 	StatusRunning Status = "running"
 )
 
@@ -83,8 +84,9 @@ type ServerState struct {
 	// stopped restarting it on watched changes.
 	LastRestartReason string `json:"lastRestartReason,omitempty"`
 	Exit              *Exit  `json:"exit"`
-	// RetryPending: the server crashed while starting and the supervisor
-	// starts it once more after its siblings settle; set only while crashed.
+	// RetryPending: the server crashed while starting, or the preview server
+	// exited after it answered, and the supervisor starts it once more after
+	// its siblings settle; set only while crashed.
 	RetryPending bool `json:"retryPending,omitempty"`
 	// TaskLimit: the server crashed, or its start was refused, because the
 	// service's task limit was reached; set only while crashed. RetryPending
@@ -109,6 +111,64 @@ type ServerState struct {
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`
 }
+
+// statusFacts are what a server's status is derived from (deriveStatus).
+type statusFacts struct {
+	desired Desired
+	// starting: a start is under way; live: a process group runs.
+	starting, live bool
+	// port is the declared port, 0 for none; accepts: it accepts TCP now,
+	// read only for a live group whose healthPath answered.
+	port    int
+	accepts bool
+	// answered: this start's healthPath answered once, or the listen wait
+	// passed without an answer.
+	answered bool
+	// exited: an exit is recorded.
+	exited bool
+}
+
+// deriveStatus is a server's status, the one derivation zcp and Mate read: a
+// live server with a port runs once its healthPath has answered and while its
+// port accepts — a dev server that accepts at once and compiles its first page
+// for a minute is starting, and the preview port holds its page meanwhile. A
+// server runs only while a group of it lives: one with none and no exit is
+// about to start, or is being stopped, and never runs — the preview port
+// would send its page's reload to a port nothing listens on.
+func deriveStatus(f statusFacts) Status {
+	switch {
+	case f.desired == DesiredStopped:
+		return StatusStopped
+	case f.starting:
+		return StatusStarting
+	case !f.live && f.exited:
+		return StatusCrashed
+	case !f.live:
+		return StatusStarting
+	case f.port > 0 && (!f.answered || !f.accepts):
+		return StatusStarting
+	}
+	return StatusRunning
+}
+
+// Restart reasons that name no path.
+const (
+	reasonRetry   = "it crashed within its start window"
+	reasonAsked   = "a restart was asked for"
+	reasonStart   = "a start was asked for"
+	reasonDecl    = "its declaration changed"
+	reasonBoot    = "the supervisor started again"
+	reasonRunSpec = "its run entry changed"
+	// reasonEnv: `ctl env` changed the overlay the server's group started
+	// under (docs/spec-mate.md §2.8a.2).
+	reasonEnv = "env changed"
+	// reasonLimit marks a start after the task limit was met; the recorded
+	// reason is limitReason.
+	reasonLimit = "task limit"
+	// reasonExited: the preview server exited on its own after it answered,
+	// and is started once more (onceMore).
+	reasonExited = "it exited on its own after it started"
+)
 
 // SupervisorInfo identifies the running supervisor.
 type SupervisorInfo struct {

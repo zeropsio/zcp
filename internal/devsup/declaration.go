@@ -37,11 +37,19 @@ const CapabilityEnv = "env"
 // the preview server's port: previewLastConnAt and previewOpenConns.
 const CapabilityActivity = "activity"
 
+// CapabilityHold names the preview port that answers whatever its server's
+// status: the holding page while the preview server is not running, its held
+// request on HoldPath, and `running` once the server's healthPath answered.
+// A client that sees it leaves saying starting, stopped or restarting to the
+// page.
+const CapabilityHold = "hold"
+
 // Capabilities lists the ctl verbs, flags and answer fields this supervisor
-// has that an older one lacks; `ctl version` reports them. An older ctl fails
-// on a verb or flag it does not know, so zcp sends one only to a supervisor
-// that lists it, and reads such a field only from one that lists it.
-var Capabilities = []string{CapabilityEnv, CapabilityActivity}
+// has that an older one lacks, and the behaviours a client reads off it;
+// `ctl version` reports them. An older ctl fails on a verb or flag it does
+// not know, so zcp sends one only to a supervisor that lists it, and reads
+// such a field only from one that lists it.
+var Capabilities = []string{CapabilityEnv, CapabilityActivity, CapabilityHold}
 
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.
@@ -82,7 +90,8 @@ type Declaration struct {
 
 // Server is one named dev server: the shell command, its working directory
 // relative to the repo root, the port it listens on (0 when it has none), the
-// HTTP path its health probe reads on that port (absent: /), the paths whose
+// HTTP path its health probe reads on that port (absent: /; the supervisor
+// counts the server running once it answers there), the paths whose
 // change restarts it, the dev service that runs it (variant B) and whether it
 // starts before anyone asks (absent: it does). Preview marks the server the
 // preview port reaches when several have a port (PreviewServer).

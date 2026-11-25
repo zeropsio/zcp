@@ -405,7 +405,7 @@ func TestDeployNextActions_AServerThatCrashedWhileStartingWithItsOneMoreStartPen
 
 	for _, want := range []string{
 		"gateway running",
-		"vets crashed while starting (exit 1); the supervisor starts it once more after its siblings settle",
+		"vets crashed (exit 1); the supervisor starts it once more after its siblings settle",
 		`Check vets again in about 30 s with zerops_dev_server action=status hostname="petclinicdev".`,
 		"zerops_verify",
 	} {

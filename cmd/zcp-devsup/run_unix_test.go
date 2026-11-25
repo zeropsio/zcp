@@ -274,7 +274,7 @@ func TestCtl_VersionNamesCapabilities(t *testing.T) {
 	var got struct {
 		Capabilities []string `json:"capabilities"`
 	}
-	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !reflect.DeepEqual(got.Capabilities, []string{"env", "activity"}) {
+	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !reflect.DeepEqual(got.Capabilities, []string{"env", "activity", "hold"}) {
 		t.Fatalf("exit %d out %q", code, out)
 	}
 }
