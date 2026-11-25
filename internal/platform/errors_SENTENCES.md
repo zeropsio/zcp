@@ -17,3 +17,5 @@ E9 — HQ not serving (no answer, 5xx, 429) is unreachable, and HQ's other no (a
 E10 — A platform call whose connection ended mid-answer (EOF, unexpected EOF) is unreachable, so a wait waits on it.
 E11 — A platform call whose TLS handshake timed out is unreachable, so a wait waits on it.
 E12 — zcp's own refusal of its input (a PlatformError the API did not answer) is not called refused: only the API's own 4xx is.
+
+E13 — A refusal of the platform that names fields keeps them in its words: each field and its reason follow the message. Breaks: "Invalid parameter provided." alone reaches the agent and the person, who cannot tell what to change.

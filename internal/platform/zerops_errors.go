@@ -250,6 +250,34 @@ func flattenAPIMetaPairs(meta []APIMetaItem) []apiMetaPair {
 	return out
 }
 
+// APIMetaWords renders the platform's field-level reasons in their stable order.
+func APIMetaWords(meta []APIMetaItem) string {
+	pairs := flattenAPIMetaPairs(meta)
+	if len(pairs) > maxAPIMetaInlineFields {
+		return fmt.Sprintf("%d fields", len(pairs))
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		word := pair.field
+		if reason := strings.Join(pair.reasons, "; "); reason != "" {
+			word += ": " + reason
+		}
+		parts = append(parts, word)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// WordsOf preserves a wrapped error's words and any fields the platform named.
+func WordsOf(err error) string {
+	var pe *PlatformError
+	if errors.As(err, &pe) {
+		if words := APIMetaWords(pe.APIMeta); words != "" {
+			return err.Error() + " (" + words + ")"
+		}
+	}
+	return err.Error()
+}
+
 // decodeAPIMetaJSON is the JSON-bytes entrypoint used by per-service error
 // mapping (zerops_search.go). The import endpoint's `ErrorObject.Meta` is
 // `JsonRawMessage` rather than `any`; unmarshal first, then share

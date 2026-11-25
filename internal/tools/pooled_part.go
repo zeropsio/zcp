@@ -620,7 +620,11 @@ func (b *pooledBirth) importParts(ctx context.Context, parts []pooledPlanPart) e
 	if len(result.ServiceErrors) > 0 {
 		said := make([]string, 0, len(result.ServiceErrors))
 		for _, e := range result.ServiceErrors {
-			said = append(said, fmt.Sprintf("%s: %s (%s)", e.Service, e.Message, e.Code))
+			message := e.Message
+			if words := platform.APIMetaWords(e.Meta); words != "" {
+				message += " (" + words + ")"
+			}
+			said = append(said, fmt.Sprintf("%s: %s (%s)", e.Service, message, e.Code))
 		}
 		return platform.NewPlatformError(platform.ErrInvalidImportYml,
 			fmt.Sprintf("The platform refused the import of %s: %s.", strings.Join(names, ", "), strings.Join(said, "; ")),

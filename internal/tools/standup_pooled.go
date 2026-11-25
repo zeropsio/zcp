@@ -321,14 +321,14 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 
 	scratch, err := hqc.OpenScratch(ctx, sp.appID(), sp.pair.RepoName)
 	if err != nil {
-		failAll(platform.ClassOf(err), fmt.Sprintf("could not open %s in HQ: %v", sp.repository, err))
+		failAll(platform.ClassOf(err), fmt.Sprintf("could not open %s in HQ: %s", sp.repository, platform.WordsOf(err)))
 		return "", false, ""
 	}
 	defer scratch.Close()
 	commit, found, err := scratch.FetchTip(ctx, hqBase)
 	switch {
 	case err != nil:
-		failAll(platform.ClassOf(err), fmt.Sprintf("could not read %s's %s from HQ: %v", sp.repository, hqBase, err))
+		failAll(platform.ClassOf(err), fmt.Sprintf("could not read %s's %s from HQ: %s", sp.repository, hqBase, platform.WordsOf(err)))
 		return "", false, ""
 	case !found:
 		failAll(platform.ClassRefused, fmt.Sprintf("%s has no %s branch in HQ", sp.repository, hqBase))
@@ -336,7 +336,7 @@ func (d standupDeps) buildPooledPair(ctx context.Context, hqc hq.Client, sp *sta
 	}
 	lacks, err := poolSetupLacks(ctx, scratch, commit, sp, live)
 	if err != nil {
-		failAll(classOr(err), fmt.Sprintf("%s at %s: %v", sp.repository, shortCommit(commit), err))
+		failAll(classOr(err), fmt.Sprintf("%s at %s: %s", sp.repository, shortCommit(commit), platform.WordsOf(err)))
 		return "", false, ""
 	}
 	if len(lacks) > 0 {
@@ -430,7 +430,7 @@ func (d standupDeps) commitDeployOne(ctx context.Context, sp *standupPair, s poo
 	})
 	if err != nil {
 		rows.set(s.host, func(in *ops.StandupRowInput) {
-			in.Class, in.Cause = platform.ClassOf(err), fmt.Sprintf("the commit deploy of %s into %s did not start: %v", shortCommit(commit), s.host, err)
+			in.Class, in.Cause = platform.ClassOf(err), fmt.Sprintf("the commit deploy of %s into %s did not start: %s", shortCommit(commit), s.host, platform.WordsOf(err))
 		})
 		return false, ""
 	}
@@ -537,7 +537,7 @@ func (d standupDeps) waitBuild(ctx context.Context, host, serviceID string, res 
 			return "", false // the run was stopped: its end says so (endBuilding)
 		case err != nil:
 			rows.set(host, func(in *ops.StandupRowInput) {
-				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %v", host, err)
+				in.Class, in.Cause = classOr(err), fmt.Sprintf("waiting on %s's build failed: %s", host, platform.WordsOf(err))
 			})
 			return "", false
 		case waited.TimedOut:
@@ -570,7 +570,7 @@ func (d standupDeps) confirmBearer(ctx context.Context, pool string, rows *stand
 			in.BearerResolves = err == nil && bearer != ""
 			switch {
 			case err != nil:
-				in.Class, in.Cause = classOr(err), err.Error()
+				in.Class, in.Cause = classOr(err), platform.WordsOf(err)
 			case pending && last:
 				in.Class = platform.ClassUnreachable
 				in.Cause = "still literal after " + pool + "'s build"

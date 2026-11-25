@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -93,5 +94,33 @@ func TestErrorClass_E12_ZcpsOwnRefusalIsNotCalledRefused(t *testing.T) {
 	err := NewPlatformError(ErrAdoptTargetBusy, "appdev is being adopted by another session", "Wait for it to finish")
 	if c := ClassOf(err); c != "" {
 		t.Fatalf("ClassOf = %q, want unclassified", c)
+	}
+}
+
+// witness: internal/platform/zerops_errors.go | return err.Error() + " (" + words + ")" → return err.Error()
+func TestErrorClass_E13_ARefusalKeepsTheFieldsItNamed(t *testing.T) {
+	t.Parallel()
+	refusal := &PlatformError{Code: ErrInvalidZeropsYml, Message: "Invalid parameter provided.", APIMeta: []APIMetaItem{{
+		Metadata: map[string][]string{"build.base": {"unknown base alpine/static@1.0"}, "build.os": {""}},
+	}}}
+	many := &PlatformError{Message: "Invalid.", APIMeta: []APIMetaItem{{Metadata: map[string][]string{
+		"a": {"x"}, "b": {"x"}, "c": {"x"}, "d": {"x"}, "e": {"x"}, "f": {"x"}, "g": {"x"},
+	}}}}
+	plain := fmt.Errorf("unavailable")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"fields", fmt.Errorf("x: %w", refusal), "x: Invalid parameter provided. (build.base: unknown base alpine/static@1.0; build.os)"},
+		{"no meta", plain, "unavailable"},
+		{"many fields", many, "Invalid. (7 fields)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := WordsOf(tc.err); got != tc.want {
+				t.Errorf("WordsOf = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
