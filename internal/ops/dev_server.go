@@ -417,14 +417,8 @@ func executeDevServer(ctx context.Context, ssh SSHDeployer, client platform.Clie
 	if errors.As(err, &unresponsive) {
 		return unresponsiveResult(action, p.Hostname, unresponsive), nil
 	}
-	if errors.As(err, &noSup) {
-		if p.lease != nil {
-			return leaseNoSupervisorResult(action, *p.lease, noSup.Installed, why), nil
-		}
-		return noSupervisorResult(action, p.Hostname), nil
-	}
 	if err != nil {
-		return nil, err
+		return devServerActionError(action, p.Hostname, p.lease, why, err)
 	}
 	for _, name := range dropped {
 		if result.Message != "" {
@@ -449,6 +443,18 @@ func executeDevServer(ctx context.Context, ssh SSHDeployer, client platform.Clie
 		result.applyLease(*p.lease)
 	}
 	return result, nil
+}
+
+// devServerActionError reports a missing supervisor on status and leaves other action errors to their callers.
+func devServerActionError(operation, hostname string, lease *LeaseTargetInfo, why string, err error) (*DevServerResult, error) {
+	var noSup *NoSupervisorError
+	if operation == devServerActionStatus && errors.As(err, &noSup) {
+		if lease != nil {
+			return leaseNoSupervisorResult(operation, *lease, noSup.Installed, why), nil
+		}
+		return noSupervisorResult(operation, hostname), nil
+	}
+	return nil, err
 }
 
 // dropUndeclared has the supervisor re-read the declaration when it still runs

@@ -5,6 +5,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -13,6 +14,52 @@ import (
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 )
+
+// witness: internal/ops/dev_server.go | operation == devServerActionStatus → operation != devServerActionStatus
+func TestDevServer_DSActionNoSup_SupervisorLossKeepsTheActionError(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, action, hostname string
+		lease                  *LeaseTargetInfo
+		wrapped                bool
+		wantResult             bool
+	}{
+		{"service status", "status", "appdev", nil, true, true},
+		{"service start", "start", "appdev", nil, false, false},
+		{"service start after wait", "start", "appdev", nil, true, false},
+		{"service restart", "restart", "appdev", nil, false, false},
+		{"service stop", "stop", "appdev", nil, false, false},
+		{"service logs", "logs", "appdev", nil, false, false},
+		{"lease status", "status", "devpool-3", &LeaseTargetInfo{Alias: "devpool-3", Pool: "devpool"}, true, true},
+		{"lease start", "start", "devpool-3", &LeaseTargetInfo{Alias: "devpool-3", Pool: "devpool"}, false, false},
+		{"lease restart", "restart", "devpool-3", &LeaseTargetInfo{Alias: "devpool-3", Pool: "devpool"}, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var input error = &NoSupervisorError{Hostname: tt.hostname, Installed: true}
+			if tt.wrapped {
+				input = fmt.Errorf("read dev server after wait: %w", input)
+			}
+			result, err := devServerActionError(tt.action, tt.hostname, tt.lease, "", input)
+			if !tt.wantResult {
+				var noSup *NoSupervisorError
+				if result != nil || !errors.As(err, &noSup) || err != input {
+					t.Errorf("result/error = %+v/%v, want the original missing-supervisor error", result, err)
+				}
+				return
+			}
+			if err != nil || result == nil {
+				t.Fatalf("result/error = %+v/%v, want a status result", result, err)
+			}
+			if result.Reason != "no_supervisor" || result.Action != "status" || result.Hostname != tt.hostname {
+				t.Errorf("status result = %+v, want no_supervisor for %s", result, tt.hostname)
+			}
+			if tt.lease != nil && result.Pool != "devpool" {
+				t.Errorf("pool = %q, want devpool", result.Pool)
+			}
+		})
+	}
+}
 
 // DS-STARTING — A start, restart or status of a server the supervisor reports starting with its start under way or its port still awaited answers `starting` with when to read it again, never a failed start, so an agent waits for a dev server that compiles for 90 s instead of restarting it.
 // witness: internal/ops/dev_server.go | case devsup.StartLaunching, devsup.StartAwaitingPort: → case devsup.StartLaunching:

@@ -1927,6 +1927,9 @@ supervisor without `start-phase`, is probed as a running server and answered by 
 (`TestDevServer_DSStarting_AnsweredStartingWithARecheck`, `TestDevServer_DSStalled_ToFixNotToWaitFor`,
 `TestDevServer_DSPortElsewhere_NamesThePortsItListensOn`, `TestDevServer_DSListened_ProbedNotWaitedFor`).
 Mate shows `starting` as a start in progress, never as a failed step.
+After the initial supervisor read succeeds, a waited status whose wait and fallback status both
+find no supervisor answers `no_supervisor`. A later missing-supervisor error from start, restart,
+stop or logs stays with that action's caller (`TestDevServer_DSActionNoSup_SupervisorLossKeepsTheActionError`).
 
 **What the log gained.** A status that reports one server, of a supervisor listing `logs-since`,
 carries `newLog: {errors?, tail, omitted?}`: the lines the server's current run (from its last
