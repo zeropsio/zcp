@@ -90,6 +90,10 @@ jobs:
     needs: knowledge
     if: needs.knowledge.outputs.reused != 'true'
     runs-on: ubuntu-22.04
+    env:
+      LINTER_VERSION: v2.8.0
+      # Go module checksum from sum.golang.org; update it with the version.
+      LINTER_MODULE_SUM: wJnr3hJWY3eVzOUcfwbDc2qbi2RDEpvLmQeNFaPSNYA=
     steps:
       - uses: actions/checkout@v5
         with:
@@ -97,6 +101,7 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-go@v6
+        id: go
         with:
           go-version-file: "go.mod"
 
@@ -105,12 +110,39 @@ jobs:
           artifact: ${{ needs.knowledge.outputs.artifact }}
           digest: ${{ needs.knowledge.outputs.digest }}
 
-      - uses: golangci/golangci-lint-action@v9
+      - name: Restore golangci-lint binary
+        id: lint-binary
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          version: v2.8.0
+          path: ${{ runner.temp }}/golangci-bin/golangci-lint
+          key: golangci-bin-${{ runner.os }}-${{ runner.arch }}-${{ env.LINTER_VERSION }}-${{ env.LINTER_MODULE_SUM }}-${{ steps.go.outputs.go-version }}
+
+      - name: Set golangci-lint paths
+        run: |
+          echo "$RUNNER_TEMP/golangci-bin" >> "$GITHUB_PATH"
+          echo "GOLANGCI_LINT_CACHE=$HOME/.cache/golangci-lint" >> "$GITHUB_ENV"
+
+      # GitHub caches are immutable: save each commit and restore the newest compatible cache.
+      - name: Restore golangci-lint analysis
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-analysis-${{ runner.os }}-${{ runner.arch }}-${{ env.LINTER_VERSION }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', '.golangci.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            golangci-analysis-${{ runner.os }}-${{ runner.arch }}-${{ env.LINTER_VERSION }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', '.golangci.yaml') }}-
+
+      - uses: golangci/golangci-lint-action@v9
+        env:
+          GOBIN: ${{ runner.temp }}/golangci-bin
+        with:
+          version: ${{ env.LINTER_VERSION }}
           # Built from the Go module proxy: the action's default download from GitHub releases
           # answers 504 whenever GitHub's release downloads do, which fails the job for no code reason.
-          install-mode: goinstall
+          install-mode: ${{ steps.lint-binary.outputs.cache-hit == 'true' && 'none' || 'goinstall' }}
+          # The per-commit cache above replaces the action's immutable seven-day cache.
+          skip-cache: true
           # Skip the action's online `config verify` step: it fetches the
           # golangci JSON schema from golangci-lint.run, which times out on
           # runner network blips and fails the whole job (nothing to do with
