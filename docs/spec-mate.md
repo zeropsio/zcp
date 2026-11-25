@@ -70,6 +70,7 @@ Every fact has one owner and one path to the client:
 | live platform observations                             | native platform websocket plus direct bootstrap/repair, user token                         | shared client read model                                                                                            |
 | what the platform is doing now                         | Zerops API, user token                                                                     | client overlay                                                                                                      |
 | where the agent is in the workflow                     | the envelope in a tool result                                                              | mate server reducer → lifecycle feed (§1)                                                                           |
+| where the work stands, for an agent starting a turn | zcp, one read (`zcp where`, §2.8c) | mate server → in front of the run's message, for the agent only |
 | which services are mounted                             | the container's mount table                                                                | mate server (§6.1)                                                                                                  |
 | agent sign-in                                          | the agent CLI's own status + the platform flag                                             | mate server (§8)                                                                                                    |
 | thread state                                           | mate server, `~/.t3`                                                                       | mate server                                                                                                         |
@@ -88,7 +89,8 @@ Touchpoints between mate and zcp, closed list:
   console serve`, the loopback data console the mate server hosts and brokers (§5.7), `zcp version`,
   `zcp lease acquire` (a crew writer's copy, `docs/spec-workflows.md` §8 DP-39),
   `zcp lease release --lease-id <id> --json` (a crew writer's copy at removal, DP-40, gated on the first zcp release with it),
-  `zcp lease release --branch` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35) and
+  `zcp lease release --branch` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35),
+  `zcp where` (at a run's start, §2.8c, gated on `zcp version` ≥ 9.275.0), and
   `zcp self restart` (§2.9 step 7, MU-4), and `zcp git <host> ls-remote` for a checkout's remote
   health, run in the Mate's container, never by git in the dev service (§6.8); the agent sign-in flag it writes through the Zerops API
   (§8.1);
@@ -110,7 +112,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | The Mate server spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0), `lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json` (DP-39: a crew writer's copy, at Apply, gated on `zcp version` ≥ the first release with it), `lease release --lease-id <id> --json` (DP-40: a crew writer's copy at its removal, gated on the first zcp release with it), and `self restart --json` (§2.9 step 7, MU-4: once the Mate has drained, gated on `zcp version` ≥ 9.226.0). mate lint rule `t3code/zcp-verb-list`. |
+| MA-6 | The Mate server spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2), `studio console serve`, `version`, `lease release --branch <branch> [--repo <repo URL>] --json` (`docs/spec-workflows.md` §8 DP-35: on a conversation's archive, never `--force`, gated on `zcp version` ≥ 9.223.0), `lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json` (DP-39: a crew writer's copy, at Apply, gated on `zcp version` ≥ the first release with it), `lease release --lease-id <id> --json` (DP-40: a crew writer's copy at its removal, gated on the first zcp release with it), `where [--lease <alias>] --json` (§2.8c: at a run's start, gated on `zcp version` ≥ 9.275.0, the first release that refuses an unknown verb instead of starting the MCP server), and `self restart --json` (§2.9 step 7, MU-4: once the Mate has drained, gated on `zcp version` ≥ 9.226.0). mate lint rule `t3code/zcp-verb-list`. |
 | MA-7 | The Mate server sends `ZCP_API_KEY` only to HQ, in the first frame of its link, and to Zerops for project and organisation reads and flag writes (§3.13, §8.1); it never forwards it anywhere else. |
 
 ## 1. Envelope on the wire
@@ -2428,6 +2430,17 @@ file's version stays 1, and the verdict is a field an older reader ignores.
 Before any commit deploy the stand-up checks that `main` holds each pooled part's pool setup with the one setup check
 (`ops.CheckPoolSetups` over `main`'s zerops.yaml and `.zcp/dev-servers.json`, read from HQ); a miss fails the part's
 unbuilt rows `refused` with the check's words, and a pool or stage that has a build is never checked.
+
+### 2.8c Where the work stands — `zcp where`
+
+| ID | Contract |
+|---|---|
+| W-1 | `zcp where` accepts `--lease <alias>` and `--json` and runs inside the project's zcp container, with or without a Mate. With `--json`, success exits 0 with the last stdout line `{"where":"<text>","readAt":"<RFC 3339 UTC>","tookMs":<n>}`; a failure before any fact is read exits 1 with `{"error":"<words>"}`. Without it, success prints the text alone; failure exits 1 with the error on stderr. An unknown lease alias marks no copy and is not an error. |
+| W-2 | Empty when nothing is named; otherwise the first line is `Where the work stands, read by zcp at <readAt>. A tool result you received after that is newer.` Working copies follow, the named lease first and marked `(this conversation's)`, then other leases by alias and non-pool dev halves by hostname. Each line names its part, branch, unsaved work, change and each dev server with its status and URL. Stages follow by hostname with their part and active version name verbatim, or `runs no deployed version`; then open changes whose branch no copy holds. Unread facts say `not read` with why. At most 1024 UTF-8 bytes: whole lines drop from the end, never the first or named copy's line, and the last line is `<n> more lines: zerops_workflow action="status" lists them.` |
+| W-3 | Reads are read-only: no container is started, nothing is acquired, released or deployed, and zcp state is not written. |
+| W-4 | Reads share a 3 s deadline and are not retried. A failed or unanswered fact says `not read` and why; other facts remain in the answer. |
+| W-5 | At the start of each run that sends a message, never for a maintenance run or slash command, the Mate server asks once, passing the conversation's bound lease alias with `--lease`, and waits at most 5 s. It places `where` verbatim between `<zerops-where>` and `</zerops-where>` in front of the run's message and never parses it. Empty text, an error, exit 2, a missing zcp or no answer in time adds nothing and the run starts. |
+| W-6 | Nothing in zcp calls `where`; tool answers, envelopes, AGENTS.md blocks, atoms and status text are unchanged. |
 
 ---
 
