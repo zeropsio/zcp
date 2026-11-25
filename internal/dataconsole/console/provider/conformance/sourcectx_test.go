@@ -2,7 +2,6 @@ package conformance
 
 import (
 	"os"
-	"runtime"
 	"testing"
 )
 
@@ -18,11 +17,7 @@ import (
 // genuinely missing input inside a present repo still fails loudly.
 func requireSourceTree(t *testing.T) {
 	t.Helper()
-	_, self, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Skip("source context unavailable (no caller info) — repo-context lint")
-	}
-	if _, err := os.Stat(self); err != nil {
+	if _, err := os.Stat("sourcectx_test.go"); err != nil {
 		t.Skipf("conformance source tree not present (%v) — repo-context lint, skipped in compiled-binary runs", err)
 	}
 }

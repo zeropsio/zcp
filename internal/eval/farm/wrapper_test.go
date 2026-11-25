@@ -66,17 +66,10 @@ func requireShAndCurl(t *testing.T) {
 	}
 }
 
-// wrapperScriptPath locates eval/farm/wrapper.sh relative to this test
-// file's own path, independent of the test binary's working directory.
+// wrapperScriptPath locates eval/farm/wrapper.sh from the package directory.
 func wrapperScriptPath(t *testing.T) string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller(0): not ok")
-	}
-	// internal/eval/farm/wrapper_test.go -> repo root is three levels up.
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	path := filepath.Join(root, "eval", "farm", "wrapper.sh")
+	path := filepath.Join(farmRepoRoot(t), "eval", "farm", "wrapper.sh")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("eval/farm/wrapper.sh: %v", err)
 	}
@@ -354,7 +347,7 @@ func (h *wrapperHarness) start(t *testing.T, overrides map[string]string) *exec.
 	// supervisor holding the test binary open.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, "sh", h.scriptPath) //nolint:gosec // h.scriptPath is this repo's own eval/farm/wrapper.sh, located via runtime.Caller, never external/user input
+	cmd := exec.CommandContext(ctx, "sh", h.scriptPath) //nolint:gosec // h.scriptPath is this repo's own eval/farm/wrapper.sh, never external/user input
 	cmd.Env = h.env(overrides)
 	var out strings.Builder
 	cmd.Stdout = &out

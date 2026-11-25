@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,23 +34,10 @@ func requireShAndPython3(t *testing.T) {
 	}
 }
 
-// consoleDeployTestDir locates this test file's own directory, independent
-// of the test binary's working directory.
-func consoleDeployTestDir(t *testing.T) string {
+// farmRepoRoot resolves the repo root from the package's working directory.
+func farmRepoRoot(t *testing.T) string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller(0): not ok")
-	}
-	return filepath.Dir(thisFile)
-}
-
-// consoleDeployRepoRoot resolves the repo root three levels up from
-// internal/eval/farm, the same computation wrapperScriptPath uses.
-func consoleDeployRepoRoot(t *testing.T) string {
-	t.Helper()
-	root := filepath.Join(consoleDeployTestDir(t), "..", "..", "..")
-	abs, err := filepath.Abs(root)
+	abs, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatalf("abs repo root: %v", err)
 	}
@@ -61,7 +47,7 @@ func consoleDeployRepoRoot(t *testing.T) string {
 // consoleDeployScriptPath locates eval/farm/console/deploy.sh.
 func consoleDeployScriptPath(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(consoleDeployRepoRoot(t), "eval", "farm", "console", "deploy.sh")
+	path := filepath.Join(farmRepoRoot(t), "eval", "farm", "console", "deploy.sh")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("eval/farm/console/deploy.sh: %v", err)
 	}
@@ -71,7 +57,7 @@ func consoleDeployScriptPath(t *testing.T) string {
 // consoleDeployTestdataDir locates internal/eval/farm/testdata/consoledeploy.
 func consoleDeployTestdataDir(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(consoleDeployTestDir(t), "testdata", "consoledeploy")
+	return filepath.Join("testdata", "consoledeploy")
 }
 
 // consoleDeployHarness wires a fresh, isolated environment for one deploy.sh
@@ -152,7 +138,7 @@ func (h *consoleDeployHarness) run(overrides map[string]string, omit ...string) 
 		"ZCP_FARM_ACCOUNT_TOKEN":  h.accountToken,
 		"ZCP_FARM_PROJECT_ID":     "swY2yczpQlqVLlcz0fCyFA",
 		"ZCP_API_HOST":            "fake.zerops.test",
-		"REPO_ROOT":               consoleDeployRepoRoot(h.t),
+		"REPO_ROOT":               farmRepoRoot(h.t),
 		"HOME":                    h.home,
 		"STUB_DIR":                h.stubDir,
 		"PATH":                    h.stubBin + ":" + os.Getenv("PATH"),

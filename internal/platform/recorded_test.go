@@ -67,9 +67,7 @@ func (rt *recordedTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // loadRecordings reads every recording TestRecord wrote as routes and as each
 // one's raw value by schema. go test runs a package's tests in its directory,
-// and the path is relative to it: the file's own path is no help, since
-// scripts/gate builds with -trimpath, which leaves runtime.Caller the module
-// path instead of one on disk.
+// so the path is relative to it even under -trimpath.
 func loadRecordings(t *testing.T) ([]*recordedRoute, map[string]json.RawMessage) {
 	t.Helper()
 	dir := filepath.Join("..", "..", "e2e", "recordings")

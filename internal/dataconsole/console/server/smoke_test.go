@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -250,12 +249,7 @@ func TestServerSmoke_CSPFrameAncestorsNone(t *testing.T) {
 // visitor reach ANY localhost port (incl. code-server --auth none). It must stay
 // gone, and code-server (:8081) must be reachable ONLY from the cookie-gated root.
 func TestNginxTemplate_NoDCProxyTunnel(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	repoInternal := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	templatePath := filepath.Join(repoInternal, "content", "templates", "nginx.conf.tmpl")
+	templatePath := filepath.Join("..", "..", "..", "content", "templates", "nginx.conf.tmpl")
 	data, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read nginx template: %v", err)
