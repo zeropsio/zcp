@@ -59,6 +59,23 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -v ./...
           GOOS=windows GOARCH=amd64 go build -v ./...
 
+  vet:
+    name: vet
+    needs: knowledge
+    if: needs.knowledge.outputs.reused != 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - uses: ./.github/actions/restore-knowledge
+        with:
+          artifact: ${{ needs.knowledge.outputs.artifact }}
+          digest: ${{ needs.knowledge.outputs.digest }}
+
       # go vet type-checks test files without running them, the build-tagged
       # ones (api, e2e, livegit) included, so no test file rots unseen.
       - name: Vet (default and build-tagged)

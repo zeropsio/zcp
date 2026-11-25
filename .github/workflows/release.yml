@@ -110,9 +110,9 @@ jobs:
           # Only the release job below reads these; the binaries then live in the release itself.
           retention-days: 7
 
-  release:
-    name: Create release
-    needs: build
+  mate-release-check:
+    name: Require a compatible published Mate
+    needs: validation
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -123,16 +123,23 @@ jobs:
           go-version-file: "go.mod"
           cache: false
 
+      - name: Require a compatible published Mate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./cmd/mate-release-check
+
+  release:
+    name: Create release
+    needs: [build, mate-release-check]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v7
         with:
           path: ./builds
           pattern: zcp-*
           merge-multiple: true
-
-      - name: Require a compatible published Mate
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./cmd/mate-release-check
 
       - name: Create GitHub release
         env:
