@@ -1,6 +1,8 @@
 # Pool template, repository half (`pool_template.go`)
 
-- PT-SEED-POOL — A seed gives each part a pool setup named after its pool that builds and runs on the part's own runtime type, never the pool's `swarm@1`, installs zcp-devsup and starts `zcp-devsup run`, so a lease's container has the part's toolchain under the supervisor.
+- PT-SEED-BASES — A seed builds a static or nginx part with the newest Node.js Zerops lists and runs its pool on it, builds a PHP web-server part with the PHP of its own version, and writes any other part's type as both bases; a base Zerops' catalog does not list is refused naming the part, the type, the field and the base, and no file is written. Breaks: main gets a zerops.yaml Zerops refuses to build, no pool image exists and no lease can repair main.
+- PT-SEED-WEB — Every web-server type Zerops' catalog offers for import gets a seed whose every base the catalog lists. Breaks: a web-server type or version Zerops adds is seeded with a base it refuses, or refused though a person asked for it.
+- PT-SEED-POOL — A seed gives each part a pool setup named after its pool that builds and runs on the part's toolchain, never the pool's `swarm@1`, installs zcp-devsup and starts `zcp-devsup run`, so a lease's container has the part's toolchain under the supervisor.
 - PT-SEED-PORTS — A seed's pool setup declares exactly the ports previewPortBase + 1 … previewPortBase + maxContainers, each with httpSupport, so every lease's preview has its port and no port beside them is opened.
 - PT-SEED-STAGE — A seed gives each part a stage setup named after the part that deploys `./`, with the idle start for a runtime that takes a start command and none for a static one, so the stage builds before the part has code.
 - PT-CHECK-MISSING — A main holding code without the parts' setups is refused naming each part's missing pool setup, each missing stage setup and the missing dev-server declaration, so the person knows what to add.

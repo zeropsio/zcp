@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -81,31 +82,88 @@ type seedPort struct {
 	HTTPSupport bool `yaml:"httpSupport"`
 }
 
-// SeedFiles are the seed commit's files by path: zerops.yaml with each part's
-// pool setup (the part's type as both bases, every preview port from
-// SeedPreviewPortBase+1 to SeedPreviewPortBase+maxContainers with
-// httpSupport, the zcp-devsup install line, `zcp-devsup run`; nothing baked)
-// and stage setup (the type as both bases, deployFiles ./, the idle start for
-// a runtime class that takes a start), and the dev-server declaration with
-// SeedPreviewPortBase and no server. Nothing else.
-func SeedFiles(parts []PoolPart) (map[string]string, error) {
+// SeedBaseError names a base the catalog cannot supply for a part's seed.
+type SeedBaseError struct {
+	Part  string
+	Type  string
+	Field string
+	Base  string
+}
+
+func (e *SeedBaseError) Error() string {
+	return fmt.Sprintf("part %q of type %q: %s base %q is not listed by Zerops", e.Part, e.Type, e.Field, e.Base)
+}
+
+type seedPartBases struct {
+	build, poolRun, stageRun string
+}
+
+// seedBases maps the part's type to the bases of its pool and stage setups.
+func seedBases(typ string, catalog *schema.Schemas) (seedPartBases, error) {
+	bases := seedPartBases{build: typ, poolRun: typ, stageRun: typ}
+	switch topology.RuntimeClassFor(typ) {
+	case topology.RuntimeStatic:
+		base, ok := catalog.NewestBuildBase("nodejs")
+		if !ok {
+			return seedPartBases{}, &SeedBaseError{Type: typ, Field: "build.base"}
+		}
+		if os := topology.OSPrefix(typ); os != "" {
+			base = os + "/" + base
+		}
+		bases.build = base
+		bases.poolRun = base
+	case topology.RuntimeImplicitWeb:
+		_, version, found := strings.Cut(typ, "@")
+		version, _, _ = strings.Cut(version, "+")
+		phpBase := ""
+		if found && version != "" {
+			phpBase = "php@" + version
+			if os := topology.OSPrefix(typ); os != "" {
+				phpBase = os + "/" + phpBase
+			}
+		}
+		bases.build = phpBase
+	case topology.RuntimeDynamic, topology.RuntimeManaged, topology.RuntimePool, topology.RuntimeSandbox, topology.RuntimeUnknown:
+		// Other classes use the type as supplied.
+	}
+	if !catalog.HasBuildBase(bases.build) {
+		return seedPartBases{}, &SeedBaseError{Type: typ, Field: "build.base", Base: bases.build}
+	}
+	for _, base := range []string{bases.poolRun, bases.stageRun} {
+		if !catalog.HasRunBase(base) {
+			return seedPartBases{}, &SeedBaseError{Type: typ, Field: "run.base", Base: base}
+		}
+	}
+	return bases, nil
+}
+
+// SeedFiles composes the pool and stage setups and the dev-server declaration.
+func SeedFiles(parts []PoolPart, catalog *schema.Schemas) (map[string]string, error) {
 	doc := seedDoc{Zerops: make([]seedSetup, 0, 2*len(parts))}
 	for _, p := range parts {
+		bases, err := seedBases(p.Type, catalog)
+		if err != nil {
+			var baseErr *SeedBaseError
+			if errors.As(err, &baseErr) {
+				baseErr.Part = p.Part
+			}
+			return nil, fmt.Errorf("compose seed: %w", err)
+		}
 		ports := make([]seedPort, 0, p.maxContainers())
 		for port := SeedPreviewPortBase + 1; port <= SeedPreviewPortBase+p.maxContainers(); port++ {
 			ports = append(ports, seedPort{Port: port, HTTPSupport: true})
 		}
 		doc.Zerops = append(doc.Zerops, seedSetup{
 			Setup: p.Pool,
-			Build: seedBuild{Base: p.Type},
+			Build: seedBuild{Base: bases.build},
 			Run: seedRun{
-				Base:            p.Type,
+				Base:            bases.poolRun,
 				Ports:           ports,
 				PrepareCommands: []string{DevsupPrepareCommand(DevsupLatestURL)},
 				Start:           DevsupStart,
 			},
 		})
-		stage := seedSetup{Setup: p.Part, Build: seedBuild{Base: p.Type, DeployFiles: "./"}, Run: seedRun{Base: p.Type}}
+		stage := seedSetup{Setup: p.Part, Build: seedBuild{Base: bases.build, DeployFiles: "./"}, Run: seedRun{Base: bases.stageRun}}
 		if topology.RuntimeClassFor(p.Type) == topology.RuntimeDynamic {
 			stage.Run.Start = seedIdleStart
 		}

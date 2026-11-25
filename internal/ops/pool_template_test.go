@@ -12,6 +12,8 @@ import (
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // seedSetupsOf decodes the seed's zerops.yaml into its setups by name.
@@ -28,13 +30,104 @@ func seedSetupsOf(t *testing.T, files map[string]string) map[string]seedSetup {
 	return setups
 }
 
+// seedCatalog is the literal catalog used by the seed's decision cases.
+func seedCatalog() *schema.Schemas {
+	return &schema.Schemas{ZeropsYml: &schema.ZeropsYmlSchema{
+		BuildBases: []string{"alpine/nodejs@9", "alpine/nodejs@22", "alpine/nodejs@24", "alpine/nodejs@latest", "ubuntu/nodejs@24", "alpine/php@8.3", "alpine/php@8.4", "ubuntu/php@8.4", "alpine/php@latest", "go@1"},
+		RunBases:   []string{"alpine/nodejs@22", "alpine/nodejs@24", "ubuntu/nodejs@24", "go@1", "static", "alpine/static@1.0", "ubuntu/static", "alpine/nginx@1.22", "alpine/php-nginx@8.4", "alpine/php-nginx@8.4+1.22", "ubuntu/php-apache@8.4", "alpine/php-apache@latest", "alpine/php-nginx@8.5"},
+	}}
+}
+
+// witness: internal/ops/pool_template.go | bases.poolRun = base → bases.poolRun = typ
+func TestPoolTemplate_PTSeedBases_EachTypeTakesItsTablesBases(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		typ, build, poolRun, stageRun string
+		field, missing                string
+	}{
+		{typ: "alpine/static@1.0", build: "alpine/nodejs@24", poolRun: "alpine/nodejs@24", stageRun: "alpine/static@1.0"},
+		{typ: "static", build: "nodejs@24", poolRun: "nodejs@24", stageRun: "static"},
+		{typ: "ubuntu/static", build: "ubuntu/nodejs@24", poolRun: "ubuntu/nodejs@24", stageRun: "ubuntu/static"},
+		{typ: "alpine/nginx@1.22", build: "alpine/nodejs@24", poolRun: "alpine/nodejs@24", stageRun: "alpine/nginx@1.22"},
+		{typ: "php-nginx@8.4", build: "php@8.4", poolRun: "php-nginx@8.4", stageRun: "php-nginx@8.4"},
+		{typ: "alpine/php-nginx@8.4+1.22", build: "alpine/php@8.4", poolRun: "alpine/php-nginx@8.4+1.22", stageRun: "alpine/php-nginx@8.4+1.22"},
+		{typ: "ubuntu/php-apache@8.4", build: "ubuntu/php@8.4", poolRun: "ubuntu/php-apache@8.4", stageRun: "ubuntu/php-apache@8.4"},
+		{typ: "alpine/php-apache@latest", build: "alpine/php@latest", poolRun: "alpine/php-apache@latest", stageRun: "alpine/php-apache@latest"},
+		{typ: "go@1", build: "go@1", poolRun: "go@1", stageRun: "go@1"},
+		{typ: "nodejs@24", build: "nodejs@24", poolRun: "nodejs@24", stageRun: "nodejs@24"},
+		{typ: "alpine/php-nginx@8.5", field: "build.base", missing: "alpine/php@8.5"},
+		{typ: "rust@1", field: "build.base", missing: "rust@1"},
+		{typ: "nodejs@9", field: "run.base", missing: "nodejs@9"},
+		{typ: "php-nginx", field: "build.base"},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			t.Parallel()
+			files, err := SeedFiles([]PoolPart{{Part: "app", Pool: "apppool", Stage: "appstage", Type: tc.typ}}, seedCatalog())
+			if tc.field != "" {
+				var baseErr *SeedBaseError
+				if !errors.As(err, &baseErr) {
+					t.Fatalf("SeedFiles error = %v, want SeedBaseError", err)
+				}
+				if baseErr.Part != "app" || baseErr.Type != tc.typ || baseErr.Field != tc.field || baseErr.Base != tc.missing || len(files) != 0 {
+					t.Errorf("error = %+v, files = %v; want app, %q, %q, %q and no files", baseErr, files, tc.typ, tc.field, tc.missing)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SeedFiles: %v", err)
+			}
+			setups := seedSetupsOf(t, files)
+			pool, stage := setups["apppool"], setups["app"]
+			if pool.Build.Base != tc.build || pool.Run.Base != tc.poolRun || stage.Build.Base != tc.build || stage.Run.Base != tc.stageRun {
+				t.Errorf("bases = (%q, %q, %q, %q), want (%q, %q, %q, %q)", pool.Build.Base, pool.Run.Base, stage.Build.Base, stage.Run.Base, tc.build, tc.poolRun, tc.build, tc.stageRun)
+			}
+		})
+	}
+	noConcrete := &schema.Schemas{ZeropsYml: &schema.ZeropsYmlSchema{BuildBases: []string{"nodejs@latest"}, RunBases: []string{"static"}}}
+	files, err := SeedFiles([]PoolPart{{Part: "web", Pool: "webpool", Type: "static"}}, noConcrete)
+	var baseErr *SeedBaseError
+	if !errors.As(err, &baseErr) || baseErr.Part != "web" || baseErr.Field != "build.base" || baseErr.Base != "" || len(files) != 0 {
+		t.Errorf("no concrete Node.js: files = %v, error = %v", files, err)
+	}
+}
+
+// witness: internal/ops/pool_template.go | bases.build = phpBase → bases.build = typ + phpBase[:0]
+func TestPoolTemplate_PTSeedWeb_EveryWebServerTypeZeropsOffers(t *testing.T) {
+	t.Parallel()
+	catalog := schema.Embedded()
+	if catalog == nil || catalog.ImportYml == nil {
+		t.Fatal("embedded import catalog missing")
+	}
+	count := 0
+	for _, typ := range catalog.ImportYml.ServiceTypes {
+		class := topology.RuntimeClassFor(typ)
+		if class != topology.RuntimeStatic && class != topology.RuntimeImplicitWeb {
+			continue
+		}
+		count++
+		files, err := SeedFiles([]PoolPart{{Part: "web", Pool: "webpool", Type: typ}}, catalog)
+		if err != nil {
+			t.Errorf("type %q: %v", typ, err)
+			continue
+		}
+		for _, setup := range seedSetupsOf(t, files) {
+			if !catalog.HasBuildBase(setup.Build.Base) || !catalog.HasRunBase(setup.Run.Base) {
+				t.Errorf("type %q setup %q: unlisted build %q or run %q", typ, setup.Setup, setup.Build.Base, setup.Run.Base)
+			}
+		}
+	}
+	if count == 0 {
+		t.Error("embedded catalog contains no web-server type")
+	}
+}
+
 // PT-SEED-POOL — A seed gives each part a pool setup named after its pool
-// that builds and runs on the part's own runtime type, installs zcp-devsup
+// that builds and runs on the part's toolchain, installs zcp-devsup
 // and starts `zcp-devsup run`.
-// witness: internal/ops/pool_template.go | Base:            p.Type, → Base:            bundle.PoolType,
+// witness: internal/ops/pool_template.go | Base:            bases.poolRun, → Base:            bundle.PoolType,
 func TestPoolTemplate_PTSeedPool_PoolSetupOnPartTypeUnderSupervisor(t *testing.T) {
 	t.Parallel()
-	files, err := SeedFiles([]PoolPart{{Part: "app", Pool: "apppool", Stage: "appstage", Type: "nodejs@22"}})
+	files, err := SeedFiles([]PoolPart{{Part: "app", Pool: "apppool", Stage: "appstage", Type: "nodejs@22"}}, seedCatalog())
 	if err != nil {
 		t.Fatalf("SeedFiles: %v", err)
 	}
@@ -59,7 +152,7 @@ func TestPoolTemplate_PTSeedPool_PoolSetupOnPartTypeUnderSupervisor(t *testing.T
 // witness: internal/ops/pool_template.go | for port := SeedPreviewPortBase + 1; → for port := SeedPreviewPortBase;
 func TestPoolTemplate_PTSeedPorts_ExactlyOnePreviewPortPerContainer(t *testing.T) {
 	t.Parallel()
-	files, err := SeedFiles([]PoolPart{{Part: "app", Pool: "apppool", Stage: "appstage", Type: "nodejs@22", MaxContainers: 5}})
+	files, err := SeedFiles([]PoolPart{{Part: "app", Pool: "apppool", Stage: "appstage", Type: "nodejs@22", MaxContainers: 5}}, seedCatalog())
 	if err != nil {
 		t.Fatalf("SeedFiles: %v", err)
 	}
@@ -82,21 +175,21 @@ func TestPoolTemplate_PTSeedStage_StageSetupIdleStartOnlyWhereTaken(t *testing.T
 	files, err := SeedFiles([]PoolPart{
 		{Part: "api", Pool: "apipool", Stage: "apistage", Type: "nodejs@22"},
 		{Part: "web", Pool: "webpool", Stage: "webstage", Type: "static"},
-	})
+	}, seedCatalog())
 	if err != nil {
 		t.Fatalf("SeedFiles: %v", err)
 	}
 	setups := seedSetupsOf(t, files)
-	for _, tc := range []struct{ part, base, start string }{
-		{part: "api", base: "nodejs@22", start: "zsc noop --silent"},
-		{part: "web", base: "static", start: ""},
+	for _, tc := range []struct{ part, build, run, start string }{
+		{part: "api", build: "nodejs@22", run: "nodejs@22", start: "zsc noop --silent"},
+		{part: "web", build: "nodejs@24", run: "static", start: ""},
 	} {
 		stage, ok := setups[tc.part]
 		if !ok {
 			t.Fatalf("seed has no stage setup %q:\n%s", tc.part, files["zerops.yaml"])
 		}
-		if stage.Build.Base != tc.base || stage.Run.Base != tc.base || stage.Build.DeployFiles != "./" {
-			t.Errorf("stage %q = build %q deployFiles %q, run %q; want %q, ./, %q", tc.part, stage.Build.Base, stage.Build.DeployFiles, stage.Run.Base, tc.base, tc.base)
+		if stage.Build.Base != tc.build || stage.Run.Base != tc.run || stage.Build.DeployFiles != "./" {
+			t.Errorf("stage %q = build %q deployFiles %q, run %q; want %q, ./, %q", tc.part, stage.Build.Base, stage.Build.DeployFiles, stage.Run.Base, tc.build, tc.run)
 		}
 		if stage.Run.Start != tc.start {
 			t.Errorf("stage %q run.start = %q, want %q", tc.part, stage.Run.Start, tc.start)
@@ -131,7 +224,7 @@ func TestPoolTemplate_PTCheckSeed_SeedPassesTheCheck(t *testing.T) {
 		{Part: "api", Pool: "apipool", Stage: "apistage", Type: "nodejs@22", MaxContainers: 4},
 		{Part: "web", Pool: "webpool", Stage: "webstage", Type: "static"},
 	}
-	files, err := SeedFiles(parts)
+	files, err := SeedFiles(parts, seedCatalog())
 	if err != nil {
 		t.Fatalf("SeedFiles: %v", err)
 	}

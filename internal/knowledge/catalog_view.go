@@ -3,7 +3,6 @@ package knowledge
 import (
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/schema"
@@ -238,7 +237,7 @@ func concreteStorageTypes(types []string) []string {
 // (incl. families, for the "X not found, available: …" lookup) stays in
 // cv.versionsByBase — this is presentation only.
 func compactBase(bv baseVersions) string {
-	leaves := concreteLeaves(bv.versions)
+	leaves := schema.ConcreteVersions(bv.versions)
 	mark := true
 	if len(leaves) == 0 {
 		// No concrete versions active (some runtimes — e.g. rust — ship only
@@ -270,7 +269,7 @@ func compactBase(bv baseVersions) string {
 func rollingVersions(versions []string) []string {
 	var stable, rest []string
 	for _, v := range versions {
-		if !isRollingTag(v) {
+		if !schema.IsRollingTag(v) {
 			continue
 		}
 		if strings.EqualFold(v, "stable") {
@@ -280,75 +279,4 @@ func rollingVersions(versions []string) []string {
 		}
 	}
 	return append(stable, rest...)
-}
-
-// concreteLeaves reduces a base's version list to its concrete leaf versions:
-// drops rolling tags (latest/canary/nightly/stable) and any version that is a
-// strict dot-component prefix of another (a family alias like "1" or "1.3" when
-// "1.3.9" is present), then sorts newest-first.
-func concreteLeaves(versions []string) []string {
-	concrete := make([]string, 0, len(versions))
-	for _, v := range versions {
-		if !isRollingTag(v) {
-			concrete = append(concrete, v)
-		}
-	}
-	leaves := make([]string, 0, len(concrete))
-	for i, v := range concrete {
-		isPrefix := false
-		for j, w := range concrete {
-			if i != j && isDotPrefix(v, w) {
-				isPrefix = true
-				break
-			}
-		}
-		if !isPrefix {
-			leaves = append(leaves, v)
-		}
-	}
-	sort.Slice(leaves, func(i, j int) bool { return versionLess(leaves[j], leaves[i]) })
-	return leaves
-}
-
-func isRollingTag(v string) bool {
-	switch strings.ToLower(v) {
-	case "latest", "canary", "nightly", "stable", "edge", "dev":
-		return true
-	default:
-		return false
-	}
-}
-
-// isDotPrefix reports whether a is a STRICT dot-component prefix of b
-// ("1" ⊂ "1.3.9", "1.3" ⊂ "1.3.9"; "22" is NOT a prefix of "24").
-func isDotPrefix(a, b string) bool {
-	ap, bp := strings.Split(a, "."), strings.Split(b, ".")
-	if len(ap) >= len(bp) {
-		return false
-	}
-	for i := range ap {
-		if ap[i] != bp[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// versionLess compares two dot-segmented versions numerically per segment,
-// falling back to string compare for non-numeric segments.
-func versionLess(a, b string) bool {
-	ap, bp := strings.Split(a, "."), strings.Split(b, ".")
-	for i := 0; i < len(ap) && i < len(bp); i++ {
-		ai, aerr := strconv.Atoi(ap[i])
-		bi, berr := strconv.Atoi(bp[i])
-		switch {
-		case aerr == nil && berr == nil:
-			if ai != bi {
-				return ai < bi
-			}
-		case ap[i] != bp[i]:
-			return ap[i] < bp[i]
-		}
-	}
-	return len(ap) < len(bp)
 }

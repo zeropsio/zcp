@@ -167,7 +167,7 @@ func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client p
 	}
 	defer birth.progress.quiesce(ctx)
 
-	stood, err := birth.ensurePooledParts(ctx, parts, repository)
+	stood, err := birth.ensurePooledParts(ctx, parts, repository, schemas)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus())
 	}
@@ -262,7 +262,7 @@ func pooledPlanFailed(stood standupResponse) *platform.PlatformError {
 // project lacks (3), then the stand-up's pooled build from the plan's tier
 // (4, 5) under the project's one stand-up. A run already holding it answers
 // with its start and its verdict so far, and nothing is started.
-func (b *pooledBirth) ensurePooledParts(ctx context.Context, parts []pooledPlanPart, repository string) (standupResponse, error) {
+func (b *pooledBirth) ensurePooledParts(ctx context.Context, parts []pooledPlanPart, repository string, schemas *schema.Schemas) (standupResponse, error) {
 	d := b.d
 	release, held, err := holdStandup(d.batch.stateDir)
 	switch {
@@ -285,7 +285,7 @@ func (b *pooledBirth) ensurePooledParts(ctx context.Context, parts []pooledPlanP
 	if err != nil {
 		return standupResponse{}, err
 	}
-	if err := b.seedOrCheckMain(ctx, hqc, appID, repository, parts); err != nil {
+	if err := b.seedOrCheckMain(ctx, hqc, appID, repository, parts, schemas); err != nil {
 		return standupResponse{}, err
 	}
 	if err := b.importParts(ctx, parts); err != nil {
@@ -350,7 +350,7 @@ func (b *pooledBirth) ensurePartRepository(ctx context.Context, repos partReposi
 // part's setups, naming each one and its file; a repository with no `main` is
 // refused before any change is opened, for HQ lands a first change only onto
 // its own empty first commit.
-func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositories, appID, repository string, parts []pooledPlanPart) error {
+func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositories, appID, repository string, parts []pooledPlanPart, schemas *schema.Schemas) error {
 	full := appID + "/" + repository
 	scratch, err := repos.OpenScratch(ctx, appID, repository)
 	if err != nil {
@@ -378,8 +378,16 @@ func (b *pooledBirth) seedOrCheckMain(ctx context.Context, repos partRepositorie
 	for _, p := range parts {
 		poolParts = append(poolParts, p.poolPart())
 	}
-	files, err := ops.SeedFiles(poolParts)
+	if schemas == nil || schemas.ZeropsYml == nil || len(schemas.ZeropsYml.BuildBases) == 0 || len(schemas.ZeropsYml.RunBases) == 0 {
+		schemas = schema.Embedded()
+	}
+	files, err := ops.SeedFiles(poolParts, schemas)
 	if err != nil {
+		var baseErr *ops.SeedBaseError
+		if errors.As(err, &baseErr) {
+			return platform.NewPlatformError(platform.ErrInvalidParameter, baseErr.Error(),
+				fmt.Sprintf("Nothing was opened, written or imported. Choose a type whose bases Zerops lists, or have a person write main with the two setups %q and %q, then send the same plan again.", baseErr.Part+"pool", baseErr.Part))
+		}
 		return platform.NewPlatformError(platform.ErrAPIError, fmt.Sprintf("Could not write the seed: %v.", err), "Nothing was imported.")
 	}
 	// The seed's tree holds its files alone: written over the empty tree,

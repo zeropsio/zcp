@@ -37,6 +37,28 @@ func (s *Schemas) HasBuildBase(base string) bool {
 	return s.ZeropsYml != nil && matchesAnyEquivalent(base, s.ZeropsYml.BuildBases)
 }
 
+// NewestBuildBase returns the newest concrete build base for a name, in bare form.
+func (s *Schemas) NewestBuildBase(name string) (string, bool) {
+	if s == nil || s.ZeropsYml == nil {
+		return "", false
+	}
+	var versions []string
+	for _, base := range s.ZeropsYml.BuildBases {
+		if topology.CanonicalBaseName(base) != name {
+			continue
+		}
+		_, version, found := strings.Cut(base, "@")
+		if found && version != "" {
+			versions = append(versions, version)
+		}
+	}
+	leaves := ConcreteVersions(versions)
+	if len(leaves) == 0 {
+		return "", false
+	}
+	return name + "@" + leaves[0], true
+}
+
 // SupportsHAVariant reports whether the platform offers an HA (`:ha`) deployment
 // variant for the given managed-service type. This is the SINGLE schema-derived
 // owner of "can this type run HA on this instance", replacing hardcoded family
