@@ -6,15 +6,15 @@
 // deleted file a `Drops-test-file: <path>` trailer.
 //
 //	go run scripts/check-witness.go                                   # staged commit
-//	go run scripts/check-witness.go --base <rev> [--head <rev>] [--replay]  # pushed range
+//	go run scripts/check-witness.go --base <rev> [--head <rev>] [--replay] [--units]  # pushed range
 //
 // The staged form (make check-changed, pre-commit) checks touched test files
 // only: drop trailers live in a commit message that does not exist yet. The
 // range form (scripts/witness-check.sh in pre-push, and CI) also checks
 // witnesses in untouched test files that name an owner touched in the range
-// and the drop trailers. Only the dispatch-only Tests workflow adds --replay,
-// which applies each new witness of a short test and requires its case to
-// fail. Tests behind an e2e build tag get the static checks only.
+// and the drop trailers. With --replay, each new witness of a short test must
+// make its case fail; tests behind an e2e build tag get the static checks only.
+// With --units, new untagged top-level cases must map to a unit ID.
 package main
 
 import (
@@ -40,6 +40,8 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+
+	"github.com/zeropsio/zcp/scripts/t1/unit"
 )
 
 // dropClasses is the shared rules' removal class set; `reworded` also needs the same
@@ -94,8 +96,9 @@ type testCase struct {
 
 // testFile is one parsed _test.go file.
 type testFile struct {
-	cases []testCase
-	e2e   bool
+	cases  []testCase
+	e2e    bool
+	tagged bool
 }
 
 func (f testFile) witnessLines() map[string]bool {
@@ -187,7 +190,7 @@ func collectCases(file string, src []byte) (testFile, error) {
 	if err != nil {
 		return testFile{}, fmt.Errorf("parse %s: %w", file, err)
 	}
-	result := testFile{}
+	result := testFile{tagged: unit.Tagged(src)}
 	// A witness sits in the block of whole-line comments directly above its case.
 	comments := map[int]string{}
 	for _, group := range parsed.Comments {
@@ -196,6 +199,9 @@ func collectCases(file string, src []byte) (testFile, error) {
 			lineStart := pos.Offset - (pos.Column - 1)
 			if !strings.HasPrefix(c.Text, "//") || strings.TrimSpace(string(src[lineStart:pos.Offset])) != "" {
 				continue
+			}
+			if constraint.IsGoBuild(c.Text) {
+				result.tagged = true
 			}
 			comments[pos.Line] = c.Text[2:]
 			if c.Slash < parsed.Package {
@@ -271,6 +277,8 @@ type input struct {
 	// drops enables the trailer rules over commits (range mode).
 	drops   bool
 	commits []commit
+	// unitKeys enables admission of new top-level cases only to named units.
+	unitKeys map[string]bool
 }
 
 func unwitnessed(files map[string]testFile) int {
@@ -338,6 +346,26 @@ func check(in input) []string {
 			if !c.suite && len(c.witnesses) == 0 && !before[c.title] {
 				problems = append(problems, fmt.Sprintf(
 					"%s:%d: added case %s has no `// witness: <owner path> | <old> → <new>` line directly above it.",
+					file, c.line, c.title))
+			}
+		}
+	}
+	if in.unitKeys != nil {
+		for _, file := range sortedKeys(in.head) {
+			current := in.head[file]
+			if current.tagged {
+				continue
+			}
+			beforeFile := map[string]bool{}
+			for _, c := range in.base[file].cases {
+				beforeFile[c.title] = true
+			}
+			for _, c := range current.cases {
+				if strings.Contains(c.title, "/") || beforeFile[c.title] || in.unitKeys[unit.CaseKey(c.title)] {
+					continue
+				}
+				problems = append(problems, fmt.Sprintf(
+					"%s:%d: %s is a new case outside every unit: give it a sentence in a list and name it for the id, or do not add it",
 					file, c.line, c.title))
 			}
 		}
@@ -709,6 +737,38 @@ func (g repo) changed(ctx context.Context, args ...string) ([]string, error) {
 	return slices.DeleteFunc(strings.Split(out, "\x00"), func(s string) bool { return s == "" }), nil
 }
 
+// unitKeys reads the tracked sentence lists from the range's head revision.
+func (g repo) unitKeys(ctx context.Context, head string) (map[string]bool, error) {
+	out, err := g.git(ctx, "ls-tree", "-r", "--name-only", "-z", head)
+	if err != nil {
+		return nil, fmt.Errorf("list unit files: %w", err)
+	}
+	var files, specs []string
+	for file := range strings.SplitSeq(out, "\x00") {
+		if strings.HasSuffix(file, "_SENTENCES.md") {
+			files = append(files, file)
+			specs = append(specs, head+":"+file)
+		}
+	}
+	blobs, err := g.blobs(ctx, specs)
+	if err != nil {
+		return nil, fmt.Errorf("read unit files: %w", err)
+	}
+	lists := make(map[string][]byte, len(files))
+	for _, file := range files {
+		data, ok := blobs[head+":"+file]
+		if !ok {
+			return nil, fmt.Errorf("read unit file %s at %s: missing blob", file, head)
+		}
+		lists[file] = data
+	}
+	keys := map[string]bool{}
+	for _, id := range unit.ReadIDs(lists) {
+		keys[unit.IDKey(id.ID)] = true
+	}
+	return keys, nil
+}
+
 func isTestFile(file string) bool { return strings.HasSuffix(file, "_test.go") }
 
 // sides parses the touched test files at both revisions (prefixes like "HEAD:" or ":").
@@ -932,9 +992,10 @@ func run(ctx context.Context) (int, error) {
 	baseRef := flag.String("base", "", "check the range from the merge base of this revision to --head")
 	headRef := flag.String("head", "HEAD", "the range's last revision")
 	doReplay := flag.Bool("replay", false, "replay new witnesses of short tests (range mode)")
+	doUnits := flag.Bool("units", false, "require new untagged cases to map to a unit ID (range mode)")
 	flag.Parse()
-	if flag.NArg() != 0 || (*baseRef == "" && (*doReplay || *headRef != "HEAD")) {
-		return 2, errors.New("usage: check-witness [--base <rev> [--head <rev>] [--replay]]")
+	if flag.NArg() != 0 || (*baseRef == "" && (*doReplay || *doUnits || *headRef != "HEAD")) {
+		return 2, errors.New("usage: check-witness [--base <rev> [--head <rev>] [--replay] [--units]]")
 	}
 	top, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
@@ -950,6 +1011,11 @@ func run(ctx context.Context) (int, error) {
 	}
 	if err != nil {
 		return 1, err
+	}
+	if *doUnits {
+		if in.unitKeys, err = g.unitKeys(ctx, head); err != nil {
+			return 1, fmt.Errorf("unit admission: %w", err)
+		}
 	}
 	problems := check(in)
 	if len(problems) == 0 && *doReplay {

@@ -25,23 +25,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/scripts/t1/unit"
 )
 
 const budgetSeconds = 30.0
-
-var (
-	idLine   = regexp.MustCompile(`^(?:- )?([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*) — `)
-	testFunc = regexp.MustCompile(`^func (Test[A-Za-z0-9_]+)\(\w+ \*testing\.T\)`)
-	buildTag = regexp.MustCompile(`^//go:build `)
-)
-
-type unitID struct {
-	id, list string
-}
-
-type testCase struct {
-	name, dir string
-}
 
 type event struct {
 	Action  string  `json:"Action"`  //nolint:tagliatelle // go test -json wire format
@@ -65,30 +53,32 @@ func run() error {
 	}
 	root = strings.TrimSpace(root)
 
-	ids, err := readIDs(root)
+	lists, err := readFiles(root, "*_SENTENCES.md")
 	if err != nil {
-		return err
+		return fmt.Errorf("read unit lists: %w", err)
 	}
-	byKey, err := readCases(root)
+	tests, err := readFiles(root, "*_test.go")
 	if err != nil {
-		return err
+		return fmt.Errorf("read unit cases: %w", err)
 	}
+	ids := unit.ReadIDs(lists)
+	byKey := unit.ReadCases(tests)
 
-	var cases []testCase
+	var cases []unit.Case
 	var unmapped []string
 	for _, u := range ids {
-		found := byKey[strings.ToLower(strings.ReplaceAll(u.id, "-", ""))]
+		found := byKey[unit.IDKey(u.ID)]
 		switch len(found) {
 		case 1:
 			cases = append(cases, found[0])
 		case 0:
-			unmapped = append(unmapped, fmt.Sprintf("%s (%s): no case", u.id, u.list))
+			unmapped = append(unmapped, fmt.Sprintf("%s (%s): no case", u.ID, u.List))
 		default:
 			names := make([]string, 0, len(found))
 			for _, c := range found {
-				names = append(names, c.dir+"."+c.name)
+				names = append(names, c.Dir+"."+c.Name)
 			}
-			unmapped = append(unmapped, fmt.Sprintf("%s (%s): %d cases: %s", u.id, u.list, len(found), strings.Join(names, ", ")))
+			unmapped = append(unmapped, fmt.Sprintf("%s (%s): %d cases: %s", u.ID, u.List, len(found), strings.Join(names, ", ")))
 		}
 	}
 	if len(unmapped) > 0 {
@@ -104,72 +94,12 @@ func run() error {
 	return runCases(root, cases)
 }
 
-// readIDs reads every unit id from the tracked lists, in list order.
-func readIDs(root string) ([]unitID, error) {
-	files, err := gitFiles(root, "*_SENTENCES.md")
-	if err != nil {
-		return nil, err
-	}
-	var ids []unitID
-	for _, f := range files {
-		data, err := os.ReadFile(path.Join(root, f))
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", f, err)
-		}
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if m := idLine.FindStringSubmatch(line); m != nil {
-				ids = append(ids, unitID{id: m[1], list: f})
-			}
-		}
-	}
-	return ids, nil
-}
-
-// readCases indexes every top-level Test function of the untagged tracked test files by its
-// second name segment, lowercased.
-func readCases(root string) (map[string][]testCase, error) {
-	files, err := gitFiles(root, "*_test.go")
-	if err != nil {
-		return nil, err
-	}
-	byKey := map[string][]testCase{}
-	for _, f := range files {
-		data, err := os.ReadFile(path.Join(root, f))
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", f, err)
-		}
-		var names []string
-		tagged := false
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if buildTag.MatchString(line) {
-				tagged = true
-				break
-			}
-			if m := testFunc.FindStringSubmatch(line); m != nil {
-				names = append(names, m[1])
-			}
-		}
-		if tagged {
-			continue
-		}
-		for _, n := range names {
-			seg := strings.Split(n, "_")
-			if len(seg) < 2 {
-				continue
-			}
-			key := strings.ToLower(seg[1])
-			byKey[key] = append(byKey[key], testCase{name: n, dir: path.Dir(f)})
-		}
-	}
-	return byKey, nil
-}
-
-func runCases(root string, cases []testCase) error {
+func runCases(root string, cases []unit.Case) error {
 	names := make([]string, 0, len(cases))
 	dirSet := map[string]bool{}
 	for _, c := range cases {
-		names = append(names, regexp.QuoteMeta(c.name))
-		dirSet["./"+c.dir] = true
+		names = append(names, regexp.QuoteMeta(c.Name))
+		dirSet["./"+c.Dir] = true
 	}
 	dirs := make([]string, 0, len(dirSet))
 	for d := range dirSet {
@@ -268,6 +198,22 @@ func gitFiles(root, pattern string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+func readFiles(root, pattern string) (map[string][]byte, error) {
+	files, err := gitFiles(root, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("find %s: %w", pattern, err)
+	}
+	contents := make(map[string][]byte, len(files))
+	for _, f := range files {
+		data, err := os.ReadFile(path.Join(root, f))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", f, err)
+		}
+		contents[f] = data
+	}
+	return contents, nil
 }
 
 func gitOut(dir string, args ...string) (string, error) {

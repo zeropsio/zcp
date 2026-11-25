@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# zcp's gate, the one place that says what green means for a change to land on main: the static
-# witness check of origin/main..HEAD, native lint of the packages that range affects, go vet
-# (default and build-tagged), go build and T1 (scripts/t1: every unit case and no other test, within
+# zcp's gate, the one place that says what green means for a change to land on main: the witness
+# check of origin/main..HEAD replays new witnesses and refuses new cases outside the units. The gate
+# also runs native lint of the packages that range affects, go vet (default and build-tagged), go
+# build and T1 (scripts/t1: every unit case and no other test, within
 # its budget). The three-platform build and the two-platform lint stay CI's. Run it from anywhere in
 # a worktree:
 #
@@ -23,7 +24,7 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo " worktree"; echo "g
 cd "$root" || { echo " worktree"; exit 1; }
 
 red=
-go run scripts/check-witness.go --base origin/main --head HEAD >&2 || red+=" witness"
+go run scripts/check-witness.go --base origin/main --head HEAD --replay --units >&2 || red+=" witness"
 scripts/check-changed.sh --base origin/main >&2 || red+=" lint"
 go vet ./... >&2 || red+=" vet"
 make --no-print-directory vet-tags >&2 || red+=" vet-tags"
