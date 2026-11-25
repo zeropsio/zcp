@@ -151,7 +151,7 @@ func (b *warmCloneBox) launch(t *testing.T, repo string, pathFirst []string, env
 	b.cloneDone = readEnd
 	t.Cleanup(func() { _ = readEnd.Close() })
 	path := append(append([]string{b.stubs}, pathFirst...), filepath.SplitList(os.Getenv("PATH"))...)
-	out, err := b.runPathWithFD(t, leaseWarmCloneCommand(b.dir, repo, ""), path, writeEnd, env...)
+	out, err := b.runPathWithFD(t, leaseWarmCloneCommand(b.dir, repo, "", ""), path, writeEnd, env...)
 	_ = writeEnd.Close()
 	if err != nil {
 		t.Fatalf("the warm clone's launch failed: %v\n%s", err, out)
@@ -570,7 +570,7 @@ func TestLeaseWarmClone_TreeAlreadyARepository_LeftAlone(t *testing.T) {
 	head := b.git(t, "rev-parse", "HEAD")
 
 	path := append([]string{b.stubs}, filepath.SplitList(os.Getenv("PATH"))...)
-	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, ""), path, true)
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), path, true)
 	if err != nil {
 		t.Fatalf("launch failed: %v\n%s", err, out)
 	}
@@ -591,7 +591,7 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 	origin, _ := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
 
-	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, ""), append([]string{b.stubs}, pathWithout("flock")...), true)
+	out, err := b.runPathWithReceipt(t, leaseWarmCloneCommand(b.dir, origin, "", ""), append([]string{b.stubs}, pathWithout("flock")...), true)
 	if err != nil {
 		t.Fatalf("launch: %v\n%s", err, out)
 	}

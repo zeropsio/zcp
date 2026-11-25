@@ -4865,8 +4865,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   existing HQ credential helper. Recipe clones are still unshallowed, from the origin they came
   from (above). A lease checkout of an HQ repository fetches the same way, `blob:none` with full ancestry,
   and keeps a credential hint for HQ's host that tells a plain git needing old contents to run it
-  as `zcp git <alias> …`. Pool warm clones and missing-`.git` reconstruction keep their existing
-  fetch policy until separately qualified (`TestBuildBaseBranchCommand_FirstFetch_DefersBlobsWithFullAncestry`).
+  as `zcp git <alias> …`. A pool's warm clone of an HQ repository fetches the same way (`spec-workflows.md` §8 DP-32);
+  missing-`.git` reconstruction keeps its existing fetch policy until separately qualified (`TestBuildBaseBranchCommand_FirstFetch_DefersBlobsWithFullAncestry`).
 - **One repository per monorepo.** A monorepo's every part gets its own dev pool and its own stage, nothing sharing a
   container, all on ONE repository in HQ. In a Mate the plan creates each part's pool and stage on
   that one repository (§2.8b B-9); a dev service with a stage per part made earlier keeps working,
@@ -5314,8 +5314,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (`ops.RelayedSSH`), answered with the project key over the session, as an agent's `zcp git` is.
   A dev pool holds no Git credential either: zcp's git in a lease of a repository on HQ — the
   checkout, a sync's push, the release guard's fetch — runs as a relayed script, and the agent's
-  runs through `zcp git <alias>` (`spec-workflows.md` §8 DP-12, DP-16). A repository on HQ is
-  never warm-cloned into a pool: a detached clone outlives the relayed session that would answer it.
+  runs through `zcp git <alias>` (`spec-workflows.md` §8 DP-12, DP-16). A pool's warm clone of a repository on HQ
+  runs as a relayed script zcp holds until the clone ends (DP-32).
 - **A Mate moved to another HQ.** A wired pair whose record names its own repository
   (`/git/[<org>/]<app>/<repo>.git` of its HQ record) on another host than the HQ the Mate links to now
   was wired before the move; any other remote is the person's and is never moved. At the Mate's service start, and at

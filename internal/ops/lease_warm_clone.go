@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -39,13 +40,16 @@ import (
 // away with /var/www, which leaves the empty /var/www today's checkout expects.
 //
 // zcp writes into a free container only right after reading it by id as free,
-// and only for a pool it leased a repository outside the Mate's HQ from: the
-// clone authenticates exactly as a checkout does, from the pool's GIT_TOKEN,
-// answered only to the host it is bound to (leaseTokenScope), and writes no
-// credential, helper or identity. A repository on HQ is never warmed (DP-16):
-// zcp answers HQ's git only over a session it holds (LeaseDeps.HQGit), which
-// a clone detached from it outlives, and the pool stores no HQ credential —
-// its acquire clones it relayed.
+// and only for a pool it leased a repository from: the clone authenticates
+// exactly as a checkout does and writes no credential, helper or identity. A
+// repository outside the Mate's HQ is fetched with the pool's GIT_TOKEN,
+// answered only to the host it is bound to (leaseTokenScope), and the clone
+// runs detached. A repository on HQ is fetched blobless with no helper of its
+// own (leaseFetchStep), as its checkout is: zcp answers HQ's git only over a
+// session it holds (LeaseDeps.HQGit, DP-16), so the clone runs as a relayed
+// script that zcp holds until the clone ends, and the pool stores no HQ
+// credential. Without it every acquire of an HQ repository cloned the whole
+// tree through the relay: 70 s of a 92 s acquire (live, 2026-11-23).
 
 // leaseWarmStateFile is the clone's state, inside the clone's .git so it lives
 // and goes with the clone.
@@ -57,8 +61,10 @@ const leaseWarmStateFile = "zcp-warm"
 // (GIT_HTTP_LOW_SPEED_*).
 const leaseWarmCloneWait = 3 * time.Minute
 
-// leaseWarmCloneLaunchTimeout bounds one try of a launch: the ssh call returns
-// as soon as the clone is detached, well under a second.
+// leaseWarmCloneLaunchTimeout bounds one try of a detached launch: the ssh
+// call returns as soon as the clone is detached, well under a second. A held
+// launch (a repository on HQ) runs the whole clone, which RelayedSSH bounds
+// (relayedScriptCeiling).
 const leaseWarmCloneLaunchTimeout = 10 * time.Second
 
 // A launch ssh could not run is tried again, up to leaseWarmLaunchTries times
@@ -82,12 +88,19 @@ const (
 	leaseWarmCheckoutMarker = "@@zcp-lease warm "
 )
 
-// What a launch answers.
+// What a launch answers: a detached one started, a held one done or failed
+// with the clone's exit status; either present or tools.
 const (
 	warmLaunchStarted = "started"
+	warmLaunchDone    = "done"
+	warmLaunchFailed  = "failed"
 	warmLaunchPresent = "present"
 	warmLaunchTools   = "tools"
 )
+
+// leaseWarmCloneNothingExit is the clone's exit status when it left the work
+// dir alone: a checkout holds it, or it already holds a repository.
+const leaseWarmCloneNothingExit = "3"
 
 // What a checkout did with a clone (leaseCheckedOut.warm).
 const (
@@ -105,8 +118,11 @@ const (
 // What zcp last did to clone a pool's repository into a warm container
 // (LeaseWarmClone.Outcome).
 const (
-	// LeaseWarmCloneStarted: the clone runs, detached, in the container.
+	// LeaseWarmCloneStarted: the clone runs in the container — detached, or
+	// for a repository on HQ in a session zcp holds until it ends.
 	LeaseWarmCloneStarted = "started"
+	// LeaseWarmCloneDone: a clone zcp held the session of finished.
+	LeaseWarmCloneDone = "done"
 	// LeaseWarmCloneSkipped: nothing was written; Note says why.
 	LeaseWarmCloneSkipped = "skipped"
 	// LeaseWarmCloneFailed: the launch failed; Note says why.
@@ -115,8 +131,8 @@ const (
 
 // LeaseWarmClone is what zcp last did to clone a pool's repository into a warm
 // container, kept per pool and reported by status. Started means the clone
-// runs in the container; whether it finished only the container knows, and the
-// next checkout acts on it either way.
+// runs in the container; whether a detached one finished only the container
+// knows, and the next checkout acts on it either way.
 type LeaseWarmClone struct {
 	At string `json:"at"` // RFC 3339
 	// Container is the container's hostname; "" when no container was read.
@@ -135,31 +151,41 @@ func leaseWarmRepoKey(repo string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// leaseWarmCloneCommand starts, detached, the clone of repo at origin/main into
-// workDir, and answers on a leaseWarmLaunchMarker line: started, present (the
-// work dir already holds a repository) or tools (the image lacks git, flock or
-// setsid, without which nothing would keep a checkout from running beside it).
+// leaseWarmCloneCommand starts the clone of repo at origin/main into workDir
+// and answers on a leaseWarmLaunchMarker line; present (the work dir already
+// holds a repository) and tools (the image lacks git, flock or setsid, without
+// which nothing would keep a checkout from running beside it) start nothing.
 // The clone runs in its own session (setsid), so a checkout can stop its whole
-// process group; its output goes to $HOME/.zcp/warm/clone.log. It fetches
-// through the inline helper a checkout uses (leaseCredentialHelperShell), so
-// the credential comes from the session's env — GIT_TOKEN, answering
-// tokenScope alone — and is never composed in, and it persists nothing: the
-// checkout that takes the clone sets the helper and the identity. repo and
-// workDir are shell-quoted.
-func leaseWarmCloneCommand(workDir, repo, tokenScope string) string {
+// process group; its output goes to $HOME/.zcp/warm/clone.log. It fetches as
+// a checkout does (leaseFetchStep) and persists nothing: the checkout that
+// takes the clone sets the helper and the identity.
+//   - A repository outside the Mate's HQ (hqURL) is fetched through the inline
+//     helper, so the credential comes from the session's env — GIT_TOKEN,
+//     answering tokenScope alone — and is never composed in; the clone runs
+//     detached and the launch answers started at once.
+//   - A repository on HQ is fetched blobless with no helper of its own: the
+//     command runs as a relayed session (LeaseDeps.HQGit), whose helper answers
+//     HQ only while the session lasts, so the launch waits for the clone and
+//     answers done, present (a checkout took the work dir first), or failed
+//     and the clone's exit status.
+//
+// The clone holds the work dir's flock on leaseCheckoutLockFD, a descriptor a
+// relayed session leaves free. repo and workDir are shell-quoted.
+func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
 	q := shellQuote
 	wd := q(workDir)
 	state := ".git/" + leaseWarmStateFile
+	fd := leaseCheckoutLockFD
 	clone := strings.Join([]string{
-		"exec 9<" + wd,
-		"flock -n 9 || exit 0",
-		"cd " + wd + " || exit 0",
-		"[ -e .git ] && exit 0",
+		"exec " + fd + "<" + wd,
+		"flock -n " + fd + " || exit " + leaseWarmCloneNothingExit,
+		"cd " + wd + " || exit 1",
+		"[ -e .git ] && exit " + leaseWarmCloneNothingExit,
 		"export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30",
 		"git init -q || exit 1",
 		`printf 'repo %s\npid %s\n' ` + q(leaseWarmRepoKey(repo)) + ` "$$" > ` + state + " || exit 1",
 		"git remote add origin " + q(repo) + " && " +
-			"git " + leaseInlineHelperArgs(leaseCredentialHelperShell(tokenScope)) + " fetch -q --prune origin && " +
+			leaseFetchStep(repo, hqURL, tokenScope) + " && " +
 			"c=$(git rev-parse -q --verify " + q("refs/remotes/origin/"+leaseDefaultBranch+"^{commit}") + ") && " +
 			`printf 'commit %s\n' "$c" >> ` + state + " && " +
 			`git checkout -q -f --detach "$c" && ` +
@@ -168,14 +194,22 @@ func leaseWarmCloneCommand(workDir, repo, tokenScope string) string {
 			// file again at the checkout that takes the clone.
 			"sleep 1 && { git update-index -q --refresh >/dev/null 2>&1 || :; } && echo done >> " + state,
 	}, "\n")
+	run := "setsid sh -c " + q(clone) + ` </dev/null >>"$d/clone.log" 2>&1 &`
+	answer := "echo " + q(leaseWarmLaunchMarker+warmLaunchStarted)
+	if IsHQRemote(repo, hqURL) {
+		answer = "wait $!; r=$?; case $r in " +
+			"0) echo " + q(leaseWarmLaunchMarker+warmLaunchDone) + ";; " +
+			leaseWarmCloneNothingExit + ") echo " + q(leaseWarmLaunchMarker+warmLaunchPresent) + ";; " +
+			"*) echo " + q(leaseWarmLaunchMarker+warmLaunchFailed) + ` "$r";; esac`
+	}
 	return strings.Join([]string{
 		"if ! command -v git >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1 || ! command -v setsid >/dev/null 2>&1; then echo " + q(leaseWarmLaunchMarker+warmLaunchTools) + "; exit 0; fi",
 		"if [ -e " + q(workDir+"/.git") + " ]; then echo " + q(leaseWarmLaunchMarker+warmLaunchPresent) + "; exit 0; fi",
 		"[ -d " + wd + " ] || exit 1",
 		`d="$HOME/.zcp/warm"`,
 		`mkdir -p "$d" || exit 1`,
-		"setsid sh -c " + q(clone) + ` </dev/null >>"$d/clone.log" 2>&1 &`,
-		"echo " + q(leaseWarmLaunchMarker+warmLaunchStarted),
+		run,
+		answer,
 	}, "\n")
 }
 
@@ -313,25 +347,37 @@ func readWarmClone(stateDir, pool string) *LeaseWarmClone {
 }
 
 // warmCloneHQSkip is the note of a clone zcp never starts: repo is on the
-// Mate's HQ, whose git zcp answers only within a session it holds.
-const warmCloneHQSkip = "the repository is on this Mate's HQ, whose git zcp answers only over its own ssh session, which a clone running on in the background outlives, so the pool warms none of it; an acquire clones it"
+// Mate's HQ, whose git zcp answers only over a relayed session, and this zcp
+// runs none (LeaseDeps.HQGit nil).
+const warmCloneHQSkip = "the repository is on the Mate's HQ, whose git zcp answers only over a relayed session, and this zcp runs none (it runs outside a Mate)"
+
+// warmCloneHeldNote is what status says while a held clone runs.
+const warmCloneHeldNote = "the repository is on the Mate's HQ, so the clone runs in a relayed session zcp holds until it ends; an acquire that comes meanwhile waits for it"
+
+// warmCloneBound bounds the clone into one container: its read by id and its
+// launch's tries, and for a held launch (a repository on HQ) the whole clone,
+// which RelayedSSH ends at relayedScriptCeiling.
+func warmCloneBound(held bool) time.Duration {
+	bound := leaseReadTimeout + leaseWarmLaunchTries*(leaseWarmCloneLaunchTimeout+leaseWarmLaunchRetry)
+	if held {
+		bound += relayedScriptCeiling
+	}
+	return bound
+}
 
 // cloneLater starts the clone in each of ids in the background (cloneInto).
 func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return
 	}
-	w.spawn(func() {
-		bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(len(ids))*(leaseReadTimeout+leaseWarmLaunchTries*(leaseWarmCloneLaunchTimeout+leaseWarmLaunchRetry)))
-		defer cancel()
-		w.cloneInto(bctx, d, rp, ids)
-	})
+	w.spawn(func() { w.cloneInto(context.WithoutCancel(ctx), d, rp, ids) })
 }
 
 // cloneInto starts, in each container of ids still free, the clone of the
-// pool's recorded repository, and records what it did. It does nothing for a
-// pool that records none, and records a
-// skip for a repository on the Mate's HQ (warmCloneHQSkip).
+// pool's recorded repository, each within warmCloneBound, and records what it
+// did. It does nothing for a pool that records none, and records a skip for a
+// repository on the Mate's HQ when no relayed session answers its git
+// (warmCloneHQSkip).
 func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return
@@ -341,18 +387,24 @@ func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool
 	if repo == "" {
 		return
 	}
-	if IsHQRemote(repo, d.hqAddress()) {
+	hqURL := d.hqAddress()
+	held := IsHQRemote(repo, hqURL)
+	if held && d.HQGit == nil {
 		w.recordClone(d, pool, LeaseWarmClone{Repo: topology.CanonicalRepoURL(repo), Outcome: LeaseWarmCloneSkipped, Note: warmCloneHQSkip + "; nothing was cloned"})
 		return
 	}
 	for _, id := range ids {
-		w.recordClone(d, pool, w.launchClone(ctx, d, rp, id, repo))
+		cctx, cancel := context.WithTimeout(ctx, warmCloneBound(held))
+		w.recordClone(d, pool, w.launchClone(cctx, d, rp, id, repo, hqURL, held))
+		cancel()
 	}
 }
 
 // launchClone reads the container by id and, while it is free, ACTIVE and
-// reachable, starts the clone of repo in it over ssh to its hostname.
-func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPool, id, repo string) LeaseWarmClone {
+// reachable, starts the clone of repo in it over ssh to its hostname — held,
+// for a repository on HQ, as a relayed session (LeaseDeps.gitSSH) that ends
+// with the clone, status saying it runs meanwhile.
+func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPool, id, repo, hqURL string, held bool) LeaseWarmClone {
 	out := LeaseWarmClone{Repo: topology.CanonicalRepoURL(repo)}
 	c, err := d.containerByID(ctx, rp, id)
 	if err != nil {
@@ -371,17 +423,31 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	// The pool's GIT_TOKEN answers the scope its recorded repository or an
 	// earlier lease bound it to; a clone never binds it (repo "").
 	tokenScope, _ := leaseTokenScope(d, rp.svc.Name, "")
-	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, tokenScope))
+	if held {
+		running := out
+		running.Outcome, running.Note = LeaseWarmCloneStarted, warmCloneHeldNote
+		w.recordClone(d, rp.svc.Name, running)
+	}
+	answer, err := w.runLaunch(ctx, d.gitSSH(held), c.Hostname, leaseWarmCloneCommand(LeaseWorkDir, repo, hqURL, tokenScope), held)
 	if err != nil {
-		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)
+		what := "the clone could not be started over ssh: "
+		if held {
+			what = "the clone's relayed session ended before it answered: "
+		}
+		out.Outcome, out.Note = LeaseWarmCloneFailed, what+sshFailureText(err)
 		return out
 	}
-	switch warmLaunchAnswer(string(answer)) {
-	case warmLaunchStarted:
+	switch v := warmLaunchAnswer(string(answer)); {
+	case v == warmLaunchStarted:
 		out.Outcome = LeaseWarmCloneStarted
-	case warmLaunchPresent:
+	case v == warmLaunchDone:
+		out.Outcome = LeaseWarmCloneDone
+	case strings.HasPrefix(v, warmLaunchFailed+" "):
+		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone ended with exit status "+strings.TrimPrefix(v, warmLaunchFailed+" ")+
+			" before it finished (the container's $HOME/.zcp/warm/clone.log says why); the next checkout removes it and clones"
+	case v == warmLaunchPresent:
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's /var/www already holds a repository (a clone zcp started there before, or a checkout)"
-	case warmLaunchTools:
+	case v == warmLaunchTools:
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the pool's image lacks git, flock or setsid, which the clone needs"
 	default:
 		out.Outcome, out.Note = LeaseWarmCloneFailed, fmt.Sprintf("the clone's launch answered %q", boundedText(string(answer)))
@@ -389,18 +455,24 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	return out
 }
 
-// runLaunch runs the launch over ssh to host, again while ssh could not run
-// it (leaseWarmLaunchTries).
-func (w *LeaseWarm) runLaunch(ctx context.Context, d LeaseDeps, host, command string) ([]byte, error) {
+// runLaunch runs the launch through runner to host, again while ssh could not
+// run it (leaseWarmLaunchTries). A detached launch's try is bounded by
+// leaseWarmCloneLaunchTimeout, and one that ran out of time is ssh's not
+// getting in; a held one runs the whole clone, so only ssh's own failure is
+// tried again.
+func (w *LeaseWarm) runLaunch(ctx context.Context, runner git.SSHExecutor, host, command string, held bool) ([]byte, error) {
 	pause := w.LaunchRetry
 	if pause == 0 {
 		pause = leaseWarmLaunchRetry
 	}
 	for try := 1; ; try++ {
-		lctx, cancel := context.WithTimeout(ctx, leaseWarmCloneLaunchTimeout)
-		answer, err := d.SSH.ExecSSH(lctx, host, command)
+		lctx, cancel := ctx, context.CancelFunc(func() {})
+		if !held {
+			lctx, cancel = context.WithTimeout(ctx, leaseWarmCloneLaunchTimeout)
+		}
+		answer, err := runner.ExecSSH(lctx, host, command)
 		cancel()
-		sshDidNotRun := exitStatus(err) == leaseSSHUnreachableExit || (errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil)
+		sshDidNotRun := exitStatus(err) == leaseSSHUnreachableExit || (!held && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil)
 		if err == nil || !sshDidNotRun || try == leaseWarmLaunchTries {
 			return answer, err
 		}

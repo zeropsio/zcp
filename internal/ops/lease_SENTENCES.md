@@ -1,4 +1,4 @@
-# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`)
+# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`)
 
 - LP-RETAKEN — A lease the orchestrator answers unknown-lease for while it lists the container reserved is another holder's, lost, never ours.
 - LP-STOPPED — A lease whose container the orchestrator renews while stopping or starting it (a park, an unpark) stays ours.
@@ -11,3 +11,4 @@
 - LP-NO-RAISE — The same maxContainers again, or a lower one, is no raise; a higher one is.
 - LP-PARKED — A reserved container that is stopped reads parked (as does one being stopped or started); a reserved running one does not.
 - LP-UNKNOWN-POOL — An acquire naming a service that is not in the project, or not a Swarm pool, is refused naming that service, also when it passes no repo and none is recorded: it is never asked for a repo first.
+- LP-WARM-HQ — In a Mate, a pool's free warm container is cloned from the pool's repository on the Mate's HQ over a relayed session zcp holds until the clone ends, so HQ answers the clone's git and the next acquire only fetches what its branch changes.

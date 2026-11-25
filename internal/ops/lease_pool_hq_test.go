@@ -200,7 +200,7 @@ func TestLeaseAcquire_HQRepo_TheUsersGitTokenStays(t *testing.T) {
 	if _, password, _ := persistedAnswer(t, testRepo, session); password != usersToken {
 		t.Errorf("the user's lease pushes with %q, want the user's token", password)
 	}
-	if _, password, _ := inlineAnswer(t, leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHelperScope(testRepo)), session, testRepo); password != usersToken {
+	if _, password, _ := inlineAnswer(t, leaseWarmCloneCommand(LeaseWorkDir, testRepo, "", leaseHelperScope(testRepo)), session, testRepo); password != usersToken {
 		t.Errorf("a warm clone of the user's repository fetches with %q, want the user's token", password)
 	}
 	if !strings.HasPrefix(checkouts[1].command, relayedMark) || strings.HasPrefix(checkouts[0].command, relayedMark) {

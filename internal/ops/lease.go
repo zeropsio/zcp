@@ -75,7 +75,7 @@ type LeaseDeps struct {
 	PoolRepository func(pool string) (repo string, onHQ bool)
 	// HQGit runs zcp's own git against the Mate's HQ in a leased container —
 	// the checkout's fetch, the release guard's, a sync's push and
-	// fast-forwards — as relayed sessions (RelayedSSH), answered with the
+	// fast-forwards — and in a warm one, its clone (DP-32), as relayed sessions (RelayedSSH), answered with the
 	// Mate's project key over the session (DP-16): a pool stores no HQ
 	// credential. nil — outside a Mate — runs that git over SSH as any other.
 	HQGit git.SSHExecutor

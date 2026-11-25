@@ -1,11 +1,11 @@
 // Tests for: ops/lease_warm_clone.go and the steps of lease_warm.go,
 // lease_group.go and lease_checkout.go that use it — a pool's warm container
 // already holds the pool's repository: right after zcp creates a pool's warm
-// container, keeps one at a release or finds one at an acquire, it starts —
-// detached in the container — a clone of the repository the pool's last lease
-// checked out, only into a container still free, only for a pool zcp leased a
-// repository from, and for a repository on the Mate's HQ only once the pool's
-// ZCP_HQ_GIT_TOKEN holds this Mate's HQ credential; status reports what it did
+// container, keeps one at a release or finds one at an acquire, it starts in
+// the container a clone of the repository the pool's last lease checked out —
+// detached, or for a repository on the Mate's HQ in a relayed session zcp
+// holds until the clone ends — only into a container still free and only for
+// a pool zcp leased a repository from; status reports what it did
 // (docs/spec-workflows.md §8 DP-32).
 package ops
 
@@ -51,7 +51,7 @@ func newWarmCloneSSH() *warmCloneSSH {
 	return s
 }
 
-func isWarmCloneLaunch(command string) bool { return strings.Contains(command, "@@zcp-warm started") }
+func isWarmCloneLaunch(command string) bool { return strings.Contains(command, leaseWarmLaunchMarker) }
 
 // launches are the clone launches, in order.
 func (s *warmCloneSSH) launches() []sshCall {
@@ -326,39 +326,31 @@ func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testin
 	}
 }
 
-// TestLeaseWarmClone_HQRepository_NeverWarmed: a pool warms no clone of a
-// repository on the Mate's HQ (DP-16) — zcp answers HQ's git only over a
-// session it holds, which a detached clone outlives, and the pool stores no
-// HQ credential — in a Mate or outside one. Its status says the clone was
-// skipped for HQ, and nothing is written to the pool's env.
-// witness: internal/ops/lease_warm_clone.go | if IsHQRemote(repo, d.hqAddress()) { → if false {
+// TestLeaseWarmClone_HQRepository_NeverWarmed: outside a Mate a pool warms no
+// clone of a repository on HQ — zcp answers HQ's git only over a relayed
+// session (DP-16), and such a zcp runs none. Its status says the clone was
+// skipped for HQ, and nothing is written to the pool's env. In a Mate the
+// clone runs relayed (LP-WARM-HQ).
+// witness: internal/ops/lease_warm_clone.go | if held && d.HQGit == nil { → if false {
 func TestLeaseWarmClone_HQRepository_NeverWarmed(t *testing.T) {
 	t.Parallel()
-	for _, mate := range []bool{false, true} {
-		t.Run(map[bool]string{false: "outside a Mate", true: "in a Mate"}[mate], func(t *testing.T) {
-			t.Parallel()
-			orch := newWarmOrch(4)
-			wf, ssh := newWarmCloneFixture(t, orch)
-			wf.deps.HQAddress = func() string { return leaseHQURL }
-			if mate {
-				wf.deps.HQGit = relayedThrough{deps: &wf.deps}
-			}
-			withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
-			wf.hold(t, 5, true)
-			mock := wf.deps.Client.(*platform.Mock)
+	orch := newWarmOrch(4)
+	wf, ssh := newWarmCloneFixture(t, orch)
+	wf.deps.HQAddress = func() string { return leaseHQURL }
+	withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
+	wf.hold(t, 5, true)
+	mock := wf.deps.Client.(*platform.Mock)
 
-			wf.release(t, "devpool-5")
+	wf.release(t, "devpool-5")
 
-			if launches := ssh.launches(); len(launches) != 0 {
-				t.Fatalf("clone launches = %+v, want none of a repository on HQ", launches)
-			}
-			if writes := mock.CallCount("CreateServiceEnvVar"); writes != 0 {
-				t.Errorf("env writes = %d, want none", writes)
-			}
-			if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneSkipped || !strings.Contains(clone.Note, "HQ") {
-				t.Errorf("status clone = %+v, want skipped naming HQ", clone)
-			}
-		})
+	if launches := ssh.launches(); len(launches) != 0 {
+		t.Fatalf("clone launches = %+v, want none of a repository on HQ", launches)
+	}
+	if writes := mock.CallCount("CreateServiceEnvVar"); writes != 0 {
+		t.Errorf("env writes = %d, want none", writes)
+	}
+	if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneSkipped || !strings.Contains(clone.Note, "HQ") {
+		t.Errorf("status clone = %+v, want skipped naming HQ", clone)
 	}
 }
 
@@ -425,7 +417,7 @@ func TestClassifyCheckoutFailure_WarmCloneThatWouldNotStop(t *testing.T) {
 // takes it does.
 func TestLeaseWarmCloneCommand_CredentialNeverInIt(t *testing.T) {
 	t.Parallel()
-	c := leaseWarmCloneCommand(LeaseWorkDir, testRepo, leaseHelperScope(testRepo))
+	c := leaseWarmCloneCommand(LeaseWorkDir, testRepo, "", leaseHelperScope(testRepo))
 	if !strings.Contains(c, "fetch -q --prune origin") || !strings.Contains(c, "$"+GitTokenEnvKey) || !strings.Contains(c, "username=oauth2") {
 		t.Errorf("the clone must fetch through the session-env helper reading %s as oauth2: %s", GitTokenEnvKey, c)
 	}

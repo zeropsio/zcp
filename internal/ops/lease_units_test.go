@@ -241,3 +241,35 @@ func TestLease_LPUnknownPool_NoRepoForANonPool_RefusedNamingIt(t *testing.T) {
 		}
 	}
 }
+
+// LP-WARM-HQ — In a Mate, a pool's free warm container is cloned from the
+// pool's repository on the Mate's HQ over a relayed session zcp holds until
+// the clone ends, so HQ answers the clone's git and the next acquire only
+// fetches what its branch changes.
+// witness: internal/ops/lease_warm_clone.go | answer, err := w.runLaunch(ctx, d.gitSSH(held), → answer, err := w.runLaunch(ctx, d.gitSSH(false),
+func TestLease_LPWarmHQ_FreeContainerClonedOverAHeldRelayedSession(t *testing.T) {
+	t.Parallel()
+	wf, ssh := newWarmCloneFixture(t, newWarmOrch(4))
+	wf.deps.HQAddress = func() string { return leaseHQURL }
+	wf.deps.HQGit = relayedThrough{deps: &wf.deps}
+	withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
+	ssh.answer = leaseWarmLaunchMarker + warmLaunchDone + "\n"
+	wf.hold(t, 5, true)
+
+	wf.release(t, "devpool-5")
+
+	launches := ssh.launches()
+	if len(launches) != 1 {
+		t.Fatalf("clone launches = %+v, want one, into the container the release kept", launches)
+	}
+	command := launches[0].command
+	if !strings.HasPrefix(command, relayedMark) {
+		t.Errorf("the clone of an HQ repository did not run relayed, so nothing answers HQ's git: %s", command)
+	}
+	if !strings.Contains(command, "--filter=blob:none") || strings.Contains(command, "credential.helper=") {
+		t.Errorf("the clone must fetch blobless with no helper of its own, as the checkout does: %s", command)
+	}
+	if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneDone {
+		t.Errorf("status clone = %+v, want done: the session ended with the clone", clone)
+	}
+}
