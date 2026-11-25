@@ -887,7 +887,7 @@ produced for such a run). `TestSeed_ExpectMismatch_BlocksPreparation`,
 
 **FM-64.** `seed.expect` is mandatory for a cell whose starting state is
 deliberately broken (spec-scenarios.md §9.2 rule 3); `mode: settled` without
-`expect` is a `validate()` error on such a cell (`TestScenarioValidate_SettledWithoutExpect_Rejected`).
+`expect` is a `validate()` error on such a cell.
 
 ## 5. Report and coverage — verdict vocabulary over many bundles
 
