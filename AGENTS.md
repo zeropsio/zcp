@@ -8,7 +8,7 @@ Read private tooling/access policy in `CLAUDE.local.md` when present; worktrees 
 
 Map only. Authority: tests → code → specs → this map. Homes:
 
-- Behaviour → a test's sentence; mechanism → code; the seam other repositories build against → docs/spec-mate.md; a rule across packages → its docs/spec-*.md listed below. A file not listed here is not a home.
+- Behaviour → a unit's sentence (a line of a `*_SENTENCES.md`) and its case; mechanism → code; the seam other repositories build against → docs/spec-mate.md. A docs/spec-*.md listed below holds only what the shared rules §6 admit outside code and tests (a contract between separately released parts, who owns a fact or a decision, a trust boundary, a term, a platform fact, steps a person performs, a rule that binds changes not yet written, a limit kept on purpose), never what one package does. A file not listed here is not a home.
 - Platform facts → the Zerops documentation (`zeropsio/docs`, <https://docs.zerops.io>) or live, never training data; recipe gotchas → `internal/knowledge/recipes/<slug>.md`; universal mechanics → `internal/content/atoms/`.
 - Disciplines → the shared rules, this repository's own in `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`.
 - `plans/` is a local, untracked scratch directory for whoever uses it, never authoritative.
@@ -108,6 +108,6 @@ Read the home before new call sites:
 
 ## Maintenance
 
-Keep only traps an agent can violate before checks, or knowledge routes. One line per route/trap, cite its spec/test; traps ≤~30 lines. No cached values/summaries, dates, hashes, quotes or journals. Delete stale/redundant content; history is git.
+Keep only traps an agent can violate before checks, or knowledge routes. One line per route/trap, cite its spec/test; traps ≤~30 lines. No cached values/summaries, dates, hashes, quotes or journals. Delete stale/redundant content; history is git. A docs line names no test and carries no measurement, review reply or account of what was before; whoever edits a line removes the ones it holds.
 
 Error codes → `internal/platform/errors.go`. Global state: `// non-parallel: <reason>` in the package seed test.
