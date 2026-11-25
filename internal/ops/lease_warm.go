@@ -727,7 +727,7 @@ func (d LeaseDeps) leaseStatusWarm(ctx context.Context, services []platform.Serv
 		if err != nil {
 			continue // gone: it keeps nothing warm
 		}
-		pw := LeasePoolWarm{Pool: name, Target: d.Warm.Target, Clone: readWarmClone(d.StateDir, name)}
+		pw := LeasePoolWarm{Pool: name, Target: d.Warm.Target, Clone: d.warmCloneView(name)}
 		pw.Last, pw.Preparing = d.warmOutcomeView(name)
 		rp, err := orchestratorFor(ctx, d, svc)
 		if err == nil {

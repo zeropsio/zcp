@@ -29,7 +29,9 @@ import (
 const (
 	leaseAcquireUsage = "usage: zcp lease acquire --pool <pool> --branch <branch> [--repo <repo URL>] --json"
 	leaseReleaseUsage = "usage: zcp lease release --branch <branch> [--repo <repo URL>] --json or zcp lease release --lease-id <id> --json"
-	leaseUsage        = leaseAcquireUsage + "\n" + leaseReleaseUsage
+	// zcp starts warm-clone itself (ops.LeaseDeps.HoldWarmClone).
+	leaseWarmCloneUsage = "usage: zcp lease warm-clone --pool <pool> --container <container id>"
+	leaseUsage          = leaseAcquireUsage + "\n" + leaseReleaseUsage + "\n" + leaseWarmCloneUsage
 )
 
 // The verb supplies its name when the container prerequisite fails.
@@ -57,6 +59,8 @@ const leaseAcquireBudget = 900 * time.Second
 // warm policy's background work the release started (a pool's top-up create,
 // a clone into the container kept warm, DP-27/DP-32); work cut short is the
 // next acquire's or release's to finish, and status says what never answered.
+// A clone of a repository on the Mate's HQ is no such work: a zcp process of
+// its own holds it (runLeaseWarmClone).
 const leaseBackgroundWait = 20 * time.Second
 
 // runLeaseCmd dispatches acquire and release. args is everything after
@@ -77,6 +81,9 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	// A usage refusal carries a code and its class as every failure does.
 	fail := func(msg string) int {
 		return failWith(platform.NewPlatformError(platform.ErrInvalidUsage, msg, ""))
+	}
+	if len(args) > 0 && args[0] == "warm-clone" {
+		return runLeaseWarmClone(args[1:], stdout, resolve)
 	}
 	if len(args) == 0 || (!acquire && args[0] != "release") {
 		return fail(leaseUsage)
@@ -156,6 +163,32 @@ func runLeaseCmd(args []string, stdout io.Writer, resolve func(context.Context) 
 	}
 	waitWithin(&background, leaseBackgroundWait)
 	return code
+}
+
+// runLeaseWarmClone is `zcp lease warm-clone`: the process that holds the
+// relayed session of one warm clone of a repository on the Mate's HQ until
+// the clone ends (ops.LeaseWarmCloneHeld, DP-32). Its outcome is the pool's
+// warm clone record; stdout, which its starter discards, gets only an error.
+func runLeaseWarmClone(args []string, stdout io.Writer, resolve func(context.Context) (ops.LeaseDeps, error)) int {
+	fs := flag.NewFlagSet("lease warm-clone", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	pool := fs.String("pool", "", "the pool service hostname")
+	container := fs.String("container", "", "the warm container's id")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || strings.TrimSpace(*pool) == "" || strings.TrimSpace(*container) == "" {
+		_, _ = fmt.Fprintln(stdout, leaseWarmCloneUsage)
+		return tools.LeaseReleaseExitFailed
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	deps, err := resolve(ctx)
+	if err == nil {
+		err = ops.LeaseWarmCloneHeld(ctx, deps, *pool, *container)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(stdout, "lease warm-clone: "+err.Error())
+		return tools.LeaseReleaseExitFailed
+	}
+	return 0
 }
 
 // waitWithin waits for wg, at most d.

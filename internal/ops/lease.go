@@ -75,10 +75,18 @@ type LeaseDeps struct {
 	PoolRepository func(pool string) (repo string, onHQ bool)
 	// HQGit runs zcp's own git against the Mate's HQ in a leased container —
 	// the checkout's fetch, the release guard's, a sync's push and
-	// fast-forwards — and in a warm one, its clone (DP-32), as relayed sessions (RelayedSSH), answered with the
-	// Mate's project key over the session (DP-16): a pool stores no HQ
-	// credential. nil — outside a Mate — runs that git over SSH as any other.
+	// fast-forwards — and in a warm one, its clone (DP-32), as relayed
+	// sessions (RelayedSSH), answered with the Mate's project key over the
+	// session (DP-16): a pool stores no HQ credential. nil — outside a Mate —
+	// runs that git over SSH as any other.
 	HQGit git.SSHExecutor
+	// HoldWarmClone starts, in a zcp process of its own, the clone of a
+	// pool's repository on the Mate's HQ into the pool's free warm container
+	// (LeaseWarmCloneHeld, `zcp lease warm-clone`), which holds the clone's
+	// relayed session until the clone ends — longer than the process that
+	// warmed the container may live (DP-32). nil — outside a Mate — warms no
+	// repository on HQ.
+	HoldWarmClone func(pool, containerID string) error
 	// ReadTimeout bounds one orchestrator read (a container listing); zero
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
 	// a reset; a read that hangs must not hold a status call that long.

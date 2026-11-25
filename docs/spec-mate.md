@@ -5315,7 +5315,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   A dev pool holds no Git credential either: zcp's git in a lease of a repository on HQ — the
   checkout, a sync's push, the release guard's fetch — runs as a relayed script, and the agent's
   runs through `zcp git <alias>` (`spec-workflows.md` §8 DP-12, DP-16). A pool's warm clone of a repository on HQ
-  runs as a relayed script zcp holds until the clone ends (DP-32).
+  runs as a relayed script that a zcp process of its own holds until the clone ends (DP-32).
 - **A Mate moved to another HQ.** A wired pair whose record names its own repository
   (`/git/[<org>/]<app>/<repo>.git` of its HQ record) on another host than the HQ the Mate links to now
   was wired before the move; any other remote is the person's and is never moved. At the Mate's service start, and at

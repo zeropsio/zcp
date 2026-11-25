@@ -126,6 +126,9 @@ type leaseRolloutToolResult struct {
 // rt is the runtime that envelope is computed for.
 func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, opts ...LeaseOption) {
 	setup := leaseSetup{deps: leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)}
+	// A warm clone of a repository on the Mate's HQ is held by a zcp process
+	// of its own, as LeaseDepsFor's (DP-32).
+	setup.deps.HoldWarmClone = startHeldWarmClone
 	for _, opt := range opts {
 		opt(&setup)
 	}

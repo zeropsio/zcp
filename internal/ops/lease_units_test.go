@@ -1,9 +1,12 @@
 package ops
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -242,34 +245,108 @@ func TestLease_LPUnknownPool_NoRepoForANonPool_RefusedNamingIt(t *testing.T) {
 	}
 }
 
-// LP-WARM-HQ — In a Mate, a pool's free warm container is cloned from the
-// pool's repository on the Mate's HQ over a relayed session zcp holds until
-// the clone ends, so HQ answers the clone's git and the next acquire only
-// fetches what its branch changes.
-// witness: internal/ops/lease_warm_clone.go | answer, err := w.runLaunch(ctx, d.gitSSH(held), → answer, err := w.runLaunch(ctx, d.gitSSH(false),
-func TestLease_LPWarmHQ_FreeContainerClonedOverAHeldRelayedSession(t *testing.T) {
+// LP-WARM-HQ — In a Mate, the clone of a pool's repository on the Mate's HQ
+// into a free warm container is handed to a zcp process of its own, which
+// holds its relayed session until the clone ends; the process that warmed the
+// container, which may end first (a zcp lease call, an MCP server), never runs
+// it.
+// witness: internal/ops/lease_warm_clone.go | if IsHQRemote(repo, hqURL) { → if false {
+func TestLease_LPWarmHQ_CloneHandedToAProcessOfItsOwn(t *testing.T) {
 	t.Parallel()
 	wf, ssh := newWarmCloneFixture(t, newWarmOrch(4))
 	wf.deps.HQAddress = func() string { return leaseHQURL }
 	wf.deps.HQGit = relayedThrough{deps: &wf.deps}
 	withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
-	ssh.answer = leaseWarmLaunchMarker + warmLaunchDone + "\n"
+	var (
+		mu   sync.Mutex
+		held []string
+	)
+	wf.deps.HoldWarmClone = func(pool, containerID string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		held = append(held, pool+"/"+containerID)
+		return nil
+	}
 	wf.hold(t, 5, true)
 
 	wf.release(t, "devpool-5")
 
-	launches := ssh.launches()
-	if len(launches) != 1 {
-		t.Fatalf("clone launches = %+v, want one, into the container the release kept", launches)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(held) != 1 || held[0] != testPoolHost+"/c-5" {
+		t.Errorf("clones handed to a process of their own = %v, want the container the release kept, %s/c-5", held, testPoolHost)
 	}
-	command := launches[0].command
-	if !strings.HasPrefix(command, relayedMark) {
-		t.Errorf("the clone of an HQ repository did not run relayed, so nothing answers HQ's git: %s", command)
+	if launches := ssh.launches(); len(launches) != 0 {
+		t.Errorf("the releasing process ran the clone itself, which dies with it: %+v", launches)
 	}
-	if !strings.Contains(command, "--filter=blob:none") || strings.Contains(command, "credential.helper=") {
-		t.Errorf("the clone must fetch blobless with no helper of its own, as the checkout does: %s", command)
+}
+
+// LP-WARM-HELD — A held clone's process records what the clone did: done once
+// it finished, skipped when it left the work dir alone (a checkout took it, or
+// it held a repository), failed naming the clone's exit status, and failed —
+// never tried again into a skip — when the session ended while the clone ran.
+// witness: internal/ops/lease_warm_clone.go | case exited && code == "0": → case exited && (code == "0" || code == leaseWarmCloneNothingExit):
+func TestLease_LPWarmHeld_RecordsWhatTheCloneDid(t *testing.T) {
+	t.Parallel()
+	running := leaseWarmLaunchMarker + warmLaunchRunning + "\n"
+	exit := func(code string) string { return running + leaseWarmLaunchMarker + warmLaunchExit + " " + code + "\n" }
+	tests := []struct {
+		name    string
+		answer  string
+		err     error
+		outcome string
+		note    string
+	}{
+		{"finished", exit("0"), nil, LeaseWarmCloneDone, ""},
+		{"left the work dir alone", exit(leaseWarmCloneNothingExit), nil, LeaseWarmCloneSkipped, "already holds a repository"},
+		{"the clone failed", exit("128"), nil, LeaseWarmCloneFailed, "exit status 128"},
+		{"the session ended while it ran", running, sshFailure("", platform.ExitStatusError(leaseSSHUnreachableExit)), LeaseWarmCloneFailed, "ended while the clone ran"},
 	}
-	if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneDone {
-		t.Errorf("status clone = %+v, want done: the session ended with the clone", clone)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			orch := newWarmOrch(4)
+			orch.add(3, "", true, false, 1)
+			wf, ssh := newWarmCloneFixture(t, orch)
+			wf.deps.Warm.LaunchRetry = time.Nanosecond
+			wf.deps.HQAddress = func() string { return leaseHQURL }
+			wf.deps.HQGit = relayedThrough{deps: &wf.deps}
+			withPoolRepository(&wf.deps, testPoolHost, leaseHQRepo, true)
+			ssh.setHandler(func(string, string) ([]byte, error) { return []byte(tt.answer), tt.err })
+
+			if err := LeaseWarmCloneHeld(context.Background(), wf.deps, testPoolHost, "c-3"); err != nil {
+				t.Fatal(err)
+			}
+
+			if launches := ssh.launches(); len(launches) != 1 || !strings.HasPrefix(launches[0].command, relayedMark) {
+				t.Fatalf("launches = %+v, want one relayed session, never tried again once the clone ran", launches)
+			}
+			if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != tt.outcome || !strings.Contains(clone.Note, tt.note) {
+				t.Errorf("status clone = %+v, want %s noting %q", clone, tt.outcome, tt.note)
+			}
+		})
+	}
+}
+
+// LP-WARM-LOST — A held clone that still reads running past its bound never
+// reported back (the process holding its session ended first, as at a
+// restart): status says it failed, never that it runs and an acquire waits
+// for it.
+// witness: internal/ops/lease_warm_clone.go | d.now().Sub(at) <= warmCloneBound(true) { → d.now().Sub(at) <= 2*warmCloneBound(true) {
+func TestLease_LPWarmLost_RunningPastItsBoundReadsFailed(t *testing.T) {
+	t.Parallel()
+	wf, _ := newWarmCloneFixture(t, newWarmOrch(4))
+	started := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
+	now := started
+	wf.deps.Now = func() time.Time { return now }
+	wf.deps.Warm.recordClone(wf.deps, testPoolHost, LeaseWarmClone{Container: nodeHostname(3), Repo: leaseHQRepo, Outcome: LeaseWarmCloneRunning, Note: warmCloneHeldNote})
+
+	now = started.Add(time.Minute)
+	if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneRunning {
+		t.Errorf("a minute in: status clone = %+v, want running", clone)
+	}
+	now = started.Add(warmCloneBound(true) + time.Second)
+	if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != LeaseWarmCloneFailed || !strings.Contains(clone.Note, "never reported back") {
+		t.Errorf("past its bound: status clone = %+v, want failed, never reported back", clone)
 	}
 }

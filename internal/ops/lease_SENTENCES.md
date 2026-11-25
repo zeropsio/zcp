@@ -11,4 +11,6 @@
 - LP-NO-RAISE — The same maxContainers again, or a lower one, is no raise; a higher one is.
 - LP-PARKED — A reserved container that is stopped reads parked (as does one being stopped or started); a reserved running one does not.
 - LP-UNKNOWN-POOL — An acquire naming a service that is not in the project, or not a Swarm pool, is refused naming that service, also when it passes no repo and none is recorded: it is never asked for a repo first.
-- LP-WARM-HQ — In a Mate, a pool's free warm container is cloned from the pool's repository on the Mate's HQ over a relayed session zcp holds until the clone ends, so HQ answers the clone's git and the next acquire only fetches what its branch changes.
+- LP-WARM-HQ — In a Mate, the clone of a pool's repository on the Mate's HQ into a free warm container is handed to a zcp process of its own, which holds its relayed session until the clone ends; the process that warmed the container, which may end first (a zcp lease call, an MCP server), never runs it.
+- LP-WARM-HELD — A held clone's process records what the clone did: done once it finished, skipped when it left the work dir alone (a checkout took it, or it held a repository), failed naming the clone's exit status, and failed — never tried again into a skip — when the session ended while the clone ran.
+- LP-WARM-LOST — A held clone that still reads running past its bound never reported back (the process holding its session ended first, as at a restart): status says it failed, never that it runs and an acquire waits for it.

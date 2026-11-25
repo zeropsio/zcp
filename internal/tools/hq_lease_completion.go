@@ -38,9 +38,12 @@ type leaseBranchRelease func(ctx context.Context, repo, branch string, confirm f
 // client and swarm, a lease's ssh alias and mount through mounter (nil: no
 // host side), git in its container through ssh, each pool's warm container
 // (DP-27), the HQ a repository is recognised on, and — inside a Mate — git
-// against that HQ relayed (DP-16).
+// against that HQ relayed (DP-16), a warm clone of a repository there held by
+// a zcp process of its own (DP-32).
 func LeaseDepsFor(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) ops.LeaseDeps {
-	return leaseDepsIn(leaseDeps(client, projectID, stateDir, swarm, mounter, ssh), rt)
+	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	deps.HoldWarmClone = startHeldWarmClone
+	return leaseDepsIn(deps, rt)
 }
 
 // leaseDepsIn is deps in the container rt describes: the HQ a repository is
