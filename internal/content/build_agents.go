@@ -79,9 +79,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		// (docs/spec-mate.md §2.10) and has zerops_env's ai-key action
 		// (§5.8). Only a Mate's preview pane frames its dev and stage
 		// (§10.10), and only a Mate has a vault of its own for the account
-		// it checks a sign-in with (§5.8a). Only a Mate's person links
-		// pen.dev designs, which the agent reads by the playbook the block
-		// names (§10.10).
+		// it checks a sign-in with (§5.8a).
 		for _, block := range []struct {
 			include bool
 			name    string
@@ -90,7 +88,6 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			{!rt.MateEnabled, "agents_group.md"},
 			{rt.MateEnabled, "agents_application.md"},
 			{rt.MateEnabled, "agents_preview.md"},
-			{rt.MateEnabled, "agents_designs.md"},
 			{rt.MateEnabled, "agents_git_host.md"},
 			{rt.MateEnabled, "agents_pages.md"},
 			{rt.MateEnabled, "agents_live_facts.md"},

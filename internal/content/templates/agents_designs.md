@@ -1,1 +1,0 @@
-**Designs.** A link to a pen.dev design (`app.pen.dev/s/…`) is no page you can fetch: every fetch tool gets an error and the browser draws only a canvas. Before the first read of one, read `zerops_knowledge uri="zerops://playbooks/pen-designs"`; it has the route that reads a shared design and finds the node id the person pastes.

@@ -1111,38 +1111,6 @@ func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
 	}
 }
 
-// TestBuildAgentsMD_Container_APenDesignLinkSendsTheAgentToItsPlaybook: a
-// Mate's agent that is handed a pen.dev share link reads the pen-designs
-// playbook before its first read of it, because the share page answers every
-// fetch tool with an error and the browser with a canvas, and the route that
-// reads it (www.pen.dev's manifest and objects, a zstd file) was found by hand
-// on four Mates; outside a Mate, whose person does not link designs, AGENTS.md
-// does not send the agent there.
-// witness: internal/content/build_agents.go | {rt.MateEnabled, "agents_designs.md"}, → {true, "agents_designs.md"},
-func TestBuildAgentsMD_Container_APenDesignLinkSendsTheAgentToItsPlaybook(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		rt   runtime.Info
-		want bool
-	}{
-		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
-		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
-		{name: "the Chief", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			out, err := BuildAgentsMD(tc.rt, false)
-			if err != nil {
-				t.Fatalf("BuildAgentsMD: %v", err)
-			}
-			if got := strings.Contains(out, `zerops_knowledge uri="zerops://playbooks/pen-designs"`); got != tc.want {
-				t.Errorf("AGENTS.md points at the pen-designs playbook = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 // TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins pins that a
 // Mate widens a page's framing by Mate's own origins only — the hosted client
 // and this container's own subdomain — never a zerops.app wildcard, which lets
