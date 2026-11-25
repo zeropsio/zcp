@@ -249,6 +249,8 @@ const (
 	// maxDevServerWait is an upper bound that keeps pathological boot
 	// loops from eating the whole bash-timeout window.
 	maxDevServerWait = 45
+	// maxSupervisorWait bounds a wait owned by a capable supervisor.
+	maxSupervisorWait = 300
 	// defaultLogTailLines is how many trailing log lines a result of a
 	// failed start or status carries: enough to diagnose a failed startup.
 	defaultLogTailLines = 40
@@ -271,6 +273,26 @@ const (
 	// containerIdentityTimeout bounds a one-round-trip remote write or read.
 	containerIdentityTimeout = 10 * time.Second
 )
+
+// devServerWait decides the bound and the owner of a call's wait once.
+func devServerWait(action string, asked int, v SupervisorVersion) (seconds int, bySupervisor bool) {
+	bySupervisor = v.Supports(devsup.CapabilityWait)
+	switch action {
+	case devServerActionStart, devServerActionRestart:
+		if asked <= 0 {
+			asked = defaultDevServerWait
+		}
+		if bySupervisor {
+			return min(asked, maxSupervisorWait), true
+		}
+		return min(asked, maxDevServerWait), false
+	case devServerActionStatus:
+		if bySupervisor && asked > 0 {
+			return min(asked, maxSupervisorWait), true
+		}
+	}
+	return 0, false
+}
 
 var (
 	// devHostnameRe bounds the dev-server hostname to the same shape as
@@ -394,6 +416,12 @@ func executeDevServer(ctx context.Context, ssh SSHDeployer, client platform.Clie
 	}
 	if errors.As(err, &unresponsive) {
 		return unresponsiveResult(action, p.Hostname, unresponsive), nil
+	}
+	if errors.As(err, &noSup) {
+		if p.lease != nil {
+			return leaseNoSupervisorResult(action, *p.lease, noSup.Installed, why), nil
+		}
+		return noSupervisorResult(action, p.Hostname), nil
 	}
 	if err != nil {
 		return nil, err
@@ -881,6 +909,9 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	result := newResult(action, p.Hostname, name)
 	if want.Port == 0 || p.NoHTTPProbe {
 		result, err = settleNoProbe(ctx, ssh, ds, result, name)
+		if err == nil && ds.State.Servers[name].Status == devsup.StatusCrashed {
+			appendCrashWait(result, ds.Supervisor, ds.State.Servers[name])
+		}
 	} else {
 		result, err = probeStarted(ctx, ssh, ds, result, p, name, want.Port, begun)
 	}
@@ -921,11 +952,9 @@ func settleNoProbe(ctx context.Context, ssh SSHDeployer, ds *DevServers, result 
 // probeStarted runs the in-container health probe for a started server and
 // then confirms with the supervisor that its group is the one answering.
 func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time) (*DevServerResult, error) {
-	wait := p.WaitSeconds
-	if wait <= 0 {
-		wait = defaultDevServerWait
-	} else if wait > maxDevServerWait {
-		wait = maxDevServerWait
+	wait, bySupervisor := devServerWait(result.Action, p.WaitSeconds, ds.Supervisor)
+	if bySupervisor {
+		return probeSupervisorStarted(ctx, ssh, ds, result, p, name, port, begun, wait)
 	}
 	healthPath := probedPath(p, ds, name)
 	result.Port, result.HealthPath = port, healthPath
@@ -942,6 +971,7 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 		// A passing probe with the server's group gone is someone else's
 		// listener answering its port (F3).
 		applyCrash(ctx, ssh, result, name, server)
+		appendCrashWait(result, ds.Supervisor, server)
 		return result, nil
 	}
 	switch {
@@ -950,13 +980,74 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
 	case server.Status == devsup.StatusStarting && answerStarting(ds.Supervisor, server) != startingProbe: // the wait ended first
 		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
-		applyStarting(ctx, ssh, result, name, server, answerStarting(ds.Supervisor, server))
+		applyStarting(ctx, ssh, result, name, server, answerStarting(ds.Supervisor, server), ds.Supervisor)
 	default:
 		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
 		applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	}
 	// The probe reaches a loopback listener from inside the container; the
 	// server listens only now, so the call's first read of them is stale.
+	if ds.observeListeners(ctx, ssh); ds.LoopbackOnly[port] {
+		applyLoopbackOnly(result, name, port)
+	}
+	return result, nil
+}
+
+// waitDevServer reads the supervisor's answer once, falling back to status
+// only if the wait's answer was lost.
+func waitDevServer(ctx context.Context, ssh SSHDeployer, ds *DevServers, name string, seconds int) error {
+	st, err := supervisorWait(ctx, ssh, ds.Hostname, name, seconds)
+	if err != nil {
+		st, err = supervisorCtl(ctx, ssh, ds.Hostname, devServerActionStatus, name)
+		if err != nil {
+			return fmt.Errorf("read dev server after wait: %w", err)
+		}
+	}
+	if _, ok := st.Servers[name]; ok {
+		servers := maps.Clone(ds.State.Servers)
+		servers[name] = st.Servers[name] // the wait's answer
+		st.Servers = servers
+	}
+	ds.observe(st)
+	return nil
+}
+
+// probeSupervisorStarted judges the state returned by the wait and makes one
+// health request only when that state calls for a probe.
+func probeSupervisorStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time, wait int) (*DevServerResult, error) {
+	if err := waitDevServer(ctx, ssh, ds, name, wait); err != nil {
+		return nil, err
+	}
+	server := ds.State.Servers[name]
+	result.Port, result.LogFile, result.PID = port, server.LogPath, server.Pid
+	switch server.Status {
+	case devsup.StatusCrashed:
+		applyCrash(ctx, ssh, result, name, server)
+		appendCrashWait(result, ds.Supervisor, server)
+		return result, nil
+	case devsup.StatusStopped:
+		result.Reason = reasonStopped
+		result.Message = fmt.Sprintf("Dev server %s is stopped.", serverLabel(p.Hostname, name))
+		return result, nil
+	case devsup.StatusStarting:
+		if answer := answerStarting(ds.Supervisor, server); answer != startingProbe {
+			result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
+			applyStarting(ctx, ssh, result, name, server, answer, ds.Supervisor)
+			return result, nil
+		}
+	case devsup.StatusRunning:
+	}
+	healthPath := probedPath(p, ds, name)
+	result.HealthPath = healthPath
+	remaining := max(2, wait-int(time.Since(begun).Seconds()))
+	probeLine, deadline, probeErr := runHealthProbeOnce(ctx, ssh, p.Hostname, port, healthPath, remaining)
+	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
+		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, startedLogTailLines))
+		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
+	} else {
+		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
+		applyProbeFailure(result, probeLine, deadline, name, healthPath, remaining, server.Status)
+	}
 	if ds.observeListeners(ctx, ssh); ds.LoopbackOnly[port] {
 		applyLoopbackOnly(result, name, port)
 	}
@@ -1053,6 +1144,13 @@ func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, n
 		result.Message = fmt.Sprintf("Dev server %s %s — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label, verdict.Phrase)
 	default:
 		result.Message = fmt.Sprintf("Dev server %s %s; the supervisor leaves it down. Read logTail, fix the cause, then start it again.", label, verdict.Phrase)
+	}
+}
+
+// appendCrashWait extends only this tool's retry-pending replies.
+func appendCrashWait(result *DevServerResult, v SupervisorVersion, server devsup.ServerState) {
+	if server.RetryPending && v.Supports(devsup.CapabilityWait) {
+		result.Message += " " + waitSentence()
 	}
 }
 
@@ -1154,6 +1252,18 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	if !ok {
 		return nil, unknownServerErr(ds, name)
 	}
+	probeWait := 2
+	if wait, bySupervisor := devServerWait(devServerActionStatus, p.WaitSeconds, ds.Supervisor); bySupervisor {
+		begun := time.Now()
+		if err := waitDevServer(ctx, ssh, ds, name, wait); err != nil {
+			return nil, err
+		}
+		server = ds.State.Servers[name]
+		probeWait = max(2, wait-int(time.Since(begun).Seconds()))
+		if server.Status == devsup.StatusRunning || (server.Status == devsup.StatusStarting && answerStarting(ds.Supervisor, server) == startingProbe) {
+			ds.observeListeners(ctx, ssh)
+		}
+	}
 	declared, isDeclared := ds.Server(name)
 	result := newResult(devServerActionStatus, p.Hostname, name)
 	result.LogFile, result.PID, result.Restarts = server.LogPath, server.Pid, server.Restarts
@@ -1173,6 +1283,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	switch server.Status {
 	case devsup.StatusCrashed:
 		applyCrash(ctx, ssh, result, name, server)
+		appendCrashWait(result, ds.Supervisor, server)
 		return result, nil
 	case devsup.StatusStopped:
 		result.Reason = reasonStopped
@@ -1187,7 +1298,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 			if answer == startingStalled {
 				result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
 			}
-			applyStarting(ctx, ssh, result, name, server, answer)
+			applyStarting(ctx, ssh, result, name, server, answer, ds.Supervisor)
 			return result, nil
 		}
 	case devsup.StatusRunning:
@@ -1206,7 +1317,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	// curl's exit follows the code: 28 is a listener that accepted and did
 	// not answer within --max-time.
 	out, err := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
-		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s; echo \" $?\"", port, healthPath))
+		"curl -s -o /dev/null -w '%%{http_code}' --max-time %d http://localhost:%d%s; echo \" $?\"", probeWait, port, healthPath))
 	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 	switch {
 	case err != nil:
@@ -1216,7 +1327,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		return result, nil
 	case (code == "" || code == "000") && exit == "28":
 		result.Reason = reasonSlow
-		result.Message = fmt.Sprintf("Dev server %s is %s and accepts connections on :%d, but sent no HTTP answer on %s within 2s — likely still compiling its first response; check again shortly.", label, server.Status, port, healthPath)
+		result.Message = fmt.Sprintf("Dev server %s is %s and accepts connections on :%d, but sent no HTTP answer on %s within %ds — likely still compiling its first response; check again shortly.", label, server.Status, port, healthPath, probeWait)
 		return result, nil
 	case code == "" || code == "000":
 		result.Reason = "connection_refused"
@@ -1261,6 +1372,7 @@ func statusEveryServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, 
 	for _, s := range servers {
 		one := p
 		one.Name, one.Port, one.HealthPath = s.Name, 0, ""
+		one.WaitSeconds = 0
 		if _, ok := ds.State.Servers[s.Name]; !ok {
 			lines = append(lines, fmt.Sprintf("Dev server %s is declared but the supervisor does not run it.", serverLabel(p.Hostname, s.Name)))
 			continue
@@ -1285,6 +1397,7 @@ func statusSupervisedServers(ctx context.Context, ssh SSHDeployer, p DevServerPa
 	for _, name := range names {
 		one := p
 		one.Name, one.Port, one.HealthPath = name, 0, ""
+		one.WaitSeconds = 0
 		r, err := statusDevServer(ctx, ssh, one, ds)
 		if err != nil {
 			return nil, err
@@ -1387,6 +1500,28 @@ func runHealthProbe(parent context.Context, ssh SSHDeployer, hostname string, po
 	return out, elapsed, probeCtx.Err() == context.DeadlineExceeded, err
 }
 
+// runHealthProbeOnce makes the single health request after a supervisor wait.
+func runHealthProbeOnce(parent context.Context, ssh SSHDeployer, hostname string, port int, healthPath string, wait int) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Duration(wait)*time.Second+probeTimeoutSlack)
+	defer cancel()
+	cmd := fmt.Sprintf("curl -s -o /dev/null -w '%%{http_code}' --max-time %d http://localhost:%d%s; echo \" $?\"", wait, port, healthPath)
+	out, err := ssh.ExecSSH(ctx, hostname, cmd)
+	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	if code == "" {
+		return "", ctx.Err() == context.DeadlineExceeded, err
+	}
+	var httpCode int
+	_, _ = fmt.Sscanf(code, "%d", &httpCode)
+	switch {
+	case healthyHTTP(httpCode):
+		return "OK " + code, false, err
+	case exit == "28":
+		return "SLOW " + code, false, err
+	default:
+		return "FAIL " + code, false, err
+	}
+}
+
 // applyProbeSuccess fills in result fields for a successful probe.
 func applyProbeSuccess(result *DevServerResult, probeLine string, elapsedMs int64, name string) {
 	var httpCode int
@@ -1482,9 +1617,12 @@ func answerStarting(v SupervisorVersion, server devsup.ServerState) startingAnsw
 // starting, with when to read it again, or a stalled start to fix and start
 // again. A server whose port is awaited while its process group listens on
 // other ports only is named so (port_elsewhere).
-func applyStarting(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState, answer startingAnswer) {
+func applyStarting(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState, answer startingAnswer, v SupervisorVersion) {
 	label := serverLabel(result.Hostname, name)
 	recheck := RecheckSentence(result.Hostname, name, []string{name})
+	if answer != startingStalled && v.Supports(devsup.CapabilityWait) {
+		recheck += " " + waitSentence()
+	}
 	if result.Port > 0 && (server.StartPhase == devsup.StartAwaitingPort || answer == startingStalled) {
 		if others := groupListenPorts(ctx, ssh, result.Hostname, server.Pgid); len(others) > 0 && !slices.Contains(others, result.Port) {
 			result.Reason = reasonPortElsewhere
@@ -1506,6 +1644,10 @@ func applyStarting(ctx context.Context, ssh SSHDeployer, result *DevServerResult
 	result.Reason = reasonStarting
 	result.Message = fmt.Sprintf("Dev server %s is still starting: its port has not answered since its start, which is no failed start; the supervisor reports it starting until it does, for at most %d minutes. %s",
 		label, int(devsup.ListenWait.Minutes()), recheck)
+}
+
+func waitSentence() string {
+	return "Add waitSeconds (up to 300) to that status call to wait there; it answers as soon as the supervisor reports the server running, crashed, stopped or stalled."
 }
 
 // portList names ports as ":5174, :9229".

@@ -500,13 +500,24 @@ func sshTimedOut(ctx context.Context, err error) bool {
 // supervisorCtl runs one `zcp-devsup ctl <args> --json` on hostname and returns
 // the state it answers with.
 func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args ...string) (devsup.State, error) {
+	return supervisorCtlWithin(ctx, ssh, hostname, devsupCtlTimeout, args...)
+}
+
+// supervisorWait gives the read-only wait its own SSH bound, including the
+// slack used by a health probe for a busy container's round trip.
+func supervisorWait(ctx context.Context, ssh SSHDeployer, hostname, name string, seconds int) (devsup.State, error) {
+	return supervisorCtlWithin(ctx, ssh, hostname, time.Duration(seconds)*time.Second+probeTimeoutSlack,
+		"wait", name, "--timeout", strconv.Itoa(seconds))
+}
+
+func supervisorCtlWithin(ctx context.Context, ssh SSHDeployer, hostname string, timeout time.Duration, args ...string) (devsup.State, error) {
 	quoted := make([]string, 0, len(args))
 	for _, a := range args {
 		quoted = append(quoted, shellQuote(a))
 	}
 	cmd := fmt.Sprintf(`if command -v zcp-devsup >/dev/null 2>&1; then zcp-devsup ctl %s --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup ctl $c"; else echo "@@zcp-devsup ctl 127"; fi`,
 		strings.Join(quoted, " "))
-	ctlCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
+	ctlCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out, err := ssh.ExecSSH(ctlCtx, hostname, cmd)
 	if sshTimedOut(ctx, err) {

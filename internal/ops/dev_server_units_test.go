@@ -190,3 +190,78 @@ func TestDevServer_DSUnsaved_AStatusOfALeaseCarriesItsUnsavedWork(t *testing.T) 
 		t.Errorf("unsaved = %+v, want one file and two unpushed commits", u)
 	}
 }
+
+// witness: internal/ops/dev_server.go | bySupervisor = v.Supports(devsup.CapabilityWait) → bySupervisor = true
+func TestDevServer_DSWaitBound_DecidedOnce(t *testing.T) {
+	t.Parallel()
+	newVersion := SupervisorVersion{Capabilities: []string{"wait"}}
+	oldVersion := SupervisorVersion{Capabilities: []string{"env", "activity", "hold", "logs-since", "start-phase"}}
+	for _, tt := range []struct {
+		action       string
+		asked        int
+		version      SupervisorVersion
+		seconds      int
+		bySupervisor bool
+	}{
+		{"start", 0, newVersion, 15, true}, {"start", 30, newVersion, 30, true}, {"start", 120, newVersion, 120, true}, {"start", 900, newVersion, 300, true},
+		{"restart", 0, newVersion, 15, true}, {"restart", 30, newVersion, 30, true}, {"restart", 120, newVersion, 120, true}, {"restart", 900, newVersion, 300, true},
+		{"status", 0, newVersion, 0, false}, {"status", 30, newVersion, 30, true}, {"status", 120, newVersion, 120, true}, {"status", 900, newVersion, 300, true},
+		{"start", 0, oldVersion, 15, false}, {"start", 30, oldVersion, 30, false}, {"start", 120, oldVersion, 45, false}, {"start", 900, oldVersion, 45, false},
+		{"restart", 0, oldVersion, 15, false}, {"restart", 30, oldVersion, 30, false}, {"restart", 120, oldVersion, 45, false}, {"restart", 900, oldVersion, 45, false},
+		{"status", 0, oldVersion, 0, false}, {"status", 30, oldVersion, 0, false}, {"status", 120, oldVersion, 0, false}, {"status", 900, oldVersion, 0, false},
+	} {
+		seconds, bySupervisor := devServerWait(tt.action, tt.asked, tt.version)
+		if seconds != tt.seconds || bySupervisor != tt.bySupervisor {
+			t.Errorf("devServerWait(%q, %d, %v) = %d, %v; want %d, %v", tt.action, tt.asked, tt.version.Capabilities, seconds, bySupervisor, tt.seconds, tt.bySupervisor)
+		}
+	}
+}
+
+// witness: internal/ops/dev_server.go | servers[name] = st.Servers[name] // the wait's answer → servers[name] = ds.State.Servers[name] // the wait's answer
+func TestDevServer_DSWaitAnswer_WhatTheSupervisorReportsWhenItsWaitEnds(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name             string
+		found            devsup.ServerState
+		running          bool
+		reason, wantText string
+	}{
+		{"running", devsup.ServerState{Status: devsup.StatusRunning, Desired: devsup.DesiredRunning, Pid: 800, Pgid: 800}, true, "", ""},
+		{"crashed", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}}, false, "crashed", "Error: the compile failed"},
+		{"starting", devsup.ServerState{Status: devsup.StatusStarting, Desired: devsup.DesiredRunning, StartPhase: devsup.StartAwaitingPort, Pid: 800, Pgid: 800}, false, "starting", "waitSeconds"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.Servers["api"].Status = devsup.StatusStarting
+			c.Servers["api"].StartPhase = devsup.StartAwaitingPort
+			c.WaitFinds = map[string]devsup.ServerState{"api": tt.found}
+			c.Logs = map[string][]string{"api": {"Error: the compile failed"}}
+			result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev", Name: "api", WaitSeconds: 120})
+			if result.Running != tt.running || result.Reason != tt.reason {
+				t.Errorf("running/reason = %v/%q, want %v/%q", result.Running, result.Reason, tt.running, tt.reason)
+			}
+			if tt.running && result.URL != "http://appdev:8080/" {
+				t.Errorf("url = %q, want the server's address", result.URL)
+			}
+			if tt.wantText != "" && !strings.Contains(result.Message+result.LogTail, tt.wantText) {
+				t.Errorf("message/log = %q/%q, want %q", result.Message, result.LogTail, tt.wantText)
+			}
+		})
+	}
+	t.Run("older supervisor", func(t *testing.T) {
+		t.Parallel()
+		c := devservertest.NewSupervised(twoServers)
+		c.Capabilities = []string{"env", "activity", "hold", "logs-since", "start-phase"}
+		c.Servers["api"].Status, c.Servers["api"].StartPhase = devsup.StatusStarting, devsup.StartAwaitingPort
+		result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev", Name: "api", WaitSeconds: 120})
+		if result.Reason != "starting" {
+			t.Errorf("reason = %q, want starting", result.Reason)
+		}
+		for _, command := range c.Sent() {
+			if strings.Contains(command, "ctl 'wait'") {
+				t.Errorf("older supervisor was sent wait: %s", command)
+			}
+		}
+	})
+}

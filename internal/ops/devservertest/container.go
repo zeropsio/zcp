@@ -95,6 +95,9 @@ type Container struct {
 	// under way (launching) and one whose port refuses is awaited
 	// (awaiting_port).
 	StartPhase map[string]devsup.StartPhase
+	// WaitFinds is the state a wait finds for a named server; absent, wait
+	// answers the same state as status.
+	WaitFinds map[string]devsup.ServerState
 	// GroupPorts are the ports a server's process group listens on, as
 	// `ss -ltnp` with each listener's process group answers them.
 	GroupPorts map[string][]int
@@ -512,6 +515,7 @@ func (c *Container) listen() string {
 }
 
 func (c *Container) ctl(command string) string {
+	const waitVerb = "wait"
 	if !c.Installed {
 		return "@@zcp-devsup ctl 127\n"
 	}
@@ -538,9 +542,15 @@ func (c *Container) ctl(command string) string {
 		}
 	}
 	switch verb {
-	case "status":
+	case "status", waitVerb:
+		if verb == waitVerb && !slices.Contains(c.Capabilities, devsup.CapabilityWait) {
+			return fail(1, "unknown verb wait")
+		}
 		if _, ok := c.Servers[name]; name != "" && !ok {
 			return fail(3, "no server named "+name)
+		}
+		if found, ok := c.WaitFinds[name]; verb == waitVerb && ok {
+			*c.Servers[name] = found
 		}
 	case "start", "restart":
 		if _, ok := declared[name]; !ok {
@@ -584,7 +594,7 @@ func (c *Container) ctl(command string) string {
 		return fail(1, "unknown verb "+verb)
 	}
 	only := ""
-	if verb == "status" {
+	if verb == "status" || verb == waitVerb {
 		only = name
 	}
 	return encode(c.state(only)) + "\n@@zcp-devsup ctl 0\n"

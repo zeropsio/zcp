@@ -1911,8 +1911,7 @@ root route runs and answers 404 (`TestDevServer_Running_IsTheSupervisorsStatus`)
 
 **Starting is no failure.** zcp answers a server the supervisor reports `starting` by its
 `startPhase` (§2.8a.2) alone, never by its own clock. `launching` or `awaiting_port` is answered
-`reason: "starting"` with when to read it again, by a start or restart whose wait (at most 45 s)
-ended first and by a status, which probes nothing then: a dev server that compiles its first page
+`reason: "starting"` with when to read it again. A start or restart waits 15 s by default; a status waits only when asked. A supervisor listing `wait` owns that wait (at most 300 s); on an older supervisor zcp probes for at most 45 s on a start or restart and a status never waits. A still-awaited server is not probed: a dev server that compiles its first page
 for 90 s is never told to restart. `stalled` is `reason: "start_stalled"`, with the run's log, to
 fix and restart. While its port is awaited or stalled and its process group listens on other ports
 only (`ss -ltnp`), the answer is `reason: "port_elsewhere"`, naming those ports. `listened`, or a
