@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/devsup"
 )
 
 // The warm browser: one transient systemd service holds agent-browser's
@@ -461,6 +463,9 @@ walk:
 			tabs.hold(ctx, run)
 		}
 		loading = w.settle(ctx, step, last, loading)
+		if w.page.devsup {
+			break
+		}
 	}
 	out, err := json.Marshal(results)
 	if err != nil {
@@ -581,6 +586,19 @@ func (w *browserWalk) settle(ctx context.Context, step []string, last *BrowserSt
 	paintWait := slices.Equal(step, browserPaintWait)
 	if paintWait && w.page.serverStatus == 0 {
 		w.page.serverStatus = documentStatus(ctx, w.run)
+		if w.page.serverStatus >= 500 {
+			mark, says := devsupDocument(ctx, w.run)
+			if _, ok := devsupPageFailure(mark, says); ok {
+				if words, err := json.Marshal(devsupPageWords{Says: says}); err == nil {
+					// Page text rides Result, which the env redactor reads; Note
+					// carries only the supervisor's fixed mark.
+					last.Note = devsupPageNotePrefix + mark
+					last.Result = words
+					w.page.devsup = true
+					return false
+				}
+			}
+		}
 	}
 	loading = loading && !paintWait
 	if w.tabs != nil && !loading && !isReportingCommand(step) {
@@ -633,6 +651,38 @@ type browserPage struct {
 	url          string
 	slow         bool
 	serverStatus int
+	devsup       bool
+}
+
+const devsupPageNotePrefix = "zcp-devsup page: "
+
+type devsupPageWords struct {
+	Says string `json:"says"`
+}
+
+// devsupDocument reads the mark and the main text together, once. An
+// unanswered or unmarked page remains an ordinary server-error page.
+func devsupDocument(ctx context.Context, run browserStepExec) (string, string) {
+	pctx, cancel := context.WithTimeout(ctx, browserLivenessTimeout)
+	defer cancel()
+	script := fmt.Sprintf(`(()=>{const m=document.querySelector('meta[name="%s"]');const main=document.querySelector('main');return {mark:m?m.content:'',says:main?main.innerText:''}})()`, devsup.PageMarkName)
+	out, _, err := run(pctx, []string{browserCmdEval, script})
+	if err != nil {
+		return "", ""
+	}
+	var answer struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Result struct {
+				Mark string `json:"mark"`
+				Says string `json:"says"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &answer) != nil || !answer.Success {
+		return "", ""
+	}
+	return answer.Data.Result.Mark, answer.Data.Result.Says
 }
 
 // answeredSlowly stamps a step the daemon did not answer, and reports whether

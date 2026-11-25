@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -686,6 +687,19 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		fmt.Fprintf(os.Stderr, "zerops_browser: browser release: %v\n", err)
 	}
 	if !done && runErr == nil {
+		for _, step := range result.Steps {
+			if !slices.Equal(step.Command, browserPaintWait) || !strings.HasPrefix(step.Note, devsupPageNotePrefix) {
+				continue
+			}
+			var words devsupPageWords
+			if json.Unmarshal(step.Result, &words) == nil {
+				if failure, ok := devsupPageFailure(strings.TrimPrefix(step.Note, devsupPageNotePrefix), words.Says); ok {
+					return nil, failure
+				}
+			}
+		}
+	}
+	if !done && runErr == nil {
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	if result.Message == "" {
@@ -705,6 +719,22 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		result.Message = failedStepsMessage(result.Steps, result.FailedSteps)
 	}
 	return result, nil
+}
+
+// devsupPageFailure is the call's answer when the supervisor's page opened
+// instead of the app; unmarked pages keep the ordinary server-error path.
+func devsupPageFailure(mark, says string) (*platform.PlatformError, bool) {
+	if mark != devsup.PageMarkHold && mark != devsup.PageMarkFinal {
+		return nil, false
+	}
+	var suggestion string
+	if mark == devsup.PageMarkHold {
+		suggestion = "Read zerops_dev_server action=status on the dev service or lease alias this address belongs to with waitSeconds, then call again."
+	} else {
+		suggestion = "Read zerops_dev_server action=status on the dev service or lease alias this address belongs to for its exit and log, fix it, start it, then call again."
+	}
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("The dev server's supervisor answered instead of the app: %q", says), suggestion), true
 }
 
 // browserWaitCapNote is what a wait that ran out at browserWaitCapMs adds to

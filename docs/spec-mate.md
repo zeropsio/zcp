@@ -937,8 +937,10 @@ open is zcp's own step: a page that did not paint within its 5 s comes back as a
 succeeded, its result saying so, and the walk goes on; any other failure of it stays as it is.
 `failedSteps` counts the steps that answered `success:false`, the refused ones included, and a
 result nothing else put a message on says "N of M steps failed; the first: COMMAND (ERRORKIND)",
-the command cut to 80 characters; a failed step never makes the call an error. `zerops_verify`'s
-render check reads no rendered text from a walk that recycled the browser, and reads it whatever
+the command cut to 80 characters; a failed step never makes the call an error. A call whose own
+5xx document carries the supervisor holding page's mark fails with its words and the appropriate
+dev-server status call; no app page opened. `zerops_verify`'s render check reads that error as no
+rendered text and reads no rendered text from a walk that recycled the browser, and reads it whatever
 the message says otherwise: the failed steps themselves are skipped. `errorsOutput` and
 `consoleOutput` are read from the canned tail's `errors` and `console` steps, whose own results
 are then dropped, so each appears once; the `network requests` step stays whole, since
@@ -1699,7 +1701,9 @@ answers, with what holds once the request came, `503` and the holding page, `Cac
 no-store` and `Connection: close`, so each later request is decided again. The page names the
 server and says why: starting; starting again, with `lastRestartReason`; stopped with its `exit`
 and one more start to come; or, with nothing to start it, stopped with its `exit`, or stopped by a
-`stop` (`TestPreview_PVPage_SaysWhetherSomethingWillStartTheServer`). It renders in Mate's
+`stop` (`TestPreview_PVPage_SaysWhetherSomethingWillStartTheServer`). A `meta` named `zcp-devsup`
+carries `hold` when the server is coming and `final` when nothing starts it
+(`TestPreview_PVMark_SaysWhetherTheServerIsComing`). It renders in Mate's
 sandboxed frame, which allows scripts and, for a page on another origin, its own origin: inline
 style and script only, nothing fetched but its one held request, a `GET` of the reserved path
 `/.zcp-devsup/hold?page=<id>`, the id naming the page. The port answers that path itself while

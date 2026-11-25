@@ -17,6 +17,13 @@ import (
 // answer (docs/spec-mate.md §2.8a.2).
 const HoldPath = "/.zcp-devsup/hold"
 
+// Page marks let a browser distinguish the supervisor's page from an app's.
+const (
+	PageMarkName  = "zcp-devsup"
+	PageMarkHold  = "hold"
+	PageMarkFinal = "final"
+)
+
 // holdWait bounds a held request: it answers once the port would serve
 // another page than the one the request came from (holdDone), or after
 // holdWait with holdAgain, on which the page asks again without reloading.
@@ -123,6 +130,14 @@ func holdDone(served string, now previewView) bool {
 	return now.kind == previewForward || pageID(now) != served
 }
 
+// pageMark tells a program whether anything will start the server.
+func pageMark(view previewView) string {
+	if view.kind == previewHold {
+		return PageMarkHold
+	}
+	return PageMarkFinal
+}
+
 // holdingPage is the page the preview port answers while its server is not
 // running. It renders in Mate's sandboxed frame (scripts allowed, same origin
 // only for a page on another origin): inline style and script only, nothing
@@ -133,6 +148,7 @@ func holdingPage(v previewView) []byte {
 	var b strings.Builder
 	b.WriteString("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+	fmt.Fprintf(&b, "<meta name=\"%s\" content=\"%s\">", PageMarkName, pageMark(v))
 	fmt.Fprintf(&b, "<title>%s</title>", html.EscapeString(title))
 	b.WriteString("<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif}main{max-width:32rem;padding:2rem}h1{font-size:1.15rem;margin:0 0 .5rem}p{margin:.25rem 0;opacity:.8}</style>")
 	b.WriteString("</head><body><main>")

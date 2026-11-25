@@ -141,3 +141,22 @@ func TestPreview_PVOnceMore_ThePreviewServerIsStartedOnceMoreAfterAnExit(t *test
 		})
 	}
 }
+
+// witness: internal/devsup/preview.go | view.kind == previewHold → view.kind == previewFinal
+func TestPreview_PVMark_SaysWhetherTheServerIsComing(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		view previewView
+		want string
+	}{
+		{"starting", previewView{kind: previewHold, status: StatusStarting}, "hold"},
+		{"crashed with retry", previewView{kind: previewHold, status: StatusCrashed}, "hold"},
+		{"crashed", previewView{kind: previewFinal, status: StatusCrashed}, "final"},
+		{"stopped", previewView{kind: previewFinal, status: StatusStopped}, "final"},
+	} {
+		if got := pageMark(tt.view); got != tt.want {
+			t.Errorf("%s: pageMark = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

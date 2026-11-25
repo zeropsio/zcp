@@ -5,3 +5,4 @@
 - PV-PAGE — The preview port forwards to a running server, says a starting server or a crashed one whose one more start is coming is coming, and says a crashed server nothing will start, or a stopped one, is down.
 - PV-HOLD — The holding page's held request returns once the port would answer anything but that page — the server runs, or its page now says something else — and holds while the page would be the same, so a page that says the server stopped opens it once someone starts it and no page reloads into itself.
 - PV-ONCE-MORE — The preview server that exits on its own after it answered is started once more and the exit of that start stays down; any other server that exits after it answered stays down.
+- PV-MARK — The holding page tells a program what it tells a person: `hold` when something will start the server, `final` when nothing will. Breaks: zcp's browser tells an agent to fix a server that is only starting, or to wait for one nothing starts.
