@@ -109,6 +109,12 @@ func startPhaseOf(underWay, answered, waitEnded bool) StartPhase {
 	}
 }
 
+// startAwaited says whether the supervisor itself still has a start to finish.
+func startAwaited(status Status, phase StartPhase, retryPending bool) bool {
+	return (status == StatusStarting && (phase == StartLaunching || phase == StartAwaitingPort)) ||
+		(status == StatusCrashed && retryPending)
+}
+
 // ServerState is one server in state.json.
 type ServerState struct {
 	Source  Source  `json:"source"`

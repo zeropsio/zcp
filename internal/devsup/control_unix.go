@@ -19,6 +19,7 @@ import (
 // `ctl` itself.
 const (
 	VerbStatus  = "status"
+	VerbWait    = "wait"
 	VerbStart   = "start"
 	VerbStop    = "stop"
 	VerbRestart = "restart"
@@ -50,6 +51,8 @@ type Request struct {
 	Server *Server `json:"server,omitempty"`
 	// Env is the whole overlay `env` sets; absent or empty clears it.
 	Env map[string]string `json:"env,omitempty"`
+	// TimeoutSeconds bounds a wait; required for VerbWait.
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
 
 // Response answers a Request with the state after it was applied.
@@ -120,6 +123,12 @@ func (s *Supervisor) apply(req Request) Response {
 	var err error
 	switch req.Verb {
 	case VerbStatus:
+	case VerbWait:
+		if req.Name == "" || req.TimeoutSeconds < 1 || req.TimeoutSeconds > int(ListenWait/time.Second) {
+			err = errors.New("wait needs a server name and timeout from 1 to 600 seconds")
+		} else {
+			err = s.Wait(req.Name, time.Duration(req.TimeoutSeconds)*time.Second)
+		}
 	case VerbStart:
 		err = s.Start(req.Name)
 	case VerbStop:
@@ -142,7 +151,7 @@ func (s *Supervisor) apply(req Request) Response {
 		err = fmt.Errorf("unknown verb %q", req.Verb)
 	}
 	resp := Response{State: s.State()}
-	if req.Verb == VerbStatus && req.Name != "" {
+	if (req.Verb == VerbStatus || req.Verb == VerbWait) && req.Name != "" {
 		one, ok := resp.State.Servers[req.Name]
 		if !ok {
 			err = fmt.Errorf("%w: no server named %q", ErrUnknownServer, req.Name)

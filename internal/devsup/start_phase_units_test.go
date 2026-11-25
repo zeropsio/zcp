@@ -24,3 +24,26 @@ func TestStartPhase_STPhase_TheSupervisorsAlone(t *testing.T) {
 		}
 	}
 }
+
+// witness: internal/devsup/state.go | (status == StatusCrashed && retryPending) → false
+func TestStartPhase_STAwaited_OnlyWhileTheSupervisorBringsItUp(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		status      Status
+		phase       StartPhase
+		retry, want bool
+	}{
+		{StatusStarting, StartLaunching, false, true},
+		{StatusStarting, StartAwaitingPort, false, true},
+		{StatusCrashed, "", true, true},
+		{StatusRunning, "", false, false},
+		{StatusStopped, "", false, false},
+		{StatusCrashed, "", false, false},
+		{StatusStarting, StartStalled, false, false},
+		{StatusStarting, StartListened, false, false},
+	} {
+		if got := startAwaited(tt.status, tt.phase, tt.retry); got != tt.want {
+			t.Errorf("startAwaited(%q, %q, %v) = %v, want %v", tt.status, tt.phase, tt.retry, got, tt.want)
+		}
+	}
+}

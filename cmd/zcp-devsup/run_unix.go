@@ -81,11 +81,13 @@ type ctlArgs struct {
 	lines      int
 	// since is --since's cursor; sinceSet tells an empty cursor (a first
 	// read) from none.
-	since    string
-	sinceSet bool
-	cwd      string
-	port     int
-	command  string
+	since      string
+	sinceSet   bool
+	cwd        string
+	port       int
+	timeout    int
+	timeoutSet bool
+	command    string
 	// env holds the --set pairs; clear is --clear. Either makes `env`
 	// replace the overlay with exactly the pairs.
 	env   map[string]string
@@ -127,17 +129,20 @@ func parseCtl(args []string) (ctlArgs, error) {
 		case "--since":
 			a.since, err = value()
 			a.sinceSet = true
-		case "--lines", "--port":
+		case "--lines", "--port", "--timeout":
 			var v string
 			if v, err = value(); err == nil {
 				n, cerr := strconv.Atoi(v)
 				if cerr != nil || n < 0 {
 					return a, fmt.Errorf("%s: %q is not a number", arg, v)
 				}
-				if arg == "--lines" {
+				switch arg {
+				case "--lines":
 					a.lines = n
-				} else {
+				case "--port":
 					a.port = n
+				case "--timeout":
+					a.timeout, a.timeoutSet = n, true
 				}
 			}
 		default:
@@ -193,6 +198,9 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 	if (a.clear || a.env != nil) && a.verb != devsup.VerbEnv {
 		return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("--set and --clear go with env only"))
 	}
+	if a.timeoutSet && a.verb != devsup.VerbWait {
+		return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("--timeout goes with wait only"))
+	}
 	switch a.verb {
 	case "version":
 		return emit(a, stdout, map[string]any{"version": version, "formats": devsup.Formats, "capabilities": devsup.Capabilities}, version)
@@ -207,6 +215,11 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 		}
 		req.Env = a.env
 	case devsup.VerbStatus, devsup.VerbReload:
+	case devsup.VerbWait:
+		if a.name == "" || !a.timeoutSet || a.timeout < 1 || a.timeout > int(devsup.ListenWait/time.Second) {
+			return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("wait needs a server name and --timeout from 1 to 600 seconds"))
+		}
+		req.TimeoutSeconds = a.timeout
 	case devsup.VerbStart, devsup.VerbStop, devsup.VerbRestart, devsup.VerbRm:
 		if a.name == "" {
 			return fail(a, stdout, stderr, devsup.CodeFailed, fmt.Errorf("%s needs a server name", a.verb))
@@ -220,7 +233,11 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 	default:
 		return fail(a, stdout, stderr, devsup.CodeFailed, fmt.Errorf("unknown verb %q", a.verb))
 	}
-	resp, err := devsup.Control(dir, req, ctlTimeout)
+	deadline := ctlTimeout
+	if a.verb == devsup.VerbWait {
+		deadline += time.Duration(a.timeout) * time.Second
+	}
+	resp, err := devsup.Control(dir, req, deadline)
 	if err != nil {
 		return fail(a, stdout, stderr, resp.Code, err)
 	}

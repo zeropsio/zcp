@@ -1342,6 +1342,35 @@ func (s *Supervisor) changedLocked() chan struct{} {
 	return s.changed
 }
 
+// Wait waits for the supervisor to finish bringing one server up, or for the
+// caller's bound. Facts and the change receipt are captured together so a
+// transition cannot be missed; deriving status probes outside the lock.
+func (s *Supervisor) Wait(name string, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		s.mu.Lock()
+		sv, ok := s.servers[name]
+		if !ok {
+			s.mu.Unlock()
+			return fmt.Errorf("%w: no server named %q", ErrUnknownServer, name)
+		}
+		snapshot := *sv
+		preview := s.previewPortLocked(name)
+		changed := s.changedLocked()
+		s.mu.Unlock()
+		state := s.serverState(name, &snapshot, preview)
+		if !startAwaited(state.Status, state.StartPhase, state.RetryPending) {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-timer.C:
+			return nil
+		}
+	}
+}
+
 // previewView is what the preview port answers for server name now, and the
 // channel closed at the next change of the servers' state. It never probes:
 // for a live server that answered, the forward's own dial is the probe, and
