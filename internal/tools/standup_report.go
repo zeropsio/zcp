@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -167,19 +168,62 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		}
 		resp.Next += " For the parts whose dev half is a dev pool: " + standupPooledNext(pooled)
 	}
-	resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
-		stood, containers, devs, containers, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
-	if pools > 0 {
-		resp.Message += fmt.Sprintf(" The %d pooled parts' verdict is %s.", pools, pooled.verdict.Headline)
-		for repo, commit := range pooled.main {
-			if pooled.built[repo] {
-				resp.Message += fmt.Sprintf(" %s was built at %s.", repo, shortCommit(commit))
-			} else {
-				resp.Message += fmt.Sprintf(" %s's main is at %s; nothing was built.", repo, shortCommit(commit))
+	if containers == 0 && pools > 0 {
+		resp.Message = standupPooledMessage(pooled)
+	} else {
+		resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
+			stood, containers, devs, containers, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
+		if pools > 0 {
+			resp.Message += fmt.Sprintf(" The %d pooled parts' verdict is %s.", pools, pooled.verdict.Headline)
+			for repo, commit := range pooled.main {
+				if pooled.built[repo] {
+					resp.Message += fmt.Sprintf(" %s was built at %s.", repo, shortCommit(commit))
+				} else {
+					resp.Message += fmt.Sprintf(" %s's main is at %s; nothing was built.", repo, shortCommit(commit))
+				}
 			}
 		}
 	}
 	return resp
+}
+
+// standupRowWords is the verdict row's state, build identifiers and cause.
+func standupRowWords(row *mate.StandupRow) string {
+	words := fmt.Sprintf("%s %s", row.Hostname, row.State)
+	if row.Class != "" {
+		words += " (" + string(row.Class) + ")"
+	}
+	words += standupBuildIDs(row)
+	if row.Cause != "" {
+		words += ": " + row.Cause
+	}
+	return words
+}
+
+// standupPooledMessage reports only the pooled verdict and repository heads.
+func standupPooledMessage(pooled pooledOutcome) string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "The pooled parts' verdict is %s.", pooled.verdict.Headline)
+	for i := range pooled.verdict.Rows {
+		row := &pooled.verdict.Rows[i]
+		if row.State != mate.RowDone {
+			fmt.Fprintf(&message, " %s.", standupRowWords(row))
+		}
+	}
+	repos := make([]string, 0, len(pooled.main))
+	for repo := range pooled.main {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+	for _, repo := range repos {
+		commit := pooled.main[repo]
+		if pooled.built[repo] {
+			fmt.Fprintf(&message, " %s was built at %s.", repo, shortCommit(commit))
+		} else {
+			fmt.Fprintf(&message, " %s's main is at %s; nothing was built.", repo, shortCommit(commit))
+		}
+	}
+	return message.String()
 }
 
 // standupPooledService is a pooled part's pool or stage after the stand-up:

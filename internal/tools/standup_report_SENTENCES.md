@@ -1,0 +1,1 @@
+- SR-POOLED — The report of a project whose every part is pooled says the pooled parts' verdict and, for each pool or stage that is not done, its state, class and cause, and counts no pairs. Breaks: the agent reads "0 of 0 pairs stand" and tells its person nothing of what was refused.

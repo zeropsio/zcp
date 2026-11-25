@@ -244,14 +244,7 @@ func pooledPlanFailed(stood standupResponse) *platform.PlatformError {
 		if s.Verdict == nil || s.Verdict.State == mate.RowDone {
 			continue
 		}
-		row := fmt.Sprintf("%s %s", s.Hostname, s.Verdict.State)
-		if s.Verdict.Class != "" {
-			row += " (" + string(s.Verdict.Class) + ")"
-		}
-		row += standupBuildIDs(s.Verdict)
-		if s.Verdict.Cause != "" {
-			row += ": " + s.Verdict.Cause
-		}
+		row := standupRowWords(s.Verdict)
 		// A row's own next step names zerops_standup, which reads a recipe
 		// a plan's parts are not stood up from: the way on is this plan.
 		if next := s.Verdict.Next; next != "" && !strings.Contains(next, "zerops_standup") {
