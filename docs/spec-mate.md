@@ -44,7 +44,7 @@ by the ownership table below.
    the browser viewport. code-server and SSH are the platform's own doors and stay outside mate.
 3. **zcp does not distinguish its caller.** Two entry points, stdio MCP and CLI. No layer exists for
    mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2),
-   as a reader of the envelope it already emits (§1), and as two CLI subcommands mate spawns. `zcp
+   as a reader of the envelope it already emits (§1), and as CLI subcommands mate spawns. `zcp
    studio watch` is the Zerops Studio extension's transport; mate does not consume it.
 4. **Recover automatically; never let a clock or a hidden fix stand in for an owner's answer**
    (the owner, 2026-10-05: "problém mám s automatickými opakováními jako třeba to, že se na FE
@@ -90,7 +90,8 @@ Touchpoints between mate and zcp, closed list:
   `zcp lease acquire` (a crew writer's copy, `docs/spec-workflows.md` §8 DP-39),
   `zcp lease release --lease-id <id> --json` (a crew writer's copy at removal, DP-40, gated on the first zcp release with it),
   `zcp lease release --branch` (a conversation's archive, `docs/spec-workflows.md` §8 DP-35),
-  `zcp where` (at a run's start, §2.8c, gated on `zcp version` ≥ 9.275.0), and
+  `zcp where
+  [--lease <alias>] --json` (at a run's start, §2.8c, gated on `zcp version` ≥ 9.275.0), and
   `zcp self restart` (§2.9 step 7, MU-4), and `zcp git <host> ls-remote` for a checkout's remote
   health, run in the Mate's container, never by git in the dev service (§6.8); the agent sign-in flag it writes through the Zerops API
   (§8.1);
@@ -2436,7 +2437,7 @@ unbuilt rows `refused` with the check's words, and a pool or stage that has a bu
 | ID | Contract |
 |---|---|
 | W-1 | `zcp where` accepts `--lease <alias>` and `--json` and runs inside the project's zcp container, with or without a Mate. With `--json`, success exits 0 with the last stdout line `{"where":"<text>","readAt":"<RFC 3339 UTC>","tookMs":<n>}`; a failure before any fact is read exits 1 with `{"error":"<words>"}`. Without it, success prints the text alone; failure exits 1 with the error on stderr. An unknown lease alias marks no copy and is not an error. |
-| W-2 | Empty when nothing is named; otherwise the first line is `Where the work stands, read by zcp at <readAt>. A tool result you received after that is newer.` Working copies follow, the named lease first and marked `(this conversation's)`, then other leases by alias and non-pool dev halves by hostname. Each line names its part, branch, unsaved work, change and each dev server with its status and URL. Stages follow by hostname with their part and active version name verbatim, or `runs no deployed version`; then open changes whose branch no copy holds. Unread facts say `not read` with why. At most 1024 UTF-8 bytes: whole lines drop from the end, never the first or named copy's line, and the last line is `<n> more lines: zerops_workflow action="status" lists them.` |
+| W-2 | Empty when nothing is named; otherwise the first line is `Where the work stands, read by zcp at <readAt>. A tool result you received after that is newer.` Working copies follow, the named lease first and marked `(this conversation's)`, then other leases by alias and non-pool dev halves by hostname. Each line names its part, branch, unsaved work, change and each dev server with its status and URL. Stages follow by hostname with their part and active version name verbatim, or `runs no deployed version`; then open changes whose branch no copy holds. Unread facts say `not read` with why. At most 1024 UTF-8 bytes: whole lines drop from the end, never the first or named copy's line, and the last line is `<n> more lines: zerops_workflow action="status" lists them.` If the named copy's servers alone exceed the bound, those that fit remain in order followed by `+N more (zcp status)`. |
 | W-3 | Reads are read-only: no container is started, nothing is acquired, released or deployed, and zcp state is not written. |
 | W-4 | Reads share a 3 s deadline and are not retried. A failed or unanswered fact says `not read` and why; other facts remain in the answer. |
 | W-5 | At the start of each run that sends a message, never for a maintenance run or slash command, the Mate server asks once, passing the conversation's bound lease alias with `--lease`, and waits at most 5 s. It places `where` verbatim between `<zerops-where>` and `</zerops-where>` in front of the run's message and never parses it. Empty text, an error, exit 2, a missing zcp or no answer in time adds nothing and the run starts. |
