@@ -1022,8 +1022,12 @@ func probeSupervisorStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers
 	result.Port, result.LogFile, result.PID = port, server.LogPath, server.Pid
 	switch server.Status {
 	case devsup.StatusCrashed:
-		applyCrash(ctx, ssh, result, name, server)
-		appendCrashWait(result, ds.Supervisor, server)
+		if server.RetryPending {
+			applyStarting(ctx, ssh, result, name, server, startingWait, ds.Supervisor)
+		} else {
+			applyCrash(ctx, ssh, result, name, server)
+			appendCrashWait(result, ds.Supervisor, server)
+		}
 		return result, nil
 	case devsup.StatusStopped:
 		result.Reason = reasonStopped
@@ -1253,7 +1257,8 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		return nil, unknownServerErr(ds, name)
 	}
 	probeWait := 2
-	if wait, bySupervisor := devServerWait(devServerActionStatus, p.WaitSeconds, ds.Supervisor); bySupervisor {
+	wait, bySupervisor := devServerWait(devServerActionStatus, p.WaitSeconds, ds.Supervisor)
+	if bySupervisor {
 		begun := time.Now()
 		if err := waitDevServer(ctx, ssh, ds, name, wait); err != nil {
 			return nil, err
@@ -1282,8 +1287,12 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	label := serverLabel(p.Hostname, name)
 	switch server.Status {
 	case devsup.StatusCrashed:
-		applyCrash(ctx, ssh, result, name, server)
-		appendCrashWait(result, ds.Supervisor, server)
+		if bySupervisor && server.RetryPending {
+			applyStarting(ctx, ssh, result, name, server, startingWait, ds.Supervisor)
+		} else {
+			applyCrash(ctx, ssh, result, name, server)
+			appendCrashWait(result, ds.Supervisor, server)
+		}
 		return result, nil
 	case devsup.StatusStopped:
 		result.Reason = reasonStopped
@@ -1618,6 +1627,14 @@ func answerStarting(v SupervisorVersion, server devsup.ServerState) startingAnsw
 // again. A server whose port is awaited while its process group listens on
 // other ports only is named so (port_elsewhere).
 func applyStarting(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState, answer startingAnswer, v SupervisorVersion) {
+	if server.RetryPending {
+		// A timed-out wait can find a crash with one more start still to
+		// come. Keep its exit and log while reporting the unsettled start.
+		applyCrash(ctx, ssh, result, name, server)
+		result.Reason = reasonStarting // the retry is still awaited
+		appendCrashWait(result, v, server)
+		return
+	}
 	label := serverLabel(result.Hostname, name)
 	recheck := RecheckSentence(result.Hostname, name, []string{name})
 	if answer != startingStalled && v.Supports(devsup.CapabilityWait) {

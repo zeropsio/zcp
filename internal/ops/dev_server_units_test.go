@@ -218,26 +218,35 @@ func TestDevServer_DSWaitBound_DecidedOnce(t *testing.T) {
 }
 
 // witness: internal/ops/dev_server.go | servers[name] = st.Servers[name] // the wait's answer → servers[name] = ds.State.Servers[name] // the wait's answer
+// witness: internal/ops/dev_server.go | result.Reason = reasonStarting // the retry is still awaited → result.Reason = reasonCrashed // the retry is still awaited
 func TestDevServer_DSWaitAnswer_WhatTheSupervisorReportsWhenItsWaitEnds(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name             string
+		name, action     string
 		found            devsup.ServerState
+		wait             int
 		running          bool
 		reason, wantText string
 	}{
-		{"running", devsup.ServerState{Status: devsup.StatusRunning, Desired: devsup.DesiredRunning, Pid: 800, Pgid: 800}, true, "", ""},
-		{"crashed", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}}, false, "crashed", "Error: the compile failed"},
-		{"starting", devsup.ServerState{Status: devsup.StatusStarting, Desired: devsup.DesiredRunning, StartPhase: devsup.StartAwaitingPort, Pid: 800, Pgid: 800}, false, "starting", "waitSeconds"},
+		{"running", "status", devsup.ServerState{Status: devsup.StatusRunning, Desired: devsup.DesiredRunning, Pid: 800, Pgid: 800}, 120, true, "", ""},
+		{"crashed", "status", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}}, 120, false, "crashed", "Error: the compile failed"},
+		{"starting", "status", devsup.ServerState{Status: devsup.StatusStarting, Desired: devsup.DesiredRunning, StartPhase: devsup.StartAwaitingPort, Pid: 800, Pgid: 800}, 120, false, "starting", "waitSeconds"},
+		{"retry pending on status", "status", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}, RetryPending: true}, 120, false, "starting", "waitSeconds"},
+		{"retry pending on start", "start", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}, RetryPending: true}, 120, false, "starting", "waitSeconds"},
+		{"retry pending on restart", "restart", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}, RetryPending: true}, 120, false, "starting", "waitSeconds"},
+		{"retry pending without a wait", "status", devsup.ServerState{Status: devsup.StatusCrashed, Desired: devsup.DesiredRunning, Exit: &devsup.Exit{Code: 1}, RetryPending: true}, 0, false, "crashed", "waitSeconds"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := devservertest.NewSupervised(twoServers)
 			c.Servers["api"].Status = devsup.StatusStarting
 			c.Servers["api"].StartPhase = devsup.StartAwaitingPort
+			if tt.wait == 0 {
+				*c.Servers["api"] = tt.found
+			}
 			c.WaitFinds = map[string]devsup.ServerState{"api": tt.found}
 			c.Logs = map[string][]string{"api": {"Error: the compile failed"}}
-			result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev", Name: "api", WaitSeconds: 120})
+			result := runDevServer(t, c, DevServerParams{Action: tt.action, Hostname: "appdev", Name: "api", WaitSeconds: tt.wait})
 			if result.Running != tt.running || result.Reason != tt.reason {
 				t.Errorf("running/reason = %v/%q, want %v/%q", result.Running, result.Reason, tt.running, tt.reason)
 			}
@@ -246,6 +255,16 @@ func TestDevServer_DSWaitAnswer_WhatTheSupervisorReportsWhenItsWaitEnds(t *testi
 			}
 			if tt.wantText != "" && !strings.Contains(result.Message+result.LogTail, tt.wantText) {
 				t.Errorf("message/log = %q/%q, want %q", result.Message, result.LogTail, tt.wantText)
+			}
+			if tt.found.RetryPending && (!strings.Contains(result.Message, RetryPendingNote) || !strings.Contains(result.LogTail, "Error: the compile failed")) {
+				t.Errorf("message/log = %q/%q, want retry and crash log", result.Message, result.LogTail)
+			}
+			if tt.wait == 0 {
+				for _, command := range c.Sent() {
+					if strings.Contains(command, "ctl 'wait'") {
+						t.Errorf("status without wait was sent wait: %s", command)
+					}
+				}
 			}
 		})
 	}
