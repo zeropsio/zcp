@@ -44,12 +44,21 @@ const CapabilityActivity = "activity"
 // page.
 const CapabilityHold = "hold"
 
+// CapabilityLogsSince names `ctl logs --since <cursor>`: the lines a server's
+// log gained after a cursor an earlier read answered (LogSince).
+const CapabilityLogsSince = "logs-since"
+
+// CapabilityStartPhase names a starting server's startPhase in `status`:
+// whether a start is under way, its healthPath is still awaited, it stalled,
+// or it answered once and refuses now.
+const CapabilityStartPhase = "start-phase"
+
 // Capabilities lists the ctl verbs, flags and answer fields this supervisor
 // has that an older one lacks, and the behaviours a client reads off it;
 // `ctl version` reports them. An older ctl fails on a verb or flag it does
 // not know, so zcp sends one only to a supervisor that lists it, and reads
 // such a field only from one that lists it.
-var Capabilities = []string{CapabilityEnv, CapabilityActivity, CapabilityHold}
+var Capabilities = []string{CapabilityEnv, CapabilityActivity, CapabilityHold, CapabilityLogsSince, CapabilityStartPhase}
 
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
@@ -298,6 +299,28 @@ func (ds *DevServers) observeListeners(ctx context.Context, ssh SSHDeployer) {
 	}
 }
 
+// groupListenPorts is the TCP ports process group pgid listens on, read in
+// the container (`ss -ltnp`, each listener's process group from /proc); nil
+// when it listens on none, pgid is 0, or the read did not answer.
+func groupListenPorts(ctx context.Context, ssh SSHDeployer, hostname string, pgid int) []int {
+	if pgid <= 0 {
+		return nil
+	}
+	cmd := fmt.Sprintf(`ss -ltnpH 2>/dev/null | while read -r _ _ _ local _ users; do for p in $(echo "$users" | grep -o 'pid=[0-9]*' | cut -d= -f2); do [ "$(sed 's/.*) //' /proc/$p/stat 2>/dev/null | cut -d' ' -f3)" = %d ] && echo "${local##*:}"; done; done`, pgid)
+	out, err := ssh.ExecSSH(ctx, hostname, cmd)
+	if err != nil {
+		return nil
+	}
+	var ports []int
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if port, err := strconv.Atoi(strings.TrimSpace(line)); err == nil && port > 0 && !slices.Contains(ports, port) {
+			ports = append(ports, port)
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
 // socket is bound to a loopback address.
 func loopbackOnlyPorts(out string) map[int]bool {
@@ -535,6 +558,135 @@ func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name stri
 	return withoutTerminalEscapes(strings.Join(tail.Lines, "\n")) + "\n"
 }
 
+// DevServerNewLog is what a server's current run wrote to its log since this
+// zcp's previous status of it, as the status carries it: at most newLogLines
+// lines, the error lines first — the newest newLogErrorLines of them when
+// there are more — then the newest of the rest, each part in the log's order.
+// Omitted counts the new lines in neither, an earlier run's included.
+type DevServerNewLog struct {
+	Errors  []string `json:"errors,omitempty"`
+	Tail    []string `json:"tail"`
+	Omitted int      `json:"omitted,omitempty"`
+}
+
+// newLogLines bounds what a status carries of a server's new log lines;
+// newLogErrorLines bounds its error lines, so the newest lines — a watcher's
+// "Found 0 errors" after a burst of them — always have room.
+const (
+	newLogLines      = 40
+	newLogErrorLines = 30
+)
+
+// newLogReadLines is how many a status asks the supervisor for: enough that an
+// error line is not lost under a burst of hot-reload lines.
+const newLogReadLines = 500
+
+// logErrorLine is a log line a status puts first: an error as compilers,
+// bundlers and runtimes print one — a word ending in error or exception
+// before a colon ("[vite] Internal server error:", "TypeError:"), "error
+// TS2304", a line or a bracketed tag that opens with error, fatal or panic,
+// "npm ERR!", "Uncaught", "Unhandled", "Failed to compile|resolve|load|parse",
+// "Build failed", a Python traceback. A file name holding the word
+// ("FormErrors.tsx", "onError.ts") or a test summary ("0 failed") is none,
+// nor are "0 errors" and "no errors".
+var (
+	logErrorLine   = regexp.MustCompile(`(?i)[a-z]*(error|exception)s?\s*:(\s|$)|\berror\s+TS\d+|^\W*(\d[\d:.]*\s*(am|pm)?\s+)?(\[[^\]]*\]\s*)*(error|fatal|panic)(\s|:|!|$)|\[(error|fatal)\]|\berr!|\b(uncaught|unhandled)\b|\bfailed to (compile|resolve|load|parse)\b|\b(build|compilation) failed\b|^traceback \(most recent call last\)`)
+	logNoErrorLine = regexp.MustCompile(`(?i)\b(0|no) errors?\b`)
+)
+
+// newLogOf is what a status carries of lines, the lines a server's log gained
+// (DevServerNewLog); dropped are lines it gained that the read did not hand
+// over.
+func newLogOf(lines []string, dropped int) DevServerNewLog {
+	var errs, rest []string
+	for _, l := range lines {
+		if logErrorLine.MatchString(l) && !logNoErrorLine.MatchString(l) {
+			errs = append(errs, l)
+		} else {
+			rest = append(rest, l)
+		}
+	}
+	errs = errs[max(0, len(errs)-newLogErrorLines):]
+	rest = rest[max(0, len(rest)-(newLogLines-len(errs))):]
+	return DevServerNewLog{Errors: errs, Tail: append([]string{}, rest...), Omitted: dropped + len(lines) - len(errs) - len(rest)}
+}
+
+// DevServerLogCursors is where this zcp's previous status of each dev server
+// read its log to (the supervisor's cursor, devsup.LogRead), so the next
+// status carries only what came after: one per zcp server, shared by its calls.
+type DevServerLogCursors struct {
+	mu sync.Mutex
+	at map[string]string
+}
+
+// NewDevServerLogCursors is a zcp server's cursors, none read yet.
+func NewDevServerLogCursors() *DevServerLogCursors {
+	return &DevServerLogCursors{at: map[string]string{}}
+}
+
+func (c *DevServerLogCursors) get(key string) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at[key]
+}
+
+func (c *DevServerLogCursors) set(key, cursor string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at[key] = cursor
+}
+
+// readNewLog is what name's log on hostname gained since cursors' last read of
+// it (`ctl logs <name> --since <cursor>`, devsup.CapabilityLogsSince), as plain
+// text; a first read carries the server's current run. The cursor moves when
+// the supervisor answers, so a status whose result never reaches its caller
+// still moves it. nil when the supervisor's answer could not be read: nothing
+// was read, and the cursor stays.
+func readNewLog(ctx context.Context, ssh SSHDeployer, hostname, name string, cursors *DevServerLogCursors) *DevServerNewLog {
+	key := hostname + "\x00" + name
+	cursor := cursors.get(key)
+	cmd := fmt.Sprintf(`zcp-devsup ctl logs %s --since %s --lines %d --json 2>/dev/null`, shellQuote(name), shellQuote(cursor), newLogReadLines)
+	readCtx, cancel := context.WithTimeout(ctx, logTailTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(readCtx, hostname, cmd)
+	if err != nil {
+		return nil
+	}
+	var read devsup.LogRead
+	if json.Unmarshal(out, &read) != nil || read.Cursor == "" {
+		return nil
+	}
+	cursors.set(key, read.Cursor)
+	lines := strings.Split(withoutTerminalEscapes(strings.Join(read.Lines, "\n")), "\n")
+	if len(read.Lines) == 0 {
+		lines = nil
+	}
+	// Only the current run's lines are carried: from its last start marker
+	// on. An earlier run's — a run zcp has restarted since its previous
+	// status — are counted as omitted; a first read counts none of them, as
+	// it reads no "since".
+	dropped := read.Dropped
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], startMarker) {
+			if cursor == "" {
+				dropped = 0
+			} else {
+				dropped += i
+			}
+			lines = lines[i:]
+			break
+		}
+	}
+	log := newLogOf(lines, dropped)
+	return &log
+}
+
 // terminalEscape matches the escape sequences a dev server writes for a
 // terminal: CSI sequences (colours, cursor moves), OSC sequences (hyperlinks,
 // titles) ended by BEL or ST, and lone two-byte escapes.
@@ -548,7 +700,7 @@ func withoutTerminalEscapes(s string) string {
 }
 
 // startMarker opens each run of a server in its log ("--- zcp-devsup: start
-// #N at …" or "… start #N failed: …").
+// #N at …" or "… start #N failed at …").
 const startMarker = "--- zcp-devsup: start #"
 
 // currentRun cuts a log tail to the server's current run: from the last start

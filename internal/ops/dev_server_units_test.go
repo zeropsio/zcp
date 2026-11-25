@@ -1,0 +1,192 @@
+// Tests for: internal/ops/dev_server.go, dev_server_supervisor.go — what a
+// dev-server call answers of a server still starting, of the lines its log
+// gained, and of a lease's unsaved work.
+package ops
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
+)
+
+// DS-STARTING — A start, restart or status of a server the supervisor reports starting with its start under way or its port still awaited answers `starting` with when to read it again, never a failed start, so an agent waits for a dev server that compiles for 90 s instead of restarting it.
+// witness: internal/ops/dev_server.go | case devsup.StartLaunching, devsup.StartAwaitingPort: → case devsup.StartLaunching:
+func TestDevServer_DSStarting_AnsweredStartingWithARecheck(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "restart", "status"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.HTTP = map[int]int{8080: 0}
+			c.Logs = map[string][]string{"api": {"--- zcp-devsup: start #1 at 2026-10-14T21:00:00Z: pnpm dev", "compiling..."}}
+
+			result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev", Name: "api", WaitSeconds: 1})
+
+			recheck := `Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+			if result.Running || result.Reason != reasonStarting || !strings.Contains(result.Message, recheck) {
+				t.Errorf("running/reason/message = %v/%q/%q, want not running, %q and %q", result.Running, result.Reason, result.Message, reasonStarting, recheck)
+			}
+		})
+	}
+}
+
+// DS-STALLED — A server whose listen wait the supervisor reports run out with its healthPath never answering answers `start_stalled` with the run's log, to fix and restart, never "check again": the supervisor waits for its answer no more, so the wait would never end.
+// witness: internal/ops/dev_server.go | return startingStalled → return startingWait
+func TestDevServer_DSStalled_ToFixNotToWaitFor(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"restart", "status"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.HTTP = map[int]int{8080: 0}
+			c.StartPhase = map[string]devsup.StartPhase{"api": devsup.StartStalled}
+			c.Logs = map[string][]string{"api": {"--- zcp-devsup: start #1 at 2026-10-14T21:00:00Z: pnpm dev", "Error: Cannot find module 'vite'"}}
+
+			result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev", Name: "api", WaitSeconds: 1})
+
+			if result.Running || result.Reason != reasonStartStalled || strings.Contains(result.Message, "again in about 30 s") {
+				t.Errorf("running/reason/message = %v/%q/%q, want not running, %q and no recheck", result.Running, result.Reason, result.Message, reasonStartStalled)
+			}
+			if !strings.Contains(result.LogTail, "Cannot find module 'vite'") {
+				t.Errorf("logTail = %q, want the run's log to fix it by", result.LogTail)
+			}
+		})
+	}
+}
+
+// DS-LISTENED — A status of a server whose healthPath answered since its start and whose port refuses now probes it as a running one and answers what the probe found, never `starting`: a server whose watcher outlived its crashed child is no start to wait for.
+// witness: internal/ops/dev_server.go | case devsup.StartLaunching, devsup.StartAwaitingPort: → case devsup.StartLaunching, devsup.StartAwaitingPort, devsup.StartListened:
+func TestDevServer_DSListened_ProbedNotWaitedFor(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.HTTP = map[int]int{8080: 0}
+	c.StartPhase = map[string]devsup.StartPhase{"api": devsup.StartListened}
+
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev", Name: "api"})
+
+	if result.Running || result.Reason != "connection_refused" {
+		t.Errorf("running/reason = %v/%q, want not running and connection_refused", result.Running, result.Reason)
+	}
+}
+
+// DS-PORT-ELSEWHERE — A server whose port is still awaited while its process listens on other ports only answers `port_elsewhere`, naming those ports, so a wrong declared port is fixed at once instead of waited for until the listen wait runs out.
+// witness: internal/ops/dev_server.go | len(others) > 0 && !slices.Contains(others, result.Port) { → len(others) > 0 && slices.Contains(others, result.Port) {
+func TestDevServer_DSPortElsewhere_NamesThePortsItListensOn(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "status"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.HTTP = map[int]int{8080: 0}
+			c.GroupPorts = map[string][]int{"api": {8081}}
+
+			result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev", Name: "api", WaitSeconds: 1})
+
+			if result.Reason != reasonPortElsewhere || !strings.Contains(result.Message, ":8081") {
+				t.Errorf("reason/message = %q/%q, want %q naming :8081", result.Reason, result.Message, reasonPortElsewhere)
+			}
+		})
+	}
+}
+
+// DS-NEWLOG — A status carries at most 40 of the lines a server's log gained, at most 30 of them error lines put first, so an error under a burst of hot-reload lines is never cut off and the newest lines — a watcher's recovery — always have room, and it counts the lines it leaves out.
+// witness: internal/ops/dev_server_supervisor.go | errs = errs[max(0, len(errs)-newLogErrorLines):] → errs = errs[max(0, len(errs)-newLogLines):]
+func TestDevServer_DSNewLog_ErrorLinesFirstThenTheNewest(t *testing.T) {
+	t.Parallel()
+	lines := make([]string, 0, 61)
+	var errs, rest []string
+	for i := range 60 {
+		line := fmt.Sprintf("hmr update /src/App.tsx (x%d)", i)
+		if i%3 != 0 {
+			line = fmt.Sprintf("src/App.tsx(%d,5): error TS2304: Cannot find name 'x'.", i)
+			errs = append(errs, line)
+		} else {
+			rest = append(rest, line)
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "Found 0 errors. Watching for file changes.")
+	rest = append(rest, lines[len(lines)-1])
+
+	got := newLogOf(lines, 3)
+
+	want := DevServerNewLog{Errors: errs[len(errs)-30:], Tail: rest[len(rest)-10:], Omitted: 3 + len(lines) - 40}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("new log = %+v, want %+v", got, want)
+	}
+}
+
+// DS-ERROR-SHAPE — A log line is an error line only in an error's shape, never because a file name holds the word or a test summary counts none failed, so a designer editing FormErrors.tsx is never told of errors.
+// witness: internal/ops/dev_server_supervisor.go | (?i)[a-z]*(error|exception)s?\s*:(\s|$)| → (?i)\w*(errors?|exceptions?)\b|
+func TestDevServer_DSErrorShape_OnlyAnErrorsShape(t *testing.T) {
+	t.Parallel()
+	for line, want := range map[string]bool{
+		"[vite] Internal server error: Failed to resolve import \"./Card\"": true,
+		"TypeError: Cannot read properties of undefined":                    true,
+		"src/App.tsx(3,5): error TS2304: Cannot find name 'x'.":             true,
+		"npm ERR! code ELIFECYCLE":                                          true,
+		"panic: runtime error: index out of range":                          true,
+		"9:41:02 PM [vite] hmr update /src/zerops/FormErrors.tsx":           false,
+		"page reload src/lib/onError.ts":                                    false,
+		"Tests: 0 failed, 12 passed":                                        false,
+		"Found 0 errors. Watching for file changes.":                        false,
+	} {
+		if got := len(newLogOf([]string{line}, 0).Errors) == 1; got != want {
+			t.Errorf("%q an error line = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// DS-NEWLOG-RUN — A status carries only the lines of the server's current run; the lines an earlier run wrote since the previous status are counted as omitted, so an error a restart already fixed never reads as current.
+// witness: internal/ops/dev_server_supervisor.go | lines = lines[i:] → lines = lines[0:]
+func TestDevServer_DSNewLogRun_OnlyTheCurrentRun(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.LogCursor = true
+	c.Logs = map[string][]string{"api": {"--- zcp-devsup: start #1 at 2026-10-14T21:00:00Z: pnpm dev", "ready"}}
+	cursors := NewDevServerLogCursors()
+	readNewLog(context.Background(), c, "appdev", "api", cursors)
+	c.Logs["api"] = append(c.Logs["api"], "Error: Cannot find module './Card'", "--- zcp-devsup: start #2 at 2026-10-14T21:05:00Z: pnpm dev", "ready")
+
+	got := readNewLog(context.Background(), c, "appdev", "api", cursors)
+
+	want := &DevServerNewLog{Tail: []string{"--- zcp-devsup: start #2 at 2026-10-14T21:05:00Z: pnpm dev", "ready"}, Omitted: 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("new log = %+v, want %+v", got, want)
+	}
+}
+
+// leaseWithUnsavedWork answers the read of a lease's checkout (readLeaseFacts) with
+// one modified file and two unpushed commits; every other command goes to the
+// container.
+type leaseWithUnsavedWork struct{ *devservertest.Container }
+
+func (c leaseWithUnsavedWork) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if strings.Contains(command, leaseActivityMarker) {
+		return []byte(leaseActivityMarker + "1792000000 \n" + leaseStatusMarker + "\n M src/App.tsx\n" + leaseUnpushedMarker + "\n2\n"), nil
+	}
+	return c.Container.ExecSSH(ctx, hostname, command)
+}
+
+// DS-UNSAVED — A status of a lease carries what releasing the lease would
+// lose, so the person sees that the Preview holds work no change has yet.
+// witness: internal/ops/dev_server.go | result.Unsaved, result.LeaseActivity = facts.unsaved, facts.activity → result.LeaseActivity = facts.activity
+func TestDevServer_DSUnsaved_AStatusOfALeaseCarriesItsUnsavedWork(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(previewDeclaration)
+
+	result, err := ExecuteDevServer(context.Background(), leaseWithUnsavedWork{c}, poolClient(0), "p1",
+		DevServerParams{Action: "status", Hostname: "devpool-3", StateDir: leaseState(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if u := result.Unsaved; u == nil || u.FileCount != 1 || u.UnpushedCommits != 2 {
+		t.Errorf("unsaved = %+v, want one file and two unpushed commits", u)
+	}
+}

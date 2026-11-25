@@ -93,6 +93,13 @@ type DevServerResult struct {
 	//   http_<code>               — status-action: a code other than 2xx/3xx
 	//   loopback_only             — it listens on a loopback address only:
 	//                               nothing outside the container reaches it
+	//   starting                  — the supervisor reports its start under
+	//                               way or its port awaited: not failed, read
+	//                               it again
+	//   start_stalled             — the supervisor's listen wait ran out with
+	//                               its port never accepting: a failed start
+	//   port_elsewhere            — its port is still awaited while its
+	//                               process listens on other ports only
 	Reason string `json:"reason,omitempty"`
 	// Name is the dev server's name in the declaration — set only when it
 	// differs from Hostname (docs/spec-mate.md §2.8a.3): a single-part app's
@@ -135,6 +142,18 @@ type DevServerResult struct {
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
 	Unreported bool `json:"-"`
+	// NewLog is, on a status that reports one server whose supervisor lists
+	// devsup.CapabilityLogsSince, what its log gained since this zcp's
+	// previous status of it (the first status: its current run); absent when
+	// it was not read.
+	NewLog *DevServerNewLog `json:"newLog,omitempty"`
+	// Unsaved is, on a status of a lease, what releasing the lease would lose,
+	// from the release guard's own reads (docs/spec-workflows.md §8 DP-4);
+	// absent when either read did not answer.
+	Unsaved *topology.LeaseUnsaved `json:"unsaved,omitempty"`
+	// LeaseActivity is that read's activity of the lease's checkout; the
+	// envelope's leases[] carries it beside Unsaved.
+	LeaseActivity *topology.LeaseActivity `json:"-"`
 	// subdomainOn: the caller has just found or switched the lease's pool's
 	// subdomain on, so a preview URL is built without waiting for the pool's
 	// own flag to show it (leasePreviewURL's requireOn).
@@ -169,6 +188,9 @@ type DevServerParams struct {
 	// alias of a lease zcp holds (LeaseTarget) is driven as that lease — the
 	// supervisor over SSH to the alias, every platform fact from its pool.
 	StateDir string
+	// LogCursors is where this zcp's previous status of each server read its
+	// log to; nil reads every status as the first.
+	LogCursors *DevServerLogCursors
 	// lease is the lease Hostname names, resolved by ExecuteDevServer.
 	lease *LeaseTargetInfo
 }
@@ -193,6 +215,15 @@ const (
 	// reasonSupervisorUnresponsive never offers the move onto the
 	// supervisor: one runs there.
 	reasonSupervisorUnresponsive = "supervisor_unresponsive"
+	// reasonStarting: the supervisor reports the server's start under way or
+	// its port awaited (startingWait). No failed start: it is read again later.
+	reasonStarting = "starting"
+	// reasonStartStalled: the supervisor's listen wait ran out with the
+	// server's port never accepting (startingStalled): a failed start.
+	reasonStartStalled = "start_stalled"
+	// reasonPortElsewhere: its port is awaited while its process group listens
+	// on other ports only.
+	reasonPortElsewhere = "port_elsewhere"
 )
 
 // ReasonHealthProbeTimeout is the start/restart Reason when the health probe
@@ -278,6 +309,27 @@ func ExecuteDevServer(
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", p.Hostname, err)
 	}
+	// A status of a lease also says what releasing it would lose: beside the
+	// supervisor's read, the one read of its checkout zerops_lease
+	// action=status makes (docs/spec-workflows.md §8 DP-21, DP-4).
+	var checkout chan leaseFacts
+	if isLease && strings.ToLower(p.Action) == devServerActionStatus {
+		checkout = make(chan leaseFacts, 1)
+		go func() { checkout <- readLeaseFacts(ctx, LeaseDeps{SSH: ssh}, rec) }()
+	}
+	result, err := executeDevServer(ctx, ssh, client, projectID, p, rec, isLease)
+	if checkout != nil {
+		facts := <-checkout
+		if result != nil {
+			result.Unsaved, result.LeaseActivity = facts.unsaved, facts.activity
+		}
+	}
+	return result, err
+}
+
+// executeDevServer is ExecuteDevServer once the target is resolved: rec is
+// the lease Hostname names when isLease.
+func executeDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client, projectID string, p DevServerParams, rec leaseRecord, isLease bool) (*DevServerResult, error) {
 	lease := rec.targetInfo()
 	if isLease {
 		// A lease is a pool container, not a service: nothing to look up, and
@@ -353,6 +405,15 @@ func ExecuteDevServer(
 		result.Message += fmt.Sprintf("Dev server %s is no longer declared in %s, so the supervisor stopped it.", serverLabel(p.Hostname, name), devsup.DeclarationPath)
 	}
 	result.settle(ds)
+	if action == devServerActionStatus && !result.Unreported && ds.Supervisor.Supports(devsup.CapabilityLogsSince) {
+		name := cmp.Or(result.Name, result.Hostname)
+		if _, ok := ds.State.Servers[name]; ok {
+			result.NewLog = readNewLog(ctx, ssh, p.Hostname, name, p.LogCursors)
+		}
+		if result.NewLog != nil && len(result.NewLog.Errors) > 0 {
+			result.Message += fmt.Sprintf(" Its current run logged %d error line(s) since this zcp's previous status of it (newLog.errors).", len(result.NewLog.Errors))
+		}
+	}
 	if p.lease != nil {
 		if action == devServerActionStatus {
 			result.applyStaleWiring(p.StateDir, *p.lease, ds.State)
@@ -883,10 +944,14 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 		applyCrash(ctx, ssh, result, name, server)
 		return result, nil
 	}
-	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
+	switch {
+	case probeErr == nil && strings.HasPrefix(probeLine, "OK "):
 		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, startedLogTailLines))
 		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
-	} else {
+	case server.Status == devsup.StatusStarting && answerStarting(ds.Supervisor, server) != startingProbe: // the wait ended first
+		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
+		applyStarting(ctx, ssh, result, name, server, answerStarting(ds.Supervisor, server))
+	default:
 		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
 		applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	}
@@ -1113,7 +1178,19 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		result.Reason = reasonStopped
 		result.Message = fmt.Sprintf("Dev server %s is stopped.", label)
 		return result, nil
-	case devsup.StatusRunning, devsup.StatusStarting:
+	case devsup.StatusStarting:
+		// A server whose healthPath has not answered since its start is not
+		// probed. One that answered since, or of a supervisor that cannot
+		// say, is probed as a running one.
+		if answer := answerStarting(ds.Supervisor, server); answer != startingProbe {
+			result.Port = cmp.Or(p.Port, declared.Port, server.Port)
+			if answer == startingStalled {
+				result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
+			}
+			applyStarting(ctx, ssh, result, name, server, answer)
+			return result, nil
+		}
+	case devsup.StatusRunning:
 	}
 	port := cmp.Or(p.Port, declared.Port, server.Port)
 	if port == 0 {
@@ -1364,6 +1441,80 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 	if status == devsup.StatusStarting {
 		result.Message += " " + RecheckSentence(result.Hostname, name, []string{name})
 	}
+}
+
+// startingAnswer is how a reply reads a server the supervisor reports
+// starting (answerStarting).
+type startingAnswer int
+
+const (
+	// startingProbe: probe it as a running server — its healthPath answered
+	// since this start and its port refuses now, or its supervisor reports no
+	// startPhase.
+	startingProbe startingAnswer = iota
+	// startingWait: its start is under way or its healthPath is still awaited.
+	startingWait
+	// startingStalled: its listen wait ran out with its healthPath never
+	// answering.
+	startingStalled
+)
+
+// answerStarting decides how a reply reads a server the supervisor reports
+// starting, from the supervisor's own startPhase alone: the supervisor owns
+// the start, the port wait and its clock (devsup.CapabilityStartPhase).
+func answerStarting(v SupervisorVersion, server devsup.ServerState) startingAnswer {
+	if !v.Supports(devsup.CapabilityStartPhase) {
+		return startingProbe
+	}
+	switch server.StartPhase {
+	case devsup.StartLaunching, devsup.StartAwaitingPort:
+		return startingWait
+	case devsup.StartStalled:
+		return startingStalled
+	case devsup.StartListened:
+		return startingProbe
+	default:
+		return startingProbe
+	}
+}
+
+// applyStarting reports a server answerStarting reads as answer: still
+// starting, with when to read it again, or a stalled start to fix and start
+// again. A server whose port is awaited while its process group listens on
+// other ports only is named so (port_elsewhere).
+func applyStarting(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState, answer startingAnswer) {
+	label := serverLabel(result.Hostname, name)
+	recheck := RecheckSentence(result.Hostname, name, []string{name})
+	if result.Port > 0 && (server.StartPhase == devsup.StartAwaitingPort || answer == startingStalled) {
+		if others := groupListenPorts(ctx, ssh, result.Hostname, server.Pgid); len(others) > 0 && !slices.Contains(others, result.Port) {
+			result.Reason = reasonPortElsewhere
+			result.Message = fmt.Sprintf("Dev server %s has not answered on its port :%d, while its process listens on %s. If that is the server, make its declared port and its command's port the same, then restart it; if it is a side port (an inspector, a separate HMR socket) and the server still compiles, it is still starting. %s",
+				label, result.Port, portList(others), recheck)
+			if answer == startingStalled {
+				result.Message = fmt.Sprintf("Dev server %s never answered on its port :%d within the supervisor's listen wait (%d minutes), while its process listens on %s: make its declared port and its command's port the same, then restart it.",
+					label, result.Port, int(devsup.ListenWait.Minutes()), portList(others))
+			}
+			return
+		}
+	}
+	if answer == startingStalled {
+		result.Reason = reasonStartStalled
+		result.Message = fmt.Sprintf("Dev server %s never answered on its port within the supervisor's listen wait (%d minutes): its process lives and its port does not accept. Read logTail, fix it, then restart it.",
+			label, int(devsup.ListenWait.Minutes()))
+		return
+	}
+	result.Reason = reasonStarting
+	result.Message = fmt.Sprintf("Dev server %s is still starting: its port has not answered since its start, which is no failed start; the supervisor reports it starting until it does, for at most %d minutes. %s",
+		label, int(devsup.ListenWait.Minutes()), recheck)
+}
+
+// portList names ports as ":5174, :9229".
+func portList(ports []int) string {
+	named := make([]string, len(ports))
+	for i, p := range ports {
+		named[i] = ":" + strconv.Itoa(p)
+	}
+	return strings.Join(named, ", ")
 }
 
 // devServerURL composes the consumer-vantage address of a dev server — the

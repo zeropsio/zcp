@@ -34,8 +34,9 @@ import (
 // WithLeaseActivity alone.
 type LeaseReader func(ctx context.Context) ([]LeaseSnapshot, error)
 
-// LeaseRead is what a zerops_lease call read of one lease (docs/spec-workflows.md
-// §8 DP-21): its checkout's activity and unsaved work, and its dev servers as
+// LeaseRead is what a call read of one lease (docs/spec-workflows.md §8 DP-21):
+// its checkout's activity and unsaved work (a zerops_lease status, a
+// zerops_dev_server status on its alias), and its dev servers as
 // one read of its supervisor found them (an acquire, DP-30), each nil when the
 // call did not read it, and why its container did not answer the read ("" when
 // it answered or was not read).
@@ -73,9 +74,9 @@ func WithLeasesAlwaysRead() EnvelopeOption {
 // leases[] (docs/spec-mate.md §2.8a.3), keyed by alias the way WithParts keys
 // devServers: a lease the call read carries its activity and unsaved work,
 // every other lease neither, and a read of an alias leases[] does not list
-// adds nothing. Only the zerops_lease call that made the reads passes it; the
-// lease reader never reads a checkout, so no other tool's envelope pays for
-// one.
+// adds nothing. Only the status call that made the reads passes it (a
+// zerops_lease one, or zerops_dev_server's on the alias); the lease reader
+// never reads a checkout, so no other call's envelope pays for one.
 func WithLeaseActivity(reads map[string]LeaseRead) EnvelopeOption {
 	return func(c *envelopeConfig) { c.leaseReads = reads }
 }

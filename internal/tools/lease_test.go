@@ -776,11 +776,12 @@ func TestLeaseReader_NeverReadsActivity(t *testing.T) {
 	})
 }
 
-// TestEnvelope_OtherToolsCarryNoLeaseActivity: a tool other than zerops_lease
-// carries no lease's activity or unsaved work in its envelope, even one that
-// has ssh into the leased container (zerops_dev_server on the alias, whose
-// envelope carries the lease's devServers): it never reads the checkout for
-// it, so it pays no ssh read (docs/spec-mate.md §2.8a.3).
+// TestEnvelope_OtherToolsCarryNoLeaseActivity: a call other than a status
+// (zerops_lease's, or zerops_dev_server's on the alias) carries no lease's
+// activity or unsaved work in its envelope, even one that has ssh into the
+// leased container (zerops_dev_server logs on the alias, whose envelope
+// carries the lease's devServers): it never reads the checkout for it, so it
+// pays no ssh read (docs/spec-mate.md §2.8a.3).
 func TestEnvelope_OtherToolsCarryNoLeaseActivity(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -789,10 +790,10 @@ func TestEnvelope_OtherToolsCarryNoLeaseActivity(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, CarriesParts: true, vouch: vouchHeld})
 
-	res := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "devpool-3"})
+	res := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "logs", "hostname": "devpool-3"})
 	text := getTextContent(t, res)
 	if res.IsError {
-		t.Fatalf("status failed: %s", text)
+		t.Fatalf("logs failed: %s", text)
 	}
 	env, ok := workflow.ExtractEnvelope(text)
 	if !ok || len(env.LeaseList()) != 1 {

@@ -7,6 +7,7 @@
 package devservertest
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -89,6 +90,18 @@ type Container struct {
 	// state after they start, and only then as running or as Crash says.
 	Settle   map[string]int
 	settling map[string]int
+	// StartPhase is the startPhase a starting server reports, to a zcp its
+	// Capabilities list start-phase for: unset, a settling server's start is
+	// under way (launching) and one whose port refuses is awaited
+	// (awaiting_port).
+	StartPhase map[string]devsup.StartPhase
+	// GroupPorts are the ports a server's process group listens on, as
+	// `ss -ltnp` with each listener's process group answers them.
+	GroupPorts map[string][]int
+	// LogCursor: `ctl logs --since` answers as zcp-devsup does, a cursor
+	// past Logs' last line; off, its answer carries no cursor (one zcp cannot
+	// read), as before LogCursor.
+	LogCursor bool
 	// StableNumber is the container's ZEROPS_StableNumber (a pool
 	// container's slot; 0: none). With the declaration's previewPortBase the
 	// preview server's state carries its preview port, base + StableNumber,
@@ -217,6 +230,8 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 			return fmt.Appendf(nil, "OK %d 123", code), nil // 123: the probe's own in-container measure
 		}
 		return fmt.Appendf(nil, "FAIL %03d", code), errors.New("exit status 1")
+	case strings.HasPrefix(command, "ss -ltnpH"):
+		return []byte(c.groupPorts(command)), nil
 	case strings.HasPrefix(command, "ss -ltn"):
 		return []byte(c.listen()), nil
 	case strings.Contains(command, "curl -s -o /dev/null"):
@@ -431,11 +446,15 @@ func (c *Container) state(only string) devsup.State {
 		if only == "" || n == only {
 			server := *s
 			if code, ok := c.HTTP[c.declaredPort(n)]; ok && code == 0 && server.Status == devsup.StatusRunning && c.declaredPort(n) != 0 {
-				server.Status = devsup.StatusStarting
+				server.Status, server.StartPhase = devsup.StatusStarting, cmp.Or(c.StartPhase[n], devsup.StartAwaitingPort)
 			}
 			if c.settling[n] > 0 {
 				c.settling[n]--
 				server.Status, server.Exit, server.RetryPending, server.TaskLimit = devsup.StatusStarting, nil, false, nil
+				server.StartPhase = cmp.Or(c.StartPhase[n], devsup.StartLaunching)
+			}
+			if !slices.Contains(c.Capabilities, devsup.CapabilityStartPhase) {
+				server.StartPhase = ""
 			}
 			if n == preview {
 				server.PreviewPort = previewPort
@@ -643,7 +662,39 @@ func (c *Container) logs(command string) ([]byte, error) {
 	if !ok {
 		return []byte(`{"code":3,"error":"no log"}`), errors.New("exit status 3")
 	}
+	if m := sinceRe.FindStringSubmatch(command); m != nil && c.LogCursor {
+		from := 0
+		if n, ok := strings.CutPrefix(m[1], "fake:"); ok {
+			from, _ = strconv.Atoi(n)
+		}
+		from = min(from, len(lines))
+		return []byte(encode(devsup.LogRead{Lines: lines[from:], Cursor: "fake:" + strconv.Itoa(len(lines))})), nil
+	}
 	return []byte(encode(map[string]any{"name": name, "lines": lines})), nil
+}
+
+var (
+	sinceRe     = regexp.MustCompile(`--since '([^']*)'`)
+	groupPgidRe = regexp.MustCompile(`= (\d+) \]`)
+)
+
+// groupPorts answers groupListenPorts' read: GroupPorts of the server whose
+// process group the command names, one port a line.
+func (c *Container) groupPorts(command string) string {
+	m := groupPgidRe.FindStringSubmatch(command)
+	if m == nil {
+		return ""
+	}
+	pgid, _ := strconv.Atoi(m[1])
+	var b strings.Builder
+	for name, s := range c.Servers {
+		if s.Pgid == pgid && pgid != 0 {
+			for _, p := range c.GroupPorts[name] {
+				fmt.Fprintf(&b, "%d\n", p)
+			}
+		}
+	}
+	return b.String()
 }
 
 var portRe = regexp.MustCompile(`http://localhost:(\d+)`)

@@ -1,0 +1,76 @@
+{
+  "action": "status",
+  "hostname": "appdev",
+  "running": false,
+  "port": 3000,
+  "logFile": "/home/zerops/.zcp/devsup/logs/appdev.log",
+  "pid": 800,
+  "message": "Dev server appdev is still starting: its port has not answered since its start, which is no failed start; the supervisor reports it starting until it does, for at most 10 minutes. Check appdev again in about 30 s with zerops_dev_server action=status hostname=\"appdev\" name=\"appdev\". Its current run logged 1 error line(s) since this zcp's previous status of it (newLog.errors).",
+  "reason": "starting",
+  "newLog": {
+    "errors": [
+      "[vite] Internal server error: Failed to resolve import \"./Card\" from \"src/App.tsx\""
+    ],
+    "tail": [
+      "--- zcp-devsup: start #1 at 2026-10-14T21:03:00Z: bunx vite --host 0.0.0.0",
+      "Forced re-optimization of dependencies",
+      "[vite] hmr update /src/App.tsx"
+    ]
+  },
+  "envelope": {
+    "phase": "idle",
+    "environment": "container",
+    "mate": true,
+    "idleScenario": "bootstrapped",
+    "selfService": {
+      "hostname": "zcp"
+    },
+    "project": {
+      "id": "proj-weather",
+      "name": "weather"
+    },
+    "services": [
+      {
+        "hostname": "appdev",
+        "typeVersion": "bun@1.3",
+        "runtimeClass": "dynamic",
+        "status": "RUNNING",
+        "bootstrapped": true,
+        "mode": "standard",
+        "closeDeployMode": "unset",
+        "gitPushState": "unconfigured",
+        "buildIntegration": "none",
+        "setupName": "dev",
+        "stages": [
+          {
+            "hostname": "appstage",
+            "setup": "prod",
+            "part": "prod"
+          }
+        ],
+        "devServers": [
+          {
+            "name": "appdev",
+            "port": 3000,
+            "url": "https://appdev-1df2-3000.prg1.zerops.app",
+            "status": "starting",
+            "readAt": "2026-10-14T21:04:00Z"
+          }
+        ]
+      },
+      {
+        "hostname": "appstage",
+        "typeVersion": "bun@1.3",
+        "runtimeClass": "dynamic",
+        "status": "RUNNING",
+        "bootstrapped": true,
+        "mode": "stage",
+        "closeDeployMode": "unset",
+        "gitPushState": "unconfigured",
+        "buildIntegration": "none",
+        "setupName": "prod"
+      }
+    ],
+    "generated": "2026-10-14T21:04:00Z"
+  }
+}

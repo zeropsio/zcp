@@ -306,7 +306,7 @@ func TestMateContractFixtures_DevServerResults_KeepTodaysFieldsAndAddTheEnvelope
 
 func TestMateContractFixtures_DevServerResults_RunningIsTheReportedServersStatus(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"dev-server.one-server.json", "dev-server.three-servers-one-crashed.json", "dev-server.running-http-404.json"} {
+	for _, name := range []string{"dev-server.one-server.json", "dev-server.three-servers-one-crashed.json", "dev-server.running-http-404.json", "dev-server.status-starting.json"} {
 		var res contractDevServerResult
 		readContractFixture(t, name, &res)
 		if res.Envelope == nil {
@@ -428,6 +428,22 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 				c.Servers["worker"].Pid = 0
 				c.Servers["worker"].Exit = &devsup.Exit{Code: 1, At: crashedAt}
 				c.Logs = map[string][]string{"worker": {"Error: QUEUE_URL is not set"}}
+			},
+		},
+		{
+			fixture: "dev-server.status-starting.json",
+			decl:    `{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bunx vite --host 0.0.0.0","cwd":"."}]}`,
+			stages:  []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+			args:    map[string]any{"action": "status", "hostname": "appdev"},
+			setup: func(c *devservertest.Container) {
+				c.HTTP = map[int]int{3000: 0}
+				c.LogCursor = true
+				c.Logs = map[string][]string{"appdev": {
+					"--- zcp-devsup: start #1 at 2026-10-14T21:03:00Z: bunx vite --host 0.0.0.0",
+					"Forced re-optimization of dependencies",
+					"[vite] Internal server error: Failed to resolve import \"./Card\" from \"src/App.tsx\"",
+					"[vite] hmr update /src/App.tsx",
+				}}
 			},
 		},
 		{

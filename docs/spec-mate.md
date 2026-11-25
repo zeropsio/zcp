@@ -1635,6 +1635,13 @@ lost on a redeploy — which is exactly the start-up rule below.
   siblings' one more starts — until, past the listen wait (10 min after the start) without an
   answer, the status follows the port alone (`TestPreview_PVAnswered_AcceptingIsNotRunningUntilTheHealthPathAnswered`).
   zcp and Mate read it, never recompute it.
+  Beside `starting` only, `startPhase` (capability `start-phase`) says where the server is, from the
+  supervisor's own start and clock: `launching` (a start under way — a restart's stop grace, the
+  port wait, a boot's stagger — or no live group and no `exit`, even while the previous run had
+  answered), `awaiting_port` (its process lives and its `healthPath` has not answered since this
+  start — its port accepts nothing, or holds the `GET` — within the listen wait), `stalled` (that
+  wait ran out without an answer and its port does not accept now), `listened` (its `healthPath`
+  answered since this start and its port refuses now) (`TestStartPhase_STPhase_TheSupervisorsAlone`).
 - `retryPending: true` (omitted otherwise) marks a `crashed` server whose one more start after a
   start crash, or after the preview server's exit (*Events* below), is still to come. A deploy or `zerops_dev_server` reply names such a
   server as coming back, and one still `starting` when its wait ends as still starting, each with
@@ -1720,10 +1727,10 @@ verb is idempotent, so the caller asks `status` again.
 | `status [name]` | the `servers` map above (all or one) plus `supervisor` and `declaration` |
 | `start <name>` / `stop <name>` / `restart <name>` | sets `desired` and acts; never writes the declaration. `start` and `restart` first re-read it as `reload` does, so an edited entry runs as edited; a server that re-read already restarted is not restarted again (`TestSupervisor_StartAndRestartRunTheDeclarationAsEditedWithoutAReload`) |
 | `reload` | same as `SIGHUP` |
-| `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
+| `logs <name> [--lines N] [--since <cursor>]` | the tail of `logs/<name>.log`. With `--since` (capability `logs-since`): `{name, lines, cursor, dropped}`, the complete lines the log gained after an earlier `--since` answer's `cursor`, the newest `N` of them, `dropped` counting the others among its last 256 KiB; the next read starts at `cursor`, past the last complete line, so a line still being written comes whole later. A cursor of another file — empty, a log rotated away, a new `$HOME` behind the same alias — reads the log from its start (`TestLogSince_LGSince_OnlyCompleteLinesAfterTheCursor`, `TestLogSince_LGOtherFile_ReadFromItsStart`) |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
 | `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
-| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity","hold"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks, and the behaviours a client reads off it: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`, `hold` the preview port of *Preview port* above. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity","hold","logs-since","start-phase"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks, and the behaviours a client reads off it: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`, `hold` the preview port of *Preview port* above, `logs-since` the `logs --since` flag, `start-phase` a starting server's `startPhase` in `status`. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
@@ -1901,6 +1908,29 @@ named `hostname`) — never a second probe. The HTTP probe is a health fact besi
 root route runs and answers 404 (`TestDevServer_Running_IsTheSupervisorsStatus`). From field-order step (3) Mate's card reads that entry's
 `status` and `url`; at step (4) zcp stops emitting the top-level `running` and `url`.
 
+**Starting is no failure.** zcp answers a server the supervisor reports `starting` by its
+`startPhase` (§2.8a.2) alone, never by its own clock. `launching` or `awaiting_port` is answered
+`reason: "starting"` with when to read it again, by a start or restart whose wait (at most 45 s)
+ended first and by a status, which probes nothing then: a dev server that compiles its first page
+for 90 s is never told to restart. `stalled` is `reason: "start_stalled"`, with the run's log, to
+fix and restart. While its port is awaited or stalled and its process group listens on other ports
+only (`ss -ltnp`), the answer is `reason: "port_elsewhere"`, naming those ports. `listened`, or a
+supervisor without `start-phase`, is probed as a running server and answered by the probe
+(`TestDevServer_DSStarting_AnsweredStartingWithARecheck`, `TestDevServer_DSStalled_ToFixNotToWaitFor`,
+`TestDevServer_DSPortElsewhere_NamesThePortsItListensOn`, `TestDevServer_DSListened_ProbedNotWaitedFor`).
+Mate shows `starting` as a start in progress, never as a failed step.
+
+**What the log gained.** A status that reports one server, of a supervisor listing `logs-since`,
+carries `newLog: {errors?, tail, omitted?}`: the lines the server's current run (from its last
+start marker) wrote since this zcp process's previous status of it, whoever called that status
+(`ctl logs --since`; the first status: the current run), plain text, at most 40 — the lines in an
+error's shape first (at most 30, the newest), then the newest of the rest, each in the log's order —
+and `omitted`, how many it leaves out, an earlier run's lines included. The cursor moves when the
+supervisor answers, so a status whose result never reaches its caller still moves it. A zcp that
+restarts reads from the current run again. Absent when the supervisor lacks `logs-since` or its
+answer could not be read (`TestDevServer_DSNewLog_ErrorLinesFirstThenTheNewest`,
+`TestDevServer_DSErrorShape_OnlyAnErrorsShape`, `TestDevServer_DSNewLogRun_OnlyTheCurrentRun`).
+
 **Field order**: (1) a Mate release accepts `stages` and `devServers` beside the old
 keys; (2) zcp raises `MinimumMateVersion` to it; (3) zcp emits `stages`/`devServers` and stops
 emitting `stageHostname`/`stageSetupName`; (4) Mate drops the old keys. Until (2) zcp emits today's
@@ -1937,8 +1967,8 @@ record (§6.3), never a field here:
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) — or when the pool's listing answered but the renew of that lease did not (`spec-workflows.md` §8 DP-2): the state is then the listing's (`held`, `parked`, `unmounted`), never `lost`, so a client keeps the lease bound as that state says, and nothing is read from it (`TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead`) |
 | `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
 | `repo` | the repository the lease's group is keyed by beside `branch` (`spec-workflows.md` §8 DP-17): the record's identity, canonical (no `.git`, no trailing slash) and credential-free — no userinfo, query or fragment ever rides it (`topology.RepoIdentity`) — after `acquiredAt`; absent for a lease zcp has no record of (`unknown-holder`) and for a record older than keeping it. Two apps of one Mate both on `main` hold leases of the same branch: a client binds and rebinds by `repo` and `branch` together, never by branch alone (§6.3). Additive (`TestLeaseViews_CarryTheRepository`, `TestComputeEnvelope_LeaseRecords_CarryTheRepository`, `TestMateContractFixtures_LeaseStatus_RenderedByTheHandler`) |
-| `activity` | present only on a `zerops_lease` call that read the lease's checkout — today `action=status`, for each lease zcp holds (`spec-workflows.md` §8 DP-21) — exactly as that result reports it: `lastChangeAt` (the checkout's last change), `previewLastConnAt` and `previewOpenConns` (the preview forward's last connection and open connections, when the lease's supervisor reports them; one that reports them and runs no dev server on a preview port reads `previewOpenConns: 0`, since no preview connection can be open), `acquiredAt`, `readAt` (when zcp read it), all times RFC 3339 UTC, and `note` (what could not be read, and why). Inside it too a fact not read is absent, never zero: a lease status did not read (`unverified`, its ssh alias missing) carries `activity` with only `acquiredAt` and `note`; a read that failed (the container unreachable, the read cut at its budget) carries its `readAt`, keeps what it did read and says what failed in `note`. zcp's own `idle` label (`spec-workflows.md` §8 DP-25) rides the result only, never the envelope: a client draws idleness from these facts (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`, `TestLeaseTool_Status_IdleLease_NamesWhatFreesIt`) |
-| `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
+| `activity` | present only on a call that read the lease's checkout — `zerops_lease action=status`, for each lease zcp holds (`spec-workflows.md` §8 DP-21), and `zerops_dev_server action=status` on the lease's alias, for that lease, a read beside its supervisor's — exactly as that read found it: `lastChangeAt` (the checkout's last change), `previewLastConnAt` and `previewOpenConns` (the preview forward's last connection and open connections, when the lease's supervisor reports them; one that reports them and runs no dev server on a preview port reads `previewOpenConns: 0`, since no preview connection can be open), `acquiredAt`, `readAt` (when zcp read it), all times RFC 3339 UTC, and `note` (what could not be read, and why). Inside it too a fact not read is absent, never zero: a lease status did not read (`unverified`, its ssh alias missing) carries `activity` with only `acquiredAt` and `note`; a read that failed (the container unreachable, the read cut at its budget) carries its `readAt`, keeps what it did read and says what failed in `note`. zcp's own `idle` label (`spec-workflows.md` §8 DP-25) rides the result only, never the envelope: a client draws idleness from these facts (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`, `TestLeaseTool_Status_IdleLease_NamesWhatFreesIt`) |
+| `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too. The per-ask `zerops_dev_server` status carries it, so a client can say that the Preview holds work no change has; that result names the same object at its top level (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`, `TestDevServer_DSUnsaved_AStatusOfALeaseCarriesItsUnsavedWork`) |
 | `notAnswering` | why a `zerops_lease` status call's read of the lease's container found it not answering, on that call's envelope only: one of zcp's own fixed reasons — the container at its process limit (fork answered `resource temporarily unavailable`), or ssh not reaching it — never ssh's or the container's output, so it is credential-free (`spec-workflows.md` §8 DP-21). zcp records none of it; every other call that runs in the lease says it in its own result or refusal. Absent when the read reached the container, or none ran. Additive |
 
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
@@ -1955,11 +1985,12 @@ record (§6.3), never a field here:
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
   The same holds for `activity` and `unsaved`.
 - **Absent `activity` / `unsaved` means "not read in this call"**, never "no activity" or "nothing
-  unsaved", as with `devServers`; a client keeps the last one it read, with its `readAt`. Only the
-  `zerops_lease` call that read a lease's checkout lays them on (`workflow.WithLeaseActivity`, keyed
-  by alias); the lease reader every envelope is filled by asks the pool orchestrators only and runs
-  no ssh, so every other tool's envelope — `zerops_dev_server` on the alias included — carries
-  neither and pays no ssh read, and no envelope reader derives them (`TestLeaseReader_NeverReadsActivity`,
+  unsaved", as with `devServers`; a client keeps the last one it read, with its `readAt`. Only a
+  status call that read a lease's checkout — `zerops_lease`'s, or `zerops_dev_server`'s on the alias —
+  lays them on (`workflow.WithLeaseActivity`, keyed by alias); the lease reader every envelope is
+  filled by asks the pool orchestrators only and runs no ssh, so every other call's envelope —
+  `zerops_dev_server`'s other actions on the alias included — carries neither and pays no ssh read,
+  and no envelope reader derives them (`TestLeaseReader_NeverReadsActivity`,
   `TestComputeEnvelope_LeaseActivity_NeverFromTheReader`, `TestEnvelope_OtherToolsCarryNoLeaseActivity`,
   `TestJSONCarriers_LeaseActivity_ReadBackVerbatim`; fixture `envelope.lease-status.json`, §2.8a.7).
 - **The lease string never appears** (`spec-workflows.md` §8 DP-3): a lease has no field that could
@@ -2346,6 +2377,7 @@ on it and never blocks.
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
+| `dev-server.status-starting.json` | a status of a server whose port is still awaited (`startPhase: awaiting_port`): `running` false, `reason: "starting"` with when to read it again, its `newLog` with an error line first, the entry's `status: "starting"` |
 | `dev-servers.declaration.json` | the §2.8a.1 example, `admin` with `autostart: false` |
 | `hq-change.receipt.json` | an HQ change record carrying the §2.8a.6 receipt |
 

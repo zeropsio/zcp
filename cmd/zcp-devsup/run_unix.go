@@ -79,9 +79,13 @@ type ctlArgs struct {
 	json       bool
 	state      string
 	lines      int
-	cwd        string
-	port       int
-	command    string
+	// since is --since's cursor; sinceSet tells an empty cursor (a first
+	// read) from none.
+	since    string
+	sinceSet bool
+	cwd      string
+	port     int
+	command  string
 	// env holds the --set pairs; clear is --clear. Either makes `env`
 	// replace the overlay with exactly the pairs.
 	env   map[string]string
@@ -120,6 +124,9 @@ func parseCtl(args []string) (ctlArgs, error) {
 			a.name, err = value()
 		case "--cwd":
 			a.cwd, err = value()
+		case "--since":
+			a.since, err = value()
+			a.sinceSet = true
 		case "--lines", "--port":
 			var v string
 			if v, err = value(); err == nil {
@@ -226,6 +233,13 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 func ctlLogs(a ctlArgs, dir string, stdout, stderr io.Writer) int {
 	if a.name == "" {
 		return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("logs needs a server name"))
+	}
+	if a.sinceSet {
+		read, err := devsup.LogSince(dir, a.name, a.since, a.lines)
+		if err != nil {
+			return fail(a, stdout, stderr, devsup.CodeUnknownName, err)
+		}
+		return emit(a, stdout, map[string]any{"name": a.name, "lines": read.Lines, "cursor": read.Cursor, "dropped": read.Dropped}, strings.Join(read.Lines, "\n"))
 	}
 	lines, err := devsup.LogTail(dir, a.name, a.lines)
 	if err != nil {

@@ -1,11 +1,15 @@
 package devsup
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +36,7 @@ const (
 	// StatusStarting: a start is under way; the group lives and its port
 	// does not accept TCP or its healthPath has not answered yet; or no group
 	// lives and no exit is recorded — a start about to begin, a stop under way.
+	// StartPhase says which.
 	StatusStarting Status = "starting"
 	// StatusRunning: a live group, answered and accepting when it has a port.
 	StatusRunning Status = "running"
@@ -62,6 +67,48 @@ const (
 	ExitStartFailed = "start_failed"
 )
 
+// ListenWait bounds how long the supervisor waits for a started server's
+// healthPath to answer, to record starting → running; past it, the status
+// follows the port alone.
+const ListenWait = 10 * time.Minute
+
+// StartPhase is where a starting server is (CapabilityStartPhase), decided
+// by the supervisor alone: it owns the start, the port wait and the clock.
+type StartPhase string
+
+const (
+	// StartLaunching: a start is under way — a restart's stop grace, the
+	// port wait, a boot's stagger — and its process has not started yet.
+	StartLaunching StartPhase = "launching"
+	// StartAwaitingPort: its process lives and its port has not answered
+	// since this start — it accepts nothing, or its healthPath has not
+	// answered — within ListenWait.
+	StartAwaitingPort StartPhase = "awaiting_port"
+	// StartStalled: its process lives, its healthPath did not answer within
+	// ListenWait, and its port does not accept now; the supervisor waits for
+	// an answer no more.
+	StartStalled StartPhase = "stalled"
+	// StartListened: its healthPath answered since this start and its port
+	// does not accept now.
+	StartListened StartPhase = "listened"
+)
+
+// startPhaseOf is the StartPhase of a server reported starting: underWay a
+// start runs or no group of it lives, answered its healthPath answered since
+// that start or its listen wait ran out, waitEnded the wait ran out first.
+func startPhaseOf(underWay, answered, waitEnded bool) StartPhase {
+	switch {
+	case underWay:
+		return StartLaunching
+	case waitEnded:
+		return StartStalled
+	case answered:
+		return StartListened
+	default:
+		return StartAwaitingPort
+	}
+}
+
 // ServerState is one server in state.json.
 type ServerState struct {
 	Source  Source  `json:"source"`
@@ -78,6 +125,8 @@ type ServerState struct {
 	// the identity a stop checks before it signals the group.
 	LeaderStart int64      `json:"leaderStart"`
 	StartedAt   *time.Time `json:"startedAt"`
+	// StartPhase is set only while Status is starting.
+	StartPhase StartPhase `json:"startPhase,omitempty"`
 	// Restarts counts the starts after the first in this state file's life.
 	Restarts int `json:"restarts"`
 	// LastRestartReason says why the supervisor last restarted it, or why it
@@ -288,4 +337,89 @@ func LogTail(dir, name string, n int) ([]string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return lines, nil
+}
+
+// LogRead is `ctl logs <name> --since <cursor>`: the complete lines the log
+// gained after Cursor's read, the newest n of them; Dropped counts the others
+// (lines older than the last 256 KiB of the log are not counted). Cursor is
+// where the next read starts.
+type LogRead struct {
+	Lines   []string `json:"lines"`
+	Cursor  string   `json:"cursor"`
+	Dropped int      `json:"dropped"`
+}
+
+// logReadWindow is how much of a log one read takes, from its end.
+const logReadWindow = 256 << 10
+
+// logHeadSize bounds the part of a log's first line that names the file.
+const logHeadSize = 4096
+
+// LogSince reads server name's log after cursor, an earlier LogSince's
+// Cursor. A cursor of another log file — empty, one rotated away, a container
+// whose $HOME is new — reads the log from its start.
+func LogSince(dir, name, cursor string, n int) (LogRead, error) {
+	if !serverName.MatchString(name) {
+		return LogRead{}, fmt.Errorf("no server named %q", name)
+	}
+	f, err := os.Open(LogPath(dir, name))
+	if err != nil {
+		return LogRead{}, fmt.Errorf("no log for a server named %q", name)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return LogRead{}, fmt.Errorf("read log: %w", err)
+	}
+	return readLogSince(f, fi.Size(), cursor, n)
+}
+
+// readLogSince is LogSince over a log of size bytes. A cursor is
+// "<file id>:<offset>": the file id is a hash of the log's first line (its
+// first logHeadSize bytes) — each log begins with a start marker naming its
+// run's start time — and the offset
+// is just past the last complete line the read answered, so a line still being
+// written comes whole in the next read.
+func readLogSince(r io.ReaderAt, size int64, cursor string, n int) (LogRead, error) {
+	head := make([]byte, min(size, logHeadSize))
+	if _, err := r.ReadAt(head, 0); err != nil && err != io.EOF {
+		return LogRead{}, fmt.Errorf("read log: %w", err)
+	}
+	// A first line longer than the head is named by the head: it no longer
+	// grows there. A shorter one still being written names no file yet.
+	id := ""
+	if line, _, ok := bytes.Cut(head, []byte{'\n'}); ok || len(head) == logHeadSize {
+		sum := sha256.Sum256(line)
+		id = hex.EncodeToString(sum[:8])
+	}
+	start := int64(0)
+	if cid, offText, ok := strings.Cut(cursor, ":"); ok && id != "" && cid == id {
+		if off, err := strconv.ParseInt(offText, 10, 64); err == nil && off >= 0 && off <= size {
+			start = off
+		}
+	}
+	partial := false
+	if size-start > logReadWindow {
+		start, partial = size-logReadWindow, true
+	}
+	buf := make([]byte, size-start)
+	if _, err := r.ReadAt(buf, start); err != nil && err != io.EOF {
+		return LogRead{}, fmt.Errorf("read log: %w", err)
+	}
+	if partial {
+		// The window began inside a line: it is not a line of this read.
+		i := bytes.IndexByte(buf, '\n')
+		start += int64(i + 1)
+		buf = buf[i+1:]
+	}
+	complete := buf[:bytes.LastIndexByte(buf, '\n')+1]
+	read := LogRead{Lines: []string{}, Cursor: id + ":" + strconv.FormatInt(start+int64(len(complete)), 10)}
+	if len(complete) > 0 {
+		read.Lines = strings.Split(strings.TrimSuffix(string(complete), "\n"), "\n")
+	}
+	if len(read.Lines) > n {
+		read.Dropped = len(read.Lines) - n
+		read.Lines = read.Lines[read.Dropped:]
+	}
+	return read, nil
 }

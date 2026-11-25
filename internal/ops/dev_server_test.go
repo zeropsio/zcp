@@ -164,31 +164,6 @@ func TestDevServer_Start_ProbeOKButSpawnedPidDead_PortInUse(t *testing.T) {
 	}
 }
 
-func TestDevServer_Start_HealthProbeFails(t *testing.T) {
-	t.Parallel()
-	c := devservertest.NewSupervised("")
-	c.HTTP = map[int]int{3000: 0}
-	c.Logs = map[string][]string{"apidev": {"Error: listen EADDRINUSE ::: 3000"}}
-
-	result := runDevServer(t, c, DevServerParams{
-		Action:      "start",
-		Hostname:    "apidev",
-		Command:     "npm run start:dev",
-		Port:        3000,
-		HealthPath:  "/api/health",
-		WaitSeconds: 5,
-	})
-	if result.Running {
-		t.Errorf("expected Running=false, got %+v", result)
-	}
-	if !strings.Contains(result.Reason, "connection_refused") {
-		t.Errorf("expected reason to classify as connection_refused, got %q", result.Reason)
-	}
-	if !strings.Contains(result.LogTail, "EADDRINUSE") {
-		t.Errorf("expected LogTail to carry EADDRINUSE, got %q", result.LogTail)
-	}
-}
-
 // TestDevServer_Start_MissingCommand: the first start of a server must name
 // its command; nothing is declared or started without one.
 func TestDevServer_Start_MissingCommand(t *testing.T) {
@@ -417,24 +392,6 @@ func TestDevServer_SupervisorOlderThanDeclaration(t *testing.T) {
 	}
 }
 
-func TestDevServer_Status_NotRunning(t *testing.T) {
-	t.Parallel()
-	c := devservertest.NewSupervised(oneServer)
-	c.HTTP = map[int]int{3000: 0}
-	result := runDevServer(t, c, DevServerParams{
-		Action:     "status",
-		Hostname:   "apidev",
-		Port:       3000,
-		HealthPath: "/api/health",
-	})
-	if result.Running {
-		t.Errorf("expected Running=false for 000 curl response")
-	}
-	if result.Reason != "connection_refused" {
-		t.Errorf("expected reason=connection_refused, got %q", result.Reason)
-	}
-}
-
 func TestDevServer_Status_Running(t *testing.T) {
 	t.Parallel()
 	c := devservertest.NewSupervised(oneServer)
@@ -544,21 +501,6 @@ func TestDevServer_AServerThatListensOnLoopbackOnlyIsNamedSoWithoutAnAddress(t *
 				t.Errorf("url = %q, want none for a server nothing outside the container reaches", result.URL)
 			}
 		})
-	}
-}
-
-// A restart whose health probe ends while the supervisor still reports the
-// server starting names it as still starting and says when to look again.
-func TestDevServer_ARestartStillStartingWhenItsProbeEndsSaysWhenToCheckItAgain(t *testing.T) {
-	t.Parallel()
-	c := devservertest.NewSupervised(twoServers)
-	c.HTTP = map[int]int{8080: 0}
-
-	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api", WaitSeconds: 1})
-
-	want := `Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
-	if !strings.Contains(result.Message, "the supervisor reports it starting") || !strings.Contains(result.Message, want) {
-		t.Errorf("message = %q, want it still starting and %q", result.Message, want)
 	}
 }
 
@@ -1092,7 +1034,7 @@ func TestDevServer_Running_IsTheSupervisorsStatus(t *testing.T) {
 		{name: "status, no root route answers 404", http: map[int]int{8080: 404}, p: DevServerParams{Action: "status", Name: "api"},
 			running: true, healthCode: 404, reason: "http_404", verify: &probeFailed},
 		{name: "status, port not open yet", http: map[int]int{8080: 0}, p: DevServerParams{Action: "status", Name: "api"},
-			running: false, reason: "connection_refused", verify: &probeFailed},
+			running: false, reason: reasonStarting},
 		{name: "status, crashed", crash: true, p: DevServerParams{Action: "status", Name: "api"},
 			running: false, reason: reasonCrashed},
 		{name: "start, no root route answers 404", http: map[int]int{8080: 404}, p: DevServerParams{Action: "start", Name: "api", WaitSeconds: 1},

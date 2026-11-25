@@ -87,11 +87,6 @@ const watchLoopLimit = 10
 // the server starts.
 const logRotateSize = 10 << 20
 
-// listenWait bounds how long the supervisor waits for a started server's
-// healthPath to answer, to record starting → running; past it, the status
-// follows the port alone.
-const listenWait = 10 * time.Minute
-
 // answerProbeWait bounds one probe's wait for the server's first reaction to
 // its GET: a dev server compiling its first page holds the request, and one
 // that holds it past this is asked again.
@@ -118,7 +113,8 @@ type server struct {
 	retry, retryPending bool
 	// answered: this start's healthPath answered once, or the listen wait
 	// passed without an answer; from then on its status follows the port.
-	answered bool
+	// listenWaitEnded: the listen wait passed without an answer.
+	answered, listenWaitEnded bool
 	// preview is what its preview forwards saw, kept across them; nil until
 	// the first opens.
 	preview *previewSeen
@@ -527,7 +523,7 @@ func (s *Supervisor) start(name, reason string) {
 	}
 	spec, env := sv.spec, s.env
 	sv.starting, sv.startBegun = true, time.Now()
-	sv.retryPending, sv.windowChanged, sv.answered = false, false, false
+	sv.retryPending, sv.windowChanged, sv.answered, sv.listenWaitEnded = false, false, false, false
 	if reason == reasonLimit {
 		sv.limitStarts++
 	} else {
@@ -594,7 +590,7 @@ func (s *Supervisor) launch(name string, spec Server, env map[string]string, sta
 		}
 		signal = ExitStartFailed
 	}
-	fmt.Fprintf(f, "--- zcp-devsup: start #%d failed: %v\n", starts, err)
+	fmt.Fprintf(f, "--- zcp-devsup: start #%d failed at %s: %v\n", starts, time.Now().UTC().Format(time.RFC3339), err)
 	return nil, signal, err
 }
 
@@ -648,7 +644,7 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 	_ = stopGroup(g.pgid, s.cfg.Grace)
 	if again != "" {
 		s.logf("start %s once more in %s: %s", sv.name, s.cfg.StartWindow, again)
-		deadline := time.Now().Add(listenWait)
+		deadline := time.Now().Add(ListenWait)
 		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline, again) })
 	}
 }
@@ -666,7 +662,7 @@ func (s *Supervisor) limitStart(sv *server, t Tasks, starts int) {
 	wait := min(s.cfg.LimitBackoff<<sv.limitStarts, maxLimitBackoff)
 	sv.retryPending = true
 	s.logf("start %s again in %s: %s (%d tasks)", sv.name, wait, limitReason(&t), t.Current)
-	deadline := time.Now().Add(wait + listenWait)
+	deadline := time.Now().Add(wait + ListenWait)
 	time.AfterFunc(wait, func() { s.retryStart(sv, starts, deadline, reasonLimit) })
 }
 
@@ -728,9 +724,11 @@ func (s *Supervisor) siblingStarting(sv *server) bool {
 
 // awaitAnswer records starting → running once the server's healthPath
 // answers (answers), or once the listen wait has passed without an answer:
-// from then on its status follows the port alone.
+// from then on its status follows the port alone, and a starting one is
+// stalled (listenWaitEnded).
 func (s *Supervisor) awaitAnswer(sv *server, g *group, port int, path string) {
-	deadline := time.Now().Add(listenWait)
+	deadline := time.Now().Add(ListenWait)
+	waitEnded := false
 	for {
 		select {
 		case <-g.done:
@@ -739,7 +737,8 @@ func (s *Supervisor) awaitAnswer(sv *server, g *group, port int, path string) {
 		}
 		left := time.Until(deadline)
 		if left <= 0 {
-			s.logf("%s: %s did not answer within %s; its status follows its port from now on", sv.name, healthPathOf(path), listenWait)
+			s.logf("%s: %s did not answer within %s; its status follows its port from now on", sv.name, healthPathOf(path), ListenWait)
+			waitEnded = true
 			break
 		}
 		if answers(port, healthPathOf(path), min(answerProbeWait, left)) {
@@ -754,7 +753,7 @@ func (s *Supervisor) awaitAnswer(sv *server, g *group, port int, path string) {
 	}
 	s.mu.Lock()
 	if sv.g == g {
-		sv.answered = true
+		sv.answered, sv.listenWaitEnded = true, waitEnded
 	}
 	s.mu.Unlock()
 	s.persist()
@@ -1278,6 +1277,9 @@ func (s *Supervisor) serverState(name string, sv *server, preview int) ServerSta
 		ss.RssKB = groupRSSKB(sv.g.pgid)
 	}
 	ss.Status = sv.status()
+	if ss.Status == StatusStarting {
+		ss.StartPhase = startPhaseOf(sv.starting || sv.g == nil, sv.answered, sv.listenWaitEnded)
+	}
 	if ss.Status == StatusCrashed {
 		ss.RetryPending = sv.retryPending
 		if sv.taskLimit != nil {

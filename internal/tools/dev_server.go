@@ -124,6 +124,9 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 	if vouch == nil {
 		vouch = orchestratorVouch(client, projectID, stateDir, d.Swarm)
 	}
+	// Where this zcp's previous status of each dev server read its log to,
+	// whoever called it: the next status carries only what came after.
+	logCursors := ops.NewDevServerLogCursors()
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a named development server on a Zerops dev container. " +
@@ -132,7 +135,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			"Each server is its own process group with its own log; stop ends the whole group and frees the port, and the other servers keep running. " +
 			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes while starting is started once more after its siblings settle (status says so); any other crash stays down (status says crashed, with its exit) until you start it again. " +
 			"On a dev service whose dev setup does not run the supervisor yet, the first start moves it there: zcp adds two lines to the dev setup in zerops.yaml, declares the server, and redeploys the dev service once (uncommitted work stays); on a work branch zcp commits both files as a commit of its own first, else the result says what to commit. " +
-			"Results are structured {running, startMillis, healthStatus, url, previewUrl, logTail, reason} with a reason code on failure (crashed, port_in_use, supervisor_unresponsive, health_probe_*) so the agent can diagnose without a follow-up call; a lease's previewUrl is the address to open in a browser, its url answers only inside the project. " +
+			"Results are structured {running, startMillis, healthStatus, url, previewUrl, logTail, reason} with a reason code on failure (crashed, port_in_use, supervisor_unresponsive, start_stalled, port_elsewhere, health_probe_*) so the agent can diagnose without a follow-up call; starting is no failure, read it again later; a status adds newLog, the current run's log lines since this zcp's previous status of that server (by any caller) with error lines first, and on a lease unsaved, what releasing it would lose; a lease's previewUrl is the address to open in a browser, its url answers only inside the project. " +
 			"The health probe asks one HTTP request from inside the container: a page that arrives but renders nothing passes it, so look at the page itself (zerops_verify on a lease opens its preview in the browser). " +
 			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true. " +
 			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
@@ -157,6 +160,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		}
 		params.Root = supervisorRoot(stateDir, input.Hostname)
 		params.StateDir = stateDir
+		params.LogCursors = logCursors
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, params)
 		var noSup *ops.NoSupervisorError
 		var migration *devServerMigration
@@ -219,7 +223,15 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			states = ops.DevServerStates(ctx, client, projectID, result)
 		}
 		if d.CarriesParts {
-			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
+			// A status of a lease read its checkout: leases[] carries what
+			// releasing it would lose, as a zerops_lease status's does.
+			var reads []workflow.EnvelopeOption
+			if result.Unsaved != nil || result.LeaseActivity != nil {
+				reads = append(reads, workflow.WithLeaseActivity(map[string]workflow.LeaseRead{
+					input.Hostname: {Activity: result.LeaseActivity, Unsaved: result.Unsaved},
+				}))
+			}
+			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo, reads...); env != nil {
 				withServers := env.WithParts(map[string][]topology.DevServerState{input.Hostname: states})
 				resp.Envelope = &withServers
 			}
