@@ -27,6 +27,8 @@ type HQChangeLine struct {
 	Leases     []string `json:"leases"`
 	Merged     bool     `json:"merged"`
 	LandedWith int      `json:"landedWith,omitempty"`
+	// Open is the owner's last-known standing; it is not part of tool output.
+	Open bool `json:"-"`
 }
 
 // Landing is how the change's work reached main, in the words a person reads

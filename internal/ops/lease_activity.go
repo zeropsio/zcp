@@ -51,6 +51,12 @@ const leasePreviewReadSeconds = 2
 // activity (leasePreviewCommand); the read exits with the checkout part's
 // status, so a failed git read stays the read's failure.
 func leaseActivityCommand() string {
+	return leaseCheckoutFactsCommand() + "; rc=$?; echo " + shellQuote(leasePreviewMarker) + "; " + leasePreviewCommand() + "; exit $rc"
+}
+
+// leaseCheckoutFactsCommand is the checkout portion of the same status read,
+// for a caller that reads the supervisor independently.
+func leaseCheckoutFactsCommand() string {
 	return strings.Join([]string{
 		"cd " + shellQuote(LeaseWorkDir),
 		"printf " + shellQuote(leaseActivityMarker+"%s %s\\n") +
@@ -60,7 +66,7 @@ func leaseActivityCommand() string {
 		leaseUnsavedFilesCommand(),
 		"echo " + shellQuote(leaseUnpushedMarker),
 		leaseUnpushedCommand(),
-	}, " && ") + "; rc=$?; echo " + shellQuote(leasePreviewMarker) + "; " + leasePreviewCommand() + "; exit $rc"
+	}, " && ")
 }
 
 // leasePreviewCommand reads the container's zcp-devsup with two verbs every
@@ -147,13 +153,17 @@ type leaseFacts struct {
 // readLeaseFacts is readLeaseActivity with whether the container has no
 // preview to observe and its overlay.
 func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFacts {
+	return readLeaseFactsCommand(ctx, d, rec, leaseActivityCommand())
+}
+
+func readLeaseFactsCommand(ctx context.Context, d LeaseDeps, rec leaseRecord, command string) leaseFacts {
 	budget := d.ActivityTimeout
 	if budget <= 0 {
 		budget = leaseActivityReadTimeout
 	}
 	readCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	out, err := d.SSH.ExecSSH(readCtx, rec.alias(), leaseActivityCommand())
+	out, err := d.SSH.ExecSSH(readCtx, rec.alias(), command)
 	act := &topology.LeaseActivity{AcquiredAt: rec.AcquiredAt, ReadAt: d.now().UTC().Format(time.RFC3339)}
 	answer := string(out)
 	var sshErr *platform.SSHExecError

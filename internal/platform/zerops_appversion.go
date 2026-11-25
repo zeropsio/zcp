@@ -462,3 +462,45 @@ func (z *ZeropsClient) ListUploadingAppVersions(ctx context.Context, projectID, 
 	}
 	return events, nil
 }
+
+// ActiveAppVersionName reads the platform's name of the active version of a
+// stage. The search's raw body carries name, which the SDK's DTO omits.
+func (z *ZeropsClient) ActiveAppVersionName(ctx context.Context, projectID, serviceID string) (string, error) {
+	clientID, err := z.OrgID(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read app version organization: %w", err)
+	}
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{
+			body.EsSearchItem{Name: types.NewString("clientId"), Operator: types.NewString("eq"), Value: types.NewString(clientID)},
+			body.EsSearchItem{Name: types.NewString("projectId"), Operator: types.NewString("eq"), Value: types.NewString(projectID)},
+			body.EsSearchItem{Name: types.NewString("serviceStackId"), Operator: types.NewString("eq"), Value: types.NewString(serviceID)},
+			body.EsSearchItem{Name: types.NewString("status"), Operator: types.NewString("eq"), Value: types.NewString("ACTIVE")},
+		},
+		Limit: types.NewIntNull(directListLimit),
+	}
+	resp := sdkBase.Post(ctx, z.env, "/api/rest/public/app-version/search", filter)
+	if resp.Err != nil {
+		return "", mapSDKError(resp.Err, "appVersion")
+	}
+	raw := resp.ResponseData.Bytes()
+	if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
+		return "", answerError(status, raw, "appVersion")
+	}
+	var result struct {
+		Items []struct {
+			ServiceID string `json:"serviceStackId"`
+			Status    string `json:"status"`
+			Name      string `json:"name"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("decode active app version search: %w", err)
+	}
+	for _, item := range result.Items {
+		if item.ServiceID == serviceID && item.Status == ServiceStatusActive {
+			return item.Name, nil
+		}
+	}
+	return "", nil
+}

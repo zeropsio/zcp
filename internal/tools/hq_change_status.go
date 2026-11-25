@@ -221,6 +221,7 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 // nil once it is not one.
 func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeLine, *workflow.HQChangeTold) {
 	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told)}
+	line.Open = c.Told == nil || c.Told.State == "" || c.Told.State == hq.ChangeOpen
 	if c.Told != nil && c.Told.State == hq.ChangeClosed {
 		line.Labels = []string{"closed without merging"}
 	}
@@ -234,16 +235,21 @@ func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeL
 	outcome, s := outcomeOf(*state, c)
 	switch outcome {
 	case changeStillOpen:
+		line.Open = true
 		now := standingOf(*s)
 		line.Labels = changeLabels(&now)
 		return line, &now
 	case changeMerged:
+		line.Open = false
 		line.Labels, line.Merged = nil, true
 	case changeLandedWith:
+		line.Open = false
 		line.Labels, line.LandedWith = nil, s.CarriedBy()
 	case changeClosed:
+		line.Open = false
 		line.Labels = []string{"closed without merging"}
 	case changeUnlisted:
+		line.Open = false
 		line.Labels = []string{"no longer open"}
 	case changeUnknown:
 		return line, c.Told

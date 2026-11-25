@@ -49,7 +49,8 @@ func main() {
 // run is the single entry point for both CLI subcommand dispatch and MCP
 // server mode. No arguments or a first argument `serve` start runServe
 // (telemetry: session_start/session_end); a recognized verb routes to runCLI
-// (telemetry: one cli_command event, spec §5.5). Any other first argument is
+// (telemetry: one cli_command event, spec §5.5), except the read-only where.
+// Any other first argument is
 // refused with exit 2 before telemetry, the crash log or any credential, so a
 // launcher calling a verb this release does not know fails instead of
 // starting a server.
@@ -73,6 +74,11 @@ func run(args []string) int {
 		return runServe()
 	}
 	if dispatch, ok := cliDispatch()[args[0]]; ok {
+		// Orientation is a read-only input to each turn, so it must not
+		// create telemetry state or add a disclosure to its answer.
+		if args[0] == "where" {
+			return dispatch(args[1:], telemetry.Config{})
+		}
 		return runCLI(args, dispatch)
 	}
 	fmt.Fprintf(os.Stderr, "zcp: unknown command %q\n", args[0])
@@ -81,8 +87,8 @@ func run(args []string) int {
 }
 
 // serveVerb names the MCP server on stdio. It stays out of cliDispatch: a
-// verb there runs through runCLI, whose telemetry disclosure writes to
-// stdout, the MCP stream.
+// server mode is not a CLI one-shot, and telemetry disclosure writes to the
+// MCP stream.
 const serveVerb = "serve"
 
 // cliDispatch is the single source of truth for first-level CLI verbs: a
@@ -105,6 +111,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"mate":      func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
 		"hq":        func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
 		"lease":     func(rest []string, _ telemetry.Config) int { return runLeaseCmd(rest, os.Stdout, resolveLiveLeaseDeps) },
+		"where":     func(rest []string, _ telemetry.Config) int { return runWhereCmd(rest) },
 		"self": func(rest []string, _ telemetry.Config) int {
 			return runSelfCmd(rest, os.Stdout, mate.LiveLookup(mate.LiveEnvStorePath), newSelfRestartClient)
 		},

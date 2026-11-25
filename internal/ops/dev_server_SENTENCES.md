@@ -11,3 +11,7 @@
 - DS-ERROR-SHAPE — A log line is an error line only in an error's shape, never because a file name holds the word or a test summary counts none failed, so a designer editing FormErrors.tsx is never told of errors.
 - DS-NEWLOG-RUN — A status carries only the lines of the server's current run; the lines an earlier run wrote since the previous status are counted as omitted, so an error a restart already fixed never reads as current.
 - DS-UNSAVED — A status of a lease carries what releasing the lease would lose, so the person sees that the Preview holds work no change has yet.
+- DS-READ-NOSTART — Reading a lease's dev servers for orientation never starts its missing supervisor, so an agent's message cannot change the container.
+- DS-READ-NORELOAD — Reading dev servers for orientation leaves an undeclared running server alone, so an agent's message cannot stop a person's process.
+- DS-READ-EMPTY — An answering supervisor with no servers is distinct from one that did not answer, so an agent never reads an unread supervisor as empty.
+- DS-READ-SAFE — A malformed supervisor answer cannot expose its environment in the reason the agent reads.

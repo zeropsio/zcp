@@ -160,6 +160,82 @@ type DevServerResult struct {
 	subdomainOn bool
 }
 
+// DevServerRead is one read-only supervisor or lease checkout result.
+// A nil Servers slice means the supervisor was not read; an empty slice means
+// it answered with no servers. The two reads can fail independently.
+type DevServerRead struct {
+	Servers       []topology.DevServerState
+	ServersUnread DevServerReadFailure
+	Unsaved       *topology.LeaseUnsaved
+	WorkUnread    string
+}
+
+// DevServerReadFailure is a safe reason for an unread supervisor: raw SSH
+// and supervisor answers may contain environment values.
+type DevServerReadFailure string
+
+// ReadDevServerStatus begins one read of the supervisor and, for a lease, one
+// of its checkout, without recovering or reloading the supervisor. Each read
+// has its own receipt so a slow one cannot hide the other. The caller must
+// already have confirmed a lease's ownership.
+func ReadDevServerStatus(ctx context.Context, ssh SSHDeployer, client platform.Client, projectID, stateDir, hostname, root string, lease bool) (<-chan DevServerRead, <-chan DevServerRead) {
+	servers := make(chan DevServerRead, 1)
+	var checkout chan DevServerRead
+	var rec leaseRecord
+	if lease {
+		checkout = make(chan DevServerRead, 1)
+		var ok bool
+		var err error
+		rec, ok, err = leaseTargetRecord(stateDir, hostname)
+		if err != nil || !ok {
+			servers <- DevServerRead{ServersUnread: "lease record not read"}
+			checkout <- DevServerRead{WorkUnread: "lease record not read"}
+			return servers, checkout
+		}
+		go func() {
+			facts := readLeaseFactsCommand(ctx, LeaseDeps{SSH: ssh}, rec, leaseCheckoutFactsCommand())
+			got := DevServerRead{Unsaved: facts.unsaved}
+			if facts.unsaved == nil {
+				got.WorkUnread = cmp.Or(facts.notAnswering, "checkout did not answer")
+				if ctx.Err() != nil {
+					got.WorkUnread = "no answer in 3 s"
+				}
+			}
+			checkout <- got
+		}()
+	}
+	go func() {
+		ds, err := ReadDevServers(ctx, ssh, hostname, root)
+		if err != nil {
+			servers <- DevServerRead{ServersUnread: devServerReadReason(err)}
+			return
+		}
+		result := &DevServerResult{Hostname: hostname, Read: ds}
+		if lease {
+			ds.Service, result.Pool = rec.PoolHostname, rec.PoolHostname
+		}
+		servers <- DevServerRead{Servers: DevServerStates(ctx, client, projectID, result)}
+	}()
+	return servers, checkout
+}
+
+// devServerReadReason names the failed read without exposing an untrusted
+// supervisor answer, which can contain its environment overlay.
+func devServerReadReason(err error) DevServerReadFailure {
+	var missing *NoSupervisorError
+	var unresponsive *SupervisorUnresponsiveError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "no answer in 3 s"
+	case errors.As(err, &missing):
+		return "supervisor not running"
+	case errors.As(err, &unresponsive):
+		return "supervisor did not answer"
+	default:
+		return "supervisor read failed"
+	}
+}
+
 // DevServerParams is the typed input of ExecuteDevServer. Fields not relevant
 // to a given action are ignored (e.g. Command is unused by stop and logs).
 type DevServerParams struct {

@@ -54,6 +54,14 @@ type envelopeConfig struct {
 	leases       LeaseReader
 	leaseReads   map[string]LeaseRead
 	leasesAlways bool
+	preview      func(StateEnvelope, []platform.ServiceStack)
+}
+
+// WithEnvelopePreview exposes the service snapshot and last-known leases as
+// soon as they are available, before the pool orchestrators are asked. The
+// final envelope and its wire representation are unchanged.
+func WithEnvelopePreview(preview func(StateEnvelope, []platform.ServiceStack)) EnvelopeOption {
+	return func(c *envelopeConfig) { c.preview = preview }
 }
 
 // WithLeaseReader injects the reader that fills StateEnvelope.Leases. Without
@@ -169,9 +177,7 @@ func ComputeEnvelope(
 		projectSummary.Name = project.Name
 	}
 
-	leases := readLeases(ctx, cfg, stateDir, metas)
-
-	return StateEnvelope{
+	envelope := StateEnvelope{
 		Phase:        phase,
 		Environment:  env,
 		Mate:         rt.MateEnabled,
@@ -179,13 +185,26 @@ func ComputeEnvelope(
 		SelfService:  self,
 		Project:      projectSummary,
 		Services:     snapshots,
-		Leases:       leases,
 		WorkSession:  wsSummary,
 		// Bootstrap and Recipe are left nil here — the bootstrap conductor
 		// populates them on a per-render synthetic envelope (see
 		// bootstrap_guide_assembly.go::synthesisEnvelope), not from disk.
 		Generated: now.UTC(),
-	}, nil
+	}
+	var records []LeaseSnapshot
+	if cfg.leases != nil {
+		records = readLeaseRecordSnapshots(stateDir)
+	}
+	if cfg.preview != nil {
+		preview := envelope
+		if cfg.leases != nil {
+			lastKnown := slices.Clone(records)
+			preview.Leases = &lastKnown
+		}
+		cfg.preview(preview, services)
+	}
+	envelope.Leases = readLeases(ctx, cfg, records, metas)
+	return envelope, nil
 }
 
 // leaseStateHeld is the state of a lease zcp holds — the reader's verbatim
@@ -207,12 +226,11 @@ const leaseStateRecorded = leaseStateHeld
 // Only the non-secret fields of a record are ever decoded (DP-3). Each lease
 // carries the activity, unsaved work and dev servers of reads
 // (WithLeaseActivity) and no other: a record keeps none of them.
-func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas []*ServiceMeta) *[]LeaseSnapshot {
+func readLeases(ctx context.Context, cfg envelopeConfig, records []LeaseSnapshot, metas []*ServiceMeta) *[]LeaseSnapshot {
 	reader, reads := cfg.leases, cfg.leaseReads
 	if reader == nil {
 		return nil
 	}
-	records := readLeaseRecordSnapshots(stateDir)
 	if len(records) == 0 && !cfg.leasesAlways && !slices.ContainsFunc(metas, (*ServiceMeta).DevIsPool) {
 		return nil
 	}
