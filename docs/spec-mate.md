@@ -2295,22 +2295,38 @@ How zcp does it:
   calls (`bundle.mateRuleLine`), so the person learns the choice is theirs; the owner decided that the person says what serves only a Mate. `TestBuildGroupRecipe_PersonsMateOnlyChoice_WinsOverZcpsRules`,
   `TestGroupRecipe_TheMateOnlyChoice_IsKeptAndEveryPassHonoursIt`,
   `TestGroupRecipe_TheMateOnlyChoice_RefusesADevHalf`.
-- Proposal. `zerops_workflow action="group-recipe" service=<host>` (the host a stage, or a runtime a
-  tier names) adds that part's composed entry to each tier file on `main` that carries a service of
-  its repository and lacks the part — after the repository's last service — or removes the part's
-  entry, its comment lines and its blank separator from each tier still carrying it; a dev half is
-  never removed, a tier carrying no service of the repository is left alone, and a tier the text
-  edit cannot read is refused and named. A tier's service names its part by its repository and the
+- Proposal. `zerops_workflow action="group-recipe" service=<host>` (the host a stage, a part's dev
+  pool, or a runtime a tier names) proposes that part to the tier files on `main`, every other line
+  as `main` has it. A part of a repository a tier on `main` carries is added to each tier file that
+  carries a service of its repository and lacks the part — after the repository's last service, its
+  dev pool beside its stage on the AI Agent tier — or its entry, its comment lines and its blank
+  separator are removed from each tier still carrying it; a dev half is never removed, and a tier
+  carrying no service of the repository is one people wrote without it and is left alone. A **new
+  part** — one this Mate runs whose repository in HQ no tier on `main` carries — goes into every
+  tier file on `main` where the composer places it: on the AI Agent tier each of its entries (its dev
+  pool or dev service, and its stage), on Stage and Small Production the runtime the composer writes
+  for it there (none for a part the person marked Mate-only), each after the tier's last runtime,
+  managed services keeping their place. A tier the text edit cannot read is refused and named. A
+  tier's service names its part by its repository and the
   setup a group environment builds for it (`bundle.GroupEnvironmentSetup`, the composer's own rule):
   a stage deploying Mate's preview variant of a setup — which the AI Agent tier keeps, while Stage and
   Small Production build the setup it extends — is that setup's part, so a part gained with a variant
   is one proposal over every tier, and a stage that only switched to its variant changes no part; a
-  dev half keeps its own setup (`TestGroupRecipeService_PreviewVariant_IsThePartOfTheSetupItExtends`). Every other line stays as `main` has it. The change is
+  dev half keeps its own setup (`TestGroupRecipeService_PreviewVariant_IsThePartOfTheSetupItExtends`). The change is
   titled `Mate: <host> in the group recipe`; the Mate keeps one recipe proposal open at a time —
   its one change there opened naming no branch, zcp's choice, since proposals touch the same tier
-  files — as for scaling. The reconcile's line names the call for each part `main`'s tiers lack or still carry,
-  unless that part's change is the open one. A one-part app's tiers carry its part, so nothing is
-  said or proposed.
+  files — as for scaling. The reconcile's line names the call for each part of a carried repository
+  `main`'s tiers lack or still carry, unless that part's change is the open one. New parts are the
+  pass's own: every recipe pass — each zcp start, service change, bootstrap close, adopt, develop
+  start and the agent's `group-recipe` — proposes every new part `main` lacks as one change titled
+  `Mate: <host>, <host> in the group recipe` (each part by its stage), the Mate's one recipe
+  proposal; while another recipe change of the Mate is open they wait for a later pass, and a
+  proposal a person closed unmerged is not proposed again until a later recipe change of the Mate
+  merges. `service=` for one of them moves that change forward whole. Status says, while no change
+  proposes them, a required step naming the call, and while their change is open one line naming
+  it and its address; nothing once `main` carries them. HQ decides who lands the change: merging it
+  creates the part in the environments made from the tiers. A one-part app's tiers carry its part,
+  so nothing is said or proposed.
 - Removal. `zerops_delete` deletes a service only with the person's explicit consent: a call
   whose `consent` does not name the service is refused (`CONSENT_REQUIRED`) and deletes nothing,
   so the agent asks first. With it, a stage of a pair with several leaves `Stages[]` and its

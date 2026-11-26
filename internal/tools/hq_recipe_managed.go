@@ -53,7 +53,7 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 			if edited, err := bundle.AddTierServiceInRank(mainBody, file.Body, host); err != nil {
 				tier.refused = err.Error()
 			} else {
-				tier.body, tier.added = edited, host
+				tier.body, tier.added = edited, []string{host}
 			}
 		}
 		tiers = append(tiers, tier)
@@ -61,17 +61,17 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 	return tiers, nil
 }
 
-// recipeDeclined reports whether a person declined the proposal titled
-// title: the Mate's latest change of that title in the recipe repository
-// was closed without merging, none of the Mate's changes there reached main
+// recipeDeclined reports whether a person declined the proposal whose title
+// titled matches (recipeTitled, recipeProposalOf): the Mate's latest such
+// change in the recipe repository was closed without merging, none of the Mate's changes there reached main
 // after it (recipeClosedProposal), and no merge before it superseded it
 // (recipeSuperseded). A proposal that landed with another change is on main,
 // never declined. A later merge — a tier added, another service carried —
 // changes main, and what the proposal would be is worth asking about
 // again. scratch holds main of the recipe repository at main; the closed
 // change's branch is read into it only when a merge came before it.
-func recipeDeclined(ctx context.Context, scratch *hq.Scratch, main string, state hq.MateState, title string) bool {
-	closed := recipeClosedProposal(state, title)
+func recipeDeclined(ctx context.Context, scratch *hq.Scratch, main string, state hq.MateState, titled func(string) bool) bool {
+	closed := recipeClosedProposal(state, titled)
 	if closed == nil {
 		return false
 	}
@@ -79,14 +79,19 @@ func recipeDeclined(ctx context.Context, scratch *hq.Scratch, main string, state
 	return len(earlier) == 0 || !recipeSuperseded(ctx, scratch, main, *closed, earlier)
 }
 
-// recipeClosedProposal is the Mate's latest change titled title in the
-// recipe repository when it was closed without merging, its work not on main
+// recipeTitled matches the one title title.
+func recipeTitled(title string) func(string) bool {
+	return func(t string) bool { return t == title }
+}
+
+// recipeClosedProposal is the Mate's latest change in the recipe repository
+// whose title titled matches, when it was closed without merging, its work not on main
 // (hq.MateChange.OnMain), and none of the Mate's changes there reached main
 // after it, merged or landed with another; nil otherwise.
-func recipeClosedProposal(state hq.MateState, title string) *hq.MateChange {
+func recipeClosedProposal(state hq.MateState, titled func(string) bool) *hq.MateChange {
 	var latest *hq.MateChange
 	for i := range state.Changes {
-		if c := &state.Changes[i]; c.Repo == hq.RecipeRepo && c.Title != nil && *c.Title == title && (latest == nil || c.Number > latest.Number) {
+		if c := &state.Changes[i]; c.Repo == hq.RecipeRepo && c.Title != nil && titled(*c.Title) && (latest == nil || c.Number > latest.Number) {
 			latest = c
 		}
 	}
@@ -187,7 +192,7 @@ func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (strin
 		}
 		title := recipeServiceTitle(m.Hostname)
 		edits := serviceTierEdits(tiers)
-		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(ctx, comp.scratch, comp.main, comp.state, title) {
+		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(ctx, comp.scratch, comp.main, comp.state, recipeTitled(title)) {
 			continue
 		}
 		calls = append(calls, fmt.Sprintf("zerops_workflow action=\"group-recipe\" service=%q (%s)", m.Hostname, strings.Join(edits, "; ")))

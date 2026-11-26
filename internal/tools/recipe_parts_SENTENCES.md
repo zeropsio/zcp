@@ -1,0 +1,8 @@
+# A Mate's parts in its group recipe (`hq_recipe_parts.go`)
+
+- NP-EVERYTIER — A new part, in a repository no tier on main carries, is planned into every tier main holds where the composer places it: on the AI Agent tier its dev pool and its stage, on Stage and Small Production its runtime, each after the tier's last runtime with the managed services in their place and every other line as main has it. Breaks: new Mates and the group's environments are made without the part for good.
+- NP-POOL — A pool-keyed part of a repository the tiers carry gains its dev pool beside its stage on the AI Agent tier, after the repository's last service. Breaks: a Mate made from the tier gets the stage and no pool to develop the part in.
+- NP-HANDWRITTEN — A tier people wrote without a repository another tier on main carries stays as they wrote it, and that repository's part is no new part. Breaks: zcp adds back to production a part people left out of it.
+- NP-SERVICE — A new part's dev pool names the same part as its stage, so `service=` for either proposes that part into every tier. Breaks: the agent's call for the pool is refused and the part never reaches the recipe.
+- NP-PASS — A pass proposes every new part main lacks as one proposal, each by its stage, never by its dev half, and leaves out a part a person declined. Breaks: a new part waits for a call nobody makes, or a declined one is proposed again.
+- NP-STATUS — Status asks for the call while no change proposes the new parts, names the change and its address while it is open, and says nothing once it is not. Breaks: the agent never learns the part is missing, or never tells the person a change waits for them.

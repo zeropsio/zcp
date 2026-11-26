@@ -1209,7 +1209,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	if rt.MateEnabled {
-		envelope.Required = readRecipeRequired(engine.StateDir())
+		envelope.Required = recipeStatusSteps(engine.StateDir(), mateState)
 	}
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()

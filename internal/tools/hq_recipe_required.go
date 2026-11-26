@@ -39,9 +39,11 @@ import (
 // dash, which no hostname has. Status reads it — it calls HQ for nothing.
 const recipeRequiredFile = "group-recipe.json"
 
-// recipeRequiredRecord is what recipeRequiredFile holds.
+// recipeRequiredRecord is what recipeRequiredFile holds: the required steps
+// and what the pass left of the Mate's new parts.
 type recipeRequiredRecord struct {
-	Required []string `json:"required"`
+	Required []string        `json:"required,omitempty"`
+	NewParts *recipeNewParts `json:"newParts,omitempty"`
 }
 
 // recipeRequiredStep is the required step for the tiers main lacks (tiers,
@@ -91,23 +93,37 @@ const recipeRequiredAgain = `Then call zerops_workflow action="group-recipe", or
 // readRecipeRequired is what the last recipe pass recorded as required;
 // none when it recorded nothing or the record cannot be read.
 func readRecipeRequired(stateDir string) []string {
+	return readRecipeRecord(stateDir).Required
+}
+
+// readRecipeRecord is what the last recipe pass recorded; empty when it
+// recorded nothing or the record cannot be read.
+func readRecipeRecord(stateDir string) recipeRequiredRecord {
 	data, err := os.ReadFile(filepath.Join(stateDir, hqStateDir, recipeRequiredFile))
 	if err != nil {
-		return nil
+		return recipeRequiredRecord{}
 	}
 	var record recipeRequiredRecord
 	if json.Unmarshal(data, &record) != nil {
-		return nil
+		return recipeRequiredRecord{}
 	}
-	return record.Required
+	return record
 }
 
-// writeRecipeRequired records required, and removes the record when nothing
-// is. Best-effort: a record that cannot be written costs status the step
-// until the next pass, never the pass.
-func writeRecipeRequired(stateDir string, required []string) {
+// recipeStatusSteps are the steps status shows of the last recipe pass's
+// record: the required ones, then the new parts' (recipeNewPartsSteps),
+// state the Mate's state as status heard it, nil when it was not.
+func recipeStatusSteps(stateDir string, state *hq.MateState) []string {
+	record := readRecipeRecord(stateDir)
+	return append(record.Required, recipeNewPartsSteps(record.NewParts, state)...)
+}
+
+// writeRecipeRecord records the pass's verdict, and removes the record when
+// it holds nothing. Best-effort: a record that cannot be written costs
+// status the step until the next pass, never the pass.
+func writeRecipeRecord(stateDir string, record recipeRequiredRecord) {
 	path := filepath.Join(stateDir, hqStateDir, recipeRequiredFile)
-	if len(required) == 0 {
+	if len(record.Required) == 0 && record.NewParts == nil {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "zcp: group recipe record: %v\n", err)
 		}
@@ -117,7 +133,7 @@ func writeRecipeRequired(stateDir string, required []string) {
 		fmt.Fprintf(os.Stderr, "zcp: group recipe record: %v\n", err)
 		return
 	}
-	data, err := json.Marshal(recipeRequiredRecord{Required: required})
+	data, err := json.Marshal(record)
 	if err != nil {
 		return
 	}

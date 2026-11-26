@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // HeldRuntimes reads what a tier file holds of the app's parts: each runtime
@@ -204,6 +206,36 @@ func leadingComments(lines []string, start int) int {
 func TierListsService(body, host string) bool {
 	services, ok := tierServices(body)
 	return ok && slices.ContainsFunc(services, func(svc map[string]any) bool { return svc["hostname"] == host })
+}
+
+// TierHostnames are a tier file's services by hostname, in its order; none
+// for a file that does not parse.
+func TierHostnames(body string) []string {
+	services, _ := tierServices(body)
+	hosts := make([]string, 0, len(services))
+	for _, svc := range services {
+		if host, ok := svc["hostname"].(string); ok {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+// LastTierRuntime is the last service of a tier file, in its order, that is
+// neither a managed service nor a Box — what a service a tier gains as a new
+// part goes after, so the managed services keep their place; "" when the
+// file lists none or does not parse.
+func LastTierRuntime(body string) string {
+	services, _ := tierServices(body)
+	last := ""
+	for _, svc := range services {
+		host, _ := svc["hostname"].(string)
+		typ, _ := svc["type"].(string)
+		if host != "" && !topology.IsManagedService(typ) && !topology.IsSandboxType(typ) {
+			last = host
+		}
+	}
+	return last
 }
 
 // tierServices is a tier file's services as YAML reads them; ok is false

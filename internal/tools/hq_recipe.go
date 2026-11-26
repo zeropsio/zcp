@@ -90,6 +90,9 @@ type recipeOutcome struct {
 	// composed against main — whether or not the recipe composed — or found
 	// no pair left to compose from, which requires nothing.
 	decided bool
+	// newParts is what the pass left of this Mate's new parts, recorded
+	// beside Required for status (recipeNewPartsSteps); nil when none.
+	newParts *recipeNewParts
 }
 
 // reconcileGroupRecipe proposes to the application's recipe repository the
@@ -179,7 +182,7 @@ func groupRecipeUnasked(ctx context.Context, client platform.Client, httpClient 
 // proposal a merge came before, the one case git has to tell. A main that
 // cannot be read leaves the close a decline.
 func recipeDeclinedAtStart(ctx context.Context, hqc hq.Client, state hq.MateState) bool {
-	closed := recipeClosedProposal(state, hq.RecipeProposalTitle)
+	closed := recipeClosedProposal(state, recipeTitled(hq.RecipeProposalTitle))
 	switch {
 	case closed == nil:
 		return false
@@ -191,7 +194,7 @@ func recipeDeclinedAtStart(ctx context.Context, hqc hq.Client, state hq.MateStat
 		return true
 	}
 	defer scratch.Close()
-	return recipeDeclined(ctx, scratch, main, state, hq.RecipeProposalTitle)
+	return recipeDeclined(ctx, scratch, main, state, recipeTitled(hq.RecipeProposalTitle))
 }
 
 // groupRecipeOutcome is the reconcile itself. Split from the reporter so the
@@ -210,7 +213,7 @@ func groupRecipeOutcome(
 	// step an earlier one recorded again.
 	if _, _, blocked, ready := recipePassReady(client, httpClient, rt, stateDir); !ready {
 		if blocked.decided {
-			writeRecipeRequired(stateDir, nil)
+			writeRecipeRecord(stateDir, recipeRequiredRecord{})
 		}
 		return blocked
 	}
@@ -220,14 +223,22 @@ func groupRecipeOutcome(
 	}
 	defer release()
 	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir, schemas)
-	if early.decided {
-		writeRecipeRequired(stateDir, early.Required)
-	}
 	if !ok {
+		if early.decided {
+			writeRecipeRecord(stateDir, recipeRequiredRecord{Required: early.Required})
+		}
 		return early
 	}
 	defer comp.close()
-	outcome := recipeOutcome{Warnings: comp.warnings, Required: early.Required}
+	outcome := groupRecipeProposals(ctx, comp, recipeOutcome{Warnings: comp.warnings, Required: early.Required})
+	writeRecipeRecord(stateDir, recipeRequiredRecord{Required: outcome.Required, NewParts: outcome.newParts})
+	return outcome
+}
+
+// groupRecipeProposals is what a pass that composed proposes from comp, over
+// outcome: the tiers main lacks or zcp's own anew, else the Mate's new parts
+// (recipeNewPartsTurn), and the steers to what only a call proposes.
+func groupRecipeProposals(ctx context.Context, comp groupRecipeComposition, outcome recipeOutcome) recipeOutcome {
 	open := openRecipeChange(comp.state)
 	if open != nil {
 		outcome.Change = open.Number
@@ -245,7 +256,7 @@ func groupRecipeOutcome(
 			// zcp's own to propose anew follows once main has every tier —
 			// unless a person closed such a proposal unmerged and no recipe
 			// change of this Mate's merged since.
-			if len(missing) == 0 && !recipeDeclined(ctx, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
+			if len(missing) == 0 && !recipeDeclined(ctx, comp.scratch, comp.main, comp.state, recipeTitled(hq.RecipeProposalTitle)) {
 				var err error
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
 					return nil, err
@@ -280,13 +291,14 @@ func groupRecipeOutcome(
 	if written.other != nil {
 		// The Mate's open change there is another proposal of its own, and
 		// this Mate keeps one recipe proposal open at a time: it is left as
-		// it is.
+		// it is — moved forward when it is the new parts' own.
 		outcome.Change, outcome.ChangeURL = 0, ""
 		if !outcome.OnMain {
 			outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) waits for this Mate's change #%d there (%q) to be merged or closed: this Mate keeps one recipe proposal open at a time",
 				hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), written.other.number, written.other.title)
+			return outcome
 		}
-		return outcome
+		return recipeWithNewParts(ctx, comp, outcome)
 	}
 	outcome.Committed = written.pushed
 	if written.number != 0 {
@@ -314,6 +326,7 @@ func groupRecipeOutcome(
 	if len(replaced) > 0 {
 		return outcome
 	}
+	outcome = recipeWithNewParts(ctx, comp, outcome)
 	for _, steerOf := range []func(context.Context, groupRecipeComposition) (string, error){recipePartSteer, recipeManagedSteer} {
 		steer, err := steerOf(ctx, comp)
 		switch {
@@ -324,6 +337,23 @@ func groupRecipeOutcome(
 		case steer != "":
 			outcome.Line = steer
 		}
+	}
+	return outcome
+}
+
+// recipeWithNewParts is outcome with the pass's turn for the Mate's new
+// parts (recipeNewPartsTurn): its line said, what it left recorded.
+func recipeWithNewParts(ctx context.Context, comp groupRecipeComposition, outcome recipeOutcome) recipeOutcome {
+	line, parts, err := recipeNewPartsTurn(ctx, comp)
+	outcome.newParts = parts
+	if err != nil {
+		line = fmt.Sprintf("this Mate's new parts are not proposed yet (%v) — retrying on the next pass", err)
+	}
+	switch {
+	case line != "" && outcome.Line != "":
+		outcome.Line += "; " + line
+	case line != "":
+		outcome.Line = line
 	}
 	return outcome
 }

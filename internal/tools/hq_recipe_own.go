@@ -32,10 +32,11 @@ import (
 // longer matches — is the group's alone.
 
 // recipeOwnTitles is the titles zcp gives its recipe proposals, as a regular
-// expression's alternatives: the additive one's, a part's or a managed
-// service's, a scale's (recipeServiceTitle, recipeScalingTitle).
+// expression's alternatives: the additive one's, a part's, a managed
+// service's or the new parts' (recipeServiceTitle), a scale's
+// (recipeScalingTitle).
 func recipeOwnTitles() string {
-	return regexp.QuoteMeta(hq.RecipeProposalTitle) + `|Mate: \S+ in the group recipe|Mate: \S+'s scale in the group recipe`
+	return regexp.QuoteMeta(hq.RecipeProposalTitle) + `|Mate: \S+(?:, \S+)* in the group recipe|Mate: \S+'s scale in the group recipe`
 }
 
 // recipeOwnSubject is the subject Core's squash gives one of zcp's recipe
