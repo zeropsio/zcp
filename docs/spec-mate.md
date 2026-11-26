@@ -907,14 +907,14 @@ is left and answers busy without touching the browser, so a late waiter is never
 mid-walk. The unit caps memory at 75% of the container's ceiling at its start and
 sets `OOMScoreAdjust=1000`, so Chrome, not the agent, is the first to die of memory.
 
-Each step answers with its `error` text and an `errorKind` beside it:
+Each step answers agent-browser's own `error` text verbatim with an `errorKind` beside it:
 `wedge` (a CDP wedge signal, which also recycles the service), `invalid-command` (a command,
 subcommand or `find` action agent-browser does not know — the call was wrong, not the page),
 `stale-ref` (an `@eN` ref no snapshot in the call's tab made; refs die with the tab),
 `script-timeout` (an `eval` that ran into the CDP timeout while the page still answered a
 trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
-alive — the closing reports run and the service is kept; a probe that fails leaves the step `wedge`),
-`slow-page` (an `open` that did not commit within 30 s or that agent-browser's client gave up on — "no response came back" — while one
+alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
+`slow-page` (an `open` agent-browser's client gave up on — "no response came back" — while one
 plain request to the page, sent after it and bounded at 30 s, got an answer: the step notes that
 request's time to first byte and status, the walk goes on, a later unanswered step on that page
 is `slow-page` too, and the service is kept; a request that gets no answer leaves the open
@@ -928,7 +928,7 @@ open that is `slow-page`, or `timeout` (agent-browser answered that its own wait
 load ran out), says only what the walk measured: the open got no answer (or that answer), the
 plain request's time to first byte and status when there was one, that the page had not finished
 loading when agent-browser stopped waiting for it (a dev server's bundle still compiling, a
-request that never ends), that later steps which ran saw the page as it was, and that a
+request that never ends), that the steps after the open ran on the page as it was, and that a
 long first byte itself means a slow server a later call will find warmed up. `timeoutSeconds`
 does not reach agent-browser's load wait, so the message never advises raising it, and it names
 none of agent-browser's own bounds, which change with it. Measured: a
@@ -938,13 +938,6 @@ wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNo
 `TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). The first-paint wait after the
 open is zcp's own step: a page that did not paint within its 5 s comes back as a step that
 succeeded, its result saying so, and the walk goes on; any other failure of it stays as it is.
-The open normally returns at navigation commit; when the tab or its DevTools session cannot be
-obtained, agent-browser opens the page. A caller command that runs and fails causes later caller
-commands to return as not run, while the screenshot and closing reports are still attempted.
-Refused commands come first and do not stop the remaining commands. When page observation is
-available, an uncaught error or a document or script 5xx observed in the call's own page since the
-open makes a caller's wait fail before it starts with that cause; a failure after the wait starts
-does not interrupt it.
 `failedSteps` counts the steps that answered `success:false`, the refused ones included, and a
 result nothing else put a message on says "N of M steps failed; the first: COMMAND (ERRORKIND)",
 the command cut to 80 characters; a failed step never makes the call an error. A call whose own

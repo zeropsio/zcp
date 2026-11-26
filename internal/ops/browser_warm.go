@@ -495,14 +495,12 @@ walk:
 		// tab list after it answered, so Chrome is no wedge.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged && !closedUnder {
 			if !w.outlivesWedge(ctx, last) {
-				if !callerStep && (last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer)) {
+				if w.page.session == nil || !isCommand(step, browserCmdOpen) || last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer) {
 					break
 				}
-				if !callerStep {
-					// The unanswered open still permits paint and closing reports.
-					callerFailed = true
-					skipReason = "not run: the open did not commit"
-				}
+				// The unanswered direct open still permits paint and closing reports.
+				callerFailed = true
+				skipReason = "not run: the open did not commit"
 			}
 		}
 		// While the call's own page loads — the viewport, the open and the

@@ -15,7 +15,7 @@ import (
 )
 
 // non-parallel: these cases replace the DevTools dialer and page probe.
-// witness: internal/ops/browser_warm.go | 				if !callerStep && (last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer)) { → 				if !callerStep {
+// witness: internal/ops/browser_warm.go | 				if w.page.session == nil || !isCommand(step, browserCmdOpen) || last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer) { → 				if true {
 // witness: internal/ops/browser_cdp.go | 		if errors.Is(nctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil { → 		if errors.Is(nctx.Err(), context.DeadlineExceeded) && false {
 func TestBrowserPage_BPOpenbound_AnUncommittedOpenIsDiagnosed(t *testing.T) {
 	for _, tc := range []struct {
@@ -211,6 +211,7 @@ func TestBrowserPage_BPDevsup_TheSupervisorsPageFailsTheCall(t *testing.T) {
 // non-parallel: the refusal case replaces the browser runner and scaler.
 // witness: internal/ops/browser_warm.go | 		if callerFailed && callerStep { → 		if callerFailed && false {
 // witness: internal/ops/browser.go | 		if why, ok := refusedCommand(cmd); ok { → 		if why, ok := refusedCommand(cmd); ok && false {
+// witness: internal/ops/browser_warm.go | 				if w.page.session == nil || !isCommand(step, browserCmdOpen) || last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer) { → 				if !callerStep && (w.page.session == nil || !isCommand(step, browserCmdOpen) || last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer)) {
 func TestBrowserPage_BPSkip_AFailedStepSkipsLaterCallerSteps(t *testing.T) {
 	for _, tc := range []struct {
 		name, errorText string
@@ -233,6 +234,22 @@ func TestBrowserPage_BPSkip_AFailedStepSkipsLaterCallerSteps(t *testing.T) {
 			var got []BrowserStepResult
 			if err := json.Unmarshal([]byte(out), &got); err != nil {
 				t.Fatalf("decode steps: %v", err)
+			}
+			if tc.recycle {
+				if len(got) != 4 || got[3].Success {
+					t.Fatalf("steps = %+v, want the walk to end at the wedged caller step", got)
+				}
+				for _, step := range steps[4:] {
+					if b.ranIn(step...) != "" {
+						t.Errorf("step %v ran after the browser wedged", step)
+					}
+				}
+				var result BrowserBatchResult
+				_, recycled := classifyRunResult(&result, out, "", nil, time.Second)
+				if !recycled {
+					t.Error("the wedged browser was kept")
+				}
+				return
 			}
 			if len(got) != len(steps) {
 				t.Fatalf("steps = %+v, want each step reported", got)
