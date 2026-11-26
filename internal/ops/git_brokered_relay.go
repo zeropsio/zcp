@@ -552,11 +552,11 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // `http.<url>.sslVerify` or `http.<url>.proxy` in the checkout's config
 // outranks a generic -c; GIT_ALLOW_PROTOCOL does override every
 // `protocol.*` key.
-// Auto-gc and auto-maintenance run in the foreground: detached, they close
-// only descriptors 0-2, keep 3 and 4 — the session's — and hold the call
-// open until they finish. A passthrough call needs no such setting: its git
-// holds only 0-2. A process a hook leaves running in the background holds 3
-// and 4 the same way, so once git ended the script writes its done marker,
+// Auto-gc and auto-maintenance are disabled: detached, they close only
+// descriptors 0-2, keep 3 and 4 — the session's — and hold the call open;
+// in the foreground they delay it. A passthrough call needs no such setting:
+// its git holds only 0-2. A process a hook leaves running in the background
+// holds 3 and 4 the same way, so once git ended the script writes its done marker,
 // `ZCPDONE-<nonce> <exit>`, and zcp ends the call from it (relayStream,
 // RunBrokeredGitRelayed) — after its end mark on stdout, `ZCPEND-<nonce>`,
 // which every byte git wrote to stdout precedes (relayStdout). Running git
@@ -588,8 +588,8 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 		"-c", "submodule.fetchJobs=1",
 		"-c", "http.sslVerify=true",
 		"-c", "http.proxy=",
-		"-c", "gc.autoDetach=false",
-		"-c", "maintenance.autoDetach=false",
+		"-c", "gc.auto=0",
+		"-c", "maintenance.auto=false",
 		args.Subcommand)
 	argv = append(argv, args.Rest...)
 	for _, a := range argv {

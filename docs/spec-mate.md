@@ -3969,8 +3969,8 @@ sockets take it without close-on-exec, and a frame written there would go onto t
 helper waited for an answer that never comes. A stdin the argv asks git to read is sent first and staged whole into
 `/tmp/zcp-stdin.XXXXXX` before git starts; any other call's git reads `/dev/null`, so 3 carries
 answers only. git runs with `-c credential.helper=`, clearing every persisted helper, then zcp's
-one-line get-only POSIX helper, `credential.useHttpPath=true`, and `gc.autoDetach=false` and
-`maintenance.autoDetach=false` — a detached auto-gc keeps 3 and 4 and would hold the session —
+one-line get-only POSIX helper, `credential.useHttpPath=true`, and `gc.auto=0` and
+`maintenance.auto=false` — a detached auto-gc keeps 3 and 4 and would hold the session —
 under `GIT_ALLOW_PROTOCOL` (https, HQ's scheme, `file` only for an absolute `.bundle` path in
 argv), which overrides every `protocol.*` key in the checkout's config. The helper takes the call's
 lock, `mkdir /tmp/zcp-relay-<nonce>.lock`, giving up 90 s by the clock (`date +%s`) after it began,

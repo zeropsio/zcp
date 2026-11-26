@@ -63,7 +63,7 @@ func (r RelayedSSH) ExecSSH(ctx context.Context, hostname, command string) ([]by
 // prologue, then git's configuration for every git the script starts, from
 // the environment (git 2.31 or later) — the empty helper clearing every
 // persisted one, then zcp's own helper (relayHelper), and auto-gc and
-// auto-maintenance in the foreground — under GIT_ALLOW_PROTOCOL (schemes,
+// auto-maintenance disabled — under GIT_ALLOW_PROTOCOL (schemes,
 // HQ's), then script itself in a subshell reading /dev/null, and the relay
 // epilogue with its exit code. A -c a script's git takes comes after this
 // configuration, so a script against HQ names no helper of its own.
@@ -72,8 +72,8 @@ func buildRelayedScriptCommand(script, nonce string, schemes []string) string {
 		{"credential.helper", ""},
 		{"credential.helper", relayHelper(nonce)},
 		{"credential.useHttpPath", "true"},
-		{"gc.autoDetach", "false"},
-		{"maintenance.autoDetach", "false"},
+		{"gc.auto", "0"},
+		{"maintenance.auto", "false"},
 	}
 	var b strings.Builder
 	b.WriteString(relayPrologue(nonce))
