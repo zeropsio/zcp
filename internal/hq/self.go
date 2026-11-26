@@ -142,6 +142,9 @@ type MateChange struct {
 	// Checks is the head's GitHub checks verdict (passing, pending, failing);
 	// "" while none are known or from an HQ older than it.
 	Checks string `json:"checks,omitempty"`
+	// ReviewBuild is HQ's result for this open change's head, when it has one.
+	ReviewBuild   *ReviewBuild `json:"reviewBuild,omitempty"`
+	ChecksGivenUp bool         `json:"checksGivenUp,omitempty"`
 	// UpdatedAt is when HQ last changed its record of the change, RFC 3339;
 	// "" from an HQ older than it.
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -158,6 +161,34 @@ type MateChange struct {
 	// from an older HQ. zcp reports them without judging validity itself.
 	Problems         []Problem         `json:"problems,omitempty"`
 	RecipeValidation *RecipeValidation `json:"recipeValidation,omitempty"`
+}
+
+// ReviewBuild is HQ's read of the Mate's Review build at a change's head.
+type ReviewBuild struct {
+	State  string            `json:"state"`
+	Head   string            `json:"head"`
+	At     string            `json:"at"`
+	Until  string            `json:"until,omitempty"`
+	Reason string            `json:"reason,omitempty"`
+	Parts  []ReviewBuildPart `json:"parts,omitempty"`
+}
+
+// ReviewBuildPart is one setup's stage observation at that head.
+type ReviewBuildPart struct {
+	Setup        string            `json:"setup"`
+	Stage        string            `json:"stage"`
+	Outcome      string            `json:"outcome"`
+	Phase        string            `json:"phase,omitempty"`
+	AppVersionID string            `json:"appVersionId,omitempty"`
+	Reason       string            `json:"reason,omitempty"`
+	Probe        *ReviewBuildProbe `json:"probe,omitempty"`
+}
+
+// ReviewBuildProbe is the stage's public health observation.
+type ReviewBuildProbe struct {
+	URL    string `json:"url"`
+	Status *int   `json:"status,omitempty"`
+	At     string `json:"at"`
 }
 
 // CarriedBy is the number of the change whose landing put all of c's work on

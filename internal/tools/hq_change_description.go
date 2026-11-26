@@ -248,7 +248,7 @@ func handleDescribeChange(
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
-		Labels:         describedLabels(answered),
+		Labels:         describedLabels(answered, time.Now()),
 		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that changes its diff makes it a draft again, until you describe it again; HQ keeps it ready when it can tell the diff is unchanged.",
 			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited) + " " + describedIsNotTheReply,
 	}), nil, nil
@@ -265,12 +265,14 @@ const describedIsNotTheReply = "The description is for the review, not your repl
 // labels a change (changeLabels): the write's own answer, so no state read
 // older than it judges the change. An answer without ready comes from an
 // older HQ and is read as ready.
-func describedLabels(c hq.Change) []string {
+func describedLabels(c hq.Change, now time.Time) []string {
 	ready := true
 	if c.Ready != nil {
 		ready = *c.Ready
 	}
-	return changeLabels(&workflow.HQChangeTold{State: c.State, Ready: &ready, Mergeability: c.Mergeability, Behind: c.Behind})
+	standing := workflow.HQChangeTold{State: c.State, Ready: &ready, Mergeability: c.Mergeability, Behind: c.Behind}
+	reviewBuildAsTold(&standing, c.ReviewBuild, c.ChecksGivenUp)
+	return changeLabels(&standing, now)
 }
 
 // changeRef is one change of the Mate's in HQ: appID's repo, number.

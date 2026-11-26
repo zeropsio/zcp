@@ -335,6 +335,7 @@ func standingLabel(t workflow.HQChangeTold) string {
 // (s), in the ledger's terms (workflow.HQChangeTold).
 func standingOf(s hq.MateChange) workflow.HQChangeTold {
 	now := workflow.HQChangeTold{State: s.State, Ready: s.Ready, Mergeability: s.Mergeability, Checks: s.Checks, UpdatedAt: s.UpdatedAt}
+	reviewBuildAsTold(&now, s.ReviewBuild, s.ChecksGivenUp)
 	if s.Behind != nil {
 		now.Behind = *s.Behind
 	}
@@ -346,6 +347,14 @@ func standingOf(s hq.MateChange) workflow.HQChangeTold {
 		now.CoreHead, now.CoreLanded = s.CorePush.Head, s.CorePush.Landed
 	}
 	return now
+}
+
+// reviewBuildAsTold keeps only the state needed to repeat the label.
+func reviewBuildAsTold(told *workflow.HQChangeTold, build *hq.ReviewBuild, givenUp bool) {
+	told.ChecksGivenUp = givenUp
+	if build != nil {
+		told.ReviewBuildState, told.ReviewBuildUntil, told.ReviewBuildReason = build.State, build.Until, build.Reason
+	}
 }
 
 // corePushWords says HQ brought `main` into change number on branch after

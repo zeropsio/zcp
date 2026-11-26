@@ -30,7 +30,7 @@ const changeOldAfter = 72 * time.Hour
 // changeLabels is a change's standing as told, as status and develop's start
 // label it: ready means described, with HQ's mergeability named separately
 // so it cannot imply permission to merge before HQ has judged it.
-func changeLabels(t *workflow.HQChangeTold) []string {
+func changeLabels(t *workflow.HQChangeTold, now time.Time) []string {
 	if t == nil {
 		return nil
 	}
@@ -63,6 +63,29 @@ func changeLabels(t *workflow.HQChangeTold) []string {
 		labels = append(labels, "GitHub's checks failed")
 	case checksPending:
 		labels = append(labels, "GitHub's checks running")
+	}
+	state, reason := t.ReviewBuildState, t.ReviewBuildReason
+	if state == "awaiting" {
+		if until, err := time.Parse(time.RFC3339, t.ReviewBuildUntil); err == nil && now.After(until) {
+			state, reason = "unavailable", "no result arrived"
+		}
+	}
+	switch state {
+	case "awaiting":
+		labels = append(labels, "Awaiting Review build")
+	case "failing":
+		labels = append(labels, "Review build failed")
+	case "unavailable":
+		label := "Review build unavailable"
+		if reason != "" {
+			label += " (" + reason + ")"
+		}
+		labels = append(labels, label)
+	case "passing":
+		labels = append(labels, "Review build passed")
+	}
+	if t.ChecksGivenUp {
+		labels = append(labels, "over to you")
 	}
 	return labels
 }
@@ -186,7 +209,7 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 		repo := workflow.HQRepoChanges{Repo: k.repo}
 		var branches []string
 		for _, c := range changesIn(changes, k.appID, k.repo) {
-			line, told := changeLineNow(c, state)
+			line, told := changeLineNow(c, state, now)
 			line.Leases = held(k, c.Branch)
 			if updated := changeUpdatedWords(told, now); updated != "" {
 				line.Labels = append(line.Labels, updated)
@@ -219,8 +242,8 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 // or no longer listed, said so — or, unread, unknown or of another
 // application, its standing as told. told is its standing as an open change,
 // nil once it is not one.
-func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeLine, *workflow.HQChangeTold) {
-	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told)}
+func changeLineNow(c workflow.HQChange, state *hq.MateState, now time.Time) (workflow.HQChangeLine, *workflow.HQChangeTold) {
+	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told, now)}
 	line.Open = c.Told == nil || c.Told.State == "" || c.Told.State == hq.ChangeOpen
 	if c.Told != nil && c.Told.State == hq.ChangeClosed {
 		line.Labels = []string{"closed without merging"}
@@ -236,9 +259,9 @@ func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeL
 	switch outcome {
 	case changeStillOpen:
 		line.Open = true
-		now := standingOf(*s)
-		line.Labels = changeLabels(&now)
-		return line, &now
+		standing := standingOf(*s)
+		line.Labels = changeLabels(&standing, now)
+		return line, &standing
 	case changeMerged:
 		line.Open = false
 		line.Labels, line.Merged = nil, true
@@ -306,7 +329,7 @@ func openChangeLabels(handed bool, told *workflow.HQChangeTold, now time.Time) [
 	if handed {
 		labels = append(labels, handedToYou)
 	}
-	labels = append(labels, changeLabels(told)...)
+	labels = append(labels, changeLabels(told, now)...)
 	if updated := changeUpdatedWords(told, now); updated != "" {
 		labels = append(labels, updated)
 	}
@@ -426,7 +449,7 @@ func groupChange(changes []workflow.HQChange, state *hq.MateState, g hqLeaseBran
 		if c.Branch != g.branch {
 			continue
 		}
-		line, told := changeLineNow(c, state)
+		line, told := changeLineNow(c, state, time.Now())
 		if line.Landing() != "" {
 			landed, open = &line, nil
 			continue

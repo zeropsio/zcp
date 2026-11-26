@@ -88,6 +88,12 @@ type HQChangeTold struct {
 	Behind       bool   `json:"behind,omitempty"`
 	Checks       string `json:"checks,omitempty"`
 	UpdatedAt    string `json:"updatedAt,omitempty"`
+	// ReviewBuildState, Until and Reason are the Review build as last told;
+	// the deadline lets a reader recognize a take that never received a result.
+	ReviewBuildState  string `json:"reviewBuildState,omitempty"`
+	ReviewBuildUntil  string `json:"reviewBuildUntil,omitempty"`
+	ReviewBuildReason string `json:"reviewBuildReason,omitempty"`
+	ChecksGivenUp     bool   `json:"checksGivenUp,omitempty"`
 	// CoreHead is HQ's merge commit on the change's branch while it is the
 	// change's head — HQ brought `main` in after change CoreLanded merged
 	// (hq.CorePush), so the agent's branch is behind its own remote until

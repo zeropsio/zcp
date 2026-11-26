@@ -3,12 +3,13 @@ package tools
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// witness: internal/tools/hq_change_status.go | case "failing": → case "passing":
+// witness: internal/tools/hq_change_status.go | switch t.Checks { → switch t.ReviewBuildState {
 func TestChangeLabels_CL1_ChecksOfTheHeadAreLabelled(t *testing.T) {
 	t.Parallel()
 	ready := true
@@ -27,8 +28,95 @@ func TestChangeLabels_CL1_ChecksOfTheHeadAreLabelled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := changeLabels(&tt.told); !slices.Equal(got, tt.labels) {
+			if got := changeLabels(&tt.told, time.Time{}); !slices.Equal(got, tt.labels) {
 				t.Errorf("labels = %q, want %q", got, tt.labels)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_status.go | case "passing": → case "pass":
+func TestChangeLabels_CL2_ReviewBuildAndChecksHandoff(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		told   *workflow.HQChangeTold
+		labels []string
+	}{
+		{name: "no standing"},
+		{name: "no build", told: &workflow.HQChangeTold{}},
+		{name: "unknown state", told: &workflow.HQChangeTold{ReviewBuildState: "other"}},
+		{name: "awaiting", told: &workflow.HQChangeTold{ReviewBuildState: "awaiting"}, labels: []string{"Awaiting Review build"}},
+		{name: "passing", told: &workflow.HQChangeTold{ReviewBuildState: "passing"}, labels: []string{"Review build passed"}},
+		{name: "failing with GitHub", told: &workflow.HQChangeTold{ReviewBuildState: "failing", Checks: "failing"}, labels: []string{"GitHub's checks failed", "Review build failed"}},
+		{name: "unavailable with reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable", ReviewBuildReason: "stage moved"}, labels: []string{"Review build unavailable (stage moved)"}},
+		{name: "unavailable without reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable"}, labels: []string{"Review build unavailable"}},
+		{name: "given up", told: &workflow.HQChangeTold{ReviewBuildState: "failing", ChecksGivenUp: true}, labels: []string{"Review build failed", "over to you"}},
+		{name: "GitHub given up without a build", told: &workflow.HQChangeTold{Checks: "failing", ChecksGivenUp: true}, labels: []string{"GitHub's checks failed", "over to you"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := changeLabels(tt.told, time.Time{}); !slices.Equal(got, tt.labels) {
+				t.Errorf("labels = %q, want %q", got, tt.labels)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_status.go | now.After(until) → now.Before(until)
+func TestChangeLabels_CL3_DeadlineChangesAwaitingToUnavailable(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name, until, want string
+	}{
+		{"before", "2026-11-26T12:00:01Z", "Awaiting Review build"},
+		{"at", "2026-11-26T12:00:00Z", "Awaiting Review build"},
+		{"after", "2026-11-26T11:59:59Z", "Review build unavailable (no result arrived)"},
+		{"unreadable deadline", "broken", "Awaiting Review build"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			told := &workflow.HQChangeTold{ReviewBuildState: "awaiting", ReviewBuildUntil: tt.until}
+			if got := changeLabels(told, at); !slices.Equal(got, []string{tt.want}) {
+				t.Errorf("labels = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change.go | told.ReviewBuildState, told.ReviewBuildUntil, told.ReviewBuildReason = build.State, build.Until, build.Reason → told.ReviewBuildState, told.ReviewBuildUntil, told.ReviewBuildReason = "", build.Until, build.Reason
+func TestChangeLabels_CL4_HQStateReachesEveryLabel(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	app, head, ready := "app-1", "head", true
+	for _, tt := range []struct {
+		name    string
+		build   *hq.ReviewBuild
+		givenUp bool
+		labels  []string
+	}{
+		{"no build", nil, false, []string{"ready"}},
+		{"awaiting", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T12:01:00Z"}, false, []string{"ready", "Awaiting Review build"}},
+		{"deadline passed", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T11:59:00Z"}, false, []string{"ready", "Review build unavailable (no result arrived)"}},
+		{"unavailable", &hq.ReviewBuild{State: "unavailable", Reason: "stage moved"}, false, []string{"ready", "Review build unavailable (stage moved)"}},
+		{"failed and given up", &hq.ReviewBuild{State: "failing"}, true, []string{"ready", "Review build failed", "over to you"}},
+		{"passed", &hq.ReviewBuild{State: "passing"}, false, []string{"ready", "Review build passed"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := hq.MateChange{Repo: "app", Number: 7, State: hq.ChangeOpen, Head: &head, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build, ChecksGivenUp: tt.givenUp}
+			standing := standingOf(s)
+			change := workflow.HQChange{AppID: app, Repo: "app", Number: 7, Told: &standing}
+			state := &hq.MateState{AppID: &app, Changes: []hq.MateChange{s}}
+			current, _ := changeLineNow(change, state, at)
+			lastTold, _ := changeLineNow(change, nil, at)
+			described := describedLabels(hq.Change{State: hq.ChangeOpen, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build, ChecksGivenUp: tt.givenUp}, at)
+			for name, got := range map[string][]string{"current": current.Labels, "last told": lastTold.Labels, "description": described} {
+				if !slices.Equal(got, tt.labels) {
+					t.Errorf("%s labels = %q, want %q", name, got, tt.labels)
+				}
 			}
 		})
 	}

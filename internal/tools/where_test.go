@@ -42,7 +42,7 @@ func TestWhere_WGStanding_ListsOnlyOpenChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			state := &hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "app", Number: 7, Branch: "feature", State: tc.state}}}
-			line, _ := changeLineNow(change, state)
+			line, _ := changeLineNow(change, state, at)
 			wire, err := json.Marshal(line)
 			if err != nil || line.Open != tc.open || string(wire) != tc.wire {
 				t.Fatalf("open = %v; wire = %s, err = %v; want %v and %s", line.Open, wire, err, tc.open, tc.wire)

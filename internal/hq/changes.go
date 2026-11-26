@@ -188,7 +188,9 @@ type Change struct {
 	Behind       bool    `json:"behind"`
 	// Ready is whether the change asks for review (HqChange.ready); nil from
 	// an older HQ, which sends none, and is read as ready.
-	Ready *bool `json:"ready"`
+	Ready         *bool        `json:"ready"`
+	ReviewBuild   *ReviewBuild `json:"reviewBuild,omitempty"`
+	ChecksGivenUp bool         `json:"checksGivenUp,omitempty"`
 }
 
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in
@@ -220,11 +222,21 @@ func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (Ope
 	return opened, err
 }
 
-// ChangeEdit is what an edit of an open change sets: its title, its
-// description (markdown), or both; a nil field stays as it is.
+// ReviewBuildWrite is a take or a result sent to HQ for one change head.
+type ReviewBuildWrite struct {
+	Head  string            `json:"head"`
+	Step  string            `json:"step"`
+	At    string            `json:"at"`
+	Until string            `json:"until,omitempty"`
+	Parts []ReviewBuildPart `json:"parts,omitempty"`
+}
+
+// ChangeEdit sets an open change's title, description or Review build.
 type ChangeEdit struct {
-	Title *string `json:"title,omitempty"`
-	Body  *string `json:"body,omitempty"`
+	Title        *string           `json:"title,omitempty"`
+	Body         *string           `json:"body,omitempty"`
+	ExpectedHead string            `json:"expectedHead,omitempty"`
+	ReviewBuild  *ReviewBuildWrite `json:"reviewBuild,omitempty"`
 }
 
 // EditChange retitles or describes the Mate's open change number in repo.
