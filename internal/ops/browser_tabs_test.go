@@ -34,7 +34,7 @@ func (b *tabsBrowser) run(_ context.Context, args []string) (string, string, err
 	case slices.Equal(args, []string{"tab", "list"}):
 		tabs := make([]string, 0, len(b.tabs))
 		for _, id := range b.tabs {
-			tabs = append(tabs, fmt.Sprintf(`{"tabId":%q,"active":%t,"url":"https://%s.example.invalid/"}`, id, id == b.active, id))
+			tabs = append(tabs, fmt.Sprintf(`{"tabId":%q,"targetId":%q,"active":%t,"url":"https://%s.example.invalid/"}`, id, id, id == b.active, id))
 		}
 		return `{"success":true,"data":{"tabs":[` + strings.Join(tabs, ",") + `]},"error":null}`, "", nil
 	case len(args) == 2 && args[0] == "tab":
@@ -83,7 +83,7 @@ func (b *tabsBrowser) ranIn(cmd ...string) string {
 
 func walkCallSteps(t *testing.T, b *tabsBrowser, steps ...[]string) []BrowserStepResult {
 	t.Helper()
-	out, _, _, err := runCallSteps(t.Context(), steps, b.run)
+	out, _, _, err := runCallSteps(t.Context(), steps, b.run, nil)
 	if err != nil {
 		t.Fatalf("runCallSteps: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestRunCallSteps_TheTabListNamesOnlyTheCallsTabs(t *testing.T) {
 // does not let it run; a tab list or switch goes to the walk.
 // witness: internal/ops/browser.go | 	why, ok := refusedCommands[cmd[own[0]]] → 	why, ok := refusedCommands[cmd[0]]
 func TestBuildCanonicalBatch_ACommandIsReadPastItsGlobalFlags(t *testing.T) {
-	batch, refused := buildCanonicalBatch("https://app.example.invalid/", [][]string{
+	batch, _, refused := buildCanonicalBatch("https://app.example.invalid/", [][]string{
 		{"--json", "window", "new"},
 		{"--headed", "tab", "new"},
 		{"-q", "open", "https://other.example.invalid/"},
@@ -321,7 +321,7 @@ func TestRunCallSteps_APopupOpenedDuringLoadLeavesThePagesOwnLoad(t *testing.T) 
 		return b.run(ctx, args)
 	}
 	steps := [][]string{browserDefaultViewport, {"open", "https://app.example.invalid/"}, browserPaintWait, {"get", "title"}, {"errors"}}
-	if _, _, _, err := runCallSteps(t.Context(), steps, run); err != nil {
+	if _, _, _, err := runCallSteps(t.Context(), steps, run, nil); err != nil {
 		t.Fatalf("runCallSteps: %v", err)
 	}
 	if in := b.ranIn(browserPaintWait...); in != "t2" {
@@ -357,7 +357,7 @@ func TestRunCallSteps_ATabListLostAfterAPopupRunsNoStepBlind(t *testing.T) {
 		}
 		return b.run(ctx, args)
 	}
-	out, _, _, err := runCallSteps(t.Context(), [][]string{{"click", "#signin"}, {"click", "#approve"}, {"eval", "location.href"}, {"errors"}}, run)
+	out, _, _, err := runCallSteps(t.Context(), [][]string{{"click", "#signin"}, {"click", "#approve"}, {"eval", "location.href"}, {"errors"}}, run, nil)
 	if err != nil {
 		t.Fatalf("runCallSteps: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestRunCallSteps_ATabListLostAfterAPopupRunsNoStepBlind(t *testing.T) {
 // commands of its own is refused, not only the first one documented.
 // witness: internal/ops/browser.go | 	"goto":           browserRefusedOpen, → 	"go-to":          browserRefusedOpen,
 func TestBuildCanonicalBatch_EveryNameOfARefusedCommandIsRefused(t *testing.T) {
-	_, refused := buildCanonicalBatch("https://app.example.invalid/", [][]string{
+	_, _, refused := buildCanonicalBatch("https://app.example.invalid/", [][]string{
 		{"goto", "https://other.example.invalid/"},
 		{"navigate", "https://other.example.invalid/"},
 		{"quit"},
@@ -453,7 +453,7 @@ func TestRunCallSteps_AFollowWithLittleTimeLeftOnlySwitchesAndSaysSo(t *testing.
 		b := &tabsBrowser{tabs: []string{"t1", "t2"}, active: "t2", on: map[string]func(*tabsBrowser) (bool, string){
 			"click #signin": opens("t3"),
 		}}
-		out, _, _, err := runCallSteps(ctx, [][]string{{"click", "#signin"}, {"get", "url"}}, b.run)
+		out, _, _, err := runCallSteps(ctx, [][]string{{"click", "#signin"}, {"get", "url"}}, b.run, nil)
 		if err != nil {
 			t.Fatalf("runCallSteps: %v", err)
 		}

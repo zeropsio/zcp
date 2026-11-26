@@ -51,8 +51,7 @@ const (
 
 // browserPaintWait waits for the page's first contentful paint: it returns
 // at once on a page that has painted and gives up after 5 s on one that never
-// does, while the walk goes on. It is zcp's own step, so giving up is no
-// failure: the step says so as its result (browserNoPaint).
+// does, while the walk goes on. Its timeout is reported in the step's result.
 var browserPaintWait = []string{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"}
 
 // browserWaitTimedOut is agent-browser's error for a wait whose --timeout ran
@@ -378,7 +377,7 @@ type browserStepExec func(ctx context.Context, args []string) (stdout, stderr st
 // step with no answer, or the end of ctx, ends the walk with an error,
 // keeping the steps before it.
 func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
-	return walkBrowserSteps(ctx, steps, run, false)
+	return walkBrowserSteps(ctx, steps, run, false, nil)
 }
 
 // runCallSteps walks a call's batch as runBrowserSteps does, in the call's
@@ -391,12 +390,17 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 // tab list that fails twice after a popup was active runs no caller step
 // more; and a caller's tab command lists or switches the call's tabs only.
 // Those steps of its own are none of the result's.
-func runCallSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
-	return walkBrowserSteps(ctx, steps, run, true)
+func runCallSteps(ctx context.Context, steps [][]string, run browserStepExec, caller []bool) (string, string, bool, error) {
+	return walkBrowserSteps(ctx, steps, run, true, caller)
 }
 
-func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec, followTabs bool) (string, string, bool, error) {
+func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec, followTabs bool, caller []bool) (string, string, bool, error) {
 	w := browserWalk{run: run, stderr: &capBuffer{cap: browserOutputCap}, followTabs: followTabs}
+	defer func() {
+		if w.page.session != nil {
+			w.page.session.cdp.close()
+		}
+	}()
 	if followTabs {
 		w.tabs = startBrowserCallTabs(ctx, run, w.stderr)
 	}
@@ -406,23 +410,56 @@ func walkBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec
 	// loading lasts until the first-paint wait has run and the document's
 	// status is read: the call's own page's load.
 	loading := followTabs
+	callerFailed := false
+	var skipReason string
+	rememberFailure := func(step BrowserStepResult) {
+		if !step.Success {
+			callerFailed = true
+			skipReason = "not run: an earlier caller step failed"
+		}
+	}
 walk:
 	for at, step := range steps {
 		if walkErr = ctx.Err(); walkErr != nil {
 			break
 		}
-		if own, ok := w.ownStep(ctx, step); ok {
+		callerStep := at < len(caller) && caller[at]
+		if callerFailed && callerStep {
+			results = append(results, BrowserStepResult{Command: step, Error: &skipReason})
+			continue
+		}
+		if own, ok, ran := w.ownStep(ctx, step, callerStep); ok {
 			results = append(results, own)
+			if callerStep && ran {
+				rememberFailure(own)
+			}
 			continue
 		}
 		if isCommand(step, browserCmdOpen) && len(step) > 1 {
 			w.page.url = step[1]
 		}
+		if followTabs && isCommand(step, browserCmdOpen) {
+			if tabs != nil {
+				// The observer is optional. If it cannot be prepared, let
+				// agent-browser open the page as it did before this session existed.
+				setupCtx, cancel := context.WithTimeout(ctx, browserLivenessTimeout)
+				w.page.session, _ = openBrowserPage(setupCtx, run, tabs.ownTarget)
+				cancel()
+			}
+			if walkErr = ctx.Err(); walkErr != nil {
+				break
+			}
+		}
 		var answer browserAnswer
 		var cut bool
 		closedUnder := false
 		for attempt := 0; ; attempt++ {
-			if answer, cut, walkErr = w.ask(ctx, at, step); walkErr != nil {
+			if followTabs && w.page.session != nil && isCommand(step, browserCmdOpen) && len(step) > 1 {
+				answer, walkErr = w.page.session.navigate(ctx, step[1])
+			} else {
+				answer, cut, walkErr = w.ask(ctx, at, step)
+			}
+			if walkErr != nil {
 				break walk
 			}
 			if cut {
@@ -442,17 +479,30 @@ walk:
 		if cut {
 			msg := fmt.Sprintf("the answer exceeded %d bytes and was cut", browserOutputCap)
 			results = append(results, BrowserStepResult{Command: step, Error: &msg})
+			if callerStep {
+				rememberFailure(results[len(results)-1])
+			}
 			continue
 		}
 		results = append(results, answer.stepResult(step, closedUnder))
 		last := &results[len(results)-1]
+		if callerStep {
+			rememberFailure(*last)
+		}
 		// A wedged page would make every later step wait out the same CDP
 		// timeout; the browser is recycled for it anyway. A step whose popup
 		// closed under it got the closed page's answer ("Target closed"); the
 		// tab list after it answered, so Chrome is no wedge.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged && !closedUnder {
 			if !w.outlivesWedge(ctx, last) {
-				break
+				if !callerStep && (last.Error == nil || !strings.HasPrefix(*last.Error, browserNavigationNoAnswer)) {
+					break
+				}
+				if !callerStep {
+					// The unanswered open still permits paint and closing reports.
+					callerFailed = true
+					skipReason = "not run: the open did not commit"
+				}
 			}
 		}
 		// While the call's own page loads — the viewport, the open and the
@@ -495,29 +545,39 @@ type browserAnswer struct {
 }
 
 // ownStep answers a step the walk does not hand agent-browser as written,
-// and reports whether it did. A page whose server answered 5xx runs none of
-// the caller's commands: each would wait or fail on the error page; the
+// and reports whether it did and whether the caller's command ran. A page
+// whose server answered 5xx runs none of the caller's commands: each would
+// wait or fail on the error page; the
 // screenshot and the canned tail still run, to show it. A walk that lost
 // track of its tabs runs no step that acts on a page: it could run in the
 // base tab; the canned tail still runs, the screenshot would show an unknown
 // tab. A caller's tab command lists or switches the call's tabs only.
-func (w *browserWalk) ownStep(ctx context.Context, step []string) (BrowserStepResult, bool) {
+func (w *browserWalk) ownStep(ctx context.Context, step []string, caller bool) (BrowserStepResult, bool, bool) {
 	switch {
 	case w.page.serverStatus >= 500 && !isReportingCommand(step):
 		msg := w.page.notRun()
-		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError}, true
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError}, true, false
 	case w.tabs != nil && w.tabs.lost && (!isReportingCommand(step) || isCommand(step, browserCmdScreenshot)):
 		msg := browserTabsLost
-		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindOther}, true
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindOther}, true, false
+	}
+	if caller {
+		own, _ := browserCommandArgs(step)
+		if len(own) > 0 && step[own[0]] == browserCmdWait && w.page.session != nil {
+			if failure := w.page.session.failure(); failure != "" {
+				return BrowserStepResult{Command: step, Error: &failure, ErrorKind: ErrorKindOther}, true, false
+			}
+		}
 	}
 	if _, _, isTab := readBrowserTabCommand(step); !isTab || !w.followTabs {
-		return BrowserStepResult{}, false
+		return BrowserStepResult{}, false, false
 	}
 	if w.tabs == nil {
 		msg := "not run: the call's tabs could not be read, so no tab command runs in it"
-		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindInvalidCommand}, true
+		return BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindInvalidCommand}, true, false
 	}
-	return w.tabs.command(ctx, step, w.run), true
+	result := w.tabs.command(ctx, step, w.run)
+	return result, true, result.ErrorKind != ErrorKindInvalidCommand
 }
 
 // ask runs step once, step number at of the batch, and reads its answer. cut
@@ -638,6 +698,10 @@ func (e *browserStepUnansweredError) Unwrap() error { return e.err }
 // be running — an open of a page whose server is slow.
 const browserNoAnswer = "no response came back"
 
+// browserNavigationNoAnswer distinguishes a direct CDP navigation bound from
+// the agent-browser client's own unanswered-command text.
+const browserNavigationNoAnswer = "navigation did not commit: " + browserNoAnswer
+
 // browserPageProbeTimeout bounds the plain request a walk sends a page whose
 // open got no answer.
 const browserPageProbeTimeout = 30 * time.Second
@@ -655,6 +719,7 @@ type browserPage struct {
 	slow         bool
 	serverStatus int
 	devsup       bool
+	session      *browserPageSession
 }
 
 const devsupPageNotePrefix = "zcp-devsup page: "
@@ -692,8 +757,7 @@ func devsupDocument(ctx context.Context, run browserStepExec) (string, string) {
 // the walk goes on. The page's open is checked with one plain request to its
 // URL, sent after the open went unanswered: a server that answers makes the
 // open slow-page, noting that request's time to first byte and status — all
-// the walk measured; the open itself waited on the page's load, which may
-// never come however fast the server answers — or server-error when it
+// the walk measured — or server-error when it
 // answered 5xx. A later step the daemon does not answer on a slow page is
 // slow-page too. Anything else stays a wedge.
 func (p *browserPage) answeredSlowly(ctx context.Context, step *BrowserStepResult) bool {

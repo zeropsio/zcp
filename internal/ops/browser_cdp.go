@@ -125,6 +125,7 @@ type browserCDP struct {
 	pending map[int64]chan browserCDPMessage
 	readErr error
 	done    chan struct{}
+	event   func(browserCDPMessage)
 }
 
 type browserCDPMessage struct {
@@ -195,6 +196,12 @@ func (c *browserCDP) read(ctx context.Context) {
 				ch <- msg
 			}
 			continue
+		}
+		c.mu.Lock()
+		event := c.event
+		c.mu.Unlock()
+		if event != nil {
+			event(msg)
 		}
 		if msg.Method == "Fetch.requestPaused" && msg.SessionID != "" {
 			var paused struct {
@@ -287,6 +294,145 @@ func (c *browserCDP) call(ctx context.Context, sessionID, method string, params,
 		}
 		return nil
 	}
+}
+
+// browserNavigationTimeout bounds waiting for response headers and commit;
+// the caller's larger deadline still leaves room to diagnose a slow page.
+const browserNavigationTimeout = 30 * time.Second
+
+// browserPageSession observes and navigates the call's own tab, without
+// waiting for its load event. Closing the connection detaches this session.
+type browserPageSession struct {
+	cdp     *browserCDP
+	session string
+	target  string
+	mu      sync.Mutex
+	fault   string
+}
+
+func openBrowserPage(ctx context.Context, run browserStepExec, target string) (*browserPageSession, error) {
+	if target == "" {
+		return nil, errors.New("the call's tab has no DevTools target")
+	}
+	cdp, err := connectBrowserCDP(ctx, run)
+	if err != nil {
+		return nil, fmt.Errorf("connect to the call's tab: %w", err)
+	}
+	var attached struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := cdp.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true}, &attached); err != nil {
+		cdp.close()
+		return nil, fmt.Errorf("attach to the call's tab: %w", err)
+	}
+	if attached.SessionID == "" {
+		cdp.close()
+		return nil, errors.New("attach to the call's tab: no session id")
+	}
+	page := &browserPageSession{cdp: cdp, session: attached.SessionID, target: target}
+	cdp.mu.Lock()
+	cdp.event = page.observe
+	cdp.mu.Unlock()
+	for _, method := range []string{"Runtime.enable", "Network.enable"} {
+		if err := cdp.call(ctx, page.session, method, nil, nil); err != nil {
+			if ctx.Err() != nil {
+				cdp.close()
+				return nil, fmt.Errorf("observe the call's tab: %w", err)
+			}
+			// Each observer is optional; try the other one and retain the
+			// attached session for navigation.
+		}
+	}
+	return page, nil
+}
+
+// observe remembers the first page exception or failed document/script
+// response of the call's own tab. The DevTools reader delivers the events in
+// order; reading the stored failure never waits for another event.
+func (p *browserPageSession) observe(msg browserCDPMessage) {
+	if msg.SessionID != p.session {
+		return
+	}
+	var fault string
+	switch msg.Method {
+	case "Runtime.exceptionThrown":
+		var event struct {
+			Details struct {
+				Text      string `json:"text"`
+				Exception struct {
+					Description string `json:"description"`
+				} `json:"exception"`
+			} `json:"exceptionDetails"`
+		}
+		if json.Unmarshal(msg.Params, &event) == nil {
+			description := event.Details.Exception.Description
+			if description == "" {
+				description = event.Details.Text
+			}
+			if description != "" {
+				fault = "uncaught page error: " + description
+			}
+		}
+	case "Network.responseReceived":
+		var event struct {
+			Type     string `json:"type"`
+			Response struct {
+				Status int    `json:"status"`
+				URL    string `json:"url"`
+			} `json:"response"`
+		}
+		if json.Unmarshal(msg.Params, &event) == nil && (event.Type == "Document" || event.Type == "Script") && event.Response.Status >= 500 && event.Response.Status < 600 {
+			fault = fmt.Sprintf("%s answered HTTP %d: %s", strings.ToLower(event.Type), event.Response.Status, event.Response.URL)
+		}
+	}
+	if fault != "" {
+		p.mu.Lock()
+		if p.fault == "" {
+			p.fault = capUTF8(fault, browserOutputCap)
+		}
+		p.mu.Unlock()
+	}
+}
+
+func (p *browserPageSession) failure() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fault
+}
+
+func (p *browserPageSession) navigate(ctx context.Context, url string) (browserAnswer, error) {
+	nctx, cancel := context.WithTimeout(ctx, browserNavigationTimeout)
+	defer cancel()
+	var nav struct {
+		ErrorText string `json:"errorText"`
+	}
+	if err := p.cdp.call(nctx, p.session, "Page.navigate", map[string]any{"url": url}, &nav); err != nil {
+		if errors.Is(nctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			message := browserNavigationNoAnswer
+			return browserAnswer{Error: &message}, nil
+		}
+		return browserAnswer{}, fmt.Errorf("navigate: %w", err)
+	}
+	if nav.ErrorText != "" {
+		message := "Navigation failed: " + nav.ErrorText
+		return browserAnswer{Error: &message}, nil
+	}
+	var target struct {
+		Info struct {
+			URL   string `json:"url"`
+			Title string `json:"title"`
+		} `json:"targetInfo"`
+	}
+	infoCtx, cancelInfo := context.WithTimeout(ctx, browserLivenessTimeout)
+	defer cancelInfo()
+	if err := p.cdp.call(infoCtx, "", "Target.getTargetInfo", map[string]any{"targetId": p.target}, &target); err == nil && target.Info.URL != "" {
+		url = target.Info.URL
+	}
+	data, err := json.Marshal(map[string]string{"url": url, "title": target.Info.Title, "targetId": p.target})
+	if err != nil {
+		return browserAnswer{}, fmt.Errorf("navigation result: %w", err)
+	}
+	return browserAnswer{Success: true, Data: data}, nil
 }
 
 // browserCookie is a kept cookie: the fields of Chrome's own cookie

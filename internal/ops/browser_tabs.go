@@ -99,15 +99,17 @@ var browserFocusHold = []string{browserCmdEval, "new Promise(r=>{window.focus();
 
 // browserTabEntry is one tab of agent-browser's tab list.
 type browserTabEntry struct {
-	TabID  string `json:"tabId"`
-	Active bool   `json:"active"`
-	URL    string `json:"url"`
+	TabID    string `json:"tabId"`
+	TargetID string `json:"targetId"`
+	Active   bool   `json:"active"`
+	URL      string `json:"url"`
 }
 
 // browserCallTabs is what a walk knows of the call's tabs.
 type browserCallTabs struct {
 	// own is the call's own tab, active when the walk began.
-	own string
+	own       string
+	ownTarget string
 	// before are the tabs open when the walk began, own among them.
 	before []string
 	// opened are the tabs opened during the call and still open, in the
@@ -142,6 +144,7 @@ func startBrowserCallTabs(ctx context.Context, run browserStepExec, stderr *capB
 		t.before = append(t.before, tab.TabID)
 		if tab.Active {
 			t.own = tab.TabID
+			t.ownTarget = tab.TargetID
 		}
 	}
 	if t.own == "" {

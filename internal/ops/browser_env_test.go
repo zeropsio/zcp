@@ -57,19 +57,20 @@ func envStoreOf(t *testing.T, values map[string]string) string {
 	return path
 }
 
-// walkRunner runs the walk itself (runBrowserSteps) over a scripted
+// walkRunner runs the walk itself over a scripted
 // agent-browser, so a step's fate is the walk's own.
 type walkRunner struct {
 	fakeBrowserRunner
 	exec browserStepExec
 }
 
-func (w *walkRunner) Run(ctx context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (w *walkRunner) Run(ctx context.Context, stdin string, _ time.Duration, caller []bool) (string, string, bool, error) {
+	w.lastStdin = stdin
 	var steps [][]string
 	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
 		return "", "", false, err
 	}
-	return runBrowserSteps(ctx, steps, w.exec)
+	return walkBrowserSteps(ctx, steps, w.exec, false, caller)
 }
 
 // signInWith opens a sign-in page whose commands are written and whose
@@ -107,7 +108,7 @@ type pageRunner struct {
 	answer func(cmd []string) (result any, errText string)
 }
 
-func (p *pageRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (p *pageRunner) Run(_ context.Context, stdin string, _ time.Duration, _ []bool) (string, string, bool, error) {
 	p.lastStdin = stdin
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {

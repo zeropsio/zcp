@@ -34,6 +34,7 @@ type fakeChrome struct {
 	fail         map[string]bool
 	upgrade      map[string]bool
 	dies         bool
+	refuseMethod string
 	refuseCookie string
 	created      []string
 	sessions     map[string]string
@@ -122,6 +123,10 @@ func (f *fakeChrome) WriteMessage(_ context.Context, data []byte) error {
 	defer f.mu.Unlock()
 	reply := func(result any) { f.reply(msg.ID, result) }
 	refuse := func(message string) { f.deny(msg.ID, message) }
+	if msg.Method == f.refuseMethod {
+		refuse("method unavailable")
+		return nil
+	}
 	switch msg.Method {
 	case "Storage.getCookies":
 		cookies := f.cookies

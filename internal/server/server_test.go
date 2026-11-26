@@ -165,7 +165,7 @@ func (s *stubBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
-func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
+func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration, _ []bool) (string, string, bool, error) {
 	return "", "", false, nil
 }
 

@@ -77,7 +77,7 @@ func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(r
 	}, f.fresh, f.note, nil
 }
 
-func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration, _ []bool) (string, string, bool, error) {
 	f.lastStdin = stdin
 	f.lastTimeout = timeout
 	return f.runStdout, f.runStderr, f.runTruncated, f.runErr
@@ -603,7 +603,7 @@ func TestBrowserBatch_EvalReturnsItsValueAsText(t *testing.T) {
 		{"eval", `throw new Error("boom")`},
 	}
 	var seen [][]string
-	batch, _ := buildCanonicalBatch("https://example.com", commands, "", false)
+	batch, _, _ := buildCanonicalBatch("https://example.com", commands, "", false)
 	stdout, _, _, err := runBrowserSteps(context.Background(), batch, func(_ context.Context, args []string) (string, string, error) {
 		seen = append(seen, args)
 		if args[0] == "eval" {
@@ -935,7 +935,7 @@ type fakeEchoScreenshotRunner struct {
 	tempPath string
 }
 
-func (f *fakeEchoScreenshotRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (f *fakeEchoScreenshotRunner) Run(_ context.Context, stdin string, _ time.Duration, _ []bool) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeEchoScreenshotRunner: parse stdin: %w", err)
@@ -994,7 +994,7 @@ type fakeScreenshotRunner struct {
 	capturedPath string
 }
 
-func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout time.Duration, caller []bool) (string, string, bool, error) {
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
 		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
@@ -1007,7 +1007,7 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 			}
 		}
 	}
-	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, stdin, timeout)
+	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, stdin, timeout, caller)
 	if stdout == "" {
 		// Default canned output when the embedded fake wasn't pre-seeded.
 		out := make([]map[string]any, 0, len(batch))
@@ -1718,7 +1718,7 @@ func TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery(t *testing.T) {
 // back warm, the canned tail is read, and the step says script-timeout.
 func TestBrowserBatch_EvalNeverSettledOnALivePage_KeepsTheBrowser(t *testing.T) {
 	commands := [][]string{{"eval", settleScript}, {"get", "title"}}
-	batch, _ := buildCanonicalBatch("https://example.com", commands, "", false)
+	batch, _, _ := buildCanonicalBatch("https://example.com", commands, "", false)
 	var seen [][]string
 	stdout, _, _, err := runBrowserSteps(context.Background(), batch, probedSteps(t, answer{stdout: `{"success":true,"data":{"result":1},"error":null}`}, &seen))
 	if err != nil {

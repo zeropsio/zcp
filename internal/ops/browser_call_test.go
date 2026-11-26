@@ -22,7 +22,7 @@ func (c *callRunner) Acquire(ctx context.Context, _ string) (func(bool) (string,
 	return func(bool) (string, error) { return "", nil }, false, "", nil
 }
 
-func (*callRunner) Run(context.Context, string, time.Duration) (string, string, bool, error) {
+func (*callRunner) Run(context.Context, string, time.Duration, []bool) (string, string, bool, error) {
 	return `[]`, "", false, nil
 }
 

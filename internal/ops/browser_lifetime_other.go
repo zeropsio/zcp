@@ -14,6 +14,6 @@ func (execBrowserRunner) Acquire(context.Context, string) (func(bool) (string, e
 	return nil, false, "", errBrowserNeedsLinux
 }
 
-func (execBrowserRunner) Run(context.Context, string, time.Duration) (string, string, bool, error) {
+func (execBrowserRunner) Run(context.Context, string, time.Duration, []bool) (string, string, bool, error) {
 	return "", "", false, errBrowserNeedsLinux
 }

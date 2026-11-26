@@ -268,7 +268,7 @@ func (fullPageRunner) Acquire(context.Context, string) (func(bool) (string, erro
 	return func(bool) (string, error) { return "", nil }, false, "", nil
 }
 
-func (f *fullPageRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+func (f *fullPageRunner) Run(_ context.Context, stdin string, _ time.Duration, _ []bool) (string, string, bool, error) {
 	f.lastStdin = stdin
 	var batch [][]string
 	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {

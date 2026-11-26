@@ -36,8 +36,9 @@ type BrowserBatchInput struct {
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
 	// "close", "window", "tab new" or "tab close" elements do not run; each
-	// comes back first in the result's steps as a failed invalid-command
-	// step. ["tab"] and ["tab", "t<N>"] list and switch the call's tabs —
+	// comes back first as a failed invalid-command step. After a caller command
+	// runs and fails, later caller commands are skipped.
+	// ["tab"] and ["tab", "t<N>"] list and switch the call's tabs —
 	// its own and those its pages opened (browser_tabs.go). An "eval"
 	// step's result is its value as JSON text (evalValuesAsText). A
 	// leading ["set", "viewport", w, h] runs before the open instead; without
@@ -47,10 +48,8 @@ type BrowserBatchInput struct {
 	// the placeholder (browser_env.go).
 	Commands [][]string `json:"commands,omitempty"`
 
-	// TimeoutSeconds bounds the whole call, the wait for the browser
-	// included; a walk whose open agent-browser gave up on goes on within it
-	// (slow-page). It does not reach agent-browser's own wait for the open's
-	// load. Default 120, max 300.
+	// TimeoutSeconds bounds the whole call, including the wait for the
+	// browser. Default 120, max 300.
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 
 	// Isolation is how much of earlier calls' history the page sees:
@@ -277,10 +276,10 @@ type browserRunner interface {
 	// release's note what its hand-back found of it (both
 	// BrowserBatchResult.KeptSignIn).
 	Acquire(ctx context.Context, isolation string) (release func(reuse bool) (note string, err error), fresh bool, note string, err error)
-	// Run walks the JSON [][]string batch in stdin and answers with the
-	// JSON []BrowserStepResult of the steps that finished. err is set only
-	// when the walk could not finish (ctx ended, a step got no answer).
-	Run(ctx context.Context, stdin string, timeout time.Duration) (stdout, stderr string, truncated bool, err error)
+	// Run walks the JSON [][]string batch in stdin; caller marks its caller
+	// commands. It answers with the JSON []BrowserStepResult of the steps
+	// that finished. err is set only when the walk could not finish.
+	Run(ctx context.Context, stdin string, timeout time.Duration, caller []bool) (stdout, stderr string, truncated bool, err error)
 }
 
 // Isolation levels, from cheapest. A tab shares cookies, storage, HTTP cache
@@ -627,7 +626,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	defer cleanupScreenshot()
 
-	written, refused := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
+	written, caller, refused := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
 	// Before the browser is asked for: a refused placeholder runs nothing.
 	batch, envUse, err := substituteBrowserEnv(written, input.EnvStorePath, input.InMate)
 	if err != nil {
@@ -661,7 +660,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 
 	start := time.Now()
-	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout)
+	stdout, stderr, truncated, runErr := browserRun.Run(ctx, string(stdinBytes), timeout, caller)
 	duration := time.Since(start)
 	// Everything below reads the walk's answer without the values it was given.
 	answer, runErr := envUse.takeBack(stdout, stderr, truncated, runErr)
@@ -712,7 +711,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
 	noteCappedWaits(result.Steps)
-	// The refused commands come first: they were turned away before the walk.
+	// Refusals are reported first; none was sent to the walk.
 	result.Steps = append(refused, result.Steps...)
 	result.FailedSteps = countFailedSteps(result.Steps)
 	if result.Message == "" && result.FailedSteps > 0 {
@@ -847,6 +846,11 @@ func pageVerdict(steps []BrowserStepResult) string {
 		case open != "" || !isCommand(s.Command, browserCmdOpen):
 		case s.ErrorKind == ErrorKindSlowPage:
 			_, note, _ := strings.Cut(*s.Error, browserSlowPageMarker)
+			if strings.Contains(*s.Error, browserNavigationNoAnswer) {
+				open = "The open did not commit before navigation timed out; " + strings.TrimSpace(note) + ". " +
+					"The steps that ran after the open saw the page as it was."
+				break
+			}
 			open = "The open got no answer from agent-browser; " + strings.TrimSpace(note) + ". " + browserOpenUnloaded +
 				" When that first byte itself took long, the server is slow, and a call after it has warmed up will do better."
 		case s.ErrorKind == ErrorKindTimeout:
@@ -1102,11 +1106,11 @@ func cutScreenshot(shot *BrowserScreenshotResult) error {
 // true if any step's error field contains one of the CDP-wedge markers
 // in cdpWedgeSignals. The "" sentinel in the return means "no match". An
 // eval the walk found hung on a live page (ErrorKindScriptTimeout), a slow
-// page (ErrorKindSlowPage) and a server-error page (ErrorKindServerError)
-// are no wedge.
+// page (ErrorKindSlowPage), a server-error page and a step already classified
+// as other are no wedge.
 func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 	for _, s := range steps {
-		if s.Error == nil || s.ErrorKind == ErrorKindScriptTimeout || s.ErrorKind == ErrorKindSlowPage || s.ErrorKind == ErrorKindServerError {
+		if s.Error == nil || s.ErrorKind == ErrorKindScriptTimeout || s.ErrorKind == ErrorKindSlowPage || s.ErrorKind == ErrorKindServerError || s.ErrorKind == ErrorKindOther {
 			continue
 		}
 		msg := *s.Error
@@ -1121,13 +1125,9 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
 // the caller's other commands + an optional [screenshot [--full] screenshotPath] +
-// [errors] [console] [network requests]. Any open, close, window, new tab
-// or closed tab in the caller's commands does not run and comes back in
-// refused instead, as a failed invalid-command step naming why and what to
-// use (refusedCommand) — the canonical open is the only navigation the tool
-// owns, a close would end the warm browser, and a window or a new or closed
-// tab could close its base tab or leave one past the cleanup. A tab list or
-// switch stays, for the walk to answer in the call's tabs.
+// [errors] [console] [network requests]. Disallowed caller commands are
+// returned in refused. caller marks the remaining caller commands so the walk
+// can skip them after a failure; its own screenshot and diagnostics still run.
 // screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
@@ -1136,7 +1136,7 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 // earlier call set. The steps come back in the order they ran, the caller's
 // commands in the order sent. A caller's wait asking more than
 // browserWaitCapMs runs, and comes back, with that.
-func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) (batch [][]string, refused []BrowserStepResult) {
+func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) (batch [][]string, caller []bool, refused []BrowserStepResult) {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
@@ -1151,24 +1151,32 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 	batch = make([][]string, 0, len(inner)+7)
 	if len(inner) > 0 && isSetViewport(inner[0]) {
 		batch, inner = append(batch, inner[0]), inner[1:]
+		caller = append(caller, true)
 	} else {
 		batch = append(batch, browserDefaultViewport)
+		caller = append(caller, false)
 	}
 	batch = append(batch, []string{browserCmdOpen, url}, browserPaintWait)
+	caller = append(caller, false, false)
 	batch = append(batch, inner...)
+	for range inner {
+		caller = append(caller, true)
+	}
 	if screenshotPath != "" {
 		shot := []string{browserCmdScreenshot}
 		if fullPage {
 			shot = append(shot, browserFlagFull)
 		}
 		batch = append(batch, append(shot, screenshotPath))
+		caller = append(caller, false)
 	}
 	batch = append(batch,
 		[]string{browserCmdErrors},
 		[]string{browserCmdConsole},
 		[]string{browserCmdNetwork, browserSubcmdRequests, browserFlagStatus, browserStatusRange4xx5xx},
 	)
-	return batch, refused
+	caller = append(caller, false, false, false)
+	return batch, caller, refused
 }
 
 // refusedCommands maps each caller command the tool does not run to the

@@ -330,7 +330,7 @@ func linkBrowserStream(home string) error {
 	return nil
 }
 
-func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Duration, caller []bool) (string, string, bool, error) {
 	var steps [][]string
 	if err := json.Unmarshal([]byte(stdin), &steps); err != nil {
 		return "", "", false, fmt.Errorf("browser batch: %w", err)
@@ -341,7 +341,7 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	stdout, stderr, truncated, walkErr := runCallSteps(rctx, steps, h.step)
+	stdout, stderr, truncated, walkErr := runCallSteps(rctx, steps, h.step, caller)
 	// Inside the call's lock: the origins its open steps ended on are now
 	// ones a save reads.
 	if err := recordBrowserOpened(browserPresencePath, stdout); err != nil {
