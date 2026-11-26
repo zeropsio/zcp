@@ -554,6 +554,9 @@ func (a browserAnswer) stepResult(step []string, closedUnder bool) BrowserStepRe
 	if string(data) == "null" {
 		data = nil
 	}
+	if browserNetworkRequests(step) {
+		data = redactBrowserNetworkHeaders(data)
+	}
 	errText := a.Error
 	if closedUnder && !a.Success && errText != nil && !browserReadOnly(step) {
 		text := *errText + "; " + browserClosedUnderNote
