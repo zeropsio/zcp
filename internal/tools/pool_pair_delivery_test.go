@@ -351,11 +351,8 @@ func TestRenderDevelopBriefing_LeaseReaderOption_ReplacesTheDefault(t *testing.T
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
 			reader := func(context.Context) ([]workflow.LeaseSnapshot, error) { return tt.leases, nil }
 
-			result, _, err := renderDevelopBriefing(context.Background(), engine, platform.NewMock().WithServices(poolPairServices()), "proj-1",
+			result := renderDevelopBriefing(context.Background(), engine, platform.NewMock().WithServices(poolPairServices()), "proj-1",
 				runtime.Info{InContainer: true}, nil, workflow.WithLeaseReader(reader))
-			if err != nil {
-				t.Fatalf("renderDevelopBriefing: %v", err)
-			}
 			var primary string
 			for line := range strings.SplitSeq(extractText(result), "\n") {
 				if strings.Contains(line, "▸ Primary:") {

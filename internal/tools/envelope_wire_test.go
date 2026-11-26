@@ -85,15 +85,9 @@ func TestRenderDevelopBriefing_TextCarriesEnvelope(t *testing.T) {
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		})
 
-	result, structured, err := renderDevelopBriefing(
+	result := renderDevelopBriefing(
 		context.Background(), eng, mock, "proj-2", runtime.Info{InContainer: true}, nil,
 	)
-	if err != nil {
-		t.Fatalf("renderDevelopBriefing: %v", err)
-	}
-	if structured != nil {
-		t.Fatalf("structured output must stay nil")
-	}
 	if result.IsError {
 		t.Fatalf("unexpected error result: %s", getTextContent(t, result))
 	}
@@ -187,11 +181,7 @@ func TestEnvelope_AttemptHistory_OnlyStatusCarriesItWhole(t *testing.T) {
 	replies := map[string]func(t *testing.T) *mcp.CallToolResult{
 		"the develop briefing": func(t *testing.T) *mcp.CallToolResult {
 			t.Helper()
-			result, _, err := renderDevelopBriefing(context.Background(), eng, mock, "proj-3", rt, nil)
-			if err != nil {
-				t.Fatalf("renderDevelopBriefing: %v", err)
-			}
-			return result
+			return renderDevelopBriefing(context.Background(), eng, mock, "proj-3", rt, nil)
 		},
 		"a prose mutation reply": func(t *testing.T) *mcp.CallToolResult {
 			t.Helper()

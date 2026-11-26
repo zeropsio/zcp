@@ -123,22 +123,22 @@ func devPoolLeaseCall(pools []string) string {
 // deploys and verifies runtime services, and a pool's work is a lease — and
 // answers with the envelope as status reads it, the dev-pool loop, and the
 // acquire as the next step.
-func renderDevPoolBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, pools []string) (*mcp.CallToolResult, any, error) {
+func renderDevPoolBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, pools []string) *mcp.CallToolResult {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
 		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout)...)
 	if err != nil {
-		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
+		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus())
 	}
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
-		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil
+		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus())
 	}
 	guidance := []string{devPoolBriefingLead(pools)}
 	if body := atomBody(corpus, developDevPoolAtomID); body != "" {
 		guidance = append(guidance, body)
 	}
 	plan := workflow.Plan{Primary: workflow.LeaseAcquireAction(pools)}
-	return briefingResult(workflow.Response{Envelope: envelope, Guidance: guidance, Plan: &plan}), nil, nil
+	return briefingResult(workflow.Response{Envelope: envelope, Guidance: guidance, Plan: &plan})
 }
 
 // devPoolBriefingLead heads the dev-pool briefing: why no session opened, and

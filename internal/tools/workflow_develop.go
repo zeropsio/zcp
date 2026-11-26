@@ -115,7 +115,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	if len(poolStart.pools) > 0 {
-		return renderDevPoolBriefing(ctx, engine, client, projectID, rt, poolStart.pools)
+		return renderDevPoolBriefing(ctx, engine, client, projectID, rt, poolStart.pools), nil, nil
 	}
 
 	if len(metas) == 0 {
@@ -186,7 +186,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		// session state. Scope on this call is treated as confirmation, not
 		// a mutation; a scope change requires an explicit close first.
 		if existing.Intent != "" && existing.Intent == input.Intent {
-			return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
+			return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer), nil, nil
 		}
 		// Different intent — manual/unset close-mode session blocks the
 		// implicit auto-delete (deploy-decomp P6 §3.4 Scenario D + §6 step 5).
@@ -257,8 +257,8 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return errResult, nil, nil
 	}
 
-	result, structured, err := renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
-	return withLeadNote(result, poolScope.note), structured, err
+	result := renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
+	return withLeadNote(result, poolScope.note), nil, nil
 }
 
 // developRuntimeList is develop's runtime list: the services a scope may
@@ -429,14 +429,14 @@ func appendMissing(list []string, add ...string) []string {
 // default lease reader within the status budget, an extra option replacing
 // it — so develop's start and the next status plan a pool-keyed pair's stage
 // alike: the deploy from a held lease of the pool, else its acquire.
-func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer, extra ...workflow.EnvelopeOption) (*mcp.CallToolResult, any, error) {
+func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer, extra ...workflow.EnvelopeOption) *mcp.CallToolResult {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
 		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout, extra...)...)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Compute envelope: %v", err),
-			""), WithRecoveryStatus()), nil, nil
+			""), WithRecoveryStatus())
 	}
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	corpus, err := workflow.LoadAtomCorpus()
@@ -444,14 +444,14 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Load knowledge atoms: %v", err),
-			""), WithRecoveryStatus()), nil, nil
+			""), WithRecoveryStatus())
 	}
 	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Synthesize guidance: %v", err),
-			""), WithRecoveryStatus()), nil, nil
+			""), WithRecoveryStatus())
 	}
 	// Budget backstop (R1), as action="status" applies it: the guidance and
 	// the per-service lines above it keep within the composer's budget.
@@ -461,7 +461,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		Envelope: envelope,
 		Guidance: workflow.BodiesOf(matches),
 		Plan:     &plan,
-	}), nil, nil
+	})
 }
 
 // errStandardPairStageMissing is returned by validateDevelopScope when a
