@@ -335,6 +335,17 @@ func planRecipeService(ctx context.Context, comp groupRecipeComposition, part re
 	return t.plan([]recipePart{part}), nil
 }
 
+// recipeTierBodies writes each planned tier's body over main.
+func recipeTierBodies(tiers []recipeServiceTier) recipeFiles {
+	return func(context.Context, *hq.Scratch, string, []string) (map[string]string, error) {
+		files := make(map[string]string, len(tiers))
+		for _, tier := range tiers {
+			files[tier.path] = tier.body
+		}
+		return files, nil
+	}
+}
+
 // serviceTierEdits reads the tiers a proposal changes as "Tier: adds x, y".
 func serviceTierEdits(tiers []recipeServiceTier) []string {
 	var out []string
@@ -436,8 +447,14 @@ func handleGroupRecipeService(
 	// A managed service the Mate's project runs is proposed for any app
 	// (hq_recipe_managed.go); anything else is a part of the app.
 	what, title := "the managed service "+host, recipeServiceTitle(host)
-	plan := func(ctx context.Context) ([]recipeServiceTier, error) { return planRecipeManaged(ctx, comp, host) }
-	if !recipeManagedService(comp, host) {
+	var tiers []recipeServiceTier
+	if recipeManagedService(comp, host) {
+		planned, err := planRecipeManaged(ctx, comp, host)
+		if err != nil {
+			return serviceProposalFailed(err.Error()), nil, nil
+		}
+		tiers = planned
+	} else {
 		t, err := readRecipeTiers(ctx, comp)
 		if err != nil {
 			return serviceProposalFailed(err.Error()), nil, nil
@@ -463,20 +480,10 @@ func handleGroupRecipeService(
 				}
 			}
 		}
-		plan = func(context.Context) ([]recipeServiceTier, error) { return t.plan(parts), nil }
+		tiers = t.plan(parts)
 	}
-	var tiers []recipeServiceTier
 	written, err := writeRecipeChange(ctx, comp, openRecipeChange(comp.state), title,
-		"recipe: "+host+" in the group recipe, from "+comp.inputs.MateProjectName,
-		func(ctx context.Context, _ *hq.Scratch, _ string, _ []string) (map[string]string, error) {
-			planned, err := plan(ctx)
-			tiers = planned
-			files := make(map[string]string, len(planned))
-			for _, tier := range planned {
-				files[tier.path] = tier.body
-			}
-			return files, err
-		})
+		"recipe: "+host+" in the group recipe, from "+comp.inputs.MateProjectName, recipeTierBodies(tiers))
 	if err != nil {
 		return serviceProposalFailed(err.Error()), nil, nil
 	}
@@ -575,14 +582,7 @@ func recipeNewPartsTurn(ctx context.Context, comp groupRecipeComposition) (line 
 	named := strings.Join(hosts, ", ")
 	tiers := t.plan(proposed)
 	written, err := writeRecipeChange(ctx, comp, openRecipeChange(comp.state), recipeServiceTitle(named),
-		"recipe: "+named+" in the group recipe, from "+comp.inputs.MateProjectName,
-		func(context.Context, *hq.Scratch, string, []string) (map[string]string, error) {
-			files := make(map[string]string, len(tiers))
-			for _, tier := range tiers {
-				files[tier.path] = tier.body
-			}
-			return files, nil
-		})
+		"recipe: "+named+" in the group recipe, from "+comp.inputs.MateProjectName, recipeTierBodies(tiers))
 	if err != nil {
 		return "", &recipeNewParts{Hosts: hosts}, err
 	}
