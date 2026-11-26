@@ -539,6 +539,21 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 	return strings.Join(protocols, ":")
 }
 
+// brokeredGitReadOnly names commands that do not create git objects. Unknown
+// commands and aliases keep foreground maintenance because they may write.
+func brokeredGitReadOnly(subcommand string) bool {
+	switch subcommand {
+	case "annotate", "blame", "cat-file", "check-attr", "check-ignore", "check-mailmap", "check-ref-format",
+		"count-objects", "describe", "diff", "diff-files", "diff-index", "diff-tree", "for-each-ref", "grep",
+		"log", "ls-files", "ls-remote", "ls-tree", "merge-base", "name-rev", "range-diff", "rev-list", "rev-parse",
+		"shortlog", "show", "show-branch", "show-ref", "status", //nolint:goconst // A git verb, not a dev-server action.
+		"verify-commit", "verify-tag", "whatchanged":
+		return true
+	default:
+		return false
+	}
+}
+
 // buildRelayedGitCommand is a relayed call's remote command: /bin/sh runs a
 // script that moves its shell into a scope of its own (ownScopeStep, as a
 // plain call's), scrubs the environment, keeps the session's stdin as
@@ -552,11 +567,12 @@ func brokeredGitAllowProtocol(args BrokeredGitArgs, hqOrigin string) string {
 // `http.<url>.sslVerify` or `http.<url>.proxy` in the checkout's config
 // outranks a generic -c; GIT_ALLOW_PROTOCOL does override every
 // `protocol.*` key.
-// Auto-gc and auto-maintenance are disabled: detached, they close only
-// descriptors 0-2, keep 3 and 4 — the session's — and hold the call open;
-// in the foreground they delay it. A passthrough call needs no such setting:
-// its git holds only 0-2. A process a hook leaves running in the background
-// holds 3 and 4 the same way, so once git ended the script writes its done marker,
+// Read-only git commands disable auto-gc and auto-maintenance; commands that
+// can create objects run them in the foreground. Detached, they close only
+// descriptors 0-2 and keep 3 and 4 — the session's — holding the call open.
+// A passthrough call needs no such setting: its git holds only 0-2. A process
+// a hook leaves running in the background holds 3 and 4 the same way, so
+// once git ended the script writes its done marker,
 // `ZCPDONE-<nonce> <exit>`, and zcp ends the call from it (relayStream,
 // RunBrokeredGitRelayed) — after its end mark on stdout, `ZCPEND-<nonce>`,
 // which every byte git wrote to stdout precedes (relayStdout). Running git
@@ -587,10 +603,19 @@ func buildRelayedGitCommand(dir string, args BrokeredGitArgs, nonce string, stdi
 		"-c", "fetch.parallel=1",
 		"-c", "submodule.fetchJobs=1",
 		"-c", "http.sslVerify=true",
-		"-c", "http.proxy=",
-		"-c", "gc.auto=0",
-		"-c", "maintenance.auto=false",
-		args.Subcommand)
+		"-c", "http.proxy=")
+	if brokeredGitReadOnly(args.Subcommand) {
+		argv = append(argv,
+			"-c", "gc.auto=0",
+			"-c", "maintenance.auto=false",
+		)
+	} else {
+		argv = append(argv,
+			"-c", "gc.autoDetach=false",
+			"-c", "maintenance.autoDetach=false",
+		)
+	}
+	argv = append(argv, args.Subcommand)
 	argv = append(argv, args.Rest...)
 	for _, a := range argv {
 		b.WriteByte(' ')
