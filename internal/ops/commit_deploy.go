@@ -22,8 +22,7 @@ type CommitDeployRequest struct {
 
 // CommitDeployResult is a submitted or joined commit deploy: the app version
 // named by its commit, the build-and-deploy process behind it, and the commit
-// it builds — the request's, or a joined build's as its version names it (the
-// first 12 hex digits, AppVersionName). The build itself is read from the app
+// it builds. The build itself is read from the app
 // version, never waited on here.
 type CommitDeployResult struct {
 	AppVersionID string
@@ -36,13 +35,9 @@ type CommitDeployResult struct {
 // commit's deploy source from source into it and starts build-and-deploy.
 // Every build into a pool or a stage goes through it.
 //
-// It assumes it is the one run for the service (the stand-up runs once per
-// project):
-//   - a commit deploy of any commit already in flight on the service (its
-//     build-and-deploy process pending or running, read from the project's
-//     direct process list) is joined and answers as it is: never a second
-//     build (F7, F8). A service gets a new build only when none is in flight,
-//     so a main that moved since waits for the next run;
+// Its caller orders writers with the stage lock. A live build of this commit
+// is joined; a different build is waited to its end before this one starts.
+//   - a different build is given the stand-up's 20-minute wait;
 //   - a version a cut upload left UPLOADING (a zcp restart mid-upload; the
 //     platform keeps it so for 14 min and more) is deleted before each try,
 //     and any left beside a submitted build after it (F7);
@@ -65,9 +60,40 @@ func CommitDeploy(ctx context.Context, client platform.Client, source DeploySour
 		return CommitDeployResult{}, err
 	}
 	run := commitRun{client: client, projectID: service.ProjectID, serviceID: req.ServiceID}
-	if found, ok, err := run.inFlight(ctx); err != nil || ok {
-		return found, err
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+	defer cancel()
+	settled := make(map[string]bool)
+	for {
+		processes, err := zeropsTries(waitCtx, func() ([]platform.Process, error) {
+			return client.GetProjectProcessesDirect(waitCtx, service.ProjectID)
+		})
+		if err != nil {
+			return CommitDeployResult{}, fmt.Errorf("commit deploy: read builds: %w", err)
+		}
+		found, decision := commitFlight(processes, req.ServiceID, name, settled)
+		switch decision {
+		case flightJoin:
+			found.Commit = req.Commit
+			return found, nil
+		case flightNone:
+			goto submit
+		case flightWait:
+			for {
+				waited, err := WaitProcesses(waitCtx, client, []string{found.ProcessID}, nil)
+				if err != nil {
+					return CommitDeployResult{}, fmt.Errorf("commit deploy: wait for build %s: %w", found.ProcessID, err)
+				}
+				if waitCtx.Err() != nil {
+					return CommitDeployResult{}, fmt.Errorf("commit deploy: wait for build %s: %w", found.ProcessID, waitCtx.Err())
+				}
+				if !waited.TimedOut {
+					break
+				}
+			}
+			settled[found.ProcessID] = true
+		}
 	}
+submit:
 	for try := 0; ; try++ {
 		if err := run.removeCutUploads(ctx, ""); err != nil {
 			return CommitDeployResult{}, err
@@ -90,9 +116,6 @@ func CommitDeploy(ctx context.Context, client platform.Client, source DeploySour
 // the commit in it, so a version shows which head it builds (F13) and a
 // later run finds it.
 func AppVersionName(commit string) string {
-	if len(commit) > 12 {
-		commit = commit[:12]
-	}
 	return commitVersionPrefix + commit
 }
 
@@ -107,33 +130,47 @@ type commitRun struct {
 	serviceID string
 }
 
-// liveProcess is a process still pending or running: the only ones whose
-// build is in flight. A failed, cancelled or finished one is not, whatever
-// its version's status says.
-func liveProcess(p platform.Process) bool {
-	return p.Status == platform.ProcessStatusPending || p.Status == platform.ProcessStatusRunning
+type flightDecision int
+
+const (
+	flightNone flightDecision = iota
+	flightWait
+	flightJoin
+)
+
+// commitFlight waits for other live builds before joining this commit's build.
+// A version without the requested name is not evidence of the requested head.
+func commitFlight(processes []platform.Process, serviceID, name string, settled map[string]bool) (CommitDeployResult, flightDecision) {
+	var matching CommitDeployResult
+	for _, p := range processes {
+		if !isStageVersionProcess(p, serviceID) || settled[p.ID] {
+			continue
+		}
+		if p.ActionName != actionStackBuild || p.AppVersion == nil {
+			return CommitDeployResult{ProcessID: p.ID}, flightWait
+		}
+		found := CommitDeployResult{AppVersionID: p.AppVersion.ID, ProcessID: p.ID}
+		if p.AppVersion.Name != name || p.ID == "" {
+			return found, flightWait
+		}
+		matching = found
+	}
+	if matching.ProcessID != "" {
+		return matching, flightJoin
+	}
+	return CommitDeployResult{}, flightNone
 }
 
-// inFlight is the service's live build-and-deploy of a version a commit
-// deploy created, of whatever commit, when it has one.
-func (r commitRun) inFlight(ctx context.Context) (CommitDeployResult, bool, error) {
+// inFlight finds a submitted version after an unanswered build request.
+func (r commitRun) inFlight(ctx context.Context, name string) (CommitDeployResult, bool, error) {
 	processes, err := zeropsTries(ctx, func() ([]platform.Process, error) {
 		return r.client.GetProjectProcessesDirect(ctx, r.projectID)
 	})
 	if err != nil {
 		return CommitDeployResult{}, false, err
 	}
-	for _, p := range processes {
-		if !liveProcess(p) || p.AppVersion == nil || !touches(p, r.serviceID) {
-			continue
-		}
-		commit, ok := strings.CutPrefix(p.AppVersion.Name, commitVersionPrefix)
-		if !ok {
-			continue
-		}
-		return CommitDeployResult{AppVersionID: p.AppVersion.ID, ProcessID: p.ID, Commit: commit}, true, nil
-	}
-	return CommitDeployResult{}, false, nil
+	found, decision := commitFlight(processes, r.serviceID, name, nil)
+	return found, decision == flightJoin, nil
 }
 
 // touches reports whether process p acts on the service.
@@ -195,7 +232,7 @@ func (r commitRun) submit(ctx context.Context, source DeploySource, req CommitDe
 		// No answer: the build may have started. The version stays; a live
 		// process for it is the build, else the next run finds the version
 		// UPLOADING and removes it.
-		if found, ok, readErr := r.inFlight(ctx); readErr == nil && ok && found.AppVersionID == versionID {
+		if found, ok, readErr := r.inFlight(ctx, name); readErr == nil && ok && found.AppVersionID == versionID {
 			found.Commit = req.Commit
 			return found, true, nil
 		}

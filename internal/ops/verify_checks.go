@@ -267,6 +267,107 @@ func probePath(healthPath string) string {
 	return healthPath
 }
 
+// StageProbe is the observation of a Review build's public health path.
+// Private parts have outcome ok without an HTTP observation.
+type StageProbe struct {
+	Outcome string
+	URL     string
+	Status  int
+	At      time.Time
+	Reason  string
+}
+
+const stageProbeFailed = "failed"
+
+// ProbeStage checks a built version without changing lifecycle verification.
+// The caller supplies whether the part is public and its public address; a
+// public part without an address cannot be verified. The active version must
+// be the requested version on both sides of the HTTP observation.
+func ProbeStage(ctx context.Context, client platform.Client, doer HTTPDoer, serviceID, versionID, publicURL, healthPath string, public bool) StageProbe {
+	if !public {
+		return StageProbe{Outcome: "ok"}
+	}
+	result := StageProbe{Outcome: "unavailable", URL: strings.TrimRight(publicURL, "/") + probePath(healthPath)}
+	if serviceID == "" || versionID == "" || publicURL == "" {
+		result.Reason = "stage version or public address is unavailable"
+		return result
+	}
+	active := func() (string, error) {
+		svc, err := client.GetService(ctx, serviceID)
+		if err != nil {
+			return "", fmt.Errorf("read active stage version: %w", err)
+		}
+		if svc == nil || svc.ActiveAppVersion == nil {
+			return "", nil
+		}
+		return svc.ActiveAppVersion.ID, nil
+	}
+	before, err := active()
+	if err != nil || before != versionID {
+		result.Reason = "the requested version is not known to be active before the probe"
+		return result
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if httpClient, ok := doer.(*http.Client); ok {
+		copyClient := *httpClient
+		copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		doer = &copyClient
+	}
+	if doer == nil {
+		doer = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	var probeErr error
+	for range 3 {
+		attempt, stop := context.WithTimeout(requestCtx, 5*time.Second)
+		req, requestErr := http.NewRequestWithContext(attempt, http.MethodGet, result.URL, nil)
+		if requestErr != nil {
+			stop()
+			result.Reason = "invalid public health address: " + requestErr.Error()
+			return result
+		}
+		response, requestErr := doer.Do(req)
+		result.At = time.Now().UTC()
+		result.Status = 0
+		if response != nil {
+			if requestErr == nil {
+				result.Status = response.StatusCode
+			}
+			if response.Body != nil {
+				_ = response.Body.Close()
+			}
+		}
+		stop()
+		probeErr = requestErr
+		if requestErr == nil && result.Status >= 200 && result.Status < 400 || requestCtx.Err() != nil {
+			break
+		}
+	}
+	after, readErr := active()
+	result.Outcome = stageProbeVerdict(versionID, before, after, result.Status, readErr != nil || ctx.Err() != nil)
+	switch result.Outcome {
+	case "unavailable":
+		result.Reason = "the stage version moved or could not be read during the probe"
+	case stageProbeFailed:
+		if probeErr != nil {
+			result.Reason = "health probe: " + probeErr.Error()
+		} else {
+			result.Reason = fmt.Sprintf("health probe returned HTTP %d", result.Status)
+		}
+	}
+	return result
+}
+
+func stageProbeVerdict(expected, before, after string, status int, unreadable bool) string {
+	if unreadable || expected == "" || before != expected || after != expected {
+		return "unavailable"
+	}
+	if status >= 200 && status < 400 {
+		return "ok"
+	}
+	return stageProbeFailed
+}
+
 // devPortInternalChecks probes each declared dev server's port over the
 // project network: a server its supervisor runs is probed, a crashed one
 // fails with the way to read it, one not running is skipped with the way to

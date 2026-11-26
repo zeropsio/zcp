@@ -418,7 +418,7 @@ func handleGitPush(
 	input DeploySSHInput,
 	stateDir string,
 	rt runtime.Info,
-) (*mcp.CallToolResult, any, error) {
+) *mcp.CallToolResult {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 		Setup:       input.Setup,
@@ -459,7 +459,7 @@ func handleGitPush(
 			platform.ErrNotImplemented,
 			"SSH deployer not configured",
 			"git-push requires a running Zerops container with SSH access",
-		)), nil, nil
+		))
 	}
 	if input.TargetService == "" {
 		recordAttempt("targetService missing", topology.FailureClassConfig)
@@ -467,12 +467,12 @@ func handleGitPush(
 			platform.ErrInvalidParameter,
 			"targetService is required for git-push",
 			"Provide the hostname of the service to push from",
-		)), nil, nil
+		))
 	}
 
 	// Meta-based source-of-push + setup-state pre-flight (deploy-decomp P4).
 	if blocked := gitPushMetaPreflight(stateDir, input.TargetService, recordAttempt); blocked != nil {
-		return blocked, nil, nil
+		return blocked
 	}
 
 	hostname := input.TargetService
@@ -488,7 +488,7 @@ func handleGitPush(
 	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote, rt) {
 		refusal := hqGitPushRefusal(hostname, rt.MateEnabled)
 		recordAttempt(refusal.Message, topology.FailureClassConfig)
-		return convertError(refusal, WithRecoveryStatus()), nil, nil
+		return convertError(refusal, WithRecoveryStatus())
 	}
 	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
 
@@ -504,7 +504,7 @@ func handleGitPush(
 	if err != nil {
 		pe := gitPushCheckFailure(err, committedOut, hostname, "the committed-code check")
 		recordAttempt(pe.Message, topology.FailureClassNetwork)
-		return convertError(pe), nil, nil
+		return convertError(pe)
 	}
 	if strings.TrimSpace(string(committedOut)) != "1" {
 		recordAttempt("no committed code at workingDir", topology.FailureClassConfig)
@@ -512,7 +512,7 @@ func handleGitPush(
 			platform.ErrPrerequisiteMissing,
 			"git-push requires committed code at "+workingDir+" on "+hostname,
 			"Commit your changes on the container first: ssh "+hostname+` "cd `+workingDir+` && git add -A && git commit -m 'your message'". Then retry.`,
-		)), nil, nil
+		))
 	}
 
 	// Dirty-tree probe (F1a): committedCodeCheckCmd proved a commit EXISTS, not
@@ -541,7 +541,7 @@ func handleGitPush(
 	if err != nil {
 		pe := gitPushCheckFailure(err, tokenOut, hostname, "the GIT_TOKEN check")
 		recordAttempt(pe.Message, topology.FailureClassNetwork)
-		return convertError(pe), nil, nil
+		return convertError(pe)
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
 		recordAttempt("GIT_TOKEN missing in container session", topology.FailureClassCredential)
@@ -559,7 +559,7 @@ func handleGitPush(
 				Status:       platform.ErrGitTokenMissing,
 				Message:      fmt.Sprintf("meta records git-push as configured for %s, but the service env carries no GIT_TOKEN secret (fresh sessions read the live env — this is a missing secret, not propagation lag).", hostname),
 				Instructions: fmt.Sprintf("Re-run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<recorded remote> gitToken=<PAT> — it probe-verifies the token, re-writes the service-scope secret, and re-checks a fresh session before re-stamping.", hostname),
-			}), nil, nil
+			})
 		}
 		// Route through convertError so appendCredentialContract (the single
 		// owner for credential-class errors) fires — the agent must surface
@@ -568,7 +568,7 @@ func handleGitPush(
 			platform.ErrGitTokenMissing,
 			"GIT_TOKEN is not set. The project env var is required for pushing to a git remote.",
 			fmt.Sprintf(gitPushSetupPointerInstructions, hostname, hostname),
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	// Pre-push zerops.yaml validation: the remote's receipt of this push
@@ -592,7 +592,7 @@ func handleGitPush(
 				platform.ErrPreflightFailed,
 				fmt.Sprintf("failed to record deployed setup metadata for %s: %v", hostname, recordErr),
 				"Retry after the local .zcp/state directory is writable; verify needs this metadata to distinguish HTTP services from workers.",
-			), WithRecoveryStatus()), nil, nil
+			), WithRecoveryStatus())
 		} else if resolvedSetup != "" {
 			setupName = resolvedSetup
 		}
@@ -609,7 +609,7 @@ func handleGitPush(
 		if target != nil {
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
-				return convertError(vErr), nil, nil
+				return convertError(vErr)
 			}
 			// Env-var pre-flight (deploy-decomp P4 R5 / DEPLOY-3): the build
 			// pipeline that runs on the remote's receipt of this push consumes
@@ -618,7 +618,7 @@ func handleGitPush(
 			// (handleLocalGitPush) so both surface the same actionable feedback.
 			if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
 				recordAttempt(fmt.Sprintf("env-var pre-flight failed: %s", detail), topology.FailureClassConfig)
-				return resp, nil, nil
+				return resp
 			}
 		}
 	}
@@ -667,7 +667,7 @@ func handleGitPush(
 				WithFailureClassification(classification),
 				WithGitPushRejection(rejection),
 				WithRecoveryStatus(),
-			), nil, nil
+			)
 		}
 
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
@@ -678,7 +678,7 @@ func handleGitPush(
 			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		)
 		pushErr.Cause = err
-		return convertError(pushErr, WithFailureClassification(classification)), nil, nil
+		return convertError(pushErr, WithFailureClassification(classification))
 	}
 
 	result := &ops.GitPushResult{
@@ -770,7 +770,7 @@ func handleGitPush(
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
-	}), nil, nil
+	})
 }
 
 // deployGitPushResponse wraps the push-git result with the structured

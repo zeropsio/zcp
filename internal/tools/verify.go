@@ -91,6 +91,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input VerifyInput) (*mcp.CallToolResult, any, error) {
 		if input.ServiceHostname == "" {
+			before := readStageVersions(ctx, client, projectID, stateDir, rt.MateEnabled, false)
 			result, err := ops.VerifyAllWithMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaResolver(stateDir), publicAccessResolver(stateDir))
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
@@ -99,9 +100,14 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				checkPool(ctx, &result.Services[i])
 				checkBox(ctx, &result.Services[i])
 			}
+			after := readStageVersions(ctx, client, projectID, stateDir, rt.MateEnabled, true)
+			session, _ := workflow.CurrentWorkSession(stateDir)
 			recordVerifyAllToWorkSession(stateDir, result)
 			var notes []string
 			for i := range result.Services {
+				if note := stageVerifyNote(result.Services[i].Hostname, before, after, session); note != "" {
+					notes = append(notes, note)
+				}
 				if note := partsWithoutDevServerNote(ctx, ssh, rt, stateDir, result.Services[i].Hostname, &result.Services[i]); note != "" {
 					notes = append(notes, note)
 				}
@@ -146,12 +152,15 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				host = buildHost
 			}
 		}
+		before := readStageVersions(ctx, client, projectID, stateDir, rt.MateEnabled, false)
 		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, ssh, projectID, stateDir, host))
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		checkPool(ctx, result)
 		checkBox(ctx, result)
+		after := readStageVersions(ctx, client, projectID, stateDir, rt.MateEnabled, true)
+		session, _ := workflow.CurrentWorkSession(stateDir)
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,
@@ -166,7 +175,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		// start — kept across restarts and redeploys, down after a crash.
 		// Annotate so the agent does not report it as an always-on service
 		// (the e2 failure).
-		for _, note := range []string{deferredStartDurabilityNote(stateDir, host, result), partsWithoutDevServerNote(ctx, ssh, rt, stateDir, host, result)} {
+		for _, note := range []string{stageVerifyNote(host, before, after, session), deferredStartDurabilityNote(stateDir, host, result), partsWithoutDevServerNote(ctx, ssh, rt, stateDir, host, result)} {
 			if note == "" {
 				continue
 			}
@@ -177,6 +186,151 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		}
 		return jsonResult(resp), nil, nil
 	})
+}
+
+// stageVersion is read from the platform, not from the caller's deploy record.
+// The process's version name may identify a commit when the platform retains it.
+type stageVersion struct {
+	id     string
+	commit string
+}
+
+const unknownStageCommit = "unknown"
+
+func readStageVersions(ctx context.Context, client platform.Client, projectID, stateDir string, enabled, withCommits bool) map[string]stageVersion {
+	if !enabled {
+		return nil
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return nil
+	}
+	stages := make(map[string]stageVersion)
+	for _, meta := range metas {
+		for _, stage := range meta.Stages {
+			stages[stage.Hostname] = stageVersion{}
+		}
+	}
+	if len(stages) == 0 {
+		return stages
+	}
+	services, err := ops.ListProjectServicesDirect(ctx, client, projectID)
+	if err != nil {
+		return stages
+	}
+	for _, service := range services {
+		if _, stage := stages[service.Name]; stage && service.ActiveAppVersion != nil {
+			stages[service.Name] = stageVersion{id: service.ActiveAppVersion.ID}
+		}
+	}
+	if !withCommits {
+		return stages
+	}
+	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
+	if err != nil {
+		return stages
+	}
+	commits := make(map[string]string)
+	for _, process := range processes {
+		if process.AppVersion != nil {
+			if commit := stageVersionCommit(process.AppVersion.Name); commit != "" {
+				commits[process.AppVersion.ID] = commit
+			}
+		}
+	}
+	for host, version := range stages {
+		version.commit = commits[version.id]
+		stages[host] = version
+	}
+	return stages
+}
+
+// A version name written by zcp is two words, the second a clean short SHA.
+func stageVersionCommit(name string) string {
+	words := strings.Fields(name)
+	if len(words) != 2 || len(words[1]) < 7 || len(words[1]) > 64 {
+		return ""
+	}
+	for _, ch := range words[1] {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", ch) {
+			return ""
+		}
+	}
+	return words[1]
+}
+
+func stageVerifyNote(host string, before, after map[string]stageVersion, session *workflow.WorkSession) string {
+	prior, wasStage := before[host]
+	current, isStage := after[host]
+	if !wasStage && !isStage {
+		return ""
+	}
+	var last workflow.DeployAttempt
+	if session != nil {
+		attempts := session.Deploys[host]
+		if len(attempts) > 0 {
+			last = attempts[len(attempts)-1]
+		}
+	}
+	relation := stageVersionRelation(prior.id, current.id, last.AppVersionID)
+	switch relation {
+	case stageUnknown:
+		return fmt.Sprintf("Stage %s: the version checked could not be read.", host)
+	case stageMoved:
+		return fmt.Sprintf("Stage %s moved during verify; the version checked is unknown.", host)
+	case stageSame, stageOther, stageNoLast:
+		commit := stageCheckedCommit(current.commit, last, relation)
+		if commit == "" {
+			commit = unknownStageCommit
+		}
+		note := fmt.Sprintf("Stage %s: checked version %s, commit %s.", host, current.id, commit)
+		if relation == stageOther {
+			note += " This is not your last deploy."
+		}
+		if relation == stageNoLast {
+			note += " Your last deploy's version is unknown."
+		}
+		return note
+	}
+	return ""
+}
+
+func stageCheckedCommit(named string, last workflow.DeployAttempt, relation stageRelation) string {
+	if relation == stageSame {
+		if last.Dirty {
+			return ""
+		}
+		if last.SHA != "" {
+			return last.SHA
+		}
+	}
+	return named
+}
+
+type stageRelation int
+
+const (
+	stageUnknown stageRelation = iota
+	stageMoved
+	stageSame
+	stageOther
+	stageNoLast
+)
+
+func stageVersionRelation(before, after, last string) stageRelation {
+	if before == "" || after == "" {
+		return stageUnknown
+	}
+	if before != after {
+		return stageMoved
+	}
+	if last == "" {
+		return stageNoLast
+	}
+	if last == after {
+		return stageSame
+	}
+	return stageOther
 }
 
 // leaseProbeTimeout bounds `ssh <alias> true`: a container that does not

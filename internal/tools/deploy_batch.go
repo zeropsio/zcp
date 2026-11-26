@@ -247,7 +247,9 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, services []platform.ServiceStack) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
 	configFiles := make(map[string]string, len(targets))
-	for _, t := range targets {
+	for i := range targets {
+		targets[i].LockVersion = d.rtInfo.MateEnabled
+		t := targets[i]
 		configFiles[t.TargetService] = t.ConfigFile
 	}
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {

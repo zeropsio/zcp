@@ -30,6 +30,8 @@ type DeployBatchTarget struct {
 	// (zerops.yaml or zerops.yml); the target's failure classification
 	// names it. Not an input either.
 	ConfigFile string `json:"-"`
+	// LockVersion orders this Mate writer with other writers of the target.
+	LockVersion bool `json:"-"`
 }
 
 // DeployBatchEntryResult is the outcome for one target inside a batch. The
@@ -143,6 +145,29 @@ func DeployBatchSSH(
 				entry.EndedAt = time.Now().UTC().Format(time.RFC3339)
 				entries[idx] = entry
 			}()
+			if tgt.LockVersion {
+				var target *platform.ServiceStack
+				var err error
+				if services == nil {
+					target, err = LookupService(ctx, client, projectID, tgt.TargetService)
+				} else {
+					target, err = FindService(services, tgt.TargetService)
+				}
+				if err != nil {
+					entry.failed(fmt.Errorf("resolve stage writer target: %w", err))
+					return
+				}
+				release, err := LockStage(ctx, stateDir, target.ID)
+				if err != nil {
+					entry.failed(err)
+					return
+				}
+				defer release()
+				if err := WaitStageVersions(ctx, client, projectID, target.ID); err != nil {
+					entry.failed(err)
+					return
+				}
+			}
 
 			result, err := DeploySSHFromListing(
 				ctx, client, projectID, sshDeployer, leaseGit, authInfo, stateDir, services,

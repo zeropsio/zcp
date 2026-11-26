@@ -15,9 +15,11 @@ import (
 	"syscall"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/platform/watch"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -203,11 +205,42 @@ func runStudioDeploy(args []string) {
 			fmt.Fprintf(os.Stderr, "  %s\n", message)
 		}
 	}
+	var releaseStage func()
+	if runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		target, err := ops.LookupService(ctx, client, projectID, *service)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "deploy: resolve target: %v\n", err)
+			os.Exit(1)
+		}
+		stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+		release, err := ops.LockStage(ctx, stateDir, target.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "deploy: %v\n", err)
+			os.Exit(1)
+		}
+		if err := ops.WaitStageVersions(ctx, client, projectID, target.ID); err != nil {
+			release()
+			fmt.Fprintf(os.Stderr, "deploy: %v\n", err)
+			os.Exit(1)
+		}
+		releaseStage = release
+	}
 
-	result, err := ops.DeployLocal(ctx, client, projectID, *authInfo, *service, setupName, *workingDir, "")
+	result, err := deployStudioAndWait(ctx, client, projectID, authInfo, *service, setupName, *workingDir, onProgress, releaseStage)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "deploy: %v\n", err)
 		os.Exit(1)
+	}
+	emitJSON(result)
+}
+
+func deployStudioAndWait(ctx context.Context, client platform.Client, projectID string, authInfo *auth.Info, service, setup, workingDir string, onProgress ops.ProgressCallback, release func()) (*ops.DeployResult, error) {
+	if release != nil {
+		defer release()
+	}
+	result, err := ops.DeployLocal(ctx, client, projectID, *authInfo, service, setup, workingDir, "")
+	if err != nil {
+		return nil, fmt.Errorf("deploy local: %w", err)
 	}
 
 	if result.TargetServiceID != "" {
@@ -220,20 +253,20 @@ func runStudioDeploy(args []string) {
 
 	// Best-effort subdomain enable for eligible (HTTP) services — mirrors the
 	// deploy tool's auto-enable. Non-HTTP services error here; swallow it.
-	if _, serr := ops.Subdomain(ctx, client, projectID, *service, "enable"); serr == nil {
+	if _, serr := ops.Subdomain(ctx, client, projectID, service, "enable"); serr == nil {
 		result.SubdomainAccessEnabled = true
 	}
 	// Read the live subdomain URL back through discover (one owner of the URL).
-	if dr, derr := ops.Discover(ctx, client, projectID, *service, false, false, false); derr == nil {
+	if dr, derr := ops.Discover(ctx, client, projectID, service, false, false, false); derr == nil {
 		for i := range dr.Services {
-			if dr.Services[i].Hostname == *service && dr.Services[i].SubdomainURL != "" {
+			if dr.Services[i].Hostname == service && dr.Services[i].SubdomainURL != "" {
 				result.SubdomainURL = dr.Services[i].SubdomainURL
 				result.SubdomainAccessEnabled = true
 			}
 		}
 	}
 
-	emitJSON(result)
+	return result, nil
 }
 
 // resolveDeploySetup resolves the canonical zerops.yaml setup-block name for a

@@ -11,3 +11,5 @@
 - SV-F10 — A pool whose bearer still does not resolve once the wait is over is "failed" and its cause names the variable `<pool>_LEASE_TOKEN`, never "restart zcp".
 - SV-F4 — A refusal before any build is "failed" with class "refused" and the refusal's own words.
 - SV-F5 — A failed first pool build is one "failed" row with its commit and build process and the build's words, not the bearer failure met beside it, and its next step fixes the code on zcp's own container.
+- SV-COMMIT-FLIGHT — A live build of the requested commit is joined; a different or unnamed build of that service is waited on before the requested commit is built.
+- SV-COMMIT-NAME — A commit deploy names its version with the whole commit so distinct heads cannot share a name.

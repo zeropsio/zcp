@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -314,6 +315,11 @@ func RegisterDeploySSH(
 			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
 				return blocked, nil, nil
 			}
+			release, err := lockMateDeploy(ctx, client, projectID, stateDir, input.TargetService, rtInfo.MateEnabled)
+			if err != nil {
+				return convertError(err, WithRecoveryStatus()), nil, nil
+			}
+			defer release()
 			// A non-"latest" value is an appVersion id: rollback
 			// (docs/spec-workflows.md §12.6 GF-8), not the R2 newest-only
 			// recovery below.
@@ -369,8 +375,7 @@ func RegisterDeploySSH(
 		// A lease pushes its own branch itself; git-push pushes the target's
 		// tracked branch (main by default), so from a lease it would put the
 		// feature branch on the stage's delivery branch (DP-6). A branch is
-		// tried on its lease's preview URL and checked on a stage by a deploy
-		// from the lease (DP-8).
+		// tried on its lease's preview URL and checked on the stage (DP-8).
 		if input.Strategy == deployStrategyGitPush {
 			if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok {
 				return convertError(leaseGitPushRefusal(lease, rtInfo), WithRecoveryStatus()), nil, nil
@@ -447,14 +452,94 @@ func RegisterDeploySSH(
 			configFile = resolved.configFile
 		}
 
+		release, err := lockMateDeployInput(ctx, client, projectID, stateDir, input, rtInfo.MateEnabled)
+		if err != nil {
+			return convertError(err, WithRecoveryStatus()), nil, nil
+		}
+		defer release()
+
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
+			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo), nil, nil
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, listedServices(), input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, listedServices(), input), nil, nil
 	})
+}
+
+func lockMateDeployInput(ctx context.Context, client platform.Client, projectID, stateDir string, input DeploySSHInput, enabled bool) (func(), error) {
+	targets := []string{input.TargetService}
+	if enabled && input.Strategy == deployStrategyGitPush {
+		meta, _ := workflow.FindServiceMeta(stateDir, input.TargetService)
+		targets = deployBuildHosts(input.TargetService, anticipatedBuilds(meta))
+	}
+	return lockMateDeploys(ctx, client, projectID, stateDir, targets, enabled)
+}
+
+// lockMateDeploy resolves the agent's hostname before taking the shared
+// service-id lock. It also covers a Mate target without local pair metadata.
+func lockMateDeploy(ctx context.Context, client platform.Client, projectID, stateDir, hostname string, enabled bool) (func(), error) {
+	return lockMateDeploys(ctx, client, projectID, stateDir, []string{hostname}, enabled)
+}
+
+// A git push may build every stage of a pair. Their ids determine lock order,
+// so two multi-stage writers cannot hold the same locks in opposite orders.
+func lockMateDeploys(ctx context.Context, client platform.Client, projectID, stateDir string, hostnames []string, enabled bool) (func(), error) {
+	if !enabled {
+		return func() {}, nil
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve deploy targets: %w", err)
+	}
+	targets := make(map[string]string, len(hostnames))
+	for _, hostname := range hostnames {
+		service, err := ops.FindService(services, hostname)
+		if err != nil {
+			return nil, fmt.Errorf("resolve deploy target %s: %w", hostname, err)
+		}
+		targets[service.ID] = hostname
+	}
+	ids := make([]string, 0, len(targets))
+	for id := range targets {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var releases []func()
+	releaseAll := func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	for _, id := range ids {
+		release, err := ops.LockStage(lockCtx, stateDir, id)
+		if err != nil {
+			releaseAll()
+			return nil, fmt.Errorf("order deploy %s: %w", targets[id], err)
+		}
+		releases = append(releases, release)
+	}
+	for _, id := range ids {
+		if err := ops.WaitStageVersions(ctx, client, projectID, id); err != nil {
+			releaseAll()
+			return nil, fmt.Errorf("order deploy %s: %w", targets[id], err)
+		}
+	}
+	return releaseAll, nil
+}
+
+func deployBuildHosts(source string, builds []topology.StageRef) []string {
+	if len(builds) == 0 {
+		return []string{source}
+	}
+	hosts := make([]string, 0, len(builds))
+	for _, build := range builds {
+		hosts = append(hosts, build.Hostname)
+	}
+	return hosts
 }
 
 // runDeploySSHZCLIPush is the default zcli-push branch of zerops_deploy's
@@ -477,7 +562,7 @@ func runDeploySSHZCLIPush(
 	devsup DevsupSource,
 	services []platform.ServiceStack,
 	input DeploySSHInput,
-) (*mcp.CallToolResult, any, error) {
+) *mcp.CallToolResult {
 	// Record attempt up front so a crash still leaves a trace.
 	attemptedAt := time.Now().UTC().Format(time.RFC3339)
 	attempt := workflow.DeployAttempt{
@@ -521,7 +606,7 @@ func runDeploySSHZCLIPush(
 				w.Suggestion = strings.TrimSpace(w.Suggestion + " " + told)
 			}
 		}
-		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
+		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove)
 	}
 
 	// A deploy to a pool, whatever its source, reaches only the containers
@@ -593,7 +678,7 @@ func runDeploySSHZCLIPush(
 		DeployResult:     result,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
-	}), nil, nil
+	})
 }
 
 // pollTriggeredDeploy is pollDeployBuild for a triggered SSH deploy, single or
