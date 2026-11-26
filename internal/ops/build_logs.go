@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -44,6 +45,91 @@ func FetchBuildLogs(
 	return messagesOf(entries)
 }
 
+// FetchVersionBuildLogs reads the named stage version, never the latest build
+// of the stage. A successful empty answer is distinct from a failed read.
+func FetchVersionBuildLogs(ctx context.Context, client platform.Client, fetcher platform.LogFetcher, projectID, stage, versionID string, limit int) ([]string, error) {
+	if client == nil || fetcher == nil || stage == "" || versionID == "" {
+		return nil, fmt.Errorf("read version build log: stage, version or platform access missing")
+	}
+	serviceIDs, err := stageServiceIDs(ctx, client, projectID, stage)
+	if err != nil {
+		return nil, fmt.Errorf("read version build log: %w", err)
+	}
+	for _, serviceID := range serviceIDs {
+		versions, err := client.ListServiceAppVersions(ctx, serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("list stage versions: %w", err)
+		}
+		for _, event := range versions {
+			if event.ID != versionID {
+				continue
+			}
+			// The direct list owns version identity; the search only adds the
+			// build container and its timing for untagged error alerts.
+			var searchErr error
+			if event.Build == nil {
+				event.Build = &platform.BuildInfo{}
+				var indexed []platform.AppVersionEvent
+				indexed, searchErr = client.SearchAppVersions(ctx, projectID, buildLogSearchLimit)
+				for _, candidate := range indexed {
+					if candidate.ID == event.ID && candidate.Build != nil {
+						event.Build = candidate.Build
+						break
+					}
+				}
+			}
+			entries, _, err := fetchBuildLog(ctx, client, fetcher, projectID, &event, "", limit, true)
+			if err != nil {
+				return nil, fmt.Errorf("read version build log: %w", err)
+			}
+			if len(entries) == 0 && searchErr != nil {
+				return nil, fmt.Errorf("read build event: %w", searchErr)
+			}
+			return messagesOf(entries), nil
+		}
+	}
+	return nil, fmt.Errorf("version %s not found on stage %s", versionID, stage)
+}
+
+// stageServiceIDs resolves the stage host through the platform's routing
+// when it is public; several paths on one host may name different services.
+func stageServiceIDs(ctx context.Context, client platform.Client, projectID, stage string) ([]string, error) {
+	if !strings.Contains(stage, ".") {
+		services, err := client.ListServicesDirect(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("read stage services: %w", err)
+		}
+		svc, err := FindService(services, stage)
+		if err != nil {
+			return nil, fmt.Errorf("resolve stage: %w", err)
+		}
+		return []string{svc.ID}, nil
+	}
+	routings, err := client.ListPublicHTTPRoutings(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("read stage routing: %w", err)
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for _, routing := range routings {
+		for _, domain := range routing.Domains {
+			if !strings.EqualFold(strings.TrimSuffix(domain.Name, "."), strings.TrimSuffix(stage, ".")) {
+				continue
+			}
+			for _, location := range routing.Locations {
+				if location.ServiceID != "" && !seen[location.ServiceID] {
+					ids = append(ids, location.ServiceID)
+					seen[location.ServiceID] = true
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no service routes stage %s", stage)
+	}
+	return ids, nil
+}
+
 // FetchBuildLogTail returns the build log FetchBuildLogs returns and its last
 // n lines, with the build container's alerts kept even when they come earlier:
 // a builder the platform stopped for memory starts again in the same container,
@@ -74,7 +160,8 @@ func FetchBuildLogTail(
 // an entry without it is one of the build container's alerts. severity, when
 // set, is the least severe line kept of the build's own output ("" keeps
 // all). A read that failed returns its error; the deploy paths read best
-// effort and drop it, zerops_logs facility=build reports it.
+// effort and drop it, zerops_logs facility=build reports it. A Review build
+// also reports an unreadable alert stream, which might hold the failure.
 func fetchBuildLog(
 	ctx context.Context,
 	client platform.Client,
@@ -83,6 +170,7 @@ func fetchBuildLog(
 	event *platform.AppVersionEvent,
 	severity string,
 	limit int,
+	strictAlerts ...bool,
 ) ([]platform.LogEntry, string, error) {
 	if event == nil || event.Build == nil {
 		return nil, "", nil
@@ -104,7 +192,11 @@ func fetchBuildLog(
 	if err != nil {
 		return nil, "", fmt.Errorf("build log %s: %w", tag, err)
 	}
-	entries = append(entries, fetchBuildContainerAlerts(ctx, fetcher, logAccess, event, tag, limit)...)
+	alerts, err := fetchBuildContainerAlerts(ctx, fetcher, logAccess, event, tag, limit)
+	if err != nil && len(strictAlerts) > 0 && strictAlerts[0] {
+		return entries, tag, fmt.Errorf("build container alerts: %w", err)
+	}
+	entries = append(entries, alerts...)
 	sortByTime(entries)
 	return entries, tag, nil
 }
@@ -124,13 +216,13 @@ func fetchBuildContainerAlerts(
 	event *platform.AppVersionEvent,
 	tag string,
 	limit int,
-) []platform.LogEntry {
+) ([]platform.LogEntry, error) {
 	if event.Build.ServiceStackID == nil || *event.Build.ServiceStackID == "" || event.Build.PipelineStart == nil {
-		return nil
+		return nil, nil
 	}
 	since, err := time.Parse(time.RFC3339, *event.Build.PipelineStart)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("parse build start: %w", err)
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		ServiceID: *event.Build.ServiceStackID,
@@ -140,7 +232,7 @@ func fetchBuildContainerAlerts(
 		Limit:     limit,
 	})
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("fetch alerts: %w", err)
 	}
 	alerts := make([]platform.LogEntry, 0, len(entries))
 	for _, e := range entries {
@@ -148,7 +240,7 @@ func fetchBuildContainerAlerts(
 			alerts = append(alerts, e)
 		}
 	}
-	return alerts
+	return alerts, nil
 }
 
 // sortByTime orders entries by their parsed timestamp, keeping the order of

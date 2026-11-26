@@ -1,0 +1,3 @@
+- VBL-1 — A Review build reads the log of the named stage version even when a newer build exists. Breaks: an agent repairs another change's build.
+- VBL-2 — A platform read error stays distinct from a successful empty log. Breaks: an agent mistakes an unavailable log for a missing one.
+- VBL-3 — A public stage host resolves through its own routing before its version is read. Breaks: an agent reads a different stage's build.

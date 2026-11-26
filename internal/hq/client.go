@@ -24,6 +24,7 @@ type RefusedError struct {
 	Status int
 	Code   string
 	Reason string
+	State  string
 }
 
 func (r *RefusedError) Error() string {
@@ -266,12 +267,13 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 		var refusal struct {
 			Code   string `json:"code"`
 			Reason string `json:"reason"`
+			State  string `json:"state"`
 		}
 		_ = json.Unmarshal(raw, &refusal)
 		if resp.StatusCode == http.StatusServiceUnavailable {
 			return retryAfter(resp.Header.Get("Retry-After")), &UnavailableError{Code: refusal.Code, Reason: refusal.Reason}
 		}
-		return 0, &RefusedError{Status: resp.StatusCode, Code: refusal.Code, Reason: refusal.Reason}
+		return 0, &RefusedError{Status: resp.StatusCode, Code: refusal.Code, Reason: refusal.Reason, State: refusal.State}
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return 0, fmt.Errorf("hq %s: malformed answer: %w", path, err)
