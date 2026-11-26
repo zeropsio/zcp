@@ -15,11 +15,11 @@ import (
 var argumentTypeRefusal = regexp.MustCompile(`^validating "arguments": validating root: validating /properties/([^/:]+): type: `)
 
 // decodeStringifiedArguments returns middleware for agents whose client sends
-// an object or array argument JSON-encoded in a string — closeMode as
+// an object, array, number or boolean argument JSON-encoded in a string — closeMode as
 // "{\"appdev\":\"auto\"}" — which the SDK refuses before the handler runs
 // and the agent cannot fix from its side. When a call is refused for one
-// property's type and that property is a string holding a JSON object or
-// array, the call runs again with it decoded; each property once. A value
+// property's type and that property is a string holding one of those JSON
+// values, the call runs again with it decoded; each property once. A value
 // the schema takes as a string is never refused, so it is never touched, and
 // any other refusal goes back as it was.
 func decodeStringifiedArguments() mcp.Middleware {
@@ -67,7 +67,7 @@ func refusedArgument(result mcp.Result) string {
 }
 
 // decodeArgument answers arguments with property name decoded from a string
-// holding a JSON object or array; false when it is no such string.
+// holding a JSON object, array, number or boolean; false when it is no such string.
 func decodeArgument(arguments json.RawMessage, name string) (json.RawMessage, bool) {
 	var args map[string]json.RawMessage
 	if err := json.Unmarshal(arguments, &args); err != nil {
@@ -78,15 +78,12 @@ func decodeArgument(arguments json.RawMessage, name string) (json.RawMessage, bo
 		return nil, false
 	}
 	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") {
+	if !json.Valid([]byte(text)) {
 		return nil, false
 	}
-	var value any
-	if err := json.Unmarshal([]byte(text), &value); err != nil {
-		return nil, false
-	}
-	switch value.(type) {
-	case map[string]any, []any:
+	switch text[0] {
+	case '{', '[':
+	case 't', 'f', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 	default:
 		return nil, false
 	}
