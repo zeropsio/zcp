@@ -245,9 +245,9 @@ func TestCheckLog_KL5_ReadsTheNamedReviewPartAndKeepsReadFailuresDistinct(t *tes
 	t.Parallel()
 	status := 503
 	head := "new"
-	checks := hq.ChecksAnswer{Head: &head, ReviewBuild: &hq.CheckReviewBuild{Head: "old", Parts: []hq.CheckReviewPart{
+	checks := hq.ChecksAnswer{Head: &head, ReviewBuild: &hq.CheckReviewBuild{Head: "old", Parts: []hq.ReviewBuildPart{
 		{Setup: "api", Stage: "stage", Outcome: "failed", Phase: "build", AppVersionID: "v1", Reason: "build failed"},
-		{Setup: "web", Stage: "web.example", Outcome: "failed", Phase: "health", AppVersionID: "v2", Reason: "unhealthy", Probe: &hq.CheckReviewProbe{URL: "https://web.example/health", Status: &status, At: "2026-11-26T20:00:00Z"}},
+		{Setup: "web", Stage: "web.example", Outcome: "failed", Phase: "health", AppVersionID: "v2", Reason: "unhealthy", Probe: &hq.ReviewBuildProbe{URL: "https://web.example/health", Status: &status, At: "2026-11-26T20:00:00Z"}},
 	}}}
 	tests := []struct {
 		name, setup string

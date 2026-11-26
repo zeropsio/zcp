@@ -25,25 +25,7 @@ type ChecksAnswer struct {
 // CheckReviewBuild is the failed Review build HQ names in its checks answer.
 type CheckReviewBuild struct {
 	Head  string            `json:"head"`
-	Parts []CheckReviewPart `json:"parts"`
-}
-
-// CheckReviewPart points to the platform's version or the health observation.
-type CheckReviewPart struct {
-	Setup        string            `json:"setup"`
-	Stage        string            `json:"stage"`
-	Outcome      string            `json:"outcome"`
-	Phase        string            `json:"phase,omitempty"`
-	AppVersionID string            `json:"appVersionId,omitempty"`
-	Reason       string            `json:"reason,omitempty"`
-	Probe        *CheckReviewProbe `json:"probe,omitempty"`
-}
-
-// CheckReviewProbe is the observation made for a public stage.
-type CheckReviewProbe struct {
-	URL    string `json:"url"`
-	Status *int   `json:"status,omitempty"`
-	At     string `json:"at"`
+	Parts []ReviewBuildPart `json:"parts"`
 }
 
 // CheckLogQuery holds only the bounds and pattern the agent supplied.
