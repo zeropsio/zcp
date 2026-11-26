@@ -45,15 +45,18 @@ type DeployIntent struct {
 	// standard pair, a single-service mode (simple/dev/local-*), or the dev
 	// half found by reverse-lookup when target is a stage half. Empty when
 	// the target is a stage half whose paired dev is missing from services.
-	// For a pair whose dev half is a pool it is a held lease's alias, or empty
-	// while none is held (SourcePool).
+	// For a pair whose dev half is a pool it is the sole held lease's alias,
+	// or empty when there is no unambiguous source (SourcePool).
 	PushSource string
+
+	// SourceChoices holds the leases reported held when more than one could
+	// contain the work. An unverified choice must be checked before use.
+	SourceChoices []LeaseSnapshot
 
 	// SourcePool is set when the target's pair has a dev pool for its dev
 	// half (ServiceSnapshot.DevIsPool) — on the stage and on the pool half
 	// alike: the deploy's source is a lease of this pool, never the pool
-	// itself (docs/spec-workflows.md §8 PS-3, §13). With PushSource empty
-	// there is no source yet: a lease of it comes first.
+	// itself (docs/spec-workflows.md §8 PS-3, §13).
 	SourcePool string
 
 	// BuildTarget is the hostname whose runtime actually receives the build:
@@ -154,8 +157,9 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 }
 
 // ResolveWithLeases is Resolve knowing the leases zcp holds — the envelope's
-// leases[] — so a stage whose pair's dev half is a pool takes a held lease of
-// that pool as its source. Every other target resolves as Resolve does.
+// leases[] — so a stage whose pair's dev half is a pool takes its sole held
+// lease as its source, or leaves the choice open. Every other target resolves
+// as Resolve does.
 func ResolveWithLeases(target ServiceSnapshot, services []ServiceSnapshot, leases []LeaseSnapshot) DeployIntent {
 	if intent, ok := resolvePoolPair(target, services, leases); ok {
 		return intent
@@ -280,9 +284,9 @@ func ResolveWithLeases(target ServiceSnapshot, services []ServiceSnapshot, lease
 //   - The stage builds on itself from a held lease of the pool — a
 //     cross-deploy from the alias — whatever the pair's git-push state: a
 //     git-push from a lease is refused (DP-6), so the lease's cross-deploy is
-//     the stage's deploy, and DP-8 steers it towards main. With no lease held
-//     there is no source: PushSource stays empty and no tool call is rendered.
-//     A manual close mode stays the user's.
+//     the stage's deploy. With no lease held or several to choose from there
+//     is no source: PushSource stays empty and no tool call is rendered. A
+//     manual close mode stays the user's.
 func resolvePoolPair(target ServiceSnapshot, services []ServiceSnapshot, leases []LeaseSnapshot) (DeployIntent, bool) {
 	firstDeployBypass := !target.Deployed
 	if target.DevIsPool {
@@ -299,9 +303,11 @@ func resolvePoolPair(target ServiceSnapshot, services []ServiceSnapshot, leases 
 	if !ok || !dev.DevIsPool {
 		return DeployIntent{}, false
 	}
+	source, choices := heldLeaseOf(dev.Hostname, leases)
 	intent := DeployIntent{
 		Delivery:          DeployDeliveryDirect,
-		PushSource:        heldLeaseOf(dev.Hostname, leases),
+		PushSource:        source,
+		SourceChoices:     choices,
 		SourcePool:        dev.Hostname,
 		BuildTarget:       target.Hostname,
 		BuildSetup:        setupOrDefault(target.SetupName, RecipeSetupProd),
@@ -324,18 +330,24 @@ func resolvePoolPair(target ServiceSnapshot, services []ServiceSnapshot, leases 
 	return intent, true
 }
 
-// heldLeaseOf is the alias of the first lease of pool zcp holds, verified as
-// its own by the pool's orchestrator, in the envelope's order (by container
-// number); "" for none.
-func heldLeaseOf(pool string, leases []LeaseSnapshot) string {
+// heldLeaseOf resolves a sole verified lease, or lists the leases reported
+// held, in the envelope's order. It never guesses between them.
+func heldLeaseOf(pool string, leases []LeaseSnapshot) (string, []LeaseSnapshot) {
+	var held []LeaseSnapshot
 	for _, l := range leases {
 		// An unverified lease may be another holder's container by now: never
 		// a deploy's source (docs/spec-workflows.md §8 DP-2).
-		if l.Pool == pool && l.State == leaseStateHeld && !l.Unverified {
-			return l.Alias
+		if l.Pool == pool && l.State == leaseStateHeld {
+			held = append(held, l)
 		}
 	}
-	return ""
+	if len(held) == 1 {
+		if !held[0].Unverified {
+			return held[0].Alias, nil
+		}
+		return "", nil
+	}
+	return "", held
 }
 
 // Builds is every runtime the deploy builds, each with its setup: every

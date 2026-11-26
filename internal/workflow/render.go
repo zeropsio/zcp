@@ -339,14 +339,24 @@ func blockerNextAction(host string, needsDeploy, needsVerify bool, env StateEnve
 
 // poolStageDeployNext is the auto-close line's deploy call for host when its
 // pair's dev half is a pool, resolved as deployActionFor resolves the plan's:
-// the cross-deploy from a held lease of the pool, else acquiring one first
-// (docs/spec-workflows.md §13 PM-10). "" for any other host, and for a manual
+// the cross-deploy from the sole held lease, a choice among several, or an
+// acquire when none is held. "" for any other host, and for a manual
 // close-mode, which the generic line covers.
 func poolStageDeployNext(host string, env StateEnvelope) string {
 	intent := ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList())
 	switch {
 	case intent.SourcePool == "" || intent.Delivery == DeployDeliveryManual:
 		return ""
+	case len(intent.SourceChoices) > 0:
+		choices := make([]string, 0, len(intent.SourceChoices))
+		for _, lease := range intent.SourceChoices {
+			name := lease.Alias
+			if lease.Unverified {
+				name += " (unverified: check lease status first)"
+			}
+			choices = append(choices, name)
+		}
+		return fmt.Sprintf("Next: choose the source lease for %s from %s, then zerops_deploy sourceService=<lease alias> targetService=%q setup=%q", host, strings.Join(choices, ", "), host, intent.BuildSetup)
 	case intent.PushSource == "":
 		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q branch=\"<your branch>\" (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
 	}
@@ -660,6 +670,9 @@ func renderPlan(b *strings.Builder, plan *Plan) {
 // sorted for determinism (map iteration would otherwise vary run-to-run); a
 // list argument (ListArg) is written unquoted, as the tool call takes it.
 func formatAction(a NextAction) string {
+	if a.Tool == "" {
+		return a.Label
+	}
 	if len(a.Args) == 0 {
 		return fmt.Sprintf("%s — %s", a.Label, a.Tool)
 	}

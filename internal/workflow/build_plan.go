@@ -314,12 +314,18 @@ func idlePools(env StateEnvelope) []string {
 // `plans/git-push-deploy-flow-redesign-2026-05-19.md` for the redesign.
 //
 // A stage whose pair's dev half is a pool deploys from a held lease of the
-// pool (env.Leases); with none held the step is acquiring one — never a
-// deploy from the pool.
+// pool (env.Leases); with none held the step is acquiring one, and with
+// several held it is choosing the work's lease — never a deploy from the pool.
 func deployActionFor(host string, last AttemptInfo, env StateEnvelope) NextAction {
 	target := snapshotByHostname(env.Services, host)
 	intent := ResolveWithLeases(target, env.Services, env.LeaseList())
 	if intent.SourcePool != "" && intent.PushSource == "" && intent.Delivery != DeployDeliveryManual {
+		if len(intent.SourceChoices) > 0 {
+			return NextAction{
+				Label:     "Choose the source lease of " + intent.SourcePool + " for " + host,
+				Rationale: "Several leases are held: choose the one holding this work, then deploy it with sourceService=<lease alias> targetService=" + host + ".",
+			}
+		}
 		return leaseFirstAction(host, intent.SourcePool)
 	}
 	rationale := deployRationale(last)
