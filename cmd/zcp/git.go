@@ -298,7 +298,8 @@ func gitTargetOf(ctx context.Context, host string, d gitCmdDeps) (target gitTarg
 // ops.LeaseWorkDir; a relayed call to it answers from the record of the pair
 // keyed by its pool.
 func gitLeaseTarget(ctx context.Context, host string, d gitCmdDeps) (target gitTarget, code int, stopped bool) {
-	noLease := fmt.Sprintf("%q is no lease this zcp holds: only zcp's own lease records make an alias reachable; zerops_lease action=status lists the leases it holds, and zerops_lease action=\"acquire\" takes one", host)
+	pool, _, _ := strings.Cut(host, "-")
+	noLease := fmt.Sprintf("zerops_lease action=acquire pool=%s branch=<your branch> takes a lease; %q is no lease this zcp holds. Use the alias returned by acquire; zerops_lease action=status lists held leases", pool, host)
 	if _, held, err := ops.LeaseTarget(d.stateDir, host); err != nil {
 		return gitTarget{}, gitRecordUnread(d, host, err), true
 	} else if !held {

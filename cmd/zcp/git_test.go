@@ -518,22 +518,34 @@ func gitLeaseDeps(orch *gitLeaseOrch, built *int) func(context.Context) (ops.Lea
 	}
 }
 
-// TestRunGitCmd_LeaseAlias_NoRecord_Refused: only zcp's own lease records
-// make an alias reachable (docs/spec-workflows.md §8 DP-2): an alias zcp
-// holds no lease of is refused before any ssh call, and nobody is asked.
-func TestRunGitCmd_LeaseAlias_NoRecord_Refused(t *testing.T) {
+// witness: cmd/zcp/git.go | zerops_lease action=acquire pool=%s branch=<your branch> → zerops_lease action=status pool=%s branch=<your branch>
+func TestRunGitCmd_GLNoRecord_RefusedWithAcquire(t *testing.T) {
 	t.Parallel()
-	stateDir := t.TempDir()
-	writeGitTestMeta(t, stateDir, gitPoolPairMeta())
-	ssh := &fakeGitSSH{}
-	deps, stdout, stderr := gitTestDeps(stateDir, ssh)
-	built := 0
-	deps.leaseDeps = gitLeaseDeps(&gitLeaseOrch{renew: ownedLease}, &built)
-	args := []string{"apppool-3", "status"}
-	code := runGitCmd(t.Context(), args, deps)
-	assertGitRefused(t, args, code, stdout, stderr, ssh, "apppool-3", "zerops_lease action=status")
-	if built != 0 {
-		t.Errorf("the lease check's client was built %d times for an alias with no record, want never", built)
+	for _, tc := range []struct {
+		alias string
+		pool  string
+	}{
+		{"apppool-3", "apppool"},
+		{"web2-42", "web2"},
+	} {
+		t.Run(tc.alias, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			ssh := &fakeGitSSH{}
+			deps, stdout, stderr := gitTestDeps(stateDir, ssh)
+			built := 0
+			deps.leaseDeps = gitLeaseDeps(&gitLeaseOrch{renew: ownedLease}, &built)
+			args := []string{tc.alias, "status"}
+			code := runGitCmd(t.Context(), args, deps)
+			assertGitRefused(t, args, code, stdout, stderr, ssh, tc.alias)
+			want := "zcp git: zerops_lease action=acquire pool=" + tc.pool + " branch=<your branch>"
+			if !strings.HasPrefix(stderr.String(), want) {
+				t.Errorf("refusal = %q, want it to start with %q", stderr.String(), want)
+			}
+			if built != 0 {
+				t.Errorf("the lease check's client was built %d times for an alias with no record, want never", built)
+			}
+		})
 	}
 }
 

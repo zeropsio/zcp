@@ -40,6 +40,31 @@ func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 	}
 }
 
+// witness: internal/content/templates/agents_container.md | zcp git {hostname} grep --untracked <pattern> → zcp git {hostname} grep <pattern>
+func TestBuildAgentsMD_ASSearch_SearchesTheServiceCheckout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+	}{
+		{"container", runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{"Mate", runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{"`zcp git {hostname} grep --untracked <pattern>`", "never `grep -r` or `find` across the mount"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("container AGENTS.md lacks search guidance %q", want)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_Container_RunOnServiceRule pins the always-on
 // edit-vs-run topology rule in the container shim: build/test/framework
 // commands run INSIDE the service with `zcp run` at the container-internal
