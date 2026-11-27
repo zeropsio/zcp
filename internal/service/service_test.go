@@ -3,6 +3,8 @@ package service_test
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/service"
@@ -211,7 +212,9 @@ func TestList_ReturnsAllServices(t *testing.T) {
 // installFakeMateBundle lays down a bundle that looks exactly like an
 // `npm install --prefix ~/.zcp/mate/versions/<v> zerops-mate@<version>` result —
 // activated via mate.CurrentLink() the way the start job leaves it — with a
-// `mate` that leaves a help-ran marker in HOME if anything runs it. Returns HOME.
+// `mate` that leaves a help-ran marker in HOME if anything runs it, and serves
+// the release list the start job reads on every start from a server of the
+// test's own. Returns HOME.
 func installFakeMateBundle(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -236,14 +239,12 @@ func installFakeMateBundle(t *testing.T) string {
 	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
 		t.Fatalf("symlink current: %v", err)
 	}
-	// The release list zcp holds, fresh, names what is installed: the start job
-	// reaches no network and has nothing to change.
-	cache := `{"fetchedAt":"` + time.Now().UTC().Format(time.RFC3339) + `","manifest":{"version":"` + version +
-		`","asset":"zerops-mate.tgz","url":"https://example.invalid/zerops-mate.tgz","sha256":"` + strings.Repeat("0", 64) +
-		`","size":1,"contract":` + strconv.Itoa(mate.SupportedContract) + `,"publishedAt":"2026-01-01T00:00:00Z"}}`
-	if err := os.WriteFile(filepath.Join(home, ".zcp", "mate", "manifest.json"), []byte(cache), 0o600); err != nil {
-		t.Fatalf("write release list: %v", err)
-	}
+	// The release list names what is installed, so the start job has nothing
+	// to change; holdRelease names another version.
+	holdRelease(t, home, version)
+	list := httptest.NewServer(http.FileServer(http.Dir(filepath.Join(home, "published"))))
+	t.Cleanup(list.Close)
+	t.Setenv("ZCP_MATE_MANIFEST_URL", list.URL+"/stable.json")
 	return home
 }
 
@@ -568,14 +569,17 @@ func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
 	}
 }
 
-// holdRelease makes the release list zcp holds, fresh, name version, with a
-// download URL nothing answers.
+// holdRelease makes the release list installFakeMateBundle's server publishes
+// name version, with a download URL nothing answers.
 func holdRelease(t *testing.T, home, version string) {
 	t.Helper()
-	cache := `{"fetchedAt":"` + time.Now().UTC().Format(time.RFC3339) + `","manifest":{"version":"` + version +
-		`","asset":"zerops-mate.tgz","url":"https://127.0.0.1:1/zerops-mate.tgz","sha256":"` + strings.Repeat("0", 64) +
-		`","size":1,"contract":` + strconv.Itoa(mate.SupportedContract) + `,"publishedAt":"2026-01-01T00:00:00Z"}}`
-	if err := os.WriteFile(filepath.Join(home, ".zcp", "mate", "manifest.json"), []byte(cache), 0o600); err != nil {
+	dir := filepath.Join(home, "published")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir release list: %v", err)
+	}
+	list := `{"version":"` + version + `","asset":"zerops-mate.tgz","url":"https://127.0.0.1:1/zerops-mate.tgz","sha256":"` +
+		strings.Repeat("0", 64) + `","size":1,"contract":` + strconv.Itoa(mate.SupportedContract) + `,"publishedAt":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(dir, "stable.json"), []byte(list), 0o600); err != nil {
 		t.Fatalf("write release list: %v", err)
 	}
 }
@@ -677,11 +681,8 @@ func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
 func TestStart_Mate_InstalledBelowFloor_RefusesToRun(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	t.Setenv("ZCP_MATE_MANIFEST_URL", "http://127.0.0.1:1/stable.json") // nothing listens here
 	home := installFakeMateBundle(t)
-	if err := os.Remove(filepath.Join(home, ".zcp", "mate", "manifest.json")); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("ZCP_MATE_MANIFEST_URL", "http://127.0.0.1:1/stable.json") // over the fixture's list: nothing listens here
 	pkgDir := filepath.Join(home, ".zcp", "mate", "versions", mate.MinimumMateVersion, "node_modules", mate.PackageName)
 	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"0.16.40"}`), 0o644); err != nil {
 		t.Fatal(err)
