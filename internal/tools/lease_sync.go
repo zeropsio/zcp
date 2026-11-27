@@ -66,7 +66,7 @@ func corePushSyncRefusal(err error, stateDir, address, alias string, read func()
 		return err
 	}
 	for _, c := range state.Changes {
-		if c.Repo != l.repo || c.Branch != l.branch || c.State != hq.ChangeOpen || !c.CorePushAtHead() {
+		if c.Repo != l.repo || c.Branch != l.branch || !hq.ChangeIsOpen(c.State) || !c.CorePushAtHead() {
 			continue
 		}
 		named := *pe

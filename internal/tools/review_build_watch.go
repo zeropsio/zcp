@@ -17,16 +17,16 @@ type reviewKey struct {
 }
 
 type reviewAttempt struct {
-	head, updatedAt             string
+	head, main, updatedAt       string
 	tries                       int
 	next                        time.Time
 	running, completed, stopped bool
-	resultStored                bool
 }
 
 type reviewDone struct {
 	key         reviewKey
 	head        string
+	main        string
 	updatedAt   string
 	unavailable bool
 	err         error
@@ -81,12 +81,24 @@ func (o *reviewObserver) run(ctx context.Context, changed, standupDone <-chan st
 				continue
 			}
 			o.look(ctx)
-		case <-standupDone:
+		case _, open := <-standupDone:
+			if !open {
+				standupDone = nil
+				continue
+			}
+			// A stand-up can change the recorded stage set or recover a stage.
+			for _, attempt := range o.attempts {
+				if !attempt.running {
+					attempt.completed, attempt.stopped = false, false
+					attempt.next = time.Time{}
+				}
+			}
 			o.look(ctx)
 		case <-o.alarm:
 			o.look(ctx)
 		case result := <-o.done:
 			o.finish(result)
+			o.look(ctx)
 		}
 	}
 }
@@ -134,19 +146,32 @@ func (o *reviewObserver) look(ctx context.Context) {
 		}
 		key := reviewKey{repo: change.Repo, number: change.Number}
 		seen[key] = true
-		o.consider(ctx, key, change, *doc.Mate.AppID)
+		_, repo := reviewCurrent(doc.Mate, change.Repo, change.Number)
+		if repo == nil {
+			continue
+		}
+		main := ""
+		if repo.MainHead != nil {
+			main = *repo.MainHead
+		}
+		o.consider(ctx, key, change, *doc.Mate.AppID, main)
 	}
-	for key := range o.attempts {
-		if !seen[key] {
+	for _, repo := range doc.Mate.Repos {
+		key := reviewKey{repo: repo.Name}
+		seen[key] = true
+		o.considerMain(ctx, key, repo, *doc.Mate.AppID)
+	}
+	for key, attempt := range o.attempts {
+		if !seen[key] && !attempt.running {
 			delete(o.attempts, key)
 		}
 	}
 }
 
-func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.MateChange, app string) {
+func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.MateChange, app, main string) {
 	a := o.attempts[key]
-	if a == nil || a.head != *change.Head || (a.stopped && reviewUpdated(change.UpdatedAt, a.updatedAt)) {
-		a = &reviewAttempt{head: *change.Head, updatedAt: change.UpdatedAt}
+	if a == nil || a.head != *change.Head || a.main != main || (a.stopped && reviewUpdated(change.UpdatedAt, a.updatedAt)) {
+		a = &reviewAttempt{head: *change.Head, main: main, updatedAt: change.UpdatedAt}
 		o.attempts[key] = a
 	} else if reviewUpdated(change.UpdatedAt, a.updatedAt) {
 		a.updatedAt = change.UpdatedAt
@@ -154,16 +179,12 @@ func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.
 	now := time.Now()
 	action := reviewNext(change, a.running, now)
 	if action == reviewNothing {
-		if !a.running && (change.State != hq.ChangeOpen || change.Ready == nil || !*change.Ready || (change.ReviewBuild != nil && (change.ReviewBuild.State == "passing" || change.ReviewBuild.State == reviewFailing))) {
+		if !a.running && change.State != hq.ChangeAdding && change.State != hq.ChangeMerging {
 			delete(o.attempts, key)
 		}
 		return
 	}
 	if a.stopped || a.completed && a.next.IsZero() {
-		return
-	}
-	if action == reviewRetry && a.next.IsZero() {
-		o.schedule(a, now)
 		return
 	}
 	if !a.next.IsZero() {
@@ -173,10 +194,71 @@ func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.
 		a.next = time.Time{}
 		a.tries++
 	}
-	o.start(ctx, key, change, app, a, action, now)
+	o.start(ctx, key, change, app, a, now)
 }
 
-func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.MateChange, app string, a *reviewAttempt, action reviewAction, now time.Time) {
+func (o *reviewObserver) considerMain(ctx context.Context, key reviewKey, repo hq.MateRepo, app string) {
+	if repo.Adding {
+		// An adding build may activate a candidate that HQ later declines. Even
+		// an unchanged main must be checked again when adding ends.
+		if attempt := o.attempts[key]; attempt != nil {
+			attempt.completed = false
+			attempt.stopped = false
+			attempt.next, attempt.tries = time.Time{}, 0
+		}
+	}
+	if !reviewMainNext(repo, false) {
+		return
+	}
+	main := *repo.MainHead
+	a := o.attempts[key]
+	if a == nil || a.main != main {
+		a = &reviewAttempt{head: main, main: main}
+		o.attempts[key] = a
+	}
+	if a.running || a.stopped || a.completed && a.next.IsZero() {
+		return
+	}
+	now := time.Now()
+	if !a.next.IsZero() {
+		if now.Before(a.next) {
+			return
+		}
+		a.next = time.Time{}
+		a.tries++
+	}
+	d, ok := o.deps(ctx)
+	if !ok {
+		o.schedule(a, now)
+		return
+	}
+	metas, err := workflow.ListServiceMetas(d.stateDir)
+	if err != nil {
+		o.log(fmt.Sprintf("Main stage could not read pair records: %v", err))
+		o.schedule(a, now)
+		return
+	}
+	stages := reviewStages(metas, app, repo.Name)
+	if len(stages) == 0 {
+		a.completed = true
+		return
+	}
+	hqc, err := hq.Open(d.httpClient, hqIdentity(d.rt))
+	if err != nil {
+		o.schedule(a, now)
+		return
+	}
+	a.running = true
+	go func() {
+		unavailable, err := executeReviewMain(ctx, d, hqc, app, repo.Name, main, metas, stages, o.read, o.log)
+		select {
+		case o.done <- reviewDone{key: key, head: main, main: main, unavailable: unavailable, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.MateChange, app string, a *reviewAttempt, now time.Time) {
 	d, ok := o.deps(ctx)
 	if !ok {
 		o.schedule(a, now)
@@ -189,9 +271,6 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 		return
 	}
 	stages := reviewStages(metas, app, change.Repo)
-	if len(stages) == 0 {
-		return
-	}
 	hqc, err := hq.Open(d.httpClient, hqIdentity(d.rt))
 	if err != nil {
 		o.log(fmt.Sprintf("Review build could not open HQ: %v", err))
@@ -199,9 +278,6 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 		return
 	}
 	a.running = true
-	// Renew an expired take, but leave an accepted result intact while
-	// the Mate state catches up.
-	take := reviewNeedsTake(action, a.resultStored, change.ReviewBuild)
 	go func() {
 		unavailable, updatedAt, runErr := func() (unavailable bool, updatedAt string, err error) {
 			defer func() {
@@ -209,10 +285,10 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 					unavailable, err = true, fmt.Errorf("worker stopped: %v", r)
 				}
 			}()
-			return executeReviewBuild(ctx, d, hqc, app, change, metas, stages, take, o.log)
+			return executeReviewBuild(ctx, d, hqc, app, change, metas, stages, o.read, o.log)
 		}()
 		select {
-		case o.done <- reviewDone{key: key, head: *change.Head, updatedAt: updatedAt, unavailable: unavailable, err: runErr}:
+		case o.done <- reviewDone{key: key, head: *change.Head, main: a.main, updatedAt: updatedAt, unavailable: unavailable, err: runErr}:
 		case <-ctx.Done():
 		}
 	}()
@@ -220,20 +296,20 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 
 func (o *reviewObserver) finish(result reviewDone) {
 	a := o.attempts[result.key]
-	if a == nil || a.head != result.head {
+	if a == nil || a.head != result.head || a.main != result.main {
 		return
 	}
 	if reviewUpdated(result.updatedAt, a.updatedAt) {
 		a.updatedAt = result.updatedAt
 	}
 	a.running, a.completed = false, true
-	if result.err == nil {
-		a.resultStored = true
-	} else {
+	if result.err != nil {
 		o.log(fmt.Sprintf("Review build: %v", result.err))
 	}
 	if result.unavailable {
-		o.schedule(a, time.Now())
+		if result.err != nil {
+			o.schedule(a, time.Now())
+		}
 	}
 }
 

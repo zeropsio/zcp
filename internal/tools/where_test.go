@@ -469,7 +469,7 @@ func TestDescription_WGKeptHead_ExplicitDescribeBindsWordsToNewHead(t *testing.T
 			if err != nil || !found || after.Description == nil || after.Description.Text != words || after.Description.Head != newHead {
 				t.Fatalf("after new call: %+v, found %v, err %v; want words at %s", after.Description, found, err, newHead)
 			}
-			edit := descriptionEdit(words, "title", newHead, false, time.Time{})
+			edit := descriptionEdit(words, "title", newHead)
 			if edit.Body == nil || *edit.Body != words || edit.ExpectedHead != newHead {
 				t.Fatalf("description edit = %+v, want same words at %s", edit, newHead)
 			}

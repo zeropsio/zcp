@@ -156,10 +156,17 @@ func (c Client) AttachmentURL(path string) string { return c.Address() + path }
 // without merging — by a person or its Mate, its work not on `main`, or by HQ
 // once another change's landing carried all of it there (LandedWith).
 const (
-	ChangeOpen   = "open"
-	ChangeMerged = "merged"
-	ChangeClosed = "closed"
+	ChangeOpen    = "open"
+	ChangeAdding  = "adding"
+	ChangeMerging = "merging"
+	ChangeMerged  = "merged"
+	ChangeClosed  = "closed"
 )
+
+// ChangeIsOpen includes the adding phases, during which its Mate can still work.
+func ChangeIsOpen(state string) bool {
+	return state == ChangeOpen || state == ChangeAdding || state == ChangeMerging
+}
 
 // Change is a change as HQ records it (hqChanges.ts HqChange). Head is the
 // commit its branch was last pushed to, nil until the first push lands; once
@@ -246,21 +253,52 @@ func (c Client) OpenChangeOnBranch(ctx context.Context, repo, branch string) (*C
 	return change, nil
 }
 
-// ReviewBuildWrite is a take or a result sent to HQ for one change head.
-type ReviewBuildWrite struct {
-	Head  string            `json:"head"`
-	Step  string            `json:"step"`
-	At    string            `json:"at"`
-	Until string            `json:"until,omitempty"`
-	Parts []ReviewBuildPart `json:"parts,omitempty"`
+// ReviewStage identifies one stage in the owning Mate's complete set.
+type ReviewStage struct {
+	Part  string `json:"part"`
+	Setup string `json:"setup"`
+	Stage string `json:"stage"`
 }
 
-// ChangeEdit sets an open change's title, description or Review build.
+// ReviewTake asks HQ to admit this content and complete stage set.
+type ReviewTake struct {
+	Head   string        `json:"head"`
+	Main   *string       `json:"main"`
+	Stages []ReviewStage `json:"stages"`
+}
+
+// ReviewDecision is HQ's answer to a take or its result.
+type ReviewDecision struct {
+	Take     string `json:"take"`
+	Decision string `json:"decision"`
+}
+
+const (
+	ReviewDecisionBuild       = "build"
+	ReviewDecisionMerging     = "merging"
+	ReviewDecisionUnavailable = "unavailable"
+)
+
+func (c Client) TakeReviewBuild(ctx context.Context, repo string, number int, take ReviewTake) (ReviewDecision, error) {
+	var answer ReviewDecision
+	err := c.call.json(ctx, http.MethodPost, changePath(repo, number)+"/review-build/take", c.authorization(), take, &answer)
+	return answer, err
+}
+
+func (c Client) FinishReviewBuild(ctx context.Context, repo string, number int, take string, parts []ReviewBuildPart) (ReviewDecision, error) {
+	var answer ReviewDecision
+	body := struct {
+		Parts []ReviewBuildPart `json:"parts"`
+	}{Parts: parts}
+	err := c.call.json(ctx, http.MethodPost, changePath(repo, number)+"/review-build/"+url.PathEscape(take), c.authorization(), body, &answer)
+	return answer, err
+}
+
+// ChangeEdit sets an open change's title or description.
 type ChangeEdit struct {
-	Title        *string           `json:"title,omitempty"`
-	Body         *string           `json:"body,omitempty"`
-	ExpectedHead string            `json:"expectedHead,omitempty"`
-	ReviewBuild  *ReviewBuildWrite `json:"reviewBuild,omitempty"`
+	Title        *string `json:"title,omitempty"`
+	Body         *string `json:"body,omitempty"`
+	ExpectedHead string  `json:"expectedHead,omitempty"`
 }
 
 // EditChange retitles or describes the Mate's open change number in repo.

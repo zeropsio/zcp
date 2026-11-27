@@ -18,41 +18,32 @@ const (
 	reviewNothing reviewAction = iota
 	reviewTake
 	reviewRun
-	reviewRetry
 )
 
 const (
-	reviewAwaiting      = "awaiting"
-	reviewFailing       = "failing"
 	reviewUnavailable   = "unavailable"
 	reviewOutcomeFailed = "failed"
 	reviewPhaseBuild    = "build"
 	reviewPhaseDeploy   = "deploy"
 )
 
-// reviewNext decides from HQ's change and the process's own running set.
-func reviewNext(c hq.MateChange, running bool, now time.Time) reviewAction {
-	if c.State != hq.ChangeOpen || c.Repo == hq.RecipeRepo || c.Head == nil || *c.Head == "" || c.Ready == nil || !*c.Ready || running {
+// reviewNext decides from HQ's adding phase and this process's running set.
+func reviewNext(c hq.MateChange, running bool, _ time.Time) reviewAction {
+	if running || c.Repo == hq.RecipeRepo || c.Head == nil || *c.Head == "" || c.ChecksGivenUp != nil {
 		return reviewNothing
 	}
-	if c.ReviewBuild == nil || c.ReviewBuild.Head != *c.Head {
+	if c.State == hq.ChangeAdding {
 		return reviewTake
 	}
-	switch c.ReviewBuild.State {
-	case reviewAwaiting:
-		if until, err := time.Parse(time.RFC3339, c.ReviewBuild.Until); err == nil && now.After(until) {
-			return reviewRetry
-		}
+	if c.State == hq.ChangeMerging {
 		return reviewRun
-	case reviewUnavailable:
-		return reviewRetry
-	default:
-		return reviewNothing
 	}
+	return reviewNothing
 }
 
-func reviewNeedsTake(action reviewAction, resultStored bool, build *hq.ReviewBuild) bool {
-	return !resultStored && (action == reviewTake || action == reviewRetry && build != nil && build.Until != "")
+// reviewMainNext follows main only while no change in the repository is adding.
+func reviewMainNext(repo hq.MateRepo, running bool) bool {
+	return !running && !repo.Adding && repo.MainHead != nil && *repo.MainHead != ""
 }
 
 // reviewStages reads the same per-pair setup records the stand-up writes.
@@ -105,7 +96,6 @@ const (
 	reviewJoin
 	reviewProbe
 	reviewFailed
-	reviewComplete
 	reviewUnknown
 )
 
@@ -147,7 +137,7 @@ func reviewVersionOf(head, service, active string, versions []platform.AppVersio
 			return reviewVersion{action: reviewFailed, id: v.ID, status: v.Status, reason: reason}
 		}
 		if v.Status == platform.BuildStatusBackup || v.Status == platform.BuildStatusDeployed {
-			return reviewVersion{action: reviewComplete, id: v.ID, status: v.Status}
+			continue
 		}
 		return reviewVersion{action: reviewUnknown, id: v.ID, status: v.Status}
 	}
@@ -184,8 +174,7 @@ func reviewReason(step, reason string) string {
 	return string(runes)
 }
 
-// reviewRetryDelay is the only retry clock; the fourth unavailable result
-// stays until a change's head/state moves or the service starts again.
+// reviewRetryDelay bounds retries of an unreachable infrastructure call.
 func reviewRetryDelay(tries int) time.Duration {
 	switch tries {
 	case 0:

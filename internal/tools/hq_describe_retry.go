@@ -83,11 +83,11 @@ func describeClient(hqc hq.Client) hq.Client {
 // HQ was still away after the tries, whether any of them may have landed —
 // HQ has no read of a change's words to ask. change is HQ's answer to the
 // try it answered.
-func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title, head string, stageBacked bool, at time.Time) (change hq.Change, tries int, away describeAway, err error) {
+func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title, head string) (change hq.Change, tries int, away describeAway, err error) {
 	client := describeClient(hqc)
 	unconfirmed := false
 	tries = describeRetry.run(ctx, func() hqAnswer {
-		change, err = putChangeDescription(ctx, client, stateDir, ref, text, title, head, stageBacked, at)
+		change, err = putChangeDescription(ctx, client, stateDir, ref, text, title, head)
 		if !describeTransient(err) {
 			return hqAnswered
 		}

@@ -241,7 +241,7 @@ func settledChangeOn(changes []hq.MateChange, repo, branch string) (hq.MateChang
 		if c.Repo != repo || c.Branch != branch {
 			continue
 		}
-		if c.State == hq.ChangeOpen {
+		if hq.ChangeIsOpen(c.State) {
 			return hq.MateChange{}, false
 		}
 		if newest == nil || c.Number > newest.Number {

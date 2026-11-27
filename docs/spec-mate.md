@@ -1501,7 +1501,7 @@ count.
 | C-9 | `zcp-devsup`, run by the dev setup's `run.start`, runs the declared servers; its runtime state lives in `$HOME/.zcp/devsup/` and zcp drives it with `zcp-devsup ctl` over SSH (§2.8a.2) | zcp repo `cmd/zcp-devsup` |
 | C-10 | The envelope's dev-service snapshot carries `stages[]` and `devServers[]` (§2.8a.3) | zcp `workflow.ServiceSnapshot`, the fork; the shared fixtures (§2.8a.7) |
 | C-11 | A tier names a part by `zeropsSetup` beside its hostname (§2.8a.5) | zcp composer, HQ `tierRuntimes` |
-| C-12 | zcp writes the Review build observation for every stage-backed setup of an open, ready code change, including a single part (§2.8a.6) | HQ change record |
+| C-12 | zcp writes the Review build observation for every stage-backed setup of an adding code change, including a single part (§2.8a.6) | HQ change record |
 
 All five are additive to contract 2: an older release ignores an unknown key, so none bumps
 `SupportedContract`. New envelope keys follow the field order in §2.8a.3.
@@ -2422,12 +2422,15 @@ zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe
 
 #### 2.8a.6 The Review build on an HQ change
 
-zcp writes `reviewBuild` by `PATCH /api/mate/changes/<repo>/<number>`. A take names the full head,
-`step: "taken"`, its time and its deadline; the result names that head, `step: "result"`, its time
-and one or more parts. Each part names the setup and stage, an `ok`, `failed` or `unavailable`
-outcome, and may name the app version and probe. A failure names its build, deploy or health phase
-and its reason. HQ holds one result for the head and derives the read state. The legacy `receipt`
-read key remains `null` until its readers remove it.
+Only the Mate owning an adding change takes its complete set of stages with its current head and
+main through HQ's Review build take route. It builds the change merged into that main, reports every
+stage through the take's result route and holds the stage locks until HQ's merge decision settles.
+A changed main or head requires a new take. Describing a change starts no build. When no change
+of a repository is adding, each Mate brings its own stages to main if their active version is behind.
+HQ owns the per-change, per-stage result and the merge decision; the platform owns active versions.
+The stage-owning Mate reports each main-follow result through HQ's repository/main-stage result
+route; HQ tells that Mate when the build fails.
+The route shapes and merging states are `zeropsio/mate-hq:spec/protocol.md` (Changes).
 
 #### 2.8a.7 Shared fixtures
 

@@ -73,8 +73,10 @@ type Chief struct {
 // MateRepo is one of the application's repositories in HQ, with the origin
 // connected to it, nil while none is.
 type MateRepo struct {
-	Name   string      `json:"name"`
-	Origin *RepoOrigin `json:"origin"`
+	Name     string      `json:"name"`
+	MainHead *string     `json:"mainHead"`
+	Adding   bool        `json:"adding"`
+	Origin   *RepoOrigin `json:"origin"`
 }
 
 // RepoOrigin is the origin connected to a repository in HQ — the repository
@@ -172,6 +174,8 @@ type ChecksGivenUp struct {
 type ReviewBuild struct {
 	State  string            `json:"state"`
 	Head   string            `json:"head"`
+	Main   *string           `json:"main,omitempty"`
+	Take   string            `json:"take,omitempty"`
 	At     string            `json:"at"`
 	Until  string            `json:"until,omitempty"`
 	Reason string            `json:"reason,omitempty"`
@@ -180,6 +184,7 @@ type ReviewBuild struct {
 
 // ReviewBuildPart is one setup's stage observation at that head.
 type ReviewBuildPart struct {
+	Part         string            `json:"part,omitempty"`
 	Setup        string            `json:"setup"`
 	Stage        string            `json:"stage"`
 	Outcome      string            `json:"outcome"`

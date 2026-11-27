@@ -244,7 +244,7 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 // nil once it is not one.
 func changeLineNow(c workflow.HQChange, state *hq.MateState, now time.Time) (workflow.HQChangeLine, *workflow.HQChangeTold) {
 	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told, now)}
-	line.Open = c.Told == nil || c.Told.State == "" || c.Told.State == hq.ChangeOpen
+	line.Open = c.Told == nil || c.Told.State == "" || hq.ChangeIsOpen(c.Told.State)
 	if c.Told != nil && c.Told.State == hq.ChangeClosed {
 		line.Labels = []string{"closed without merging"}
 	}

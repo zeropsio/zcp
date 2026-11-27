@@ -1,19 +1,12 @@
 # Review build
 
-- RB-TRIGGER — Only a ready, open code change without a passing or failing Review build at its head starts or resumes its Review build.
-- RB-TAKE — A failed or expired take is taken again; a result already accepted by HQ is never overwritten by a take from stale state.
-- RB-DEADLINE — A resumed take keeps its original deadline and reserves the HQ write's call budget; a new or expired take gets the current run's budget.
 - RB-FLIGHT — A stage build already running for the ready head is joined after a restart.
 - RB-ACTIVE — An active stage version identified as the ready head is probed without another build.
 - RB-FAILED — An identified failed version of the ready head is reported instead of built again.
-- RB-AGAIN — A stage builds the ready head only when its named versions contain no finished or progressing build of that head.
-- RB-CUT — A cut upload is removed before the ready head is built; a finished or progressing version of that head still prevents another build.
-- RB-STAGES — A Review build covers every recorded stage of the change's repository and writes nothing for a repository with none.
+- RB-CUT — A cut upload is removed before the selected source is built; an in-flight build of that source prevents another build.
+- RB-STAGES — A Review build covers every recorded stage of the change’s repository and identifies an empty stage set.
 - RB-SETUP — A stage whose setup is not recorded takes the setup from its repository's stand-up tier; a missing row is not guessed.
-- RB-RETRY — An unavailable Review build is retried after one, five and fifteen minutes and no fourth time.
-- RB-MOVED — A spent retry clock starts again when its change moves, not when its own result or an older state frame arrives.
-- RB-RESULT — One result includes all stage parts; a failed part prevents a mixed failed and unavailable result from being retried as unavailable.
-- RB-OBSERVE — A finished stage version at the ready head is reported without another build, and is probed only while active.
+- RB-RETRY — A Review build whose infrastructure cannot be reached retries after one, five and fifteen minutes and no fourth time.
 - RB-WAIT — A Review build waits for a held stage until its own deadline, says it is waiting, and continues when the stage is free.
 - RB-NAME — A stage version missing from the name search is not proof that the head has no build.
 - RB-RESUME — A named in-flight head is waited to its result and returned without starting another build.
@@ -25,4 +18,16 @@
 - RB-DEVWATCH — The dev git observer reads a replacement after its state watch ends and is opened again, or uses its retry wake when reopening fails.
 - RB-WATCH — The Review observer reads a replacement after its state watch ends and is opened again, or uses its stand-up wake when reopening fails.
 - RB-DESCRIBEHEAD — A description write addresses the checkout's captured head so HQ refuses words for a moved change.
-- RB-DESCRIBETAKE — A stage-backed description takes the Review build at the same head for thirty minutes; a repository without a recorded stage takes none.
+- RB-ADDING — Only an adding code change starts a Review build; an already running build is not started again.
+- RB-BASE — A changed main starts a new attempt even if the change head stayed the same.
+- RB-NEEDED — A stage builds the selected source when it is not the active version and no build is running.
+- RB-CURRENT — An active stage version at the selected source is probed without another build.
+- RB-MAIN — A stage behind main follows it only while no change is adding and no follow build is running.
+- RB-CANDIDATE — A change's candidate identity includes both its main and its change head, so a main move makes another build.
+- RB-WORKER — A worker stage keeps its own readiness check and relies on its deployment result without an added HTTP check.
+- RB-READINESS — A public stage's readiness check uses the same path as its probe and keeps the old version serving.
+- RB-SETUPFAIL — A change whose stage setup is invalid fails its build for its Mate to fix.
+- RB-CONFLICT — A merge conflict reports its files as a failed build to HQ for the change's Mate.
+- RB-SETTLE — A stage lock stays held across the merging state and stale HQ frames until the merge settles.
+- RB-RESULTWAIT — An uncertain result keeps the stage locked through a later refusal until HQ settles the take.
+- RB-WIRE — HQ's handoff object decodes and an adding change remains open for its Mate.

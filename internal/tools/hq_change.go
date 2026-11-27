@@ -112,7 +112,7 @@ func handedChangesIn(state hq.MateState, appID, repo string) []hq.MateChange {
 	}
 	var handed []hq.MateChange
 	for _, c := range state.Changes {
-		if c.Repo == repo && c.State == hq.ChangeOpen && c.Handed {
+		if c.Repo == repo && hq.ChangeIsOpen(c.State) && c.Handed {
 			handed = append(handed, c)
 		}
 	}
@@ -206,7 +206,7 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 		}
 		if s.Number == c.Number {
 			switch s.State {
-			case hq.ChangeOpen:
+			case hq.ChangeOpen, hq.ChangeAdding, hq.ChangeMerging:
 				return changeStillOpen, s
 			case hq.ChangeMerged:
 				return changeMerged, s
@@ -565,7 +565,7 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 func openChangesOf(state hq.MateState, appID, repo string, kept []workflow.HQChange) []workflow.HQChange {
 	var open []workflow.HQChange
 	for _, s := range state.Changes {
-		if s.Repo != repo || s.State != hq.ChangeOpen {
+		if s.Repo != repo || !hq.ChangeIsOpen(s.State) {
 			continue
 		}
 		if slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == s.Number && c.StateRev > state.Rev }) {

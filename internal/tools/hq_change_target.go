@@ -368,7 +368,7 @@ func (t changeTarget) openCandidates(state *hq.MateState, ledger []workflow.HQCh
 			return out
 		}
 		for _, c := range state.Changes {
-			if c.Repo != t.Repo || c.State != hq.ChangeOpen {
+			if c.Repo != t.Repo || !hq.ChangeIsOpen(c.State) {
 				continue
 			}
 			if k := kept(c.Number); k != nil && state.Rev < k.StateRev {

@@ -185,7 +185,7 @@ func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateD
 				case change.Repo != repo.Repo:
 				case change.OnMain():
 					merged = true
-				case change.State == hq.ChangeOpen:
+				case hq.ChangeIsOpen(change.State):
 					numbers = append(numbers, change.Number)
 				}
 			}

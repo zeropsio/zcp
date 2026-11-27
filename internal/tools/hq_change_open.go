@@ -348,7 +348,7 @@ func openedIn(state hq.MateState, target changeTarget, branch string) (hq.Change
 		return hq.Change{}, false
 	}
 	for _, c := range state.Changes {
-		if c.Repo != target.Repo || c.State != hq.ChangeOpen || c.Handed {
+		if c.Repo != target.Repo || !hq.ChangeIsOpen(c.State) || c.Handed {
 			continue
 		}
 		held := c.Branch

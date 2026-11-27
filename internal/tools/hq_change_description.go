@@ -391,15 +391,10 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 		}
 	}
 	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil {
-		return convertError(fmt.Errorf("read the recorded stages for the description: %w", err), WithRecoveryStatus()), nil, nil
-	}
-	stageBacked := target.Repo != hq.RecipeRepo && len(reviewStages(metas, target.AppID, target.Repo)) > 0
 	keepErr := keepChangeDescription(stateDir, ref, pick, text, title, workcopy.head)
 
 	url := hqc.ChangeURL(target.AppID, target.Repo, number)
-	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title, workcopy.head, stageBacked, time.Now())
+	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title, workcopy.head)
 	if err != nil {
 		result := changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true}
 		readStep := func() workflow.EditStep {
@@ -646,12 +641,12 @@ func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text
 // put. Nothing is written when a picture could not be attached: never a
 // description with a broken picture. It answers the change as HQ answered the
 // edit.
-func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title, head string, stageBacked bool, at time.Time) (hq.Change, error) {
+func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title, head string) (hq.Change, error) {
 	body, err := changeBody(ctx, hqc, stateDir, ref, text)
 	if err != nil {
 		return hq.Change{}, err
 	}
-	edit := descriptionEdit(body, title, head, stageBacked, at)
+	edit := descriptionEdit(body, title, head)
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
 	change, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit)
@@ -667,15 +662,11 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, r
 	return change, nil
 }
 
-// descriptionEdit binds the words and the optional take to the same head.
-func descriptionEdit(body, title, head string, stageBacked bool, at time.Time) hq.ChangeEdit {
+// descriptionEdit binds the words to the captured head.
+func descriptionEdit(body, title, head string) hq.ChangeEdit {
 	edit := hq.ChangeEdit{Body: &body, ExpectedHead: head}
 	if title != "" {
 		edit.Title = &title
-	}
-	if stageBacked {
-		at = at.UTC()
-		edit.ReviewBuild = &hq.ReviewBuildWrite{Head: head, Step: "taken", At: at.Format(time.RFC3339), Until: at.Add(30 * time.Minute).Format(time.RFC3339)}
 	}
 	return edit
 }

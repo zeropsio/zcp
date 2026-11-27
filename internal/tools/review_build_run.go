@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -15,69 +16,117 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// executeReviewBuild makes one observation of every recorded stage. HQ owns
-// the head check and ranks competing results inside the change's lock.
-func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, take bool, log func(string)) (bool, string, error) {
-	head := *change.Head
-	now := time.Now().UTC().Truncate(time.Second)
-	updatedAt := ""
-	if take {
-		write := hq.ReviewBuildWrite{Head: head, Step: "taken", At: now.Format(time.RFC3339), Until: now.Add(30 * time.Minute).Format(time.RFC3339)}
-		taken, err := hqc.Once().EditChange(ctx, change.Repo, change.Number, hq.ChangeEdit{ReviewBuild: &write})
-		if err != nil {
-			return true, updatedAt, fmt.Errorf("take Review build: %w", err)
+// executeReviewBuild takes the entire stage set only after holding its locks.
+// The lock scope includes HQ's asynchronous merge decision.
+func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, read func() (hq.MateStateDocument, error), log func(string)) (bool, string, error) {
+	if err := reviewResolveSetups(ctx, hqc, app, change.Repo, metas, stages); err != nil {
+		return true, "", fmt.Errorf("read stage setups: %w", err)
+	}
+	bindings, err := reviewBindStages(ctx, d, stages)
+	if err != nil {
+		return true, "", fmt.Errorf("find stages: %w", err)
+	}
+	release, err := reviewLockStages(ctx, d, bindings, log)
+	if err != nil {
+		return true, "", fmt.Errorf("lock stages: %w", err)
+	}
+	defer release()
+
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	watch := watchMateState(watchCtx, hqIdentity(d.rt).State.Watch, func(err error) {
+		if log != nil {
+			log(fmt.Sprintf("Review merge watch: %v", err))
 		}
-		updatedAt = taken.UpdatedAt
+	})
+	doc, err := read()
+	if err != nil {
+		return true, "", fmt.Errorf("read current Mate state: %w", err)
 	}
-	// Leave the HQ write its own call budget before the take's deadline.
-	work, cancel := context.WithDeadline(ctx, reviewWorkDeadline(now, change.ReviewBuild, take))
-	defer cancel()
-	if err := reviewResolveSetups(work, hqc, app, change.Repo, metas, stages); err != nil {
-		return true, updatedAt, fmt.Errorf("read stage setups: %w", err)
+	if doc.Link != hq.MateLinkLinked || doc.Mate == nil {
+		return true, "", fmt.Errorf("read current Mate state: HQ is not linked")
 	}
-	source := ops.NewHQDeploySource(d.httpClient, hqIdentity(d.rt))
-	parts := make([]hq.ReviewBuildPart, len(stages))
+	current, repo := reviewCurrent(doc.Mate, change.Repo, change.Number)
+	if current == nil || repo == nil {
+		return false, "", nil
+	}
+	if current.State == hq.ChangeMerging {
+		return false, "", reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, "", doc.Mate.Rev, true)
+	}
+	if current.State != hq.ChangeAdding || current.Head == nil || *current.Head == "" || current.ChecksGivenUp != nil {
+		return false, "", nil
+	}
+	// The local stage records can change while the locks were being acquired.
+	latest, err := workflow.ListServiceMetas(d.stateDir)
+	if err != nil {
+		return true, "", fmt.Errorf("reread stage records: %w", err)
+	}
+	fresh := reviewStages(latest, app, change.Repo)
+	if err := reviewResolveSetups(ctx, hqc, app, change.Repo, latest, fresh); err != nil {
+		return true, "", fmt.Errorf("reread stage setups: %w", err)
+	}
+	if !reviewSameStages(stages, fresh) {
+		return true, "", fmt.Errorf("stage set changed while waiting")
+	}
+
+	head := *current.Head
+	selected := make([]hq.ReviewStage, len(bindings))
+	for i, b := range bindings {
+		selected[i] = b.stage
+	}
+	take, err := hqc.TakeReviewBuild(ctx, change.Repo, change.Number, hq.ReviewTake{Head: head, Main: repo.MainHead, Stages: selected})
+	if err != nil {
+		return true, "", fmt.Errorf("take Review build: %w", err)
+	}
+	switch take.Decision {
+	case "declined":
+		return false, "", nil
+	case hq.ReviewDecisionMerging:
+		return false, "", reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, take.Take, doc.Mate.Rev, false)
+	case hq.ReviewDecisionBuild:
+		if take.Take == "" {
+			return true, "", fmt.Errorf("take Review build: HQ returned no take")
+		}
+	default:
+		return true, "", fmt.Errorf("take Review build: unknown decision %q", take.Decision)
+	}
+	version := reviewCandidateName(repo.MainHead, head)
+	var source ops.DeploySource
+	if repo.MainHead == nil {
+		source = ops.NewHQDeploySource(d.httpClient, hqIdentity(d.rt))
+		version = head
+	} else {
+		source = ops.NewHQReviewDeploySource(d.httpClient, hqIdentity(d.rt), *repo.MainHead, head)
+	}
+	parts := make([]hq.ReviewBuildPart, len(bindings))
 	var wg sync.WaitGroup
-	for i, stage := range stages {
+	for i, binding := range bindings {
 		wg.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
-					parts[i] = reviewUnavailablePart(hq.ReviewBuildPart{Setup: stage.SetupName, Stage: stage.Hostname}, reviewPhaseBuild, fmt.Errorf("worker stopped: %v", r))
+					parts[i] = reviewUnavailablePart(hq.ReviewBuildPart{}, reviewPhaseBuild, fmt.Errorf("worker stopped: %v", r))
 				}
+				parts[i].Part, parts[i].Setup, parts[i].Stage = binding.stage.Part, binding.stage.Setup, binding.stage.Stage
 			}()
-			parts[i] = reviewBuildStage(work, d, source, app+"/"+change.Repo, head, stage, log)
+			parts[i] = reviewBuildStageWithLock(ctx, d, source, app+"/"+change.Repo, version, binding.ref, log, true)
 		})
 	}
 	wg.Wait()
-	write, retry := reviewResult(head, time.Now(), parts)
-	result, err := hqc.Once().EditChange(ctx, change.Repo, change.Number, hq.ChangeEdit{ReviewBuild: &write})
+	result, err := reviewFinishResult(ctx, hqc, change.Repo, change.Number, take.Take, parts, watch)
 	if err != nil {
-		return true, updatedAt, fmt.Errorf("write Review build: %w", err)
+		return true, "", fmt.Errorf("write Review build: %w", err)
 	}
-	return retry, result.UpdatedAt, nil
-}
-
-func reviewWorkDeadline(now time.Time, build *hq.ReviewBuild, take bool) time.Time {
-	deadline := now.Add(30 * time.Minute)
-	if !take && build != nil && build.State == reviewAwaiting {
-		if until, err := time.Parse(time.RFC3339, build.Until); err == nil && now.Before(until) && until.Before(deadline) {
-			deadline = until
+	if result.Decision == hq.ReviewDecisionMerging {
+		if err := reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, take.Take, doc.Mate.Rev, false); err != nil {
+			return true, "", err
 		}
 	}
-	return deadline.Add(-hqCallTimeout)
+	return result.Decision == hq.ReviewDecisionUnavailable, "", nil
 }
 
-func reviewResult(head string, at time.Time, parts []hq.ReviewBuildPart) (hq.ReviewBuildWrite, bool) {
-	unavailable, failed := false, false
-	for _, part := range parts {
-		unavailable = unavailable || part.Outcome == reviewUnavailable
-		failed = failed || part.Outcome == reviewOutcomeFailed
-	}
-	return hq.ReviewBuildWrite{Head: head, Step: "result", At: at.UTC().Format(time.RFC3339), Parts: parts}, unavailable && !failed
-}
-
-func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef, log func(string)) hq.ReviewBuildPart {
-	part := hq.ReviewBuildPart{Setup: stage.SetupName, Stage: stage.Hostname}
+// A caller holding all stage locks keeps them past this function, through HQ's decision.
+func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef, log func(string), locked bool) hq.ReviewBuildPart {
+	part := hq.ReviewBuildPart{Part: stage.Hostname, Setup: stage.SetupName, Stage: stage.Hostname}
 	unavailable := func(step string, err error) hq.ReviewBuildPart {
 		return reviewUnavailablePart(part, step, err)
 	}
@@ -112,24 +161,18 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 	if parsed, parseErr := url.Parse(publicURL); parseErr == nil && parsed.Hostname() != "" {
 		part.Stage = parsed.Hostname()
 	}
-	_, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
-	if err == nil && found.action == reviewComplete {
-		part.Outcome, part.AppVersionID = "ok", found.id
-		return part
-	}
-	if err == nil && found.action == reviewFailed {
-		return reviewFailedPart(ctx, d, stage.Hostname, part, found)
-	}
-	release, err := ops.LockStageUntil(ctx, d.stateDir, svc.ID, func() {
-		if log != nil {
-			log(fmt.Sprintf("Review build %s: waiting for the stage %s", repository, part.Stage))
+	if !locked {
+		release, lockErr := ops.LockStageUntil(ctx, d.stateDir, svc.ID, func() {
+			if log != nil {
+				log(fmt.Sprintf("Review build %s: waiting for the stage %s", repository, part.Stage))
+			}
+		})
+		if lockErr != nil {
+			return unavailable("lock stage", lockErr)
 		}
-	})
-	if err != nil {
-		return unavailable("lock stage", err)
+		defer release()
 	}
-	defer release()
-	svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head)
+	svc, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
 	if err != nil {
 		return unavailable("read stage version", err)
 	}
@@ -143,10 +186,6 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 			return unavailable("read stage version", err)
 		}
 	}
-	if found.action == reviewComplete {
-		part.Outcome, part.AppVersionID = "ok", found.id
-		return part
-	}
 	if found.action == reviewFailed {
 		return reviewFailedPart(ctx, d, stage.Hostname, part, found)
 	}
@@ -154,11 +193,26 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 	if found.action == reviewUnknown {
 		return unavailable("read stage version", fmt.Errorf("version %s is %s and has no live build", found.id, found.status))
 	}
+	port, hasPort := ops.PreferredHTTPPort(svc.Ports)
+	if public && !hasPort {
+		return unavailable("prepare readiness", fmt.Errorf("stage has no HTTP port"))
+	}
+	source = reviewReadySource{source: source, setup: stage.SetupName, port: port.Port, public: public}
 	if found.action == reviewBuild {
 		res, deployErr := ops.CommitDeploy(ctx, d.client, source, ops.CommitDeployRequest{
 			ServiceID: svc.ID, Hostname: stage.Hostname, Setup: stage.SetupName, Repository: repository, Commit: head,
 		})
 		if deployErr != nil {
+			var conflict *ops.MergeConflictError
+			if errors.As(deployErr, &conflict) {
+				part.Outcome, part.Phase, part.Reason = reviewOutcomeFailed, reviewPhaseBuild, reviewReason("merge", conflict.Error())
+				return part
+			}
+			var setupErr *reviewSetupError
+			if errors.As(deployErr, &setupErr) {
+				part.Outcome, part.Phase, part.Reason = reviewOutcomeFailed, reviewPhaseBuild, reviewReason("prepare stage", setupErr.Error())
+				return part
+			}
 			return unavailable("start build", deployErr)
 		}
 		found = reviewVersion{action: reviewJoin, id: res.AppVersionID, process: res.ProcessID}
@@ -185,10 +239,6 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 		}
 		if reviewFailedStatus(version.Status) || status == platform.ProcessStatusFailed {
 			return reviewFailedPart(ctx, d, stage.Hostname, part, reviewVersion{id: version.ID, status: version.Status, reason: status})
-		}
-		if version.Status == platform.BuildStatusBackup || version.Status == platform.BuildStatusDeployed {
-			part.Outcome = "ok"
-			return part
 		}
 		if version.Status != platform.AppVersionStatusActive {
 			return unavailable("read finished build", fmt.Errorf("version %s is %s", version.ID, version.Status))
@@ -378,4 +428,35 @@ func reviewHealthPath(body, setup string) (string, error) {
 	get, _ := check["httpGet"].(map[string]any)
 	path, _ := get["path"].(string)
 	return strings.TrimSpace(path), nil
+}
+
+// reviewReadySource changes only the build's setup, leaving its source tree intact.
+type reviewReadySource struct {
+	source ops.DeploySource
+	setup  string
+	port   int
+	public bool
+}
+
+type reviewSetupError struct{ err error }
+
+func (e *reviewSetupError) Error() string { return e.err.Error() }
+func (e *reviewSetupError) Unwrap() error { return e.err }
+
+func (s reviewReadySource) Open(ctx context.Context, repository, commit string) (ops.CommitSource, error) {
+	opened, err := s.source.Open(ctx, repository, commit)
+	if err != nil {
+		var missing *ops.MissingDeployConfigError
+		if errors.As(err, &missing) {
+			return ops.CommitSource{}, &reviewSetupError{err: err}
+		}
+		return ops.CommitSource{}, fmt.Errorf("open stage source: %w", err)
+	}
+	yaml, _, err := ops.ReviewStageSetup(opened.ZeropsYaml, s.setup, s.port, s.public)
+	if err != nil {
+		_ = opened.Archive.Close()
+		return ops.CommitSource{}, &reviewSetupError{err: fmt.Errorf("prepare stage readiness: %w", err)}
+	}
+	opened.ZeropsYaml = yaml
+	return opened, nil
 }

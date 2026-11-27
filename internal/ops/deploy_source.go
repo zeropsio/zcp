@@ -95,6 +95,110 @@ func (s hqDeploySource) Open(ctx context.Context, repository, commit string) (Co
 	return opened, nil
 }
 
+// MergeConflictError names files Git could not merge for an adding change.
+type MergeConflictError struct{ Paths []string }
+
+func (e *MergeConflictError) Error() string { return "merge conflict: " + strings.Join(e.Paths, ", ") }
+
+// MissingDeployConfigError is a source tree with no root Zerops configuration.
+type MissingDeployConfigError struct{ Tree string }
+
+func (e *MissingDeployConfigError) Error() string {
+	return fmt.Sprintf("commit deploy: commit %s has no %s or %s at its root", e.Tree, zeropsYmlPrimary, zeropsYmlFallback)
+}
+
+func (e *MissingDeployConfigError) Class() platform.ErrorClass { return platform.ClassRefused }
+
+// NewHQReviewDeploySource reads a change merged onto its current main in a
+// scratch repository. Its identity is supplied by the caller; it is not a
+// commit in HQ. Open repeats the deterministic merge after a restart.
+func NewHQReviewDeploySource(httpClient hq.Doer, id hq.Identity, main, head string) DeploySource {
+	project, err := hq.OpenProject(httpClient, id)
+	return reviewDeploySource{hqDeploySource: hqDeploySource{project: project, opened: err, id: id}, main: main, head: head}
+}
+
+type reviewDeploySource struct {
+	hqDeploySource
+	main, head string
+}
+
+func (s reviewDeploySource) Open(ctx context.Context, repository, _ string) (CommitSource, error) {
+	if s.opened != nil {
+		return CommitSource{}, fmt.Errorf("open review source: %w", s.opened)
+	}
+	app, name, ok := strings.Cut(repository, "/")
+	if !ok || app == "" || name == "" {
+		return CommitSource{}, fmt.Errorf("review source: invalid repository %q", repository)
+	}
+	repoURL, err := hq.RepoURLAt(s.id.Origin, s.id.OrgID, app, name)
+	if err != nil {
+		return CommitSource{}, fmt.Errorf("review source: %w", err)
+	}
+	removeLeftScratches()
+	dir, err := os.MkdirTemp("", scratchPrefix+strconv.Itoa(os.Getpid())+"-")
+	if err != nil {
+		return CommitSource{}, fmt.Errorf("review source scratch: %w", err)
+	}
+	g := sourceGit{dir: dir, env: append(s.project.GitEnv(), "LC_ALL=C"), key: s.id.Key}
+	opened, err := g.openMerge(ctx, repoURL, s.main, s.head)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return CommitSource{}, fmt.Errorf("review source: %w", err)
+	}
+	return opened, nil
+}
+
+func (g sourceGit) openMerge(ctx context.Context, repoURL, main, head string) (CommitSource, error) {
+	if _, err := g.run(ctx, nil, "init", "--bare", "-q"); err != nil {
+		return CommitSource{}, err
+	}
+	fetch := append(append([]string{"-c", "http.followRedirects=false"}, fetchLowSpeed...), "fetch", "-q", "--no-tags", repoURL, main, head)
+	if _, err := g.run(ctx, nil, fetch...); err != nil {
+		return CommitSource{}, err
+	}
+	args := []string{"merge-tree", "--write-tree", "--name-only", "-z", main, head}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir, cmd.Env, cmd.WaitDelay = g.dir, g.env, gitWaitDelay
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return CommitSource{}, fmt.Errorf("merge stopped: %w", ctx.Err())
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			fields := strings.Split(stdout.String(), "\x00")
+			var paths []string
+			for _, path := range fields[1:] {
+				if path == "" {
+					break
+				}
+				paths = append(paths, path)
+			}
+			return CommitSource{}, &MergeConflictError{Paths: paths}
+		}
+		return CommitSource{}, g.failure(args, stderr.String(), err)
+	}
+	tree := strings.TrimSpace(strings.TrimRight(stdout.String(), "\x00"))
+	yaml, err := g.zeropsYaml(ctx, tree)
+	if err != nil {
+		return CommitSource{}, err
+	}
+	empty := filepath.Join(g.dir, "no-worktree")
+	if err := os.Mkdir(empty, 0o700); err != nil {
+		return CommitSource{}, fmt.Errorf("review source worktree: %w", err)
+	}
+	deployTree, err := g.deployTree(ctx, tree, empty)
+	if err != nil {
+		return CommitSource{}, err
+	}
+	archive, err := g.archive(ctx, deployTree, empty)
+	if err != nil {
+		return CommitSource{}, err
+	}
+	return CommitSource{Archive: archive, ZeropsYaml: yaml}, nil
+}
+
 // removeLeftScratches removes the scratch directories of deploy sources
 // whose process is gone (a zcp killed mid-deploy); a live process's,
 // this one's among them, stay.
@@ -175,8 +279,7 @@ func (g sourceGit) zeropsYaml(ctx context.Context, commit string) (string, error
 			return g.run(ctx, nil, "cat-file", "blob", commit+":"+name)
 		}
 	}
-	return "", &deployError{class: platform.ClassRefused, step: "commit deploy",
-		words: fmt.Sprintf("commit %s has no %s or %s at its root", commit, zeropsYmlPrimary, zeropsYmlFallback)}
+	return "", &MissingDeployConfigError{Tree: commit}
 }
 
 // deployTree is the tree to archive: commit's own, or, when it has a root

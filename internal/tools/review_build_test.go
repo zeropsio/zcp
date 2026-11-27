@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -17,80 +18,36 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
+	"gopkg.in/yaml.v3"
 )
 
-// witness: internal/tools/review_build.go | c.Ready == nil || !*c.Ready || running → c.Ready == nil || *c.Ready || running
-func TestReviewNext_RBTrigger_Change_SelectsWork(t *testing.T) {
+func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, stage topology.StageRef, log func(string)) hq.ReviewBuildPart {
+	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage, log, false)
+}
+
+// witness: internal/tools/review_build.go | c.State == hq.ChangeAdding → c.State != hq.ChangeAdding
+func TestReviewNext_RBAdding_OnlyAdding_Takes(t *testing.T) {
 	t.Parallel()
-	head, ready, draft := "abcdef", true, false
-	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	head := "abcdef"
 	for _, tc := range []struct {
-		name    string
-		change  hq.MateChange
-		running bool
-		want    reviewAction
+		name, state, repo string
+		running           bool
+		want              reviewAction
 	}{
-		{"new", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready}, false, reviewTake},
-		{"taken", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "awaiting", Until: "2026-11-27T12:30:00Z"}}, false, reviewRun},
-		{"expired", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "awaiting", Until: "2026-11-27T11:30:00Z"}}, false, reviewRetry},
-		{"unavailable", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "unavailable"}}, false, reviewRetry},
-		{"passing held", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "passing"}}, false, reviewNothing},
-		{"failing held", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "failing"}}, false, reviewNothing},
-		{"old head", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "older", State: "passing"}}, false, reviewTake},
-		{"draft", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &draft}, false, reviewNothing},
-		{"closed", hq.MateChange{State: "closed", Repo: "app", Head: &head, Ready: &ready}, false, reviewNothing},
-		{"recipe", hq.MateChange{State: "open", Repo: hq.RecipeRepo, Head: &head, Ready: &ready}, false, reviewNothing},
-		{"running", hq.MateChange{State: "open", Repo: "app", Head: &head, Ready: &ready}, true, reviewNothing},
+		{"adding", hq.ChangeAdding, "app", false, reviewTake},
+		{"described", hq.ChangeOpen, "app", false, reviewNothing},
+		{"merged", hq.ChangeMerged, "app", false, reviewNothing},
+		{"already running", hq.ChangeAdding, "app", true, reviewNothing},
+		{"recipe", hq.ChangeAdding, hq.RecipeRepo, false, reviewNothing},
+		{"merging recovery", hq.ChangeMerging, "app", false, reviewRun},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := reviewNext(tc.change, tc.running, now); got != tc.want {
+			got := reviewNext(hq.MateChange{Repo: tc.repo, State: tc.state, Head: &head}, tc.running, time.Time{})
+			if got != tc.want {
 				t.Fatalf("action = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-// witness: internal/tools/review_build.go | action == reviewTake || action == reviewRetry && build != nil && build.Until != "" → action == reviewTake
-func TestReviewTake_RBTake_Retry_ProtectsStoredResult(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		action reviewAction
-		stored bool
-		build  *hq.ReviewBuild
-		want   bool
-	}{
-		{"new", reviewTake, false, nil, true},
-		{"stale new", reviewTake, true, nil, false},
-		{"live take", reviewRun, false, &hq.ReviewBuild{State: "awaiting", Until: "2026-11-27T12:30:00Z"}, false},
-		{"expired take", reviewRetry, false, &hq.ReviewBuild{State: "unavailable", Until: "2026-11-27T11:30:00Z"}, true},
-		{"stale expired take", reviewRetry, true, &hq.ReviewBuild{State: "unavailable", Until: "2026-11-27T11:30:00Z"}, false},
-		{"unavailable result", reviewRetry, false, &hq.ReviewBuild{State: "unavailable", Parts: []hq.ReviewBuildPart{{Outcome: "unavailable"}}}, false},
-	} {
-		if got := reviewNeedsTake(tc.action, tc.stored, tc.build); got != tc.want {
-			t.Fatalf("%s: got %t, want %t", tc.name, got, tc.want)
-		}
-	}
-}
-
-// witness: internal/tools/review_build_run.go | until.Before(deadline) → until.After(deadline)
-func TestReviewDeadline_RBDeadline_Resume_PreservesTake(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		build *hq.ReviewBuild
-		take  bool
-		want  time.Time
-	}{
-		{nil, true, time.Date(2026, 11, 27, 12, 29, 30, 0, time.UTC)},
-		{&hq.ReviewBuild{State: "awaiting", Until: "2026-11-27T12:05:00Z"}, false, time.Date(2026, 11, 27, 12, 4, 30, 0, time.UTC)},
-		{&hq.ReviewBuild{State: "awaiting", Until: "2026-11-27T11:59:00Z"}, false, time.Date(2026, 11, 27, 12, 29, 30, 0, time.UTC)},
-		{&hq.ReviewBuild{State: "unavailable", Until: "2026-11-27T12:05:00Z"}, false, time.Date(2026, 11, 27, 12, 29, 30, 0, time.UTC)},
-	} {
-		if got := reviewWorkDeadline(now, tc.build, tc.take); !got.Equal(tc.want) {
-			t.Fatalf("build %+v take %t: got %v, want %v", tc.build, tc.take, got, tc.want)
-		}
 	}
 }
 
@@ -133,7 +90,7 @@ func TestReviewVersion_RBFailed_EndedHead_ReportsFailure(t *testing.T) {
 }
 
 // witness: internal/tools/review_build.go | return reviewVersion{action: reviewBuild} → return reviewVersion{action: reviewProbe}
-func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
+func TestReviewVersion_RBNeeded_InactiveVersion_BuildsAgain(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		versions []platform.AppVersionEvent
@@ -141,7 +98,7 @@ func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
 	}{
 		{nil, reviewBuild},
 		{[]platform.AppVersionEvent{{ID: "other", Name: "zcp another", Status: "BACKUP"}}, reviewBuild},
-		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewComplete},
+		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewBuild},
 	} {
 		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil)
 		if got.action != tc.want {
@@ -156,7 +113,7 @@ func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}}).
 		WithProcess(&platform.Process{ID: "build-av-stage-zcp abcdef", Status: "FINISHED"})
 	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 	if part.AppVersionID != "av-stage-zcp abcdef" || part.Outcome != "unavailable" || !strings.Contains(part.Reason, "was not returned") {
 		t.Fatalf("absent version: %+v", part)
 	}
@@ -184,7 +141,7 @@ func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
 				client.WithError("DeleteAppVersion", tc.deleteErr)
 			}
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, reviewTestSource{}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 			if part.Outcome != "unavailable" || part.AppVersionID != tc.version || !strings.Contains(part.Reason, tc.reason) {
 				t.Fatalf("cut upload: %+v", part)
 			}
@@ -194,7 +151,6 @@ func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
 		status string
 		want   reviewVersionAction
 	}{
-		{"BACKUP", reviewComplete},
 		{"BUILDING", reviewUnknown},
 		{"DEPLOYING", reviewUnknown},
 	} {
@@ -258,58 +214,28 @@ func TestReviewRetry_RBRetry_Unavailable_IsBounded(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build_watch.go | a.stopped && reviewUpdated(change.UpdatedAt, a.updatedAt) → a.stopped && false
-func TestReviewRetry_RBMoved_Change_RestartsSpentClock(t *testing.T) {
+// witness: internal/tools/review_build_watch.go | a.head != *change.Head || a.main != main → a.head != *change.Head || a.main == main
+func TestReviewAttempt_RBBase_MainMoves_StartsNewAttempt(t *testing.T) {
 	t.Parallel()
-	head, ready := "abcdef", true
-	key := reviewKey{repo: "app", number: 7}
-	for _, tc := range []struct {
-		name, updatedAt string
-		restart         bool
-	}{
-		{"older frame", "2026-11-27T12:00:00Z", false},
-		{"own result", "2026-11-27T12:01:00Z", false},
-		{"change moved", "2026-11-27T12:02:00Z", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			synctest.Test(t, func(t *testing.T) {
-				a := &reviewAttempt{head: head, tries: 3, running: true, updatedAt: "2026-11-27T12:00:00Z"}
-				o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
-				o.finish(reviewDone{key: key, head: head, updatedAt: "2026-11-27T12:01:00Z", unavailable: true})
-				change := hq.MateChange{Repo: "app", Number: 7, State: "open", Head: &head, Ready: &ready,
-					UpdatedAt: tc.updatedAt, ReviewBuild: &hq.ReviewBuild{Head: head, State: "unavailable"}}
-				o.consider(context.Background(), key, change, "app-id")
-				got := o.attempts[key]
-				if restarted := got != a; restarted != tc.restart || (restarted && (got.stopped || got.next.IsZero())) {
-					t.Fatalf("restarted %t, attempt %+v; want restart %t", restarted, got, tc.restart)
-				}
-			})
-		})
-	}
-}
-
-// witness: internal/tools/review_build_run.go | Parts: parts}, unavailable && !failed → Parts: parts[:1]}, unavailable && !failed
-func TestReviewResult_RBResult_Parts_PreservedWithFailurePrecedence(t *testing.T) {
-	t.Parallel()
-	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		parts []hq.ReviewBuildPart
-		retry bool
-	}{
-		{[]hq.ReviewBuildPart{{Setup: "web", Stage: "webstage", Outcome: "ok"}, {Setup: "api", Stage: "apistage", Outcome: "ok"}}, false},
-		{[]hq.ReviewBuildPart{{Setup: "web", Stage: "webstage", Outcome: "unavailable"}, {Setup: "api", Stage: "apistage", Outcome: "ok"}}, true},
-		{[]hq.ReviewBuildPart{{Setup: "web", Stage: "webstage", Outcome: "unavailable"}, {Setup: "api", Stage: "apistage", Outcome: "failed"}}, false},
-	} {
-		got, retry := reviewResult("head", at, tc.parts)
-		if got.Head != "head" || got.Step != "result" || got.At != "2026-11-27T12:00:00Z" || !reflect.DeepEqual(got.Parts, tc.parts) || retry != tc.retry {
-			t.Fatalf("parts %+v: got %+v retry %t, want retry %t", tc.parts, got, retry, tc.retry)
+	synctest.Test(t, func(t *testing.T) {
+		head := "feature"
+		key := reviewKey{repo: "app", number: 7}
+		for _, tc := range []struct {
+			main    string
+			restart bool
+		}{{"base-one", false}, {"base-two", true}} {
+			old := &reviewAttempt{head: head, main: "base-one", completed: true}
+			o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: old}, deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{}, false }}
+			o.consider(context.Background(), key, hq.MateChange{Repo: "app", State: hq.ChangeAdding, Head: &head}, "app-id", tc.main)
+			if got := o.attempts[key]; (got != old) != tc.restart || got.main != tc.main {
+				t.Fatalf("main %s: attempt %+v", tc.main, got)
+			}
 		}
-	}
+	})
 }
 
 // witness: internal/tools/review_build_run.go | part.AppVersionID = found.id → part.AppVersionID = ""
-func TestReviewStage_RBObserve_FinishedVersion_ReturnsWithoutRebuilding(t *testing.T) {
+func TestReviewStage_RBCurrent_ActiveVersion_ProbesWithoutRebuilding(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, status, stage string
@@ -317,7 +243,6 @@ func TestReviewStage_RBObserve_FinishedVersion_ReturnsWithoutRebuilding(t *testi
 	}{
 		{"private active", "ACTIVE", "apistage", false, false},
 		{"public active", "ACTIVE", "apistage-example.test", true, true},
-		{"public backup", "BACKUP", "apistage-example.test", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -334,10 +259,9 @@ func TestReviewStage_RBObserve_FinishedVersion_ReturnsWithoutRebuilding(t *testi
 				httpClient: checkLogDoer(func(*http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 				})}
-			part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: "zerops:\n  - setup: api\n    run:\n      base: static\n"}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
-			write, retry := reviewResult("abcdef", time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC), []hq.ReviewBuildPart{part})
-			if retry || write.Parts[0].Outcome != "ok" || part.AppVersionID != "version" || part.Stage != tc.stage || (part.Probe != nil) != tc.probe {
-				t.Fatalf("%s: result %+v, retry %t", tc.name, write, retry)
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: "zerops:\n  - setup: api\n    run:\n      base: static\n"}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			if part.Outcome != "ok" || part.AppVersionID != "version" || part.Stage != tc.stage || (part.Probe != nil) != tc.probe {
+				t.Fatalf("%s: result %+v", tc.name, part)
 			}
 		})
 	}
@@ -350,7 +274,7 @@ func TestReviewStage_RBName_SearchLag_DoesNotBuildAgain(t *testing.T) {
 	client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
 		WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BACKUP"}})
 	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: errors.New("a duplicate build was started")}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: errors.New("a duplicate build was started")}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 	if part.Outcome != "unavailable" || !strings.Contains(part.Reason, "version is not yet in the name search") {
 		t.Fatalf("missing name: %+v", part)
 	}
@@ -375,7 +299,7 @@ func TestReviewStage_RBWait_HeldStage_WaitsForItsDeadline(t *testing.T) {
 		waiting := make(chan string, 1)
 		result := make(chan hq.ReviewBuildPart, 1)
 		go func() {
-			result <- reviewBuildStage(ctx, d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, func(line string) { waiting <- line })
+			result <- reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, func(line string) { waiting <- line })
 		}()
 		synctest.Wait()
 		select {
@@ -421,7 +345,7 @@ func TestReviewStage_RBResume_HeadInFlight_WaitsForVersion(t *testing.T) {
 				WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "RUNNING")}).
 				WithProcess(&platform.Process{ID: "process", Status: "FINISHED"})
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 			if part.Outcome != tc.outcome || part.Phase != tc.phase || part.AppVersionID != "version" {
 				t.Fatalf("joined private stage: %+v", part)
 			}
@@ -452,7 +376,7 @@ func TestReviewStage_RBFaillog_PublicFailure_ReportsLastBuildLine(t *testing.T) 
 				{Timestamp: "2026-11-27T12:00:01Z", Facility: "local0", Tag: "zbuilder@version", Message: "missing module"},
 			})
 			d := devGitDeps{client: client, logFetcher: fetcher, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 			if part.Outcome != "failed" || part.Phase != "build" || part.AppVersionID != "version" || part.Stage != "apistage-1df2.prg1.zerops.app" || part.Reason != "build: missing module" {
 				t.Fatalf("public stage failure: %+v", part)
 			}
@@ -541,7 +465,7 @@ func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.
 				d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 				defer cancel()
-				part := reviewBuildStage(ctx, d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+				part := reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 				if part.Outcome != "unavailable" || part.Phase != "" || part.Stage != "apistage-example.test" || !strings.HasPrefix(part.Reason, tc.step+": ") || tc.busyLock && !strings.Contains(part.Reason, "wait for stage lock") {
 					t.Fatalf("%s: got %+v", tc.step, part)
 				}
@@ -650,7 +574,7 @@ func TestReviewWatch_RBWatch_Ended_ContinuesReading(t *testing.T) {
 				head, app, ready := "first", "app-id", true
 				key := reviewKey{repo: "app", number: 7}
 				o := &reviewObserver{read: func() (hq.MateStateDocument, error) {
-					return hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "app", Number: 7, State: "open", Head: &head, Ready: &ready}}}}, nil
+					return hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{AppID: &app, Repos: []hq.MateRepo{{Name: "app"}}, Changes: []hq.MateChange{{Repo: "app", Number: 7, State: "adding", Head: &head, Ready: &ready}}}}, nil
 				}, deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{}, false }, attempts: make(map[reviewKey]*reviewAttempt), done: make(chan reviewDone)}
 				go o.run(ctx, changed, standup)
 				synctest.Wait()
@@ -720,6 +644,9 @@ func (s reviewTestSource) Open(_ context.Context, repository, commit string) (op
 	if repository != "app/code" || commit != "abcdef" {
 		return ops.CommitSource{}, errors.New("wrong repository or commit")
 	}
+	if s.yaml == "" {
+		s.yaml = "zerops:\n  - setup: api\n    run:\n      base: static\n"
+	}
 	return ops.CommitSource{ZeropsYaml: s.yaml, Archive: io.NopCloser(strings.NewReader(""))}, nil
 }
 
@@ -750,7 +677,7 @@ func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
 						}
 						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 					})}
-				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "prod"}, nil)
+				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, topology.StageRef{Hostname: "apistage", SetupName: "prod"}, nil)
 				if part.Outcome != tc.outcome || part.AppVersionID != "version" {
 					t.Fatalf("got %+v, want outcome %s for version", part, tc.outcome)
 				}
@@ -771,7 +698,6 @@ func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
 // witness: internal/tools/hq_change_description.go | ExpectedHead: head → ExpectedHead: ""
 func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 	t.Parallel()
-	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name, head, body, title string
 	}{
@@ -780,7 +706,7 @@ func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := descriptionEdit(tc.body, tc.title, tc.head, false, at)
+			got := descriptionEdit(tc.body, tc.title, tc.head)
 			if got.ExpectedHead != tc.head || got.Body == nil || *got.Body != tc.body || (tc.title == "" && got.Title != nil) || (tc.title != "" && (got.Title == nil || *got.Title != tc.title)) {
 				t.Fatalf("description edit = %+v, want body, title and expected head for %s", got, tc.head)
 			}
@@ -788,25 +714,281 @@ func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/hq_change_description.go | if stageBacked { → if !stageBacked {
-func TestDescriptionEdit_RBDescribeTake_StageControlsTake(t *testing.T) {
+// witness: internal/tools/review_build.go | !repo.Adding && repo.MainHead != nil → repo.Adding && repo.MainHead != nil
+// witness: internal/tools/review_build_watch.go | attempt.completed = false → attempt.completed = true
+func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	t.Parallel()
-	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	main := "main-sha"
 	for _, tc := range []struct {
-		name  string
-		stage bool
-		want  *hq.ReviewBuildWrite
+		name            string
+		adding, running bool
+		head            *string
+		want            bool
 	}{
-		{"stage", true, &hq.ReviewBuildWrite{Head: head, Step: "taken", At: "2026-11-27T12:00:00Z", Until: "2026-11-27T12:30:00Z"}},
-		{"no stage", false, nil},
+		{"idle", false, false, &main, true}, {"adding", true, false, &main, false},
+		{"already running", false, true, &main, false}, {"unborn", false, false, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := descriptionEdit("body", "title", head, tc.stage, at)
-			if !reflect.DeepEqual(got.ReviewBuild, tc.want) {
-				t.Fatalf("take = %+v, want %+v", got.ReviewBuild, tc.want)
+			if got := reviewMainNext(hq.MateRepo{Adding: tc.adding, MainHead: tc.head}, tc.running); got != tc.want {
+				t.Fatalf("follow main = %t, want %t", got, tc.want)
 			}
 		})
+	}
+	found := reviewVersionOf(main, "stage", "older", []platform.AppVersionEvent{{ID: "older", Name: ops.AppVersionName("old"), Status: "ACTIVE"}}, nil)
+	if found.action != reviewBuild {
+		t.Fatalf("lagging stage: %+v", found)
+	}
+	key := reviewKey{repo: "code"}
+	attempt := &reviewAttempt{head: main, main: main, completed: true}
+	calls := 0
+	observer := reviewObserver{
+		attempts: map[reviewKey]*reviewAttempt{key: attempt},
+		deps: func(context.Context) (devGitDeps, bool) {
+			calls++
+			return devGitDeps{}, false
+		},
+	}
+	repo := hq.MateRepo{Name: "code", MainHead: &main, Adding: true}
+	observer.considerMain(t.Context(), key, repo, "app")
+	if attempt.completed || calls != 0 {
+		t.Fatalf("adding: completed=%t, builds=%d", attempt.completed, calls)
+	}
+	repo.Adding = false
+	observer.considerMain(t.Context(), key, repo, "app")
+	if calls != 1 {
+		t.Fatalf("after declined candidate: main checked %d times, want 1", calls)
+	}
+}
+
+// witness: internal/tools/review_build_take.go | base + "\x00" + head → head
+func TestReviewCandidate_RBCandidate_MainAndHead_IdentifyTheSource(t *testing.T) {
+	t.Parallel()
+	one, two := "main-one", "main-two"
+	a, again, moved := reviewCandidateName(&one, "feature"), reviewCandidateName(&one, "feature"), reviewCandidateName(&two, "feature")
+	if a == "feature" || a != again || a == moved {
+		t.Fatalf("candidate identities: %q, %q, %q", a, again, moved)
+	}
+}
+
+// witness: internal/ops/review_readiness.go | if !public { → if public {
+func TestReviewSetup_RBWorker_PreservesDeclaredReadiness(t *testing.T) {
+	t.Parallel()
+	body := "zerops:\n  - setup: worker\n    run:\n      start: worker\n    deploy:\n      temporaryShutdown: true\n      readinessCheck:\n        exec:\n          command: check-worker\n"
+	got, path, err := ops.ReviewStageSetup(body, "worker", 0, false)
+	if err != nil || path != "" {
+		t.Fatalf("worker setup: path %q, error %v", path, err)
+	}
+	var doc struct {
+		Zerops []struct {
+			Deploy struct {
+				TemporaryShutdown bool           `yaml:"temporaryShutdown"`
+				ReadinessCheck    map[string]any `yaml:"readinessCheck"`
+			} `yaml:"deploy"`
+		} `yaml:"zerops"`
+	}
+	if err := yaml.Unmarshal([]byte(got), &doc); err != nil {
+		t.Fatal(err)
+	}
+	check := doc.Zerops[0].Deploy.ReadinessCheck
+	exec, _ := check["exec"].(map[string]any)
+	if doc.Zerops[0].Deploy.TemporaryShutdown || exec["command"] != "check-worker" || check["httpGet"] != nil {
+		t.Fatalf("worker deploy: %+v", doc.Zerops[0].Deploy)
+	}
+}
+
+// witness: internal/ops/review_readiness.go | check["httpGet"] = map[string]any{"path": path, "port": port} → check["httpGet"] = map[string]any{"path": "/", "port": port}
+func TestReviewSetup_RBReadiness_PublicStage_UsesProbePath(t *testing.T) {
+	t.Parallel()
+	body := "zerops:\n  - setup: base\n    run:\n      healthCheck:\n        httpGet:\n          path: /ready\n  - setup: web\n    extends: base\n    deploy:\n      temporaryShutdown: true\n"
+	got, path, err := ops.ReviewStageSetup(body, "web", 3000, true)
+	if err != nil || path != "/ready" {
+		t.Fatalf("public setup: path %q, error %v", path, err)
+	}
+	var doc struct {
+		Zerops []struct {
+			Deploy struct {
+				TemporaryShutdown bool `yaml:"temporaryShutdown"`
+				ReadinessCheck    struct {
+					HTTPGet struct {
+						Path string `yaml:"path"`
+						Port int    `yaml:"port"`
+					} `yaml:"httpGet"`
+				} `yaml:"readinessCheck"`
+			} `yaml:"deploy"`
+		} `yaml:"zerops"`
+	}
+	if err := yaml.Unmarshal([]byte(got), &doc); err != nil {
+		t.Fatal(err)
+	}
+	check := doc.Zerops[1].Deploy.ReadinessCheck.HTTPGet
+	if doc.Zerops[1].Deploy.TemporaryShutdown || check.Path != path || check.Port != 3000 {
+		t.Fatalf("public deploy: %+v", doc.Zerops[1].Deploy)
+	}
+}
+
+// witness: internal/tools/review_build_run.go | errors.As(deployErr, &setupErr) → false
+// witness: internal/tools/review_build_run.go | errors.As(err, &missing) → !errors.As(err, &missing)
+func TestReviewStage_RBSetupFail_InvalidSetup_ReportsFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body, reason string
+		sourceErr          error
+	}{
+		{"invalid yaml", "zerops: [", "read stage setup", nil},
+		{"missing setup", "zerops:\n  - setup: other\n", "setup api", nil},
+		{"missing config", "", "has no zerops.yaml", &ops.MissingDeployConfigError{Tree: "candidate"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}})
+			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+			part := reviewBuildStage(t.Context(), d, reviewTestSource{yaml: tc.body, err: tc.sourceErr}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			if part.Outcome != "failed" || part.Phase != "build" || !strings.Contains(part.Reason, tc.reason) {
+				t.Fatalf("invalid setup result: %+v", part)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/review_build_run.go | if errors.As(deployErr, &conflict) { → if !errors.As(deployErr, &conflict) {
+func TestReviewStage_RBConflict_MergeConflictError_ReportsFiles(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}})
+	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: &ops.MergeConflictError{Paths: []string{"src/order.go", "src/app.go"}}}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	if part.Outcome != "failed" || part.Phase != "build" || !strings.Contains(part.Reason, "src/order.go") || !strings.Contains(part.Reason, "src/app.go") {
+		t.Fatalf("conflict result: %+v", part)
+	}
+	var reported []hq.ReviewBuildPart
+	doer := checkLogDoer(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != "/api/mate/changes/code/7/review-build/take-id" {
+			t.Errorf("result destination: %s %s", req.Method, req.URL.Path)
+		}
+		var body struct {
+			Parts []hq.ReviewBuildPart `json:"parts"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		reported = body.Parts
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"take":"take-id","decision":"failed"}`)), Header: make(http.Header)}, nil
+	})
+	hqc, err := hq.Open(doer, hq.Identity{Origin: "https://hq.example", Key: "test", ProjectID: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := hqc.FinishReviewBuild(context.Background(), "code", 7, "take-id", []hq.ReviewBuildPart{part})
+	if err != nil || result.Decision != "failed" || len(reported) != 1 || reported[0].Reason != part.Reason || reported[0].Part != "apistage" {
+		t.Fatalf("reported result: %+v, %+v, %v", result, reported, err)
+	}
+}
+
+// witness: internal/tools/review_build_take.go | !uncertain || refused.Code == reviewChangeNotOpen → !uncertain || refused.Code != reviewChangeNotOpen
+func TestReviewResult_RBResultwait_UncertainAnswer_HoldsThroughRefusal(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		doer := checkLogDoer(func(*http.Request) (*http.Response, error) {
+			calls++
+			switch calls {
+			case 1:
+				return nil, errors.New("answer lost")
+			case 2:
+				return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{"code":"not_authorized"}`)), Header: make(http.Header)}, nil
+			default:
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"take":"take-id","decision":"merging"}`)), Header: make(http.Header)}, nil
+			}
+		})
+		hqc, err := hq.Open(doer, hq.Identity{Origin: "https://hq.example", Key: "test", ProjectID: "project"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			decision, err := reviewFinishResult(t.Context(), hqc, "code", 7, "take-id", nil, changed)
+			if err == nil && decision.Decision != "merging" {
+				err = errors.New("wrong decision")
+			}
+			done <- err
+		}()
+		synctest.Wait()
+		changed <- struct{}{}
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("later refusal released uncertain take: %v", err)
+		default:
+		}
+		changed <- struct{}{}
+		if err := <-done; err != nil || calls != 3 {
+			t.Fatalf("settled take: calls=%d, error=%v", calls, err)
+		}
+	})
+}
+
+// witness: internal/tools/review_build_take.go | change.State != hq.ChangeMerging && (alreadyMerging → change.State == hq.ChangeMerging && (alreadyMerging
+func TestReviewDecision_RBSettle_Merging_HoldsUntilSettled(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		changed := make(chan struct{}, 1)
+		head := "feature"
+		state := &hq.MateState{Rev: 10, Repos: []hq.MateRepo{{Name: "app"}}, Changes: []hq.MateChange{{Repo: "app", Number: 7, State: hq.ChangeAdding, Head: &head}}}
+		var readErr error
+		read := func() (hq.MateStateDocument, error) {
+			return hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: state}, readErr
+		}
+		done := make(chan error, 1)
+		go func() { done <- reviewAwaitDecision(ctx, changed, read, "app", 7, "take-id", 10, false) }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("stale frame released lock: %v", err)
+		default:
+		}
+		readErr = errors.New("state temporarily unavailable")
+		changed <- struct{}{}
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("unreadable state released lock: %v", err)
+		default:
+		}
+		readErr = nil
+		state.Rev, state.Changes[0].State = 11, hq.ChangeMerging
+		changed <- struct{}{}
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("merging released lock: %v", err)
+		default:
+		}
+		state.Rev, state.Changes[0].State = 12, hq.ChangeAdding
+		state.Changes[0].ReviewBuild = &hq.ReviewBuild{Take: "take-id", State: "passing"}
+		changed <- struct{}{}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// witness: internal/hq/self.go | json:"checksGivenUp,omitempty" → json:"otherHandoff,omitempty"
+// witness: internal/tools/hq_change.go | case hq.ChangeOpen, hq.ChangeAdding, hq.ChangeMerging: → case hq.ChangeOpen:
+func TestReviewState_RBWire_HandoffAndAdding_DecodeAsOpen(t *testing.T) {
+	t.Parallel()
+	var state hq.MateState
+	body := `{"rev":8,"appId":"app","changes":[{"repo":"code","number":7,"state":"adding","checksGivenUp":{"reason":"tries"}}]}`
+	if err := json.Unmarshal([]byte(body), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Changes[0].ChecksGivenUp == nil || state.Changes[0].ChecksGivenUp.Reason != "tries" {
+		t.Fatalf("handoff: %+v", state.Changes[0].ChecksGivenUp)
+	}
+	outcome, _ := outcomeOf(state, workflow.HQChange{Repo: "code", Number: 7})
+	if outcome != changeStillOpen {
+		t.Fatalf("adding outcome: %v", outcome)
 	}
 }
