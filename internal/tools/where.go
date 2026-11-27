@@ -448,20 +448,31 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 		}
 		facts.Copies = append(facts.Copies, workingCopy)
 	}
+	if rt.MateEnabled {
+		planWhereEdits(&facts, repos, branches, refs, hqReads, now)
+	}
+	classicCopies := map[string]*workflow.WhereCopy{}
+	for i := range facts.Copies {
+		workcopy := &facts.Copies[i]
+		repo := repos[workcopy.Name]
+		if !workcopy.Lease && classicDevs[repo] == workcopy.Name {
+			classicCopies[repo] = workcopy
+		}
+	}
 	for _, repo := range changes {
 		for _, change := range repo.Changes {
 			held := false
 			for i := range facts.Copies {
 				workingCopy := &facts.Copies[i]
 				if repos[workingCopy.Name] == repo.Repo && workingCopy.Branch == change.Branch && change.Branch != "" {
-					if !rt.MateEnabled || !workingCopy.HasHQ {
+					if !rt.MateEnabled || repos[workingCopy.Name] == "" {
 						workingCopy.Change = &change
 					}
 					held = true
 				}
 			}
 			if !held && change.Open && change.Branch != "" {
-				item := workflow.WhereChange{HQChangeLine: change, Step: workflow.MissingEditCopyStep(change.Branch, classicDevs[repo.Repo])}
+				item := workflow.WhereChange{HQChangeLine: change, Step: workflow.MissingEditCopyStep(change.Branch, classicCopies[repo.Repo])}
 				if host := unreadClassic[repo.Repo]; host != "" {
 					item.Unread = "checkout " + host + " branch was not read"
 					item.Step = workflow.EditStep{Action: workflow.EditUnknown, Reason: item.Unread}
@@ -469,9 +480,6 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 				facts.Changes = append(facts.Changes, item)
 			}
 		}
-	}
-	if rt.MateEnabled {
-		planWhereEdits(&facts, repos, branches, refs, hqReads, now)
 	}
 	return facts
 }

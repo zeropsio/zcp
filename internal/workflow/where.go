@@ -84,7 +84,7 @@ type EditStep struct {
 // PlanEdit decides the next step from the copies' own reads and HQ's answer.
 func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	if len(copies) == 0 {
-		return MissingEditCopyStep("", "")
+		return MissingEditCopyStep("", nil)
 	}
 	if workcopy := copies[0]; workcopy.Unread != "" {
 		return EditStep{Action: EditUnknown, Copy: workcopy.Name, Reason: workcopy.Unread}
@@ -154,12 +154,35 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number}
 }
 
-// MissingEditCopyStep names how to get a copy on a branch of this repository.
-func MissingEditCopyStep(branch, classicDev string) EditStep {
-	if classicDev != "" {
-		return EditStep{Action: "checkout " + branch, Copy: classicDev}
+// MissingEditCopyStep names how to get a copy without moving someone else's work.
+func MissingEditCopyStep(branch string, classic *WhereCopy) EditStep {
+	if classic == nil {
+		return EditStep{Action: "acquire"}
 	}
-	return EditStep{Action: "acquire"}
+	if classic.WorkUnread != "" {
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " branch was not read"}
+	}
+	branchName := classic.Branch
+	if branchName == "" {
+		branchName = "(detached)"
+	}
+	occupied := EditStep{Action: "occupied by " + branchName + ": ask the person"}
+	if classic.Dirty {
+		return occupied
+	}
+	if classic.Step != nil && classic.Step.Action == EditUnknown {
+		return *classic.Step
+	}
+	if classic.Branch == "" {
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " is not on a branch"}
+	}
+	if classic.Step == nil {
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover was not read"}
+	}
+	if classic.Step.Action != EditHandedOver {
+		return occupied
+	}
+	return EditStep{Action: "checkout " + branch, Copy: classic.Name}
 }
 
 // Words names the action and, when relevant, the copy or change it concerns.

@@ -276,11 +276,29 @@ func TestWhere_WGNoCopy_SelectsTheRepositorysDevHalf(t *testing.T) {
 		{Repo: "classic", Changes: []workflow.HQChangeLine{{Number: 7, Branch: "feature", Open: true}}},
 		{Repo: "pool", Changes: []workflow.HQChangeLine{{Number: 8, Branch: "other", Open: true}}},
 	}
-	answer := renderWhereAnswer(env, nil, map[string]whereEvent{"appdev": {value: "main", head: "head"}}, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, nil, nil)
-	for _, want := range []string{"change #7 feature: no working copy; step: checkout feature in appdev", "change #8 other: no working copy; step: acquire"} {
-		if !strings.Contains(answer, want) {
-			t.Errorf("where = %q; missing %q", answer, want)
-		}
+	head := "head"
+	for _, tc := range []struct {
+		name  string
+		dirty bool
+		ready bool
+		want  string
+	}{
+		{"handed over", false, true, "checkout feature in appdev"},
+		{"dirty", true, true, "occupied by earlier: ask the person"},
+		{"draft", false, false, "occupied by earlier: ask the person"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			branches := map[string]whereEvent{"appdev": {value: "earlier", head: head, dirty: tc.dirty}}
+			refs := map[string]whereEvent{"appdev": {ref: &topology.BranchRef{Head: head, Published: true}}}
+			reads := map[string]whereEvent{"appdev": {change: &hq.Change{Number: 6, Head: &head, Ready: &tc.ready}}}
+			answer := renderWhereAnswer(env, nil, branches, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, refs, reads)
+			for _, want := range []string{"change #7 feature: no working copy; step: " + tc.want, "change #8 other: no working copy; step: acquire"} {
+				if !strings.Contains(answer, want) {
+					t.Errorf("where = %q; missing %q", answer, want)
+				}
+			}
+		})
 	}
 }
 
@@ -326,19 +344,20 @@ func TestOpenChange_WGOpenBranch_UsesClassicCheckout(t *testing.T) {
 }
 
 // witness: internal/tools/hq_change_description.go | !workcopy.lease && target.Branch != "" && branch != target.Branch → !workcopy.lease && target.Branch != "" && branch == target.Branch
-func TestDescription_WGNeedCopy_NamesLeaseOrClassicCheckout(t *testing.T) {
+func TestDescription_WGNeedCopy_NamesLeaseOrClassicNextStep(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, service, want string
-		pair                *workflow.ServiceMeta
+		name, service, status, want string
+		pair                        *workflow.ServiceMeta
 	}{
-		{"pool without lease", "apppool", `zerops_lease action=acquire branch="feature" pool="apppool"`, &workflow.ServiceMeta{Hostname: "apppool", DevPool: &workflow.DevPoolRef{}}},
-		{"classic on another branch", "appdev", "checkout feature in appdev", &workflow.ServiceMeta{Hostname: "appdev"}},
+		{"pool without lease", "apppool", "clean", `zerops_lease action=acquire branch="feature" pool="apppool"`, &workflow.ServiceMeta{Hostname: "apppool", DevPool: &workflow.DevPoolRef{}}},
+		{"classic dirty on another branch", "appdev", "dirty", "occupied by other: ask the person", &workflow.ServiceMeta{Hostname: "appdev"}},
+		{"classic clean without handover read", "appdev", "clean", "unknown: checkout appdev handover was not read; run zcp where", &workflow.ServiceMeta{Hostname: "appdev"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			ssh := &stubSSH{output: []byte("checkout-head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncheckout-branch:other\ncheckout-clean\n")}
+			ssh := &stubSSH{output: []byte("checkout-head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncheckout-branch:other\ncheckout-" + tc.status + "\n")}
 			_, err := readDescriptionCopy(context.Background(), ssh, dir, targetHQ, changeTarget{AppID: "app", Repo: "app", Branch: "feature", Pair: tc.pair}, tc.service)
 			var refusal *platform.PlatformError
 			if !errors.As(err, &refusal) || refusal.Code != platform.ErrPrerequisiteMissing || !strings.Contains(refusal.Suggestion, tc.want) {

@@ -118,17 +118,17 @@ func readDescriptionCopy(ctx context.Context, ssh ops.SSHDeployer, stateDir, add
 		}
 	}
 	if workcopy.name == "" {
-		return descriptionCopy{}, missingDescriptionCopy(target, "")
+		return descriptionCopy{}, missingDescriptionCopy(target, nil)
 	}
 	if ssh == nil {
 		return descriptionCopy{}, errors.New("the addressed checkout was not read: name its lease or dev service and ensure SSH is available")
 	}
-	head, branch, _, err := ops.ReadEditHead(ctx, ssh, workcopy.name, workcopy.root)
+	head, branch, dirty, err := ops.ReadEditHead(ctx, ssh, workcopy.name, workcopy.root)
 	if err != nil {
 		return descriptionCopy{}, fmt.Errorf("read the addressed checkout %s: %w", workcopy.name, err)
 	}
 	if !workcopy.lease && target.Branch != "" && branch != target.Branch {
-		return descriptionCopy{}, missingDescriptionCopy(target, workcopy.name)
+		return descriptionCopy{}, missingDescriptionCopy(target, &workflow.WhereCopy{Name: workcopy.name, Branch: branch, Dirty: dirty})
 	}
 	if head == "" || branch == "" || branch == hqBase || (target.Branch != "" && branch != target.Branch) {
 		return descriptionCopy{}, fmt.Errorf("the addressed checkout %s has branch %q and head %q; it must hold the named branch and a commit", workcopy.name, branch, head)
@@ -137,23 +137,26 @@ func readDescriptionCopy(ctx context.Context, ssh ops.SSHDeployer, stateDir, add
 	return workcopy, nil
 }
 
-func missingDescriptionCopy(target changeTarget, classic string) error {
+func missingDescriptionCopy(target changeTarget, classic *workflow.WhereCopy) error {
 	branch := target.Branch
 	message := "No working copy was selected."
 	switch {
 	case branch == "":
 		branch = "<branch>"
-	case classic != "":
-		message = fmt.Sprintf("The addressed working copy %s does not hold branch %q.", classic, branch)
+	case classic != nil:
+		message = fmt.Sprintf("The addressed working copy %s does not hold branch %q.", classic.Name, branch)
 	default:
 		message = fmt.Sprintf("No working copy was found for branch %q.", branch)
 	}
-	if classic == "" && target.Pair != nil && !target.Pair.DevIsPool() {
-		classic = target.Pair.Hostname
+	if classic == nil && target.Pair != nil && !target.Pair.DevIsPool() {
+		classic = &workflow.WhereCopy{Name: target.Pair.Hostname, WorkUnread: "checkout was not read"}
 	}
 	step := workflow.MissingEditCopyStep(branch, classic)
 	suggestion := step.Words()
-	if classic == "" {
+	if classic != nil && step.Action == workflow.EditUnknown {
+		suggestion += "; run zcp where"
+	}
+	if classic == nil {
 		suggestion = fmt.Sprintf("zerops_lease action=acquire branch=%q", branch)
 		if target.Pair != nil {
 			suggestion += fmt.Sprintf(" pool=%q", target.Pair.Hostname)

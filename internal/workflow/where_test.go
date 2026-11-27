@@ -200,26 +200,52 @@ func runEditCases(t *testing.T, cases []editPlanCase) {
 func TestPlanEdit_WHAcquire_NoCopy(t *testing.T) {
 	t.Parallel()
 	runEditCases(t, []editPlanCase{{name: "none", fresh: true, want: EditStep{Action: "acquire"}}})
-	text := RenderWhere(WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", "")}}})
+	text := RenderWhere(WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", nil)}}})
 	if !strings.Contains(text, "change #7 feature: no working copy; step: acquire") {
 		t.Errorf("where should show the acquire step: %s", text)
 	}
 }
 
-// witness: internal/workflow/where.go | if classicDev != "" { → if classicDev == "" {
+// witness: internal/workflow/where.go | return EditStep{Action: "checkout " + branch, Copy: classic.Name} → return EditStep{Action: "acquire"}
 func TestWhere_WHCheckout_ClassicBranchNeedsCheckout(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, dev, want string
+		name, want string
+		classic    *WhereCopy
 	}{
-		{"classic", "appdev", "change #7 feature: no working copy; step: checkout feature in appdev"},
-		{"pool", "", "change #7 feature: no working copy; step: acquire"},
+		{"classic", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditHandedOver}}},
+		{"pool", "change #7 feature: no working copy; step: acquire", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			facts := WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", tc.dev)}}}
+			facts := WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", tc.classic)}}}
 			if got := RenderWhere(facts); !strings.Contains(got, tc.want) {
 				t.Errorf("where = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/where.go | if classic.Dirty { → if false && classic.Dirty {
+func TestWhere_WHOccupied_ClassicBranchCannotBeMoved(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		classic WhereCopy
+		want    EditStep
+	}{
+		{"dirty even if handed over", WhereCopy{Name: "appdev", Branch: "other", Dirty: true, Step: &EditStep{Action: EditHandedOver}}, EditStep{Action: "occupied by other: ask the person"}},
+		{"dirty detached", WhereCopy{Name: "appdev", Dirty: true}, EditStep{Action: "occupied by (detached): ask the person"}},
+		{"clean detached", WhereCopy{Name: "appdev"}, EditStep{Action: EditUnknown, Reason: "checkout appdev is not on a branch"}},
+		{"clean but not handed over", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: "describe change"}}, EditStep{Action: "occupied by other: ask the person"}},
+		{"unread handover", WhereCopy{Name: "appdev", Branch: "other"}, EditStep{Action: EditUnknown, Reason: "checkout appdev handover was not read"}},
+		{"HQ unread", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditUnknown, Reason: "HQ was not read"}}, EditStep{Action: EditUnknown, Reason: "HQ was not read"}},
+		{"checkout unread", WhereCopy{Name: "appdev", WorkUnread: "no answer"}, EditStep{Action: EditUnknown, Reason: "checkout appdev branch was not read"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := MissingEditCopyStep("feature", &tc.classic); got != tc.want {
+				t.Errorf("step = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
