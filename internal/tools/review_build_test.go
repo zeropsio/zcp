@@ -761,7 +761,7 @@ func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build_take.go | base + "\x00" + head → head
+// witness: internal/tools/review_build_take.go | base + "\x00" + head → base[:0] + "\x00" + head
 func TestReviewCandidate_RBCandidate_MainAndHead_IdentifyTheSource(t *testing.T) {
 	t.Parallel()
 	one, two := "main-one", "main-two"
