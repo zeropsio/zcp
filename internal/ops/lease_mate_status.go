@@ -63,18 +63,6 @@ func publishMateLeaseRecords(stateDir, statusPath string, bootAt time.Time) erro
 			}
 			leases = append(leases, v)
 		}
-		for _, old := range previous {
-			found := false
-			for _, current := range leases {
-				if old.Alias == current.Alias && old.AcquiredAt == current.AcquiredAt && old.Branch == current.Branch {
-					found = true
-					break
-				}
-			}
-			if !found {
-				_, _ = mate.NextCopyState(old.State, mate.CopyEvent{Kind: mate.CopyRelease})
-			}
-		}
 		s.Copies.Leases = leases
 		return nil
 	}); err != nil {
