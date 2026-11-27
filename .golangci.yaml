@@ -463,6 +463,18 @@ linters:
       - linters:
           - goconst
         path: internal/tools/workflow\.go
+      # Partial switches nolintlint mis-attributes the same way when they hold
+      # an in-file //nolint: the scenario walker visits only container and
+      # string kinds of a generic reflect.Value, and the recipe briefing
+      # never sees local-* or stage modes.
+      - linters:
+          - exhaustive
+        path: internal/eval/scenario_template_test\.go
+        text: 'reflect\.Kind'
+      - linters:
+          - exhaustive
+        path: internal/knowledge/briefing\.go
+        text: 'topology\.Mode'
       # SA5011 in test files — the idiomatic `if x == nil { t.Fatalf(...) }
       # ; x.Field` pattern relies on t.Fatalf calling runtime.Goexit, which
       # staticcheck v0.5 (bundled with golangci-lint v2.8) doesn't always

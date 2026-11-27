@@ -233,7 +233,7 @@ func TestScenarioRender_CoversEveryVerificationString(t *testing.T) {
 // VerificationConfig.Reach field (*yaml.Node, FM-32: exists only to be
 // rejected at parse) is skipped — Render never touches it.
 func fillTemplateTokens(v reflect.Value) {
-	switch v.Kind() { //nolint:exhaustive // walks a generic reflect.Value; every non-container/string kind falls through as a no-op leaf
+	switch v.Kind() {
 	case reflect.Ptr:
 		if v.IsNil() {
 			if !v.CanSet() {
@@ -250,7 +250,7 @@ func fillTemplateTokens(v reflect.Value) {
 			if !field.CanSet() || name == "Reach" {
 				continue
 			}
-			switch field.Kind() { //nolint:exhaustive // only string/slice/ptr/struct leaves carry template tokens; every other kind is a no-op
+			switch field.Kind() {
 			case reflect.String:
 				field.SetString("{{runId}}")
 			case reflect.Slice:
@@ -277,7 +277,7 @@ func findUnrenderedTokens(v reflect.Value) []string {
 	var leaks []string
 	var walk func(reflect.Value)
 	walk = func(v reflect.Value) {
-		switch v.Kind() { //nolint:exhaustive // walks a generic reflect.Value; every non-container/string kind falls through as a no-op leaf
+		switch v.Kind() {
 		case reflect.Ptr:
 			if !v.IsNil() {
 				walk(v.Elem())
