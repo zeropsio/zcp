@@ -1216,22 +1216,32 @@ func saveWorkHint(onHQ bool, where string) string {
 }
 
 // ReadEditHead reads the root checkout's actual commit, branch and worktree.
-// Every command must succeed: a failed status is not a clean checkout.
+// An unborn branch has no commit and a detached checkout has no branch; a
+// failed status is not a clean checkout.
 func ReadEditHead(ctx context.Context, ssh SSHDeployer, alias, root string) (string, string, bool, error) {
 	git := leaseGitRead + shellQuote(root)
-	script := git + " rev-parse --verify " + shellQuote("HEAD^{commit}") + " && " +
-		git + " symbolic-ref -q --short HEAD && " +
+	script := "zcp_head=$(" + git + " rev-parse -q --verify " + shellQuote("HEAD^{commit}") + "); zcp_head_rc=$?; " +
+		`if [ "$zcp_head_rc" -gt 1 ]; then exit "$zcp_head_rc"; fi; ` +
+		"zcp_branch=$(" + git + " symbolic-ref -q --short HEAD); zcp_branch_rc=$?; " +
+		`if [ "$zcp_branch_rc" -gt 1 ]; then exit "$zcp_branch_rc"; fi; ` +
 		"zcp_work_status=$(" + git + " status --porcelain) && " +
+		`printf 'checkout-head:%s\ncheckout-branch:%s\n' "$zcp_head" "$zcp_branch" && ` +
 		`if [ -n "$zcp_work_status" ]; then printf 'checkout-dirty\n'; else printf 'checkout-clean\n'; fi`
 	out, err := ssh.ExecSSH(ctx, alias, script)
 	if err != nil {
 		return "", "", false, fmt.Errorf("read checkout: %w", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 3 || !leaseCommitRe.MatchString(lines[0]) || lines[1] == "" || (lines[2] != "checkout-clean" && lines[2] != "checkout-dirty") {
-		return "", "", false, errors.New("checkout answered an invalid head, branch or status")
+	invalid := errors.New("checkout answered an invalid head, branch or status")
+	if len(lines) != 3 {
+		return "", "", false, invalid
 	}
-	return lines[0], lines[1], lines[2] == "checkout-dirty", nil
+	head, hasHead := strings.CutPrefix(lines[0], "checkout-head:")
+	branch, hasBranch := strings.CutPrefix(lines[1], "checkout-branch:")
+	if !hasHead || !hasBranch || (head != "" && !leaseCommitRe.MatchString(head)) || (head == "" && branch == "") || (lines[2] != "checkout-clean" && lines[2] != "checkout-dirty") {
+		return "", "", false, invalid
+	}
+	return head, branch, lines[2] == "checkout-dirty", nil
 }
 
 // ReadBranchRef compares this checkout to the branch's current origin ref.
@@ -1266,13 +1276,23 @@ func ReadBranchRef(ctx context.Context, ssh SSHDeployer, alias, root, branch, he
 	if ssh == nil {
 		return ref, errors.New("checkout history was not read")
 	}
-	// A missing object in a partial clone otherwise causes cat-file to fetch
-	// it. Refuse the comparison if this Git cannot disable lazy fetching.
-	git := "GIT_OPTIONAL_LOCKS=0 git --no-lazy-fetch -C " + shellQuote(root)
-	script := "git --no-lazy-fetch --version >/dev/null && if ! " + git + " cat-file -e " + shellQuote(remote+"^{commit}") + " 2>/dev/null; then printf 'missing\n'; " +
-		"elif " + git + " merge-base --is-ancestor " + shellQuote(remote) + " " + shellQuote(head) + "; then printf 'ahead '; " +
-		git + " rev-list --count " + shellQuote(remote+".."+head) + "; else " +
-		git + " rev-list --left-right --count " + shellQuote(head+"..."+remote) + "; fi"
+	// Old Git ignores GIT_NO_LAZY_FETCH. Its rev-list --missing=print
+	// disables lazy fetching even in a partial clone; use that for old
+	// partial clones while full clones can compare normally.
+	script := "if git --no-lazy-fetch --version >/dev/null 2>&1; then zcp_nolazy=--no-lazy-fetch; else zcp_nolazy=; fi; " +
+		"zcp_git() { GIT_OPTIONAL_LOCKS=0 git $zcp_nolazy -C " + shellQuote(root) + ` "$@"; }; ` +
+		`if [ -z "$zcp_nolazy" ]; then ` +
+		"zcp_git config --get-regexp " + shellQuote(`^extensions\.partialclone$|^remote\..*\.(promisor|partialclonefilter)$`) + " >/dev/null; zcp_config_rc=$?; " +
+		`if [ "$zcp_config_rc" -eq 0 ]; then ` +
+		"zcp_remote_tip=$(zcp_git rev-list --missing=print -1 " + shellQuote(remote) + ` 2>/dev/null) || { printf 'missing\n'; exit; }; ` +
+		`if [ "$zcp_remote_tip" != ` + shellQuote(remote) + ` ]; then printf 'missing\n'; exit; fi; ` +
+		"zcp_counts=$(zcp_git rev-list --missing=print --left-right --count " + shellQuote(head+"..."+remote) + `) || exit $?; ` +
+		`case "$zcp_counts" in *\?*) printf 'missing\n';; *) printf '%s\n' "$zcp_counts";; esac; exit; fi; ` +
+		`if [ "$zcp_config_rc" -ne 1 ]; then exit "$zcp_config_rc"; fi; fi; ` +
+		"if ! zcp_git cat-file -e " + shellQuote(remote+"^{commit}") + " 2>/dev/null; then printf 'missing\n'; " +
+		"elif zcp_git merge-base --is-ancestor " + shellQuote(remote) + " " + shellQuote(head) + "; then printf 'ahead '; " +
+		"zcp_git rev-list --count " + shellQuote(remote+".."+head) + "; else " +
+		"zcp_git rev-list --left-right --count " + shellQuote(head+"..."+remote) + "; fi"
 	out, err = ssh.ExecSSH(ctx, alias, script)
 	if err != nil {
 		return ref, fmt.Errorf("checkout history was not read: %w", err)

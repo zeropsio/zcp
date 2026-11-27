@@ -291,7 +291,11 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 	if worktree.Step != nil && change != "" {
 		base += change + "; "
 	}
-	base += fmt.Sprintf("part %s, branch %s, %s", worktree.Part, worktree.Branch, work)
+	branch := worktree.Branch
+	if branch == "" {
+		branch = "(detached)"
+	}
+	base += fmt.Sprintf("part %s, branch %s, %s", worktree.Part, branch, work)
 	if worktree.Step == nil && change != "" {
 		base += ", " + change
 	}

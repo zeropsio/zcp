@@ -176,7 +176,7 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 	case "branch":
 		g.pending--
 		g.branches[event.host] = event
-		if event.err == nil && g.rt.MateEnabled && event.repo != "" && event.value != "" && event.value != hqBase {
+		if event.err == nil && g.rt.MateEnabled && event.repo != "" && event.value != "" && event.value != hqBase && event.head != "" {
 			g.startEditReads(ctx, event)
 		}
 	case "ref":
@@ -426,6 +426,8 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 			input.Unread = "checkout head and branch were not read"
 		case branch.value == "":
 			input.Unread = "checkout is not on a branch"
+		case branch.head == "":
+			input.Unread = "checkout has no commit"
 		case workcopy.Lease && branch.value != workcopy.Branch:
 			input.Unread = "checkout branch differs from the lease"
 		case workcopy.WorkUnread != "":

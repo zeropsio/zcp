@@ -175,6 +175,29 @@ func TestWhere_WGFresh_LastHeardCannotOpenChange(t *testing.T) {
 	}
 }
 
+// WG-HEAD — A detached checkout and an unborn branch say which branch or commit is absent instead of saying the checkout did not answer.
+// witness: internal/tools/where.go | case branch.head == "": → case false:
+func TestWhere_WGHead_NamesAbsentBranchOrCommit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		branch whereEvent
+		want   string
+	}{
+		{name: "detached", branch: whereEvent{head: "head"}, want: "checkout is not on a branch"},
+		{name: "unborn", branch: whereEvent{value: "feature"}, want: "checkout has no commit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts := workflow.WhereFacts{Copies: []workflow.WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", HasHQ: true}}}
+			planWhereEdits(&facts, map[string]string{"pool-1": "app"}, map[string]whereEvent{"pool-1": tc.branch}, nil, nil, time.Time{})
+			if got := facts.Copies[0].Step; got == nil || got.Action != workflow.EditUnknown || got.Reason != tc.want {
+				t.Errorf("step = %+v, want unknown: %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/where.go | repos[other.Name] != repos[workcopy.Name] → repos[other.Name] == repos[workcopy.Name]
 func TestWhere_WGGroup_UnreadOtherCopyPreventsHandover(t *testing.T) {
 	t.Parallel()

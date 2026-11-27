@@ -45,6 +45,27 @@ func TestWhere_WHCOPY_NamesWorkingCopies(t *testing.T) {
 	}
 }
 
+// WH-DETACHED — A detached working copy's branch is named as detached, while a named branch keeps its name.
+// witness: internal/workflow/where.go | branch = "(detached)" → branch = ""
+func TestWhere_WHDetached_NamesTheBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		branch string
+		want   string
+	}{
+		{branch: "", want: "dev: part api, branch (detached), clean; no dev server"},
+		{branch: "feature", want: "dev: part api, branch feature, clean; no dev server"},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			t.Parallel()
+			workcopy := WhereCopy{Name: "dev", Part: "api", Branch: tc.branch, DevServers: []topology.DevServerState{}}
+			if got := whereCopyLine(workcopy, false, 0); got != tc.want {
+				t.Errorf("line = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // WH-UNREAD — A fact that was not read says not read with why, never clean, none or nothing.
 // witness: internal/workflow/where.go | work = "working copy not read (no answer)" → work = "clean"
 func TestWhere_WHUNREAD_ExplainsMissingFacts(t *testing.T) {
