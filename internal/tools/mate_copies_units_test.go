@@ -192,7 +192,7 @@ func TestMateCopies_MCPreviewState_PublishesThePreviewReport(t *testing.T) {
 		name   string
 		legacy bool
 		want   mate.CopyState
-	}{{"supported", false, mate.CopyRunning}, {"older supervisor", true, mate.CopyUnknown}} {
+	}{{"supported", false, mate.CopyRunning}, {"older supervisor", true, mate.CopyRunning}} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "status.json")

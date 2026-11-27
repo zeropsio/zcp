@@ -400,7 +400,12 @@ func (o *mateCopyObserver) bootLeases(ctx context.Context) {
 		go func() {
 			ld := LeaseDepsFor(d.client, d.rt.ProjectID, o.stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), nil, d.ssh, d.rt)
 			info, exists, checkErr := ops.LeaseTargetChecked(ctx, ld, target.Hostname, "observed")
-			if checkErr != nil || !exists || info.AcquiredAt != target.AcquiredAt || info.Branch != target.Branch {
+			if checkErr != nil {
+				// The copy stays unknown until its next read: say why this one did not happen.
+				o.log(fmt.Sprintf("copy observer cannot read lease %s at boot: %v", target.Hostname, checkErr))
+				return
+			}
+			if !exists || info.AcquiredAt != target.AcquiredAt || info.Branch != target.Branch {
 				return
 			}
 			if info.Parked {

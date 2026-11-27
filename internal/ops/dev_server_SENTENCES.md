@@ -1,7 +1,7 @@
 # Dev-server answers (`dev_server.go`, `dev_server_supervisor.go`)
 
 - DS-COPY-EVENTS — A supervisor report changes only its still-held lease and cannot replace a newer report, so a previous holder or delayed wait cannot change another Draft.
-- DS-COPY-LINK — A lost supervisor wait or a supervisor without copy-state capability leaves the Draft unknown until a writer reports it.
+- DS-COPY-LINK — A lost supervisor wait leaves the Draft unknown until a writer reports it, while a supervisor without copy-state capability, which holds no wait, leaves the reported state as it is.
 - DS-COPY-BOOT — At observer boot a held copy becomes unknown and only a later supervisor snapshot reports its state; an older boot event cannot overwrite a newer report.
 - DS-COPY-BOOT-RECORD — Boot projects newly discovered leases as unknown and never republishes an older held state as current before a new report.
 - DS-COPY-WRITE — If publishing a supervisor answer fails, the observer can wait for the next transition from that answer without retrying the write.

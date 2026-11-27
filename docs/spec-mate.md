@@ -150,7 +150,11 @@ read and none. A lease entry carries `alias`, `pool`, `containerHostname`, `bran
 Each held copy carries `state` and `stateAt`, the time zcp emitted that state. State is of the
 copy's declared preview server (§2.8a.1): `parked`, `starting`, `running`, `stopped`, `failed` or
 `unknown`. A copy declaring no preview server is `stopped`. `unknown` means the link to its writer
-was lost, including when the supervisor lacks the state-wait capability. On zcp's own boot every
+was lost. A supervisor without the `copy-state` capability (pool images pin older ones) is
+reported from its `status` answer: the status of the preview server it runs, `stopped` where it
+declares none; it holds no transition wait, so its copy keeps the state its last read gave until
+zcp reads it again (an acquire, a dev-server call, `zcp preview`, an unpark, boot). On zcp's own
+boot every
 held copy first becomes `unknown`, then the supervisor's snapshot reports its state; a failed read
 leaves it `unknown`. `gone` is terminal: release or replacement removes the entry, with no stored
 tombstone. The lease owner records, parks, wakes and releases the lease; the supervisor reports

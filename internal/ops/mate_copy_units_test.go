@@ -330,14 +330,15 @@ func TestDevServer_DSCopyEvents_OnlyCurrentLeaseAndNewerReportAreApplied(t *test
 }
 
 // witness: internal/ops/mate_server_wait.go | mate.CopyEvent{Kind: mate.CopyLinkLost}, d.now().UTC(), target.StateAt → mate.CopyEvent{Kind: mate.CopyStop}, d.now().UTC(), target.StateAt
-func TestDevServer_DSCopyLink_WaitFailureAndOlderSupervisorAreUnknown(t *testing.T) {
+func TestDevServer_DSCopyLink_WaitFailureIsUnknownAndAnOlderSupervisorKeepsItsReport(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name         string
 		capabilities []string
+		want         mate.CopyState
 	}{
-		{"older supervisor", nil}, {"lost wait", []string{devsup.CapabilityCopyState}},
+		{"older supervisor", nil, "running"}, {"lost wait", []string{devsup.CapabilityCopyState}, "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -350,15 +351,15 @@ func TestDevServer_DSCopyLink_WaitFailureAndOlderSupervisorAreUnknown(t *testing
 			c := &devservertest.Container{Installed: true, Running: true, SupervisorVersion: "v1", Formats: []int{1}, Capabilities: tc.capabilities}
 			d := LeaseDeps{SSH: c, Now: func() time.Time { return start.Add(time.Minute) }}
 			target := MateCopyTarget{Hostname: "appdev", State: "running", StateAt: start.Format(time.RFC3339Nano)}
-			if _, err := AwaitMateServer(t.Context(), d, path, "", target); err == nil {
-				t.Fatal("lost link must be reported")
+			if _, err := AwaitMateServer(t.Context(), d, path, "", target); (err == nil) != (tc.want == "running") {
+				t.Fatalf("wait error = %v, want one only for a lost link", err)
 			}
 			status, err := mate.ReadStatus(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := status.Copies.DevServices[0].State; got != "unknown" {
-				t.Errorf("state = %s, want unknown", got)
+			if got := status.Copies.DevServices[0].State; got != tc.want {
+				t.Errorf("state = %s, want %s", got, tc.want)
 			}
 		})
 	}
