@@ -259,8 +259,32 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
 	go keepMateDevGit(env)
+	standupDone := make(chan struct{}, 1)
+	go keepMateReviewBuild(env, standupDone)
 	if run := standupFirstLook(env, path); run != nil {
-		go standupRun(run)
+		go func() {
+			standupRun(run)
+			standupDone <- struct{}{}
+		}()
+	}
+}
+
+// keepMateReviewBuild runs the independent state observer again if it stops
+// unexpectedly; its bounded retries of unavailable builds belong to tools.
+func keepMateReviewBuild(env func() func(string) string, standupDone <-chan struct{}) {
+	for range 2 {
+		err := func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("observer stopped: %v", r)
+				}
+			}()
+			return tools.KeepMateReviewBuild(context.Background(), env, standupDone, logHQ)
+		}()
+		if err == nil {
+			return
+		}
+		logHQ(fmt.Sprintf("Review build observer: %v", err))
 	}
 }
 

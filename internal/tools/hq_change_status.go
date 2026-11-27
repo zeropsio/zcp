@@ -67,7 +67,7 @@ func changeLabels(t *workflow.HQChangeTold, now time.Time) []string {
 	state, reason := t.ReviewBuildState, t.ReviewBuildReason
 	if state == "awaiting" {
 		if until, err := time.Parse(time.RFC3339, t.ReviewBuildUntil); err == nil && now.After(until) {
-			state, reason = "unavailable", "no result arrived"
+			state, reason = reviewUnavailable, "no result arrived"
 		}
 	}
 	switch state {
@@ -75,7 +75,7 @@ func changeLabels(t *workflow.HQChangeTold, now time.Time) []string {
 		labels = append(labels, "Awaiting Review build")
 	case "failing":
 		labels = append(labels, "Review build failed")
-	case "unavailable":
+	case reviewUnavailable:
 		label := "Review build unavailable"
 		if reason != "" {
 			label += " (" + reason + ")"

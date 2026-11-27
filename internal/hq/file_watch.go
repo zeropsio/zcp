@@ -22,7 +22,7 @@ import (
 // the watch moves down as each directory on the way is created; a directory
 // removed moves it up again. Nothing is read on a timer: a watch that loses
 // events (the kernel's queue overflowed) wakes once, so the look reads what
-// is there. The watch ends with ctx.
+// is there. The channel closes when the watch ends, including with ctx.
 func WatchReplacedFile(ctx context.Context, path string) (<-chan struct{}, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -47,6 +47,7 @@ type fileWatch struct {
 }
 
 func (cw *fileWatch) run(ctx context.Context, wake chan<- struct{}) {
+	defer close(wake)
 	defer cw.w.Close()
 	signal := func() {
 		select {

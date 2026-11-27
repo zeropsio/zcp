@@ -1432,13 +1432,13 @@ Mate release artifact contains the server and no web client (C-6).
 | MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST}`, both always written and nothing else. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestEnvLines`, `TestRun_Mate_WritesEnvContract`; fork: `serve-contract.test.ts`. |
 | MD-17 | `zcp mate status --json` reads `DesiredRelease()` and the versions the container holds and never installs; `zcp mate update` starts the keep job and answers at once; both answer JSON a caller can act on without parsing prose; every status but `--local` reads the release source (§2.1a). `TestMateStatus_*`, `TestMateUpdate_*`. |
 
-### 2.8a Monorepo: dev servers, stages, the receipt (C-8…C-12)
+### 2.8a Monorepo: dev servers, stages, the Review build (C-8…C-12)
 
 An application is made of **parts**; a part is the `zeropsSetup` its stage/production
 service names. This section is the cross-seam shape every monorepo lane builds against. Each fact
 has one source; a reader never recomputes it. **A single-part app means exactly what it means
 today**: every new key below is additive, and an app with one part shows no part name, no part
-count and no receipt anywhere.
+count.
 
 | # | The fact | Owned by |
 |---|---|---|
@@ -1446,7 +1446,7 @@ count and no receipt anywhere.
 | C-9 | `zcp-devsup`, run by the dev setup's `run.start`, runs the declared servers; its runtime state lives in `$HOME/.zcp/devsup/` and zcp drives it with `zcp-devsup ctl` over SSH (§2.8a.2) | zcp repo `cmd/zcp-devsup` |
 | C-10 | The envelope's dev-service snapshot carries `stages[]` and `devServers[]` (§2.8a.3) | zcp `workflow.ServiceSnapshot`, the fork; the shared fixtures (§2.8a.7) |
 | C-11 | A tier names a part by `zeropsSetup` beside its hostname (§2.8a.5) | zcp composer, HQ `tierRuntimes` |
-| C-12 | An HQ change of an app with more than one part carries a `receipt` (§2.8a.6); zcp writes none | HQ change record |
+| C-12 | zcp writes the Review build observation for every stage-backed setup of an open, ready code change, including a single part (§2.8a.6) | HQ change record |
 
 All five are additive to contract 2: an older release ignores an unknown key, so none bumps
 `SupportedContract`. New envelope keys follow the field order in §2.8a.3.
@@ -1858,8 +1858,8 @@ retired dev service, so this snapshot is where the part's pool shows beside its 
   `stageHostname`) pairs those stages with the pool: a tier or recipe naming a dev that still stands
   wins, then the envelope, then the stem — so a tier naming the retired dev yields to the envelope.
   Such a stage is never a checkout row, and the pool (no checkout of its own) is not one either; the
-  pairing comes from the thread's own last envelope. A preview's address is its Zerops subdomain and the commit a preview runs is
-  the receipt's (§2.8a.6), so neither rides here.
+  pairing comes from the thread's own last envelope. A preview's address is its Zerops subdomain;
+  the Review build is the stage observation on the change (§2.8a.6).
 
 ```json
 "devServers": [
@@ -2364,34 +2364,14 @@ zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe
 `TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand`,
 `TestGroupRecipeService_ManagedDeleted_WithdrawsItsOpenChange`.
 
-#### 2.8a.6 The receipt on an HQ change (only N > 1)
+#### 2.8a.6 The Review build on an HQ change
 
-**zcp writes no receipt.** The shape below is HQ's stored key and the fixture's. A writer sends it
-with the change edit,
-`PATCH /api/mate/changes/<repo>/<number>`, body `{"receipt": …}`, **only when the pair has more
-than one stage** — a single-part change never carries one. HQ stores the last one whole and returns it on
-the change record as `receipt` (`null` when none). HQ's review and Mate's review show it; merge warns
-on it and never blocks.
-
-```json
-{ "at": "2026-10-14T21:10:00Z", "parts": [
-  { "setup": "web", "previewHostname": "webstage", "deploy": "ok", "deployedAt": "2026-10-14T21:06:00Z",
-    "workspaceClean": true, "deployedCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "verified": true },
-  { "setup": "api", "previewHostname": "apistage", "deploy": "ok", "deployedAt": "2026-10-14T21:07:00Z",
-    "workspaceClean": false, "verified": true },
-  { "setup": "worker", "previewHostname": "workerstage", "deploy": "failed", "deployedAt": "2026-10-14T21:08:00Z",
-    "workspaceClean": true, "verified": false } ] }
-```
-
-- `parts` follows `Stages[]`; `deploy` is `ok|failed|none` (zcp's last deploy of that preview in the
-  work session); `verified` is a passing verify after that deploy; `deployedCommit` is the dev HEAD
-  and is present **only** for `deploy: ok` with `--workspace-state clean` (SHAPES C14).
-  `deployedAt` is that deploy's time (its success for `ok`), absent for `deploy: none`.
-  A build still running when the poll timed out is not finished: `none`, never `failed`; once it
-  finishes, the record that settles it carries that attempt's commit and workspace state.
-- No "changed / unchanged" (REVIEW 6). "Preview older than the change" is the reader comparing
-  `deployedCommit` with the change's `head`, which HQ already holds.
-- Order: HQ accepts the key first; zcp writes it after.
+zcp writes `reviewBuild` by `PATCH /api/mate/changes/<repo>/<number>`. A take names the full head,
+`step: "taken"`, its time and its deadline; the result names that head, `step: "result"`, its time
+and one or more parts. Each part names the setup and stage, an `ok`, `failed` or `unavailable`
+outcome, and may name the app version and probe. A failure names its build, deploy or health phase
+and its reason. HQ holds one result for the head and derives the read state. The legacy `receipt`
+read key remains `null` until its readers remove it.
 
 #### 2.8a.7 Shared fixtures
 
@@ -2409,7 +2389,6 @@ on it and never blocks.
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
 | `dev-server.status-starting.json` | a status of a server whose port is still awaited (`startPhase: awaiting_port`): `running` false, `reason: "starting"` with when to read it again, its `newLog` with an error line first, the entry's `status: "starting"` |
 | `dev-servers.declaration.json` | the §2.8a.1 example, `admin` with `autostart: false` |
-| `hq-change.receipt.json` | an HQ change record carrying the §2.8a.6 receipt |
 
 - zcp: `TestMateContractFixtures_*` (`internal/tools/mate_contract_fixtures_test.go`) parses every
   file strictly against the contract shapes, asserts the values, and marshals today's single-pair

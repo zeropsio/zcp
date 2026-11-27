@@ -68,11 +68,11 @@ func KeepMateDevGit(ctx context.Context, env func() func(string) string, log fun
 	if !rt.InContainer || !rt.MateEnabled {
 		return
 	}
-	id := hqIdentity(rt)
-	stateChanged, err := id.State.Watch(ctx)
-	if err != nil {
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stateChanged := watchMateState(watchCtx, hqIdentity(rt).State.Watch, func(err error) {
 		log(fmt.Sprintf("the dev services' git is looked at only at the service's start and on retries: %v", err))
-	}
+	})
 	ticker := time.NewTicker(devGitLookEvery)
 	defer ticker.Stop()
 	clock := devGitRetryClock{C: ticker.C, arm: func(on bool) {
@@ -190,7 +190,11 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 				return
 			}
 			look(func(d devGitDeps) { start(d, at) })
-		case <-stateChanged:
+		case _, open := <-stateChanged:
+			if !open {
+				stateChanged = nil
+				continue
+			}
 			look(func(d devGitDeps) {
 				complete(d)
 				if !settled || devGitStateChanged(d.rt, d.stateDir) {
@@ -200,6 +204,43 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 			})
 		}
 	}
+}
+
+// watchMateState restarts an ended watch once and wakes the consumer after
+// registration, so it also reads any replacement that happened in the gap.
+// A failed registration is said and the consumer keeps its other wakes.
+func watchMateState(ctx context.Context, watch func(context.Context) (<-chan struct{}, error), log func(error)) <-chan struct{} {
+	changed, err := watch(ctx)
+	if err != nil {
+		log(err)
+		return nil
+	}
+	wake := make(chan struct{}, 1)
+	go func() {
+		defer close(wake)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, open := <-changed:
+				if !open {
+					if ctx.Err() != nil {
+						return
+					}
+					changed, err = watch(ctx)
+					if err != nil {
+						log(err)
+						return
+					}
+				}
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	return wake
 }
 
 // devGitStateChanged wakes a settled start only for an application or a
