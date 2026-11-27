@@ -3,6 +3,8 @@ package workflow
 import (
 	"errors"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,7 +223,7 @@ func TestBootstrapOwnership_SO6_PrunedSessionCannotBeClaimed(t *testing.T) {
 	}
 }
 
-// witness: internal/workflow/engine.go | if inRegistry && (e.mate || isProcessAlive(s.PID, s.StartTime)) { → if inRegistry && isProcessAlive(s.PID, s.StartTime) {
+// witness: internal/workflow/engine.go | if s.SessionID != e.sessionID && (e.mate || isProcessAlive(s.PID, s.StartTime)) { → if s.SessionID != e.sessionID && isProcessAlive(s.PID, s.StartTime) {
 func TestBootstrapOwnership_SO3_HostnameLockSurvivesProcessExit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -279,6 +281,91 @@ func TestBootstrapOwnership_SO3_HostnameLockSurvivesProcessExit(t *testing.T) {
 				if err := engine.checkHostnameLocks([]BootstrapTarget{target}); err != nil {
 					t.Fatalf("hostname remains locked after session removal: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/engine.go | planned[hostname] = s → planned[s.SessionID] = s
+func TestBootstrapOwnership_SO7_PlanHoldsItsHostnamesBeforeMetas(t *testing.T) {
+	t.Parallel()
+	pair := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "appdev", BootstrapMode: topology.PlanModeStandard, ExplicitStage: "appstage"}}
+	dev := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "appdev", BootstrapMode: topology.PlanModeDev}}
+	stage := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "webdev", BootstrapMode: topology.PlanModeStandard, ExplicitStage: "appstage"}}
+	replay := pair // a pooled plan completes discover again with its parts standing
+	replay.Runtime.IsExisting = true
+	tests := []struct {
+		name            string
+		mate, live, own bool
+		first           string // what session "first" left: planned, reset, completed, unreadable, provisioned
+		target          BootstrapTarget
+		want            string
+		prefix          bool // want begins the refusal; the rest is the read's own error
+	}{
+		{"Mate, dead session's planned dev", true, false, false, "planned", dev,
+			`service "appdev" is being bootstrapped by session first (PID 0) — finish or reset that session first`, false},
+		{"Mate, dead session's planned stage", true, false, false, "planned", stage,
+			`service "appstage" is being bootstrapped by session first (PID 0) — finish or reset that session first`, false},
+		{"Mate, dead session's incomplete meta", true, false, false, "provisioned", dev,
+			`service "appdev" is being bootstrapped by session first (PID 0) — finish or reset that session first`, false},
+		{"Mate, reset session", true, false, false, "reset", dev, "", false},
+		{"Mate, own re-plan", true, false, true, "planned", replay, "", false},
+		{"Mate, completed bootstrap", true, false, false, "completed", dev, "", false},
+		{"Mate, unreadable session", true, false, false, "unreadable", dev,
+			`bootstrap session first (PID 0) may hold this plan's hostnames, and its state cannot be read (`, true},
+		{"standalone, dead session", false, false, false, "planned", dev, "", false},
+		{"standalone, live session", false, true, false, "planned", dev,
+			`service "appdev" is being bootstrapped by session first (PID ` + strconv.Itoa(os.Getpid()) + `) — finish or reset that session first`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var engine *Engine
+			if tt.mate {
+				engine = NewMateEngine(dir, EnvContainer, nil)
+			} else {
+				engine = NewEngine(dir, EnvContainer, nil)
+			}
+			entry := SessionEntry{SessionID: "first", Workflow: WorkflowBootstrap}
+			if tt.live {
+				entry.PID, entry.StartTime = os.Getpid(), CurrentProcessStartTime()
+			}
+			if err := RegisterSession(dir, entry); err != nil {
+				t.Fatalf("register first bootstrap: %v", err)
+			}
+			state := &WorkflowState{SessionID: "first", Workflow: WorkflowBootstrap, Bootstrap: &BootstrapState{Active: tt.first != "completed", Plan: &ServicePlan{Targets: []BootstrapTarget{pair}}}}
+			switch tt.first {
+			case "provisioned":
+				if err := WriteServiceMeta(dir, &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "first"}); err != nil {
+					t.Fatalf("write incomplete pair: %v", err)
+				}
+			default:
+				if err := SaveSessionState(dir, "first", state); err != nil {
+					t.Fatalf("save first bootstrap: %v", err)
+				}
+			}
+			switch tt.first {
+			case "reset":
+				if err := ResetSessionByID(dir, "first"); err != nil {
+					t.Fatalf("reset first bootstrap: %v", err)
+				}
+			case "unreadable":
+				if err := os.WriteFile(sessionFilePath(dir, "first"), []byte("{"), 0o600); err != nil {
+					t.Fatalf("break first bootstrap's state: %v", err)
+				}
+			}
+			if tt.own {
+				engine.setSessionID("first")
+			} else {
+				engine.setSessionID("second")
+			}
+			got := ""
+			if err := engine.checkHostnameLocks([]BootstrapTarget{tt.target}); err != nil {
+				got = err.Error()
+			}
+			if tt.prefix && !strings.HasPrefix(got, tt.want) || !tt.prefix && got != tt.want {
+				t.Fatalf("hostname lock refusal = %q, want %q", got, tt.want)
 			}
 		})
 	}

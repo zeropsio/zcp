@@ -430,7 +430,7 @@ iterate (the `develop` 3-tier deploy ladder caps at 5 attempts).
 
 ### 2.2 Exclusivity
 
-Per-service, not global. Multiple bootstraps coexist for different services. An incomplete ServiceMeta locks its hostname while its session exists in a Mate; standalone holds the lock while the process lives.
+Per-service, not global. Multiple bootstraps coexist for different services. An unfinished bootstrap holds the hostnames its recorded plan names (each dev service and every stage) from discover on, and those of its incomplete ServiceMetas: in a Mate while its session exists, standalone while its process lives. Another session's plan naming a held hostname is refused with the holding session's id; a holding session whose state cannot be read refuses every other plan.
 
 ### 2.3 Step 1: Discover
 

@@ -182,8 +182,8 @@ func sessionFilePath(stateDir, sessionID string) string {
 // writes the session state file, and appends the registry entry — all in one
 // lock acquisition. It does NOT itself enforce bootstrap exclusivity: bootstrap
 // ownership is PER-HOSTNAME (not a project singleton — see spec-workflows.md
-// §2.2 / B6), enforced at provision time by checkHostnameLocks
-// (engine.go, via FindServiceMeta).
+// §2.2 / B6), enforced by checkHostnameLocks (engine.go) when a plan
+// completes discover.
 func InitSessionAtomic(stateDir, projectID, workflowName, intent string, mate bool) (*WorkflowState, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {

@@ -141,10 +141,7 @@ func InFlightBootstrapHostnames(stateDir string) map[string]bool {
 			continue
 		}
 		for _, t := range state.Bootstrap.Plan.Targets {
-			if h := t.Runtime.DevHostname; h != "" {
-				out[h] = true
-			}
-			for _, h := range t.Runtime.StageHostnames() {
+			for _, h := range targetHostnames(t) {
 				out[h] = true
 			}
 		}

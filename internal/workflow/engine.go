@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -852,51 +853,100 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	return state, nil
 }
 
-// checkHostnameLocks verifies that no target hostname is locked by another active session.
-// A hostname with an incomplete ServiceMeta is locked while its session exists
-// in a Mate, or while its process is alive in a standalone environment.
-// A planned stage another complete pair records as its stage is refused too.
+// checkHostnameLocks verifies that no target hostname is held by another
+// unfinished bootstrap session. A session holds the hostnames of its recorded
+// plan and of its incomplete ServiceMetas: in a Mate while it exists in the
+// registry, standalone while its process is alive. A planned stage another
+// complete pair records as its stage is refused too.
 func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 	sessions, _ := ListSessions(e.stateDir)
-	sessionByID := make(map[string]SessionEntry, len(sessions))
+	holders := make(map[string]SessionEntry, len(sessions))
 	for _, s := range sessions {
-		sessionByID[s.SessionID] = s
+		// A Mate's unfinished session holds across process exits; what an
+		// unregistered or dead standalone session held is an orphan.
+		if s.SessionID != e.sessionID && (e.mate || isProcessAlive(s.PID, s.StartTime)) {
+			holders[s.SessionID] = s
+		}
+	}
+	planned, err := e.plannedHostnames(sessions, holders)
+	if err != nil {
+		return err
 	}
 
 	for _, target := range targets {
-		hostnames := append([]string{target.Runtime.DevHostname}, target.Runtime.StageHostnames()...)
-		for _, hostname := range hostnames {
+		for _, hostname := range targetHostnames(target) {
 			// Pair-aware (E8): FindServiceMeta matches Hostname OR a stage hostname,
 			// so a planned hostname colliding with an existing pair's STAGE half
 			// (which has no own file) is detected as locked. ReadServiceMeta —
 			// the bare services/{hostname}.json read — returned nil for stage
 			// halves, silently skipping the lock (SPINE-4).
-			meta, err := FindServiceMeta(e.stateDir, hostname)
-			if err != nil || meta == nil {
-				continue // no meta = no lock
+			if meta, metaErr := FindServiceMeta(e.stateDir, hostname); metaErr == nil && meta != nil {
+				// A stage belongs to one pair: another pair recording it as
+				// its stage keeps it (spec-mate §2.8a.4). An orphaned
+				// incomplete meta is still overwritten.
+				if hostname != target.Runtime.DevHostname && meta.IsComplete() && meta.Hostname != hostname && meta.Hostname != target.Runtime.DevHostname {
+					return fmt.Errorf("stage %q is already a stage of pair %q — name another stage hostname", hostname, meta.Hostname)
+				}
+				if s, held := holders[meta.BootstrapSession]; held && !meta.IsComplete() {
+					return hostnameHeldError(hostname, s)
+				}
 			}
-			// A stage belongs to one pair: another pair recording it as
-			// its stage keeps it (spec-mate §2.8a.4). An orphaned
-			// incomplete meta is still overwritten below.
-			if hostname != target.Runtime.DevHostname && meta.IsComplete() && meta.Hostname != hostname && meta.Hostname != target.Runtime.DevHostname {
-				return fmt.Errorf("stage %q is already a stage of pair %q — name another stage hostname", hostname, meta.Hostname)
+			if s, held := planned[hostname]; held {
+				return hostnameHeldError(hostname, s)
 			}
-			if meta.IsComplete() {
-				continue // completed = not locked
-			}
-			if meta.BootstrapSession == e.sessionID {
-				continue // our own session = not locked
-			}
-			// A Mate's unfinished session holds the hostname across process exits.
-			s, inRegistry := sessionByID[meta.BootstrapSession]
-			if inRegistry && (e.mate || isProcessAlive(s.PID, s.StartTime)) {
-				return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
-					hostname, meta.BootstrapSession, s.PID)
-			}
-			// A missing session, or a dead standalone session, leaves an orphan.
 		}
 	}
 	return nil
+}
+
+// plannedHostnames maps each hostname the recorded plan of a holding bootstrap
+// session names to that session, read from the session's own state file. A
+// missing file holds no plan and a completed bootstrap's plan holds nothing;
+// a file that cannot be read refuses the plan, since what it holds is unknown.
+func (e *Engine) plannedHostnames(sessions []SessionEntry, holders map[string]SessionEntry) (map[string]SessionEntry, error) {
+	planned := map[string]SessionEntry{}
+	for _, s := range sessions {
+		if _, holds := holders[s.SessionID]; !holds || s.Workflow != WorkflowBootstrap {
+			continue
+		}
+		state, err := LoadSessionByID(e.stateDir, s.SessionID)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap session %s (PID %d) may hold this plan's hostnames, and its state cannot be read (%w) — finish or reset that session first",
+				s.SessionID, s.PID, err)
+		}
+		if state.Bootstrap == nil || !state.Bootstrap.Active || state.Bootstrap.Plan == nil {
+			continue
+		}
+		for _, target := range state.Bootstrap.Plan.Targets {
+			for _, hostname := range targetHostnames(target) {
+				if _, taken := planned[hostname]; !taken {
+					planned[hostname] = s
+				}
+			}
+		}
+	}
+	return planned, nil
+}
+
+// targetHostnames is every hostname a plan target names: its dev service and
+// every stage.
+func targetHostnames(target BootstrapTarget) []string {
+	stages := target.Runtime.StageHostnames()
+	hostnames := make([]string, 0, 1+len(stages))
+	if target.Runtime.DevHostname != "" {
+		hostnames = append(hostnames, target.Runtime.DevHostname)
+	}
+	return append(hostnames, stages...)
+}
+
+// hostnameHeldError refuses a hostname another unfinished bootstrap holds,
+// whether its plan or its incomplete meta says so.
+func hostnameHeldError(hostname string, holder SessionEntry) error {
+	return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
+		hostname, holder.SessionID, holder.PID)
 }
 
 // loadState loads state for the current session.
