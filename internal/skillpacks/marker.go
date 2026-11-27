@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // markerFileName is the per-copy ownership record every installed skill
@@ -48,7 +50,7 @@ func validateMarker(m *Marker) error {
 	if err := validateSourcePath(m.SourcePath); err != nil {
 		return fmt.Errorf("invalid marker sourcePath: %w", err)
 	}
-	if !commitPattern.MatchString(m.Commit) {
+	if !topology.IsCommitID(m.Commit) {
 		return fmt.Errorf("invalid marker commit %q", m.Commit)
 	}
 	if !digestPattern.MatchString(m.Digest) {

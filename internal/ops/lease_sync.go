@@ -322,7 +322,7 @@ func pushLeaseBranch(ctx context.Context, ssh git.SSHExecutor, alias, branch str
 		return LeaseSyncPush{}, "", syncPushRefusal(err, alias, branch, onHQ, summary)
 	}
 	commit := a.marks["commit"]
-	if !reported || !leaseCommitRe.MatchString(commit) {
+	if !reported || !topology.IsCommitID(commit) {
 		return LeaseSyncPush{}, "", fmt.Errorf("push %s from %s: unreadable answer %q", branch, alias, boundedText(string(out)))
 	}
 	push := LeaseSyncPush{Outcome: LeaseSyncPushed}

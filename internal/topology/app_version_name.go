@@ -13,14 +13,8 @@ const AppVersionPrefix = "zcp "
 // version zcp did not commit-deploy (docs/spec-mate.md §1.7).
 func AppVersionCommit(name string) string {
 	commit, ok := strings.CutPrefix(name, AppVersionPrefix)
-	if !ok || !isCommitID(commit) {
+	if !ok || !IsCommitID(commit) {
 		return ""
 	}
 	return commit
-}
-
-// isCommitID reports whether s is a whole git commit id: 40 (SHA-1) or 64
-// (SHA-256) lowercase hex digits, as git prints it.
-func isCommitID(s string) bool {
-	return (len(s) == 40 || len(s) == 64) && strings.Trim(s, "0123456789abcdef") == ""
 }

@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // skillPacksStateDir is where one manifest v2 per installed pack lives,
@@ -64,10 +66,7 @@ const (
 	manifestCorrupt // schemaVersion==2 but otherwise malformed
 )
 
-var (
-	digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$|^[0-9a-f]{64}$`)
-)
+var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func manifestRelPath(id string) string {
 	return filepath.Join(skillPacksStateDir, id+".json")
@@ -144,7 +143,7 @@ func validateManifest(m *Manifest, filenameID string) error {
 	if strings.TrimSpace(m.Source.Ref) == "" {
 		return fmt.Errorf("source.ref must not be empty")
 	}
-	if !commitPattern.MatchString(m.Source.Commit) {
+	if !topology.IsCommitID(m.Source.Commit) {
 		return fmt.Errorf("invalid source.commit %q", m.Source.Commit)
 	}
 	if err := validateTargetSet(m.Targets); err != nil {

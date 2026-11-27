@@ -50,7 +50,7 @@ func remoteAddArgs(url string) []string {
 
 // fetchCommitArgs builds the argv for a shallow fetch of exactly one commit
 // SHA from the "origin" remote. commit is always caller-validated against
-// commitPattern before fetchCommit is ever invoked (it comes from a
+// topology.IsCommitID before fetchCommit is ever invoked (it comes from a
 // manifest's own Source.Commit, itself schema-validated on load), so it can
 // never be flag-shaped — the "--" is kept anyway to match cloneArgs's
 // discipline of never relying on that alone.
@@ -61,7 +61,7 @@ func fetchCommitArgs(commit string) []string {
 // checkoutCommitArgs builds the argv that populates the working tree at
 // exactly commit. Unlike clone/fetch/remote-add, git-checkout's own "--"
 // marks everything after it as a PATH, not a commit-ish — so it must NOT be
-// used here (commit is still pre-validated against commitPattern, so an
+// used here (commit is still pre-validated against topology.IsCommitID, so an
 // option-shaped value is structurally impossible regardless).
 func checkoutCommitArgs(commit string) []string {
 	return []string{"checkout", "-q", commit}

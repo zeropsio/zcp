@@ -44,10 +44,6 @@ var leaseBranchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 // keeps a pool name from naming a path outside the lease directory.
 var leasePoolNameRe = regexp.MustCompile(`^[a-z0-9]{1,40}$`)
 
-// leaseCommitRe is a full git commit id (SHA-1 or SHA-256), the only shape a
-// lease's base takes.
-var leaseCommitRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
-
 // leaseBaseMarker opens the line a checkout answers the main commit it cut a
 // new branch from with.
 const leaseBaseMarker = "@@zcp-lease base "
@@ -194,7 +190,7 @@ func leaseCheckoutSteps(workDir, repo, branch, base, from, hqURL, tokenScope str
 	}
 	newBranch := "git checkout -q -f -B " + q(branch) + " --no-track " + cutFrom +
 		" && printf '" + leaseBaseMarker + "%s\\n' \"$(git rev-parse HEAD)\""
-	if leaseCommitRe.MatchString(base) {
+	if topology.IsCommitID(base) {
 		newBranch = "{ git rev-parse -q --verify " + q(base+"^{commit}") + " >/dev/null || { echo " +
 			q("the branch's base commit "+base+" is not on origin") + " >&2; exit 3; }; } && " +
 			"git checkout -q -f -B " + q(branch) + " --no-track " + q(base) + " && echo " + q(leaseBaseMarker+base)
@@ -637,7 +633,7 @@ func checkoutSlot(out string) int {
 // from, false when it says none (it tracked the branch origin has).
 func checkoutBase(out string) (string, bool) {
 	for line := range strings.SplitSeq(out, "\n") {
-		if base, ok := strings.CutPrefix(strings.TrimSpace(line), leaseBaseMarker); ok && leaseCommitRe.MatchString(base) {
+		if base, ok := strings.CutPrefix(strings.TrimSpace(line), leaseBaseMarker); ok && topology.IsCommitID(base) {
 			return base, true
 		}
 	}
@@ -1238,7 +1234,7 @@ func ReadEditHead(ctx context.Context, ssh SSHDeployer, alias, root string) (str
 	}
 	head, hasHead := strings.CutPrefix(lines[0], "checkout-head:")
 	branch, hasBranch := strings.CutPrefix(lines[1], "checkout-branch:")
-	if !hasHead || !hasBranch || (head != "" && !leaseCommitRe.MatchString(head)) || (head == "" && branch == "") || (lines[2] != "checkout-clean" && lines[2] != "checkout-dirty") {
+	if !hasHead || !hasBranch || (head != "" && !topology.IsCommitID(head)) || (head == "" && branch == "") || (lines[2] != "checkout-clean" && lines[2] != "checkout-dirty") {
 		return "", "", false, invalid
 	}
 	return head, branch, lines[2] == "checkout-dirty", nil
@@ -1249,7 +1245,7 @@ func ReadEditHead(ctx context.Context, ssh SSHDeployer, alias, root string) (str
 // read does not fetch or change the checkout's remote-tracking refs.
 func ReadBranchRef(ctx context.Context, ssh SSHDeployer, alias, root, branch, head string) (topology.BranchRef, error) {
 	ref := topology.BranchRef{Head: head}
-	if !leaseCommitRe.MatchString(head) {
+	if !topology.IsCommitID(head) {
 		return ref, errors.New("checkout head was not read")
 	}
 	executable, err := os.Executable()
@@ -1265,7 +1261,7 @@ func ReadBranchRef(ctx context.Context, ssh SSHDeployer, alias, root, branch, he
 	if len(fields) == 0 {
 		return ref, nil
 	}
-	if len(fields) != 2 || fields[1] != name || !leaseCommitRe.MatchString(fields[0]) {
+	if len(fields) != 2 || fields[1] != name || !topology.IsCommitID(fields[0]) {
 		return ref, errors.New("branch remote ref answered an invalid value")
 	}
 	ref.Published = true
