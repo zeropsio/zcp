@@ -56,21 +56,14 @@ its containers away from the app.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
-   naming which push last built and verified. Never put a lease or pool URL
-   in a reply to the person or in the change description. For each
-   user-facing part with a finished version and a public address, give only
-   **Your app:** <the part's stage public address>. Say this is the address to
-   bookmark and share. Work in progress is the **draft**. The first answer
-   speaks only of the app and its draft; mention stage or production only when
-   asked. Never say "Preview",
-   "Review build", "main", "lease" or host names to the person.
-   Read the part's stage from `zerops_workflow action="status"` and its
-   `publicAccess.url` or `publicAccess.domains` with `zerops_discover service="<stage>"`.
-   If the first version is not finished and a public address is expected, say
-   "Your app gets its address when the first version is finished." If the stage
-   is private or its address cannot be read, explain that without naming the
-   stage or a host. The address survives merge; another branch's check may
-   replace the stage version.
+   naming which push last built and verified. For each user-facing part, give
+   the person a link labelled **Draft** to its preview server's URL from the
+   lease's `devServers`. Say it shows the work in progress you are building
+   now. Keep the lease while the person needs that address: a released lease
+   no longer serves its draft. Never call it "Your app" or an address to
+   bookmark and share, and do not put it in the change description. If the
+   draft has no public address, say so. Never say "Preview", "Review build",
+   "main", "lease" or host names to the person.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -180,8 +173,7 @@ leases are keyed by branch, so they never meet.
 - Each acquires its own group on its branch and pushes there. An
   independent piece opens and describes its own change (step 4); subagents
   on one piece open none: merge their branches into one and open its change.
-- Describe each piece of work and give the app address as above;
-  the shared stage may show another branch's check.
+- Describe each piece of work and give its draft address as above.
 - Once one change merges, the others are behind `main`. Bring one up to date
   only when the person asks or it no longer merges cleanly: in a lease of
   it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
