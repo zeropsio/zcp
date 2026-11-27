@@ -321,6 +321,13 @@ would make the envelope's delivery depend on every provider forwarding multi-blo
 intact, which is unproven, where a sibling key inside the one block they already forward is
 not.
 
+### 1.7 The version a stage runs
+
+On a Mate's envelope (`"mate": true`) the services[] entry of each pair's stage carries `"version": {"id": …, "commit": …, "at": …}`, the stage's ACTIVE Zerops app version only, never a building, waiting or failed one: `id` the app version id, `at` its created time as Zerops gives it (RFC 3339), `commit` the whole commit a zcp commit deploy named it by (§2.8b B-1), absent when its name holds none; the key is omitted when the stage has no ACTIVE version holding code, when Zerops does not answer or refuses the read, and on every envelope that is not a Mate's; it is additive and needs no version gate.
+
+Each envelope reads the version afresh. A version the Zerops search has not indexed yet reads as
+unanswered, so its key appears on a later envelope.
+
 ---
 
 ## 2. Delivery
