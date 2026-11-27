@@ -87,6 +87,7 @@ type ctlArgs struct {
 	port       int
 	timeout    int
 	timeoutSet bool
+	after      string
 	command    string
 	// env holds the --set pairs; clear is --clear. Either makes `env`
 	// replace the overlay with exactly the pairs.
@@ -120,6 +121,8 @@ func parseCtl(args []string) (ctlArgs, error) {
 			if v, err = value(); err == nil {
 				err = a.setPair(v)
 			}
+		case "--after":
+			a.after, err = value()
 		case "--state":
 			a.state, err = value()
 		case "--name":
@@ -214,6 +217,8 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 			return fail(a, stdout, stderr, devsup.CodeFailed, errors.New("env needs --set NAME=VALUE or --clear; status shows the overlay"))
 		}
 		req.Env = a.env
+	case devsup.VerbCopyState:
+		req.After = devsup.Status(a.after)
 	case devsup.VerbStatus, devsup.VerbReload:
 	case devsup.VerbWait:
 		if a.name == "" || !a.timeoutSet || a.timeout < 1 || a.timeout > int(devsup.ListenWait/time.Second) {
@@ -234,6 +239,9 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 		return fail(a, stdout, stderr, devsup.CodeFailed, fmt.Errorf("unknown verb %q", a.verb))
 	}
 	deadline := ctlTimeout
+	if a.verb == devsup.VerbCopyState {
+		deadline = 0
+	}
 	if a.verb == devsup.VerbWait {
 		deadline += time.Duration(a.timeout) * time.Second
 	}
@@ -243,6 +251,9 @@ func runCtl(args []string, stdout, stderr io.Writer) int {
 	}
 	if resp.Code != devsup.CodeOK {
 		return fail(a, stdout, stderr, resp.Code, errors.New(resp.Error))
+	}
+	if a.verb == devsup.VerbCopyState {
+		return emit(a, stdout, resp.Copy, string(resp.Copy.Status))
 	}
 	return emit(a, stdout, resp.State, statusText(resp.State))
 }

@@ -56,12 +56,15 @@ const CapabilityStartPhase = "start-phase"
 // CapabilityWait names the read-only `ctl wait` verb.
 const CapabilityWait = "wait"
 
+// CapabilityCopyState names the read-only preview state snapshot and wait.
+const CapabilityCopyState = "copy-state"
+
 // Capabilities lists the ctl verbs, flags and answer fields this supervisor
 // has that an older one lacks, and the behaviours a client reads off it;
 // `ctl version` reports them. An older ctl fails on a verb or flag it does
 // not know, so zcp sends one only to a supervisor that lists it, and reads
 // such a field only from one that lists it.
-var Capabilities = []string{CapabilityEnv, CapabilityActivity, CapabilityHold, CapabilityLogsSince, CapabilityStartPhase, CapabilityWait}
+var Capabilities = []string{CapabilityEnv, CapabilityActivity, CapabilityHold, CapabilityLogsSince, CapabilityStartPhase, CapabilityWait, CapabilityCopyState}
 
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.

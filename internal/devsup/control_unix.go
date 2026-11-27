@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,14 +19,15 @@ import (
 // Control verbs carried over the socket; `logs` and `version` are answered by
 // `ctl` itself.
 const (
-	VerbStatus  = "status"
-	VerbWait    = "wait"
-	VerbStart   = "start"
-	VerbStop    = "stop"
-	VerbRestart = "restart"
-	VerbReload  = "reload"
-	VerbRun     = "run"
-	VerbRm      = "rm"
+	VerbStatus    = "status"
+	VerbWait      = "wait"
+	VerbCopyState = "copy-state"
+	VerbStart     = "start"
+	VerbStop      = "stop"
+	VerbRestart   = "restart"
+	VerbReload    = "reload"
+	VerbRun       = "run"
+	VerbRm        = "rm"
 	// VerbEnv replaces the env overlay with Request.Env (CapabilityEnv).
 	VerbEnv = "env"
 )
@@ -52,14 +54,16 @@ type Request struct {
 	// Env is the whole overlay `env` sets; absent or empty clears it.
 	Env map[string]string `json:"env,omitempty"`
 	// TimeoutSeconds bounds a wait; required for VerbWait.
-	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+	After          Status `json:"after,omitempty"`
 }
 
 // Response answers a Request with the state after it was applied.
 type Response struct {
-	Code  int    `json:"code"`
-	Error string `json:"error,omitempty"`
-	State State  `json:"state"`
+	Code  int           `json:"code"`
+	Error string        `json:"error,omitempty"`
+	State State         `json:"state"`
+	Copy  *CopySnapshot `json:"copy,omitempty"`
 }
 
 // ErrNoSupervisor means nothing answers on the state directory's socket.
@@ -110,6 +114,17 @@ func (s *Supervisor) handle(c net.Conn) {
 	resp := Response{Code: CodeFailed}
 	if err := json.NewDecoder(bufio.NewReader(c)).Decode(&req); err != nil {
 		resp.Error = "bad request: " + err.Error()
+	} else if req.Verb == VerbCopyState {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if req.After != "" {
+			go func() { _, _ = io.Copy(io.Discard, c); cancel() }()
+		}
+		snapshot, err := s.WaitCopy(ctx, req.After)
+		resp.Copy = &snapshot
+		if err != nil {
+			resp.Code, resp.Error = CodeFailed, err.Error()
+		}
 	} else {
 		resp = s.apply(req)
 	}
@@ -181,7 +196,9 @@ func Control(dir string, req Request, timeout time.Duration) (Response, error) {
 		return dialFailure(err)
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(timeout))
+	if timeout > 0 {
+		_ = c.SetDeadline(time.Now().Add(timeout))
+	}
 	if err := json.NewEncoder(c).Encode(req); err != nil {
 		return exchangeFailure(err)
 	}

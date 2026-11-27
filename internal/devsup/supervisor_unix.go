@@ -540,6 +540,7 @@ func (s *Supervisor) start(name, reason string) {
 	sv.starts++
 	starts := sv.starts
 	s.mu.Unlock()
+	s.persist()
 
 	before, beforeOK := s.cfg.Tasks()
 	g, failure, err := s.launch(name, spec, env, starts)
@@ -558,6 +559,7 @@ func (s *Supervisor) start(name, reason string) {
 			s.limitStart(sv, after, starts)
 		}
 		s.mu.Unlock()
+		s.persist()
 		return
 	}
 	s.logf("started %s pgid=%d start#%d", name, g.pgid, starts)
@@ -995,6 +997,7 @@ func (s *Supervisor) Restart(name string) error {
 	s.mu.Lock()
 	s.servers[name].starting = true
 	s.mu.Unlock()
+	s.persist()
 	s.stopAll([]string{name})
 	s.start(name, reasonAsked)
 	s.syncWatches()
@@ -1367,6 +1370,44 @@ func (s *Supervisor) Wait(name string, timeout time.Duration) error {
 		case <-changed:
 		case <-timer.C:
 			return nil
+		}
+	}
+}
+
+// CopySnapshot is the supervisor's transition state for its declared preview.
+// StatusCrashed includes a start whose listen wait ended without an answer.
+type CopySnapshot struct {
+	Status Status `json:"status"`
+}
+
+// WaitCopy captures the state and receipt under the same lock. It does not
+// probe the port: losing a listener while its leader lives emits no transition.
+func (s *Supervisor) WaitCopy(ctx context.Context, after Status) (CopySnapshot, error) {
+	switch after {
+	case "", StatusStopped, StatusStarting, StatusRunning, StatusCrashed:
+	default:
+		return CopySnapshot{}, fmt.Errorf("invalid copy state %q", after)
+	}
+	for {
+		s.mu.Lock()
+		status := StatusStopped
+		if sv := s.servers[s.previewName]; sv != nil {
+			f := sv.facts()
+			f.accepts = f.answered
+			status = deriveStatus(f)
+			if status == StatusRunning && sv.listenWaitEnded {
+				status = StatusCrashed
+			}
+		}
+		changed := s.changedLocked()
+		s.mu.Unlock()
+		if after == "" || status != after {
+			return CopySnapshot{Status: status}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return CopySnapshot{}, fmt.Errorf("copy state wait: %w", ctx.Err())
+		case <-changed:
 		}
 	}
 }
