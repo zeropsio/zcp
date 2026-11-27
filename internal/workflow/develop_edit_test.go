@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // witness: internal/workflow/compute_envelope.go | return func(c *envelopeConfig) { c.edit = true } → return func(c *envelopeConfig) { c.edit = false }
@@ -94,6 +95,68 @@ func TestEditLiveCode_IG4_ProjectsTheActiveVersion(t *testing.T) {
 			svc := platform.ServiceStack{Name: "dev", ActiveAppVersion: tt.active}
 			if got := buildOneSnapshot(svc, nil, nil).HasLiveCode; got != tt.want {
 				t.Errorf("has live code = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// witness: internal/content/atoms/develop-edit.md | phases: [develop-edit] → phases: [develop-active]
+func TestEditBriefing_IG5_SelectsEditGuidance(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("load atoms: %v", err)
+	}
+	for _, tt := range []struct {
+		name    string
+		phase   Phase
+		runtime topology.RuntimeClass
+		want    bool
+	}{
+		{"classic edit", PhaseDevelopEdit, topology.RuntimeDynamic, true},
+		{"pool edit", PhaseDevelopEdit, topology.RuntimePool, true},
+		{"deploy session", PhaseDevelopActive, topology.RuntimeDynamic, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: tt.phase, Environment: EnvContainer, Mate: true,
+				Services: []ServiceSnapshot{{Hostname: "dev", RuntimeClass: tt.runtime}}}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("synthesize: %v", err)
+			}
+			if got := atomFired(matches, "develop-edit"); got != tt.want {
+				t.Errorf("edit guidance = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+// witness: internal/content/atoms/develop-dev-pool.md | phases: [develop-active, develop-edit] → phases: [develop-active]
+func TestEditBriefing_IG6_SelectsThePoolLoop(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("load atoms: %v", err)
+	}
+	for _, tt := range []struct {
+		name    string
+		runtime topology.RuntimeClass
+		want    bool
+	}{
+		{"pool", topology.RuntimePool, true},
+		{"classic", topology.RuntimeDynamic, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: PhaseDevelopEdit, Environment: EnvContainer, Mate: true,
+				Services: []ServiceSnapshot{{Hostname: "dev", RuntimeClass: tt.runtime}}}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("synthesize: %v", err)
+			}
+			if got := atomFired(matches, "develop-dev-pool"); got != tt.want {
+				t.Errorf("pool guidance = %t, want %t", got, tt.want)
 			}
 		})
 	}

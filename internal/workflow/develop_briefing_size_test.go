@@ -296,8 +296,7 @@ func TestRenderServices_BasePrefixRuleSaidOnce(t *testing.T) {
 
 // TestDevelopBriefing_MultiPartPoolProject_UnderTheCap pins the develop start
 // of the multi-part pool project within the 32 KB MCP tool-response cap — the
-// JSON-RPC frame the client reads, envelope block included — with the dev-pool
-// loop, the guidance its stages need, whole; and logs its size.
+// JSON-RPC frame the client reads, envelope block included, and logs its size.
 func TestDevelopBriefing_MultiPartPoolProject_UnderTheCap(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()
@@ -316,10 +315,5 @@ func TestDevelopBriefing_MultiPartPoolProject_UnderTheCap(t *testing.T) {
 	t.Logf("develop start of a six-part pool project: %d B, %d B on the wire (atoms: %v)", len(text), wire, atomIDsOf(matches))
 	if wire >= 32*1024 {
 		t.Errorf("develop start is %d B on the wire, over the 32 KB MCP cap", wire)
-	}
-	for _, m := range matches {
-		if m.AtomID == "develop-dev-pool" && !strings.Contains(m.Body, "**Stage check.**") {
-			t.Errorf("the dev-pool loop was cut to a head:\n%s", m.Body)
-		}
 	}
 }

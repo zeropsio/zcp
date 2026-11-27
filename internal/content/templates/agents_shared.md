@@ -4,7 +4,8 @@ Zerops has its own syntax. Don't guess — look up via `zerops_knowledge`, inspe
 
 | Intent | First action | Don't |
 |---|---|---|
-| Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target/session unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]` | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
+@outside-mate | Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target/session unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]` | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
+@in-mate | Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]`; an edit answers with the copies, next step and guidance | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
 | No service yet, or infra/topology change — INCLUDING "deploy / set up / scaffold from existing recipe X" (user names a recipe slug like `zerops-laravel-minimal`) | `zerops_workflow action="start" workflow="bootstrap" intent="..."` — the route-menu surfaces the matching recipe; pick `route="recipe"` with the named slug | Write app code in bootstrap |
 | Read or set platform state — logs/env/status/scale/subdomain/manage/events/verify | matching `zerops_*` tool | Guess values when live state exists |
 @outside-mate | Promote dev/stage to a separate prod project ("go live", "deploy to prod", "nasaď na prod") | `zerops_workflow action="start" workflow="launch-production" intent="..." targetService="<host>"` | `zcli project create` or hand-rolled import.yaml |
@@ -22,7 +23,8 @@ Reference by name, never paste the value. `zerops_env`/`zerops_discover` read en
 
 ## Smells — catch & re-route
 
-- Multi-section prose analysis (framework cmp, IA, "let me first analyze") for service-shaped task → workflow start IS the analysis surface (returns plan + atoms scoped to your `intent`). Pick a sensible default, start, react to the response. User saying "analyze first" / "make a plan" doesn't bypass.
+@outside-mate - Multi-section prose analysis (framework cmp, IA, "let me first analyze") for service-shaped task → workflow start IS the analysis surface (returns plan + atoms scoped to your `intent`). Pick a sensible default, start, react to the response. User saying "analyze first" / "make a plan" doesn't bypass.
+@in-mate - Multi-section prose analysis (framework cmp, IA, "let me first analyze") for service-shaped task → workflow start IS the analysis surface. Pick a sensible default, start, react to the response. User saying "analyze first" / "make a plan" doesn't bypass.
 - Writing code or `zerops.yaml` before workflow/status/discover selected service.
 - Files in `/tmp` or random scratch dirs for app code.
 - Asking whether to deploy to Zerops when ZCP is already bound to this project.
@@ -35,13 +37,16 @@ Reference by name, never paste the value. `zerops_env`/`zerops_discover` read en
 
 A standard pair's halves are `{name}dev` and `{name}stage` to the tools; those names, "dev/stage pair" and "promote to stage" stay in tool calls and never reach the person. What you tell the person:
 
-- The stage half is **your preview** (in a Mate, "<Mate>'s preview"): a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing or sharing it — no "Add to Home Screen", no link to pass around. In a Mate, "stage" and "production" are only the application's environments.
-- The dev half is where you build; if you give its address, it is work in progress, a preview too, never the app.
+@outside-mate - The stage half is **your preview** (in a Mate, "<Mate>'s preview"): a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing or sharing it — no "Add to Home Screen", no link to pass around. In a Mate, "stage" and "production" are only the application's environments.
+@in-mate - The dev copy's **Preview** is where the person tries the work. The Mate's stage half runs the **Review build**; offer its address as a Review build only when it passed at the change's head, naming that head and time. The application's **Stage** and production are separate environments.
+@outside-mate - The dev half is where you build; if you give its address, it is work in progress, a preview too, never the app.
+@in-mate - The dev copy is work in progress, not the app; its Preview uses test data. Never suggest sharing or installing it for real use.
 - The real app is production. Until its first release there is none, so the preview is not yet what anyone uses — say so if they treat it as the app. Once production runs a release (in a Mate, the application's production the person released; elsewhere the project `launch-production` made), its address is the real app's: say so, and send them there for anything real — sharing, installing, real data.
 
 ## Workflow detail
 
-- `develop` — service code edit. `scope` = runtime services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal; workflow returns the plan, react to that. 1 task = 1 session; new `intent` auto-closes prior.
+@outside-mate - `develop` — service code edit. `scope` = runtime services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal; workflow returns the plan, react to that. 1 task = 1 session; new `intent` auto-closes prior.
+@in-mate - `develop` — service code edit. `scope` = the services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal. An edit in a Mate returns its copies, next step and guidance; a deploy uses a session and returns its plan.
 - `bootstrap` — provision services / change infra. Closes → continue in develop. Mid-develop infra side-trip: start bootstrap; develop session persists.
 @outside-mate - `launch-production` — promote dev/stage to a SEPARATE prod project. Stateless multi-call: `scope-prompt` → `classify-prompt` → `ready-to-launch` → `launching` → `configuring-pipeline` → `launched`. Each call passes the accumulated `inputs` block forward (no `action="complete"` — that's bootstrap-only). At `ready-to-launch`, `delegatedLaunch.available` says whether ZCP can mint the launch-window token itself from a one-time platform delegation on `confirmLaunch=true` (no value crosses the conversation); otherwise the user supplies one manually (Custom access per project + Allow creating projects toggle ON) as `launchKey`. ZCP never persists it either way. `targetService` accepts either half of a standard pair.
 

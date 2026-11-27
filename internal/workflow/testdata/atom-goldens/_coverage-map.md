@@ -54,6 +54,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-dev-server-triage` | 3 | develop/dev-pool-dev-service, develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-container` | 13 | develop/dev-pool-dev-service, develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/standup-stage-out-of-scope, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
+| `develop-edit` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-env-cheatsheet-sql` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-env-var-channels` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-env-var-model` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |

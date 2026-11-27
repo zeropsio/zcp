@@ -24,7 +24,7 @@ A change you carry on stays on its own branch: status lists each repository's op
 
 Never open a change only to record another's merge or to update a plan, roadmap or log: put it in the change doing the work, or in the next one that has work in it. A file every change appends to — a work log, a diary kept in one file — makes each open change conflict with `main` once another merges: give each change an entry of its own, such as a file per change, or per day and change. An HQ that keeps one open change per repository answers its open one instead, and open-change then says the work goes on that change's branch.
 
-The person reviews a change by its description: write it with `zerops_workflow action="describe-change"`. Deploys within this project follow the ZCP workflow's guidance.
+The person reviews a change by its description: write it with `zerops_workflow action="describe-change"`. Mate builds its stage from the described commit as the Review build; do not wait, and report it verified only after that head passes. Deploys within this project follow the ZCP workflow's guidance.
 
 ## 4. A repository kept on GitHub
 
