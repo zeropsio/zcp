@@ -2,10 +2,49 @@ package devsup
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"testing"
 	"testing/synctest"
 	"time"
 )
+
+// witness: internal/devsup/control_unix.go | resp.Copy, resp.Code = &snapshot, CodeOK → resp.Copy, resp.Code = &snapshot, CodeFailed
+func TestStartPhase_STCopyControl_ReportsSuccessfulSnapshots(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		after Status
+	}{
+		{name: "snapshot"},
+		{name: "already changed", after: StatusRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			s, err := New(Config{Root: dir, StateDir: dir, Tasks: func() (Tasks, bool) { return Tasks{}, false }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, server := net.Pipe()
+			defer client.Close()
+			if err := client.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			go s.handle(server)
+			if err := json.NewEncoder(client).Encode(Request{Verb: VerbCopyState, After: tc.after}); err != nil {
+				t.Fatal(err)
+			}
+			var got Response
+			if err := json.NewDecoder(client).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Code != CodeOK || got.Error != "" || got.Copy == nil || got.Copy.Status != StatusStopped {
+				t.Fatalf("response = %+v, want a successful stopped snapshot", got)
+			}
+		})
+	}
+}
 
 // witness: internal/devsup/supervisor_unix.go | f.accepts = f.answered → f.accepts = false
 func TestStartPhase_STCopyWait_TransitionsAnswerTheHeldWait(t *testing.T) {

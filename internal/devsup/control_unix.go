@@ -121,7 +121,7 @@ func (s *Supervisor) handle(c net.Conn) {
 			go func() { _, _ = io.Copy(io.Discard, c); cancel() }()
 		}
 		snapshot, err := s.WaitCopy(ctx, req.After)
-		resp.Copy = &snapshot
+		resp.Copy, resp.Code = &snapshot, CodeOK
 		if err != nil {
 			resp.Code, resp.Error = CodeFailed, err.Error()
 		}
